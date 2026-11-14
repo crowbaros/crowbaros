@@ -146,7 +146,8 @@ flowchart TB
 
 ### Why Void Linux
 
-- **Small and plain.** `base-minimal` is a usable root in about 100 packages.
+- **Small and plain.** The Milestone 1 lab root, `base-minimal` plus kernel,
+  GRUB, Btrfs tools, SSH, and DHCP, is 114 packages.
   runit services are directories and symlinks, so the engine can diff and write
   them directly.
 - **Easy to drive from a program.** `xbps` installs into any root
