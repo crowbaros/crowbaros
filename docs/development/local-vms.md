@@ -94,6 +94,7 @@ rtk python3 infra/vm/lab.py view test
 packages and records their versions. After test provisioning, restart the VM to
 start its greetd/Hyprland session. A terminal opens automatically. **Alt+Enter**
 opens another terminal; **Alt+Q** closes the active window; **Alt+V** toggles floating.
+- Hold **Alt** and drag with the left mouse button to move a window, or right to resize; window borders also resize.
 These are temporary lab bindings chosen to avoid Omarchy's Super bindings.
 
 `create` leaves existing registered guests unchanged. It refuses to overwrite an
@@ -104,6 +105,37 @@ stopped guests and refuse duplicate names.
 On this 32 GiB workstation, stop the test guest during larger builds. VM memory
 is a maximum allocation, but heavy simultaneous workloads can still create memory
 pressure. The disk sizes are capacities, not an immediate 184 GiB allocation.
+
+### Default window manager and login session
+
+**Hyprland is the test VM's default Wayland compositor and window manager.**
+The provisioning recipe sets `graphical.target` as the boot target, enables
+`greetd` as `display-manager.service`, and configures both greetd's initial
+autologin and its normal login command to start Hyprland with
+`/etc/crowbaros-lab/hyprland.lua`. This applies to newly provisioned test VMs as
+well as the current lab; the build VM remains a command-line build environment.
+
+A freshly provisioned baseline opens a **foot window inside Hyprland**. After
+`shell-deploy` and `shell-run`, the packaged CrowbarOS bar, dock, launcher and
+wallpaper start with the test session instead. Alt+Return still opens a terminal.
+The local console autologin remains a disposable-lab convenience.
+
+Verify the configured default and live session without restarting it:
+
+```sh
+rtk python3 infra/vm/lab.py ssh test systemctl get-default
+rtk python3 infra/vm/lab.py ssh test systemctl is-enabled greetd
+rtk python3 infra/vm/lab.py ssh test systemctl is-active greetd
+rtk python3 infra/vm/lab.py ssh test readlink -f /etc/systemd/system/display-manager.service
+rtk python3 infra/vm/lab.py ssh test sudo cat /etc/greetd/config.toml
+rtk python3 infra/vm/lab.py ssh test sudo -u desktop env XDG_RUNTIME_DIR=/run/user/1001 hyprctl -i 0 version
+rtk python3 infra/vm/lab.py ssh test sudo -u desktop env XDG_RUNTIME_DIR=/run/user/1001 hyprctl -i 0 configerrors
+```
+
+Expected results: `graphical.target`, `enabled`, `active`, the greetd service
+path, Hyprland startup commands for both login paths, a Hyprland version, and no
+configuration errors. These checks passed on November 14, 2026 with Hyprland
+`0.57.2-1.fc45`; no session-default change was needed.
 
 ## Everyday controls
 
@@ -139,12 +171,13 @@ Copy source into the build guest and develop with incremental Cargo builds there
 Package integration checkpoints as RPMs. Keep compiler caches in the builder;
 do not install compilers into the test guest to make a missing dependency disappear.
 The GPUI probe below has its own dependency pins and RPM specification. The
-Hyprland fork and full shell still need their own build and integration recipes.
+Hyprland fork and remaining production shell features still need their own
+build and integration work; the first shell recipe is documented below.
 
 ## Verified packaging path
 
 The smoke fixture is a tiny Rust executable with no Cargo dependencies. It tests
-the infrastructure without pretending the CrowbarOS shell already exists:
+the infrastructure independently of the desktop shell:
 
 ```sh
 rtk python3 infra/vm/lab.py stop test
@@ -219,6 +252,51 @@ smoke test. It restarts the probe, exercises the VM's keyboard and pointer,
 resizes the window, checks event logs, captures screenshots, and quits the app.
 Run `gpui-run test` again afterward to leave it available for exploration.
 
+## Studio Settings: first application slice
+
+The [Studio Settings application](../../apps/studio-settings/README.md) builds on
+the GPUI probe with real appearance preferences and a Hyprland motion adapter.
+It has its own signed RPM and leaves the probe available as a smaller diagnostic.
+
+The [Studio Settings validation record](studio-settings-validation-2026-11-14.md)
+records the installed package, actual guest screenshots, and tested behavior.
+
+```sh
+rtk python3 infra/vm/lab.py start build
+rtk python3 infra/vm/lab.py wait build
+rtk python3 infra/vm/lab.py view build &
+rtk python3 infra/vm/lab.py studio-build build
+rtk python3 infra/vm/lab.py stop build
+rtk python3 infra/vm/lab.py start test
+rtk python3 infra/vm/lab.py wait test
+rtk python3 infra/vm/lab.py view test &
+rtk python3 infra/vm/lab.py studio-deploy test
+rtk python3 infra/vm/lab.py studio-run test intel-virtio
+```
+
+Save a checkpoint before deployment. Keep the active VM viewer visible; an idle
+guest can be stopped to free resources during a large build.
+`studio-run` accepts the same Vulkan modes as `gpui-run`. The desktop launcher
+uses system discovery; the lab launcher explicitly selects the isolated driver.
+The development repository archive is `.local/vms/studio-repo.tar.gz`.
+
+`studio-deploy` loads the RPM's optional login hook from the **lab-owned** Hyprland
+configuration. Saved reduced-motion preferences are restored when the compositor
+starts; the GUI is not started automatically. Saved appearance also updates the
+installed CrowbarOS shell. It does not theme GTK/Qt applications.
+
+With a checkpoint saved and manual interaction paused, run
+`rtk python3 infra/vm/check_studio.py`. This check changes the lab user's settings,
+exercises real input, and finishes with Dark appearance, Studio Mode off, and
+reduced motion on. It captures evidence under `.local/studio/validation/`.
+The app README documents the model, save/error behavior, keyboard controls,
+package contents, and recovery.
+
+Keep a SPICE/GL viewer visible when shutting down the test VM. During development,
+one shutdown stalled with `no gl-draw-done` messages while its viewer was obscured;
+bringing the viewer forward allowed graceful shutdown to complete. If it happens
+again, inspect the viewer and guest state before considering a forced power-off.
+
 ## Clean tests and recovery
 
 Take a named checkpoint before a package or compositor experiment:
@@ -255,6 +333,47 @@ helper does not automatically hard-power-off a machine. An intentional
 `virsh -c qemu:///session destroy crowbaros-test` is equivalent to pulling its power;
 use it only when the guest is stuck and you accept losing unsaved guest work.
 
+## First desktop shell
+
+The [shell source and workflow](../../apps/shell/README.md) provide a Rust/GPUI
+workspace bar, persistent dock, searchable launcher and wallpaper. It uses a
+pinned, documented GPUI layer-shell backport; Studio Settings stays on stock GPUI.
+The [validation record](shell-validation-2026-11-14.md) records package identity,
+layer/focus checks, theme behavior and the single-output scope.
+
+```bash
+rtk python3 infra/vm/lab.py start build
+rtk python3 infra/vm/lab.py view build &
+rtk python3 infra/vm/lab.py wait build
+rtk python3 infra/vm/lab.py shell-build build
+rtk python3 infra/vm/lab.py start test
+rtk python3 infra/vm/lab.py view test &
+rtk python3 infra/vm/lab.py wait test
+rtk python3 infra/vm/lab.py shell-deploy test
+rtk python3 infra/vm/lab.py shell-run test intel-virtio
+```
+
+The signed development repository is `.local/vms/shell-repo.tar.gz`. The build
+recipe vendors pinned dependencies, builds offline in clean Mock, runs Rust
+catalog tests, and packages licenses. Fedora hardening flags are retained while
+the development profile uses optimization level 2, 16 codegen units and no debug
+information. This is not a release performance qualification.
+
+`shell-deploy` connects the packaged hook to `/etc/crowbaros-lab/hyprland.lua`,
+replaces the baseline terminal autostart, and leaves the Studio Settings hook
+intact. `shell-run` selects a service-scoped Vulkan ICD, imports the live Wayland
+session, reloads the lab compositor config and starts the user service. The
+service and fixed-command control socket run as `desktop`, with no privileges.
+Applications launched by the shell get separate systemd user scopes.
+
+Click Applications or press **Alt+Space**; type a name, choose with Up/Down or Tab,
+and press Enter. Escape or clicking outside restores desktop focus. The dock
+opens or focuses installed Terminal and Settings. Floating windows are the lab
+default; Alt+V switches a window to/from tiling. The bar reserves 44 px, and the
+persistent dock reserves 96 px. Alt+left-drag moves windows; Alt+right-drag
+resizes them, and window edges also resize. Auto-hide and the full product app set remain
+future work. `before-shell` is the offline pre-install checkpoint.
+
 ## Graphics and desktop boundary
 
 The test VM uses **VirtIO with VirGL OpenGL acceleration**, backed by this host's
@@ -280,7 +399,7 @@ metadata here; that limitation is explicit in the recipe. Only the test guest us
 this repository. Replace it with our maintained, signed packages when available.
 
 The lab intentionally uses a minimal upstream test session. CrowbarOS's floating
-window behavior, GPUI shell, custom greeter, accessibility, and full app integration
+complete window behavior, remaining shell features, custom greeter, accessibility, and full app integration
 remain implementation work. GPU performance, color accuracy, suspend/resume, and
 physical input/display behavior remain deferred hardware tests.
 

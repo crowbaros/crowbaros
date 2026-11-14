@@ -1,0 +1,14 @@
+[Unit]
+Description=CrowbarOS desktop shell
+PartOf=graphical-session.target
+StartLimitIntervalSec=30
+StartLimitBurst=3
+
+[Service]
+Type=exec
+WorkingDirectory=%h
+ExecStart=/usr/bin/crowbaros-shell
+Restart=on-failure
+RestartSec=2
+Environment=RUST_LOG=info
+EnvironmentFile=-/etc/crowbaros-lab/shell-vulkan.env

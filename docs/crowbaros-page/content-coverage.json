@@ -1,9 +1,9 @@
 {
   "source": "docs/community_foss_distro_plan.md",
-  "sourceBytes": 38832,
+  "sourceBytes": 40443,
   "completeSourceEmbedded": true,
   "renderedReferenceBlocks": 7,
   "systemPackageRows": 10,
   "coreAppRows": 5,
-  "sourceSha256": "b3eae19359b889daae85b3feaf98a3eb3e08463c8d989f099c215d03dc2e394b"
+  "sourceSha256": "4bda4f6da64c1ea82962a1e38630e4f68ff9d59a1fda1b1d31e5d48ee5e90db8"
 }

@@ -46,12 +46,12 @@
     },
     {
       "file": "branding/crowbaros-brand-kit/asset-manifest.json",
-      "bytes": 21435
+      "bytes": 21843
     }
   ],
   "textAndLogoDownloadsExact": true,
   "noArchiveOrPdf": true,
-  "htmlBytes": 3579745,
+  "htmlBytes": 3583576,
   "under5MiB": true,
   "typeSizes": {
     "body": "16px",

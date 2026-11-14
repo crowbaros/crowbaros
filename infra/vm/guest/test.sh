@@ -37,11 +37,26 @@ hl.config({
     animations = { enabled = false },
     decoration = { blur = { enabled = false } },
 })
+-- CrowbarOS lab mouse controls.
+hl.config({general={resize_on_border=true}})
+hl.bind("ALT + mouse:272", hl.dsp.window.drag(), {mouse=true})
+hl.bind("ALT + mouse:273", hl.dsp.window.resize(), {mouse=true})
 -- Alt avoids collisions with Omarchy's Super shortcuts outside the VM.
 hl.bind("ALT + Return", hl.dsp.exec_cmd("foot"))
 hl.bind("ALT + Q", hl.dsp.window.close())
 hl.bind("ALT + V", hl.dsp.window.float({ action = "toggle" }))
-hl.on("hyprland.start", function () hl.exec_cmd("foot") end)
+-- Use the optional packaged shell when installed; retain a clean-image fallback.
+local shell_hook = "/usr/share/crowbaros-shell/hyprland.lua"
+local shell_file = io.open(shell_hook, "r")
+if shell_file then
+    shell_file:close(); dofile(shell_hook)
+else
+    hl.on("hyprland.start", function () hl.exec_cmd("foot") end)
+end
+-- Optional packaged settings adapter; clean images do not need the app installed.
+local settings_hook = "/usr/share/crowbaros-studio-settings/hyprland.lua"
+local settings_file = io.open(settings_hook, "r")
+if settings_file then settings_file:close(); dofile(settings_hook) end
 EOF
 cat > /etc/greetd/config.toml <<'EOF'
 [terminal]

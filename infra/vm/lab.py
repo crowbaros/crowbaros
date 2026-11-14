@@ -315,7 +315,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["doctor", "download", "create", "start", "stop", "status",
         "wait", "ssh", "console", "view", "provision", "snapshot", "restore", "record", "smoke",
-        "configure", "deploy-smoke", "gpui-build", "gpui-deploy", "gpui-run", "gpu-build", "gpu-deploy"])
+        "configure", "deploy-smoke", "gpui-build", "gpui-deploy", "gpui-run", "gpu-build", "gpu-deploy", "studio-build", "studio-deploy", "studio-run", "shell-build", "shell-deploy", "shell-run"])
     parser.add_argument("role", nargs="?", choices=["build", "test", "all"])
     parser.add_argument("args", nargs=argparse.REMAINDER)
     opts = parser.parse_args()
@@ -343,7 +343,7 @@ def main():
     if not opts.role:
         parser.error("This action needs build, test, or all")
     roles = ["build", "test"] if opts.role == "all" else [opts.role]
-    if opts.role == "all" and opts.action in ("ssh", "console", "view", "smoke", "deploy-smoke", "gpui-build", "gpui-deploy", "gpui-run", "gpu-build", "gpu-deploy"):
+    if opts.role == "all" and opts.action in ("ssh", "console", "view", "smoke", "deploy-smoke", "gpui-build", "gpui-deploy", "gpui-run", "gpu-build", "gpu-deploy", "studio-build", "studio-deploy", "studio-run", "shell-build", "shell-deploy", "shell-run"):
         parser.error("This action needs one guest")
     if opts.action == "create":
         download()
@@ -442,6 +442,82 @@ def main():
             if mode not in ("system", "intel-virtio", "software"):
                 parser.error("Expected Vulkan mode: system, intel-virtio, or software")
             with (INFRA / "guest/gpui-run.sh").open() as script:
+                ssh(role, ["sudo", "bash", "-se", "--", mode], stdin=script)
+        elif opts.action == "studio-build":
+            if role != "build":
+                parser.error("Use studio-build build")
+            ssh(role, ["mkdir", "-p", "/home/crowbar/src/studio-settings"])
+            archive = subprocess.Popen([
+                "tar", "--exclude=./target", "--exclude=./vendor", "--exclude=./.cargo",
+                "--exclude=./dependency-licenses", "--exclude=./THIRD_PARTY.json",
+                "--exclude=./BUILD-MANIFEST.txt", "-C", str(ROOT / "apps/studio-settings"),
+                "-cf", "-", "."], stdout=subprocess.PIPE)
+            try:
+                ssh(role, ["tar", "-C", "/home/crowbar/src/studio-settings", "-xf", "-"], stdin=archive.stdout)
+            finally:
+                archive.stdout.close()
+                if archive.wait() != 0:
+                    raise RuntimeError("Studio Settings source transfer failed")
+            with (INFRA / "guest/studio-build.sh").open() as script:
+                ssh(role, ["bash", "-se"], stdin=script)
+            with (STATE / "studio-repo.tar.gz").open("wb") as artifact:
+                ssh(role, ["cat", "/home/crowbar/artifacts/studio-repo.tar.gz"], stdout=artifact)
+            print("Signed Studio Settings repository copied to .local/vms/studio-repo.tar.gz")
+        elif opts.action == "studio-deploy":
+            if role != "test":
+                parser.error("Use studio-deploy test")
+            ssh(role, ["mkdir", "-p", "/home/crowbar/incoming-studio"])
+            with (STATE / "studio-repo.tar.gz").open("rb") as artifact:
+                ssh(role, ["tar", "-C", "/home/crowbar/incoming-studio", "-xzf", "-"], stdin=artifact)
+            with (INFRA / "guest/studio-deploy.sh").open() as script:
+                ssh(role, ["sudo", "bash", "-se"], stdin=script)
+        elif opts.action == "studio-run":
+            if role != "test":
+                parser.error("Use studio-run test")
+            if len(opts.args) > 1:
+                parser.error("Supply at most one Vulkan mode: system, intel-virtio, or software")
+            mode = opts.args[0] if opts.args else CFG.get("gpui_vulkan_driver", "system")
+            if mode not in ("system", "intel-virtio", "software"):
+                parser.error("Expected Vulkan mode: system, intel-virtio, or software")
+            with (INFRA / "guest/studio-run.sh").open() as script:
+                ssh(role, ["sudo", "bash", "-se", "--", mode], stdin=script)
+        elif opts.action == "shell-build":
+            if role != "build":
+                parser.error("Use shell-build build")
+            ssh(role, ["mkdir", "-p", "/home/crowbar/src/shell"])
+            archive = subprocess.Popen([
+                "tar", "--exclude=./target", "--exclude=./vendor", "--exclude=./.cargo",
+                "--exclude=./dependency-licenses", "--exclude=./THIRD_PARTY.json",
+                "--exclude=./BUILD-MANIFEST.txt", "--exclude=./.upstream-cache", "--exclude=./gpui-source", "-C", str(ROOT / "apps/shell"),
+                "-cf", "-", "."], stdout=subprocess.PIPE)
+            try:
+                ssh(role, ["tar", "-C", "/home/crowbar/src/shell", "-xf", "-"], stdin=archive.stdout)
+            finally:
+                archive.stdout.close()
+                if archive.wait() != 0:
+                    raise RuntimeError("Desktop shell source transfer failed")
+            with (INFRA / "guest/shell-build.sh").open() as script:
+                ssh(role, ["bash", "-se"], stdin=script)
+            with (STATE / "shell-repo.tar.gz").open("wb") as artifact:
+                ssh(role, ["cat", "/home/crowbar/artifacts/shell-repo.tar.gz"], stdout=artifact)
+            print("Signed Desktop shell repository copied to .local/vms/shell-repo.tar.gz")
+        elif opts.action == "shell-deploy":
+            if role != "test":
+                parser.error("Use shell-deploy test")
+            ssh(role, ["mkdir", "-p", "/home/crowbar/incoming-shell"])
+            with (STATE / "shell-repo.tar.gz").open("rb") as artifact:
+                ssh(role, ["tar", "-C", "/home/crowbar/incoming-shell", "-xzf", "-"], stdin=artifact)
+            with (INFRA / "guest/shell-deploy.sh").open() as script:
+                ssh(role, ["sudo", "bash", "-se"], stdin=script)
+        elif opts.action == "shell-run":
+            if role != "test":
+                parser.error("Use shell-run test")
+            if len(opts.args) > 1:
+                parser.error("Supply at most one Vulkan mode: system, intel-virtio, or software")
+            mode = opts.args[0] if opts.args else CFG.get("gpui_vulkan_driver", "system")
+            if mode not in ("system", "intel-virtio", "software"):
+                parser.error("Expected Vulkan mode: system, intel-virtio, or software")
+            with (INFRA / "guest/shell-run.sh").open() as script:
                 ssh(role, ["sudo", "bash", "-se", "--", mode], stdin=script)
         elif opts.action == "gpu-build":
             if role != "build":

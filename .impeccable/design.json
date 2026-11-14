@@ -1,0 +1,527 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-14T19:51:05Z",
+  "title": "Design System: CrowbarOS",
+  "extensions": {
+    "colorMeta": {
+      "void": {
+        "role": "neutral",
+        "displayName": "Void",
+        "tonalRamp": [
+          "oklch(15.00% 0.01354 248.04)",
+          "oklch(26.43% 0.01354 248.04)",
+          "oklch(37.86% 0.01354 248.04)",
+          "oklch(49.29% 0.01354 248.04)",
+          "oklch(60.71% 0.01354 248.04)",
+          "oklch(72.14% 0.01354 248.04)",
+          "oklch(83.57% 0.01354 248.04)",
+          "oklch(95.00% 0.01354 248.04)"
+        ]
+      },
+      "abyss": {
+        "role": "neutral",
+        "displayName": "Abyss",
+        "tonalRamp": [
+          "oklch(15.00% 0.02397 248.84)",
+          "oklch(26.43% 0.02397 248.84)",
+          "oklch(37.86% 0.02397 248.84)",
+          "oklch(49.29% 0.02397 248.84)",
+          "oklch(60.71% 0.02397 248.84)",
+          "oklch(72.14% 0.02397 248.84)",
+          "oklch(83.57% 0.02397 248.84)",
+          "oklch(95.00% 0.02397 248.84)"
+        ]
+      },
+      "ice": {
+        "role": "primary",
+        "displayName": "Ice",
+        "tonalRamp": [
+          "oklch(15.00% 0.12039 206.58)",
+          "oklch(26.43% 0.12039 206.58)",
+          "oklch(37.86% 0.12039 206.58)",
+          "oklch(49.29% 0.12039 206.58)",
+          "oklch(60.71% 0.12039 206.58)",
+          "oklch(72.14% 0.12039 206.58)",
+          "oklch(83.57% 0.12039 206.58)",
+          "oklch(95.00% 0.12039 206.58)"
+        ]
+      },
+      "steel": {
+        "role": "neutral",
+        "displayName": "Steel",
+        "tonalRamp": [
+          "oklch(15.00% 0.03386 242.36)",
+          "oklch(26.43% 0.03386 242.36)",
+          "oklch(37.86% 0.03386 242.36)",
+          "oklch(49.29% 0.03386 242.36)",
+          "oklch(60.71% 0.03386 242.36)",
+          "oklch(72.14% 0.03386 242.36)",
+          "oklch(83.57% 0.03386 242.36)",
+          "oklch(95.00% 0.03386 242.36)"
+        ]
+      },
+      "frost": {
+        "role": "neutral",
+        "displayName": "Frost",
+        "tonalRamp": [
+          "oklch(15.00% 0.01691 230.92)",
+          "oklch(26.43% 0.01691 230.92)",
+          "oklch(37.86% 0.01691 230.92)",
+          "oklch(49.29% 0.01691 230.92)",
+          "oklch(60.71% 0.01691 230.92)",
+          "oklch(72.14% 0.01691 230.92)",
+          "oklch(83.57% 0.01691 230.92)",
+          "oklch(95.00% 0.01691 230.92)"
+        ]
+      },
+      "secondary-text": {
+        "role": "neutral",
+        "displayName": "Secondary Text",
+        "tonalRamp": [
+          "oklch(15.00% 0.02720 239.18)",
+          "oklch(26.43% 0.02720 239.18)",
+          "oklch(37.86% 0.02720 239.18)",
+          "oklch(49.29% 0.02720 239.18)",
+          "oklch(60.71% 0.02720 239.18)",
+          "oklch(72.14% 0.02720 239.18)",
+          "oklch(83.57% 0.02720 239.18)",
+          "oklch(95.00% 0.02720 239.18)"
+        ]
+      },
+      "dark-line": {
+        "role": "neutral",
+        "displayName": "Dark Line",
+        "tonalRamp": [
+          "oklch(15.00% 0.03373 240.61)",
+          "oklch(26.43% 0.03373 240.61)",
+          "oklch(37.86% 0.03373 240.61)",
+          "oklch(49.29% 0.03373 240.61)",
+          "oklch(60.71% 0.03373 240.61)",
+          "oklch(72.14% 0.03373 240.61)",
+          "oklch(83.57% 0.03373 240.61)",
+          "oklch(95.00% 0.03373 240.61)"
+        ]
+      },
+      "light-canvas": {
+        "role": "neutral",
+        "displayName": "Light Canvas",
+        "tonalRamp": [
+          "oklch(15.00% 0.00417 236.50)",
+          "oklch(26.43% 0.00417 236.50)",
+          "oklch(37.86% 0.00417 236.50)",
+          "oklch(49.29% 0.00417 236.50)",
+          "oklch(60.71% 0.00417 236.50)",
+          "oklch(72.14% 0.00417 236.50)",
+          "oklch(83.57% 0.00417 236.50)",
+          "oklch(95.00% 0.00417 236.50)"
+        ]
+      },
+      "light-surface": {
+        "role": "neutral",
+        "displayName": "Light Surface",
+        "tonalRamp": [
+          "oklch(15.00% 0.00759 228.85)",
+          "oklch(26.43% 0.00759 228.85)",
+          "oklch(37.86% 0.00759 228.85)",
+          "oklch(49.29% 0.00759 228.85)",
+          "oklch(60.71% 0.00759 228.85)",
+          "oklch(72.14% 0.00759 228.85)",
+          "oklch(83.57% 0.00759 228.85)",
+          "oklch(95.00% 0.00759 228.85)"
+        ]
+      },
+      "light-secondary-text": {
+        "role": "neutral",
+        "displayName": "Light Secondary Text",
+        "tonalRamp": [
+          "oklch(15.00% 0.03095 236.19)",
+          "oklch(26.43% 0.03095 236.19)",
+          "oklch(37.86% 0.03095 236.19)",
+          "oklch(49.29% 0.03095 236.19)",
+          "oklch(60.71% 0.03095 236.19)",
+          "oklch(72.14% 0.03095 236.19)",
+          "oklch(83.57% 0.03095 236.19)",
+          "oklch(95.00% 0.03095 236.19)"
+        ]
+      },
+      "light-line": {
+        "role": "neutral",
+        "displayName": "Light Line",
+        "tonalRamp": [
+          "oklch(15.00% 0.02258 235.07)",
+          "oklch(26.43% 0.02258 235.07)",
+          "oklch(37.86% 0.02258 235.07)",
+          "oklch(49.29% 0.02258 235.07)",
+          "oklch(60.71% 0.02258 235.07)",
+          "oklch(72.14% 0.02258 235.07)",
+          "oklch(83.57% 0.02258 235.07)",
+          "oklch(95.00% 0.02258 235.07)"
+        ]
+      },
+      "light-focus": {
+        "role": "primary",
+        "displayName": "Light Focus",
+        "tonalRamp": [
+          "oklch(15.00% 0.08158 210.91)",
+          "oklch(26.43% 0.08158 210.91)",
+          "oklch(37.86% 0.08158 210.91)",
+          "oklch(49.29% 0.08158 210.91)",
+          "oklch(60.71% 0.08158 210.91)",
+          "oklch(72.14% 0.08158 210.91)",
+          "oklch(83.57% 0.08158 210.91)",
+          "oklch(95.00% 0.08158 210.91)"
+        ]
+      },
+      "paper-canvas": {
+        "role": "neutral",
+        "displayName": "Paper Canvas",
+        "tonalRamp": [
+          "oklch(15.00% 0.01431 84.58)",
+          "oklch(26.43% 0.01431 84.58)",
+          "oklch(37.86% 0.01431 84.58)",
+          "oklch(49.29% 0.01431 84.58)",
+          "oklch(60.71% 0.01431 84.58)",
+          "oklch(72.14% 0.01431 84.58)",
+          "oklch(83.57% 0.01431 84.58)",
+          "oklch(95.00% 0.01431 84.58)"
+        ]
+      },
+      "paper-surface": {
+        "role": "neutral",
+        "displayName": "Paper Surface",
+        "tonalRamp": [
+          "oklch(15.00% 0.01779 81.33)",
+          "oklch(26.43% 0.01779 81.33)",
+          "oklch(37.86% 0.01779 81.33)",
+          "oklch(49.29% 0.01779 81.33)",
+          "oklch(60.71% 0.01779 81.33)",
+          "oklch(72.14% 0.01779 81.33)",
+          "oklch(83.57% 0.01779 81.33)",
+          "oklch(95.00% 0.01779 81.33)"
+        ]
+      },
+      "paper-text": {
+        "role": "neutral",
+        "displayName": "Paper Text",
+        "tonalRamp": [
+          "oklch(15.00% 0.00638 78.20)",
+          "oklch(26.43% 0.00638 78.20)",
+          "oklch(37.86% 0.00638 78.20)",
+          "oklch(49.29% 0.00638 78.20)",
+          "oklch(60.71% 0.00638 78.20)",
+          "oklch(72.14% 0.00638 78.20)",
+          "oklch(83.57% 0.00638 78.20)",
+          "oklch(95.00% 0.00638 78.20)"
+        ]
+      },
+      "paper-secondary-text": {
+        "role": "neutral",
+        "displayName": "Paper Secondary Text",
+        "tonalRamp": [
+          "oklch(15.00% 0.01903 82.75)",
+          "oklch(26.43% 0.01903 82.75)",
+          "oklch(37.86% 0.01903 82.75)",
+          "oklch(49.29% 0.01903 82.75)",
+          "oklch(60.71% 0.01903 82.75)",
+          "oklch(72.14% 0.01903 82.75)",
+          "oklch(83.57% 0.01903 82.75)",
+          "oklch(95.00% 0.01903 82.75)"
+        ]
+      },
+      "paper-line": {
+        "role": "neutral",
+        "displayName": "Paper Line",
+        "tonalRamp": [
+          "oklch(15.00% 0.02451 82.10)",
+          "oklch(26.43% 0.02451 82.10)",
+          "oklch(37.86% 0.02451 82.10)",
+          "oklch(49.29% 0.02451 82.10)",
+          "oklch(60.71% 0.02451 82.10)",
+          "oklch(72.14% 0.02451 82.10)",
+          "oklch(83.57% 0.02451 82.10)",
+          "oklch(95.00% 0.02451 82.10)"
+        ]
+      },
+      "paper-focus": {
+        "role": "primary",
+        "displayName": "Paper Focus",
+        "tonalRamp": [
+          "oklch(15.00% 0.03056 196.23)",
+          "oklch(26.43% 0.03056 196.23)",
+          "oklch(37.86% 0.03056 196.23)",
+          "oklch(49.29% 0.03056 196.23)",
+          "oklch(60.71% 0.03056 196.23)",
+          "oklch(72.14% 0.03056 196.23)",
+          "oklch(83.57% 0.03056 196.23)",
+          "oklch(95.00% 0.03056 196.23)"
+        ]
+      },
+      "studio-background": {
+        "role": "neutral",
+        "displayName": "Studio Background",
+        "tonalRamp": [
+          "oklch(15.00% 0.00000 0.00)",
+          "oklch(26.43% 0.00000 0.00)",
+          "oklch(37.86% 0.00000 0.00)",
+          "oklch(49.29% 0.00000 0.00)",
+          "oklch(60.71% 0.00000 0.00)",
+          "oklch(72.14% 0.00000 0.00)",
+          "oklch(83.57% 0.00000 0.00)",
+          "oklch(95.00% 0.00000 0.00)"
+        ]
+      },
+      "studio-surface": {
+        "role": "neutral",
+        "displayName": "Studio Surface",
+        "tonalRamp": [
+          "oklch(15.00% 0.00000 0.00)",
+          "oklch(26.43% 0.00000 0.00)",
+          "oklch(37.86% 0.00000 0.00)",
+          "oklch(49.29% 0.00000 0.00)",
+          "oklch(60.71% 0.00000 0.00)",
+          "oklch(72.14% 0.00000 0.00)",
+          "oklch(83.57% 0.00000 0.00)",
+          "oklch(95.00% 0.00000 0.00)"
+        ]
+      },
+      "studio-text": {
+        "role": "neutral",
+        "displayName": "Studio Text",
+        "tonalRamp": [
+          "oklch(15.00% 0.00000 0.00)",
+          "oklch(26.43% 0.00000 0.00)",
+          "oklch(37.86% 0.00000 0.00)",
+          "oklch(49.29% 0.00000 0.00)",
+          "oklch(60.71% 0.00000 0.00)",
+          "oklch(72.14% 0.00000 0.00)",
+          "oklch(83.57% 0.00000 0.00)",
+          "oklch(95.00% 0.00000 0.00)"
+        ]
+      },
+      "studio-secondary-text": {
+        "role": "neutral",
+        "displayName": "Studio Secondary Text",
+        "tonalRamp": [
+          "oklch(15.00% 0.00000 0.00)",
+          "oklch(26.43% 0.00000 0.00)",
+          "oklch(37.86% 0.00000 0.00)",
+          "oklch(49.29% 0.00000 0.00)",
+          "oklch(60.71% 0.00000 0.00)",
+          "oklch(72.14% 0.00000 0.00)",
+          "oklch(83.57% 0.00000 0.00)",
+          "oklch(95.00% 0.00000 0.00)"
+        ]
+      },
+      "studio-line": {
+        "role": "neutral",
+        "displayName": "Studio Line",
+        "tonalRamp": [
+          "oklch(15.00% 0.00000 0.00)",
+          "oklch(26.43% 0.00000 0.00)",
+          "oklch(37.86% 0.00000 0.00)",
+          "oklch(49.29% 0.00000 0.00)",
+          "oklch(60.71% 0.00000 0.00)",
+          "oklch(72.14% 0.00000 0.00)",
+          "oklch(83.57% 0.00000 0.00)",
+          "oklch(95.00% 0.00000 0.00)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Title",
+        "purpose": "Native page heading; Appearance and About."
+      },
+      "section": {
+        "displayName": "Section",
+        "purpose": "Setting and section names; About also uses this size at regular weight."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Introductory copy and About paragraphs."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Native buttons, sidebar navigation and theme-choice names."
+      },
+      "supporting": {
+        "displayName": "Supporting",
+        "purpose": "Explanations, On/Off labels, error text and footer status."
+      },
+      "technical": {
+        "displayName": "Technical",
+        "purpose": "About stack line only; IBM Plex Mono."
+      },
+      "selection-label": {
+        "displayName": "Selection Label",
+        "purpose": "Redundant Selected marker on theme cards only; not a body-copy size."
+      }
+    },
+    "shadows": [],
+    "motion": [],
+    "breakpoints": [],
+    "native": {
+      "platformDescription": "Native Linux desktop; Rust/GPUI on Wayland. No web, iOS or Android platform enum is assigned.",
+      "sourceFiles": [
+        "apps/studio-settings/src/main.rs",
+        "apps/studio-settings/src/theme.rs",
+        "apps/studio-settings/src/settings.rs"
+      ],
+      "defaultWindow": {
+        "width": 980,
+        "height": 720,
+        "unit": "logical px"
+      },
+      "minimumWindow": {
+        "width": 800,
+        "height": 640,
+        "unit": "logical px"
+      },
+      "focus": {
+        "borderWidth": "2px",
+        "buttonStyle": "dashed",
+        "themeChoiceStyle": "dashed",
+        "toggleRowStyle": "solid",
+        "primaryColor": "on_accent",
+        "otherColor": "focus"
+      },
+      "feedback": {
+        "buttonHoverOpacity": 0.85,
+        "themeChoiceHoverOpacity": 0.86,
+        "disabledButtonOpacity": 0.5,
+        "toggleRowHover": "surface"
+      },
+      "motionBehavior": "No app-authored animation. The reduced-motion preference controls compositor window/workspace animation when saved.",
+      "previewTranslation": "HTML/CSS entries are isolated illustrations of native controls. They do not run GPUI actions or establish native accessibility semantics. Font families use browser fallbacks when the bundled fonts are unavailable.",
+      "evidenceStatus": "Actual guest captures at 980×720 and 800×640 validate the native composition, theme variants, focus, title, and wrapped permission-error recovery. Finish review disposition: ship. Session startup behavior is recorded separately in docs/development/studio-settings-validation-2026-11-14.md.",
+      "tonalRampProvenance": "Synthetic OKLCH swatch illustrations at eight lightness steps from 15% to 95%, retaining each source color hue/chroma. They are not application tokens or validated contrast pairings."
+    }
+  },
+  "components": [
+    {
+      "name": "Primary button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Native Dark primary action; dashed on-accent focus stays distinct from the fill.",
+      "html": "<button class=\"ds-primary\">Save changes</button>",
+      "css": ".ds-primary{font-family:Manrope,sans-serif;font-size:13px;font-weight:600;box-sizing:border-box;height:40px;padding:0 16px;border:2px solid #49D7E8;border-radius:10px;background:#49D7E8;color:#080D12;cursor:pointer;}.ds-primary:hover:not(:disabled){opacity:.85;}.ds-primary:focus-visible{outline:none;border:2px dashed #080D12;}.ds-primary:disabled{opacity:.5;cursor:default;}"
+    },
+    {
+      "name": "Secondary button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Native Dark secondary action; uses the same dimensions and high-contrast focus treatment.",
+      "html": "<button class=\"ds-secondary\">Undo</button>",
+      "css": ".ds-secondary{font-family:Manrope,sans-serif;font-size:13px;font-weight:600;box-sizing:border-box;height:40px;padding:0 16px;border:2px solid #364957;border-radius:10px;background:#17212B;color:#D8E5EC;cursor:pointer;}.ds-secondary:hover:not(:disabled){opacity:.85;}.ds-secondary:focus-visible{outline:none;border:2px dashed #49D7E8;}.ds-secondary:disabled{opacity:.5;cursor:default;}"
+    },
+    {
+      "name": "Sidebar navigation",
+      "kind": "nav",
+      "refersTo": "navigation-selected",
+      "description": "Appearance/About visual sample; native navigation behavior remains in GPUI.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Studio Settings\"><button class=\"ds-nav-selected\" aria-current=\"page\">Appearance</button><button class=\"ds-nav-idle\">About</button></nav>",
+      "css": ".ds-nav{display:flex;flex-direction:column;gap:8px;width:144px;padding:16px;background:#17212B;}.ds-nav-selected{font-family:Manrope,sans-serif;font-size:13px;font-weight:600;box-sizing:border-box;height:40px;padding:0 16px;border:2px solid #49D7E8;border-radius:10px;background:#49D7E8;color:#080D12;cursor:pointer;}.ds-nav-selected:hover:not(:disabled){opacity:.85;}.ds-nav-selected:focus-visible{outline:none;border:2px dashed #080D12;}.ds-nav-selected:disabled{opacity:.5;cursor:default;}.ds-nav-idle{font-family:Manrope,sans-serif;font-size:13px;font-weight:600;box-sizing:border-box;height:40px;padding:0 16px;border:2px solid #364957;border-radius:10px;background:#17212B;color:#D8E5EC;cursor:pointer;}.ds-nav-idle:hover:not(:disabled){opacity:.85;}.ds-nav-idle:focus-visible{outline:none;border:2px dashed #49D7E8;}.ds-nav-idle:disabled{opacity:.5;cursor:default;}"
+    },
+    {
+      "name": "Selected theme choice",
+      "kind": "card",
+      "refersTo": "theme-card",
+      "description": "Native Dark theme choice; solid selection, redundant label, dashed keyboard focus. The preview is schematic.",
+      "html": "<button class=\"ds-theme\" aria-pressed=\"true\"><span class=\"ds-theme-preview\" aria-hidden=\"true\"><span class=\"ds-theme-sidebar\"></span><span class=\"ds-theme-lines\"><span class=\"ds-theme-title\"></span><span class=\"ds-theme-rule\"></span><span class=\"ds-theme-action\"></span></span></span><span class=\"ds-theme-label\"><span>Dark</span><span class=\"ds-theme-selected\">Selected</span></span></button>",
+      "css": ".ds-theme{font-family:Manrope,sans-serif;font-size:13px;font-weight:600;box-sizing:border-box;display:flex;flex-direction:column;gap:12px;width:244px;padding:12px;border:2px solid #49D7E8;border-radius:12px;background:#17212B;color:#D8E5EC;cursor:pointer;}.ds-theme:hover{opacity:.86;}.ds-theme:focus-visible{outline:none;border-style:dashed;}.ds-theme-preview{box-sizing:border-box;display:flex;gap:8px;width:100%;height:72px;padding:12px;border-radius:6px;background:#080D12;}.ds-theme-sidebar{width:18px;border-radius:3px;background:#17212B;}.ds-theme-lines{flex:1;display:flex;flex-direction:column;justify-content:center;gap:8px;}.ds-theme-title{height:5px;width:42px;border-radius:2px;background:#D8E5EC;}.ds-theme-rule{height:4px;width:100%;border-radius:2px;background:#364957;}.ds-theme-action{height:12px;width:32px;border-radius:3px;background:#49D7E8;}.ds-theme-label{display:flex;justify-content:space-between;align-items:center;width:100%;}.ds-theme-selected{font-size:10px;color:#A8BAC7;}"
+    },
+    {
+      "name": "Setting row — off",
+      "kind": "custom",
+      "refersTo": "toggle-row",
+      "description": "Native Dark row and off switch; fixed-state visual sample, not a working preference control.",
+      "html": "<button class=\"ds-toggle-off\" role=\"switch\" aria-checked=\"false\"><span class=\"ds-toggle-off-copy\"><strong>Studio Mode</strong><span>Use neutral grays for visual work. This does not calibrate your display.</span></span><span class=\"ds-toggle-off-state\">Off</span><span class=\"ds-toggle-off-track\" aria-hidden=\"true\"><span></span></span></button>",
+      "css": ".ds-toggle-off{font-family:Manrope,sans-serif;display:flex;align-items:center;gap:20px;width:100%;padding:16px 12px;border:2px solid #080D12;border-radius:10px;background:#080D12;color:#D8E5EC;text-align:left;cursor:pointer;}.ds-toggle-off:hover{background:#17212B;}.ds-toggle-off:focus-visible{outline:none;border-color:#49D7E8;}.ds-toggle-off-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}.ds-toggle-off-copy strong{font-size:14px;font-weight:600;}.ds-toggle-off-copy>span,.ds-toggle-off-state{font-size:12px;font-weight:400;color:#A8BAC7;}.ds-toggle-off-track{box-sizing:border-box;display:flex;align-items:center;flex-shrink:0;width:44px;height:26px;padding:0 3px;border-radius:999px;background:#364957;}.ds-toggle-off-track>span{width:20px;height:20px;border-radius:50%;background:#D8E5EC;}"
+    },
+    {
+      "name": "Setting row — on",
+      "kind": "custom",
+      "refersTo": "toggle-row",
+      "description": "Native Dark row and on switch; fixed-state visual sample, not a working preference control.",
+      "html": "<button class=\"ds-toggle-on\" role=\"switch\" aria-checked=\"true\"><span class=\"ds-toggle-on-copy\"><strong>Reduced motion</strong><span>Turn off desktop window and workspace animations when you save.</span></span><span class=\"ds-toggle-on-state\">On</span><span class=\"ds-toggle-on-track\" aria-hidden=\"true\"><span></span></span></button>",
+      "css": ".ds-toggle-on{font-family:Manrope,sans-serif;display:flex;align-items:center;gap:20px;width:100%;padding:16px 12px;border:2px solid #080D12;border-radius:10px;background:#080D12;color:#D8E5EC;text-align:left;cursor:pointer;}.ds-toggle-on:hover{background:#17212B;}.ds-toggle-on:focus-visible{outline:none;border-color:#49D7E8;}.ds-toggle-on-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}.ds-toggle-on-copy strong{font-size:14px;font-weight:600;}.ds-toggle-on-copy>span,.ds-toggle-on-state{font-size:12px;font-weight:400;color:#A8BAC7;}.ds-toggle-on-track{box-sizing:border-box;display:flex;align-items:center;justify-content:flex-end;flex-shrink:0;width:44px;height:26px;padding:0 3px;border-radius:999px;background:#49D7E8;}.ds-toggle-on-track>span{width:20px;height:20px;border-radius:50%;background:#080D12;}"
+    },
+    {
+      "name": "Save footer",
+      "kind": "custom",
+      "refersTo": "save-footer",
+      "description": "Native footer visual sample with explicit status and save/undo actions; it sits outside scrolling content.",
+      "html": "<div class=\"ds-footer\"><span class=\"ds-footer-status\">Preview · not saved</span><button class=\"ds-footer-undo\">Undo</button><button class=\"ds-footer-save\">Save changes</button></div>",
+      "css": ".ds-footer{display:flex;align-items:center;gap:12px;padding:16px 24px;background:#080D12;border-top:1px solid #364957;font-family:Manrope,sans-serif;font-size:12px;color:#A8BAC7;}.ds-footer-status{flex:1;}.ds-footer-undo{font-family:Manrope,sans-serif;font-size:13px;font-weight:600;box-sizing:border-box;height:40px;padding:0 16px;border:2px solid #364957;border-radius:10px;background:#17212B;color:#D8E5EC;cursor:pointer;}.ds-footer-undo:hover:not(:disabled){opacity:.85;}.ds-footer-undo:focus-visible{outline:none;border:2px dashed #49D7E8;}.ds-footer-undo:disabled{opacity:.5;cursor:default;}.ds-footer-save{font-family:Manrope,sans-serif;font-size:13px;font-weight:600;box-sizing:border-box;height:40px;padding:0 16px;border:2px solid #49D7E8;border-radius:10px;background:#49D7E8;color:#080D12;cursor:pointer;}.ds-footer-save:hover:not(:disabled){opacity:.85;}.ds-footer-save:focus-visible{outline:none;border:2px dashed #080D12;}.ds-footer-save:disabled{opacity:.5;cursor:default;}"
+    },
+    {
+      "name": "Inline write error",
+      "kind": "custom",
+      "refersTo": "inline-error",
+      "description": "Native error-band styling with current permission-recovery copy; the sample directory is illustrative.",
+      "html": "<div class=\"ds-error\"><span class=\"ds-error-copy\">Cannot write settings in ~/.config/crowbaros. Restore write permission for your account, then choose Save changes again.</span><button class=\"ds-error-reload\">Reload saved</button></div>",
+      "css": ".ds-error{display:flex;align-items:center;gap:12px;padding:12px 24px;background:#080D12;border-top:1px solid #364957;font-family:Manrope,sans-serif;font-size:12px;color:#D8E5EC;}.ds-error-copy{flex:1;}.ds-error-reload{flex-shrink:0;}.ds-error-reload{font-family:Manrope,sans-serif;font-size:13px;font-weight:600;box-sizing:border-box;height:40px;padding:0 16px;border:2px solid #364957;border-radius:10px;background:#17212B;color:#D8E5EC;cursor:pointer;}.ds-error-reload:hover:not(:disabled){opacity:.85;}.ds-error-reload:focus-visible{outline:none;border:2px dashed #49D7E8;}.ds-error-reload:disabled{opacity:.5;cursor:default;}"
+    },
+    {
+      "name": "Unsaved-close footer",
+      "kind": "custom",
+      "refersTo": "save-footer",
+      "description": "Native footer confirmation styling; no modal overlay. Runtime focuses Keep editing.",
+      "html": "<div class=\"ds-close\"><span class=\"ds-close-copy\">Discard unsaved changes?</span><button class=\"ds-close-keep\">Keep editing</button><button class=\"ds-close-discard\">Discard &amp; close</button></div>",
+      "css": ".ds-close{display:flex;align-items:center;gap:12px;padding:16px 24px;background:#080D12;border-top:1px solid #364957;font-family:Manrope,sans-serif;font-size:12px;color:#A8BAC7;}.ds-close-copy{flex:1;}.ds-close-keep{font-family:Manrope,sans-serif;font-size:13px;font-weight:600;box-sizing:border-box;height:40px;padding:0 16px;border:2px solid #364957;border-radius:10px;background:#17212B;color:#D8E5EC;cursor:pointer;}.ds-close-keep:hover:not(:disabled){opacity:.85;}.ds-close-keep:focus-visible{outline:none;border:2px dashed #49D7E8;}.ds-close-keep:disabled{opacity:.5;cursor:default;}.ds-close-discard{font-family:Manrope,sans-serif;font-size:13px;font-weight:600;box-sizing:border-box;height:40px;padding:0 16px;border:2px solid #49D7E8;border-radius:10px;background:#49D7E8;color:#080D12;cursor:pointer;}.ds-close-discard:hover:not(:disabled){opacity:.85;}.ds-close-discard:focus-visible{outline:none;border:2px dashed #080D12;}.ds-close-discard:disabled{opacity:.5;cursor:default;}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Quiet surface. Sharp mind.",
+    "overview": "CrowbarOS keeps the approved Nullkeel blue-black field, controlled Ice signal, Rookslash crow and proportional Manrope interface. Engraved artwork supplies the identity's organic detail; functional controls remain quiet, precise and readable. This is an extension of that established world, not a replacement identity.\n\nThis root record combines shared brand commitments with the implemented Studio Settings surface: a native Linux desktop application built in Rust/GPUI on Wayland. The frontmatter's type, spacing and component values describe that native surface. The [brand-kit design system](docs/branding/crowbaros-brand-kit/DESIGN.md) remains authoritative for logo geometry, artwork, desktop concept compositions and the HTML review viewer. The [blueprint design system](docs/crowbaros-page/DESIGN.md) continues to govern the separate reading page. Their larger type scales, shadows and layout rules remain scoped to those surfaces.\n\nSources are [the canonical brand tokens](docs/branding/crowbaros-brand-kit/tokens/crowbaros.tokens.json), [native palette mapping](apps/studio-settings/src/theme.rs), [native controls](apps/studio-settings/src/main.rs), [product commitments](PRODUCT.md) and the [surface brief](.impeccable/surfaces/apps-studio-settings-src-main-rs.md). The first-build captures in [.impeccable/review/studio-settings](.impeccable/review/studio-settings/) establish the four appearance variants, compact layout, About, close protection and error placement. Current source includes the subsequent focus, native-title and error-copy corrections; those captures predate them. This document records implementation, not a final build or validation verdict. Follow the [finish review](.impeccable/review/studio-settings/finish-review.md) for that evidence.",
+    "keyCharacteristics": [
+      "Quiet opaque surfaces with a controlled signal for selection and action.",
+      "Manrope for human-facing controls; IBM Plex Mono for technical data.",
+      "Dark, Light and Warm Paper choices with a neutral Studio override.",
+      "Familiar native window structure, explicit settings state and visible recovery."
+    ],
+    "rules": [
+      {
+        "name": "The Signal Rule",
+        "body": "Use Ice for purposeful selection and action. Keep Steel decorative and use the palette's readable muted role for supporting text.",
+        "section": "colors"
+      },
+      {
+        "name": "The Choice Rule",
+        "body": "Preserve Dark, Light and Warm Paper as separate choices. Studio neutralizes the current window while retaining the underlying appearance choice.",
+        "section": "colors"
+      },
+      {
+        "name": "The Human Type Rule",
+        "body": "Use Manrope for the interface and IBM Plex Mono for technical information. Use the supplied outlined logo master when a wordmark is required; typed UI text is not a substitute for that asset.",
+        "section": "typography"
+      },
+      {
+        "name": "The Stable Actions Rule",
+        "body": "Keep the status and save/recovery actions reachable while the settings content scrolls.",
+        "section": "layout"
+      },
+      {
+        "name": "The State Separation Rule",
+        "body": "Distinguish focus from selection. Native buttons and theme cards use a dashed focused border; primary buttons use on-accent contrast for that border. A selected theme retains its solid border and “Selected” label when unfocused. Toggle rows use a solid focus border independent of their On/Off state.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do preserve the approved Nullkeel colors, supplied Rookslash masters and established font families.",
+      "Do pair filled accents with on-accent text and use each palette's dedicated focus color on pale surfaces.",
+      "Do accompany selected and enabled states with visible labels, border treatment and switch position.",
+      "Do keep the native footer reachable as content scrolls at the minimum window size.",
+      "Do describe appearance as an app preview and desktop motion as an apply-on-Save preference.",
+      "Do preserve the existing brand-viewer and blueprint design records within their own surfaces."
+    ],
+    "donts": [
+      "Don't replace the approved identity or redraw the wordmark from ordinary text.",
+      "Don't use Steel for normal body copy or turn the accent into a large reading surface.",
+      "Don't let focus disappear into a selected fill or border.",
+      "Don't claim that neutral Studio chrome calibrates a display or themes third-party applications.",
+      "Don't inherit concept-only controls, artwork treatments or web breakpoints as implemented native behavior.",
+      "Don't treat component-preview HTML as evidence of native accessibility, final runtime validation or a web platform."
+    ]
+  }
+}

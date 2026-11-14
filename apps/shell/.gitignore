@@ -1,0 +1,8 @@
+/gpui-source/
+/.upstream-cache/
+/.cargo/
+/vendor/
+/target/
+/dependency-licenses/
+/THIRD_PARTY.json
+/BUILD-MANIFEST.txt

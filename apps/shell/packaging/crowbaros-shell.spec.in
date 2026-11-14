@@ -1,0 +1,51 @@
+Name:           crowbaros-shell
+Version:        0.1.1
+Release:        1%{?dist}
+Summary:        CrowbarOS desktop bar, dock and application launcher
+# Generated from the vendored dependency manifests, plus application/font licenses.
+License:        @LICENSE_EXPRESSION@
+Source0:        %{name}-%{version}.tar.gz
+ExclusiveArch:  x86_64
+BuildRequires:  rust cargo gcc gcc-c++ make cmake clang
+BuildRequires:  openssl-devel fontconfig-devel freetype-devel libxkbcommon-devel libxkbcommon-x11-devel
+BuildRequires:  wayland-devel libxcb-devel vulkan-loader-devel libzstd-devel
+BuildRequires:  systemd-rpm-macros
+Requires:       vulkan-loader mesa-vulkan-drivers
+Requires:       glib2 systemd hyprland
+Requires:       /usr/bin/gio
+
+%global debug_package %{nil}
+
+%description
+A native Rust/GPUI desktop shell using Wayland layer surfaces on Hyprland.
+Includes an application launcher, workspace bar, dock and wallpaper.
+The first slice targets one output; the launcher uses installed desktop entries.
+
+%prep
+%autosetup
+
+%build
+# Keep Fedora hardening flags, while honoring this development profile.
+export RUSTFLAGS="$RUSTFLAGS -Copt-level=2 -Cdebuginfo=0 -Ccodegen-units=16"
+export CARGO_NET_OFFLINE=true
+export CARGO_BUILD_JOBS=4
+cargo build --release --frozen
+
+%check
+export RUSTFLAGS="$RUSTFLAGS -Copt-level=2 -Cdebuginfo=0 -Ccodegen-units=16"
+CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 cargo test --release --frozen
+./target/release/%{name} --version
+
+%install
+install -Dpm0755 target/release/%{name} %{buildroot}%{_bindir}/%{name}
+install -Dpm0644 packaging/crowbaros-shell.service %{buildroot}%{_userunitdir}/crowbaros-shell.service
+install -Dpm0644 packaging/hyprland.lua %{buildroot}%{_datadir}/crowbaros-shell/hyprland.lua
+install -Dpm0644 assets/mark.png %{buildroot}%{_datadir}/crowbaros-shell/mark.png
+install -Dpm0644 assets/wallpaper.png %{buildroot}%{_datadir}/crowbaros-shell/wallpaper.png
+
+%files
+%license LICENSE licenses/ fonts/*OFL.txt dependency-licenses/
+%doc THIRD_PARTY.json BUILD-MANIFEST.txt patches/README.md
+%{_bindir}/%{name}
+%{_datadir}/crowbaros-shell/
+%{_userunitdir}/crowbaros-shell.service
