@@ -1,0 +1,234 @@
+{
+  "direction": {
+    "palette_from": "Nullkeel",
+    "mascot_from": "Rookslash",
+    "naming_format": "One word followed by OS",
+    "selected_name": null
+  },
+  "palette": [
+    [
+      "Void",
+      "#080D12"
+    ],
+    [
+      "Abyss",
+      "#17212B"
+    ],
+    [
+      "Ice",
+      "#49D7E8"
+    ],
+    [
+      "Steel",
+      "#6D8191"
+    ],
+    [
+      "Frost",
+      "#D8E5EC"
+    ]
+  ],
+  "recommendation": [
+    "CorvidOS",
+    "GloamOS",
+    "QuothOS"
+  ],
+  "checked_at_arizona": "2026-11-13T12:36:26.743796-07:00",
+  "checked_count": 30,
+  "unregistered_count": 6,
+  "availability_note": "Unregistered means the authoritative .com RDAP endpoint returned HTTP 404 at check time; registrar checkout is the final availability and price confirmation. Registered does not establish whether an owner may sell. No domains were purchased or reserved. This is not trademark clearance.",
+  "shortlist": [
+    {
+      "name": "CorvidOS",
+      "domain": "corvidos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/corvidos.com",
+      "checked_at_utc": "2026-11-13T19:36:25.589566+00:00",
+      "http_status": 404,
+      "status": "unregistered",
+      "error": "HTTP Error 404: Not Found",
+      "reason": "Best overall fit: the crow family, intelligence and a concise technical sound."
+    },
+    {
+      "name": "GloamOS",
+      "domain": "gloamos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/gloamos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.021129+00:00",
+      "http_status": 404,
+      "status": "unregistered",
+      "error": "HTTP Error 404: Not Found",
+      "reason": "Twilight and a dark atmosphere; softer and more evocative."
+    },
+    {
+      "name": "QuothOS",
+      "domain": "quothos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/quothos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.013312+00:00",
+      "http_status": 404,
+      "status": "unregistered",
+      "error": "HTTP Error 404: Not Found",
+      "reason": "A literary raven association; distinctive, though pronunciation is less obvious."
+    },
+    {
+      "name": "CowlOS",
+      "domain": "cowlos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/cowlos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.268318+00:00",
+      "http_status": 404,
+      "status": "unregistered",
+      "error": "HTTP Error 404: Not Found",
+      "reason": "Short, dark and enigmatic; the hood-like silhouette can echo a crow's head."
+    },
+    {
+      "name": "SootOS",
+      "domain": "sootos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/sootos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.737847+00:00",
+      "http_status": 404,
+      "status": "unregistered",
+      "error": "HTTP Error 404: Not Found",
+      "reason": "Compact and tactile; a matte-black, industrial personality."
+    },
+    {
+      "name": "NacreOS",
+      "domain": "nacreos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/nacreos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.531660+00:00",
+      "http_status": 404,
+      "status": "unregistered",
+      "error": "HTTP Error 404: Not Found",
+      "reason": "Mother-of-pearl suggests a subtle iridescent cyan sheen; pronunciation is less obvious."
+    },
+    {
+      "name": "RookOS",
+      "domain": "rookos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/rookos.com",
+      "checked_at_utc": "2026-11-13T19:36:25.588352+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "ROOKOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2019-07-06T21:30:25Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-07-06T21:30:25Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-06-06T04:17:52Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ],
+      "reason": "Very concise and directly tied to a corvid; the requested .com is already registered."
+    },
+    {
+      "name": "SpectreOS",
+      "domain": "spectreos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/spectreos.com",
+      "checked_at_utc": "2026-11-13T19:36:25.589133+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "SPECTREOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2020-05-01T12:07:12Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-05-01T12:07:12Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2025-09-18T16:22:10Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ],
+      "reason": "A clear stealth association; the requested .com is already registered."
+    },
+    {
+      "name": "SableOS",
+      "domain": "sableos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/sableos.com",
+      "checked_at_utc": "2026-11-13T19:36:25.590118+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "SABLEOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2026-02-17T20:10:19Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2029-02-17T20:10:19Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-02-17T20:10:19Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:03Z"
+        }
+      ],
+      "status_flags": [
+        "client delete prohibited",
+        "client renew prohibited",
+        "client transfer prohibited",
+        "client update prohibited"
+      ],
+      "reason": "Elegant black-color association; the requested .com is already registered."
+    },
+    {
+      "name": "VesperOS",
+      "domain": "vesperos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/vesperos.com",
+      "checked_at_utc": "2026-11-13T19:36:25.695552+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "VESPEROS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2025-08-16T18:16:16Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-08-16T18:16:16Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-09-26T09:31:38Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:03Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ],
+      "reason": "Evening atmosphere; the requested .com is already registered."
+    }
+  ],
+  "visual_study": {
+    "file": "cyan-crow-name-studies.png",
+    "generation": "built-in image_gen",
+    "prompt": "generation-prompt.txt",
+    "names_are_alternatives": true
+  }
+}

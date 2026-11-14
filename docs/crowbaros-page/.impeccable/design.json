@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-13T20:53:40.625837+00:00",
+  "title": "Design System: CrowbarOS project blueprint",
+  "extensions": {
+    "shadows": [
+      {
+        "name": "search",
+        "value": "0 15px 50px #0008",
+        "purpose": "Search results overlay."
+      },
+      {
+        "name": "contents",
+        "value": "0 16px 40px #0008",
+        "purpose": "Mobile Contents overlay."
+      },
+      {
+        "name": "toast",
+        "value": "0 8px 32px #0006",
+        "purpose": "Temporary copy feedback."
+      },
+      {
+        "name": "dialog",
+        "value": "0 24px 90px #000a",
+        "purpose": "Full-size image dialog."
+      }
+    ],
+    "motion": [
+      {
+        "name": "disclosure",
+        "value": "transform .2s ease",
+        "purpose": "Rotate the disclosure arrow with the native open state."
+      },
+      {
+        "name": "toast",
+        "value": "opacity .16s, transform .16s",
+        "purpose": "Show temporary copy feedback; disabled under reduced motion."
+      },
+      {
+        "name": "navigation",
+        "value": "scroll-behavior: smooth",
+        "purpose": "Anchor navigation; auto or instant under reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "wide-hero-min",
+        "value": "1750px"
+      },
+      {
+        "name": "compact-desktop-max",
+        "value": "1280px"
+      },
+      {
+        "name": "mobile-navigation-max",
+        "value": "1050px"
+      },
+      {
+        "name": "stacked-content-max",
+        "value": "760px"
+      },
+      {
+        "name": "narrow-phone-max",
+        "value": "380px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary chapter jump; a native anchor in the page.",
+      "html": "<a class=\"ds-action\" href=\"#desktop\">Explore the desktop</a>",
+      "css": ".ds-action{display:inline-flex;align-items:center;min-height:48px;padding:15px 20px;border-radius:10px;background:var(--ice,#49D7E8);color:var(--void,#080D12);font:700 14px Manrope,sans-serif;text-decoration:none}.ds-action:hover{background:var(--frost,#D8E5EC)}.ds-action:focus-visible{outline:2px solid var(--ice,#49D7E8);outline-offset:5px}"
+    },
+    {
+      "name": "Search field",
+      "kind": "input",
+      "refersTo": "search-input",
+      "description": "Visual extract of the toolbar input; result navigation lives in page.js.",
+      "html": "<label class=\"ds-search\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"10.5\" cy=\"10.5\" r=\"6.5\"/><path d=\"m16 16 5 5\"/></svg><input type=\"search\" aria-label=\"Search the plan\" placeholder=\"Find a decision, feature, or package\u2026\"></label>",
+      "css": ".ds-search{display:flex;align-items:center;gap:12px;color:var(--muted,#A8BAC7)}.ds-search svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}.ds-search input{width:100%;padding:12px 0;border:0;background:transparent;color:var(--frost,#D8E5EC);font:14px/1.5 Manrope,sans-serif;caret-color:var(--ice,#49D7E8)}.ds-search input::placeholder{color:var(--muted,#A8BAC7);opacity:1}.ds-search input:focus-visible{outline:2px solid var(--ice,#49D7E8);outline-offset:2px}"
+    },
+    {
+      "name": "Chapter navigation",
+      "kind": "nav",
+      "refersTo": "chapter-link-current",
+      "description": "Location indicated by fill, weight, dot and aria-current.",
+      "html": "<nav class=\"ds-chapters\" aria-label=\"Chapters\"><a href=\"#overview\" aria-current=\"location\">Overview</a><a href=\"#principles\">Principles</a></nav>",
+      "css": ".ds-chapters{display:flex;flex-direction:column;gap:5px}.ds-chapters a{position:relative;padding:11px 13px;border-radius:8px;color:var(--muted,#A8BAC7);font:14px Manrope,sans-serif;text-decoration:none}.ds-chapters a:hover{background:var(--recess,#111B24);color:var(--frost,#D8E5EC)}.ds-chapters a[aria-current]{background:var(--abyss,#17212B);color:var(--frost,#D8E5EC);font-weight:650}.ds-chapters a[aria-current]::after{content:'';position:absolute;right:12px;top:calc(50% - 3px);width:6px;height:6px;border-radius:50%;background:var(--ice,#49D7E8)}.ds-chapters a:focus-visible{outline:2px solid var(--ice,#49D7E8);outline-offset:5px}"
+    },
+    {
+      "name": "Scene choice",
+      "kind": "button",
+      "refersTo": "choice-selected",
+      "description": "Pressed and resting visual states; switching is implemented in page.js.",
+      "html": "<div class=\"ds-choices\"><button type=\"button\" aria-pressed=\"true\">Workspace</button><button type=\"button\" aria-pressed=\"false\">Zen Mode</button></div>",
+      "css": ".ds-choices{display:flex;flex-wrap:wrap;gap:6px}.ds-choices button{min-height:40px;padding:10px 15px;border:1px solid var(--line,#30424F);border-radius:8px;background:transparent;color:var(--muted,#A8BAC7);font:600 13px Manrope,sans-serif;cursor:pointer}.ds-choices button:hover{background:var(--abyss,#17212B);color:var(--frost,#D8E5EC)}.ds-choices button[aria-pressed=true]{background:var(--ice,#49D7E8);border-color:var(--ice,#49D7E8);color:var(--void,#080D12)}.ds-choices button:focus-visible{outline:2px solid var(--ice,#49D7E8);outline-offset:5px}"
+    },
+    {
+      "name": "Technical disclosure",
+      "kind": "custom",
+      "refersTo": "disclosure",
+      "description": "Native details element; no runtime required for opening and closing.",
+      "html": "<details class=\"ds-disclosure\"><summary>Hardware support<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m9 5 7 7-7 7\"/></svg></summary><div>Inspect the planned hardware requirements.</div></details>",
+      "css": ".ds-disclosure{border-top:1px solid var(--line,#30424F);border-bottom:1px solid var(--line,#30424F);color:var(--frost,#D8E5EC);font-family:Manrope,sans-serif}.ds-disclosure summary{display:flex;align-items:center;justify-content:space-between;gap:24px;list-style:none;padding:20px 0;font-size:14px;font-weight:650;cursor:pointer}.ds-disclosure summary::-webkit-details-marker{display:none}.ds-disclosure summary:hover{color:var(--ice,#49D7E8)}.ds-disclosure summary:focus-visible{outline:2px solid var(--ice,#49D7E8);outline-offset:5px}.ds-disclosure svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;transition:transform .2s ease}.ds-disclosure[open] svg{transform:rotate(90deg)}.ds-disclosure>div{padding:4px 0 18px;color:var(--muted,#A8BAC7);font-size:14px;line-height:1.75}@media(prefers-reduced-motion:reduce){.ds-disclosure svg{transition:none}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Quiet surface. Sharp mind.",
+    "keyCharacteristics": [
+      "Quiet opaque planes, readable support text and a restrained cyan signal.",
+      "Supplied engraved crow and outlined logos, with generous surrounding space.",
+      "Persistent wayfinding, open editorial rows and native disclosures.",
+      "Complete offline content in one compact, portable HTML file."
+    ],
+    "rules": [
+      {
+        "name": "The Signal Rule",
+        "body": "Preserve the inherited Ice/Void pairing and readable Muted text. Do not substitute Steel for normal secondary text.",
+        "section": "colors"
+      }
+    ],
+    "dos": [
+      "Do inherit the approved palette, supplied logo geometry and complete right-facing crow.",
+      "Do keep page layout tokens scoped here and preserve the brand-kit authority.",
+      "Do preserve native controls, keyboard focus, selected-state semantics and readable external image captions.",
+      "Do rebuild from the source files and retain provenance for every shipping preview.",
+      "Do preserve all eight scene variants, six wallpapers and the complete source when reducing file size."
+    ],
+    "donts": [
+      "Don't add the full brand-kit ZIP or PDF back into this compact HTML without a new request.",
+      "Don't introduce network or adjacent-file dependencies into the delivered one-file page.",
+      "Don't present illustrative desktop chrome, proposed architecture or roadmap content as shipped OS functionality.",
+      "Don't edit the generated HTML, redraw the supplied identity or change original artwork to maintain this page."
+    ],
+    "overview": "This is a scoped record of the completed [single-file plan page](../crowbaros.html). It inherits the approved identity from [the brand-kit design system](../branding/crowbaros-brand-kit/DESIGN.md) and [product commitments](../branding/crowbaros-brand-kit/PRODUCT.md). The canonical brand documents remain authoritative for logos, the crow, native desktop studies and appearance variants. This file documents their extension into a reading surface; it does not establish a replacement identity or native OS behavior.\n\nThe [surface brief](../../.impeccable/crowbaros-brief.txt) owns the atlas composition and Read mode. Summaries lead to inspectable specifications, with complete source preserved in the appendix. Frontmatter records actual reusable values from [page.css](page.css); responsive exceptions and behavior remain in the implementation. The sidecar carries breakpoints, effects and isolated component examples."
+  }
+}

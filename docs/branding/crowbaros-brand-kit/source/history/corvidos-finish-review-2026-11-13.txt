@@ -1,0 +1,70 @@
+1. Disposition
+
+SHIP the reviewed desktop viewer and associated visual assets. No material fix,
+rebuild, or recapture is required for this scope. This is a visual concept kit,
+not approval of an implemented operating system. PDF and final package are
+outside this review.
+
+2. Fidelity to brief
+
+The result carries CorvidOS, Nullkeel's five exact base colors, and the approved
+Rookslash engraved crow into a coherent identity. The simplified slash/crow
+mark works beside the proportional wordmark, while the detailed bird remains
+the expressive asset. Native SVG source uses Ice #49D7E8 and Frost #D8E5EC;
+the token file preserves all five requested base colors.
+
+The workspace makes the horizontal ribbon legible through the adjacent window
+edge, centered active window, and five-app dock. Wallpaper is visibly part of
+the world without obscuring content. Zen removes both system bars and centers
+the document. Dark, Light, Warm Paper, and neutral Studio chrome are distinct
+and coherent. Lock and boot carry the same identity at appropriately different
+levels of detail. The phone viewer presents the entire desktop study at scale
+with readable external captions, consistent with the stated scope.
+
+3. Craft-floor findings
+
+No material craft-floor violation observed. Typography has clear hierarchy,
+aligned groups, and readable native-size labels. IBM Plex Mono is confined to
+terminal content; the UI uses Manrope. SVG icons are consistent. Window depth
+uses offset soft shadows; bright cyan signifies selection and active focus.
+Real feather and crow imagery supplies the organic detail. The transparent
+mascot proof retains its contour on Void, Abyss, Frost, and white with no
+obvious rectangular matte, coarse geometric mask, or distracting edge fringe.
+
+Checked source color pairs exceed 4.5:1: dark secondary text 8.16:1, light
+secondary text 7.19:1, warm-paper secondary text 5.70:1, neutral Studio
+secondary text 8.12:1, and active-button text 11.30:1. Focus, selection,
+scrollbars, reduced-motion handling, and tabular clock numerals are authored.
+Real controls use button semantics and pressed/checked state. The limited
+entrance uses brightness and a visibility-preserving default. Illustrative
+app chrome and system values are clearly identified in the viewer copy.
+
+The cropped terminal edge is intentional evidence of horizontal navigation.
+The small in-scene text in the phone capture is an expected scaled desktop
+concept, not a responsive mobile OS. Neither warrants a visual redesign.
+
+4. Material fixes and exact locations
+
+None required. Preserve the committed palette, crow, type direction, and
+desktop-first composition. No UI files were changed by this review.
+
+5. Evidence and limits
+
+Reviewed PRODUCT.md, source/direction-contract.txt, the Impeccable craft floor,
+mockups/desktop.html, desktop.css, desktop.js, tokens/corvidos.css, primary SVG
+logo source, source/browser-checks.json, and source/detector-findings.json.
+
+Visually inspected the approved round-03 cyan-crow reference; viewer captures
+.impeccable/review/desktop.png (1440px) and mobile.png (390px); all 1600x900
+captures for workspace, zen, settings, settings-light, settings-paper,
+studio-neutral, lock, and boot; CorvidOS-brand-overview.png;
+.impeccable/review/mascot-alpha-proof.png; and
+social/corvidos-social-card-1200x630.png.
+
+The provided browser-check record shows matching viewport/scroll widths at
+1440 and 390, no broken images, functioning light/Studio changes, and zero
+top-bar/dock elements in Zen. The detector report is empty with no reported
+suppressions. This reviewer inspected that evidence and event-handler source;
+it did not independently rerun a live browser interaction suite or verify the
+brand-guide link while the PDF was being produced. Packaging, PDF layout,
+trademark/licensing clearance, and native OS behavior are not assessed here.

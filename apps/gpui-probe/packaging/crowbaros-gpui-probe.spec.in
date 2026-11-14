@@ -1,0 +1,44 @@
+Name:           crowbaros-gpui-probe
+Version:        0.1.1
+Release:        1%{?dist}
+Summary:        CrowbarOS native GPUI and Wayland validation app
+# Generated from the vendored dependency manifests, plus application/font licenses.
+License:        @LICENSE_EXPRESSION@
+Source0:        %{name}-%{version}.tar.gz
+ExclusiveArch:  x86_64
+BuildRequires:  rust cargo gcc gcc-c++ make cmake clang
+BuildRequires:  openssl-devel fontconfig-devel freetype-devel libxkbcommon-devel libxkbcommon-x11-devel
+BuildRequires:  wayland-devel libxcb-devel vulkan-loader-devel libzstd-devel
+BuildRequires:  desktop-file-utils
+Requires:       vulkan-loader mesa-vulkan-drivers
+
+%global debug_package %{nil}
+
+%description
+A development-only native Wayland application to validate GPUI rendering,
+input, fonts, scrolling, window resizing, and the CrowbarOS RPM pipeline.
+This is not the CrowbarOS shell or production settings application.
+
+%prep
+%autosetup
+
+%build
+export CARGO_NET_OFFLINE=true
+export CARGO_BUILD_JOBS=4
+cargo build --release --frozen
+
+%check
+./target/release/%{name} --version
+desktop-file-validate packaging/com.crowbaros.GpuiProbe.desktop
+
+%install
+install -Dpm0755 target/release/%{name} %{buildroot}%{_bindir}/%{name}
+install -Dpm0644 packaging/com.crowbaros.GpuiProbe.desktop %{buildroot}%{_datadir}/applications/com.crowbaros.GpuiProbe.desktop
+install -Dpm0644 packaging/com.crowbaros.GpuiProbe.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/com.crowbaros.GpuiProbe.svg
+
+%files
+%license LICENSE fonts/*OFL.txt dependency-licenses/
+%doc THIRD_PARTY.json BUILD-MANIFEST.txt
+%{_bindir}/%{name}
+%{_datadir}/applications/com.crowbaros.GpuiProbe.desktop
+%{_datadir}/icons/hicolor/scalable/apps/com.crowbaros.GpuiProbe.svg

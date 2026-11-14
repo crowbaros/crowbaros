@@ -1,0 +1,704 @@
+{
+  "brand": "CrowbarOS",
+  "version": "1.0",
+  "date": "2026-11-14",
+  "files": [
+    {
+      "path": ".impeccable/design.json",
+      "bytes": 30544,
+      "sha256": "408cd387e61448c509c98f6504a8ba3877016e5412024ecd2529f8786354a1d7"
+    },
+    {
+      "path": ".impeccable/review/desktop.png",
+      "bytes": 510840,
+      "sha256": "26fe8a52482d95524d4cb2fc160aead1794a6dbf63dcc7d5fe4adfdb556dc7ae",
+      "width": 1440,
+      "height": 1193,
+      "mode": "RGB"
+    },
+    {
+      "path": ".impeccable/review/mascot-alpha-proof.png",
+      "bytes": 353633,
+      "sha256": "15a77ad5e0c9ad11469b5e2497b11910de87e72fdc97541d175221fef48afed2",
+      "width": 1200,
+      "height": 900,
+      "mode": "RGB"
+    },
+    {
+      "path": ".impeccable/review/mobile.png",
+      "bytes": 80426,
+      "sha256": "3109c5d4f5dc509f09a13ac2c70b9684cf98357cfd666fcbca2bd3c8421332b4",
+      "width": 390,
+      "height": 844,
+      "mode": "RGB"
+    },
+    {
+      "path": "CrowbarOS-brand-overview.png",
+      "bytes": 808647,
+      "sha256": "d141c07685aec4a499c6760f0301824c950f4407c8bb4cefae39b1d4ca1767a2",
+      "width": 1800,
+      "height": 1200,
+      "mode": "RGB"
+    },
+    {
+      "path": "DESIGN.md",
+      "bytes": 19375,
+      "sha256": "5f49ad295919711505f0cd8964fda10eead72bd3ccefaf4957b441429809c488"
+    },
+    {
+      "path": "PRODUCT.md",
+      "bytes": 1701,
+      "sha256": "1c7c23c6523cb92c4111bc478494a53c6bb94fb843bfd1ab744f5a0f7df0721f"
+    },
+    {
+      "path": "README.txt",
+      "bytes": 4573,
+      "sha256": "50402a4fab1f883f8209e513436dfa3782215cb728ac1b745615a65599e4f924"
+    },
+    {
+      "path": "fonts/IBMPlexMono-OFL.txt",
+      "bytes": 4363,
+      "sha256": "37784b44044a4ffd9256702b7c0982c37e5c8887ba90c6dca0479aea93dc898d"
+    },
+    {
+      "path": "fonts/IBMPlexMono-Regular.ttf",
+      "bytes": 135580,
+      "sha256": "6a3412f058c7d8dfd9170c41e85ade48e5156ecb89356110ca57a0a27734af46"
+    },
+    {
+      "path": "fonts/Manrope-OFL.txt",
+      "bytes": 4387,
+      "sha256": "58172e0c0fac2cda8a37b348164bb55e44b0e69051e557e92b1d3f6910141f7b"
+    },
+    {
+      "path": "fonts/Manrope-Variable.ttf",
+      "bytes": 164700,
+      "sha256": "3ae11c49db0455a3cc33e37d380f20fdb8c7f8b41dc07625c177e3d87a9d6ae6"
+    },
+    {
+      "path": "fonts/SOURCES.txt",
+      "bytes": 781,
+      "sha256": "3a8d3e8a0e56e543bd0c9fe2e93be045272978aa0c3da20ac95a51b12d1e57f2"
+    },
+    {
+      "path": "guide/CrowbarOS-brand-guide.pdf",
+      "bytes": 21108808,
+      "sha256": "a73d3df7992ad99178beca15a3dc6b3401a19274aa6d958c425cf8bef69a1ed3"
+    },
+    {
+      "path": "logos/png/crowbaros-app-icon-180.png",
+      "bytes": 3787,
+      "sha256": "41bffaca4e7692312693e8257957667bf424d129663acd1b5b7e2d99d6bb49bf",
+      "width": 180,
+      "height": 180,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-app-icon-192.png",
+      "bytes": 4122,
+      "sha256": "a19d0207aaa94b7252e300983609b03341c3165ffa7332e69ebd18a3781f7d36",
+      "width": 192,
+      "height": 192,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-app-icon-32.png",
+      "bytes": 739,
+      "sha256": "dce3fe25e3c9c9b363bbe0ee8eb5a2076bdfb9476e7d32d93c5d4015f7bf895f",
+      "width": 32,
+      "height": 32,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-app-icon-512.png",
+      "bytes": 17797,
+      "sha256": "28848426f7cd0e695771cb74d8a5fc0310f3e8e7e4215f5e95ed1cecf19055f3",
+      "width": 512,
+      "height": 512,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-app-icon@2x.png",
+      "bytes": 17797,
+      "sha256": "28848426f7cd0e695771cb74d8a5fc0310f3e8e7e4215f5e95ed1cecf19055f3",
+      "width": 512,
+      "height": 512,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-horizontal-dark@2x.png",
+      "bytes": 34661,
+      "sha256": "3775abc3580977dac4b027a7f183bd4bb9ff0e86377f6c3e8bc17a398f2e94c6",
+      "width": 1700,
+      "height": 360,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-horizontal-frost@2x.png",
+      "bytes": 35463,
+      "sha256": "fa10859e95c4d96ae6afc09fe113fff7e0018d5b1ed217bd2a9f4af08bdb7beb",
+      "width": 1700,
+      "height": 360,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-horizontal-ice@2x.png",
+      "bytes": 35561,
+      "sha256": "af5d204dd90f8f798f420ffa8625dac07404ae9ccaf7983239b3929aecb77331",
+      "width": 1700,
+      "height": 360,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-horizontal-primary@2x.png",
+      "bytes": 36448,
+      "sha256": "c27506282159f1f069d214b139b0a873da0f0c98360b47f82ad5750e8f675acc",
+      "width": 1700,
+      "height": 360,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-1024.png",
+      "bytes": 22372,
+      "sha256": "097ce20da159e1c40b5ed64dda28dfb4d021a50fd80cceb5e62d598bace7b442",
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-128.png",
+      "bytes": 1527,
+      "sha256": "8597ac9619e04df862cc864f9c8316def381c968c7a717b75b51d3725bd50bfe",
+      "width": 128,
+      "height": 128,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-16.png",
+      "bytes": 319,
+      "sha256": "df0e4e768ce768f017e3e42ba29967027d3f6c7f6331c8a052a2604f99cc4e27",
+      "width": 16,
+      "height": 16,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-24.png",
+      "bytes": 432,
+      "sha256": "3794cc0c1534912fa128d203d05a350a4aeafc4ac916139f2f8348d98305a2ca",
+      "width": 24,
+      "height": 24,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-256.png",
+      "bytes": 2959,
+      "sha256": "7ffe15a41744dab42698be932a0145c5b66d01574be7f9afcb090a4a599689d0",
+      "width": 256,
+      "height": 256,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-32.png",
+      "bytes": 556,
+      "sha256": "b1eb77318cb22f46832532bb69f969940b3260fa71cd0fcbe617efe6e020b77d",
+      "width": 32,
+      "height": 32,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-48.png",
+      "bytes": 710,
+      "sha256": "960683191a4ba1f7d23cd1ee54878b112ca399a596f16965b2037ba52c27e031",
+      "width": 48,
+      "height": 48,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-512.png",
+      "bytes": 9444,
+      "sha256": "6f1c493a3fae131089ef78c93b6d1f2960a5d2d7e0f8c5b4fe15a8485412b3ee",
+      "width": 512,
+      "height": 512,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-64.png",
+      "bytes": 874,
+      "sha256": "16272699ea45fe310431b3d13e1f8b8d71dfed62e1ec0051a74260423e8dbf44",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-dark@2x.png",
+      "bytes": 8707,
+      "sha256": "2bcd4405a326dd24b2c07de92094f984c79cae3856fe89d9f75818bd4b21db34",
+      "width": 512,
+      "height": 512,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-frost@2x.png",
+      "bytes": 8987,
+      "sha256": "6791d389daec4ffda881b53ecfdc917b8912f5265b3e8ae600cd133aa34ef63f",
+      "width": 512,
+      "height": 512,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-ice@2x.png",
+      "bytes": 9013,
+      "sha256": "74fc20690bdf673d4584946a921b7975c8fa1f1023371905c444d6c7d82855ec",
+      "width": 512,
+      "height": 512,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-micro@2x.png",
+      "bytes": 9231,
+      "sha256": "88c5282d622f53f8e71a3b5e14b6efdd86d2f0d0c489ef7ae718ad013b8be51c",
+      "width": 512,
+      "height": 512,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-mark-primary@2x.png",
+      "bytes": 9444,
+      "sha256": "6f1c493a3fae131089ef78c93b6d1f2960a5d2d7e0f8c5b4fe15a8485412b3ee",
+      "width": 512,
+      "height": 512,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-stacked-dark@2x.png",
+      "bytes": 35411,
+      "sha256": "0076d3a4e77f44920aab6d4cb454e5de4ab7f62dfdbecead5ced93553e7b03a5",
+      "width": 1360,
+      "height": 840,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-stacked-frost@2x.png",
+      "bytes": 36220,
+      "sha256": "0ac12b9e825c3d9101ddf25ddb102873779fa4c7e8ca9a1c81876f918e509136",
+      "width": 1360,
+      "height": 840,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-stacked-ice@2x.png",
+      "bytes": 36441,
+      "sha256": "3f0ac11c392aeee16d208f432ecd22d164e0217f918a87d3442e6a782c1629b4",
+      "width": 1360,
+      "height": 840,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-stacked-primary@2x.png",
+      "bytes": 36794,
+      "sha256": "42c1394cbfdf8b00b5b93348df67b4dcfbf66d2a6b5e1d9e37fca4f109fd83af",
+      "width": 1360,
+      "height": 840,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-wordmark-dark@2x.png",
+      "bytes": 26520,
+      "sha256": "490573e933c16a6903ee9443b78623f03c89254ceec90c8551c60249e6d38ed6",
+      "width": 1280,
+      "height": 320,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-wordmark-frost@2x.png",
+      "bytes": 27099,
+      "sha256": "43809008944765d92a13c77695b4c927670b4fd2c22f459d14ac22ccb56d8b1c",
+      "width": 1280,
+      "height": 320,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-wordmark-ice@2x.png",
+      "bytes": 27203,
+      "sha256": "6d19195ba2b26fbfc01bb7ec4b1b3742684d7d924456d874211096a41df4720d",
+      "width": 1280,
+      "height": 320,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/png/crowbaros-wordmark-primary@2x.png",
+      "bytes": 27099,
+      "sha256": "43809008944765d92a13c77695b4c927670b4fd2c22f459d14ac22ccb56d8b1c",
+      "width": 1280,
+      "height": 320,
+      "mode": "RGBA"
+    },
+    {
+      "path": "logos/svg/crowbaros-app-icon.svg",
+      "bytes": 535,
+      "sha256": "1255ed7649487a9aff67647202c7cfc7ff94d700fdc8195fa33b96c29f274351"
+    },
+    {
+      "path": "logos/svg/crowbaros-horizontal-dark.svg",
+      "bytes": 14465,
+      "sha256": "e091687bf9b09ebf53ade734ddb36aee8a89b5cb2fd0236b0cfec56f8b034250"
+    },
+    {
+      "path": "logos/svg/crowbaros-horizontal-frost.svg",
+      "bytes": 14466,
+      "sha256": "2fba2a69b7aff8d86a6ebdfd19714d1a33f23314cc7da3c30795dbd7b5939eb4"
+    },
+    {
+      "path": "logos/svg/crowbaros-horizontal-ice.svg",
+      "bytes": 14464,
+      "sha256": "422cb2139702ae9097cc0c0265c5f9b5a77751cea0976ccc6eb8a0708d9f9265"
+    },
+    {
+      "path": "logos/svg/crowbaros-horizontal-primary.svg",
+      "bytes": 14468,
+      "sha256": "19137ad3cd76b30b2c5908f55af3e457a67abdd6992c6b2dea0ae05d25dd696f"
+    },
+    {
+      "path": "logos/svg/crowbaros-mark-dark.svg",
+      "bytes": 481,
+      "sha256": "3c1eef75e19cb324415e30977be4fc35cb7e4334cdf6aa7519357a1079009ac0"
+    },
+    {
+      "path": "logos/svg/crowbaros-mark-frost.svg",
+      "bytes": 482,
+      "sha256": "71a645614e3bef7fcb3e00dc9a341a7912544607478de69e78f5d2cf0fd6630e"
+    },
+    {
+      "path": "logos/svg/crowbaros-mark-ice.svg",
+      "bytes": 480,
+      "sha256": "b7aef06300db40e1282a62d46a7a639284083a32abf738d751a86ee4b4d2411a"
+    },
+    {
+      "path": "logos/svg/crowbaros-mark-micro.svg",
+      "bytes": 442,
+      "sha256": "3040cc7ccf1ff3c9a1a63d42cfb0bb063e06829e116cd69af073c8bf398e738b"
+    },
+    {
+      "path": "logos/svg/crowbaros-mark-primary.svg",
+      "bytes": 484,
+      "sha256": "8d084a7f465ee2ea14def364de2a44042f7f7a72885fd003b91446c107984697"
+    },
+    {
+      "path": "logos/svg/crowbaros-stacked-dark.svg",
+      "bytes": 14463,
+      "sha256": "680b6a69ba12cf203159f0229ce89fc713a974c28c1d5b6d513fb8ec54aeab65"
+    },
+    {
+      "path": "logos/svg/crowbaros-stacked-frost.svg",
+      "bytes": 14464,
+      "sha256": "e1fc070894fdd16e2edea057a8eb9d5e8fc3a0324d5c46992e8500895ead0ad4"
+    },
+    {
+      "path": "logos/svg/crowbaros-stacked-ice.svg",
+      "bytes": 14462,
+      "sha256": "cfec64115883a6e51b8b26045c1fd3a04a790b21c789c21319e7a310ddfcdc8b"
+    },
+    {
+      "path": "logos/svg/crowbaros-stacked-primary.svg",
+      "bytes": 14466,
+      "sha256": "dfd07413f0081f1f28b0af3d364e79943acc4ad9301b8ef0cb4cf1d11dd9bcd4"
+    },
+    {
+      "path": "logos/svg/crowbaros-wordmark-dark.svg",
+      "bytes": 14134,
+      "sha256": "87453d00f5d35a632bdf197b285da03d2e02373c4126a4e22e0bbc57010072db"
+    },
+    {
+      "path": "logos/svg/crowbaros-wordmark-frost.svg",
+      "bytes": 14135,
+      "sha256": "f84a24c33601a031e090ae8dd43ebf0ee670be7f900c3b9b5ad3e14d5fdf9986"
+    },
+    {
+      "path": "logos/svg/crowbaros-wordmark-ice.svg",
+      "bytes": 14133,
+      "sha256": "62f9fe62e274b15655a5e81d9abf92a4f997d986c845cf00f4da10753abd639d"
+    },
+    {
+      "path": "logos/svg/crowbaros-wordmark-primary.svg",
+      "bytes": 14137,
+      "sha256": "bd7bc745fd7e7137bcebbc9100103ae0c63733ba8742b1e3f3bc3966c068f573"
+    },
+    {
+      "path": "mascot/crow-master.png",
+      "bytes": 2570886,
+      "sha256": "e7e3e7e13ec89993ab8f614f9d50543478ed728829172876ef2e17bfc0da0e65",
+      "width": 1024,
+      "height": 1536,
+      "mode": "RGBA"
+    },
+    {
+      "path": "mockups/boot-1600x900.png",
+      "bytes": 23461,
+      "sha256": "c1c15733530caa7ef04021cfd2d92a6c54a1b171fc51b881ae72fe219cc8a7f3",
+      "width": 1600,
+      "height": 900,
+      "mode": "RGB"
+    },
+    {
+      "path": "mockups/desktop.css",
+      "bytes": 11968,
+      "sha256": "b7c67b841f042029a03639640efc65840d9ef1e60b02d4bc1e8bdcfef78217b3"
+    },
+    {
+      "path": "mockups/desktop.html",
+      "bytes": 1409,
+      "sha256": "a567552d226f16f2482ce09c688a6fef50c34207ac635350a24c416024a4c4ab"
+    },
+    {
+      "path": "mockups/desktop.js",
+      "bytes": 10008,
+      "sha256": "20938b12e8d24b05ae4b68e2a25a2ca0a62e957f7e18d505fb8fa1e7ac2b34e9"
+    },
+    {
+      "path": "mockups/lock-1600x900.png",
+      "bytes": 1145669,
+      "sha256": "5b7f9f73ae2efc50f3f572d0c48d08ffe880a684e6d00f52ff55be47904cbc5e",
+      "width": 1600,
+      "height": 900,
+      "mode": "RGB"
+    },
+    {
+      "path": "mockups/settings-1600x900.png",
+      "bytes": 970093,
+      "sha256": "ff1d807c3dc92f68d178a460998a7fbe6c36d444771efbda340ece8fc9441ebb",
+      "width": 1600,
+      "height": 900,
+      "mode": "RGB"
+    },
+    {
+      "path": "mockups/settings-light-1600x900.png",
+      "bytes": 971461,
+      "sha256": "bcf89d1c769b0aa88c23576063691dcf0877b2188fdadec568743e31c21a35aa",
+      "width": 1600,
+      "height": 900,
+      "mode": "RGB"
+    },
+    {
+      "path": "mockups/settings-paper-1600x900.png",
+      "bytes": 970647,
+      "sha256": "714f42b1b80154bb6f06d781471f2d8f751dcdce4375a7617a9895658950e3a8",
+      "width": 1600,
+      "height": 900,
+      "mode": "RGB"
+    },
+    {
+      "path": "mockups/studio-neutral-1600x900.png",
+      "bytes": 964030,
+      "sha256": "ef7158620bb010d4b08d2be2eea0a4a521338f16a582ec0f08794fc0666f4865",
+      "width": 1600,
+      "height": 900,
+      "mode": "RGB"
+    },
+    {
+      "path": "mockups/workspace-1600x900.png",
+      "bytes": 575405,
+      "sha256": "47a6459411c707d9998d75566e9e3ce79bf2be6cb1cfa2c5a9b57bc187178e56",
+      "width": 1600,
+      "height": 900,
+      "mode": "RGB"
+    },
+    {
+      "path": "mockups/zen-1600x900.png",
+      "bytes": 779819,
+      "sha256": "5d63039f74c8ff76b6afd6cf1e64531936a965c421f4f7e9a525f3acfb4fd192",
+      "width": 1600,
+      "height": 900,
+      "mode": "RGB"
+    },
+    {
+      "path": "social/crowbaros-banner-1500x500.png",
+      "bytes": 194046,
+      "sha256": "2bcf9c2a649e7afb0f2c80555b7c374b4538d18af727552bf6261f97c290ebe3",
+      "width": 1500,
+      "height": 500,
+      "mode": "RGB"
+    },
+    {
+      "path": "social/crowbaros-social-card-1200x630.png",
+      "bytes": 270758,
+      "sha256": "4e0b663b76efccfa1b4c37307cdb82b81526f057b6eae53d04be43adb1dc5a18",
+      "width": 1200,
+      "height": 630,
+      "mode": "RGB"
+    },
+    {
+      "path": "source/brand-layouts.html",
+      "bytes": 3822,
+      "sha256": "bc07705c25afbfe61aa24f7c1e001c7f6c11d673ec75a2d5ce2185de6cbae4fb"
+    },
+    {
+      "path": "source/browser-checks.json",
+      "bytes": 297,
+      "sha256": "42ae4f7db47f1cbe0c467a71814015da06923e38b077fcda033121c498d4fc2e"
+    },
+    {
+      "path": "source/build_guide.py",
+      "bytes": 14903,
+      "sha256": "1510e7c8332efe24d5b22656344deb3a8596fc999216a93db3e49ab121f4b867"
+    },
+    {
+      "path": "source/build_identity.py",
+      "bytes": 4766,
+      "sha256": "1c4b817b1b87c338449f4ac29701a41166a3d994c680d94978e49a3b18ffdb02"
+    },
+    {
+      "path": "source/detector-findings.json",
+      "bytes": 3,
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "source/direction-contract.txt",
+      "bytes": 1625,
+      "sha256": "60e42899486b7215d50e4279bde26eda6bc5d5a1a925c455934e8892da914bd1"
+    },
+    {
+      "path": "source/fetch_fonts.py",
+      "bytes": 607,
+      "sha256": "4d1f2ca0a731ec88a603c81eff9ea795f8d973bf5f8b4055599c9e0f38ac8340"
+    },
+    {
+      "path": "source/finish-review.txt",
+      "bytes": 975,
+      "sha256": "2663e479a456390ba267473389773f2381b09472b115853a93caa9518100ceb4"
+    },
+    {
+      "path": "source/history/corvidos-finish-review-2026-11-13.txt",
+      "bytes": 3858,
+      "sha256": "ecb1dd7aa0c10ea5b621d769d61e357d92ce67eb854c72ee9ad1a6c34f745c91"
+    },
+    {
+      "path": "source/history/corvidos-verification-2026-11-13.json",
+      "bytes": 704,
+      "sha256": "3dea441b102d270a24ec2f247171cd9ad8837db61d07952443a6510ca9585a29"
+    },
+    {
+      "path": "source/image-prompts.json",
+      "bytes": 5104,
+      "sha256": "75ba1952bfc275a21e1b267528aa2dc0b083e36cc9feb5a33b9d81f5a6c0e4be"
+    },
+    {
+      "path": "source/package_kit.py",
+      "bytes": 3929,
+      "sha256": "3e520c15b0486bb50c35a03bc105299f7b4b7c9cd1c31300dd16518a4c7369e1"
+    },
+    {
+      "path": "source/provenance.json",
+      "bytes": 6551,
+      "sha256": "2bba611ef4f3b1c1a75ee2acd01acc6a01b76768b307f94b84da782151ad79b6"
+    },
+    {
+      "path": "source/references/cyan-crow-name-studies.png",
+      "bytes": 2373087,
+      "sha256": "63114877be86bbf4720fe6f126db72262b4428267cccc682568cceefb1d45ccc",
+      "width": 1536,
+      "height": 1024,
+      "mode": "RGB"
+    },
+    {
+      "path": "source/references/rookslash-original.png",
+      "bytes": 2010209,
+      "sha256": "3b215cd428519e0e69e98e69c73facf9506e412ed6c2ebe0a341e0d5e3de3c1e",
+      "width": 1536,
+      "height": 1024,
+      "mode": "RGB"
+    },
+    {
+      "path": "source/render_assets.cjs",
+      "bytes": 3790,
+      "sha256": "358835ed55112dce0c319fd2fbcfbb1e328b8d58f196910dd9322d8136d1fcf7"
+    },
+    {
+      "path": "source/render_layouts.cjs",
+      "bytes": 1152,
+      "sha256": "5804ab54724a9cefd23fbeab2bff6a346894b8f5355d804f0d953cdafa1d4f04"
+    },
+    {
+      "path": "source/verification.json",
+      "bytes": 773,
+      "sha256": "680d800178c1278e467ff45e5bbefb40249916ac04f2430d76fc6b871cc0ad57"
+    },
+    {
+      "path": "tokens/contrast-ratios.json",
+      "bytes": 227,
+      "sha256": "2c1a3c90a7d9117a3cebe0c8bddd44a7ce3ed754cd0a1f5b08b231b5353454ad"
+    },
+    {
+      "path": "tokens/crowbaros.css",
+      "bytes": 327,
+      "sha256": "6f237cf5be0903dab3fc45d894f826baa2bd69e26c2fa974f64d9ca5f818267f"
+    },
+    {
+      "path": "tokens/crowbaros.tokens.json",
+      "bytes": 760,
+      "sha256": "48ea4c50a6a5edf74861c9cee5c9f0d92dd4cf90e2009d32c10abf84366f8500"
+    },
+    {
+      "path": "wallpapers/crowbaros-signature-4k.png",
+      "bytes": 266350,
+      "sha256": "a13753ba2dda4cb5ba8262044597f87d8522bba8e99d7b96607ed70980b6d100",
+      "width": 3840,
+      "height": 2160,
+      "mode": "RGBA"
+    },
+    {
+      "path": "wallpapers/crowbaros-signature-4k.svg",
+      "bytes": 14802,
+      "sha256": "a52eda364decfe6547c57a46db862af409b9dd4de22630385c8a12ec9a631ef4"
+    },
+    {
+      "path": "wallpapers/nightwatch.png",
+      "bytes": 1812032,
+      "sha256": "039c6975dca6db13879b5e9a19afefc5c3b63e2f9cf9ba1e54aacc9f813f1be2",
+      "width": 1672,
+      "height": 941,
+      "mode": "RGB"
+    },
+    {
+      "path": "wallpapers/quiet-signal-4k.png",
+      "bytes": 226496,
+      "sha256": "433869695168354de867b957406471c8b6b318b365675319a1fafba146d83555",
+      "width": 3840,
+      "height": 2160,
+      "mode": "RGBA"
+    },
+    {
+      "path": "wallpapers/quiet-signal-4k.svg",
+      "bytes": 423,
+      "sha256": "de1f8fa3cbb819913b4f1ee0d20e24d7bcc95edb1b01cba6944ee9e2bf919aca"
+    },
+    {
+      "path": "wallpapers/quiet-signal-ultrawide.png",
+      "bytes": 142645,
+      "sha256": "339c71b0556c040fe83893ccd581e5ba05b88b300ace7818cf7ed6935443b3b4",
+      "width": 3440,
+      "height": 1440,
+      "mode": "RGBA"
+    },
+    {
+      "path": "wallpapers/quiet-signal-ultrawide.svg",
+      "bytes": 367,
+      "sha256": "cc67c8d9a1cd918212e9e5f9adac3ef413d2a1ecac32faf0c3282c60fcde66da"
+    },
+    {
+      "path": "wallpapers/signal-feather-mobile.png",
+      "bytes": 2370326,
+      "sha256": "3fdb507546c7be02f99220582b1fe32bc784a6ce635bfb5ba88bdfa2e9ae2ab7",
+      "width": 941,
+      "height": 1672,
+      "mode": "RGB"
+    },
+    {
+      "path": "wallpapers/signal-feather.png",
+      "bytes": 2745920,
+      "sha256": "604258c8ec2d1fc44f4ca37739166dfb10cfe02f879ac3af3842233908e83b0b",
+      "width": 1672,
+      "height": 941,
+      "mode": "RGB"
+    }
+  ]
+}

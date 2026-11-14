@@ -1,0 +1,16 @@
+Fonts distributed unmodified from the official Google Fonts repository on 2026-11-13.
+
+Manrope variable font
+https://github.com/google/fonts/tree/main/ofl/manrope
+https://raw.githubusercontent.com/google/fonts/main/ofl/manrope/Manrope%5Bwght%5D.ttf
+License: Manrope-OFL.txt
+
+IBM Plex Mono Regular
+https://github.com/google/fonts/tree/main/ofl/ibmplexmono
+https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexmono/IBMPlexMono-Regular.ttf
+License: IBMPlexMono-OFL.txt
+
+The SVG wordmarks contain outlined glyphs derived from Manrope at weight 700,
+with custom spacing. Manrope's name and license remain with its authors.
+Temporary static font instances used to typeset the PDF are not distributed as
+standalone font files. The supplied variable font is the official source.

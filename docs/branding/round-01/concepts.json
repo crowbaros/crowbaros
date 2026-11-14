@@ -1,0 +1,338 @@
+{
+  "date": "2026-11-13",
+  "source": "docs/community_foss_distro_plan.md",
+  "generator": "Built-in image_gen",
+  "status": "Exploratory raster concepts; not final vector marks or cleared names.",
+  "concepts": [
+    {
+      "id": "01-selveday",
+      "name": "Selveday",
+      "pronunciation": "SEL-vuh-day",
+      "territory": "The shared workshop",
+      "tagline": "Make room for your craft.",
+      "why": "Selvedge + day: carefully finished edges, everyday usefulness, and many contributors woven into one coherent desktop.",
+      "mascot": "Purl, a harvest mouse with a looping thread-like tail",
+      "palette": [
+        [
+          "Linen",
+          "#F3EBDD"
+        ],
+        [
+          "Madder",
+          "#A44B3F"
+        ],
+        [
+          "Sage",
+          "#79836B"
+        ],
+        [
+          "Ink",
+          "#2C302C"
+        ]
+      ],
+      "style": "Warm textile-inspired editorial illustration with subtly printed paper grain, restrained linocut contours, contemporary humanist serif wordmark.",
+      "mark": "Two broad interlaced bands making an open S, sturdy and minimal; not a generic infinity symbol.",
+      "scene": "A harvest mouse in a calm three-quarter pose with its long tail making one clean stitch loop; no clothing. Wallpaper has large softly woven ribbons like fields of cloth with low contrast and a quiet center.",
+      "strength": "Best expression of warm human craft and shared contribution.",
+      "tradeoff": "Pronunciation and the selvedge reference need a little introduction.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single landscape 3:2 brand identity concept board for a new community FOSS desktop operating system for everyday users, writers and creatives. This is an art-directed evaluation board, not a website.\nPrimary request: create one beautiful professional design-studio presentation with a large exact wordmark, original mascot illustration, brand mark, four-color palette, and a wide wallpaper concept shown in a minimal desktop preview. Give each element room. Visual hierarchy: large wordmark upper left; editorial mascot illustration left center; large landscape wallpaper right center in a plain thin screen rectangle, without physical device hardware; palette and tiny one-color mark proof at bottom. On the wallpaper preview show only a very small tasteful top bar and tiny five-icon dock, without app windows. Include small light and dark brand-mark tiles to demonstrate range. Use precise generous margins and consistently aligned baselines. All lettering must be legible, only the requested brand name, tagline, small label \"DESKTOP CONCEPT\", and four hex values. No extra marketing copy or nonsense text.\nBrand constraints: warm human craft, calm premium studio quality, welcoming to nontechnical people, no terminals or code, no penguins, no cyberpunk, no AI motifs, no shiny tech or glassmorphism, no mock functionality or feature claims. Mascot is identity artwork, not an assistant. Colors are brand colors; desktop UI chrome should remain visually neutral. No famous existing logos or characters, no watermark.\n\nBrand name (verbatim): \"Selveday\" (spell S-e-l-v-e-d-a-y). Tagline (verbatim): \"Make room for your craft.\"\nCreative territory: The shared workshop. Selvedge + day: carefully finished edges, everyday usefulness, and many contributors woven into one coherent desktop.\nMascot: Purl, a harvest mouse with a looping thread-like tail.\nStyle/medium: Warm textile-inspired editorial illustration with subtly printed paper grain, restrained linocut contours, contemporary humanist serif wordmark.\nBrand mark: Two broad interlaced bands making an open S, sturdy and minimal; not a generic infinity symbol.\nSubject and wallpaper: A harvest mouse in a calm three-quarter pose with its long tail making one clean stitch loop; no clothing. Wallpaper has large softly woven ribbons like fields of cloth with low contrast and a quiet center.\nColor palette: Linen #F3EBDD; Madder #A44B3F; Sage #79836B; Ink #2C302C. Show four flat color swatches with these exact hex labels, in this order. No extra colors apart from white/black in the neutral UI proof.\nComposition: refined unified landscape identity board; prioritize character silhouette and wallpaper beauty; keep texture restrained enough for crisp logo reproduction."
+    },
+    {
+      "id": "02-alderwisp",
+      "name": "Alderwisp",
+      "pronunciation": "ALL-der-wisp",
+      "territory": "A quiet place to settle",
+      "tagline": "A little more breathing room.",
+      "why": "Alder suggests a living, grounded landscape; wisp adds lightness and unobtrusive computing.",
+      "mascot": "Bramble, a small hedgehog with leaf-shaped quills",
+      "palette": [
+        [
+          "Ivory",
+          "#F2F1E7"
+        ],
+        [
+          "Alder",
+          "#36584B"
+        ],
+        [
+          "Lichen",
+          "#AAB789"
+        ],
+        [
+          "Brass",
+          "#B58B49"
+        ]
+      ],
+      "style": "Refined botanical field-guide art, beautifully simplified hedgehog silhouette, restrained organic shapes, spacious book-cover design, soft humanist serif wordmark.",
+      "mark": "One alder leaf folded into an open lowercase a, simple broad strokes.",
+      "scene": "A small rounded hedgehog with three recognizable leaf-shaped quills and a calm attentive face; a low botanical relief wallpaper of abstract alder leaves and leaf shadows on ivory, no busy forest scene.",
+      "strength": "Most immediately reassuring and approachable for everyday switchers.",
+      "tradeoff": "Needs disciplined typography to avoid feeling like a wellness brand.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single landscape 3:2 brand identity concept board for a new community FOSS desktop operating system for everyday users, writers and creatives. This is an art-directed evaluation board, not a website.\nPrimary request: create one beautiful professional design-studio presentation with a large exact wordmark, original mascot illustration, brand mark, four-color palette, and a wide wallpaper concept shown in a minimal desktop preview. Give each element room. Visual hierarchy: large wordmark upper left; editorial mascot illustration left center; large landscape wallpaper right center in a plain thin screen rectangle, without physical device hardware; palette and tiny one-color mark proof at bottom. On the wallpaper preview show only a very small tasteful top bar and tiny five-icon dock, without app windows. Include small light and dark brand-mark tiles to demonstrate range. Use precise generous margins and consistently aligned baselines. All lettering must be legible, only the requested brand name, tagline, small label \"DESKTOP CONCEPT\", and four hex values. No extra marketing copy or nonsense text.\nBrand constraints: warm human craft, calm premium studio quality, welcoming to nontechnical people, no terminals or code, no penguins, no cyberpunk, no AI motifs, no shiny tech or glassmorphism, no mock functionality or feature claims. Mascot is identity artwork, not an assistant. Colors are brand colors; desktop UI chrome should remain visually neutral. No famous existing logos or characters, no watermark.\n\nBrand name (verbatim): \"Alderwisp\" (spell A-l-d-e-r-w-i-s-p). Tagline (verbatim): \"A little more breathing room.\"\nCreative territory: A quiet place to settle. Alder suggests a living, grounded landscape; wisp adds lightness and unobtrusive computing.\nMascot: Bramble, a small hedgehog with leaf-shaped quills.\nStyle/medium: Refined botanical field-guide art, beautifully simplified hedgehog silhouette, restrained organic shapes, spacious book-cover design, soft humanist serif wordmark.\nBrand mark: One alder leaf folded into an open lowercase a, simple broad strokes.\nSubject and wallpaper: A small rounded hedgehog with three recognizable leaf-shaped quills and a calm attentive face; a low botanical relief wallpaper of abstract alder leaves and leaf shadows on ivory, no busy forest scene.\nColor palette: Ivory #F2F1E7; Alder #36584B; Lichen #AAB789; Brass #B58B49. Show four flat color swatches with these exact hex labels, in this order. No extra colors apart from white/black in the neutral UI proof.\nComposition: refined unified landscape identity board; prioritize character silhouette and wallpaper beauty; keep texture restrained enough for crisp logo reproduction."
+    },
+    {
+      "id": "03-morrowick",
+      "name": "Morrowick",
+      "pronunciation": "MOR-oh-wick",
+      "territory": "A fresh start",
+      "tagline": "Your next day, open.",
+      "why": "Morrow + wick: a new day and a small steady light, making the switch feel optimistic and manageable.",
+      "mascot": "Rory, a red panda with a rising-sun tail curl",
+      "palette": [
+        [
+          "Daybreak",
+          "#F8EBDD"
+        ],
+        [
+          "Apricot",
+          "#E8A16A"
+        ],
+        [
+          "Blue",
+          "#476884"
+        ],
+        [
+          "Midnight",
+          "#273B50"
+        ]
+      ],
+      "style": "Clean mid-century cut-paper illustration, broad sunrise planes, understated joy, rounded geometric wordmark without toy-like lettering.",
+      "mark": "A rising semicircle between two rounded vertical strokes, forming a compact m.",
+      "scene": "A red panda with russet ears and a ringed tail curved like a rising sun, relaxed sitting pose; wallpaper is abstract dawn with two broad terraced curves, peach horizon and quiet slate-blue sky.",
+      "strength": "Strongest story for people moving from Windows or macOS.",
+      "tradeoff": "The longer name is less compact on a boot screen.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single landscape 3:2 brand identity concept board for a new community FOSS desktop operating system for everyday users, writers and creatives. This is an art-directed evaluation board, not a website.\nPrimary request: create one beautiful professional design-studio presentation with a large exact wordmark, original mascot illustration, brand mark, four-color palette, and a wide wallpaper concept shown in a minimal desktop preview. Give each element room. Visual hierarchy: large wordmark upper left; editorial mascot illustration left center; large landscape wallpaper right center in a plain thin screen rectangle, without physical device hardware; palette and tiny one-color mark proof at bottom. On the wallpaper preview show only a very small tasteful top bar and tiny five-icon dock, without app windows. Include small light and dark brand-mark tiles to demonstrate range. Use precise generous margins and consistently aligned baselines. All lettering must be legible, only the requested brand name, tagline, small label \"DESKTOP CONCEPT\", and four hex values. No extra marketing copy or nonsense text.\nBrand constraints: warm human craft, calm premium studio quality, welcoming to nontechnical people, no terminals or code, no penguins, no cyberpunk, no AI motifs, no shiny tech or glassmorphism, no mock functionality or feature claims. Mascot is identity artwork, not an assistant. Colors are brand colors; desktop UI chrome should remain visually neutral. No famous existing logos or characters, no watermark.\n\nBrand name (verbatim): \"Morrowick\" (spell M-o-r-r-o-w-i-c-k). Tagline (verbatim): \"Your next day, open.\"\nCreative territory: A fresh start. Morrow + wick: a new day and a small steady light, making the switch feel optimistic and manageable.\nMascot: Rory, a red panda with a rising-sun tail curl.\nStyle/medium: Clean mid-century cut-paper illustration, broad sunrise planes, understated joy, rounded geometric wordmark without toy-like lettering.\nBrand mark: A rising semicircle between two rounded vertical strokes, forming a compact m.\nSubject and wallpaper: A red panda with russet ears and a ringed tail curved like a rising sun, relaxed sitting pose; wallpaper is abstract dawn with two broad terraced curves, peach horizon and quiet slate-blue sky.\nColor palette: Daybreak #F8EBDD; Apricot #E8A16A; Blue #476884; Midnight #273B50. Show four flat color swatches with these exact hex labels, in this order. No extra colors apart from white/black in the neutral UI proof.\nComposition: refined unified landscape identity board; prioritize character silhouette and wallpaper beauty; keep texture restrained enough for crisp logo reproduction."
+    },
+    {
+      "id": "04-marginlet",
+      "name": "Marginlet",
+      "pronunciation": "MAR-jin-let",
+      "territory": "The writer's desktop",
+      "tagline": "Space for what matters.",
+      "why": "A small generous margin: the OS creates breathing room around your words and ideas.",
+      "mascot": "Folio, a folded-paper crane with a bookmark tail",
+      "palette": [
+        [
+          "Paper",
+          "#F6F0E6"
+        ],
+        [
+          "Plum",
+          "#674253"
+        ],
+        [
+          "Rose",
+          "#C9A0A0"
+        ],
+        [
+          "Graphite",
+          "#2D2930"
+        ]
+      ],
+      "style": "Sophisticated literary magazine identity, crisp editorial typography, folded-paper sculpture and subtle paper grain, asymmetric rule lines, elegant serif wordmark.",
+      "mark": "Two offset page corners creating an open M, large clear negative space.",
+      "scene": "A dignified origami crane made from plum and warm paper, one long folded tail resembling a bookmark; wallpaper uses three broad overlapping folded pages, ample blank paper and sparse plum shapes.",
+      "strength": "Clearest connection to Zen Mode, writing, and editorial typography.",
+      "tradeoff": "May make photographers and other makers assume it is only for writers.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single landscape 3:2 brand identity concept board for a new community FOSS desktop operating system for everyday users, writers and creatives. This is an art-directed evaluation board, not a website.\nPrimary request: create one beautiful professional design-studio presentation with a large exact wordmark, original mascot illustration, brand mark, four-color palette, and a wide wallpaper concept shown in a minimal desktop preview. Give each element room. Visual hierarchy: large wordmark upper left; editorial mascot illustration left center; large landscape wallpaper right center in a plain thin screen rectangle, without physical device hardware; palette and tiny one-color mark proof at bottom. On the wallpaper preview show only a very small tasteful top bar and tiny five-icon dock, without app windows. Include small light and dark brand-mark tiles to demonstrate range. Use precise generous margins and consistently aligned baselines. All lettering must be legible, only the requested brand name, tagline, small label \"DESKTOP CONCEPT\", and four hex values. No extra marketing copy or nonsense text.\nBrand constraints: warm human craft, calm premium studio quality, welcoming to nontechnical people, no terminals or code, no penguins, no cyberpunk, no AI motifs, no shiny tech or glassmorphism, no mock functionality or feature claims. Mascot is identity artwork, not an assistant. Colors are brand colors; desktop UI chrome should remain visually neutral. No famous existing logos or characters, no watermark.\n\nBrand name (verbatim): \"Marginlet\" (spell M-a-r-g-i-n-l-e-t). Tagline (verbatim): \"Space for what matters.\"\nCreative territory: The writer's desktop. A small generous margin: the OS creates breathing room around your words and ideas.\nMascot: Folio, a folded-paper crane with a bookmark tail.\nStyle/medium: Sophisticated literary magazine identity, crisp editorial typography, folded-paper sculpture and subtle paper grain, asymmetric rule lines, elegant serif wordmark.\nBrand mark: Two offset page corners creating an open M, large clear negative space.\nSubject and wallpaper: A dignified origami crane made from plum and warm paper, one long folded tail resembling a bookmark; wallpaper uses three broad overlapping folded pages, ample blank paper and sparse plum shapes.\nColor palette: Paper #F6F0E6; Plum #674253; Rose #C9A0A0; Graphite #2D2930. Show four flat color swatches with these exact hex labels, in this order. No extra colors apart from white/black in the neutral UI proof.\nComposition: refined unified landscape identity board; prioritize character silhouette and wallpaper beauty; keep texture restrained enough for crisp logo reproduction."
+    },
+    {
+      "id": "05-cairneth",
+      "name": "Cairneth",
+      "pronunciation": "KAIR-neth",
+      "territory": "Quiet confidence",
+      "tagline": "A steady place to begin.",
+      "why": "Cairn + a soft coined ending: a reassuring marker that helps you find your way.",
+      "mascot": "Nori, a mountain hare with one slate-colored ear",
+      "palette": [
+        [
+          "Mist",
+          "#EAECE7"
+        ],
+        [
+          "Slate",
+          "#4B6268"
+        ],
+        [
+          "Ochre",
+          "#C39B52"
+        ],
+        [
+          "Basalt",
+          "#263236"
+        ]
+      ],
+      "style": "Contemporary alpine poster art and subtle lithographic texture, sculptural stone shapes, grounded broad humanist sans wordmark.",
+      "mark": "Three simple off-center stacked stones forming an open C-like silhouette; easy one-color reproduction.",
+      "scene": "A composed mountain hare with long distinctive ears, one dark slate ear, sitting beside two smooth pebbles; wallpaper is three enormous softly layered stone forms with one ochre sun and quiet mist negative space.",
+      "strength": "Best for trust, reliability, and the underlying atomic-update story.",
+      "tradeoff": "Outdoor associations are stronger than creative-studio associations.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single landscape 3:2 brand identity concept board for a new community FOSS desktop operating system for everyday users, writers and creatives. This is an art-directed evaluation board, not a website.\nPrimary request: create one beautiful professional design-studio presentation with a large exact wordmark, original mascot illustration, brand mark, four-color palette, and a wide wallpaper concept shown in a minimal desktop preview. Give each element room. Visual hierarchy: large wordmark upper left; editorial mascot illustration left center; large landscape wallpaper right center in a plain thin screen rectangle, without physical device hardware; palette and tiny one-color mark proof at bottom. On the wallpaper preview show only a very small tasteful top bar and tiny five-icon dock, without app windows. Include small light and dark brand-mark tiles to demonstrate range. Use precise generous margins and consistently aligned baselines. All lettering must be legible, only the requested brand name, tagline, small label \"DESKTOP CONCEPT\", and four hex values. No extra marketing copy or nonsense text.\nBrand constraints: warm human craft, calm premium studio quality, welcoming to nontechnical people, no terminals or code, no penguins, no cyberpunk, no AI motifs, no shiny tech or glassmorphism, no mock functionality or feature claims. Mascot is identity artwork, not an assistant. Colors are brand colors; desktop UI chrome should remain visually neutral. No famous existing logos or characters, no watermark.\n\nBrand name (verbatim): \"Cairneth\" (spell C-a-i-r-n-e-t-h). Tagline (verbatim): \"A steady place to begin.\"\nCreative territory: Quiet confidence. Cairn + a soft coined ending: a reassuring marker that helps you find your way.\nMascot: Nori, a mountain hare with one slate-colored ear.\nStyle/medium: Contemporary alpine poster art and subtle lithographic texture, sculptural stone shapes, grounded broad humanist sans wordmark.\nBrand mark: Three simple off-center stacked stones forming an open C-like silhouette; easy one-color reproduction.\nSubject and wallpaper: A composed mountain hare with long distinctive ears, one dark slate ear, sitting beside two smooth pebbles; wallpaper is three enormous softly layered stone forms with one ochre sun and quiet mist negative space.\nColor palette: Mist #EAECE7; Slate #4B6268; Ochre #C39B52; Basalt #263236. Show four flat color swatches with these exact hex labels, in this order. No extra colors apart from white/black in the neutral UI proof.\nComposition: refined unified landscape identity board; prioritize character silhouette and wallpaper beauty; keep texture restrained enough for crisp logo reproduction."
+    },
+    {
+      "id": "06-ternhaven",
+      "name": "Ternhaven",
+      "pronunciation": "TURN-hay-vun",
+      "territory": "Freedom with a home base",
+      "tagline": "Open skies. Familiar ground.",
+      "why": "A tern's range plus a haven's welcome: openness without making newcomers feel lost.",
+      "mascot": "Tavi, a tern with a single coral wingtip",
+      "palette": [
+        [
+          "Salt",
+          "#EFF4F0"
+        ],
+        [
+          "Tidal",
+          "#266D73"
+        ],
+        [
+          "Coral",
+          "#D58D76"
+        ],
+        [
+          "Deep Sea",
+          "#213E4A"
+        ]
+      ],
+      "style": "Coastal modernism, airy screenprinted shapes, confident maritime geometry, welcoming humanist sans wordmark, no nautical clichés.",
+      "mark": "Two broad swept wings making a T in the negative space, not an airline badge.",
+      "scene": "A sleek friendly tern with a small black cap and a single coral wingtip, resting with wings gently partly open; wallpaper is extremely broad tidal arcs and one warm shoreline, large quiet pale aqua field.",
+      "strength": "Best balance of everyday friendliness, freedom, and visual restraint.",
+      "tradeoff": "Could read as a travel or coastal-lifestyle brand if the OS story is too quiet.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single landscape 3:2 brand identity concept board for a new community FOSS desktop operating system for everyday users, writers and creatives. This is an art-directed evaluation board, not a website.\nPrimary request: create one beautiful professional design-studio presentation with a large exact wordmark, original mascot illustration, brand mark, four-color palette, and a wide wallpaper concept shown in a minimal desktop preview. Give each element room. Visual hierarchy: large wordmark upper left; editorial mascot illustration left center; large landscape wallpaper right center in a plain thin screen rectangle, without physical device hardware; palette and tiny one-color mark proof at bottom. On the wallpaper preview show only a very small tasteful top bar and tiny five-icon dock, without app windows. Include small light and dark brand-mark tiles to demonstrate range. Use precise generous margins and consistently aligned baselines. All lettering must be legible, only the requested brand name, tagline, small label \"DESKTOP CONCEPT\", and four hex values. No extra marketing copy or nonsense text.\nBrand constraints: warm human craft, calm premium studio quality, welcoming to nontechnical people, no terminals or code, no penguins, no cyberpunk, no AI motifs, no shiny tech or glassmorphism, no mock functionality or feature claims. Mascot is identity artwork, not an assistant. Colors are brand colors; desktop UI chrome should remain visually neutral. No famous existing logos or characters, no watermark.\n\nBrand name (verbatim): \"Ternhaven\" (spell T-e-r-n-h-a-v-e-n). Tagline (verbatim): \"Open skies. Familiar ground.\"\nCreative territory: Freedom with a home base. A tern's range plus a haven's welcome: openness without making newcomers feel lost.\nMascot: Tavi, a tern with a single coral wingtip.\nStyle/medium: Coastal modernism, airy screenprinted shapes, confident maritime geometry, welcoming humanist sans wordmark, no nautical clichés.\nBrand mark: Two broad swept wings making a T in the negative space, not an airline badge.\nSubject and wallpaper: A sleek friendly tern with a small black cap and a single coral wingtip, resting with wings gently partly open; wallpaper is extremely broad tidal arcs and one warm shoreline, large quiet pale aqua field.\nColor palette: Salt #EFF4F0; Tidal #266D73; Coral #D58D76; Deep Sea #213E4A. Show four flat color swatches with these exact hex labels, in this order. No extra colors apart from white/black in the neutral UI proof.\nComposition: refined unified landscape identity board; prioritize character silhouette and wallpaper beauty; keep texture restrained enough for crisp logo reproduction."
+    },
+    {
+      "id": "07-kilnvale",
+      "name": "Kilnvale",
+      "pronunciation": "KILN-vayl",
+      "territory": "Made with care",
+      "tagline": "Good tools. Human hands.",
+      "why": "A kiln transforms careful work into something durable; vale makes the workshop feel like a shared place.",
+      "mascot": "Kip, a terracotta gecko with a cobalt tail tip",
+      "palette": [
+        [
+          "Chalk",
+          "#F4ECE2"
+        ],
+        [
+          "Terracotta",
+          "#B66049"
+        ],
+        [
+          "Cobalt",
+          "#3D5A93"
+        ],
+        [
+          "Soot",
+          "#302E2A"
+        ]
+      ],
+      "style": "Tactile ceramic studio identity with matte clay and subtle glaze, a playful yet refined terracotta gecko figurine, bold slab-serif wordmark, sophisticated craft magazine art direction.",
+      "mark": "A kiln arch and a small offset tile combining into a compact K, no literal fire icon.",
+      "scene": "A small original terracotta gecko with four clearly formed feet, friendly dot eyes, one cobalt glazed tail tip; wallpaper is simple warm sculptural clay arches with a single matte cobalt tile, realistic softly lit material.",
+      "strength": "Most tangible and memorable maker identity; strong merchandise potential.",
+      "tradeoff": "A heavy clay treatment could make the system feel less light and effortless.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single landscape 3:2 brand identity concept board for a new community FOSS desktop operating system for everyday users, writers and creatives. This is an art-directed evaluation board, not a website.\nPrimary request: create one beautiful professional design-studio presentation with a large exact wordmark, original mascot illustration, brand mark, four-color palette, and a wide wallpaper concept shown in a minimal desktop preview. Give each element room. Visual hierarchy: large wordmark upper left; editorial mascot illustration left center; large landscape wallpaper right center in a plain thin screen rectangle, without physical device hardware; palette and tiny one-color mark proof at bottom. On the wallpaper preview show only a very small tasteful top bar and tiny five-icon dock, without app windows. Include small light and dark brand-mark tiles to demonstrate range. Use precise generous margins and consistently aligned baselines. All lettering must be legible, only the requested brand name, tagline, small label \"DESKTOP CONCEPT\", and four hex values. No extra marketing copy or nonsense text.\nBrand constraints: warm human craft, calm premium studio quality, welcoming to nontechnical people, no terminals or code, no penguins, no cyberpunk, no AI motifs, no shiny tech or glassmorphism, no mock functionality or feature claims. Mascot is identity artwork, not an assistant. Colors are brand colors; desktop UI chrome should remain visually neutral. No famous existing logos or characters, no watermark.\n\nBrand name (verbatim): \"Kilnvale\" (spell K-i-l-n-v-a-l-e). Tagline (verbatim): \"Good tools. Human hands.\"\nCreative territory: Made with care. A kiln transforms careful work into something durable; vale makes the workshop feel like a shared place.\nMascot: Kip, a terracotta gecko with a cobalt tail tip.\nStyle/medium: Tactile ceramic studio identity with matte clay and subtle glaze, a playful yet refined terracotta gecko figurine, bold slab-serif wordmark, sophisticated craft magazine art direction.\nBrand mark: A kiln arch and a small offset tile combining into a compact K, no literal fire icon.\nSubject and wallpaper: A small original terracotta gecko with four clearly formed feet, friendly dot eyes, one cobalt glazed tail tip; wallpaper is simple warm sculptural clay arches with a single matte cobalt tile, realistic softly lit material.\nColor palette: Chalk #F4ECE2; Terracotta #B66049; Cobalt #3D5A93; Soot #302E2A. Show four flat color swatches with these exact hex labels, in this order. No extra colors apart from white/black in the neutral UI proof.\nComposition: refined unified landscape identity board; prioritize character silhouette and wallpaper beauty; keep texture restrained enough for crisp logo reproduction."
+    },
+    {
+      "id": "08-vellivane",
+      "name": "Vellivane",
+      "pronunciation": "VEL-ih-vayn",
+      "territory": "The evening studio",
+      "tagline": "Let your ideas unfold.",
+      "why": "Vellum + vane: paper wings, a gentle turn, and the shift between light, warm-paper, and dark modes.",
+      "mascot": "Luma, a paper-wing moth with two small amber eye spots",
+      "palette": [
+        [
+          "Vellum",
+          "#EFE7DD"
+        ],
+        [
+          "Aubergine",
+          "#453A50"
+        ],
+        [
+          "Lilac",
+          "#B1A0BE"
+        ],
+        [
+          "Amber",
+          "#D6AA64"
+        ]
+      ],
+      "style": "Contemporary restrained art-nouveau bookplate design, symmetric paper-cut moth, soft translucent layers and subtle print texture, elegant custom serif wordmark; no ornate filigree.",
+      "mark": "A simple two-fold moth-wing silhouette with one small diamond body, recognizable at tiny scale.",
+      "scene": "A beautifully simplified moth with vellum folded wings, two amber eye spots and a lilac inner edge; wallpaper has enormous quiet wing-like folded planes on aubergine with gentle lilac transitions, no stars.",
+      "strength": "Most distinctive mascot and strongest natural day-to-night visual system.",
+      "tradeoff": "More poetic and less immediately descriptive of everyday computing.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single landscape 3:2 brand identity concept board for a new community FOSS desktop operating system for everyday users, writers and creatives. This is an art-directed evaluation board, not a website.\nPrimary request: create one beautiful professional design-studio presentation with a large exact wordmark, original mascot illustration, brand mark, four-color palette, and a wide wallpaper concept shown in a minimal desktop preview. Give each element room. Visual hierarchy: large wordmark upper left; editorial mascot illustration left center; large landscape wallpaper right center in a plain thin screen rectangle, without physical device hardware; palette and tiny one-color mark proof at bottom. On the wallpaper preview show only a very small tasteful top bar and tiny five-icon dock, without app windows. Include small light and dark brand-mark tiles to demonstrate range. Use precise generous margins and consistently aligned baselines. All lettering must be legible, only the requested brand name, tagline, small label \"DESKTOP CONCEPT\", and four hex values. No extra marketing copy or nonsense text.\nBrand constraints: warm human craft, calm premium studio quality, welcoming to nontechnical people, no terminals or code, no penguins, no cyberpunk, no AI motifs, no shiny tech or glassmorphism, no mock functionality or feature claims. Mascot is identity artwork, not an assistant. Colors are brand colors; desktop UI chrome should remain visually neutral. No famous existing logos or characters, no watermark.\n\nBrand name (verbatim): \"Vellivane\" (spell V-e-l-l-i-v-a-n-e). Tagline (verbatim): \"Let your ideas unfold.\"\nCreative territory: The evening studio. Vellum + vane: paper wings, a gentle turn, and the shift between light, warm-paper, and dark modes.\nMascot: Luma, a paper-wing moth with two small amber eye spots.\nStyle/medium: Contemporary restrained art-nouveau bookplate design, symmetric paper-cut moth, soft translucent layers and subtle print texture, elegant custom serif wordmark; no ornate filigree.\nBrand mark: A simple two-fold moth-wing silhouette with one small diamond body, recognizable at tiny scale.\nSubject and wallpaper: A beautifully simplified moth with vellum folded wings, two amber eye spots and a lilac inner edge; wallpaper has enormous quiet wing-like folded planes on aubergine with gentle lilac transitions, no stars.\nColor palette: Vellum #EFE7DD; Aubergine #453A50; Lilac #B1A0BE; Amber #D6AA64. Show four flat color swatches with these exact hex labels, in this order. No extra colors apart from white/black in the neutral UI proof.\nComposition: refined unified landscape identity board; prioritize character silhouette and wallpaper beauty; keep texture restrained enough for crisp logo reproduction."
+    },
+    {
+      "id": "09-fablefen",
+      "name": "Fablefen",
+      "pronunciation": "FAY-bul-fen",
+      "territory": "Room to play",
+      "tagline": "Make something your own.",
+      "why": "Fable + fen: a place where stories and small inventions grow, with a welcoming community spirit.",
+      "mascot": "Fen, a round frog with one golden cheek freckle",
+      "palette": [
+        [
+          "Oat",
+          "#F4EFDC"
+        ],
+        [
+          "Reed",
+          "#6B7950"
+        ],
+        [
+          "Pond",
+          "#648D9B"
+        ],
+        [
+          "Marigold",
+          "#D4A542"
+        ]
+      ],
+      "style": "Contemporary two-color risograph and friendly picture-book shapes for adult creatives, restrained playful geometry, sturdy soft-serif wordmark, light paper grain.",
+      "mark": "Two facing folded fronds create a lowercase f, with broad rounded geometry.",
+      "scene": "A charming low round frog with simple eyes, one golden cheek freckle and natural four-limbed anatomy, perched on one abstract leaf; wallpaper has broad irregular pond and reed shapes, mostly quiet oat background, cheerful but restrained.",
+      "strength": "Strongest community personality and invitation to customize.",
+      "tradeoff": "The most playful direction; keep the core UI mature and neutral.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single landscape 3:2 brand identity concept board for a new community FOSS desktop operating system for everyday users, writers and creatives. This is an art-directed evaluation board, not a website.\nPrimary request: create one beautiful professional design-studio presentation with a large exact wordmark, original mascot illustration, brand mark, four-color palette, and a wide wallpaper concept shown in a minimal desktop preview. Give each element room. Visual hierarchy: large wordmark upper left; editorial mascot illustration left center; large landscape wallpaper right center in a plain thin screen rectangle, without physical device hardware; palette and tiny one-color mark proof at bottom. On the wallpaper preview show only a very small tasteful top bar and tiny five-icon dock, without app windows. Include small light and dark brand-mark tiles to demonstrate range. Use precise generous margins and consistently aligned baselines. All lettering must be legible, only the requested brand name, tagline, small label \"DESKTOP CONCEPT\", and four hex values. No extra marketing copy or nonsense text.\nBrand constraints: warm human craft, calm premium studio quality, welcoming to nontechnical people, no terminals or code, no penguins, no cyberpunk, no AI motifs, no shiny tech or glassmorphism, no mock functionality or feature claims. Mascot is identity artwork, not an assistant. Colors are brand colors; desktop UI chrome should remain visually neutral. No famous existing logos or characters, no watermark.\n\nBrand name (verbatim): \"Fablefen\" (spell F-a-b-l-e-f-e-n). Tagline (verbatim): \"Make something your own.\"\nCreative territory: Room to play. Fable + fen: a place where stories and small inventions grow, with a welcoming community spirit.\nMascot: Fen, a round frog with one golden cheek freckle.\nStyle/medium: Contemporary two-color risograph and friendly picture-book shapes for adult creatives, restrained playful geometry, sturdy soft-serif wordmark, light paper grain.\nBrand mark: Two facing folded fronds create a lowercase f, with broad rounded geometry.\nSubject and wallpaper: A charming low round frog with simple eyes, one golden cheek freckle and natural four-limbed anatomy, perched on one abstract leaf; wallpaper has broad irregular pond and reed shapes, mostly quiet oat background, cheerful but restrained.\nColor palette: Oat #F4EFDC; Reed #6B7950; Pond #648D9B; Marigold #D4A542. Show four flat color swatches with these exact hex labels, in this order. No extra colors apart from white/black in the neutral UI proof.\nComposition: refined unified landscape identity board; prioritize character silhouette and wallpaper beauty; keep texture restrained enough for crisp logo reproduction."
+    },
+    {
+      "id": "10-ochrelark",
+      "name": "Ochrelark",
+      "pronunciation": "OH-ker-lark",
+      "territory": "The independent art school",
+      "tagline": "An open canvas for every day.",
+      "why": "Ochre is a tactile artist's pigment; lark brings openness, movement, and a little joy.",
+      "mascot": "Olli, a lark built from three broad pigment shapes",
+      "palette": [
+        [
+          "Canvas",
+          "#F5EEDC"
+        ],
+        [
+          "Ochre",
+          "#CA983B"
+        ],
+        [
+          "Ultramarine",
+          "#3656A6"
+        ],
+        [
+          "Carbon",
+          "#292D34"
+        ]
+      ],
+      "style": "Bold European modernist art-school poster, cut-paper and screenprint texture, large intentional color planes, highly refined expressive serif wordmark, crisp graphic lark.",
+      "mark": "An ochre open circle crossed once by a blue ascending wing; compact and geometric.",
+      "scene": "A lark made from a rounded ochre body, one ultramarine wing and a simple carbon beak, lively but calm stance; wallpaper is broad ochre circles and blue cut-paper arcs on canvas with generous blank center.",
+      "strength": "Strongest shelf presence and most direct visual-arts signal.",
+      "tradeoff": "Pronunciation of ochre varies by region; vivid accents need careful restraint.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single landscape 3:2 brand identity concept board for a new community FOSS desktop operating system for everyday users, writers and creatives. This is an art-directed evaluation board, not a website.\nPrimary request: create one beautiful professional design-studio presentation with a large exact wordmark, original mascot illustration, brand mark, four-color palette, and a wide wallpaper concept shown in a minimal desktop preview. Give each element room. Visual hierarchy: large wordmark upper left; editorial mascot illustration left center; large landscape wallpaper right center in a plain thin screen rectangle, without physical device hardware; palette and tiny one-color mark proof at bottom. On the wallpaper preview show only a very small tasteful top bar and tiny five-icon dock, without app windows. Include small light and dark brand-mark tiles to demonstrate range. Use precise generous margins and consistently aligned baselines. All lettering must be legible, only the requested brand name, tagline, small label \"DESKTOP CONCEPT\", and four hex values. No extra marketing copy or nonsense text.\nBrand constraints: warm human craft, calm premium studio quality, welcoming to nontechnical people, no terminals or code, no penguins, no cyberpunk, no AI motifs, no shiny tech or glassmorphism, no mock functionality or feature claims. Mascot is identity artwork, not an assistant. Colors are brand colors; desktop UI chrome should remain visually neutral. No famous existing logos or characters, no watermark.\n\nBrand name (verbatim): \"Ochrelark\" (spell O-c-h-r-e-l-a-r-k). Tagline (verbatim): \"An open canvas for every day.\"\nCreative territory: The independent art school. Ochre is a tactile artist's pigment; lark brings openness, movement, and a little joy.\nMascot: Olli, a lark built from three broad pigment shapes.\nStyle/medium: Bold European modernist art-school poster, cut-paper and screenprint texture, large intentional color planes, highly refined expressive serif wordmark, crisp graphic lark.\nBrand mark: An ochre open circle crossed once by a blue ascending wing; compact and geometric.\nSubject and wallpaper: A lark made from a rounded ochre body, one ultramarine wing and a simple carbon beak, lively but calm stance; wallpaper is broad ochre circles and blue cut-paper arcs on canvas with generous blank center.\nColor palette: Canvas #F5EEDC; Ochre #CA983B; Ultramarine #3656A6; Carbon #292D34. Show four flat color swatches with these exact hex labels, in this order. No extra colors apart from white/black in the neutral UI proof.\nComposition: refined unified landscape identity board; prioritize character silhouette and wallpaper beauty; keep texture restrained enough for crisp logo reproduction."
+    }
+  ]
+}

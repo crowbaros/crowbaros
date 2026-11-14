@@ -1,0 +1,796 @@
+{
+  "method": "Verisign authoritative .com RDAP. HTTP 200 means registered; HTTP 404 means no registration record at query time. This is not a purchase or registrar reservation.",
+  "results": [
+    {
+      "name": "RookOS",
+      "domain": "rookos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/rookos.com",
+      "checked_at_utc": "2026-11-13T19:36:25.588352+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "ROOKOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2019-07-06T21:30:25Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-07-06T21:30:25Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-06-06T04:17:52Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "SpectreOS",
+      "domain": "spectreos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/spectreos.com",
+      "checked_at_utc": "2026-11-13T19:36:25.589133+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "SPECTREOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2020-05-01T12:07:12Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-05-01T12:07:12Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2025-09-18T16:22:10Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "CorvidOS",
+      "domain": "corvidos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/corvidos.com",
+      "checked_at_utc": "2026-11-13T19:36:25.589566+00:00",
+      "http_status": 404,
+      "status": "unregistered",
+      "error": "HTTP Error 404: Not Found"
+    },
+    {
+      "name": "SableOS",
+      "domain": "sableos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/sableos.com",
+      "checked_at_utc": "2026-11-13T19:36:25.590118+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "SABLEOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2026-02-17T20:10:19Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2029-02-17T20:10:19Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-02-17T20:10:19Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:03Z"
+        }
+      ],
+      "status_flags": [
+        "client delete prohibited",
+        "client renew prohibited",
+        "client transfer prohibited",
+        "client update prohibited"
+      ]
+    },
+    {
+      "name": "VesperOS",
+      "domain": "vesperos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/vesperos.com",
+      "checked_at_utc": "2026-11-13T19:36:25.695552+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "VESPEROS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2025-08-16T18:16:16Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-08-16T18:16:16Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-09-26T09:31:38Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:03Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "UmberOS",
+      "domain": "umberos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/umberos.com",
+      "checked_at_utc": "2026-11-13T19:36:25.695764+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "UMBEROS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2026-11-04T07:59:10Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-11-04T07:59:10Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-11-04T07:59:11Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client delete prohibited",
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "UmbraOS",
+      "domain": "umbraos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/umbraos.com",
+      "checked_at_utc": "2026-11-13T19:36:25.808084+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "UMBRAOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2025-06-05T19:25:41Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-06-05T19:25:41Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-05-06T04:42:12Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "TalonOS",
+      "domain": "talonos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/talonos.com",
+      "checked_at_utc": "2026-11-13T19:36:25.914066+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "TALONOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2017-05-11T11:16:00Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-05-11T11:16:00Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-05-16T08:11:38Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "QuothOS",
+      "domain": "quothos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/quothos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.013312+00:00",
+      "http_status": 404,
+      "status": "unregistered",
+      "error": "HTTP Error 404: Not Found"
+    },
+    {
+      "name": "GloamOS",
+      "domain": "gloamos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/gloamos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.021129+00:00",
+      "http_status": 404,
+      "status": "unregistered",
+      "error": "HTTP Error 404: Not Found"
+    },
+    {
+      "name": "EbonOS",
+      "domain": "ebonos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/ebonos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.058269+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "EBONOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2013-01-30T19:37:45Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-01-30T19:37:45Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-01-31T08:44:28Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "NoctisOS",
+      "domain": "noctisos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/noctisos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.108645+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "NOCTISOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2026-03-04T03:03:54Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-03-04T03:03:54Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-03-04T03:03:54Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "VantaOS",
+      "domain": "vantaos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/vantaos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.115471+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "VANTAOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2025-06-17T04:33:37Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-06-17T04:33:37Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-11-07T15:33:42Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client delete prohibited",
+        "client renew prohibited",
+        "client transfer prohibited",
+        "client update prohibited"
+      ]
+    },
+    {
+      "name": "CorvusOS",
+      "domain": "corvusos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/corvusos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.148509+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "CORVUSOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2026-06-30T23:48:56Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-06-30T23:48:56Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-07-02T20:01:57Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "active"
+      ]
+    },
+    {
+      "name": "NyxOS",
+      "domain": "nyxos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/nyxos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.211345+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "NYXOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2000-12-03T13:08:50Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2026-12-03T13:08:50Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2025-12-09T21:56:01Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client delete prohibited",
+        "client renew prohibited",
+        "client transfer prohibited",
+        "client update prohibited"
+      ]
+    },
+    {
+      "name": "FathomOS",
+      "domain": "fathomos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/fathomos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.242863+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "FATHOMOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2025-05-24T00:54:17Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-05-24T00:54:17Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-08-18T10:35:59Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "CowlOS",
+      "domain": "cowlos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/cowlos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.268318+00:00",
+      "http_status": 404,
+      "status": "unregistered",
+      "error": "HTTP Error 404: Not Found"
+    },
+    {
+      "name": "QuillOS",
+      "domain": "quillos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/quillos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.320028+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "QUILLOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2013-02-13T19:57:49Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-02-13T19:57:49Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2025-02-14T16:46:49Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client delete prohibited",
+        "client renew prohibited",
+        "client transfer prohibited",
+        "client update prohibited"
+      ]
+    },
+    {
+      "name": "RavenOS",
+      "domain": "ravenos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/ravenos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.335645+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "RAVENOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2010-06-22T21:57:44Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-06-22T21:57:44Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-06-23T18:49:01Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client delete prohibited",
+        "client renew prohibited",
+        "client transfer prohibited",
+        "client update prohibited"
+      ]
+    },
+    {
+      "name": "OnyxOS",
+      "domain": "onyxos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/onyxos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.359473+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "ONYXOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2020-10-31T18:03:32Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-10-31T18:03:32Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-11-01T08:35:18Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "EyrieOS",
+      "domain": "eyrieos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/eyrieos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.427237+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "EYRIEOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2026-06-16T01:40:39Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-06-16T01:40:39Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-06-16T01:40:40Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "PinionOS",
+      "domain": "pinionos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/pinionos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.429882+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "PINIONOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2026-02-10T13:01:46Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-02-10T13:01:46Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-02-10T13:01:50Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "PlumeOS",
+      "domain": "plumeos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/plumeos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.528276+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "PLUMEOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2023-03-20T09:14:40Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-03-20T09:14:40Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-03-05T10:12:19Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client delete prohibited",
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "NacreOS",
+      "domain": "nacreos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/nacreos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.531660+00:00",
+      "http_status": 404,
+      "status": "unregistered",
+      "error": "HTTP Error 404: Not Found"
+    },
+    {
+      "name": "ObscuraOS",
+      "domain": "obscuraos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/obscuraos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.574281+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "OBSCURAOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2026-09-02T02:39:27Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-09-02T02:39:27Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-09-26T01:15:37Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "NoirOS",
+      "domain": "noiros.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/noiros.com",
+      "checked_at_utc": "2026-11-13T19:36:26.632500+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "NOIROS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2026-07-20T18:15:51Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-07-20T18:15:51Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-07-21T20:35:17Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:03Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "NoxOS",
+      "domain": "noxos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/noxos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.644190+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "NOXOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2013-11-25T19:27:15Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-11-25T19:27:15Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-10-18T09:43:04Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "MurkOS",
+      "domain": "murkos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/murkos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.666685+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "MURKOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2023-06-20T13:47:50Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-06-20T13:47:50Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-05-21T02:13:19Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    },
+    {
+      "name": "SootOS",
+      "domain": "sootos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/sootos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.737847+00:00",
+      "http_status": 404,
+      "status": "unregistered",
+      "error": "HTTP Error 404: Not Found"
+    },
+    {
+      "name": "DuskOS",
+      "domain": "duskos.com",
+      "source": "https://rdap.verisign.com/com/v1/domain/duskos.com",
+      "checked_at_utc": "2026-11-13T19:36:26.743796+00:00",
+      "http_status": 200,
+      "status": "registered",
+      "registry_name": "DUSKOS.COM",
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "2021-07-31T03:32:11Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2027-07-31T03:32:11Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-08-22T13:46:29Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-11-13T19:36:18Z"
+        }
+      ],
+      "status_flags": [
+        "client transfer prohibited"
+      ]
+    }
+  ]
+}

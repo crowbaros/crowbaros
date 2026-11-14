@@ -1,0 +1,13 @@
+CrowbarOS plan page — Read mode
+Source of truth: ../community_foss_distro_plan.md. Inherit the chosen brand from ../branding/crowbaros-brand-kit/DESIGN.md and PRODUCT.md. The user explicitly asked to bring all prior work into one beautiful, easy-to-navigate HTML page. This is a local repository reference document, with no hosted publication requested.
+
+## Direction contract
+THESIS: An illustrated, navigable project atlas that makes the complete plan findable. Summaries lead to exact specifications; the source text remains available in the same page.
+OWN-WORLD: Approved Void, Abyss, Ice, Steel and Frost; Manrope and IBM Plex Mono; engraved crow and supplied SVG logos. Restrained opaque surfaces and crisp selection states.
+STORY: Understand the purpose, inspect the identity and desktop, then explore architecture, software, governance and delivery. A persistent chapter rail, search and expandable reference content support direct and sequential reading.
+FIRST VIEWPORT: Fixed left chapter rail; quiet search toolbar; large brand line at left and complete crow silhouette at right. A clear jump to desktop studies and technical foundations anchors the opening.
+FORM: Established-brand reference atlas; pinned source and identity. Native HTML/CSS/JS, no new identity or unrequested external publication. Signature interaction is a navigable desktop scene gallery with appearance variants.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+
+Controls: live chapter tracking, search with keyboard navigation and clear empty state, palette copy with fallback, desktop scene/appearance controls, accessible full-size image view, package filtering, expand/collapse details, source download and print. Native OS behavior remains illustrative. All source decisions are preserved in a rendered full-reference appendix and a downloadable original.
+Assets are existing approved brand-kit files; no new raster generation or pixel edits. Primary delivery: docs/crowbaros.html, a compact self-contained offline file with embedded fonts, WebP visual previews, small text resources and source Markdown. Per user correction, omit the full brand-kit archive and PDF. No server or adjacent files are required. Build source and page-specific documentation live in docs/crowbaros-page/. Review evidence lives outside shipping page content at .impeccable/review/crowbaros/.

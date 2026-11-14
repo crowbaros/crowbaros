@@ -1,0 +1,31 @@
+{
+  "brand": "CrowbarOS",
+  "htmlBytes": 3549201,
+  "htmlMiB": 3.38,
+  "visibleOldBrandOccurrences": 0,
+  "brokenPlanLinks": [],
+  "kitArchiveBytes": 39839606,
+  "archiveEntries": 108,
+  "legacyHtmlRedirect": true,
+  "historicalNames": "Original generation prompts, naming studies, and archived prior verification remain historical.",
+  "browserChecks": "pass",
+  "offline": true,
+  "javascriptErrors": [],
+  "unexpectedRequests": [],
+  "visualReview": [
+    "1280px overview",
+    "390px overview",
+    "brand and identity chapter",
+    "brand overview sheet",
+    "workspace mockup",
+    "social card",
+    "all 14 PDF guide pages"
+  ],
+  "typeSizes": {
+    "body": "16px",
+    "h1": "64px",
+    "h2": "42px",
+    "h3": "23px"
+  },
+  "templateHierarchyIgnore": "Carried forward the existing template-only false positive to the renamed template; rendered 16/64/42/23px hierarchy verified."
+}

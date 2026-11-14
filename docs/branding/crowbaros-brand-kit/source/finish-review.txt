@@ -1,0 +1,9 @@
+CrowbarOS rename verification — 2026-11-14
+
+Scope: user-authorized rename of the approved identity. Palette, crow, type families and desktop layout retained.
+
+Regenerated 18 outlined SVG logos, 31 PNG exports, branded vector wallpaper, all eight desktop mockups, overview, social graphics and the 14-page PDF. Wordmark canvases expanded to fit CrowbarOS without cropping or stretching. Reviewed overview, workspace and social composition at native output sizes and all 14 PDF pages in rendered contact sheets. No visible clipping or stale name in active typeset content.
+
+Browser checks confirm desktop/mobile viewer fit, working appearance variants, Zen behavior and no missing images. Packaging checks validate logo counts, alpha, dimensions, PDF text and palette.
+
+Original textless raster art and its exact generation prompts remain unchanged. Previous CorvidOS verification is retained under source/history/ as historical evidence; it is not a new full-system review.

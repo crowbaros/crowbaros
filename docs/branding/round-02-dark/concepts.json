@@ -1,0 +1,379 @@
+{
+  "date": "2026-11-13",
+  "source": "docs/community_foss_distro_plan.md",
+  "round": "02 - Dark hacker directions",
+  "generator": "Built-in image_gen",
+  "status": "Exploratory raster identity concepts. Dark styling is an intentional alternative to the source plan's warm direction. Names are not cleared trademarks or domains.",
+  "concepts": [
+    {
+      "id": "01-nullkeel",
+      "name": "Nullkeel",
+      "pronunciation": "NULL-keel",
+      "territory": "Silent systems",
+      "tagline": "Quiet surface. Total intent.",
+      "why": "Null + keel: minimal overhead above a steady underlying structure. A composed hacker identity built around precision and autonomy.",
+      "mascot": "Nix, a graphite cuttlefish with a single cyan mantle seam",
+      "palette": [
+        [
+          "Void",
+          "#080D12"
+        ],
+        [
+          "Abyss",
+          "#17212B"
+        ],
+        [
+          "Ice",
+          "#49D7E8"
+        ],
+        [
+          "Steel",
+          "#6D8191"
+        ],
+        [
+          "Frost",
+          "#D8E5EC"
+        ]
+      ],
+      "style": "Stealth industrial design; deep matte charcoal surfaces; sharp cyan edge lighting; original sculptural cuttlefish rendered with beautifully simplified forms. Wide, lowercase neo-grotesk typography, sparse and precise. No holograms or busy HUD.",
+      "mark": "An open N made from two offset keel-like strokes with a narrow channel between them, simple and bold.",
+      "scene": "A composed cuttlefish in three-quarter view, streamlined dark body, readable eye, eight short relaxed arms gathered naturally and two subtle longer tentacles, one bright cyan seam around the mantle; not an octopus with random limbs. Wallpaper is an enormous dark flowing mantle shape with one cyan rim and abundant near-black negative space.",
+      "strength": "Strongest restrained hacker identity; visually confident without needing heavy neon.",
+      "tradeoff": "The darkness needs carefully separated surfaces so it does not hide controls.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single professional landscape 3:2 dark brand identity concept board for a new community FOSS desktop operating system aimed at technically fluent Linux users, tinkerers and hackers.\nPrimary request: create one exceptional art-directed design-studio presentation, 1536x1024 landscape composition, with a large exact wordmark, original character mascot, simple brand symbol, a wide wallpaper preview in a minimal dark desktop frame, five exact labeled palette swatches, and two small one-color mark proofs. This must look like a mature desirable OS identity. The entire presentation is dark: 85-95% deep dark surfaces, careful separation of dark tones, legible light type and a controlled accent. No white or cream page background. Do not create a website or dashboard.\nComposition: large wordmark and tagline at top; substantial mascot illustration lower-left; landscape wallpaper preview right with only a thin top bar and a small 5-icon dock; five swatches at bottom with their exact hex labels; small solid monochrome mark proofs on charcoal and near-black. Generous consistent margins, optical alignment, clear hierarchy. Keep the wallpaper calmer and lower contrast than the mascot artwork so it is usable behind windows. The mascot is identity artwork, not an assistant. All requested elements should be cleanly visible.\nText: only the exact brand name, exact tagline, small label \"DESKTOP CONCEPT\", and five specified hex values. No extra headings, gibberish, fake terminal output or claimed performance metrics. No timestamps needed.\nConstraints: all-new original logo and mascot, no famous existing characters, Linux logos, Arch marks, Kali dragon motifs, hooded hacker imagery, skulls, padlocks, weapons or code rain. Hacker appeal comes from typography, disciplined geometry, material and precision. Do not use generic esports shields. Dark marks must retain readable contours. No watermarks. No AI-assistant motifs or product feature promises.\n\nBrand name (verbatim): \"Nullkeel\" (spell N-u-l-l-k-e-e-l). Tagline (verbatim): \"Quiet surface. Total intent.\"\nCreative territory: Silent systems. Null + keel: minimal overhead above a steady underlying structure. A composed hacker identity built around precision and autonomy.\nMascot: Nix, a graphite cuttlefish with a single cyan mantle seam.\nStyle/medium: Stealth industrial design; deep matte charcoal surfaces; sharp cyan edge lighting; original sculptural cuttlefish rendered with beautifully simplified forms. Wide, lowercase neo-grotesk typography, sparse and precise. No holograms or busy HUD.\nBrand mark: An open N made from two offset keel-like strokes with a narrow channel between them, simple and bold.\nSubject and wallpaper: A composed cuttlefish in three-quarter view, streamlined dark body, readable eye, eight short relaxed arms gathered naturally and two subtle longer tentacles, one bright cyan seam around the mantle; not an octopus with random limbs. Wallpaper is an enormous dark flowing mantle shape with one cyan rim and abundant near-black negative space.\nColor palette: Void #080D12; Abyss #17212B; Ice #49D7E8; Steel #6D8191; Frost #D8E5EC. Show five flat color swatches with these exact hex labels, in this order. The last pale color is for text, not a large background. The first two dark colors should dominate the entire board. Prioritize excellent contrast and retain subtle details in the shadows."
+    },
+    {
+      "id": "02-hexburrow",
+      "name": "Hexburrow",
+      "pronunciation": "HEX-bur-oh",
+      "territory": "The terminal workshop",
+      "tagline": "Dig deeper. Make it yours.",
+      "why": "Hex suggests low-level fluency; burrow makes the workstation feel like a personal space built and understood from within.",
+      "mascot": "Root, a block-cut badger with a green cheek stripe",
+      "palette": [
+        [
+          "Carbon",
+          "#0B100D"
+        ],
+        [
+          "Pine",
+          "#17231B"
+        ],
+        [
+          "Phosphor",
+          "#91E36A"
+        ],
+        [
+          "Brass",
+          "#B5A36A"
+        ],
+        [
+          "Chalk",
+          "#DEE8D9"
+        ]
+      ],
+      "style": "Premium retro-computing identity, hard-edged 8-bit-inspired woodcut geometry rather than low-resolution pixel art; phosphor green and muted brass; exact engineered monospaced wordmark with restrained square corners. Flat screenprint character, no glow haze.",
+      "mark": "A simplified hexagonal den entrance enclosing an underscore-like floor, readable as a small geometric h.",
+      "scene": "A sturdy alert badger with unmistakable pale face stripes, squared geometric paws and one phosphor-green cheek stripe, no clothes or laptop. Wallpaper is sparse large stepped contours like an abstract underground topology, dark forest-black layers and one thin green path; no code rain.",
+      "strength": "Most direct connection to terminal culture and hands-on customization.",
+      "tradeoff": "Retro cues could imply a dated interface unless the actual UI stays crisp.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single professional landscape 3:2 dark brand identity concept board for a new community FOSS desktop operating system aimed at technically fluent Linux users, tinkerers and hackers.\nPrimary request: create one exceptional art-directed design-studio presentation, 1536x1024 landscape composition, with a large exact wordmark, original character mascot, simple brand symbol, a wide wallpaper preview in a minimal dark desktop frame, five exact labeled palette swatches, and two small one-color mark proofs. This must look like a mature desirable OS identity. The entire presentation is dark: 85-95% deep dark surfaces, careful separation of dark tones, legible light type and a controlled accent. No white or cream page background. Do not create a website or dashboard.\nComposition: large wordmark and tagline at top; substantial mascot illustration lower-left; landscape wallpaper preview right with only a thin top bar and a small 5-icon dock; five swatches at bottom with their exact hex labels; small solid monochrome mark proofs on charcoal and near-black. Generous consistent margins, optical alignment, clear hierarchy. Keep the wallpaper calmer and lower contrast than the mascot artwork so it is usable behind windows. The mascot is identity artwork, not an assistant. All requested elements should be cleanly visible.\nText: only the exact brand name, exact tagline, small label \"DESKTOP CONCEPT\", and five specified hex values. No extra headings, gibberish, fake terminal output or claimed performance metrics. No timestamps needed.\nConstraints: all-new original logo and mascot, no famous existing characters, Linux logos, Arch marks, Kali dragon motifs, hooded hacker imagery, skulls, padlocks, weapons or code rain. Hacker appeal comes from typography, disciplined geometry, material and precision. Do not use generic esports shields. Dark marks must retain readable contours. No watermarks. No AI-assistant motifs or product feature promises.\n\nBrand name (verbatim): \"Hexburrow\" (spell H-e-x-b-u-r-r-o-w). Tagline (verbatim): \"Dig deeper. Make it yours.\"\nCreative territory: The terminal workshop. Hex suggests low-level fluency; burrow makes the workstation feel like a personal space built and understood from within.\nMascot: Root, a block-cut badger with a green cheek stripe.\nStyle/medium: Premium retro-computing identity, hard-edged 8-bit-inspired woodcut geometry rather than low-resolution pixel art; phosphor green and muted brass; exact engineered monospaced wordmark with restrained square corners. Flat screenprint character, no glow haze.\nBrand mark: A simplified hexagonal den entrance enclosing an underscore-like floor, readable as a small geometric h.\nSubject and wallpaper: A sturdy alert badger with unmistakable pale face stripes, squared geometric paws and one phosphor-green cheek stripe, no clothes or laptop. Wallpaper is sparse large stepped contours like an abstract underground topology, dark forest-black layers and one thin green path; no code rain.\nColor palette: Carbon #0B100D; Pine #17231B; Phosphor #91E36A; Brass #B5A36A; Chalk #DEE8D9. Show five flat color swatches with these exact hex labels, in this order. The last pale color is for text, not a large background. The first two dark colors should dominate the entire board. Prioritize excellent contrast and retain subtle details in the shadows."
+    },
+    {
+      "id": "03-ashrivet",
+      "name": "Ashrivet",
+      "pronunciation": "ASH-riv-it",
+      "territory": "The industrial forge",
+      "tagline": "Built to be worked on.",
+      "why": "Ash + rivet: heat, material and visible construction. It makes open software feel durable, repairable and intentionally assembled.",
+      "mascot": "Cinder, a charcoal salamander with three ember markings",
+      "palette": [
+        [
+          "Coal",
+          "#100E0D"
+        ],
+        [
+          "Iron",
+          "#26211E"
+        ],
+        [
+          "Ember",
+          "#F07B46"
+        ],
+        [
+          "Tarnish",
+          "#9D856E"
+        ],
+        [
+          "Ceramic",
+          "#E5D9CB"
+        ]
+      ],
+      "style": "Dark industrial workshop identity, dry soot-black tactile surfaces, controlled ember-orange accent, dramatic low side light, utilitarian condensed uppercase stencil typography with only a few intentional breaks. Mascot resembles a finely crafted cast-metal sculpture, not a toy.",
+      "mark": "A single rivet head in a split A-shaped steel bracket, minimal silhouette with clear negative space.",
+      "scene": "An elegant original salamander with a long slim tail, four anatomically plausible splayed legs, charcoal surface and exactly three ember orange back markings; no flames. Wallpaper is close-up architectural black steel plates with one glowing warm joint, large scale and low visual noise.",
+      "strength": "Best fit for makers who want a workstation that feels robust and modifiable.",
+      "tradeoff": "Industrial imagery can feel heavy; use the orange sparingly in daily UI.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single professional landscape 3:2 dark brand identity concept board for a new community FOSS desktop operating system aimed at technically fluent Linux users, tinkerers and hackers.\nPrimary request: create one exceptional art-directed design-studio presentation, 1536x1024 landscape composition, with a large exact wordmark, original character mascot, simple brand symbol, a wide wallpaper preview in a minimal dark desktop frame, five exact labeled palette swatches, and two small one-color mark proofs. This must look like a mature desirable OS identity. The entire presentation is dark: 85-95% deep dark surfaces, careful separation of dark tones, legible light type and a controlled accent. No white or cream page background. Do not create a website or dashboard.\nComposition: large wordmark and tagline at top; substantial mascot illustration lower-left; landscape wallpaper preview right with only a thin top bar and a small 5-icon dock; five swatches at bottom with their exact hex labels; small solid monochrome mark proofs on charcoal and near-black. Generous consistent margins, optical alignment, clear hierarchy. Keep the wallpaper calmer and lower contrast than the mascot artwork so it is usable behind windows. The mascot is identity artwork, not an assistant. All requested elements should be cleanly visible.\nText: only the exact brand name, exact tagline, small label \"DESKTOP CONCEPT\", and five specified hex values. No extra headings, gibberish, fake terminal output or claimed performance metrics. No timestamps needed.\nConstraints: all-new original logo and mascot, no famous existing characters, Linux logos, Arch marks, Kali dragon motifs, hooded hacker imagery, skulls, padlocks, weapons or code rain. Hacker appeal comes from typography, disciplined geometry, material and precision. Do not use generic esports shields. Dark marks must retain readable contours. No watermarks. No AI-assistant motifs or product feature promises.\n\nBrand name (verbatim): \"Ashrivet\" (spell A-s-h-r-i-v-e-t). Tagline (verbatim): \"Built to be worked on.\"\nCreative territory: The industrial forge. Ash + rivet: heat, material and visible construction. It makes open software feel durable, repairable and intentionally assembled.\nMascot: Cinder, a charcoal salamander with three ember markings.\nStyle/medium: Dark industrial workshop identity, dry soot-black tactile surfaces, controlled ember-orange accent, dramatic low side light, utilitarian condensed uppercase stencil typography with only a few intentional breaks. Mascot resembles a finely crafted cast-metal sculpture, not a toy.\nBrand mark: A single rivet head in a split A-shaped steel bracket, minimal silhouette with clear negative space.\nSubject and wallpaper: An elegant original salamander with a long slim tail, four anatomically plausible splayed legs, charcoal surface and exactly three ember orange back markings; no flames. Wallpaper is close-up architectural black steel plates with one glowing warm joint, large scale and low visual noise.\nColor palette: Coal #100E0D; Iron #26211E; Ember #F07B46; Tarnish #9D856E; Ceramic #E5D9CB. Show five flat color swatches with these exact hex labels, in this order. The last pale color is for text, not a large background. The first two dark colors should dominate the entire board. Prioritize excellent contrast and retain subtle details in the shadows."
+    },
+    {
+      "id": "04-riftskein",
+      "name": "Riftskein",
+      "pronunciation": "RIFT-skayn",
+      "territory": "Precision in motion",
+      "tagline": "Find your own line.",
+      "why": "Rift + skein: a clean boundary and interwoven threads. It links technical craft to a fast, flexible workspace.",
+      "mascot": "Skein, a faceted lynx with long violet ear tufts",
+      "palette": [
+        [
+          "Pitch",
+          "#100D18"
+        ],
+        [
+          "Slate",
+          "#241E33"
+        ],
+        [
+          "Ion",
+          "#AF8CFF"
+        ],
+        [
+          "Rift",
+          "#E276A8"
+        ],
+        [
+          "Mist",
+          "#E9E1F3"
+        ]
+      ],
+      "style": "Angular computational geometry, deep violet and mineral lilac, a faceted paper-polyhedron lynx with a confident silhouette, technical italic display typography that remains readable. Crisp geometric identity, not generic gaming esports.",
+      "mark": "Two offset diagonal cuts forming an abstract R, with one continuous line crossing the gap.",
+      "scene": "A poised original lynx with long violet ear tufts, angular cheek fur, short tail and pale focused eyes; full-body stance composed of large carefully designed polygon planes. Wallpaper is two large fractured violet planes with one hairline rose seam, quiet dark central space.",
+      "strength": "Best expression of speed, control and the desktop's flowing window ribbon.",
+      "tradeoff": "The sharp styling can drift toward esports if motion and contrast are overused.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single professional landscape 3:2 dark brand identity concept board for a new community FOSS desktop operating system aimed at technically fluent Linux users, tinkerers and hackers.\nPrimary request: create one exceptional art-directed design-studio presentation, 1536x1024 landscape composition, with a large exact wordmark, original character mascot, simple brand symbol, a wide wallpaper preview in a minimal dark desktop frame, five exact labeled palette swatches, and two small one-color mark proofs. This must look like a mature desirable OS identity. The entire presentation is dark: 85-95% deep dark surfaces, careful separation of dark tones, legible light type and a controlled accent. No white or cream page background. Do not create a website or dashboard.\nComposition: large wordmark and tagline at top; substantial mascot illustration lower-left; landscape wallpaper preview right with only a thin top bar and a small 5-icon dock; five swatches at bottom with their exact hex labels; small solid monochrome mark proofs on charcoal and near-black. Generous consistent margins, optical alignment, clear hierarchy. Keep the wallpaper calmer and lower contrast than the mascot artwork so it is usable behind windows. The mascot is identity artwork, not an assistant. All requested elements should be cleanly visible.\nText: only the exact brand name, exact tagline, small label \"DESKTOP CONCEPT\", and five specified hex values. No extra headings, gibberish, fake terminal output or claimed performance metrics. No timestamps needed.\nConstraints: all-new original logo and mascot, no famous existing characters, Linux logos, Arch marks, Kali dragon motifs, hooded hacker imagery, skulls, padlocks, weapons or code rain. Hacker appeal comes from typography, disciplined geometry, material and precision. Do not use generic esports shields. Dark marks must retain readable contours. No watermarks. No AI-assistant motifs or product feature promises.\n\nBrand name (verbatim): \"Riftskein\" (spell R-i-f-t-s-k-e-i-n). Tagline (verbatim): \"Find your own line.\"\nCreative territory: Precision in motion. Rift + skein: a clean boundary and interwoven threads. It links technical craft to a fast, flexible workspace.\nMascot: Skein, a faceted lynx with long violet ear tufts.\nStyle/medium: Angular computational geometry, deep violet and mineral lilac, a faceted paper-polyhedron lynx with a confident silhouette, technical italic display typography that remains readable. Crisp geometric identity, not generic gaming esports.\nBrand mark: Two offset diagonal cuts forming an abstract R, with one continuous line crossing the gap.\nSubject and wallpaper: A poised original lynx with long violet ear tufts, angular cheek fur, short tail and pale focused eyes; full-body stance composed of large carefully designed polygon planes. Wallpaper is two large fractured violet planes with one hairline rose seam, quiet dark central space.\nColor palette: Pitch #100D18; Slate #241E33; Ion #AF8CFF; Rift #E276A8; Mist #E9E1F3. Show five flat color swatches with these exact hex labels, in this order. The last pale color is for text, not a large background. The first two dark colors should dominate the entire board. Prioritize excellent contrast and retain subtle details in the shadows."
+    },
+    {
+      "id": "05-rookslash",
+      "name": "Rookslash",
+      "pronunciation": "ROOK-slash",
+      "territory": "The nocturnal editor",
+      "tagline": "Keep your edge.",
+      "why": "Rook + slash: a watchful corvid and a familiar computing glyph. It pairs literary darkness with command-line fluency.",
+      "mascot": "Vex, a raven with a carmine slash across one folded wing",
+      "palette": [
+        [
+          "Noir",
+          "#0B0B0F"
+        ],
+        [
+          "Graphite",
+          "#212127"
+        ],
+        [
+          "Carmine",
+          "#B94D67"
+        ],
+        [
+          "Silver",
+          "#8E919D"
+        ],
+        [
+          "Bone",
+          "#E8E5DF"
+        ]
+      ],
+      "style": "Elegant gothic editorial identity, almost-monochrome black and bone with one muted wine-red accent, wood-engraved raven illustration and highly refined sharp contemporary serif lettering. Mature literary hacker aesthetic, no blackletter clichés, skulls, or occult symbolism.",
+      "mark": "A single strong forward slash terminating in a minimal raven beak profile, extremely simple and balanced.",
+      "scene": "A stately original raven in profile with folded wings, subtle engraved feather detail, and one carmine diagonal band; poised, intelligent, no aggression. Wallpaper is enormous abstract black feathers crossed by a single muted carmine slash, barely visible graphite texture and abundant negative space.",
+      "strength": "Most distinctive crossover between hacker culture and the original editorial brief.",
+      "tradeoff": "The mood is deliberately severe; onboarding copy will need extra warmth.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single professional landscape 3:2 dark brand identity concept board for a new community FOSS desktop operating system aimed at technically fluent Linux users, tinkerers and hackers.\nPrimary request: create one exceptional art-directed design-studio presentation, 1536x1024 landscape composition, with a large exact wordmark, original character mascot, simple brand symbol, a wide wallpaper preview in a minimal dark desktop frame, five exact labeled palette swatches, and two small one-color mark proofs. This must look like a mature desirable OS identity. The entire presentation is dark: 85-95% deep dark surfaces, careful separation of dark tones, legible light type and a controlled accent. No white or cream page background. Do not create a website or dashboard.\nComposition: large wordmark and tagline at top; substantial mascot illustration lower-left; landscape wallpaper preview right with only a thin top bar and a small 5-icon dock; five swatches at bottom with their exact hex labels; small solid monochrome mark proofs on charcoal and near-black. Generous consistent margins, optical alignment, clear hierarchy. Keep the wallpaper calmer and lower contrast than the mascot artwork so it is usable behind windows. The mascot is identity artwork, not an assistant. All requested elements should be cleanly visible.\nText: only the exact brand name, exact tagline, small label \"DESKTOP CONCEPT\", and five specified hex values. No extra headings, gibberish, fake terminal output or claimed performance metrics. No timestamps needed.\nConstraints: all-new original logo and mascot, no famous existing characters, Linux logos, Arch marks, Kali dragon motifs, hooded hacker imagery, skulls, padlocks, weapons or code rain. Hacker appeal comes from typography, disciplined geometry, material and precision. Do not use generic esports shields. Dark marks must retain readable contours. No watermarks. No AI-assistant motifs or product feature promises.\n\nBrand name (verbatim): \"Rookslash\" (spell R-o-o-k-s-l-a-s-h). Tagline (verbatim): \"Keep your edge.\"\nCreative territory: The nocturnal editor. Rook + slash: a watchful corvid and a familiar computing glyph. It pairs literary darkness with command-line fluency.\nMascot: Vex, a raven with a carmine slash across one folded wing.\nStyle/medium: Elegant gothic editorial identity, almost-monochrome black and bone with one muted wine-red accent, wood-engraved raven illustration and highly refined sharp contemporary serif lettering. Mature literary hacker aesthetic, no blackletter clichés, skulls, or occult symbolism.\nBrand mark: A single strong forward slash terminating in a minimal raven beak profile, extremely simple and balanced.\nSubject and wallpaper: A stately original raven in profile with folded wings, subtle engraved feather detail, and one carmine diagonal band; poised, intelligent, no aggression. Wallpaper is enormous abstract black feathers crossed by a single muted carmine slash, barely visible graphite texture and abundant negative space.\nColor palette: Noir #0B0B0F; Graphite #212127; Carmine #B94D67; Silver #8E919D; Bone #E8E5DF. Show five flat color swatches with these exact hex labels, in this order. The last pale color is for text, not a large background. The first two dark colors should dominate the entire board. Prioritize excellent contrast and retain subtle details in the shadows."
+    },
+    {
+      "id": "06-rivethex",
+      "name": "Rivethex",
+      "pronunciation": "RIV-it-hex",
+      "territory": "Open hardware spirit",
+      "tagline": "Know every layer.",
+      "why": "Rivet + hex: physical assembly meets digital structure. A tactile identity for people who like to understand how their tools fit together.",
+      "mascot": "Bit, a copper-jointed stag beetle with a hexagonal back plate",
+      "palette": [
+        [
+          "Blacksteel",
+          "#111416"
+        ],
+        [
+          "Gunmetal",
+          "#2B3439"
+        ],
+        [
+          "Copper",
+          "#C4885A"
+        ],
+        [
+          "Oxide",
+          "#6F9693"
+        ],
+        [
+          "Alloy",
+          "#DFE5E5"
+        ]
+      ],
+      "style": "Precision-machined dark hardware identity, brushed gunmetal and warm oxidized copper, understated industrial product photography, bold rounded-square technical sans typography. A biomorphic beetle sculpture with restrained panel joints, no steampunk gears.",
+      "mark": "Three interlocking hex segments forming a compact open R with visible assembly gaps.",
+      "scene": "An original stag beetle with six clearly formed legs, two modest mandibles, one hexagonal dorsal plate, dark steel body and copper joints; anatomically legible and dignified. Wallpaper is an abstract macro arrangement of interlocking black machined plates with a single copper inset, soft directional light, no circuit-board clutter.",
+      "strength": "Most tangible technical identity; excellent for case badges, stickers and hardware partnerships.",
+      "tradeoff": "Metal textures should stay in illustration so ordinary controls do not become skeuomorphic.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single professional landscape 3:2 dark brand identity concept board for a new community FOSS desktop operating system aimed at technically fluent Linux users, tinkerers and hackers.\nPrimary request: create one exceptional art-directed design-studio presentation, 1536x1024 landscape composition, with a large exact wordmark, original character mascot, simple brand symbol, a wide wallpaper preview in a minimal dark desktop frame, five exact labeled palette swatches, and two small one-color mark proofs. This must look like a mature desirable OS identity. The entire presentation is dark: 85-95% deep dark surfaces, careful separation of dark tones, legible light type and a controlled accent. No white or cream page background. Do not create a website or dashboard.\nComposition: large wordmark and tagline at top; substantial mascot illustration lower-left; landscape wallpaper preview right with only a thin top bar and a small 5-icon dock; five swatches at bottom with their exact hex labels; small solid monochrome mark proofs on charcoal and near-black. Generous consistent margins, optical alignment, clear hierarchy. Keep the wallpaper calmer and lower contrast than the mascot artwork so it is usable behind windows. The mascot is identity artwork, not an assistant. All requested elements should be cleanly visible.\nText: only the exact brand name, exact tagline, small label \"DESKTOP CONCEPT\", and five specified hex values. No extra headings, gibberish, fake terminal output or claimed performance metrics. No timestamps needed.\nConstraints: all-new original logo and mascot, no famous existing characters, Linux logos, Arch marks, Kali dragon motifs, hooded hacker imagery, skulls, padlocks, weapons or code rain. Hacker appeal comes from typography, disciplined geometry, material and precision. Do not use generic esports shields. Dark marks must retain readable contours. No watermarks. No AI-assistant motifs or product feature promises.\n\nBrand name (verbatim): \"Rivethex\" (spell R-i-v-e-t-h-e-x). Tagline (verbatim): \"Know every layer.\"\nCreative territory: Open hardware spirit. Rivet + hex: physical assembly meets digital structure. A tactile identity for people who like to understand how their tools fit together.\nMascot: Bit, a copper-jointed stag beetle with a hexagonal back plate.\nStyle/medium: Precision-machined dark hardware identity, brushed gunmetal and warm oxidized copper, understated industrial product photography, bold rounded-square technical sans typography. A biomorphic beetle sculpture with restrained panel joints, no steampunk gears.\nBrand mark: Three interlocking hex segments forming a compact open R with visible assembly gaps.\nSubject and wallpaper: An original stag beetle with six clearly formed legs, two modest mandibles, one hexagonal dorsal plate, dark steel body and copper joints; anatomically legible and dignified. Wallpaper is an abstract macro arrangement of interlocking black machined plates with a single copper inset, soft directional light, no circuit-board clutter.\nColor palette: Blacksteel #111416; Gunmetal #2B3439; Copper #C4885A; Oxide #6F9693; Alloy #DFE5E5. Show five flat color swatches with these exact hex labels, in this order. The last pale color is for text, not a large background. The first two dark colors should dominate the entire board. Prioritize excellent contrast and retain subtle details in the shadows."
+    },
+    {
+      "id": "07-phasecoil",
+      "name": "Phasecoil",
+      "pronunciation": "FAYZ-koyl",
+      "territory": "Fluid control",
+      "tagline": "Stay in your flow.",
+      "why": "Phase + coil: a changing signal with an ordered structure. It suggests continuous motion without losing control.",
+      "mascot": "Loop, an emerald serpent folded into an open coil",
+      "palette": [
+        [
+          "Trench",
+          "#071512"
+        ],
+        [
+          "Kelp",
+          "#15332A"
+        ],
+        [
+          "Plasma",
+          "#63E6AF"
+        ],
+        [
+          "Lagoon",
+          "#2A8E98"
+        ],
+        [
+          "Salt",
+          "#D8F0E6"
+        ]
+      ],
+      "style": "Scientific instrumentation meets fluid organic geometry; dark petrol green, mint and teal; a smooth graphic serpent with subtle screenprinted shading, clean expanded geometric sans typography. Structured and calm, not magical.",
+      "mark": "One open spiral crossing a short vertical stroke to suggest a lowercase p; no closed ouroboros and no generic power-button icon.",
+      "scene": "A sophisticated original serpent in a loose open coil with its small head turned toward the viewer, readable continuous anatomy and a mint stripe; no fangs, tongue, aggression or tail-eating. Wallpaper is one broad dark-green sinusoidal ribbon flowing horizontally with a mint edge and large calm gaps.",
+      "strength": "Strongest metaphor for scrollable workspaces and sustained focus.",
+      "tradeoff": "Snakes are polarizing; test the mascot with users before making it central.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single professional landscape 3:2 dark brand identity concept board for a new community FOSS desktop operating system aimed at technically fluent Linux users, tinkerers and hackers.\nPrimary request: create one exceptional art-directed design-studio presentation, 1536x1024 landscape composition, with a large exact wordmark, original character mascot, simple brand symbol, a wide wallpaper preview in a minimal dark desktop frame, five exact labeled palette swatches, and two small one-color mark proofs. This must look like a mature desirable OS identity. The entire presentation is dark: 85-95% deep dark surfaces, careful separation of dark tones, legible light type and a controlled accent. No white or cream page background. Do not create a website or dashboard.\nComposition: large wordmark and tagline at top; substantial mascot illustration lower-left; landscape wallpaper preview right with only a thin top bar and a small 5-icon dock; five swatches at bottom with their exact hex labels; small solid monochrome mark proofs on charcoal and near-black. Generous consistent margins, optical alignment, clear hierarchy. Keep the wallpaper calmer and lower contrast than the mascot artwork so it is usable behind windows. The mascot is identity artwork, not an assistant. All requested elements should be cleanly visible.\nText: only the exact brand name, exact tagline, small label \"DESKTOP CONCEPT\", and five specified hex values. No extra headings, gibberish, fake terminal output or claimed performance metrics. No timestamps needed.\nConstraints: all-new original logo and mascot, no famous existing characters, Linux logos, Arch marks, Kali dragon motifs, hooded hacker imagery, skulls, padlocks, weapons or code rain. Hacker appeal comes from typography, disciplined geometry, material and precision. Do not use generic esports shields. Dark marks must retain readable contours. No watermarks. No AI-assistant motifs or product feature promises.\n\nBrand name (verbatim): \"Phasecoil\" (spell P-h-a-s-e-c-o-i-l). Tagline (verbatim): \"Stay in your flow.\"\nCreative territory: Fluid control. Phase + coil: a changing signal with an ordered structure. It suggests continuous motion without losing control.\nMascot: Loop, an emerald serpent folded into an open coil.\nStyle/medium: Scientific instrumentation meets fluid organic geometry; dark petrol green, mint and teal; a smooth graphic serpent with subtle screenprinted shading, clean expanded geometric sans typography. Structured and calm, not magical.\nBrand mark: One open spiral crossing a short vertical stroke to suggest a lowercase p; no closed ouroboros and no generic power-button icon.\nSubject and wallpaper: A sophisticated original serpent in a loose open coil with its small head turned toward the viewer, readable continuous anatomy and a mint stripe; no fangs, tongue, aggression or tail-eating. Wallpaper is one broad dark-green sinusoidal ribbon flowing horizontally with a mint edge and large calm gaps.\nColor palette: Trench #071512; Kelp #15332A; Plasma #63E6AF; Lagoon #2A8E98; Salt #D8F0E6. Show five flat color swatches with these exact hex labels, in this order. The last pale color is for text, not a large background. The first two dark colors should dominate the entire board. Prioritize excellent contrast and retain subtle details in the shadows."
+    },
+    {
+      "id": "08-basalhorn",
+      "name": "Basalhorn",
+      "pronunciation": "BAY-zul-horn",
+      "territory": "The brutalist workbench",
+      "tagline": "Stand firm. Build freely.",
+      "why": "Basalt + horn: grounded mass and a decisive outline. A solid visual counterweight to ephemeral, glossy software branding.",
+      "mascot": "Tor, a basalt bison with two sulfur-gold horn tips",
+      "palette": [
+        [
+          "Basalt",
+          "#12100E"
+        ],
+        [
+          "Umber",
+          "#2C251D"
+        ],
+        [
+          "Sulfur",
+          "#DDC35B"
+        ],
+        [
+          "Bronze",
+          "#937958"
+        ],
+        [
+          "Limestone",
+          "#EAE2CF"
+        ]
+      ],
+      "style": "Dark architectural brutalism, huge blocky typography, basalt and sulfur yellow, powerful geometric bison built from a handful of stone planes; dry lithographic texture. Design-school restraint rather than military or heavy-metal styling.",
+      "mark": "Two squared horns around a central vertical pillar making an abstract b, chunky and highly readable.",
+      "scene": "A strong original bison in calm side profile, broad high shoulders, two short horns with muted sulfur-gold tips, simple basalt planes and bronze shadow; no charging or angry expression. Wallpaper is a monumental abstract basalt stair and a thin yellow horizon, mostly deep near-black and umber.",
+      "strength": "Boldest silhouette and the clearest visual promise of stability.",
+      "tradeoff": "Its visual weight can feel intimidating unless spacing and wording stay generous.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single professional landscape 3:2 dark brand identity concept board for a new community FOSS desktop operating system aimed at technically fluent Linux users, tinkerers and hackers.\nPrimary request: create one exceptional art-directed design-studio presentation, 1536x1024 landscape composition, with a large exact wordmark, original character mascot, simple brand symbol, a wide wallpaper preview in a minimal dark desktop frame, five exact labeled palette swatches, and two small one-color mark proofs. This must look like a mature desirable OS identity. The entire presentation is dark: 85-95% deep dark surfaces, careful separation of dark tones, legible light type and a controlled accent. No white or cream page background. Do not create a website or dashboard.\nComposition: large wordmark and tagline at top; substantial mascot illustration lower-left; landscape wallpaper preview right with only a thin top bar and a small 5-icon dock; five swatches at bottom with their exact hex labels; small solid monochrome mark proofs on charcoal and near-black. Generous consistent margins, optical alignment, clear hierarchy. Keep the wallpaper calmer and lower contrast than the mascot artwork so it is usable behind windows. The mascot is identity artwork, not an assistant. All requested elements should be cleanly visible.\nText: only the exact brand name, exact tagline, small label \"DESKTOP CONCEPT\", and five specified hex values. No extra headings, gibberish, fake terminal output or claimed performance metrics. No timestamps needed.\nConstraints: all-new original logo and mascot, no famous existing characters, Linux logos, Arch marks, Kali dragon motifs, hooded hacker imagery, skulls, padlocks, weapons or code rain. Hacker appeal comes from typography, disciplined geometry, material and precision. Do not use generic esports shields. Dark marks must retain readable contours. No watermarks. No AI-assistant motifs or product feature promises.\n\nBrand name (verbatim): \"Basalhorn\" (spell B-a-s-a-l-h-o-r-n). Tagline (verbatim): \"Stand firm. Build freely.\"\nCreative territory: The brutalist workbench. Basalt + horn: grounded mass and a decisive outline. A solid visual counterweight to ephemeral, glossy software branding.\nMascot: Tor, a basalt bison with two sulfur-gold horn tips.\nStyle/medium: Dark architectural brutalism, huge blocky typography, basalt and sulfur yellow, powerful geometric bison built from a handful of stone planes; dry lithographic texture. Design-school restraint rather than military or heavy-metal styling.\nBrand mark: Two squared horns around a central vertical pillar making an abstract b, chunky and highly readable.\nSubject and wallpaper: A strong original bison in calm side profile, broad high shoulders, two short horns with muted sulfur-gold tips, simple basalt planes and bronze shadow; no charging or angry expression. Wallpaper is a monumental abstract basalt stair and a thin yellow horizon, mostly deep near-black and umber.\nColor palette: Basalt #12100E; Umber #2C251D; Sulfur #DDC35B; Bronze #937958; Limestone #EAE2CF. Show five flat color swatches with these exact hex labels, in this order. The last pale color is for text, not a large background. The first two dark colors should dominate the entire board. Prioritize excellent contrast and retain subtle details in the shadows."
+    },
+    {
+      "id": "09-spectrake",
+      "name": "Spectrake",
+      "pronunciation": "SPEK-trayk",
+      "territory": "The signal lab",
+      "tagline": "See the signal.",
+      "why": "Spectrum + rake: separating and collecting what matters. A technical visual language for creative people who enjoy precision.",
+      "mascot": "Prism, a dragonfly with four translucent spectral wings",
+      "palette": [
+        [
+          "Voidblue",
+          "#080D1B"
+        ],
+        [
+          "Indigo",
+          "#1C2541"
+        ],
+        [
+          "Electric",
+          "#6AB8FF"
+        ],
+        [
+          "Laser",
+          "#EF75D0"
+        ],
+        [
+          "Haze",
+          "#E5EAFA"
+        ]
+      ],
+      "style": "High-end optical-instrument and scientific-illustration identity, midnight blue with controlled electric blue and laser pink, beautifully detailed translucent dragonfly wings, clean thin-wide technical sans wordmark. Crisp precision, no lens flare, no rainbow chrome.",
+      "mark": "Four broad wing-like slits intersect a narrow central axis, creating a minimal S-shaped spectral aperture.",
+      "scene": "A dragonfly with exactly four elegant translucent wings, six delicate legs and one segmented body, symmetrically arranged at a slight angle; restrained blue-to-pink interference along wing edges only. Wallpaper is two huge overlapping optical interference bands on navy-black, extremely calm and sparse, no space stars.",
+      "strength": "Best bridge between serious technical tools and color-conscious creative work.",
+      "tradeoff": "Spectral accents must stay out of color-critical Studio Mode chrome.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single professional landscape 3:2 dark brand identity concept board for a new community FOSS desktop operating system aimed at technically fluent Linux users, tinkerers and hackers.\nPrimary request: create one exceptional art-directed design-studio presentation, 1536x1024 landscape composition, with a large exact wordmark, original character mascot, simple brand symbol, a wide wallpaper preview in a minimal dark desktop frame, five exact labeled palette swatches, and two small one-color mark proofs. This must look like a mature desirable OS identity. The entire presentation is dark: 85-95% deep dark surfaces, careful separation of dark tones, legible light type and a controlled accent. No white or cream page background. Do not create a website or dashboard.\nComposition: large wordmark and tagline at top; substantial mascot illustration lower-left; landscape wallpaper preview right with only a thin top bar and a small 5-icon dock; five swatches at bottom with their exact hex labels; small solid monochrome mark proofs on charcoal and near-black. Generous consistent margins, optical alignment, clear hierarchy. Keep the wallpaper calmer and lower contrast than the mascot artwork so it is usable behind windows. The mascot is identity artwork, not an assistant. All requested elements should be cleanly visible.\nText: only the exact brand name, exact tagline, small label \"DESKTOP CONCEPT\", and five specified hex values. No extra headings, gibberish, fake terminal output or claimed performance metrics. No timestamps needed.\nConstraints: all-new original logo and mascot, no famous existing characters, Linux logos, Arch marks, Kali dragon motifs, hooded hacker imagery, skulls, padlocks, weapons or code rain. Hacker appeal comes from typography, disciplined geometry, material and precision. Do not use generic esports shields. Dark marks must retain readable contours. No watermarks. No AI-assistant motifs or product feature promises.\n\nBrand name (verbatim): \"Spectrake\" (spell S-p-e-c-t-r-a-k-e). Tagline (verbatim): \"See the signal.\"\nCreative territory: The signal lab. Spectrum + rake: separating and collecting what matters. A technical visual language for creative people who enjoy precision.\nMascot: Prism, a dragonfly with four translucent spectral wings.\nStyle/medium: High-end optical-instrument and scientific-illustration identity, midnight blue with controlled electric blue and laser pink, beautifully detailed translucent dragonfly wings, clean thin-wide technical sans wordmark. Crisp precision, no lens flare, no rainbow chrome.\nBrand mark: Four broad wing-like slits intersect a narrow central axis, creating a minimal S-shaped spectral aperture.\nSubject and wallpaper: A dragonfly with exactly four elegant translucent wings, six delicate legs and one segmented body, symmetrically arranged at a slight angle; restrained blue-to-pink interference along wing edges only. Wallpaper is two huge overlapping optical interference bands on navy-black, extremely calm and sparse, no space stars.\nColor palette: Voidblue #080D1B; Indigo #1C2541; Electric #6AB8FF; Laser #EF75D0; Haze #E5EAFA. Show five flat color swatches with these exact hex labels, in this order. The last pale color is for text, not a large background. The first two dark colors should dominate the entire board. Prioritize excellent contrast and retain subtle details in the shadows."
+    },
+    {
+      "id": "10-cruxmolt",
+      "name": "Cruxmolt",
+      "pronunciation": "KRUKS-mohlt",
+      "territory": "The independent system",
+      "tagline": "Change on your terms.",
+      "why": "Crux + molt: keep a dependable core while replacing the outer layer. A useful metaphor for controlled updates and user-owned customization.",
+      "mascot": "Crux, an angular horseshoe crab with a single vermilion shell seam",
+      "palette": [
+        [
+          "Carbon",
+          "#130D0D"
+        ],
+        [
+          "Oxide",
+          "#302021"
+        ],
+        [
+          "Signal",
+          "#E55B50"
+        ],
+        [
+          "Ash",
+          "#A39A96"
+        ],
+        [
+          "Porcelain",
+          "#F0E6DF"
+        ]
+      ],
+      "style": "Red-and-black constructivist systems identity, hard-edged poster composition, heavy condensed grotesk typography and large purposeful negative space. Original horseshoe-crab mascot in a crisp two-tone technical engraving; no Soviet emblems or military styling.",
+      "mark": "A robust open C shell interrupted by a single offset crossbar, geometric and distinct from a power button.",
+      "scene": "An original horseshoe crab seen from a three-quarter top view, broad horseshoe carapace, subtle small eyes, anatomically coherent legs tucked beneath and one slender straight tail spine; a single vermilion seam in the shell, no weapon styling. Wallpaper is one large off-center red arc and a restrained diagonal dark-oxide slab on near-black.",
+      "strength": "Strongest rebellious FOSS attitude and a memorable controlled-change story.",
+      "tradeoff": "Red can read as an error state; reserve a separate semantic system for warnings.",
+      "prompt": "Use case: logo-brand.\nAsset type: a single professional landscape 3:2 dark brand identity concept board for a new community FOSS desktop operating system aimed at technically fluent Linux users, tinkerers and hackers.\nPrimary request: create one exceptional art-directed design-studio presentation, 1536x1024 landscape composition, with a large exact wordmark, original character mascot, simple brand symbol, a wide wallpaper preview in a minimal dark desktop frame, five exact labeled palette swatches, and two small one-color mark proofs. This must look like a mature desirable OS identity. The entire presentation is dark: 85-95% deep dark surfaces, careful separation of dark tones, legible light type and a controlled accent. No white or cream page background. Do not create a website or dashboard.\nComposition: large wordmark and tagline at top; substantial mascot illustration lower-left; landscape wallpaper preview right with only a thin top bar and a small 5-icon dock; five swatches at bottom with their exact hex labels; small solid monochrome mark proofs on charcoal and near-black. Generous consistent margins, optical alignment, clear hierarchy. Keep the wallpaper calmer and lower contrast than the mascot artwork so it is usable behind windows. The mascot is identity artwork, not an assistant. All requested elements should be cleanly visible.\nText: only the exact brand name, exact tagline, small label \"DESKTOP CONCEPT\", and five specified hex values. No extra headings, gibberish, fake terminal output or claimed performance metrics. No timestamps needed.\nConstraints: all-new original logo and mascot, no famous existing characters, Linux logos, Arch marks, Kali dragon motifs, hooded hacker imagery, skulls, padlocks, weapons or code rain. Hacker appeal comes from typography, disciplined geometry, material and precision. Do not use generic esports shields. Dark marks must retain readable contours. No watermarks. No AI-assistant motifs or product feature promises.\n\nBrand name (verbatim): \"Cruxmolt\" (spell C-r-u-x-m-o-l-t). Tagline (verbatim): \"Change on your terms.\"\nCreative territory: The independent system. Crux + molt: keep a dependable core while replacing the outer layer. A useful metaphor for controlled updates and user-owned customization.\nMascot: Crux, an angular horseshoe crab with a single vermilion shell seam.\nStyle/medium: Red-and-black constructivist systems identity, hard-edged poster composition, heavy condensed grotesk typography and large purposeful negative space. Original horseshoe-crab mascot in a crisp two-tone technical engraving; no Soviet emblems or military styling.\nBrand mark: A robust open C shell interrupted by a single offset crossbar, geometric and distinct from a power button.\nSubject and wallpaper: An original horseshoe crab seen from a three-quarter top view, broad horseshoe carapace, subtle small eyes, anatomically coherent legs tucked beneath and one slender straight tail spine; a single vermilion seam in the shell, no weapon styling. Wallpaper is one large off-center red arc and a restrained diagonal dark-oxide slab on near-black.\nColor palette: Carbon #130D0D; Oxide #302021; Signal #E55B50; Ash #A39A96; Porcelain #F0E6DF. Show five flat color swatches with these exact hex labels, in this order. The last pale color is for text, not a large background. The first two dark colors should dominate the entire board. Prioritize excellent contrast and retain subtle details in the shadows."
+    }
+  ]
+}

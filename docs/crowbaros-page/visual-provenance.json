@@ -1,0 +1,126 @@
+{
+  "sourceProvenance": "../branding/crowbaros-brand-kit/source/provenance.json",
+  "operation": "Format compression only; native dimensions and transparent alpha retained. No new generated artwork.",
+  "visuals": [
+    {
+      "source": "branding/crowbaros-brand-kit/mascot/crow-master.png",
+      "encoding": "WebP",
+      "quality": 88,
+      "width": 1024,
+      "height": 1536,
+      "bytes": 333308
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/mockups/workspace-1600x900.png",
+      "encoding": "WebP",
+      "quality": 92,
+      "width": 1600,
+      "height": 900,
+      "bytes": 111260
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/wallpapers/signal-feather.png",
+      "encoding": "WebP",
+      "quality": 88,
+      "width": 1672,
+      "height": 941,
+      "bytes": 287920
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/mockups/zen-1600x900.png",
+      "encoding": "WebP",
+      "quality": 92,
+      "width": 1600,
+      "height": 900,
+      "bytes": 111054
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/mockups/settings-1600x900.png",
+      "encoding": "WebP",
+      "quality": 92,
+      "width": 1600,
+      "height": 900,
+      "bytes": 157400
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/mockups/settings-light-1600x900.png",
+      "encoding": "WebP",
+      "quality": 92,
+      "width": 1600,
+      "height": 900,
+      "bytes": 158638
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/mockups/settings-paper-1600x900.png",
+      "encoding": "WebP",
+      "quality": 92,
+      "width": 1600,
+      "height": 900,
+      "bytes": 157030
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/mockups/studio-neutral-1600x900.png",
+      "encoding": "WebP",
+      "quality": 92,
+      "width": 1600,
+      "height": 900,
+      "bytes": 156102
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/mockups/lock-1600x900.png",
+      "encoding": "WebP",
+      "quality": 92,
+      "width": 1600,
+      "height": 900,
+      "bytes": 95548
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/mockups/boot-1600x900.png",
+      "encoding": "WebP",
+      "quality": 92,
+      "width": 1600,
+      "height": 900,
+      "bytes": 10512
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/wallpapers/nightwatch.png",
+      "encoding": "WebP",
+      "quality": 88,
+      "width": 1672,
+      "height": 941,
+      "bytes": 83678
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/wallpapers/quiet-signal-4k.png",
+      "encoding": "WebP",
+      "quality": 88,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 29306
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/wallpapers/quiet-signal-ultrawide.png",
+      "encoding": "WebP",
+      "quality": 88,
+      "width": 3440,
+      "height": 1440,
+      "bytes": 20166
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/wallpapers/crowbaros-signature-4k.png",
+      "encoding": "WebP",
+      "quality": 88,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 47816
+    },
+    {
+      "source": "branding/crowbaros-brand-kit/wallpapers/signal-feather-mobile.png",
+      "encoding": "WebP",
+      "quality": 88,
+      "width": 941,
+      "height": 1672,
+      "bytes": 239574
+    }
+  ]
+}

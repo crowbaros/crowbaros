@@ -1,0 +1,85 @@
+{
+  "skipLinkFocus": true,
+  "sourceExact": true,
+  "packageRows": 10,
+  "appRows": 5,
+  "searchJump": "#hardware-details",
+  "searchEmpty": true,
+  "sceneNeutral": true,
+  "dialog": true,
+  "zen": true,
+  "logo": true,
+  "pipeline": true,
+  "packageFilter": true,
+  "wallpaper": true,
+  "reference": true,
+  "diagrams": true,
+  "sourceDownload": true,
+  "embeddedAssets": [
+    {
+      "file": "branding/crowbaros-brand-kit/logos/svg/crowbaros-horizontal-dark.svg",
+      "bytes": 14465
+    },
+    {
+      "file": "branding/crowbaros-brand-kit/wallpapers/signal-feather-mobile.png",
+      "bytes": 239574
+    },
+    {
+      "file": "branding/crowbaros-brand-kit/DESIGN.md",
+      "bytes": 19375
+    },
+    {
+      "file": "branding/crowbaros-brand-kit/tokens/crowbaros.tokens.json",
+      "bytes": 760
+    },
+    {
+      "file": "branding/crowbaros-brand-kit/tokens/crowbaros.css",
+      "bytes": 327
+    },
+    {
+      "file": "branding/crowbaros-brand-kit/fonts/Manrope-OFL.txt",
+      "bytes": 4387
+    },
+    {
+      "file": "branding/crowbaros-brand-kit/fonts/IBMPlexMono-OFL.txt",
+      "bytes": 4363
+    },
+    {
+      "file": "branding/crowbaros-brand-kit/asset-manifest.json",
+      "bytes": 21435
+    }
+  ],
+  "textAndLogoDownloadsExact": true,
+  "noArchiveOrPdf": true,
+  "htmlBytes": 3579745,
+  "under5MiB": true,
+  "typeSizes": {
+    "body": "16px",
+    "h1": "64px",
+    "h2": "42px",
+    "h3": "23px"
+  },
+  "allEightScenes": true,
+  "allSixWallpapers": true,
+  "previewDownload": true,
+  "viewports": [
+    {
+      "width": 1280,
+      "scrollWidth": 1280
+    },
+    {
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "width": 360,
+      "scrollWidth": 360
+    }
+  ],
+  "mobileNav": true,
+  "missingImages": [],
+  "unexpectedRequests": [],
+  "isolatedFileOnly": true,
+  "offline": true,
+  "errors": []
+}

@@ -1,0 +1,20 @@
+{
+  "fedora_release": "45",
+  "image": "Fedora-Cloud-Base-Generic-45-1.4.x86_64.qcow2",
+  "image_sha256": "50bdc5e70f6a24f540932d15411c1c6ae9fcfa40fb990d876d83c5cc823b2ad0",
+  "image_directory": "https://dl.fedoraproject.org/pub/fedora/linux/releases/45/Cloud/x86_64/images",
+  "checksum": "Fedora-Cloud-45-1.4-x86_64-CHECKSUM",
+  "signing_fingerprint": "4F50A6114CD5C6976A7F1179655A4B02F577861E",
+  "libvirt_uri": "qemu:///session",
+  "firmware_code": "/usr/share/edk2/x64/OVMF_CODE.4m.fd",
+  "firmware_vars": "/usr/share/edk2/x64/OVMF_VARS.4m.fd",
+  "render_node": "/dev/dri/by-path/pci-0000:00:02.0-render",
+  "vulkan_icd": "/usr/share/vulkan/icd.d/intel_icd.json",
+  "venus_enabled": false,
+  "drm_native_context_enabled": false,
+  "gpui_vulkan_driver": "system",
+  "guests": {
+    "build": {"name": "crowbaros-build", "memory_mib": 12288, "vcpus": 8, "disk_gib": 120, "ssh_port": 22220},
+    "test": {"name": "crowbaros-test", "memory_mib": 6144, "vcpus": 4, "disk_gib": 64, "ssh_port": 22221}
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "skipLinkFocus": true,
+  "sourceExact": true,
+  "packageRows": 10,
+  "appRows": 5,
+  "searchJump": "#hardware-details",
+  "searchEmpty": true,
+  "sceneNeutral": true,
+  "dialog": true,
+  "zen": true,
+  "logo": true,
+  "pipeline": true,
+  "packageFilter": true,
+  "wallpaper": true,
+  "reference": true,
+  "diagrams": true,
+  "sourceDownload": true,
+  "embeddedAssets": [
+    {
+      "file": "branding/corvidos-brand-kit/logos/svg/corvidos-horizontal-dark.svg",
+      "bytes": 10951
+    },
+    {
+      "file": "branding/corvidos-brand-kit/wallpapers/signal-feather-mobile.png",
+      "bytes": 239574
+    },
+    {
+      "file": "branding/corvidos-brand-kit/DESIGN.md",
+      "bytes": 18756
+    },
+    {
+      "file": "branding/corvidos-brand-kit/tokens/corvidos.tokens.json",
+      "bytes": 759
+    },
+    {
+      "file": "branding/corvidos-brand-kit/tokens/corvidos.css",
+      "bytes": 317
+    },
+    {
+      "file": "branding/corvidos-brand-kit/fonts/Manrope-OFL.txt",
+      "bytes": 4387
+    },
+    {
+      "file": "branding/corvidos-brand-kit/fonts/IBMPlexMono-OFL.txt",
+      "bytes": 4456
+    },
+    {
+      "file": "branding/corvidos-brand-kit/asset-manifest.json",
+      "bytes": 21004
+    }
+  ],
+  "textAndLogoDownloadsExact": true,
+  "noArchiveOrPdf": true,
+  "htmlBytes": 3514870,
+  "under5MiB": true,
+  "typeSizes": {
+    "body": "16px",
+    "h1": "64px",
+    "h2": "42px",
+    "h3": "23px"
+  },
+  "allEightScenes": true,
+  "allSixWallpapers": true,
+  "previewDownload": true,
+  "viewports": [
+    {
+      "width": 1280,
+      "scrollWidth": 1280
+    },
+    {
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "width": 360,
+      "scrollWidth": 360
+    }
+  ],
+  "mobileNav": true,
+  "missingImages": [],
+  "unexpectedRequests": [],
+  "isolatedFileOnly": true,
+  "offline": true,
+  "errors": []
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "width": 1440,
+    "scrollWidth": 1440,
+    "brokenImages": []
+  },
+  {
+    "width": 390,
+    "scrollWidth": 390,
+    "brokenImages": []
+  },
+  {
+    "light": "desktop light"
+  },
+  {
+    "studio": "true"
+  },
+  {
+    "zenBars": 0,
+    "scene": "One document. Your full attention."
+  }
+]

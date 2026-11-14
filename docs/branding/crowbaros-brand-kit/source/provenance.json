@@ -1,0 +1,51 @@
+{
+  "created": "2026-11-13",
+  "mode": "Built-in image_gen, reference-guided generation",
+  "reference": "source/references/cyan-crow-name-studies.png",
+  "rasters": [
+    {
+      "id": "crow-master",
+      "path": "mascot/crow-master.png",
+      "transparent_background": true,
+      "prompt": "CorvidOS final identity artwork. Use the supplied reference for the approved engraved black crow and dark cyan palette, but DO NOT reproduce the board layout or any text. Palette: Void #080D12, Abyss #17212B, Ice #49D7E8, Steel #6D8191, Frost #D8E5EC. Expert art direction: precise engraved feather details, matte blue-black darkness, restrained cyan, quiet negative space. No red, purple, green, code rain, robots, hooded figures, skulls, fantasy armor, UI, typography, logos or watermarks.\nCreate a high-resolution transparent-background PNG cutout of the same full-body crow from the reference, facing right in three-quarter profile, folded wings, intelligent natural eye, natural long beak, two anatomically correct feet gripping a small rough slate rock. Full bird from head to tail and full little rock visible, ample transparent safety margin, centered portrait composition. Black feathers with intricate ice-gray engraving, ONE broad cyan feather slash on the folded wing, very subtle cyan edge light. Preserve the original crow's silhouette and dignified natural character. No backdrop, no shadow ground beyond the rock, native transparent alpha. Do not crop tail, claws or rock. 1024x1536 portrait.",
+      "original_generator_file": "/home/jasona/.codex/generated_images/01a1d64f-fadd-78a0-9aa7-3346122cf219/exec-589cfab8-d497-4f44-919d-aa16b28f8b9a.png"
+    },
+    {
+      "id": "signal-feather",
+      "path": "wallpapers/signal-feather.png",
+      "transparent_background": false,
+      "prompt": "CorvidOS final identity artwork. Use the supplied reference for the approved engraved black crow and dark cyan palette, but DO NOT reproduce the board layout or any text. Palette: Void #080D12, Abyss #17212B, Ice #49D7E8, Steel #6D8191, Frost #D8E5EC. Expert art direction: precise engraved feather details, matte blue-black darkness, restrained cyan, quiet negative space. No red, purple, green, code rain, robots, hooded figures, skulls, fantasy armor, UI, typography, logos or watermarks.\nCreate a clean textless desktop wallpaper, 16:9 wide landscape, ideally 2560x1440. Extreme macro of the crow's overlapping black wing feathers. Individual vane lines engraved in blue-gray, one long restrained cyan feather cuts diagonally from the lower center toward the upper right. This is material photography / engraving, not a drawing of a whole bird. The LEFT HALF must be mostly near-black broad soft feather shapes, no bright cyan there, calm space for desktop windows. Cyan and fine detail concentrated in right third. High-end tactile dark feather material, beautifully controlled shadows. Full-bleed wallpaper only.",
+      "original_generator_file": "/home/jasona/.codex/generated_images/01a1d64f-fadd-78a0-9aa7-3346122cf219/exec-9a396e6f-31c1-422e-aded-64c4f2ba5e17.png"
+    },
+    {
+      "id": "nightwatch",
+      "path": "wallpapers/nightwatch.png",
+      "transparent_background": false,
+      "prompt": "CorvidOS final identity artwork. Use the supplied reference for the approved engraved black crow and dark cyan palette, but DO NOT reproduce the board layout or any text. Palette: Void #080D12, Abyss #17212B, Ice #49D7E8, Steel #6D8191, Frost #D8E5EC. Expert art direction: precise engraved feather details, matte blue-black darkness, restrained cyan, quiet negative space. No red, purple, green, code rain, robots, hooded figures, skulls, fantasy armor, UI, typography, logos or watermarks.\nCreate a clean textless desktop wallpaper, 16:9 wide landscape, ideally 2560x1440. The SAME natural engraved crow from the reference stands on a low dark slate ledge in the rightmost quarter of the frame, facing right, complete silhouette visible, one cyan feather slash. Crow from head to feet takes about 65% frame height. Elegant sparse background Void blue-black, a subtle horizonless depth in Abyss. LEFT TWO THIRDS are empty dark negative space for windows; no lines, scenery, mountains, stars or clutter. Crisp engraving on the crow and dark understated rock. Full-bleed wallpaper only.",
+      "original_generator_file": "/home/jasona/.codex/generated_images/01a1d64f-fadd-78a0-9aa7-3346122cf219/exec-c905eb76-70af-4b77-9e33-ce20ad4dac97.png"
+    },
+    {
+      "id": "signal-feather-mobile",
+      "path": "wallpapers/signal-feather-mobile.png",
+      "transparent_background": false,
+      "prompt": "CorvidOS final identity artwork. Use the supplied reference for the approved engraved black crow and dark cyan palette, but DO NOT reproduce the board layout or any text. Palette: Void #080D12, Abyss #17212B, Ice #49D7E8, Steel #6D8191, Frost #D8E5EC. Expert art direction: precise engraved feather details, matte blue-black darkness, restrained cyan, quiet negative space. No red, purple, green, code rain, robots, hooded figures, skulls, fantasy armor, UI, typography, logos or watermarks.\nCreate a clean textless portrait PHONE WALLPAPER, 9:16, ideally 1440x2560. Extreme macro of black crow wing feathers, engineered organic feather structure with fine engraved blue-gray veins. A single cyan feather sweeps diagonally across the LOWER HALF, from lower-left toward center-right. Upper 45% mostly uniform quiet Void blue-black for a clock and status controls. No visible entire bird, only feather material. Restrained luminous cyan edge rather than overblown neon. Full-bleed portrait wallpaper only.",
+      "original_generator_file": "/home/jasona/.codex/generated_images/01a1d64f-fadd-78a0-9aa7-3346122cf219/exec-2da815a3-c073-44df-8c95-b3666370d0cc.png"
+    }
+  ],
+  "native_artwork": {
+    "logos": "source/build_identity.py: original simplified crow/slash geometry and outlined Manrope glyphs",
+    "wallpapers": "source/build_identity.py: sparse vector slash geometry",
+    "mockups": "mockups/desktop.html, desktop.css, desktop.js: local Chromium screenshots",
+    "social": "source/brand-layouts.html: typeset composition using supplied logo and mascot"
+  },
+  "current_brand": "CrowbarOS",
+  "brand_changes": [
+    {
+      "date": "2026-11-14",
+      "from": "CorvidOS",
+      "to": "CrowbarOS",
+      "authorized_by": "User",
+      "changes": "Regenerated outlined wordmarks and typeset assets; retained approved crow and textless wallpapers. Original generation prompts are preserved verbatim."
+    }
+  ]
+}

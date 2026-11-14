@@ -1,0 +1,22 @@
+[package]
+name = "crowbaros-gpui-probe"
+version = "0.1.1"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "CrowbarOS native Wayland/GPUI integration probe"
+
+[dependencies]
+gpui = { version = "=0.2.2", default-features = false, features = ["wayland"] }
+env_logger = "0.11"
+log = "0.4"
+# GPUI 0.2.2 -> zed-async-tar -> xattr 0.2.3 references ENOATTR, removed in
+# libc 0.2.190. This pins Rust FFI bindings, not Fedora's system glibc.
+libc = "=0.2.189"
+
+[profile.release]
+opt-level = 2
+debug = 0
+lto = false
+codegen-units = 16
+

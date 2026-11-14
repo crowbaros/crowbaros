@@ -1,0 +1,12 @@
+:root {
+  --crowbar-void: #080D12;
+  --crowbar-abyss: #17212B;
+  --crowbar-ice: #49D7E8;
+  --crowbar-steel: #6D8191;
+  --crowbar-frost: #D8E5EC;
+  --crowbar-muted: #A8BAC7;
+  --crowbar-ui: "Manrope", sans-serif;
+  --crowbar-code: "IBM Plex Mono", monospace;
+  --crowbar-radius-window: 16px;
+  --crowbar-radius-control: 10px;
+}

@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "docs/corvidos-page/page.template.html"
+        ],
+        "createdAt": "2026-11-13T20:54:02.160Z",
+        "reason": "Agent verified false positive: this source template has a CSS placeholder populated by build.mjs. Chromium measured body 16px and headings 64px, 42px, 23px in the rendered page; checks.json and the finish review confirm the hierarchy."
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "docs/crowbaros-page/page.template.html"
+        ],
+        "createdAt": "2026-11-14T16:13:01.423Z",
+        "reason": "Agent verified: renamed source template contains a CSS placeholder filled by build.mjs. Existing rendered hierarchy remains body16px and headings64/42/23px; this carries forward the prior template-only false-positive exception."
+      }
+    ]
+  }
+}

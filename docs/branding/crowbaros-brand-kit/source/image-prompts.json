@@ -1,0 +1,31 @@
+{
+  "generator": "Built-in image_gen",
+  "mode": "edit / reference-guided generation",
+  "reference": "/home/jasona/coding/my-linux/docs/branding/round-03-cyan-crow/cyan-crow-name-studies.png",
+  "jobs": [
+    {
+      "id": "crow-master",
+      "folder": "mascot",
+      "transparent": true,
+      "prompt": "CorvidOS final identity artwork. Use the supplied reference for the approved engraved black crow and dark cyan palette, but DO NOT reproduce the board layout or any text. Palette: Void #080D12, Abyss #17212B, Ice #49D7E8, Steel #6D8191, Frost #D8E5EC. Expert art direction: precise engraved feather details, matte blue-black darkness, restrained cyan, quiet negative space. No red, purple, green, code rain, robots, hooded figures, skulls, fantasy armor, UI, typography, logos or watermarks.\nCreate a high-resolution transparent-background PNG cutout of the same full-body crow from the reference, facing right in three-quarter profile, folded wings, intelligent natural eye, natural long beak, two anatomically correct feet gripping a small rough slate rock. Full bird from head to tail and full little rock visible, ample transparent safety margin, centered portrait composition. Black feathers with intricate ice-gray engraving, ONE broad cyan feather slash on the folded wing, very subtle cyan edge light. Preserve the original crow's silhouette and dignified natural character. No backdrop, no shadow ground beyond the rock, native transparent alpha. Do not crop tail, claws or rock. 1024x1536 portrait."
+    },
+    {
+      "id": "signal-feather",
+      "folder": "wallpapers",
+      "transparent": false,
+      "prompt": "CorvidOS final identity artwork. Use the supplied reference for the approved engraved black crow and dark cyan palette, but DO NOT reproduce the board layout or any text. Palette: Void #080D12, Abyss #17212B, Ice #49D7E8, Steel #6D8191, Frost #D8E5EC. Expert art direction: precise engraved feather details, matte blue-black darkness, restrained cyan, quiet negative space. No red, purple, green, code rain, robots, hooded figures, skulls, fantasy armor, UI, typography, logos or watermarks.\nCreate a clean textless desktop wallpaper, 16:9 wide landscape, ideally 2560x1440. Extreme macro of the crow's overlapping black wing feathers. Individual vane lines engraved in blue-gray, one long restrained cyan feather cuts diagonally from the lower center toward the upper right. This is material photography / engraving, not a drawing of a whole bird. The LEFT HALF must be mostly near-black broad soft feather shapes, no bright cyan there, calm space for desktop windows. Cyan and fine detail concentrated in right third. High-end tactile dark feather material, beautifully controlled shadows. Full-bleed wallpaper only."
+    },
+    {
+      "id": "nightwatch",
+      "folder": "wallpapers",
+      "transparent": false,
+      "prompt": "CorvidOS final identity artwork. Use the supplied reference for the approved engraved black crow and dark cyan palette, but DO NOT reproduce the board layout or any text. Palette: Void #080D12, Abyss #17212B, Ice #49D7E8, Steel #6D8191, Frost #D8E5EC. Expert art direction: precise engraved feather details, matte blue-black darkness, restrained cyan, quiet negative space. No red, purple, green, code rain, robots, hooded figures, skulls, fantasy armor, UI, typography, logos or watermarks.\nCreate a clean textless desktop wallpaper, 16:9 wide landscape, ideally 2560x1440. The SAME natural engraved crow from the reference stands on a low dark slate ledge in the rightmost quarter of the frame, facing right, complete silhouette visible, one cyan feather slash. Crow from head to feet takes about 65% frame height. Elegant sparse background Void blue-black, a subtle horizonless depth in Abyss. LEFT TWO THIRDS are empty dark negative space for windows; no lines, scenery, mountains, stars or clutter. Crisp engraving on the crow and dark understated rock. Full-bleed wallpaper only."
+    },
+    {
+      "id": "signal-feather-mobile",
+      "folder": "wallpapers",
+      "transparent": false,
+      "prompt": "CorvidOS final identity artwork. Use the supplied reference for the approved engraved black crow and dark cyan palette, but DO NOT reproduce the board layout or any text. Palette: Void #080D12, Abyss #17212B, Ice #49D7E8, Steel #6D8191, Frost #D8E5EC. Expert art direction: precise engraved feather details, matte blue-black darkness, restrained cyan, quiet negative space. No red, purple, green, code rain, robots, hooded figures, skulls, fantasy armor, UI, typography, logos or watermarks.\nCreate a clean textless portrait PHONE WALLPAPER, 9:16, ideally 1440x2560. Extreme macro of black crow wing feathers, engineered organic feather structure with fine engraved blue-gray veins. A single cyan feather sweeps diagonally across the LOWER HALF, from lower-left toward center-right. Upper 45% mostly uniform quiet Void blue-black for a clock and status controls. No visible entire bird, only feather material. Restrained luminous cyan edge rather than overblown neon. Full-bleed portrait wallpaper only."
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "brand": "CrowbarOS",
+  "version": "1.0",
+  "palette": {
+    "void": "#080D12",
+    "abyss": "#17212B",
+    "ice": "#49D7E8",
+    "steel": "#6D8191",
+    "frost": "#D8E5EC"
+  },
+  "semantic": {
+    "background": "{void}",
+    "surface": "{abyss}",
+    "text": "{frost}",
+    "accent": "{ice}",
+    "decorative": "{steel}",
+    "secondaryText": "#A8BAC7",
+    "neutralStudioBackground": "#111111",
+    "neutralStudioSurface": "#212121",
+    "neutralStudioText": "#E5E5E5"
+  },
+  "typography": {
+    "ui": "Manrope",
+    "wordmark": "Manrope 700 with custom spacing; use outlined master",
+    "code": "IBM Plex Mono"
+  },
+  "radii": {
+    "window": 16,
+    "control": 10
+  },
+  "spacing": [
+    4,
+    8,
+    12,
+    16,
+    24,
+    32,
+    48,
+    64
+  ]
+}

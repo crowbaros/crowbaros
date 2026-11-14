@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=CrowbarOS GPUI Probe
+Comment=Native Wayland and GPUI integration validation
+Exec=crowbaros-gpui-probe
+Icon=com.crowbaros.GpuiProbe
+Terminal=false
+Categories=Development;
+StartupWMClass=com.crowbaros.GpuiProbe

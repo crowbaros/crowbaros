@@ -1,0 +1,584 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-13T20:04:36.668103+00:00",
+  "title": "Design System: CrowbarOS",
+  "extensions": {
+    "colorMeta": {
+      "void": {
+        "role": "neutral",
+        "displayName": "Void",
+        "tonalRamp": [
+          "oklch(15.000% 0.013538 248.043)",
+          "oklch(26.429% 0.013538 248.043)",
+          "oklch(37.857% 0.013538 248.043)",
+          "oklch(49.286% 0.013538 248.043)",
+          "oklch(60.714% 0.013538 248.043)",
+          "oklch(72.143% 0.013538 248.043)",
+          "oklch(83.571% 0.013538 248.043)",
+          "oklch(95.000% 0.013538 248.043)"
+        ]
+      },
+      "abyss": {
+        "role": "neutral",
+        "displayName": "Abyss",
+        "tonalRamp": [
+          "oklch(15.000% 0.023967 248.842)",
+          "oklch(26.429% 0.023967 248.842)",
+          "oklch(37.857% 0.023967 248.842)",
+          "oklch(49.286% 0.023967 248.842)",
+          "oklch(60.714% 0.023967 248.842)",
+          "oklch(72.143% 0.023967 248.842)",
+          "oklch(83.571% 0.023967 248.842)",
+          "oklch(95.000% 0.023967 248.842)"
+        ]
+      },
+      "ice": {
+        "role": "primary",
+        "displayName": "Ice",
+        "tonalRamp": [
+          "oklch(15.000% 0.120393 206.582)",
+          "oklch(26.429% 0.120393 206.582)",
+          "oklch(37.857% 0.120393 206.582)",
+          "oklch(49.286% 0.120393 206.582)",
+          "oklch(60.714% 0.120393 206.582)",
+          "oklch(72.143% 0.120393 206.582)",
+          "oklch(83.571% 0.120393 206.582)",
+          "oklch(95.000% 0.120393 206.582)"
+        ]
+      },
+      "steel": {
+        "role": "neutral",
+        "displayName": "Steel",
+        "tonalRamp": [
+          "oklch(15.000% 0.033860 242.358)",
+          "oklch(26.429% 0.033860 242.358)",
+          "oklch(37.857% 0.033860 242.358)",
+          "oklch(49.286% 0.033860 242.358)",
+          "oklch(60.714% 0.033860 242.358)",
+          "oklch(72.143% 0.033860 242.358)",
+          "oklch(83.571% 0.033860 242.358)",
+          "oklch(95.000% 0.033860 242.358)"
+        ]
+      },
+      "frost": {
+        "role": "neutral",
+        "displayName": "Frost",
+        "tonalRamp": [
+          "oklch(15.000% 0.016911 230.921)",
+          "oklch(26.429% 0.016911 230.921)",
+          "oklch(37.857% 0.016911 230.921)",
+          "oklch(49.286% 0.016911 230.921)",
+          "oklch(60.714% 0.016911 230.921)",
+          "oklch(72.143% 0.016911 230.921)",
+          "oklch(83.571% 0.016911 230.921)",
+          "oklch(95.000% 0.016911 230.921)"
+        ]
+      },
+      "secondary-text": {
+        "role": "neutral",
+        "displayName": "Secondary Text",
+        "tonalRamp": [
+          "oklch(15.000% 0.027203 239.182)",
+          "oklch(26.429% 0.027203 239.182)",
+          "oklch(37.857% 0.027203 239.182)",
+          "oklch(49.286% 0.027203 239.182)",
+          "oklch(60.714% 0.027203 239.182)",
+          "oklch(72.143% 0.027203 239.182)",
+          "oklch(83.571% 0.027203 239.182)",
+          "oklch(95.000% 0.027203 239.182)"
+        ]
+      },
+      "dark-line": {
+        "role": "neutral",
+        "displayName": "Dark Line",
+        "tonalRamp": [
+          "oklch(15.000% 0.033731 240.610)",
+          "oklch(26.429% 0.033731 240.610)",
+          "oklch(37.857% 0.033731 240.610)",
+          "oklch(49.286% 0.033731 240.610)",
+          "oklch(60.714% 0.033731 240.610)",
+          "oklch(72.143% 0.033731 240.610)",
+          "oklch(83.571% 0.033731 240.610)",
+          "oklch(95.000% 0.033731 240.610)"
+        ]
+      },
+      "recessed-surface": {
+        "role": "neutral",
+        "displayName": "Recessed Surface",
+        "tonalRamp": [
+          "oklch(15.000% 0.022978 246.260)",
+          "oklch(26.429% 0.022978 246.260)",
+          "oklch(37.857% 0.022978 246.260)",
+          "oklch(49.286% 0.022978 246.260)",
+          "oklch(60.714% 0.022978 246.260)",
+          "oklch(72.143% 0.022978 246.260)",
+          "oklch(83.571% 0.022978 246.260)",
+          "oklch(95.000% 0.022978 246.260)"
+        ]
+      },
+      "selected-surface": {
+        "role": "neutral",
+        "displayName": "Selected Surface",
+        "tonalRamp": [
+          "oklch(15.000% 0.035131 236.378)",
+          "oklch(26.429% 0.035131 236.378)",
+          "oklch(37.857% 0.035131 236.378)",
+          "oklch(49.286% 0.035131 236.378)",
+          "oklch(60.714% 0.035131 236.378)",
+          "oklch(72.143% 0.035131 236.378)",
+          "oklch(83.571% 0.035131 236.378)",
+          "oklch(95.000% 0.035131 236.378)"
+        ]
+      },
+      "files-selected": {
+        "role": "neutral",
+        "displayName": "Files Selected",
+        "tonalRamp": [
+          "oklch(15.000% 0.034290 237.598)",
+          "oklch(26.429% 0.034290 237.598)",
+          "oklch(37.857% 0.034290 237.598)",
+          "oklch(49.286% 0.034290 237.598)",
+          "oklch(60.714% 0.034290 237.598)",
+          "oklch(72.143% 0.034290 237.598)",
+          "oklch(83.571% 0.034290 237.598)",
+          "oklch(95.000% 0.034290 237.598)"
+        ]
+      },
+      "light-surface": {
+        "role": "neutral",
+        "displayName": "Light Surface",
+        "tonalRamp": [
+          "oklch(15.000% 0.007593 228.855)",
+          "oklch(26.429% 0.007593 228.855)",
+          "oklch(37.857% 0.007593 228.855)",
+          "oklch(49.286% 0.007593 228.855)",
+          "oklch(60.714% 0.007593 228.855)",
+          "oklch(72.143% 0.007593 228.855)",
+          "oklch(83.571% 0.007593 228.855)",
+          "oklch(95.000% 0.007593 228.855)"
+        ]
+      },
+      "light-secondary-text": {
+        "role": "neutral",
+        "displayName": "Light Secondary Text",
+        "tonalRamp": [
+          "oklch(15.000% 0.030951 236.185)",
+          "oklch(26.429% 0.030951 236.185)",
+          "oklch(37.857% 0.030951 236.185)",
+          "oklch(49.286% 0.030951 236.185)",
+          "oklch(60.714% 0.030951 236.185)",
+          "oklch(72.143% 0.030951 236.185)",
+          "oklch(83.571% 0.030951 236.185)",
+          "oklch(95.000% 0.030951 236.185)"
+        ]
+      },
+      "light-line": {
+        "role": "neutral",
+        "displayName": "Light Line",
+        "tonalRamp": [
+          "oklch(15.000% 0.022578 235.074)",
+          "oklch(26.429% 0.022578 235.074)",
+          "oklch(37.857% 0.022578 235.074)",
+          "oklch(49.286% 0.022578 235.074)",
+          "oklch(60.714% 0.022578 235.074)",
+          "oklch(72.143% 0.022578 235.074)",
+          "oklch(83.571% 0.022578 235.074)",
+          "oklch(95.000% 0.022578 235.074)"
+        ]
+      },
+      "paper-surface": {
+        "role": "neutral",
+        "displayName": "Paper Surface",
+        "tonalRamp": [
+          "oklch(15.000% 0.017794 81.330)",
+          "oklch(26.429% 0.017794 81.330)",
+          "oklch(37.857% 0.017794 81.330)",
+          "oklch(49.286% 0.017794 81.330)",
+          "oklch(60.714% 0.017794 81.330)",
+          "oklch(72.143% 0.017794 81.330)",
+          "oklch(83.571% 0.017794 81.330)",
+          "oklch(95.000% 0.017794 81.330)"
+        ]
+      },
+      "paper-text": {
+        "role": "neutral",
+        "displayName": "Paper Text",
+        "tonalRamp": [
+          "oklch(15.000% 0.006382 78.203)",
+          "oklch(26.429% 0.006382 78.203)",
+          "oklch(37.857% 0.006382 78.203)",
+          "oklch(49.286% 0.006382 78.203)",
+          "oklch(60.714% 0.006382 78.203)",
+          "oklch(72.143% 0.006382 78.203)",
+          "oklch(83.571% 0.006382 78.203)",
+          "oklch(95.000% 0.006382 78.203)"
+        ]
+      },
+      "paper-secondary-text": {
+        "role": "neutral",
+        "displayName": "Paper Secondary Text",
+        "tonalRamp": [
+          "oklch(15.000% 0.019027 82.745)",
+          "oklch(26.429% 0.019027 82.745)",
+          "oklch(37.857% 0.019027 82.745)",
+          "oklch(49.286% 0.019027 82.745)",
+          "oklch(60.714% 0.019027 82.745)",
+          "oklch(72.143% 0.019027 82.745)",
+          "oklch(83.571% 0.019027 82.745)",
+          "oklch(95.000% 0.019027 82.745)"
+        ]
+      },
+      "paper-line": {
+        "role": "neutral",
+        "displayName": "Paper Line",
+        "tonalRamp": [
+          "oklch(15.000% 0.024512 82.104)",
+          "oklch(26.429% 0.024512 82.104)",
+          "oklch(37.857% 0.024512 82.104)",
+          "oklch(49.286% 0.024512 82.104)",
+          "oklch(60.714% 0.024512 82.104)",
+          "oklch(72.143% 0.024512 82.104)",
+          "oklch(83.571% 0.024512 82.104)",
+          "oklch(95.000% 0.024512 82.104)"
+        ]
+      },
+      "studio-background": {
+        "role": "neutral",
+        "displayName": "Studio Background",
+        "tonalRamp": [
+          "oklch(15.000% 0.000000 0.000)",
+          "oklch(26.429% 0.000000 0.000)",
+          "oklch(37.857% 0.000000 0.000)",
+          "oklch(49.286% 0.000000 0.000)",
+          "oklch(60.714% 0.000000 0.000)",
+          "oklch(72.143% 0.000000 0.000)",
+          "oklch(83.571% 0.000000 0.000)",
+          "oklch(95.000% 0.000000 0.000)"
+        ]
+      },
+      "studio-surface": {
+        "role": "neutral",
+        "displayName": "Studio Surface",
+        "tonalRamp": [
+          "oklch(15.000% 0.000000 0.000)",
+          "oklch(26.429% 0.000000 0.000)",
+          "oklch(37.857% 0.000000 0.000)",
+          "oklch(49.286% 0.000000 0.000)",
+          "oklch(60.714% 0.000000 0.000)",
+          "oklch(72.143% 0.000000 0.000)",
+          "oklch(83.571% 0.000000 0.000)",
+          "oklch(95.000% 0.000000 0.000)"
+        ]
+      },
+      "studio-text": {
+        "role": "neutral",
+        "displayName": "Studio Text",
+        "tonalRamp": [
+          "oklch(15.000% 0.000000 0.000)",
+          "oklch(26.429% 0.000000 0.000)",
+          "oklch(37.857% 0.000000 0.000)",
+          "oklch(49.286% 0.000000 0.000)",
+          "oklch(60.714% 0.000000 0.000)",
+          "oklch(72.143% 0.000000 0.000)",
+          "oklch(83.571% 0.000000 0.000)",
+          "oklch(95.000% 0.000000 0.000)"
+        ]
+      },
+      "studio-secondary-text": {
+        "role": "neutral",
+        "displayName": "Studio Secondary Text",
+        "tonalRamp": [
+          "oklch(15.000% 0.000000 0.000)",
+          "oklch(26.429% 0.000000 0.000)",
+          "oklch(37.857% 0.000000 0.000)",
+          "oklch(49.286% 0.000000 0.000)",
+          "oklch(60.714% 0.000000 0.000)",
+          "oklch(72.143% 0.000000 0.000)",
+          "oklch(83.571% 0.000000 0.000)",
+          "oklch(95.000% 0.000000 0.000)"
+        ]
+      },
+      "studio-line": {
+        "role": "neutral",
+        "displayName": "Studio Line",
+        "tonalRamp": [
+          "oklch(15.000% 0.000000 0.000)",
+          "oklch(26.429% 0.000000 0.000)",
+          "oklch(37.857% 0.000000 0.000)",
+          "oklch(49.286% 0.000000 0.000)",
+          "oklch(60.714% 0.000000 0.000)",
+          "oklch(72.143% 0.000000 0.000)",
+          "oklch(83.571% 0.000000 0.000)",
+          "oklch(95.000% 0.000000 0.000)"
+        ]
+      },
+      "studio-selected": {
+        "role": "neutral",
+        "displayName": "Studio Selected",
+        "tonalRamp": [
+          "oklch(15.000% 0.000000 0.000)",
+          "oklch(26.429% 0.000000 0.000)",
+          "oklch(37.857% 0.000000 0.000)",
+          "oklch(49.286% 0.000000 0.000)",
+          "oklch(60.714% 0.000000 0.000)",
+          "oklch(72.143% 0.000000 0.000)",
+          "oklch(83.571% 0.000000 0.000)",
+          "oklch(95.000% 0.000000 0.000)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Centered writing headline."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Welcome composition headline."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Settings heading and external viewer caption heading."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Base proportional desktop UI."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "External explanatory captions, up to 72ch."
+      },
+      "writing": {
+        "displayName": "Writing",
+        "purpose": "Long-form writing study."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Scene controls and title-bar labels."
+      },
+      "small": {
+        "displayName": "Small",
+        "purpose": "Metadata, count tags and compact desktop labels."
+      },
+      "code": {
+        "displayName": "Code",
+        "purpose": "Terminal code, paths and technical data only."
+      }
+    },
+    "shadows": [
+      {
+        "name": "window",
+        "value": "0 18px 50px #0006",
+        "purpose": "Lift application windows from the wallpaper."
+      },
+      {
+        "name": "dock",
+        "value": "0 14px 36px #0008",
+        "purpose": "Separate the compact dock from imagery."
+      },
+      {
+        "name": "zen-document",
+        "value": "0 20px 60px #0006",
+        "purpose": "Lift the focused writing plane."
+      }
+    ],
+    "motion": [
+      {
+        "name": "scene-arrive",
+        "value": "400ms cubic-bezier(.16,1,.3,1)",
+        "purpose": "Brightness 0.8 to 1 only under prefers-reduced-motion: no-preference; visible default otherwise."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "viewer-compact",
+        "value": "700px"
+      }
+    ],
+    "focus": [
+      {
+        "name": "viewer-focus",
+        "value": "3px solid var(--ice); outline-offset: 5px",
+        "purpose": "Visible keyboard focus on real viewer buttons and links."
+      },
+      {
+        "name": "active-window",
+        "value": "2px solid var(--ice); outline-offset: 0",
+        "purpose": "Illustrative active native window."
+      }
+    ],
+    "implementation": {
+      "scope": "Local HTML review viewer for native Linux desktop concepts; not a shipped OS.",
+      "sourceFiles": [
+        "PRODUCT.md",
+        "source/direction-contract.txt",
+        "source/finish-review.txt",
+        "tokens/crowbaros.tokens.json",
+        "tokens/crowbaros.css",
+        "mockups/desktop.html",
+        "mockups/desktop.css",
+        "mockups/desktop.js",
+        "source/build_guide.py"
+      ],
+      "approvedReferences": [
+        "../round-02-dark/assets/05-rookslash.png",
+        "../round-03-cyan-crow/cyan-crow-name-studies.png"
+      ],
+      "nativeTarget": [
+        "Fedora (non-Atomic)",
+        "Hyprland",
+        "Rust",
+        "GPUI"
+      ],
+      "liveControls": [
+        "Scene selector",
+        "Dark / Light / Warm Paper appearance preview",
+        "Neutral Studio switch",
+        "Brand-guide link"
+      ],
+      "illustrative": [
+        "Application chrome",
+        "App-role glyphs",
+        "Wallpaper thumbnails",
+        "File and terminal content",
+        "Time and system values",
+        "Password treatment",
+        "Boot progress"
+      ],
+      "previewState": "Scene changes reconstruct content and reset appearance choices. No system settings change.",
+      "tonalRampPolicy": "Eight-step OKLCH ramps are derived metadata for the documentation panel only, not approved additional UI or brand palette tokens. Some steps may be gamut-mapped by the renderer.",
+      "snippetPolicy": "Extracts preserve authored visual states; hover and focus CSS is included where implemented. Static native chrome has no fabricated interactive state. No JavaScript is embedded."
+    }
+  },
+  "components": [
+    {
+      "name": "Scene button",
+      "kind": "button",
+      "refersTo": "scene-button",
+      "description": "Unselected review scene. State mutation is supplied by desktop.js.",
+      "html": "<button class=\"ds-scene-button\" aria-pressed=\"false\">Zen Mode</button>",
+      "css": ".ds-scene-button{font-family:var(--crowbar-ui, Manrope, sans-serif);font-size:14px;font-weight:650;padding:12px 19px;border:1px solid var(--line, #364957);border-radius:var(--crowbar-radius-control, 10px);background:transparent;color:var(--muted, var(--crowbar-muted, #A8BAC7));cursor:pointer;white-space:nowrap}.ds-scene-button:hover{color:var(--crowbar-frost, #D8E5EC);background:var(--crowbar-abyss, #17212B)}.ds-scene-button[aria-pressed=\"true\"]{background:var(--ice, var(--crowbar-ice, #49D7E8));border-color:var(--ice, var(--crowbar-ice, #49D7E8));color:var(--crowbar-void, #080D12)}.ds-scene-button:focus-visible{outline:3px solid var(--ice, var(--crowbar-ice, #49D7E8));outline-offset:5px;}.ds-scene-button:disabled{opacity:.45;cursor:default}"
+    },
+    {
+      "name": "Selected scene button",
+      "kind": "button",
+      "refersTo": "scene-button-active",
+      "description": "Pressed review scene, using Ice with Void text.",
+      "html": "<button class=\"ds-scene-button\" aria-pressed=\"true\">Workspace</button>",
+      "css": ".ds-scene-button{font-family:var(--crowbar-ui, Manrope, sans-serif);font-size:14px;font-weight:650;padding:12px 19px;border:1px solid var(--line, #364957);border-radius:var(--crowbar-radius-control, 10px);background:transparent;color:var(--muted, var(--crowbar-muted, #A8BAC7));cursor:pointer;white-space:nowrap}.ds-scene-button:hover{color:var(--crowbar-frost, #D8E5EC);background:var(--crowbar-abyss, #17212B)}.ds-scene-button[aria-pressed=\"true\"]{background:var(--ice, var(--crowbar-ice, #49D7E8));border-color:var(--ice, var(--crowbar-ice, #49D7E8));color:var(--crowbar-void, #080D12)}.ds-scene-button:focus-visible{outline:3px solid var(--ice, var(--crowbar-ice, #49D7E8));outline-offset:5px;}.ds-scene-button:disabled{opacity:.45;cursor:default}"
+    },
+    {
+      "name": "Theme choice",
+      "kind": "button",
+      "refersTo": "theme-button",
+      "description": "Unselected appearance preview.",
+      "html": "<button class=\"ds-theme-button\" aria-pressed=\"false\">Warm Paper</button>",
+      "css": ".ds-theme-button{font-family:var(--crowbar-ui, Manrope, sans-serif);font-size:13px;padding:10px 20px;border:1px solid var(--line, #364957);border-radius:9px;background:transparent;color:var(--text, var(--crowbar-frost, #D8E5EC));cursor:pointer}.ds-theme-button:hover{outline:1px solid currentColor}.ds-theme-button[aria-pressed=\"true\"]{background:var(--ice, var(--crowbar-ice, #49D7E8));border-color:var(--ice, var(--crowbar-ice, #49D7E8));color:var(--crowbar-void, #080D12);font-weight:700}.ds-theme-button:focus-visible{outline:3px solid var(--ice, var(--crowbar-ice, #49D7E8));outline-offset:5px;}"
+    },
+    {
+      "name": "Selected theme choice",
+      "kind": "button",
+      "refersTo": "theme-button-active",
+      "description": "Selected appearance preview; Studio can override the accent.",
+      "html": "<button class=\"ds-theme-button\" aria-pressed=\"true\">Dark</button>",
+      "css": ".ds-theme-button{font-family:var(--crowbar-ui, Manrope, sans-serif);font-size:13px;padding:10px 20px;border:1px solid var(--line, #364957);border-radius:9px;background:transparent;color:var(--text, var(--crowbar-frost, #D8E5EC));cursor:pointer}.ds-theme-button:hover{outline:1px solid currentColor}.ds-theme-button[aria-pressed=\"true\"]{background:var(--ice, var(--crowbar-ice, #49D7E8));border-color:var(--ice, var(--crowbar-ice, #49D7E8));color:var(--crowbar-void, #080D12);font-weight:700}.ds-theme-button:focus-visible{outline:3px solid var(--ice, var(--crowbar-ice, #49D7E8));outline-offset:5px;}"
+    },
+    {
+      "name": "Studio switch",
+      "kind": "button",
+      "refersTo": "studio-switch",
+      "description": "Visual switch sample. The actual viewer changes aria-checked and applies neutral chrome.",
+      "html": "<button class=\"ds-toggle\" role=\"switch\" aria-checked=\"false\" aria-label=\"Color-accurate Studio Mode\"></button>",
+      "css": ".ds-toggle{display:flex;align-items:center;width:44px;height:25px;padding:3px;border:0;border-radius:20px;background:var(--line, #364957);cursor:pointer}.ds-toggle:before{content:\"\";width:19px;height:19px;border-radius:50%;background:var(--text, var(--crowbar-frost, #D8E5EC))}.ds-toggle[aria-checked=\"true\"]{background:var(--ice, var(--crowbar-ice, #49D7E8));justify-content:flex-end}.ds-toggle[aria-checked=\"true\"]:before{background:var(--crowbar-void, #080D12)}.ds-toggle:focus-visible{outline:3px solid var(--ice, var(--crowbar-ice, #49D7E8));outline-offset:5px;}"
+    },
+    {
+      "name": "Focused window",
+      "kind": "card",
+      "refersTo": "window",
+      "description": "Quiet application surface with a narrow title bar and active-window outline.",
+      "html": "<section class=\"ds-window\"><div class=\"ds-titlebar\">Files<span class=\"ds-width\">⅔</span></div><div class=\"ds-window-content\">Projects</div></section>",
+      "css": ".ds-window{font-family:var(--crowbar-ui, Manrope, sans-serif);width:320px;background:var(--surface, var(--crowbar-abyss, #17212B));color:var(--text, var(--crowbar-frost, #D8E5EC));border-radius:var(--crowbar-radius-window, 16px);overflow:hidden;box-shadow:0 18px 50px #0006;outline:2px solid var(--ice, var(--crowbar-ice, #49D7E8));outline-offset:0}.ds-titlebar{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;border-bottom:1px solid var(--line, #364957);font-size:14px;font-weight:650}.ds-width{font-size:12px;font-weight:600;padding:4px 6px;border-radius:5px;background:var(--text, #D8E5EC);color:var(--surface, #17212B)}.ds-window-content{padding:24px 18px;font-size:20px;font-weight:700;letter-spacing:-.025em}"
+    },
+    {
+      "name": "Window count tag",
+      "kind": "chip",
+      "refersTo": "status-tag",
+      "description": "Read-only count badge; neutral Studio chrome supplies its override.",
+      "html": "<span class=\"ds-tag\">3 windows</span>",
+      "css": ".ds-tag{font-family:var(--crowbar-ui, Manrope, sans-serif);display:inline-block;padding:4px 9px;background:var(--crowbar-abyss, #17212B);border-radius:6px;color:var(--crowbar-frost, #D8E5EC);font-size:12px}"
+    },
+    {
+      "name": "Password field study",
+      "kind": "custom",
+      "refersTo": "password-study",
+      "description": "Static illustrative field. This is not an input and collects no credentials.",
+      "html": "<div class=\"ds-password\"><span>Password</span><svg class=\"ds-arrow\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 12h16M14 6l6 6-6 6\"/></svg></div>",
+      "css": ".ds-password{font-family:var(--crowbar-ui, Manrope, sans-serif);display:flex;justify-content:space-between;align-items:center;width:280px;border:1px solid var(--crowbar-steel, #6D8191);border-radius:var(--crowbar-radius-control, 10px);padding:15px 17px;background:var(--crowbar-void, #080D12);color:var(--crowbar-muted, #A8BAC7);font-size:14px}.ds-arrow{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}"
+    },
+    {
+      "name": "Five-app dock study",
+      "kind": "nav",
+      "refersTo": "dock",
+      "description": "Illustrative app-role glyphs; no native launch action or upstream trademark representation.",
+      "html": "<div class=\"ds-dock\"><div class=\"ds-dock-item ds-active\"><svg class=\"ds-dock-icon\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z\"/></svg>Zen Browser</div><div class=\"ds-dock-item\"><svg class=\"ds-dock-icon\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M3 7h6l2 2h10v11H3Z M3 7V4h6l2 3\"/></svg>Files</div><div class=\"ds-dock-item\"><svg class=\"ds-dock-icon\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M5 6l6 6-6 6M13 18h6\"/></svg>Ghostty</div><div class=\"ds-dock-item\"><svg class=\"ds-dock-icon\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8ZM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2\"/></svg>Studio Settings</div><div class=\"ds-dock-item\"><svg class=\"ds-dock-icon\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M3 9h18v12H3ZM3 9l2-6h14l2 6M8 21v-7h8v7M3 9c0 3 4 3 4 0 0 3 5 3 5 0 0 3 5 3 5 0 0 3 4 3 4 0\"/></svg>Bazaar</div></div>",
+      "css": ".ds-dock{font-family:var(--crowbar-ui, Manrope, sans-serif);display:inline-flex;gap:12px;padding:12px 18px 10px;border-radius:var(--crowbar-radius-window, 16px);background:var(--crowbar-abyss, #17212B);box-shadow:0 14px 36px #0008;color:var(--crowbar-frost, #D8E5EC)}.ds-dock-item{width:82px;text-align:center;font-size:12px;line-height:1.3}.ds-dock-icon{display:block;width:27px;height:27px;margin:0 auto 7px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.ds-active .ds-dock-icon{color:var(--ice, var(--crowbar-ice, #49D7E8))}"
+    },
+    {
+      "name": "Scene navigation",
+      "kind": "nav",
+      "refersTo": "scene-navigation",
+      "description": "Review framing separate from desktop chrome. Samples show authored pressed state.",
+      "html": "<nav class=\"ds-scene-nav\" aria-label=\"Desktop scenes\"><button class=\"ds-scene-button\" aria-pressed=\"true\">Workspace</button><button class=\"ds-scene-button\" aria-pressed=\"false\">Zen Mode</button><button class=\"ds-scene-button\" aria-pressed=\"false\">Studio Settings</button></nav>",
+      "css": ".ds-scene-button{font-family:var(--crowbar-ui, Manrope, sans-serif);font-size:14px;font-weight:650;padding:12px 19px;border:1px solid var(--line, #364957);border-radius:var(--crowbar-radius-control, 10px);background:transparent;color:var(--muted, var(--crowbar-muted, #A8BAC7));cursor:pointer;white-space:nowrap}.ds-scene-button:hover{color:var(--crowbar-frost, #D8E5EC);background:var(--crowbar-abyss, #17212B)}.ds-scene-button[aria-pressed=\"true\"]{background:var(--ice, var(--crowbar-ice, #49D7E8));border-color:var(--ice, var(--crowbar-ice, #49D7E8));color:var(--crowbar-void, #080D12)}.ds-scene-button:focus-visible{outline:3px solid var(--ice, var(--crowbar-ice, #49D7E8));outline-offset:5px;}.ds-scene-button:disabled{opacity:.45;cursor:default}.ds-scene-nav{display:flex;gap:8px;padding:12px 0 20px;overflow-x:auto}@media(max-width:700px){.ds-scene-nav{padding-top:8px;gap:6px}.ds-scene-button{font-size:12px;padding:10px 13px}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Quiet surface. Sharp mind.",
+    "overview": "CrowbarOS pairs a restrained technical surface with an observant engraved crow. The approved Nullkeel colors establish a quiet blue-black field; precise feather texture and a controlled cyan signal provide character. Proportional type keeps the identity approachable to everyday users, writers, creatives, makers and technically fluent Linux users.\n\nThis document records the completed brand kit and its local HTML review viewer for native Linux desktop concepts. It is not a shipped operating system or a production website. The selected native stack is Fedora (non-Atomic), Hyprland, Rust, and GPUI; ../../community_foss_distro_plan.md is authoritative for architecture. The viewer does not install software or change system settings. Its existing horizontal compositions predate the floating-window default and remain optional-layout studies. The approved direction is recorded in source/direction-contract.txt and source/finish-review.txt. Prior visual authorities are ../round-02-dark/assets/05-rookslash.png and ../round-03-cyan-crow/cyan-crow-name-studies.png.\n\nThe YAML frontmatter is the portable token snapshot. Its five brand colors, families and base scales preserve tokens/crowbaros.tokens.json and tokens/crowbaros.css; additional utility colors and component treatments are extracted from mockups/desktop.css. The sidecar extends this snapshot with rendering samples and properties outside the frontmatter schema. Keep these documents synchronized with their implementation sources.",
+    "keyCharacteristics": [
+      "Quiet surfaces with one clear accent for focus and selection.",
+      "Organic engraved artwork against precise, restrained interface geometry.",
+      "Proportional UI type; monospace reserved for code, paths and technical data.",
+      "Dark identity with Light, Warm Paper and neutral Studio choices preserved."
+    ],
+    "rules": [
+      {
+        "name": "The Signal Rule",
+        "body": "Use Ice to identify focus, selection and a controlled artwork accent. Keep Steel decorative; use secondary-text for normal secondary text on dark surfaces.",
+        "section": "colors"
+      },
+      {
+        "name": "The Choice Rule",
+        "body": "Dark is the brand default. Preserve Light and Warm Paper as utility palettes and Studio Mode as a neutral chrome override. A dark identity does not cancel those choices.",
+        "section": "colors"
+      },
+      {
+        "name": "The Human Type Rule",
+        "body": "Use Manrope for the interface and IBM Plex Mono for code, paths and technical data. Always use the supplied outlined master for the wordmark.",
+        "section": "typography"
+      },
+      {
+        "name": "The Artwork Rule",
+        "body": "The detailed crow is brand artwork, never an assistant, notification messenger or functional UI icon. Use the simplified vector mark at small sizes.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do preserve the five exact Nullkeel base colors and use the supplied logo masters.",
+      "Do keep clear space around logos and leave the crow’s head, beak and silhouette readable.",
+      "Do keep Light, Warm Paper and neutral Studio previews available alongside Dark.",
+      "Do use labels, outlines and pressed or checked state to accompany selection color.",
+      "Do identify the HTML as a local concept viewer and disclose illustrative app chrome and system values.",
+      "Do preserve the five default app roles. New default-workspace studies should show familiar floating windows; retain horizontal layouts as explicitly optional tiling/scrolling studies.",
+      "Do keep raster artworks at their documented native sizes; use vector wallpaper masters for genuine large-format exports."
+    ],
+    "donts": [
+      "Don’t redraw the identity from a font, change the slash angle, distort proportions or add gradients, outlines or drop shadows to the logo.",
+      "Don’t mirror the crow, recolor individual feathers, add clothing or give it a glowing technological eye.",
+      "Don’t use Steel as normal body text on Abyss or spread Ice over large reading surfaces.",
+      "Don’t turn this desktop review viewer into a supposed responsive mobile OS or imply its illustrative controls are native system functionality.",
+      "Don’t treat role glyphs as upstream application trademarks or claim that the kit establishes artwork licensing, trademark clearance or a registered domain.",
+      "Don’t add bundled AI affordances, release claims or invented metrics to this identity."
+    ]
+  }
+}
