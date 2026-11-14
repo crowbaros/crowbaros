@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Studio Settings
+Comment=Personalize appearance and desktop motion
+Exec=crowbaros-studio-settings
+Icon=com.crowbaros.StudioSettings
+Terminal=false
+Categories=Settings;DesktopSettings;
+Keywords=Appearance;Theme;Motion;CrowbarOS;
+StartupWMClass=com.crowbaros.StudioSettings

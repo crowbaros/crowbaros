@@ -1,0 +1,11 @@
+{
+  "captured": "2026-11-14",
+  "app": "crowbaros-studio-settings-0.1.3-1.fc45.x86_64",
+  "method": "Unedited grim screenshots from the Fedora test guest, copied over SSH.",
+  "display": "1280x800, scale 1, Intel VirtIO hardware Vulkan",
+  "images": {
+    "studio-settings-2026-11-14.png": "980x720 window; Dark, Studio off, reduced motion on, saved.",
+    "studio-settings-light-2026-11-14.png": "980x720 window; Light preview before Save.",
+    "studio-settings-error-compact-2026-11-14.png": "800x640 window; real permission error with full recovery controls."
+  }
+}

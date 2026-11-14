@@ -1,0 +1,49 @@
+Name:           crowbaros-studio-settings
+Version:        0.1.3
+Release:        1%{?dist}
+Summary:        CrowbarOS Studio Settings: appearance and desktop motion
+# Generated from the vendored dependency manifests, plus application/font licenses.
+License:        @LICENSE_EXPRESSION@
+Source0:        %{name}-%{version}.tar.gz
+ExclusiveArch:  x86_64
+BuildRequires:  rust cargo gcc gcc-c++ make cmake clang
+BuildRequires:  openssl-devel fontconfig-devel freetype-devel libxkbcommon-devel libxkbcommon-x11-devel
+BuildRequires:  wayland-devel libxcb-devel vulkan-loader-devel libzstd-devel
+BuildRequires:  desktop-file-utils
+Requires:       vulkan-loader mesa-vulkan-drivers
+Requires:       /usr/bin/systemd-cat
+
+%global debug_package %{nil}
+
+%description
+A native Rust/GPUI Wayland application for configuring CrowbarOS.
+The initial Studio Settings slice includes saved appearance preferences and
+a Hyprland reduced-motion adapter. Desktop-wide theming is not yet implemented.
+
+%prep
+%autosetup
+
+%build
+export CARGO_NET_OFFLINE=true
+export CARGO_BUILD_JOBS=4
+cargo build --release --frozen
+
+%check
+CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 cargo test --release --frozen
+./target/release/%{name} --version
+desktop-file-validate packaging/com.crowbaros.StudioSettings.desktop
+
+%install
+install -Dpm0755 target/release/%{name} %{buildroot}%{_bindir}/%{name}
+install -Dpm0644 packaging/com.crowbaros.StudioSettings.desktop %{buildroot}%{_datadir}/applications/com.crowbaros.StudioSettings.desktop
+install -Dpm0644 packaging/com.crowbaros.StudioSettings.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/com.crowbaros.StudioSettings.svg
+
+install -Dpm0644 packaging/hyprland.lua %{buildroot}%{_datadir}/crowbaros-studio-settings/hyprland.lua
+
+%files
+%license LICENSE licenses/ fonts/*OFL.txt dependency-licenses/
+%doc THIRD_PARTY.json BUILD-MANIFEST.txt
+%{_bindir}/%{name}
+%{_datadir}/crowbaros-studio-settings/
+%{_datadir}/applications/com.crowbaros.StudioSettings.desktop
+%{_datadir}/icons/hicolor/scalable/apps/com.crowbaros.StudioSettings.svg

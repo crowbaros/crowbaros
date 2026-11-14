@@ -6,13 +6,21 @@ A Fedora-based desktop using Hyprland, Rust, and GPUI.
 - [Self-contained visual blueprint](docs/crowbaros.html)
 - [Local Fedora VM setup and development workflow](docs/development/local-vms.md)
 - [Initial VM validation results](docs/development/vm-validation-2026-11-14.md)
+- [Desktop shell source and workflow](apps/shell/README.md)
+- [Desktop shell validation results](docs/development/shell-validation-2026-11-14.md)
+- [Studio Settings source and workflow](apps/studio-settings/README.md)
+- [Studio Settings validation results](docs/development/studio-settings-validation-2026-11-14.md)
 - [Native GPUI app and build instructions](apps/gpui-probe/README.md)
 - [GPUI RPM and desktop validation results](docs/development/gpui-validation-2026-11-14.md)
 - [Hardware Vulkan setup and recovery](docs/development/gpu-vulkan.md)
 - [Intel GPU acceleration validation results](docs/development/gpu-validation-2026-11-14.md)
 - [VM configuration and provisioning recipes](infra/vm/)
 
-The repository currently contains the plan, brand references, and a working local
-build/test lab, and a validated native GPUI application packaged as a signed RPM.
-The test VM also runs hardware Vulkan through an experimental Intel VirtIO profile.
-The CrowbarOS compositor fork and full GPUI desktop remain to be built.
+The repository contains the plan, brand references, a working local build/test
+lab, and native GPUI applications packaged as signed RPMs. Studio Settings now
+implements appearance previews, saved preferences, and Hyprland reduced motion.
+The test VM runs hardware Vulkan through an experimental Intel VirtIO profile.
+The first GPUI shell now supplies a workspace bar, persistent dock, application
+launcher and wallpaper as a signed RPM. It follows saved appearance preferences
+and starts with the test Hyprland session. The compositor fork and full production
+desktop remain later milestones.

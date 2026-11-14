@@ -1,0 +1,21 @@
+{
+  "source": "Actual grim captures from crowbaros-test; native Wayland, hardware Intel VirtIO Vulkan",
+  "package": "crowbaros-shell-0.1.1-1.fc45.x86_64",
+  "date": "2026-11-14",
+  "captures": {
+    "desktop": "1280x800",
+    "launcher": "1280x800",
+    "compact-desktop": "1024x768",
+    "compact-launcher": "1024x768",
+    "light": "1280x800",
+    "paper": "1280x800",
+    "studio": "1280x800",
+    "empty": "1280x800",
+    "long-query": "1280x800",
+    "short-query": "1280x800",
+    "unicode": "1280x800",
+    "launch-error": "1280x800"
+  },
+  "assets": "Existing approved Signal Feather and crow mark; exact pixels, origin metadata embedded",
+  "scope": "Saved preferences affect shell chrome, not wallpaper or third-party apps"
+}
