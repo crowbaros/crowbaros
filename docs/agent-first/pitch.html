@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrowbarOS, Agent-First: a different bet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";mermaid.initialize({startOnLoad:true,theme:"base",themeVariables:{background:"#080D12",primaryColor:"#17212B",primaryTextColor:"#D8E5EC",primaryBorderColor:"#49D7E8",lineColor:"#6D8191",fontFamily:"Manrope",fontSize:"15px"}});</script>
+<style>
+:root{--void:#080D12;--abyss:#17212B;--ice:#49D7E8;--steel:#6D8191;--frost:#D8E5EC;--sub:#A8BAC7}
+*{box-sizing:border-box}
+body{margin:0;background:var(--void);color:var(--frost);font-family:Manrope,system-ui,sans-serif;line-height:1.6;font-size:17px}
+.wrap{max-width:920px;margin:0 auto;padding:0 24px}
+header{padding:96px 0 64px;border-bottom:1px solid #1f2c38}
+.eyebrow{font-family:"IBM Plex Mono",monospace;color:var(--ice);font-size:13px;letter-spacing:.12em;text-transform:uppercase}
+h1{font-size:clamp(36px,6vw,60px);line-height:1.08;margin:16px 0 20px;font-weight:800;letter-spacing:-.02em}
+h1 em{font-style:normal;color:var(--ice)}
+.lede{font-size:20px;color:var(--sub);max-width:680px}
+section{padding:64px 0;border-bottom:1px solid #1f2c38}
+h2{font-size:30px;margin:0 0 16px;letter-spacing:-.01em}
+h3{margin:0 0 6px;font-size:18px}
+p{color:var(--sub);margin:0 0 14px}
+strong{color:var(--frost)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin-top:24px}
+.card{background:var(--abyss);border:1px solid #243444;border-radius:14px;padding:22px}
+.card .n{font-family:"IBM Plex Mono",monospace;color:var(--ice);font-size:13px}
+.card p{margin:0;font-size:15.5px}
+.compare{width:100%;border-collapse:collapse;margin-top:20px;font-size:15.5px}
+.compare th,.compare td{text-align:left;padding:12px 14px;border-bottom:1px solid #243444;vertical-align:top}
+.compare th{color:var(--steel);font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:.06em}
+.compare td:first-child{color:var(--frost);font-weight:600;width:22%}
+.compare td:last-child{color:var(--frost)}
+.mermaid{background:var(--abyss);border:1px solid #243444;border-radius:14px;padding:20px;margin-top:20px;text-align:center}
+.quote{border-left:3px solid var(--ice);padding:6px 0 6px 20px;font-size:22px;color:var(--frost);margin:24px 0}
+ol.q{padding-left:22px;color:var(--sub)} ol.q li{margin:10px 0}
+.term{font-family:"IBM Plex Mono",monospace;background:var(--abyss);border:1px solid #243444;border-radius:10px;padding:16px 18px;color:var(--frost);font-size:14.5px;margin-top:18px}
+.term .p{color:var(--ice)} .term .c{color:var(--steel)}
+footer{padding:48px 0 80px;color:var(--steel);font-size:14px}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <div class="eyebrow">CrowbarOS · a counter-proposal from Jim</div>
+  <h1>Don't ship a desktop.<br><em>Ship the ability to make one.</em></h1>
+  <p class="lede">Jason, your CrowbarOS blueprint is a beautiful, curated desktop. I want to pitch a bolder bet on the same name and spirit: an agent-first OS that starts almost empty, where every person speaks their ideal OS into existence.</p>
+</div></header>
+
+<section><div class="wrap">
+  <h2>The shift I'm seeing</h2>
+  <p>People are increasingly <strong>building bespoke software instead of installing existing software</strong>. Today that's mostly experienced developers working with agents. But the cost of making a small, perfectly-fitted tool is collapsing, and I think within a few years everyone will do it.</p>
+  <div class="quote">If software becomes something you describe instead of something you install, the OS's job changes.</div>
+  <p>A curated set of five default apps matters less when your file manager or writing app might be something your agent built for you last Tuesday. What matters is the substrate: a tiny, stable base, an agent that can build and change things safely, and a way to keep, undo, and share what you make.</p>
+</div></section>
+
+<section><div class="wrap">
+  <h2>What it feels like</h2>
+  <div class="term">
+    <div><span class="p">you ›</span> I write in the mornings. Give me a calm writing mode with no notifications until noon.</div>
+    <div class="c">agent · built "Morning Pages" app, added a focus rule 6am–12pm, warmed the palette</div>
+    <div class="c">agent · new system generation #42 saved, one click to undo</div>
+    <div><span class="p">you ›</span> Nice. Make the dock disappear unless I push the mouse to the bottom.</div>
+    <div class="c">agent · done, generation #43</div>
+  </div>
+  <p style="margin-top:18px">No app store browsing, no settings archaeology, no terminal required. And because every change is a saved version, nothing the agent does is scary.</p>
+</div></section>
+
+<section><div class="wrap">
+  <h2>Five first principles</h2>
+  <div class="grid">
+    <div class="card"><div class="n">01</div><h3>Everything is declared and versioned</h3><p>The whole system is a living document the agent edits, with full history and instant rollback built in, not bolted on.</p></div>
+    <div class="card"><div class="n">02</div><h3>Capabilities, not root</h3><p>Every generated app gets only what it was granted: this folder, the camera, the network. A buggy bespoke app can't wreck the machine.</p></div>
+    <div class="card"><div class="n">03</div><h3>Intent is a first-class interface</h3><p>The agent is a system service with a stable API to the whole OS, not a chatbot app sitting on top.</p></div>
+    <div class="card"><div class="n">04</div><h3>Apps are generated and disposable</h3><p>The OS is optimized for building, sandboxing, testing, and swapping small programs constantly, not installing big ones.</p></div>
+    <div class="card"><div class="n">05</div><h3>Your OS is portable and shareable</h3><p>Your entire setup is a definition you carry to a new machine, or share so a friend can try your OS in one step.</p></div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <h2>The stack: bold where it's new, borrowed where it isn't</h2>
+  <p>I'm open to going all the way down to the metal where the vision demands a new way of thinking. But nothing about agent-first needs a new way to talk to a Wi-Fi chip, and drivers are what kill new OSes. So invent the top, borrow the bottom, and keep the kernel swappable.</p>
+  <pre class="mermaid">
+flowchart TB
+  A["NEW · Intent layer + agent runtime"] --> B["NEW · Capability app model, generated apps, system history"]
+  B --> C["NEW or ADAPTED · Compositor + UI toolkit built for generated apps"]
+  C --> D["BORROW · Kernel + drivers: Linux now, microkernel later"]
+  style A fill:#49D7E8,color:#080D12,stroke:#49D7E8
+  style B fill:#49D7E8,color:#080D12,stroke:#49D7E8
+  </pre>
+  <p style="margin-top:18px">Practical starting point: a minimal <strong>NixOS</strong>-style declarative base (the agent edits config, every rebuild is a rollback-able generation) with Hyprland, plus our own capability layer on top. Longer term, a capability microkernel like seL4 could replace Linux under the same design.</p>
+</div></section>
+
+<section><div class="wrap">
+  <h2>Your blueprint vs. this bet</h2>
+  <table class="compare">
+    <tr><th></th><th>CrowbarOS blueprint</th><th>Agent-first Crowbar</th></tr>
+    <tr><td>Core idea</td><td>A calm, curated desktop for creative people</td><td>A tiny substrate each person shapes by talking to an agent</td></tr>
+    <tr><td>Base</td><td>Fedora, non-Atomic, DNF</td><td>Declarative and versioned (NixOS-style), kernel swappable later</td></tr>
+    <tr><td>Apps</td><td>Five essentials + Bazaar/Flathub</td><td>Generated on request, sandboxed by capabilities; installs still possible</td></tr>
+    <tr><td>AI</td><td>Neutral: no bundled AI</td><td>The agent <em>is</em> the primary interface; user picks local or cloud model</td></tr>
+    <tr><td>Customizing</td><td>Settings panels, themes, Community Gallery</td><td>Say what you want; share whole OS definitions</td></tr>
+    <tr><td>What stays</td><td colspan="2" style="color:var(--frost)">The name, the crow, the palette, open governance, FOSS values, and "make it yours," taken literally.</td></tr>
+  </table>
+</div></section>
+
+<section><div class="wrap">
+  <h2>The hard problems (where I want your brain)</h2>
+  <ol class="q">
+    <li><strong>Trust.</strong> What can the agent change without asking, and how does a non-developer stay in control?</li>
+    <li><strong>Where the model runs.</strong> Local, cloud, or the user's choice, and what's the floor for hardware?</li>
+    <li><strong>Recovery.</strong> When someone's bespoke stuff breaks, how do they get back to good without knowing what a config file is?</li>
+    <li><strong>Sharing and community.</strong> Does the Community Gallery become a place to share prompts, apps, and whole OS definitions?</li>
+    <li><strong>Does this kill your AI-neutrality pillar,</strong> or can both coexist, for example an agent-first edition alongside a classic one?</li>
+  </ol>
+</div></section>
+
+<footer><div class="wrap">Pitch for discussion · Jim Martin · November 2026 · Built on Jason's CrowbarOS vision.</div></footer>
+</body>
+</html>
