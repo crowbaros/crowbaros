@@ -1,5 +1,13 @@
 # CrowbarOS
 
+> **New direction: agent-first CrowbarOS.** We are pivoting to an agent-first OS
+> on Void Linux, where each person shapes a tiny base into their own OS by talking
+> to an agent, and every change is a bootable, reversible generation. Start with
+> the [vision](docs/agent-first/VISION.md). Then read the
+> [design notes](docs/agent-first/design/), the
+> [Milestone 1 record](docs/agent-first/milestone-1.md), and the Rust
+> [apply engine workspace](agent-first/). The Fedora plan below is kept for reference.
+
 A Fedora-based desktop using Hyprland, Rust, and GPUI.
 
 - [Operating system plan](docs/community_foss_distro_plan.md)
