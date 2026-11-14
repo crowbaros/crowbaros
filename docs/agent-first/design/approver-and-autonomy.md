@@ -1,47 +1,127 @@
 # Design: approver and autonomy
 
 **Status:** draft. Nothing in this document is built yet. Milestone 1 has only the
-pieces this design builds on: generations, rollback, and the ledger.
+pieces this design builds on: Base generations, rollback, and the ledger.
 
 ## Summary
 
 - **Auto-approve by default, with no babysitting.** A person should not have to
   watch the agent work or click "Allow" all day.
-- A small, **isolated, local approver agent** reviews every action the main agent
-  wants to take. It is a separate process with rules the main agent cannot edit.
-  It sees the **concrete action** and the **person's original request**, not the
-  main agent's argument for the action.
-- The **capability broker issues handles only with an approver signature.** Without
-  a signature, nothing happens.
-- Actions are sorted into **risk tiers** by how reversible they are. Reversible
-  actions just happen. Irreversible ones ask the person.
-- **Modes:** Careful, Normal, Full auto.
-- Approvals that repeat become **proposed standing rules**, which the person accepts
-  once.
-- Everything goes in the **ledger**, with one-step revoke or rollback.
+- **Security is deterministic.** It comes from handles and the **undo boundary**,
+  which is drawn at the edge of the person's **fleet**. No model is on the trust
+  path. See [ADR 0003](../../adr/0003-approver-is-not-the-security-boundary.md).
+- **One rule replaces risk tiers.** An effect inside the undo boundary just
+  happens and goes in the ledger. An effect that crosses it needs a standing
+  grant, a standing rule, or the person's answer.
+- The **approver** is an isolated principal that answers one question: "Is this
+  what the person asked for?" It is an alignment check and defense in depth. It
+  is not the security boundary.
+- The **Agent** is a role the OS defines. A **harness** fills it, and the harness
+  thinks with a **model**. A harness can only propose. Authority stays with the
+  role.
+- **Intents change only through the person's own Agent, with the person's
+  agreement.** The OS enforces the Shaping contract: an intent edit needs
+  confirmed checks.
+- **Notify only on surprise.** "Mode" now controls only how much the person is
+  told.
+- **Money crosses the boundary.** A budget is a capped standing grant. An
+  **Allowance** is money set aside in a separately funded account whose limit
+  the issuer enforces.
+- Everything goes in the **ledger**, with one-step revoke or undo.
 
-## Why an approver, and why isolated
+## Agent, harness, and model
+
+```mermaid
+flowchart LR
+    P[Person] <-->|Shaping, point-and-say| H
+    subgraph ROLE["Agent (role defined by the OS)<br/>identity, workspace, signs ledger entries"]
+        H["Harness<br/>default CrowbarOS harness,<br/>or an external one such as Grok Bot"]
+        M["Model<br/>open weights in the fleet,<br/>or a cloud model"]
+        H --> M
+    end
+    H -->|"harness protocol (MCP):<br/>propose intent edits, request handles,<br/>apply to the Environment, read the ledger"| OS
+    subgraph OS["CrowbarOS (deterministic)"]
+        SC[Shaping contract check]
+        APR[Approver]
+        BR[Capability broker]
+    end
+```
+
+- **Agent** is the person's own principal. It has an identity, a workspace, and
+  the right to edit intents with the person. It holds the authority, whatever
+  harness fills it.
+- **Harness** is whatever fills the role: the loop, tools, memory, and
+  conversation around a model. CrowbarOS ships a default harness. An external one
+  can replace it.
+- **Model** is what a harness thinks with. The default harness can run an
+  open-weight model on the person's own hardware (for example, a DGX Spark in the
+  fleet), a small model on the laptop, or a cloud model.
+
+### The harness protocol
+
+The OS exposes one **harness protocol**, built on MCP rather than invented. Through
+it a harness can read intents and Shaping context, propose intent edits, request
+handles, apply changes to the Environment, and read the ledger. Any MCP-capable
+agent can fill the Agent role.
+
+An external harness gets no more trust than the default one. Connecting it is a
+standing grant that the owner makes once. A harness that runs in someone else's
+cloud, such as Grok Bot, is **outside the fleet**. Everything it sees has left the
+fleet, so it sees only the data labels the person granted. Grok Bot's own cloud
+memory and its persistent cloud computer are part of that egress. See
+[agent credentials prior art](../research/agent-credentials-prior-art.md).
+
+### The Shaping contract
+
+The OS owns the rules of Shaping. The harness owns the conversation.
+
+- Every intent has checks, and the person confirms them. An intent edit without
+  confirmed checks is refused, the same way an action without a handle is refused.
+- Intents change only through the person's own Agent, and only with the person's
+  agreement. Background agents, agents that come with shared Tools, and
+  third-party agents are principals with handles. They can never edit intents.
+- The Agent may **propose** a new intent ("You've muted Slack every morning this
+  week. Make it an intent?"), but never adopts one silently.
+- How the harness asks questions, how deep it digs, and its personality are up to
+  the harness. Swapping harnesses changes the conversation, not the rules.
+
+## Why an approver, and why it is not the security boundary
 
 Permission prompts fail in two ways. They interrupt people, and people learn to
 click "Allow" without reading. Letting an agent approve itself fails because a
 confused or manipulated agent will approve its own mistake, for example after a
 prompt injection from a web page it read.
 
-The approver sits between those two. It is cheap enough to run on every action,
-and it is isolated in the ways that matter:
+A small model as the approver does not fix this on its own. A model can be wrong,
+and an injection can hide inside the concrete action itself: a URL that carries
+encoded data, a file's contents, a package's install script. So the system's
+safety does not depend on the approver:
+
+- **Deterministic parts decide what is possible.** A principal can only use what
+  it holds a handle for. An effect that would cross the undo boundary needs a
+  standing grant, a standing rule, or the person's answer. The broker makes every
+  outbound connection, so there is no other way out. See
+  [ADR 0006](../../adr/0006-broker-owns-all-egress.md).
+- **The approver decides whether a possible action is wanted.** It checks the
+  concrete action against the person's intents. If it is wrong, the worst outcome
+  is an unwanted action inside the boundary, which costs one undo.
 
 ```mermaid
 flowchart LR
-    U[Person's request<br/>verbatim] --> APR
-    subgraph MAIN["Main agent (untrusted for approval)"]
+    I[(Intents<br/>person's words + checks)] --> APR
+    subgraph AG["Agent's harness (untrusted for approval)"]
         M[Plans and builds]
     end
-    M -->|"concrete action only:<br/>'write ~/Writing/app.toml',<br/>'connect api.x.org:443'"| APR
+    M -->|"concrete action only:<br/>'write ~/Writing/notes.md',<br/>'connect api.x.org:443'"| D
     M -. "its reasoning / argument<br/>(NOT forwarded)" .-x APR
-    subgraph ISO["Approver (separate process, local small model)"]
-        APR[Approver]
-        RULES[(Rules + standing grants<br/>read-only to main agent)]
-        RULES --> APR
+    subgraph DET["Deterministic gate"]
+        D{"Inside the<br/>undo boundary?"}
+        RULES[(Handles, standing grants,<br/>standing rules)]
+        RULES --> D
+    end
+    D --> APR
+    subgraph ISO["Approver (separate principal, local model)"]
+        APR["Alignment check:<br/>does this match an intent?"]
     end
     APR -->|signed decision| BR[Capability broker]
     BR -->|handle| M
@@ -49,133 +129,230 @@ flowchart LR
     BR --> LED
 ```
 
-Isolation properties:
+Properties of the approver:
 
-1. **Separate process and principal.** It has its own identity, it holds almost
-   no authority, and it has no write access to the main agent's workspace or to its
-   own rules.
-2. **Rules the main agent cannot edit.** Rules and standing grants live in the
-   Crowbar State under `[autonomy]`. A change to `[autonomy]` is itself always in
-   the "ask the person" tier.
-3. **Sees intent, not argument.** The approver gets the person's original
-   request, the concrete action in a structured form, and the relevant state. It
-   does not get the main agent's explanation. A manipulated main agent cannot
-   persuade it.
-4. **Local and small.** It runs on the machine, so approval data never leaves
-   it, and it is cheap enough to run on every action. It does not need to be
-   clever. It needs to be consistent.
+1. **Separate principal.** It has its own identity, it holds almost no authority,
+   and it has no write access to the Agent's workspace or to its own rules.
+2. **Rules the Agent cannot edit.** Standing rules and Allowances live in the
+   Crowbar State under `[autonomy]`. Changing `[autonomy]` always asks the person.
+3. **Sees intent, not argument.** It gets the person's intents, the concrete
+   action in a structured form, and the relevant State. It does not get the
+   harness's explanation, so a manipulated harness cannot persuade it.
+4. **Local and small.** It runs in the fleet, so approval data never leaves it,
+   and it is cheap enough to run on every action. It needs to be consistent, not
+   clever.
 5. **Deterministic first.** Fixed rules decide most actions before the model is
-   consulted, for example "writing inside the agent's own workspace is always
-   reversible". The model handles only the cases the rules do not cover.
+   consulted, for example "writing inside the Agent's own workspace is inside the
+   boundary". The model handles only the cases the rules do not cover.
 
-## Risk tiers
+Because intents are durable, background agents that work for hours are checked
+against the same intents as a single request. There is no separate "session
+intent" to capture.
 
-The tier depends on **how reversible the action is**, not on how dangerous it
-sounds.
+## The undo boundary
 
 ```mermaid
 flowchart TD
-    A[Proposed action] --> Q1{Can a generation<br/>rollback or ledger revoke<br/>undo it completely?}
-    Q1 -- yes --> T1["<b>Reversible</b><br/>Do it + snapshot + ledger<br/>(no interruption)"]
-    Q1 -- partly --> T2["<b>Partly reversible</b><br/>Tighter sandbox + undo window<br/>+ notify"]
-    Q1 -- no --> Q2{Sends as the person, spends money,<br/>shares off-machine,<br/>or touches credentials?}
-    Q2 -- yes --> T3["<b>Irreversible</b><br/>Ask the person"]
-    Q2 -- no --> T2
+    A[Proposed action] --> Q1{"Does it stay inside the fleet<br/>and can a generation, the Data undo window,<br/>or a ledger revoke fully undo it?"}
+    Q1 -- yes --> IN["<b>Inside</b><br/>Do it + record a generation or Data history<br/>+ ledger entry"]
+    Q1 -- no --> Q2{"Covered by a standing grant,<br/>standing rule, or Allowance?"}
+    Q2 -- yes --> OK["Do it within that grant's scope<br/>+ ledger entry"]
+    Q2 -- no --> ASK["Ask the person,<br/>in plain language"]
 ```
 
-| Tier | Examples | What happens |
-| --- | --- | --- |
-| **Reversible** | Edit the Crowbar State and apply it (a new generation); build an app in the agent's workspace; install a package; change theme or keybindings. | Approver signs, the action runs, a snapshot or generation is recorded, and a ledger entry is written. The person is not interrupted. |
-| **Partly reversible** | Delete or move the person's files (recoverable from a snapshot, but other apps may already have seen the change); start a long-running background service; download from the network. | Runs in a tighter sandbox, with an **undo window** (for example, deletes go to a holding area for N days), and the person is **notified** after the fact. |
-| **Irreversible** | Send a message or email as the person; spend money; share or upload data off the machine; read, create, or use credentials. | **Ask the person**, in plain language: "Send this email to Sam? [preview]". The prompt says what will happen, not which permission is needed. |
+**Inside the boundary**, effects stay within the fleet, are recorded, and can be
+fully undone. Examples: edit an intent and apply it to the Environment; build a
+Tool in the Agent's workspace; change the theme or keybindings; delete or move the
+person's files (the Data layer keeps them for its undo window); send private data
+to an open-weight model on the person's own DGX Spark.
 
-## Modes
+**Crossing the boundary** means an effect the system cannot undo. Examples:
 
-| Mode | Reversible | Partly reversible | Irreversible |
-| --- | --- | --- | --- |
-| **Careful** | Notify | Ask | Ask |
-| **Normal** (default) | Auto | Auto + notify + undo window | Ask |
-| **Full auto** | Auto | Auto | Auto *only* for standing rules the person has accepted; otherwise ask |
+- data leaving the fleet, including calls to a cloud model or an external harness
+  such as Grok Bot;
+- acting as the person (sending a message or email);
+- spending money;
+- reading, creating, or using credentials;
+- changing hardware or firmware;
+- changing Base with owner authority.
 
-Even in Full auto, nothing irreversible happens without a rule the person approved.
-The mode is part of the Crowbar State, so changing it is versioned and appears in
-the ledger.
+The earlier design had three risk tiers (reversible, partly reversible,
+irreversible) and three modes (Careful, Normal, Full auto). The Data layer's undo
+window moves "delete the person's files" inside the boundary, so the middle tier
+disappears. What is left is the single rule above.
 
-## Standing rules
+When the system asks, it says what will happen, not which permission is needed:
+"Send this email to Sam? [preview]".
 
-When the person approves the same kind of action repeatedly, the approver
-proposes a rule in plain language:
+## Notifications
+
+**Notify only on surprise.** A change the person asked for that stays inside the
+boundary just happens. The result *is* the notification. The person is
+interrupted only for:
+
+- something a background agent did that the person did not directly ask for;
+- anything blocked or refused;
+- a request to cross the boundary.
+
+Everything else is in the ledger. The Agent summarizes it on request ("what
+changed this week?").
+
+**Mode** is now only a verbosity setting: how much the person is told about
+actions inside the boundary. It never changes what is allowed. Mode is part of the
+Crowbar State, so changing it is versioned and recorded in the ledger.
+
+## Standing rules and standing grants
+
+These are two different things.
+
+- A **standing grant** is a long-lived handle that a principal holds, recorded in
+  the Crowbar State. For example: "Morning Pages may read and write `~/Writing`."
+- A **standing rule** is the person's pre-approval for a narrow class of actions
+  that cross the boundary, so those actions don't ask again. For example: "Morning
+  Pages may sync to your Nextcloud at cloud.example.org."
+
+When the person approves the same kind of action repeatedly, the approver proposes
+a standing rule in plain language:
 
 > You've approved "Morning Pages may sync to your Nextcloud at cloud.example.org"
 > 3 times. Always allow it? It will still stop if it tries to sync anywhere else.
 
-An accepted rule is written to `[autonomy.rules]` in the Crowbar State, as a new
-generation. It is narrow, names its scope, and can have an expiry. Rules can be
-revoked in one step from the ledger.
+An accepted rule is written to `[autonomy.rules]` in the Crowbar State. It is
+narrow, names its scope, and can have an expiry. Rules can be revoked in one step
+from the ledger.
+
+**Standing grants and standing rules never transfer** in a shared OS definition.
+Authority is always granted fresh by the person who receives it.
+
+## Money
+
+Spending money crosses the undo boundary. Two mechanisms cover it.
+
+### Budgets
+
+A budget is a **standing grant with a cap**. For example: "Claude, up to $20 a
+month, labels up to personal." Reaching the cap is a boundary event, so it asks
+the person. CPU and memory used inside the fleet are only resource limits and
+never ask.
+
+### Allowances
+
+An **Allowance** is a standing amount of money that the person sets aside for
+their Agent, in a separately funded account whose limit the card issuer or wallet
+enforces. The Agent can spend inside it without asking. Refilling it always asks.
+For example: "Here is $200. Use it for what you need."
+
+This is not the same as `allowance` in OpenAI and Stripe's Agentic Commerce
+Protocol, where it is a one-time limit on a single checkout. Ours is a standing,
+funded pot. Prior art and sources are in
+[agent payments prior art](../research/agent-payments-prior-art.md).
+
+Design rules:
+
+- **The issuer enforces the cap, not our software.** Card issuers and wallet
+  operators already check limits when a payment is authorized. If CrowbarOS is
+  compromised, the loss is still bounded by the cap.
+- **The funded amount is the real worst case.** Visa's rules make the cardholder
+  responsible for an agent's purchases "as if the Cardholder initiated" them, and
+  no network has a dispute reason for agent purchases. So "we can dispute it" is
+  not a safety net. A capped card that debits the person's main bank account is
+  weaker than one funded from a separate account that holds only the Allowance.
+- **The Agent never sees the card number.** The broker holds the card details in
+  the vault and fills them in, as with any other secret. This is stricter than most
+  products today, which hand the agent the card number.
+- **Refilling is out of the Agent's reach.** The broker never exposes "raise
+  limit", "create card", or "fund" to the Agent. Some issuer tool sets include
+  those calls; the broker must not pass them through.
+- **Every purchase is a ledger entry**, with the intent it served.
+
+Candidates to evaluate as the first backing, in order:
+
+1. **Privacy.com:** an issuer-capped card that an individual can get through an
+   API today. The broker holds the API key and sets a lifetime limit equal to the
+   Allowance. For a true bound, fund it from a dedicated account.
+2. **Link's agent wallet:** tokens for merchants that accept them, with its own
+   server-side caps.
+3. **Coinbase Agentic Wallet with x402:** for paid APIs.
+
+None of these is chosen yet. Each needs a closer look at what it exposes and
+where its limits are enforced.
+
+## Owner authority
+
+The owner can always take full authority over their machine: a root shell, a Base
+change, or turning off any guard. Taking it is deliberate, like unlocking, and it
+is recorded in the ledger. It can never be held by an agent. The Agent can ask
+the person to use owner authority, but it cannot use it itself.
 
 ## The ledger
 
-Every approval decision, capability grant, apply, and rollback is one ledger entry:
-who asked, the person's request, the concrete action, the tier, the approver's
-decision and signature, and the resulting handle or generation.
+Every intent edit, approval decision, capability grant, egress, purchase, apply,
+rollback, and use of owner authority is one ledger entry: who asked, the intent it
+served, the concrete action, whether it crossed the boundary and under which grant
+or rule, the approver's decision and signature, and the resulting handle or
+generation.
 
 ```mermaid
 sequenceDiagram
     participant P as Person
-    participant M as Main agent
+    participant H as Agent (harness)
+    participant G as Deterministic gate
     participant A as Approver
     participant B as Broker
     participant E as Apply engine
     participant L as Ledger
-    P->>M: "Make the dock hide unless I push the mouse down"
-    M->>A: action: edit state [desktop.dock], apply
-    A->>A: rules: desktop config = reversible
+    P->>H: "Make the dock hide unless I push the mouse down"
+    H->>H: Shaping: propose intent edit + checks
+    P->>H: confirms checks
+    H->>G: action: edit intent, apply to Environment
+    G->>G: inside the undo boundary
+    G->>A: concrete action + intents
+    A->>A: matches the intent
     A->>B: signed approval
-    B->>E: handle: apply state (one use)
-    E->>E: new generation #43
-    E->>L: apply ok, gen 43
-    A->>L: approved, tier reversible, request text
-    M->>P: "Done. Generation #43. Undo?"
+    B->>E: handle: apply (one use)
+    E->>E: new Environment generation
+    E->>L: apply ok
+    A->>L: approved, inside boundary, intent
+    H->>P: "Done. Undo?"
 ```
 
-From the ledger, a person can **revoke** a grant or **roll back** a generation in
-one step. Both are themselves logged.
+From the ledger, a person can **revoke** a grant or **undo** a change in one step.
+Both are themselves logged.
 
 ## Failure modes this design must handle
 
-- **Prompt injection into the main agent.** The approver never sees the injected
-  argument, only the action. An action that does not match the person's request
-  ("upload ~/Documents to an unknown host" after "sort my photos") is refused or
-  escalated.
-- **Approver mistakes.** A reversible action approved by mistake costs one undo.
-  Irreversible actions never depend on the approver model alone: they always need
-  a person or a standing rule the person accepted.
-- **Approver unavailable.** If the approver is not running, it fails closed for
-  partly reversible and irreversible actions. Reversible actions may still be
-  allowed by deterministic rules alone (configurable).
-- **Many small reversible actions that add up to an irreversible one**, for
-  example copying data step by step into a folder that some other process uploads.
-  The broker tracks flows per principal. Any off-machine sharing is irreversible,
-  whatever the path.
+- **Prompt injection into the harness.** The approver never sees the injected
+  argument, only the action. An action that does not match the intents ("upload
+  ~/Documents to an unknown host" after "sort my photos") is refused. Even if the
+  approver missed it, the upload crosses the boundary and has no grant, so the
+  deterministic gate stops it.
+- **Approver mistakes.** An unwanted action inside the boundary costs one undo.
+  Crossing the boundary never depends on the approver model alone.
+- **Approver unavailable.** The deterministic rules still run. Actions inside the
+  boundary that the fixed rules allow may still go ahead (configurable). Anything
+  that crosses the boundary still needs a grant, a rule, or the person.
+- **Many small steps that add up to an egress**, for example copying data step by
+  step into a folder that some other process uploads. Labels follow derived data,
+  and every outbound connection goes through the broker, which checks labels. The
+  path does not matter.
+- **A malicious or broken external harness.** It can only propose. It cannot edit
+  intents without the person's confirmed checks, and Environment safe mode can
+  always start the default harness instead. See
+  [state and apply engine](state-and-apply-engine.md#recovery-later).
 
 ## Open questions
 
-1. **Approver model.** Which small local model is good enough, how do we
-   evaluate it (a fixed test set of intent/action pairs, including adversarial
-   ones), and what is the hardware floor?
-2. **Classifying reversibility automatically.** Can we derive the tier from the
-   capability and the apply plan (for example, `affects_boot` changes, deletes
-   outside a snapshot) instead of maintaining lists by hand?
-3. **Intent capture.** The person's "original intent" is clear for one request.
-   How do we represent it for long sessions and background agents that work
-   for hours?
-4. **Notification design.** How does "notify" avoid becoming the next permission
-   prompt that people learn to ignore? Daily digest? Only on surprise?
-5. **Signatures.** What key material does the approver hold, how is it protected
-   from the main agent (a separate user ID? TPM?), and what does the broker check?
-6. **Budgets.** Should spending (tokens, cloud model use, money) have per-agent
-   budgets that also gate actions, and which tier is a budget increase?
-7. **Multi-person machines.** Whose intent counts when two people share a machine
-   or a family shares an OS definition?
-8. **Shared rules.** Can standing rules be shared as part of an OS definition, or
-   must every person accept them again?
+1. **Approver model.** Which small local model is good enough, how do we evaluate
+   it (a fixed test set of intent/action pairs, including adversarial ones), and
+   how small can it be?
+2. **Deriving the boundary automatically.** Can we decide "inside or crossing"
+   from the capability and the apply plan alone, instead of keeping lists by hand?
+3. **Signatures.** What key material does the approver hold, and how is it
+   protected from the Agent (a separate user ID, a TPM-bound key)? What does the
+   broker check?
+4. **Harness protocol scope.** Which MCP tools and resources does the protocol
+   expose, and how does it version them?
+5. **Allowance backing.** Which issuer or wallet backs the first Allowance, and
+   how does the broker fill card forms safely on sites that block agents?
+6. **Notification verbosity.** What are the levels, and what does "surprise" mean
+   for a background agent that runs for days?

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CrowbarOS, Agent-First: a different bet</title>
+<title>CrowbarOS, agent-first</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";mermaid.initialize({startOnLoad:true,theme:"base",themeVariables:{background:"#080D12",primaryColor:"#17212B",primaryTextColor:"#D8E5EC",primaryBorderColor:"#49D7E8",lineColor:"#6D8191",fontFamily:"Manrope",fontSize:"15px"}});</script>
@@ -41,79 +41,86 @@ footer{padding:48px 0 80px;color:var(--steel);font-size:14px}
 </head>
 <body>
 <header><div class="wrap">
-  <div class="eyebrow">CrowbarOS · a counter-proposal from Jim</div>
+  <div class="eyebrow">CrowbarOS · agent-first</div>
   <h1>Don't ship a desktop.<br><em>Ship the ability to make one.</em></h1>
-  <p class="lede">Jason, your CrowbarOS blueprint is a beautiful, curated desktop. I want to pitch a bolder bet on the same name and spirit: an agent-first OS that starts almost empty, where every person speaks their ideal OS into existence.</p>
+  <p class="lede">An operating system that starts lean, where each person shapes their own OS with their agent. What you asked for is the source. Everything built from it can be undone, rebuilt with a better model, carried to a new machine, or shared.</p>
 </div></header>
 
 <section><div class="wrap">
-  <h2>The shift I'm seeing</h2>
-  <p>People are increasingly <strong>building bespoke software instead of installing existing software</strong>. Today that's mostly experienced developers working with agents. But the cost of making a small, perfectly-fitted tool is collapsing, and I think within a few years everyone will do it.</p>
-  <div class="quote">If software becomes something you describe instead of something you install, the OS's job changes.</div>
-  <p>A curated set of five default apps matters less when your file manager or writing app might be something your agent built for you last Tuesday. What matters is the substrate: a tiny, stable base, an agent that can build and change things safely, and a way to keep, undo, and share what you make.</p>
+  <h2>The shift</h2>
+  <p>People are increasingly <strong>building bespoke software instead of installing it</strong>. Today that's mostly developers working with agents. The cost of a small tool that fits one person exactly is falling fast, and within a few years most people will make software this way.</p>
+  <div class="quote">If software becomes something you describe instead of something you install, the thing you own is the description.</div>
+  <p>So the substrate matters most: a small, stable base, an agent that helps you work out what you want before it builds, safety that does not depend on the model being right, and a way to keep, undo, carry, and share what you make.</p>
 </div></section>
 
 <section><div class="wrap">
   <h2>What it feels like</h2>
   <div class="term">
     <div><span class="p">you ›</span> I write in the mornings. Give me a calm writing mode with no notifications until noon.</div>
-    <div class="c">agent · built "Morning Pages" app, added a focus rule 6am–12pm, warmed the palette</div>
-    <div class="c">agent · new system generation #42 saved, one click to undo</div>
-    <div><span class="p">you ›</span> Nice. Make the dock disappear unless I push the mouse to the bottom.</div>
-    <div class="c">agent · done, generation #43</div>
+    <div class="c">agent · two questions first: should anyone get through before noon? Weekends too?</div>
+    <div><span class="p">you ›</span> Sam can always get through. Weekdays only.</div>
+    <div class="c">agent · intent saved with 3 checks you confirmed · built "Morning Pages" and a notification rule · applied live, one step to undo</div>
+    <div><span class="p">you ›</span> <span class="c">(points at the page list)</span> Sort these by date.</div>
+    <div class="c">agent · intent updated, checks still pass</div>
   </div>
-  <p style="margin-top:18px">No app store browsing, no settings archaeology, no terminal required. And because every change is a saved version, nothing the agent does is scary.</p>
+  <p style="margin-top:18px">No app store browsing, no settings archaeology, no terminal required. Everything that stays on your machines can be undone, so the agent just does it. Anything that leaves them, spends money, or acts as you needs your say.</p>
 </div></section>
 
 <section><div class="wrap">
-  <h2>Five first principles</h2>
+  <h2>Seven first principles</h2>
   <div class="grid">
-    <div class="card"><div class="n">01</div><h3>Everything is declared and versioned</h3><p>The whole system is a living document the agent edits, with full history and instant rollback built in, not bolted on.</p></div>
-    <div class="card"><div class="n">02</div><h3>Capabilities, not root</h3><p>Every generated app gets only what it was granted: this folder, the camera, the network. A buggy bespoke app can't wreck the machine.</p></div>
-    <div class="card"><div class="n">03</div><h3>Intent is a first-class interface</h3><p>The agent is a system service with a stable API to the whole OS, not a chatbot app sitting on top.</p></div>
-    <div class="card"><div class="n">04</div><h3>Apps are generated and disposable</h3><p>The OS is optimized for building, sandboxing, testing, and swapping small programs constantly, not installing big ones.</p></div>
-    <div class="card"><div class="n">05</div><h3>Your OS is portable and shareable</h3><p>Your entire setup is a definition you carry to a new machine, or share so a friend can try your OS in one step.</p></div>
+    <div class="card"><div class="n">01</div><h3>Intent is the source</h3><p>Your intents, with checks you confirmed, are your OS. The Crowbar State is a pinned lockfile built from them, and a better model can re-derive it as a diff you review.</p></div>
+    <div class="card"><div class="n">02</div><h3>Three layers</h3><p>Base changes rarely, at boot. The Environment, where Tools live, changes live with instant undo. Your Data is never rolled back with them.</p></div>
+    <div class="card"><div class="n">03</div><h3>Deterministic safety</h3><p>Handles, labels, and one undo boundary around your fleet. Inside it, things just happen. Crossing it needs a grant, a rule, or you. No model on the trust path.</p></div>
+    <div class="card"><div class="n">04</div><h3>Tools are living and disposable</h3><p>Generated Tools are capability-safe components with UI the system draws. Point at any part and say what to change.</p></div>
+    <div class="card"><div class="n">05</div><h3>The agent is a role</h3><p>The OS owns the role and its authority. The harness and model are swappable, from open weights on your own hardware to Grok Bot, and none of them is trusted.</p></div>
+    <div class="card"><div class="n">06</div><h3>The owner is sovereign</h3><p>You can always take full control. Lean by default, as heavy as you choose. Recovery never depends on a model.</p></div>
+    <div class="card"><div class="n">07</div><h3>Portable and shareable</h3><p>One OS across your fleet, with encrypted sync. Share your intents; a friend's agent rebuilds them, and no authority transfers.</p></div>
   </div>
 </div></section>
 
 <section><div class="wrap">
-  <h2>The stack: bold where it's new, borrowed where it isn't</h2>
-  <p>I'm open to going all the way down to the metal where the vision demands a new way of thinking. But nothing about agent-first needs a new way to talk to a Wi-Fi chip, and drivers are what kill new OSes. So invent the top, borrow the bottom, and keep the kernel swappable.</p>
+  <h2>The stack: invent the top, borrow the bottom</h2>
+  <p>Nothing about agent-first needs a new way to talk to a Wi-Fi chip, and drivers are what kill new operating systems. Isolation lives in the component runtime and the capability broker, so the kernel is a replaceable driver host. We choose Linux for its drivers.</p>
   <pre class="mermaid">
 flowchart TB
-  A["NEW · Intent layer + agent runtime"] --> B["NEW · Capability app model, generated apps, system history"]
-  B --> C["NEW or ADAPTED · Compositor + UI toolkit built for generated apps"]
-  C --> D["BORROW · Kernel + drivers: Linux now, microkernel later"]
+  A["NEW · Agent role, harness protocol, intents and Shaping"] --> B["NEW · Capability broker: handles, labels, egress, vault, ledger"]
+  B --> C["NEW · Crowbar State + apply engine: Base, Environment, Data"]
+  B --> R["ADAPTED · WASM Tool runtime + declarative shell (GPUI, Wayland)"]
+  C --> D["BORROW · Void Linux Base, Linux kernel and drivers, Btrfs"]
+  R --> D
   style A fill:#49D7E8,color:#080D12,stroke:#49D7E8
   style B fill:#49D7E8,color:#080D12,stroke:#49D7E8
+  style C fill:#49D7E8,color:#080D12,stroke:#49D7E8
   </pre>
-  <p style="margin-top:18px">Practical starting point: a minimal <strong>NixOS</strong>-style declarative base (the agent edits config, every rebuild is a rollback-able generation) with Hyprland, plus our own capability layer on top. Longer term, a capability microkernel like seL4 could replace Linux under the same design.</p>
+  <p style="margin-top:18px">Already working: Milestone 1, a Void Linux VM on Btrfs where every apply is a bootable generation and a broken change is undone from the boot menu. Next: one headless Tool end to end, from Shaping to live apply to undo, on two models.</p>
 </div></section>
 
 <section><div class="wrap">
-  <h2>Your blueprint vs. this bet</h2>
+  <h2>The Fedora blueprint vs. agent-first</h2>
   <table class="compare">
-    <tr><th></th><th>CrowbarOS blueprint</th><th>Agent-first Crowbar</th></tr>
-    <tr><td>Core idea</td><td>A calm, curated desktop for creative people</td><td>A tiny substrate each person shapes by talking to an agent</td></tr>
-    <tr><td>Base</td><td>Fedora, non-Atomic, DNF</td><td>Declarative and versioned (NixOS-style), kernel swappable later</td></tr>
-    <tr><td>Apps</td><td>Five essentials + Bazaar/Flathub</td><td>Generated on request, sandboxed by capabilities; installs still possible</td></tr>
-    <tr><td>AI</td><td>Neutral: no bundled AI</td><td>The agent <em>is</em> the primary interface; user picks local or cloud model</td></tr>
-    <tr><td>Customizing</td><td>Settings panels, themes, Community Gallery</td><td>Say what you want; share whole OS definitions</td></tr>
+    <tr><th></th><th>CrowbarOS blueprint</th><th>Agent-first CrowbarOS</th></tr>
+    <tr><td>Core idea</td><td>A calm, curated desktop for creative people</td><td>A lean substrate each person shapes into their own OS</td></tr>
+    <tr><td>Source of truth</td><td>Installed packages and settings</td><td>Your intents; the Crowbar State is a pinned lockfile</td></tr>
+    <tr><td>Base</td><td>Fedora, non-Atomic, DNF</td><td>Void Linux, Base layer only; Environment and Data change on their own</td></tr>
+    <tr><td>Software</td><td>Five essentials + Bazaar/Flathub</td><td>Tools built on request as capability-safe components; native software still possible</td></tr>
+    <tr><td>AI</td><td>Neutral: no bundled AI</td><td>Model-neutral: you pick the harness and models, and the system is sound with none</td></tr>
+    <tr><td>Customizing</td><td>Settings panels, themes, Community Gallery</td><td>Say or point at what you want; share OS definitions</td></tr>
     <tr><td>What stays</td><td colspan="2" style="color:var(--frost)">The name, the crow, the palette, open governance, FOSS values, and "make it yours," taken literally.</td></tr>
   </table>
 </div></section>
 
 <section><div class="wrap">
-  <h2>The hard problems (where I want your brain)</h2>
+  <h2>The hard problems still open</h2>
   <ol class="q">
-    <li><strong>Trust.</strong> What can the agent change without asking, and how does a non-developer stay in control?</li>
-    <li><strong>Where the model runs.</strong> Local, cloud, or the user's choice, and what's the floor for hardware?</li>
-    <li><strong>Recovery.</strong> When someone's bespoke stuff breaks, how do they get back to good without knowing what a config file is?</li>
-    <li><strong>Sharing and community.</strong> Does the Community Gallery become a place to share prompts, apps, and whole OS definitions?</li>
-    <li><strong>Does this kill your AI-neutrality pillar,</strong> or can both coexist, for example an agent-first edition alongside a classic one?</li>
+    <li><strong>Checks for everyone.</strong> How do people who aren't developers confirm checks precise enough to catch a bad re-derive?</li>
+    <li><strong>Live apply.</strong> How do we swap a running Tool atomically without losing its state?</li>
+    <li><strong>The UI vocabulary.</strong> How rich must declarative UI be before generated Tools stop needing native windows?</li>
+    <li><strong>Data newer than code.</strong> What happens when the Environment rolls back but your Data doesn't?</li>
+    <li><strong>The Allowance.</strong> What should back the money you give your agent: a capped card, an agent wallet, or a payment protocol?</li>
   </ol>
 </div></section>
 
-<footer><div class="wrap">Pitch for discussion · Jim Martin · November 2026 · Built on Jason's CrowbarOS vision.</div></footer>
+<footer><div class="wrap">Pitch for discussion · Jim Martin and Jason Alexander · Revised November 14, 2026 · Built on the CrowbarOS vision.</div></footer>
 </body>
 </html>
