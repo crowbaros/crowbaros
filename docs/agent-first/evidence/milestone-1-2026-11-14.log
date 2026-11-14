@@ -1,0 +1,204 @@
+[14:43:27] Evidence log: /home/jmartin/Code/crowbaros/.lab/void/milestone-20261114T204327Z.log
+[14:43:35] == Boot generation 1 (base image)
+[14:43:36] PASS: GRUB menu lists generation 1
+[14:44:00] ssh is up
+[14:44:00] PASS: generation 1 boots and ssh comes up
+[14:44:00] guest$ cat /proc/cmdline
+[14:44:01]     BOOT_IMAGE=/gens/1/boot/vmlinuz-6.18.63_1 root=LABEL=crowbar-root rootflags=subvol=gens/1 rw crowbar.generation=1 console=tty0 console=ttyS0,115200
+[14:44:01] PASS: booted generation is 1
+[14:44:01] guest$ findmnt -no SOURCE,FSTYPE,OPTIONS /
+[14:44:01]     /dev/vda2[/gens/1] btrfs rw,relatime,discard=async,space_cache=v2,subvolid=256,subvol=/gens/1
+[14:44:01] guest$ crowbar generations
+[14:44:01]        1  parent   -  2026-11-14T20:43:28Z  base image  default,booted
+[14:44:01] guest$ crowbar drift
+[14:44:01]     No drift: the system matches /etc/crowbar/state.toml.
+[14:44:01] PASS: no drift on the base image
+[14:44:01] == Edit the state: 02-tools.toml adds jq, htop, and /etc/motd
+[14:44:01] guest$ diff -u /etc/crowbar/state.toml /root/states/02-tools.toml
+[14:44:01]     --- /etc/crowbar/state.toml	2026-11-14 20:43:28.000000000 +0000
+[14:44:01]     +++ /root/states/02-tools.toml	2026-11-14 20:43:28.000000000 +0000
+[14:44:01]     @@ -1,10 +1,18 @@
+[14:44:01]     -# Generation 1: the base image as built by `void_lab.py image`.
+[14:44:01]     -# Base-image packages are not owned by the state in Milestone 1, so
+[14:44:01]     -# packages.install starts empty.
+[14:44:01]     +# A good change: two packages and a message of the day.
+[14:44:01]      version = 1
+[14:44:01]      
+[14:44:01]      [system]
+[14:44:01]      hostname = "crowbar-lab"
+[14:44:01]      
+[14:44:01]     +[packages]
+[14:44:01]     +install = ["jq", "htop"]
+[14:44:01]     +
+[14:44:01]      [services]
+[14:44:01]      enabled = ["agetty-tty1", "agetty-ttyS0", "dhcpcd", "sshd", "udevd"]
+[14:44:01]     +
+[14:44:01]     +[[file]]
+[14:44:01]     +path = "/etc/motd"
+[14:44:01]     +content = """
+[14:44:01]     +CrowbarOS lab. This system is built from /etc/crowbar/state.toml.
+[14:44:01]     +Change it with `crowbar apply`, not by hand.
+[14:44:01]     +"""
+[14:44:01] guest$ crowbar plan /root/states/02-tools.toml
+[14:44:01]       + install packages: htop, jq
+[14:44:01]       + write file /etc/motd (mode 0644)
+[14:44:01] guest$ CROWBAR_ACTOR=milestone-1 crowbar apply /root/states/02-tools.toml
+[14:44:04]       + install packages: htop, jq
+[14:44:04]       + write file /etc/motd (mode 0644)
+[14:44:04]     Built generation 2 from generation 1; it is now the boot default. Reboot to use it.
+[14:44:04] guest$ crowbar generations
+[14:44:04]        1  parent   -  2026-11-14T20:43:28Z  base image  booted
+[14:44:04]        2  parent   1  2026-11-14T20:44:03Z  +2 pkg, file /etc/motd  default
+[14:44:04] guest$ command -v jq
+[14:44:04] PASS: running system untouched by apply
+[14:44:04] guest$ nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &
+[14:44:32] ssh is up
+[14:44:32] PASS: generation 2 boots and ssh comes up
+[14:44:32] guest$ cat /proc/cmdline
+[14:44:33]     BOOT_IMAGE=/gens/2/boot/vmlinuz-6.18.63_1 root=LABEL=crowbar-root rootflags=subvol=gens/2 rw crowbar.generation=2 console=tty0 console=ttyS0,115200
+[14:44:33] PASS: booted generation is 2
+[14:44:33] guest$ jq --version
+[14:44:33]     jq-1.8.2
+[14:44:33] PASS: jq is installed in generation 2
+[14:44:33] guest$ cat /etc/motd
+[14:44:33]     CrowbarOS lab. This system is built from /etc/crowbar/state.toml.
+[14:44:33]     Change it with `crowbar apply`, not by hand.
+[14:44:33] PASS: /etc/motd is managed
+[14:44:33] guest$ crowbar drift
+[14:44:33]     No drift: the system matches /etc/crowbar/state.toml.
+[14:44:33] PASS: no drift on generation 2
+[14:44:33] == Apply a deliberately broken change: 03-broken-mount.toml
+[14:44:33] guest$ diff -u /etc/crowbar/state.toml /root/states/03-broken-mount.toml
+[14:44:33]     --- /etc/crowbar/state.toml	2026-11-14 20:44:03.513000000 +0000
+[14:44:33]     +++ /root/states/03-broken-mount.toml	2026-11-14 20:43:28.000000000 +0000
+[14:44:33]     @@ -1,4 +1,7 @@
+[14:44:33]     -# A good change: two packages and a message of the day.
+[14:44:33]     +# A deliberately broken change: mount a data disk that does not exist.
+[14:44:33]     +# It applies cleanly, but Void's boot runs `mount -a`, which fails, and
+[14:44:33]     +# stage 1 drops to an emergency shell. Recovery is choosing the previous
+[14:44:33]     +# generation in the boot menu.
+[14:44:33]      version = 1
+[14:44:33]      
+[14:44:33]      [system]
+[14:44:33]     @@ -16,3 +19,8 @@
+[14:44:33]      CrowbarOS lab. This system is built from /etc/crowbar/state.toml.
+[14:44:33]      Change it with `crowbar apply`, not by hand.
+[14:44:33]      """
+[14:44:33]     +
+[14:44:33]     +[ount]]
+[14:44:33]     +device = "LABEL=crowbar-data"
+[14:44:33]     +target = "/srv/data"
+[14:44:33]     +fstype = "ext4"
+[14:44:33] guest$ crowbar plan /root/states/03-broken-mount.toml
+[14:44:33]       ! managed mounts: 0 -> 1
+[14:44:33]           + LABEL=crowbar-data	/srv/data	ext4	defaults	0 0
+[14:44:33]       (! = can affect whether the next boot succeeds; the previous generation stays in the boot menu)
+[14:44:33] guest$ CROWBAR_ACTOR=milestone-1 crowbar apply /root/states/03-broken-mount.toml
+[14:44:33]       ! managed mounts: 0 -> 1
+[14:44:33]           + LABEL=crowbar-data	/srv/data	ext4	defaults	0 0
+[14:44:33]       (! = can affect whether the next boot succeeds; the previous generation stays in the boot menu)
+[14:44:33]     Built generation 3 from generation 2; it is now the boot default. Reboot to use it.
+[14:44:33] guest$ crowbar generations
+[14:44:33]        1  parent   -  2026-11-14T20:43:28Z  base image  
+[14:44:33]        2  parent   1  2026-11-14T20:44:03Z  +2 pkg, file /etc/motd  booted
+[14:44:33]        3  parent   2  2026-11-14T20:44:32Z  mounts=1  default
+[14:44:33] guest$ nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &
+[14:44:51] PASS: generation 3 fails to boot (emergency shell)
+[14:44:51]     serial| [    2.089638] parport_pc 00:02: reported by Plug and Play ACPI
+[14:44:51]     serial| [    2.091874] parport0: PC-style at 0x378, irq 7 [PCSPP,TRISTATE]
+[14:44:51]     serial| [    2.121333] iTCO_vendor_support: vendor-support=0
+[14:44:51]     serial| [    2.150264] iTCO_wdt iTCO_wdt.1.auto: Found a ICH9 TCO device (Version=2, TCOBASE=0x0660)
+[14:44:51]     serial| [    2.154554] iTCO_wdt iTCO_wdt.1.auto: initialized. heartbeat=30 sec (nowayout=0)
+[14:44:51]     serial| [    2.162902] kvm_amd: TSC scaling supported
+[14:44:51]     serial| [    2.163929] kvm_amd: Nested Virtualization enabled
+[14:44:51]     serial| [    2.165062] kvm_amd: Nested Paging enabled
+[14:44:51]     serial| [    2.166029] kvm_amd: LBR virtualization supported
+[14:44:51]     serial| [    2.167397] kvm_amd: Virtual VMLOAD VMSAVE supported
+[14:44:51]     serial| [    2.168552] kvm_amd: Virtual GIF supported
+[14:44:51]     serial| [    2.193362] ppdev: user-space parallel port driver
+[14:44:51]     serial| => Remounting rootfs read-only...
+[14:44:51]     serial| => Activating btrfs devices...
+[14:44:51]     serial| Scanning for Btrfs filesystems
+[14:44:51]     serial| registered: /dev/vda2
+[14:44:51]     serial| => Activating encrypted devices...
+[14:44:51]     serial| => Checking filesystems:
+[14:44:51]     serial| => Mounting rootfs read-write...
+[14:44:51]     serial| => Mounting all non-network filesystems...
+[14:44:51]     serial| mount: /srv/data: can't find LABEL=crowbar-data.
+[14:44:51]     serial| 
+[14:44:51]     serial| Cannot continue due to errors above, starting emergency shell.
+[14:44:51]     serial| When ready type exit to continue booting.
+[14:44:51]     serial| /bin/sh: 0: can't access tty; job control turned off
+[14:44:56] PASS: ssh is down while generation 3 is stuck
+[14:44:56] == Recover from the boot menu: reset, pick generation 2
+[14:44:57] PASS: GRUB menu shows generation 2 after reset
+[14:44:59] sent Down, Enter to the GRUB menu over the serial console
+[14:45:15] ssh is up
+[14:45:15] PASS: generation 2 boots from the menu and ssh comes up
+[14:45:15] guest$ cat /proc/cmdline
+[14:45:15]     BOOT_IMAGE=/gens/2/boot/vmlinuz-6.18.63_1 root=LABEL=crowbar-root rootflags=subvol=gens/2 rw crowbar.generation=2 console=tty0 console=ttyS0,115200
+[14:45:15] PASS: booted generation is 2 (picked in the menu)
+[14:45:15] guest$ cat /etc/fstab
+[14:45:15]     # Root is whichever generation subvolume the boot menu selected (rootflags=subvol=...).
+[14:45:15]     LABEL=crowbar-root	/	btrfs	rw,relatime	0 0
+[14:45:15]     tmpfs	/tmp	tmpfs	defaults,nosuid,nodev	0 0
+[14:45:15] PASS: broken mount absent in generation 2
+[14:45:15] guest$ crowbar generations
+[14:45:15]        1  parent   -  2026-11-14T20:43:28Z  base image  
+[14:45:15]        2  parent   1  2026-11-14T20:44:03Z  +2 pkg, file /etc/motd  booted
+[14:45:15]        3  parent   2  2026-11-14T20:44:32Z  mounts=1  default
+[14:45:15] == Make the rollback stick
+[14:45:15] guest$ CROWBAR_ACTOR=milestone-1 crowbar rollback
+[14:45:15]     Generation 2 is now the boot default.
+[14:45:15] guest$ crowbar generations
+[14:45:15]        1  parent   -  2026-11-14T20:43:28Z  base image  
+[14:45:15]        2  parent   1  2026-11-14T20:44:03Z  +2 pkg, file /etc/motd  default,booted
+[14:45:15]        3  parent   2  2026-11-14T20:44:32Z  mounts=1
+[14:45:15] guest$ nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &
+[14:45:44] ssh is up
+[14:45:44] PASS: after rollback, the default boot comes up
+[14:45:44] guest$ cat /proc/cmdline
+[14:45:44]     BOOT_IMAGE=/gens/2/boot/vmlinuz-6.18.63_1 root=LABEL=crowbar-root rootflags=subvol=gens/2 rw crowbar.generation=2 console=tty0 console=ttyS0,115200
+[14:45:44] PASS: default boot is generation 2
+[14:45:44] == Drift: a hand edit outside the engine is detected
+[14:45:44] guest$ echo 'edited by hand' >> /etc/motd
+[14:45:44] guest$ crowbar drift
+[14:45:44]     Drift: applying /etc/crowbar/state.toml again would change:
+[14:45:44]       + write file /etc/motd (mode 0644)
+[14:45:44] PASS: drift reports the hand-edited file
+[14:45:44] == A failing apply leaves nothing behind
+[14:45:44] guest$ sed 's/"jq", "htop"/"jq", "htop", "crowbar-no-such-package"/' /root/states/02-tools.toml > /root/states/04-bad-package.toml
+[14:45:44] guest$ crowbar apply /root/states/04-bad-package.toml
+[14:45:45]     crowbar: "xbps-install" "-r" "/run/crowbar/top/gens/4" "-S" "-y" "crowbar-no-such-package" failed (exit status: 2):
+[14:45:45]     [*] Updating repository `https://repo-default.voidlinux.org/current/x86_64-repodata' ...
+[14:45:45]     ERROR: Package 'crowbar-no-such-package' not found in repository pool.
+[14:45:45] PASS: apply with a missing package fails
+[14:45:45] guest$ crowbar generations; ls /run/crowbar/top/gens
+[14:45:46]        1  parent   -  2026-11-14T20:43:28Z  base image  
+[14:45:46]        2  parent   1  2026-11-14T20:44:03Z  +2 pkg, file /etc/motd  default,booted
+[14:45:46]        3  parent   2  2026-11-14T20:44:32Z  mounts=1  
+[14:45:46]     1
+[14:45:46]     2
+[14:45:46]     3
+[14:45:46] PASS: failed apply created no generation and kept default 2
+[14:45:46] guest$ crowbar ledger
+[14:45:46]     2026-11-14T20:43:28Z  init     ok      gen 1    registered base image as generation 1
+[14:45:46]     2026-11-14T20:44:03Z  apply    ok      gen 2    install packages: htop, jq; write file /etc/motd (mode 0644)
+[14:45:46]     2026-11-14T20:44:32Z  apply    ok      gen 3    managed mounts: 0 -> 1
+[14:45:46]           + LABEL=crowbar-data	/srv/data	ext4	defaults	0 0
+[14:45:46]     2026-11-14T20:45:12Z  rollback ok      gen 2    boot default 3 -> 2 (booted: 2)
+[14:45:46]     2026-11-14T20:45:42Z  apply    failed  gen 4    "xbps-install" "-r" "/run/crowbar/top/gens/4" "-S" "-y" "crowbar-no-such-package" failed (exit status: 2):
+[14:45:46]     [*] Updating repository `https://repo-default.voidlinux.org/current/x86_64-repodata' ...
+[14:45:46]     ERROR: Package 'crowbar-no-such-package' not found in repository pool.
+[14:45:46] guest$ ls -la /run/crowbar/top/gens; btrfs subvolume list /run/crowbar/top
+[14:45:46]     total 0
+[14:45:46]     drwxr-xr-x 1 root root   6 Nov 14 20:45 .
+[14:45:46]     drwxr-xr-x 1 root root  22 Nov 14 20:43 ..
+[14:45:46]     drwxr-xr-x 1 root root 136 Nov 14 20:37 1
+[14:45:46]     drwxr-xr-x 1 root root 136 Nov 14 20:44 2
+[14:45:46]     drwxr-xr-x 1 root root 142 Nov 14 20:44 3
+[14:45:46]     ID 256 gen 13 top level 5 path gens/1
+[14:45:46]     ID 257 gen 21 top level 5 path gens/2
+[14:45:46]     ID 258 gen 18 top level 5 path gens/3
+[14:45:46] == 21/21 checks passed
+[14:45:46] Evidence: /home/jmartin/Code/crowbaros/.lab/void/milestone-20261114T204327Z.log; raw serial console: /home/jmartin/Code/crowbaros/.lab/void/serial.log

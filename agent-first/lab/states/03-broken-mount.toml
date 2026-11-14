@@ -1,0 +1,26 @@
+# A deliberately broken change: mount a data disk that does not exist.
+# It applies cleanly, but Void's boot runs `mount -a`, which fails, and
+# stage 1 drops to an emergency shell. Recovery is choosing the previous
+# generation in the boot menu.
+version = 1
+
+[system]
+hostname = "crowbar-lab"
+
+[packages]
+install = ["jq", "htop"]
+
+[services]
+enabled = ["agetty-tty1", "agetty-ttyS0", "dhcpcd", "sshd", "udevd"]
+
+[[file]]
+path = "/etc/motd"
+content = """
+CrowbarOS lab. This system is built from /etc/crowbar/state.toml.
+Change it with `crowbar apply`, not by hand.
+"""
+
+[[mount]]
+device = "LABEL=crowbar-data"
+target = "/srv/data"
+fstype = "ext4"
