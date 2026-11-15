@@ -834,13 +834,32 @@ the following. The text of round 1 above is as it was written.
 care as the control channel; and Base should set and check `ptrace_scope` and
 the rules that decide who may open `/dev/uinput`.
 
+### Round 3
+
+The last round. Three fresh reviewers, the same three models, checked that
+each round 2 finding was closed. All three found each one closed and no new
+defect in the spike, and each scored it 9 out of 10. Each named the same thing
+as holding it below 10: no frame drawn by a GPU has reached a display through
+this compositor, which is [issue 5](https://github.com/crowbaros/crowbaros/issues/5).
+Nothing was changed after this round except this part and the scores.
+
+Three notes from it, for whoever runs issue 5 or reads the above:
+
+- The `needs_sync` line is logged only for a frame the compositor draws
+  itself. A frame shown straight from a client's buffer logs nothing, so the
+  run should have the shell's layers on screen.
+- "One binary did every run" means the three display runs. The tests are a
+  separate build on the host.
+- The start time of 06:39 UTC comes from the session's own log. Nothing in
+  git or the evidence shows it; the first commit is at 06:55 UTC.
+
 ### Scores
 
-| Reviewer | Round 1 | Round 2 |
-| --- | --- | --- |
-| Claude Opus 5.5 | 7/10 | 8/10 |
-| Claude Fable 5.2 | 7/10 | 8/10 |
-| GPT-6.1 Sol | 7/10 | 8/10 |
+| Reviewer | Round 1 | Round 2 | Round 3 |
+| --- | --- | --- | --- |
+| Claude Opus 5.5 | 7/10 | 8/10 | 9/10 |
+| Claude Fable 5.2 | 7/10 | 8/10 | 9/10 |
+| GPT-6.1 Sol | 7/10 | 8/10 | 9/10 |
 
 ---
 
