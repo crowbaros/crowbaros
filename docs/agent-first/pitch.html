@@ -43,14 +43,14 @@ footer{padding:48px 0 80px;color:var(--steel);font-size:14px}
 <header><div class="wrap">
   <div class="eyebrow">CrowbarOS · agent-first</div>
   <h1>Don't ship a desktop.<br><em>Ship the ability to make one.</em></h1>
-  <p class="lede">An operating system that starts lean, where each person shapes their own OS with their agent. What you asked for is the source. Everything built from it can be undone, rebuilt with a better model, carried to a new machine, or shared.</p>
+  <p class="lede">An operating system that starts lean, where each person shapes their own OS with their agent. What you asked for, the checks you confirmed, and the build you accepted are the source. Changes to your tools are checked in a private copy before they go live, and can be undone, rebuilt with a better model, carried to a new machine, or shared.</p>
 </div></header>
 
 <section><div class="wrap">
   <h2>The shift</h2>
   <p>People are increasingly <strong>building bespoke software instead of installing it</strong>. Today that's mostly developers working with agents. The cost of a small tool that fits one person exactly is falling fast, and within a few years most people will make software this way.</p>
   <div class="quote">If software becomes something you describe instead of something you install, the thing you own is the description.</div>
-  <p>So the substrate matters most: a small, stable base, an agent that helps you work out what you want before it builds, safety that does not depend on the model being right, and a way to keep, undo, carry, and share what you make.</p>
+  <p>So the substrate matters most: a small, stable base, an agent that helps you work out what you want before it builds, security that comes first and does not depend on the model being right, and a way to keep, undo, carry, and share what you make.</p>
 </div></section>
 
 <section><div class="wrap">
@@ -59,41 +59,43 @@ footer{padding:48px 0 80px;color:var(--steel);font-size:14px}
     <div><span class="p">you ›</span> I write in the mornings. Give me a calm writing mode with no notifications until noon.</div>
     <div class="c">agent · two questions first: should anyone get through before noon? Weekends too?</div>
     <div><span class="p">you ›</span> Sam can always get through. Weekdays only.</div>
-    <div class="c">agent · intent saved with 3 checks you confirmed · built "Morning Pages" and a notification rule · applied live, one step to undo</div>
+    <div class="c">agent · intent saved with 3 checks you confirmed · built "Morning Pages" and a notification rule in a fork · here is a preview</div>
+    <div><span class="p">you ›</span> <span class="c">(confirms)</span></div>
+    <div class="c">agent · live · one step to undo</div>
     <div><span class="p">you ›</span> <span class="c">(points at the page list)</span> Sort these by date.</div>
-    <div class="c">agent · intent updated, checks still pass</div>
+    <div class="c">agent · intent updated, checks still pass · preview ready</div>
   </div>
-  <p style="margin-top:18px">No app store browsing, no settings archaeology, no terminal required. Everything that stays on your machines can be undone, so the agent just does it. Anything that leaves them, spends money, or acts as you needs your say.</p>
+  <p style="margin-top:18px">No app store browsing, no settings archaeology, no terminal required. The agent works inside limits you set, builds each change in a private copy, shows you a preview, and makes it live when you confirm. You can undo one change and keep the later ones. Anything that leaves your machines, spends money, or acts as you needs your say.</p>
 </div></section>
 
 <section><div class="wrap">
   <h2>Seven first principles</h2>
   <div class="grid">
-    <div class="card"><div class="n">01</div><h3>Intent is the source</h3><p>Your intents, with checks you confirmed, are your OS. The Crowbar State is a pinned lockfile built from them, and a better model can re-derive it as a diff you review.</p></div>
-    <div class="card"><div class="n">02</div><h3>Three layers</h3><p>Base changes rarely, at boot. The Environment, where Tools live, changes live with instant undo. Your Data is never rolled back with them.</p></div>
-    <div class="card"><div class="n">03</div><h3>Deterministic safety</h3><p>Handles, labels, and one undo boundary around your fleet. Inside it, things just happen. Crossing it needs a grant, a rule, or you. No model on the trust path.</p></div>
-    <div class="card"><div class="n">04</div><h3>Tools are living and disposable</h3><p>Generated Tools are capability-safe components with UI the system draws. Point at any part and say what to change.</p></div>
-    <div class="card"><div class="n">05</div><h3>The agent is a role</h3><p>The OS owns the role and its authority. The harness and model are swappable, from open weights on your own hardware to Grok Bot, and none of them is trusted.</p></div>
+    <div class="card"><div class="n">01</div><h3>Intent, checks, and the pinned build are the source</h3><p>Your intents, the checks you confirmed, and the builds you accepted are your OS. Checks are scenarios in a fixed format, worded by templates and not by a model. A better model can re-derive a Tool only if the checks pass and a replay matches.</p></div>
+    <div class="card"><div class="n">02</div><h3>Layers with their own undo</h3><p>Base changes rarely, at boot. The Environment changes one Tool at a time: fork, preview, promote. Your Data is never rolled back with them, and undoing software never restores a grant you revoked.</p></div>
+    <div class="card"><div class="n">03</div><h3>Deterministic security, first</h3><p>Handles, effect limits, and a gate with no model in it decide what can happen. Private values stay out of the agent's context, and nothing a model does cleans a stranger's text. Anything that crosses the undo boundary needs a grant and a rule, or you, and nothing but you can say yes.</p></div>
+    <div class="card"><div class="n">04</div><h3>Tools are living and disposable</h3><p>A Tool starts with nothing and gets everything through the broker, whether it is WASM or native. The system draws its UI. Point at any part and say what to change.</p></div>
+    <div class="card"><div class="n">05</div><h3>The agent is a role</h3><p>The OS owns the role and its authority. The harness and model are swappable, from open weights on your own hardware to Grok Bot, and none of them can allow anything.</p></div>
     <div class="card"><div class="n">06</div><h3>The owner is sovereign</h3><p>You can always take full control. Lean by default, as heavy as you choose. Recovery never depends on a model.</p></div>
-    <div class="card"><div class="n">07</div><h3>Portable and shareable</h3><p>One OS across your fleet, with encrypted sync. Share your intents; a friend's agent rebuilds them, and no authority transfers.</p></div>
+    <div class="card"><div class="n">07</div><h3>Portable and shareable</h3><p>One OS across your fleet, with encrypted sync. Share a Tool as its pinned build with its intent and checks; a friend's OS verifies it, and no authority transfers.</p></div>
   </div>
 </div></section>
 
 <section><div class="wrap">
   <h2>The stack: invent the top, borrow the bottom</h2>
-  <p>Nothing about agent-first needs a new way to talk to a Wi-Fi chip, and drivers are what kill new operating systems. Isolation lives in the component runtime and the capability broker, so the kernel is a replaceable driver host. We choose Linux for its drivers.</p>
+  <p>Nothing about agent-first needs a new way to talk to a Wi-Fi chip, and drivers are what kill new operating systems. We choose Linux for its drivers. The capability broker decides what each Tool may reach, and the Linux sandbox enforces it.</p>
   <pre class="mermaid">
 flowchart TB
-  A["NEW · Agent role, harness protocol, intents and Shaping"] --> B["NEW · Capability broker: handles, labels, egress, vault, ledger"]
-  B --> C["NEW · Crowbar State + apply engine: Base, Environment, Data"]
-  B --> R["ADAPTED · WASM Tool runtime + declarative shell (GPUI, Wayland)"]
+  A["NEW · Agent role, harness protocol, intents and Shaping"] --> B["NEW · Capability broker and gate: handles, effect limits, labels, egress, vault, ledger"]
+  B --> C["NEW · Crowbar State + engine: Base generations, Environment forks, Data"]
+  B --> R["ADAPTED · Tool runtimes (WASM, sandboxed native) + declarative shell (GPUI, Wayland)"]
   C --> D["BORROW · Void Linux Base, Linux kernel and drivers, Btrfs"]
   R --> D
   style A fill:#49D7E8,color:#080D12,stroke:#49D7E8
   style B fill:#49D7E8,color:#080D12,stroke:#49D7E8
   style C fill:#49D7E8,color:#080D12,stroke:#49D7E8
   </pre>
-  <p style="margin-top:18px">Already working: Milestone 1, a Void Linux VM on Btrfs where every apply is a bootable generation and a broken change is undone from the boot menu. Next: one headless Tool end to end, from Shaping to live apply to undo, on two models.</p>
+  <p style="margin-top:18px">Already working: Milestone 1, a Void Linux VM on Btrfs where every apply is a bootable generation and a broken change is undone from the boot menu. Next: the security rules built on stock Linux and attacked. We try to make it leak a private value and act as you, and we count how much ordinary work still gets done. Then Base generations built from a complete pinned package set.</p>
 </div></section>
 
 <section><div class="wrap">
@@ -101,9 +103,9 @@ flowchart TB
   <table class="compare">
     <tr><th></th><th>CrowbarOS blueprint</th><th>Agent-first CrowbarOS</th></tr>
     <tr><td>Core idea</td><td>A calm, curated desktop for creative people</td><td>A lean substrate each person shapes into their own OS</td></tr>
-    <tr><td>Source of truth</td><td>Installed packages and settings</td><td>Your intents; the Crowbar State is a pinned lockfile</td></tr>
+    <tr><td>Source of truth</td><td>Installed packages and settings</td><td>Your intents, their checks, and the pinned build; the Crowbar State is the lockfile</td></tr>
     <tr><td>Base</td><td>Fedora, non-Atomic, DNF</td><td>Void Linux, Base layer only; Environment and Data change on their own</td></tr>
-    <tr><td>Software</td><td>Five essentials + Bazaar/Flathub</td><td>Tools built on request as capability-safe components; native software still possible</td></tr>
+    <tr><td>Software</td><td>Five essentials + Bazaar/Flathub</td><td>Tools built on request for the long tail; native apps and the browser first-class, under the same broker</td></tr>
     <tr><td>AI</td><td>Neutral: no bundled AI</td><td>Model-neutral: you pick the harness and models, and the system is sound with none</td></tr>
     <tr><td>Customizing</td><td>Settings panels, themes, Community Gallery</td><td>Say or point at what you want; share OS definitions</td></tr>
     <tr><td>What stays</td><td colspan="2" style="color:var(--frost)">The name, the crow, the palette, open governance, FOSS values, and "make it yours," taken literally.</td></tr>
@@ -113,11 +115,12 @@ flowchart TB
 <section><div class="wrap">
   <h2>The hard problems still open</h2>
   <ol class="q">
-    <li><strong>Checks for everyone.</strong> How do people who aren't developers confirm checks precise enough to catch a bad re-derive?</li>
-    <li><strong>Live apply.</strong> How do we swap a running Tool atomically without losing its state?</li>
-    <li><strong>The UI vocabulary.</strong> How rich must declarative UI be before generated Tools stop needing native windows?</li>
-    <li><strong>Data newer than code.</strong> What happens when the Environment rolls back but your Data doesn't?</li>
-    <li><strong>The Allowance.</strong> What should back the money you give your agent: a capped card, an agent wallet, or a payment protocol?</li>
+    <li><strong>Too much asking.</strong> Previews, releases, and asks all end at you. How many a day before you stop reading them?</li>
+    <li><strong>The plan language.</strong> How much can an agent do through handles before it needs to see a value it may not see?</li>
+    <li><strong>Checks for everyone.</strong> Can people who aren't developers say what they rely on in a fixed scenario format?</li>
+    <li><strong>Marks spread.</strong> One file from outside marks what touches it. How much of your Data ends up marked?</li>
+    <li><strong>Admission.</strong> Who reviews the dependency set that build tasks are allowed to read?</li>
+    <li><strong>Loss and recovery.</strong> A lost machine, a lost vault, a lost lead machine.</li>
   </ol>
 </div></section>
 

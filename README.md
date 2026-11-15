@@ -1,8 +1,9 @@
 # CrowbarOS
 
 > **New direction: agent-first CrowbarOS.** A lean OS on Void Linux where each
-> person shapes their own OS with their agent. Their intents are the source, every
-> change that stays on their machines can be undone, and safety does not depend on the model being right. Start
+> person shapes their own OS with their agent. Their intents, checks, and pinned
+> builds are the source, changes to their tools are checked in a fork before they go live, and
+> security comes first and does not depend on the model being right. Start
 > with the [vision](docs/agent-first/VISION.md), then the [glossary](GLOSSARY.md),
 > the [decision records](docs/adr/), the [design notes](docs/agent-first/design/),
 > the [Milestone 1 record](docs/agent-first/milestone-1.md), and the Rust
