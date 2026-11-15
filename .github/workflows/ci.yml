@@ -87,12 +87,14 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
 
-      # What GPUI's Wayland build links. The tests open no window.
+      # What GPUI links. It links libxkbcommon-x11 even though the shell only
+      # runs on Wayland. The tests open no window.
       - name: Install libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config patch \
-            libxkbcommon-dev libwayland-dev libfontconfig-dev libfreetype-dev
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libfontconfig-dev libfreetype-dev
 
       # Rebuilds the patched GPUI source from the pinned crate and checks its
       # checksum. See apps/shell/README.md.
