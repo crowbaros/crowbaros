@@ -142,6 +142,11 @@ impl Control {
         serde_json::from_str(&line).unwrap_or_else(|e| panic!("not JSON: {line:?}: {e}"))
     }
 
+    /// Another handle on the shell's end, for writing from another thread.
+    pub fn writer(&self) -> UnixStream {
+        self.writer.try_clone().unwrap()
+    }
+
     /// Sends one line and does not wait for a reply.
     pub fn send(&mut self, line: &str) -> std::io::Result<()> {
         writeln!(self.writer, "{line}")

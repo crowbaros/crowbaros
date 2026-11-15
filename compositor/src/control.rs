@@ -85,6 +85,12 @@ impl State {
             .insert_source(
                 Generic::new(stream, Interest::READ, Mode::Level),
                 move |_, stream, state| {
+                    // The channel may have been closed by a failed write
+                    // since the last read. What the shell sent before that
+                    // is not read.
+                    if state.control.is_none() {
+                        return Ok(PostAction::Remove);
+                    }
                     let mut chunk = [0u8; 1024];
                     // Safety: the stream is not dropped or replaced.
                     let read = unsafe { stream.get_mut() }.read(&mut chunk);

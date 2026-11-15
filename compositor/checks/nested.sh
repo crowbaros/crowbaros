@@ -103,6 +103,32 @@ for name in "${forbidden[@]}"; do
   fi
 done
 
+# The forbidden list names what must be absent. This compares the whole list
+# each client sees with the table in src/policy.rs, so a global that reached
+# a client without passing the table shows up here.
+say ""
+say "== the whole list each client sees, against the table"
+confined_set=(wl_compositor wl_output wl_seat wl_shm wl_subcompositor
+  wp_fractional_scale_manager_v1 wp_viewporter xdg_wm_base zwp_linux_dmabuf_v1
+  zxdg_output_manager_v1)
+ordinary_set=("${confined_set[@]}" wl_data_device_manager wp_security_context_manager_v1)
+shell_set=("${ordinary_set[@]}" zwlr_layer_shell_v1)
+exactly() { # exactly WHO FILE NAME...
+  local who=$1 file=$2 seen wanted
+  shift 2
+  seen=$(interfaces "$file" | cut -d" " -f1 | sort -u | tr "\n" " ")
+  wanted=$(printf "%s\n" "$@" | sort -u | tr "\n" " ")
+  if [ -n "$seen" ] && [ "$seen" = "$wanted" ]; then
+    say "   $who: exactly the table's list"
+  else
+    say "   $who: NOT the table's list. Saw: $seen"
+    fail=1
+  fi
+}
+exactly "the shell" "$work/shell.txt" "${shell_set[@]}"
+exactly "an ordinary client" "$work/ordinary.txt" "${ordinary_set[@]}"
+exactly "a security-context client" "$work/confined.txt" "${confined_set[@]}"
+
 say ""
 say "== an ordinary client asks for a layer surface"
 if WAYLAND_DISPLAY=$socket "$bin/crowbar-probe" layer >"$work/layer-ordinary.txt" 2>&1; then

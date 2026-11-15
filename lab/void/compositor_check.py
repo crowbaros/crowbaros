@@ -17,6 +17,18 @@ RUNTIME = "/run/user/1000"
 # elogind backend as well; this guest runs no elogind.
 AS_USER = (f"chpst -u {guest.GUEST_USER}:{guest.GUEST_USER}:_seatd "
            f"env HOME=/home/{guest.GUEST_USER} XDG_RUNTIME_DIR={RUNTIME} LIBSEAT_BACKEND=seatd")
+# A client's account: the same user, without the group that may ask seatd for
+# devices. Only the compositor needs that group.
+AS_CLIENT = (f"chpst -u {guest.GUEST_USER}:{guest.GUEST_USER} "
+             f"env HOME=/home/{guest.GUEST_USER} XDG_RUNTIME_DIR={RUNTIME}")
+# The whole list each kind of client is offered, as in compositor/src/policy.rs
+# and compositor/checks/nested.sh.
+CONFINED = {
+    "wl_compositor", "wl_output", "wl_seat", "wl_shm", "wl_subcompositor",
+    "wp_fractional_scale_manager_v1", "wp_viewporter", "xdg_wm_base",
+    "zwp_linux_dmabuf_v1", "zxdg_output_manager_v1",
+}
+ORDINARY = CONFINED | {"wl_data_device_manager", "wp_security_context_manager_v1"}
 # The same list as compositor/checks/nested.sh.
 FORBIDDEN = [
     "zwp_virtual_keyboard_manager_v1", "zwlr_virtual_pointer_manager_v1",
@@ -155,20 +167,33 @@ def run_checks(ev, built):
     ev.log()
     ev.log("== routes around the compositor that ADR 0014 names: input devices and tracing")
     # libinput takes any input device that appears, so an account that can
-    # open /dev/uinput can type the confirm chord as the person.
+    # open /dev/uinput can type the confirm chord as the person. Each check
+    # needs the device to exist, the command to run as the client's account,
+    # root to succeed where the account fails, and the failure to be a refusal.
     ev.run("modprobe uinput 2>&1; ls -l /dev/uinput /dev/input/ 2>&1", check=False)
-    uinput = ev.run(f"{AS_USER} sh -c 'exec 3<>/dev/uinput' 2>&1 && echo OPENED || echo REFUSED", check=False)
-    ev.check("the account that runs the compositor's clients cannot open /dev/uinput", "REFUSED" in uinput)
-    events = ev.run(f"{AS_USER} sh -c 'for d in /dev/input/event*; do (exec 3<$d) 2>/dev/null && echo OPENED $d; done'; "
-                    "echo done", check=False)
-    ev.check("that account cannot read the input devices directly", "OPENED" not in events)
+    who = ev.run(f"{AS_CLIENT} id", check=False)
+    ev.check("the client's account is the ordinary user, without the seatd group",
+             f"({guest.GUEST_USER})" in who.split()[0] and "_seatd" not in who if who.split() else False)
+    open_uinput = "sh -c 'test -c /dev/uinput && exec 3<>/dev/uinput && echo OPENED' 2>&1"
+    as_root = ev.run(open_uinput, check=False)
+    as_client = ev.run(f"{AS_CLIENT} {open_uinput}", check=False)
+    ev.check("root can open /dev/uinput and the client's account is refused",
+             "OPENED" in as_root and "OPENED" not in as_client and "Permission denied" in as_client)
+    open_events = ("sh -c 'for d in /dev/input/event*; do out=$( (exec 3<$d) 2>&1 ) "
+                   "&& echo OPENED $d || echo FAILED $d: $out; done'")
+    as_root = ev.run(open_events, check=False).splitlines()
+    as_client = ev.run(f"{AS_CLIENT} {open_events}", check=False).splitlines()
+    ev.check("root can read every input device and the client's account is refused each one",
+             as_root and all(line.startswith("OPENED /dev/input/event") for line in as_root)
+             and len(as_client) == len(as_root)
+             and all(line.startswith("FAILED") and "Permission denied" in line for line in as_client))
     # Recorded, not checked: every client here runs as the same user as the
     # compositor, and what stops one tracing another is this setting alone.
     ev.run("cat /proc/sys/kernel/yama/ptrace_scope 2>&1 || echo 'no Yama ptrace_scope'", check=False)
 
     socket_name = re.search(r'compositor is up socket="([^"]+)"', log)
     display = socket_name.group(1) if socket_name else "wayland-1"
-    client = f"{AS_USER} WAYLAND_DISPLAY={display}"
+    client = f"{AS_CLIENT} WAYLAND_DISPLAY={display}"
     wait_for(ev, "the first window", lambda: "window mapped" in guest.ssh(
         "cat /tmp/keylog-1.out 2>/dev/null", check=False).stdout)
     qmp.screendump(guest.WORK / f"compositor-{ev.stamp}-1-first-output.png", 0)
@@ -179,6 +204,10 @@ def run_checks(ev, built):
     confined = interfaces(ev.run(f"{client} crowbar-probe security-context wayland-info | grep ^interface"))
     ev.check("no forbidden global is offered to an ordinary client",
              not set(FORBIDDEN) & set(ordinary), ", ".join(sorted(set(FORBIDDEN) & set(ordinary))))
+    ev.check("an ordinary client is offered exactly the table's list",
+             set(ordinary) == ORDINARY, "unexpected: " + ", ".join(sorted(set(ordinary) ^ ORDINARY)))
+    ev.check("a security-context client is offered exactly the table's list",
+             set(confined) == CONFINED, "unexpected: " + ", ".join(sorted(set(confined) ^ CONFINED)))
     ev.check("a security-context client gets a smaller set",
              confined and set(confined) < set(ordinary),
              "missing: " + ", ".join(sorted(set(ordinary) - set(confined))))

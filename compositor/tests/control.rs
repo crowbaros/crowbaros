@@ -154,3 +154,37 @@ fn a_shell_that_stops_reading_loses_the_channel_in_both_directions() {
         "the compositor kept the channel open after it failed to write a reply"
     );
 }
+
+/// The channel can also close because an event could not be written. A
+/// request the shell had already sent, and the compositor had not yet read,
+/// must not be carried out after that.
+#[test]
+fn a_request_still_unread_when_the_channel_closes_is_not_carried_out() {
+    use crowbar_compositor::control::Event;
+    use std::io::Write;
+    let compositor = Compositor::start();
+    let (_shell, control) = compositor.shell();
+    let mut writer = control.writer();
+
+    // On the compositor's own thread, so it cannot read in between: the
+    // shell's request arrives, then events are sent to a shell that reads
+    // none of them until one cannot be written.
+    let closed = compositor.with(move |state| {
+        writer.write_all(b"{\"op\":\"focus_workspace\",\"id\":2}\n").unwrap();
+        for _ in 0..200_000 {
+            if state.control.is_none() {
+                return true;
+            }
+            state.send_event(Event::Confirm);
+        }
+        false
+    });
+    assert!(closed, "the channel never filled");
+
+    // Give the compositor many turns in which it could read the request.
+    for _ in 0..20 {
+        let workspace = compositor.with(|state| state.active_workspace);
+        assert_eq!(workspace, 1, "the request was carried out after the channel closed");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}

@@ -6,6 +6,11 @@ from Smithay's `smallvil` example runs the GPUI shell and Studio Settings,
 keeps layer-shell for the shell alone, withholds a key chord from every client,
 and runs on a TTY in a Void guest with seatd and no systemd.
 
+*Read this with the [Council review](#council-review) at the end. Three
+reviewers found that the title and several claims below say more than was
+shown, and that section corrects them: the result stands provisionally, and
+"enforces ADR 0014" covers part of two of the ADR's five rules.*
+
 **Three things were not run**, and the record does not cover them: the
 compositor on an NVIDIA card through DRM (it ran on NVIDIA only nested in a
 window), Void's `nvidia` package, and suspend and resume. See
@@ -758,13 +763,84 @@ the design.
   the table. The tests and both display checks compare the lists a client
   sees, which would catch it.
 
+### Round 2
+
+Three fresh reviewers, the same three models, read the fixes and this section.
+Each scored the spike 8 out of 10. They agreed the fixes were right, and found
+the following. The text of round 1 above is as it was written.
+
+**Corrections to round 1's text:**
+
+1. **The title claims too much as well.** Item 2 above corrects the heading
+   "It enforces ADR 0014". The record's title says the same and has the same
+   correction. A line under the result at the top now points here.
+2. **"It is the path a GPU takes" is too simple.** Smithay skips the wait only
+   when the driver has sync objects, the plane takes a fence, the NVIDIA
+   driver is 560.35.3 or later, and the drawing's fence can be exported. A GPU
+   can still take the path that waits. The compositor now logs which path
+   each output takes.
+3. **"Both display checks compare the lists a client sees" was wrong.** They
+   looked for the forbidden names only, so a global that no list names could
+   have passed them. They now compare the whole list.
+4. **The input-device checks covered opening a device directly, and the
+   client ran with the `_seatd` group.** seatd opens those same devices for
+   members of that group. The checks now run as an account without the group.
+   The first test client is started by the compositor and still inherits it:
+   the compositor does not drop the group for what it starts.
+5. **Tracing is not the only way one program of the same user reaches the
+   shell.** The shell's own socket, `control.sock` in the runtime directory,
+   takes `quit` from any process of that user. A client can end the shell
+   that way, and the compositor goes on taking the chord with no trusted UI
+   to answer.
+6. **The withheld key assumes one keyboard.** If a second keyboard presses
+   Enter while the first still holds the withheld one, the first keyboard's
+   release reaches Smithay with no press before it.
+7. **Smaller.** For the shell's launcher, "failed first" means the test did
+   not compile, because the function did not exist. And on Base a program
+   launched from the shell would not start at all: the shell launches through
+   `systemd-run`.
+8. **The hours.** 06:39 to 08:33 UTC is about 1.9 hours, to the end of the
+   fixes below.
+
+**Fixed:**
+
+| Finding | Fix | Test that failed first |
+| --- | --- | --- |
+| A request the shell sent before the channel closed was still carried out, when the close came from an event that could not be written | The compositor reads nothing more from a closed channel | `compositor/tests/control.rs`. Two reviewers reasoned that the first fix covered this; the test showed it did not |
+| Nothing said which flip path ran | The TTY backend logs `needs_sync` for each output, and again if it changes | None |
+| The device checks passed if the device was missing or the command failed | Each needs the device to exist, root to succeed, the account to be the client's, and the failure to be a refusal | None; it is a check script |
+| The display checks looked for forbidden names only | Both compare the whole list each client sees with the table | None; they are check scripts |
+
+**Runs after these fixes.** One binary did every run: sha256
+`0b92eeb8d46b7540c1fbb0e62b2d6e882bfe783866e490090c4416ae7cf3fa55`.
+
+- 20 tests in `compositor/` pass.
+- [The Void guest](evidence/compositor-spike-2026-11-15/void-tty-after-council-round-2.log):
+  25 of 25. Both outputs logged `needs_sync=true`, so the guest takes the path
+  that waits, and the path with no wait has still not run.
+  [Output 1](evidence/compositor-spike-2026-11-15/void-output-1-after-council-round-2.png)
+  and [output 2](evidence/compositor-spike-2026-11-15/void-output-2-after-council-round-2.png)
+  each hold only the background, the window, and the cursor: whole frames.
+  The captures from round 1's run were looked at and not kept.
+- [The nested protocol check](evidence/compositor-spike-2026-11-15/nested-protocols-after-council-round-2.log):
+  pass. Each kind of client sees exactly the table's list.
+- [The nested apps check](evidence/compositor-spike-2026-11-15/nested-apps-after-council-round-2.log):
+  pass.
+- [The Milestone 1 loop](evidence/compositor-spike-2026-11-15/void-lab-milestone-1-after-council-round-2.log):
+  22 of 22.
+
+**New for the real compositor's list:** who may register a security context
+(every ordinary client can today); the shell's `control.sock` needs the same
+care as the control channel; and Base should set and check `ptrace_scope` and
+the rules that decide who may open `/dev/uinput`.
+
 ### Scores
 
-| Reviewer | Round 1 |
-| --- | --- |
-| Claude Opus 5.5 | 7/10 |
-| Claude Fable 5.2 | 7/10 |
-| GPT-6.1 Sol | 7/10 |
+| Reviewer | Round 1 | Round 2 |
+| --- | --- | --- |
+| Claude Opus 5.5 | 7/10 | 8/10 |
+| Claude Fable 5.2 | 7/10 | 8/10 |
+| GPT-6.1 Sol | 7/10 | 8/10 |
 
 ---
 

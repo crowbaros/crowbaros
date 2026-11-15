@@ -80,6 +80,9 @@ struct Surface {
     flip_pending: bool,
     /// A timer is already set to draw this output again.
     retry_pending: bool,
+    /// Whether the last frame drawn here had to wait for its drawing before
+    /// the flip. Kept so that the log says so once, and again if it changes.
+    waits_for_drawing: Option<bool>,
 }
 
 pub struct Tty {
@@ -286,6 +289,7 @@ impl State {
                         drm_output,
                         flip_pending: false,
                         retry_pending: false,
+                        waits_for_drawing: None,
                     },
                 );
                 self.loop_handle.insert_idle(move |state| state.tty_render(crtc));
@@ -389,10 +393,20 @@ impl State {
         // a half-drawn frame without this. Where it can, there is no wait.
         // `needs_sync` is Smithay's own test for which case this is.
         if let Ok(frame) = &rendered
-            && frame.needs_sync()
             && let PrimaryPlaneElement::Swapchain(element) = &frame.primary_element
         {
-            let _ = element.sync.wait();
+            let waits = frame.needs_sync();
+            if surface.waits_for_drawing != Some(waits) {
+                surface.waits_for_drawing = Some(waits);
+                info!(
+                    output = %surface.output.name(),
+                    needs_sync = waits,
+                    "tty: whether a flip waits for its drawing (Smithay's needs_sync)"
+                );
+            }
+            if waits {
+                let _ = element.sync.wait();
+            }
         }
         let retry = match rendered {
             Ok(frame) if !frame.is_empty => match surface.drm_output.queue_frame(()) {
