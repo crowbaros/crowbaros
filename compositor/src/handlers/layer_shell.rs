@@ -108,7 +108,19 @@ pub fn handle_commit(state: &mut State, surface: &WlSurface) {
     });
     let mut map = layer_map_for_output(&output);
     // Arrange before the first configure so the size the client asked for counts.
+    let before = map.non_exclusive_zone();
     map.arrange();
+    let after = map.non_exclusive_zone();
+    if before != after {
+        tracing::info!(
+            output = %output.name(),
+            "usable area is now {}x{} at {},{}",
+            after.size.w,
+            after.size.h,
+            after.loc.x,
+            after.loc.y
+        );
+    }
     if !initial_configure_sent && let Some(layer) = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL) {
         layer.layer_surface().send_configure();
     }
