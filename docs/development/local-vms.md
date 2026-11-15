@@ -1,5 +1,10 @@
 # Local Fedora build and test lab
 
+> **Status.** CrowbarOS is no longer built on Fedora. This lab is kept only to build
+> and run the GPUI apps, and is removed when the Void lab has a graphical guest. See
+> the [lab note](../../lab/fedora/README.md) and the [vision](../VISION.md). For Base
+> work, use the [Void lab](../../lab/void/README.md).
+
 This is the reproducible development environment for CrowbarOS. Omarchy remains
 the workstation. Fedora builds and OS integration run in separate KVM guests.
 Physical hardware testing is deferred. These guests are development infrastructure,
@@ -39,12 +44,12 @@ console autologin is a lab convenience, not a CrowbarOS authentication decision.
 
 Repository files:
 
-- `infra/vm/config.json`: image identity, digest, signing fingerprint, VM resources,
+- `lab/fedora/config.json`: image identity, digest, signing fingerprint, VM resources,
   firmware paths, graphics configuration, and localhost ports.
-- `infra/vm/lab.py`: host-side lifecycle and transfer automation, Python stdlib only.
-- `infra/vm/guest/*.sh`: idempotent Fedora provisioning and packaging recipes.
-- `infra/vm/fixtures/`: the small Rust RPM pipeline probe and COPR public key.
-- `infra/vm/gpu/`: isolated Intel VirtIO Vulkan driver RPM specification.
+- `lab/fedora/lab.py`: host-side lifecycle and transfer automation, Python stdlib only.
+- `lab/fedora/guest/*.sh`: idempotent Fedora provisioning and packaging recipes.
+- `lab/fedora/fixtures/`: the small Rust RPM pipeline probe and COPR public key.
+- `lab/fedora/gpu/`: isolated Intel VirtIO Vulkan driver RPM specification.
 - `.local/vms/`: ignored local disks, seeds, **private keys**, reports, logs,
   artifacts, and checkpoints. Do not commit or publish this directory.
 
@@ -70,24 +75,24 @@ libvirt daemon or libvirt group membership is required for this configuration.
 The user must be able to read/write `/dev/kvm` and the selected render device.
 
 ```sh
-rtk python3 infra/vm/lab.py doctor
-rtk python3 infra/vm/lab.py download
-rtk python3 infra/vm/lab.py create all
+rtk python3 lab/fedora/lab.py doctor
+rtk python3 lab/fedora/lab.py download
+rtk python3 lab/fedora/lab.py create all
 
-rtk python3 infra/vm/lab.py start build
-rtk python3 infra/vm/lab.py wait build
-rtk python3 infra/vm/lab.py provision build
-rtk python3 infra/vm/lab.py stop build
-rtk python3 infra/vm/lab.py snapshot build provisioned
+rtk python3 lab/fedora/lab.py start build
+rtk python3 lab/fedora/lab.py wait build
+rtk python3 lab/fedora/lab.py provision build
+rtk python3 lab/fedora/lab.py stop build
+rtk python3 lab/fedora/lab.py snapshot build provisioned
 
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py wait test
-rtk python3 infra/vm/lab.py provision test
-rtk python3 infra/vm/lab.py stop test
-rtk python3 infra/vm/lab.py snapshot test clean
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py wait test
-rtk python3 infra/vm/lab.py view test
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py wait test
+rtk python3 lab/fedora/lab.py provision test
+rtk python3 lab/fedora/lab.py stop test
+rtk python3 lab/fedora/lab.py snapshot test clean
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py wait test
+rtk python3 lab/fedora/lab.py view test
 ```
 
 `wait` checks pinned SSH host keys and cloud-init completion. `provision` installs
@@ -123,13 +128,13 @@ The local console autologin remains a disposable-lab convenience.
 Verify the configured default and live session without restarting it:
 
 ```sh
-rtk python3 infra/vm/lab.py ssh test systemctl get-default
-rtk python3 infra/vm/lab.py ssh test systemctl is-enabled greetd
-rtk python3 infra/vm/lab.py ssh test systemctl is-active greetd
-rtk python3 infra/vm/lab.py ssh test readlink -f /etc/systemd/system/display-manager.service
-rtk python3 infra/vm/lab.py ssh test sudo cat /etc/greetd/config.toml
-rtk python3 infra/vm/lab.py ssh test sudo -u desktop env XDG_RUNTIME_DIR=/run/user/1001 hyprctl -i 0 version
-rtk python3 infra/vm/lab.py ssh test sudo -u desktop env XDG_RUNTIME_DIR=/run/user/1001 hyprctl -i 0 configerrors
+rtk python3 lab/fedora/lab.py ssh test systemctl get-default
+rtk python3 lab/fedora/lab.py ssh test systemctl is-enabled greetd
+rtk python3 lab/fedora/lab.py ssh test systemctl is-active greetd
+rtk python3 lab/fedora/lab.py ssh test readlink -f /etc/systemd/system/display-manager.service
+rtk python3 lab/fedora/lab.py ssh test sudo cat /etc/greetd/config.toml
+rtk python3 lab/fedora/lab.py ssh test sudo -u desktop env XDG_RUNTIME_DIR=/run/user/1001 hyprctl -i 0 version
+rtk python3 lab/fedora/lab.py ssh test sudo -u desktop env XDG_RUNTIME_DIR=/run/user/1001 hyprctl -i 0 configerrors
 ```
 
 Expected results: `graphical.target`, `enabled`, `active`, the greetd service
@@ -140,13 +145,13 @@ configuration errors. These checks passed on November 14, 2026 with Hyprland
 ## Everyday controls
 
 ```sh
-rtk python3 infra/vm/lab.py status
-rtk python3 infra/vm/lab.py start build
-rtk python3 infra/vm/lab.py ssh build
-rtk python3 infra/vm/lab.py ssh build rustc --version
-rtk python3 infra/vm/lab.py stop build
+rtk python3 lab/fedora/lab.py status
+rtk python3 lab/fedora/lab.py start build
+rtk python3 lab/fedora/lab.py ssh build
+rtk python3 lab/fedora/lab.py ssh build rustc --version
+rtk python3 lab/fedora/lab.py stop build
 
-rtk python3 infra/vm/lab.py view test
+rtk python3 lab/fedora/lab.py view test
 rtk virt-manager --connect qemu:///session
 ```
 
@@ -180,15 +185,15 @@ The smoke fixture is a tiny Rust executable with no Cargo dependencies. It tests
 the infrastructure independently of the desktop shell:
 
 ```sh
-rtk python3 infra/vm/lab.py stop test
-rtk python3 infra/vm/lab.py start build
-rtk python3 infra/vm/lab.py wait build
-rtk python3 infra/vm/lab.py smoke build
-rtk python3 infra/vm/lab.py stop build
+rtk python3 lab/fedora/lab.py stop test
+rtk python3 lab/fedora/lab.py start build
+rtk python3 lab/fedora/lab.py wait build
+rtk python3 lab/fedora/lab.py smoke build
+rtk python3 lab/fedora/lab.py stop build
 
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py wait test
-rtk python3 infra/vm/lab.py deploy-smoke test
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py wait test
+rtk python3 lab/fedora/lab.py deploy-smoke test
 ```
 
 The `smoke` command transfers the fixture over SSH, builds its SRPM and binary RPM
@@ -223,17 +228,17 @@ The [GPU follow-up](gpu-validation-2026-11-14.md) repeats those checks on Intel
 hardware Vulkan. Set up that optional profile using the [GPU workflow](gpu-vulkan.md).
 
 ```sh
-rtk python3 infra/vm/lab.py stop test
-rtk python3 infra/vm/lab.py start build
-rtk python3 infra/vm/lab.py wait build
-rtk python3 infra/vm/lab.py view build &
-rtk python3 infra/vm/lab.py gpui-build build
-rtk python3 infra/vm/lab.py stop build
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py wait test
-rtk python3 infra/vm/lab.py view test &
-rtk python3 infra/vm/lab.py gpui-deploy test
-rtk python3 infra/vm/lab.py gpui-run test
+rtk python3 lab/fedora/lab.py stop test
+rtk python3 lab/fedora/lab.py start build
+rtk python3 lab/fedora/lab.py wait build
+rtk python3 lab/fedora/lab.py view build &
+rtk python3 lab/fedora/lab.py gpui-build build
+rtk python3 lab/fedora/lab.py stop build
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py wait test
+rtk python3 lab/fedora/lab.py view test &
+rtk python3 lab/fedora/lab.py gpui-deploy test
+rtk python3 lab/fedora/lab.py gpui-run test
 ```
 
 `gpui-run` launches the installed binary as the ordinary desktop user in its
@@ -247,7 +252,7 @@ The validated workstation's local default is `intel-virtio`; a fresh lab default
 to `system`. The Intel mode requires the separately installed driver RPM.
 Quit an existing probe before switching drivers.
 
-Run `rtk python3 infra/vm/check_gpui.py` with the test viewer open for the input
+Run `rtk python3 lab/fedora/check_gpui.py` with the test viewer open for the input
 smoke test. It restarts the probe, exercises the VM's keyboard and pointer,
 resizes the window, checks event logs, captures screenshots, and quits the app.
 Run `gpui-run test` again afterward to leave it available for exploration.
@@ -262,16 +267,16 @@ The [Studio Settings validation record](studio-settings-validation-2026-11-14.md
 records the installed package, actual guest screenshots, and tested behavior.
 
 ```sh
-rtk python3 infra/vm/lab.py start build
-rtk python3 infra/vm/lab.py wait build
-rtk python3 infra/vm/lab.py view build &
-rtk python3 infra/vm/lab.py studio-build build
-rtk python3 infra/vm/lab.py stop build
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py wait test
-rtk python3 infra/vm/lab.py view test &
-rtk python3 infra/vm/lab.py studio-deploy test
-rtk python3 infra/vm/lab.py studio-run test intel-virtio
+rtk python3 lab/fedora/lab.py start build
+rtk python3 lab/fedora/lab.py wait build
+rtk python3 lab/fedora/lab.py view build &
+rtk python3 lab/fedora/lab.py studio-build build
+rtk python3 lab/fedora/lab.py stop build
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py wait test
+rtk python3 lab/fedora/lab.py view test &
+rtk python3 lab/fedora/lab.py studio-deploy test
+rtk python3 lab/fedora/lab.py studio-run test intel-virtio
 ```
 
 Save a checkpoint before deployment. Keep the active VM viewer visible; an idle
@@ -286,7 +291,7 @@ starts; the GUI is not started automatically. Saved appearance also updates the
 installed CrowbarOS shell. It does not theme GTK/Qt applications.
 
 With a checkpoint saved and manual interaction paused, run
-`rtk python3 infra/vm/check_studio.py`. This check changes the lab user's settings,
+`rtk python3 lab/fedora/check_studio.py`. This check changes the lab user's settings,
 exercises real input, and finishes with Dark appearance, Studio Mode off, and
 reduced motion on. It captures evidence under `.local/studio/validation/`.
 The app README documents the model, save/error behavior, keyboard controls,
@@ -302,18 +307,18 @@ again, inspect the viewer and guest state before considering a forced power-off.
 Take a named checkpoint before a package or compositor experiment:
 
 ```sh
-rtk python3 infra/vm/lab.py stop test
-rtk python3 infra/vm/lab.py snapshot test before-experiment
-rtk python3 infra/vm/lab.py start test
+rtk python3 lab/fedora/lab.py stop test
+rtk python3 lab/fedora/lab.py snapshot test before-experiment
+rtk python3 lab/fedora/lab.py start test
 ```
 
 Restore the baseline after testing:
 
 ```sh
-rtk python3 infra/vm/lab.py stop test
-rtk python3 infra/vm/lab.py restore test clean
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py wait test
+rtk python3 lab/fedora/lab.py stop test
+rtk python3 lab/fedora/lab.py restore test clean
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py wait test
 ```
 
 These are **offline copies of the QCOW2 disk and UEFI variables**, with reflinks
@@ -342,15 +347,15 @@ The [validation record](shell-validation-2026-11-14.md) records package identity
 layer/focus checks, theme behavior and the single-output scope.
 
 ```bash
-rtk python3 infra/vm/lab.py start build
-rtk python3 infra/vm/lab.py view build &
-rtk python3 infra/vm/lab.py wait build
-rtk python3 infra/vm/lab.py shell-build build
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py view test &
-rtk python3 infra/vm/lab.py wait test
-rtk python3 infra/vm/lab.py shell-deploy test
-rtk python3 infra/vm/lab.py shell-run test intel-virtio
+rtk python3 lab/fedora/lab.py start build
+rtk python3 lab/fedora/lab.py view build &
+rtk python3 lab/fedora/lab.py wait build
+rtk python3 lab/fedora/lab.py shell-build build
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py view test &
+rtk python3 lab/fedora/lab.py wait test
+rtk python3 lab/fedora/lab.py shell-deploy test
+rtk python3 lab/fedora/lab.py shell-run test intel-virtio
 ```
 
 The signed development repository is `.local/vms/shell-repo.tar.gz`. The build

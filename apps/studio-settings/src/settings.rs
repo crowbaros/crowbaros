@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Versioned preferences and transactional persistence. No GPUI dependency here.
 use serde::{Deserialize, Serialize};
 use std::{

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 use serde::Deserialize;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "kebab-case")]

@@ -16,7 +16,7 @@
         "rule": "flat-type-hierarchy",
         "value": "*",
         "files": [
-          "docs/crowbaros-page/page.template.html"
+          "docs/archive/fedora-blueprint/crowbaros-page/page.template.html"
         ],
         "createdAt": "2026-11-14T16:13:01.423Z",
         "reason": "Agent verified: renamed source template contains a CSS placeholder filled by build.mjs. Existing rendered hierarchy remains body16px and headings64/42/23px; this carries forward the prior template-only false-positive exception."

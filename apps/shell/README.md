@@ -1,5 +1,10 @@
 # CrowbarOS desktop shell
 
+> **Status.** This app was built for the earlier Fedora plan. Its interface work
+> carries over to the [vision](../../docs/VISION.md); its RPM packaging and Hyprland
+> wiring do not. It is built and run only in the [Fedora lab](../../lab/fedora/README.md),
+> which is kept for interface work. See [what carries over](../README.md).
+
 The first Rust/GPUI desktop slice: a live workspace bar, a persistent dock,
 installed-application search and the approved Signal Feather wallpaper.
 It runs as an ordinary user on Hyprland. The shell uses real Wayland layer
@@ -9,15 +14,15 @@ captures keyboard input only while open.
 ## Build and run in the local lab
 
 ```bash
-rtk python3 infra/vm/lab.py start build
-rtk python3 infra/vm/lab.py view build
-rtk python3 infra/vm/lab.py wait build
-rtk python3 infra/vm/lab.py shell-build build
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py view test
-rtk python3 infra/vm/lab.py wait test
-rtk python3 infra/vm/lab.py shell-deploy test
-rtk python3 infra/vm/lab.py shell-run test intel-virtio
+rtk python3 lab/fedora/lab.py start build
+rtk python3 lab/fedora/lab.py view build
+rtk python3 lab/fedora/lab.py wait build
+rtk python3 lab/fedora/lab.py shell-build build
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py view test
+rtk python3 lab/fedora/lab.py wait test
+rtk python3 lab/fedora/lab.py shell-deploy test
+rtk python3 lab/fedora/lab.py shell-run test intel-virtio
 ```
 
 Keep the relevant VM viewer visible during work. The experimental accelerated
@@ -69,7 +74,7 @@ in `/etc/crowbaros-lab/shell-vulkan.env`; it is not globally registered.
 Stop the service from the administrator SSH session if needed:
 
 ```bash
-rtk python3 infra/vm/lab.py ssh test sudo -u desktop env XDG_RUNTIME_DIR=/run/user/1001 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus systemctl --user stop crowbaros-shell
+rtk python3 lab/fedora/lab.py ssh test sudo -u desktop env XDG_RUNTIME_DIR=/run/user/1001 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus systemctl --user stop crowbaros-shell
 ```
 
 The `before-shell` offline checkpoint preserves the previously working lab.
@@ -83,7 +88,7 @@ Studio-off, reduced-motion baseline, keep the viewer visible, and pause manual
 interaction while running:
 
 ```bash
-rtk python3 infra/vm/validate_shell.py
+rtk python3 lab/fedora/validate_shell.py
 ```
 
 The check drives native input, exercises application launch and focus, follows a
@@ -105,5 +110,5 @@ follow-up work. Screen reader/IME integration, fractional scaling, international
 layout coverage and production session lifecycle still require qualification.
 
 Brand assets are copied from the approved CrowbarOS kit, with origins recorded
-in `assets/README.md`. Manrope is bundled under OFL. Native source is GPL-3.0-or-later;
+in `assets/README.md`. Manrope is bundled under OFL. Native source is MIT;
 the adapted GPUI text-input example and layer-shell backport retain Apache-2.0 terms.

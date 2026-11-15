@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrowbarOS: the pitch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";mermaid.initialize({startOnLoad:true,theme:"base",themeVariables:{background:"#080D12",primaryColor:"#17212B",primaryTextColor:"#D8E5EC",primaryBorderColor:"#49D7E8",lineColor:"#6D8191",fontFamily:"Manrope",fontSize:"15px"}});</script>
+<style>
+:root{--void:#080D12;--abyss:#17212B;--ice:#49D7E8;--steel:#6D8191;--frost:#D8E5EC;--sub:#A8BAC7}
+*{box-sizing:border-box}
+body{margin:0;background:var(--void);color:var(--frost);font-family:Manrope,system-ui,sans-serif;line-height:1.6;font-size:17px}
+.wrap{max-width:920px;margin:0 auto;padding:0 24px}
+header{padding:96px 0 64px;border-bottom:1px solid #1f2c38}
+.eyebrow{font-family:"IBM Plex Mono",monospace;color:var(--ice);font-size:13px;letter-spacing:.12em;text-transform:uppercase}
+h1{font-size:clamp(36px,6vw,60px);line-height:1.08;margin:16px 0 20px;font-weight:800;letter-spacing:-.02em}
+h1 em{font-style:normal;color:var(--ice)}
+.lede{font-size:20px;color:var(--sub);max-width:680px}
+section{padding:64px 0;border-bottom:1px solid #1f2c38}
+h2{font-size:30px;margin:0 0 16px;letter-spacing:-.01em}
+h3{margin:0 0 6px;font-size:18px}
+p{color:var(--sub);margin:0 0 14px}
+strong{color:var(--frost)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin-top:24px}
+.card{background:var(--abyss);border:1px solid #243444;border-radius:14px;padding:22px}
+.card .n{font-family:"IBM Plex Mono",monospace;color:var(--ice);font-size:13px}
+.card p{margin:0;font-size:15.5px}
+.compare{width:100%;border-collapse:collapse;margin-top:20px;font-size:15.5px}
+.compare th,.compare td{text-align:left;padding:12px 14px;border-bottom:1px solid #243444;vertical-align:top}
+.compare th{color:var(--steel);font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:.06em}
+.compare td:first-child{color:var(--frost);font-weight:600;width:22%}
+.compare td:last-child{color:var(--frost)}
+.mermaid{background:var(--abyss);border:1px solid #243444;border-radius:14px;padding:20px;margin-top:20px;text-align:center}
+.quote{border-left:3px solid var(--ice);padding:6px 0 6px 20px;font-size:22px;color:var(--frost);margin:24px 0}
+ol.q{padding-left:22px;color:var(--sub)} ol.q li{margin:10px 0}
+.term{font-family:"IBM Plex Mono",monospace;background:var(--abyss);border:1px solid #243444;border-radius:10px;padding:16px 18px;color:var(--frost);font-size:14.5px;margin-top:18px}
+.term .p{color:var(--ice)} .term .c{color:var(--steel)}
+footer{padding:48px 0 80px;color:var(--steel);font-size:14px}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <div class="eyebrow">CrowbarOS</div>
+  <h1>Don't ship a desktop.<br><em>Ship the ability to make one.</em></h1>
+  <p class="lede">An operating system that starts lean, where each person shapes their own OS with their agent. What you asked for, the checks you confirmed, and the build you accepted are the source. Changes to your tools are checked in a private copy before they go live, and can be undone, rebuilt with a better model, carried to a new machine, or shared.</p>
+</div></header>
+
+<section><div class="wrap">
+  <h2>The shift</h2>
+  <p>People are increasingly <strong>building bespoke software instead of installing it</strong>. Today that's mostly developers working with agents. The cost of a small tool that fits one person exactly is falling fast, and within a few years most people will make software this way.</p>
+  <div class="quote">If software becomes something you describe instead of something you install, the thing you own is the description.</div>
+  <p>So the substrate matters most: a small, stable base, an agent that helps you work out what you want before it builds, security that comes first and does not depend on the model being right, and a way to keep, undo, carry, and share what you make.</p>
+</div></section>
+
+<section><div class="wrap">
+  <h2>What it feels like</h2>
+  <div class="term">
+    <div><span class="p">you ›</span> I write in the mornings. Give me a calm writing mode with no notifications until noon.</div>
+    <div class="c">agent · two questions first: should anyone get through before noon? Weekends too?</div>
+    <div><span class="p">you ›</span> Sam can always get through. Weekdays only.</div>
+    <div class="c">agent · intent saved with 3 checks you confirmed · built "Morning Pages" and a notification rule in a fork · here is a preview</div>
+    <div><span class="p">you ›</span> <span class="c">(confirms)</span></div>
+    <div class="c">agent · live · one step to undo</div>
+    <div><span class="p">you ›</span> <span class="c">(points at the page list)</span> Sort these by date.</div>
+    <div class="c">agent · intent updated, checks still pass · preview ready</div>
+  </div>
+  <p style="margin-top:18px">No app store browsing, no settings archaeology, no terminal required. The agent works inside limits you set, builds each change in a private copy, shows you a preview, and makes it live when you confirm. You can undo one change and keep the later ones. Anything that leaves your machines, spends money, or acts as you needs your say.</p>
+</div></section>
+
+<section><div class="wrap">
+  <h2>Seven first principles</h2>
+  <div class="grid">
+    <div class="card"><div class="n">01</div><h3>Intent, checks, and the pinned build are the source</h3><p>Your intents, the checks you confirmed, and the builds you accepted are your OS. Checks are scenarios in a fixed format, worded by templates and not by a model. A better model can re-derive a Tool only if the checks pass and a replay matches.</p></div>
+    <div class="card"><div class="n">02</div><h3>Layers with their own undo</h3><p>Base changes rarely, at boot. The Environment changes one Tool at a time: fork, preview, promote. Your Data is never rolled back with them, and undoing software never restores a grant you revoked.</p></div>
+    <div class="card"><div class="n">03</div><h3>Deterministic security, first</h3><p>Handles, effect limits, and a gate with no model in it decide what can happen. Private values stay out of the agent's context, and nothing a model does cleans a stranger's text. Anything that crosses the undo boundary needs a grant and a rule, or you, and nothing but you can say yes.</p></div>
+    <div class="card"><div class="n">04</div><h3>Tools are living and disposable</h3><p>A Tool starts with nothing and gets everything through the broker, whether it is WASM or native. The system draws its UI. Point at any part and say what to change.</p></div>
+    <div class="card"><div class="n">05</div><h3>The agent is a role</h3><p>The OS owns the role and its authority. The harness and model are swappable, from open weights on your own hardware to Grok Bot, and none of them can allow anything.</p></div>
+    <div class="card"><div class="n">06</div><h3>The owner is sovereign</h3><p>You can always take full control. Lean by default, as heavy as you choose. Recovery never depends on a model.</p></div>
+    <div class="card"><div class="n">07</div><h3>Portable and shareable</h3><p>One OS across your fleet, with encrypted sync. Share a Tool as its pinned build with its intent and checks; a friend's OS verifies it, and no authority transfers.</p></div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <h2>The stack: invent the top, borrow the bottom</h2>
+  <p>Nothing in this design needs a new way to talk to a Wi-Fi chip, and drivers are what kill new operating systems. We choose Linux for its drivers. The capability broker decides what each Tool may reach, and the Linux sandbox enforces it.</p>
+  <pre class="mermaid">
+flowchart TB
+  A["NEW · Agent role, harness protocol, intents and Shaping"] --> B["NEW · Capability broker and gate: handles, effect limits, labels, egress, vault, ledger"]
+  B --> C["NEW · Crowbar State + engine: Base generations, Environment forks, Data"]
+  B --> R["ADAPTED · Tool runtimes (WASM, sandboxed native) + declarative shell (GPUI, Wayland)"]
+  C --> D["BORROW · Void Linux Base, Linux kernel and drivers, Btrfs"]
+  R --> D
+  style A fill:#49D7E8,color:#080D12,stroke:#49D7E8
+  style B fill:#49D7E8,color:#080D12,stroke:#49D7E8
+  style C fill:#49D7E8,color:#080D12,stroke:#49D7E8
+  </pre>
+  <p style="margin-top:18px">Already working: Milestone 1, a Void Linux VM on Btrfs where every apply is a bootable generation and a broken change is undone from the boot menu. Next: the security rules built on stock Linux and attacked. We try to make it leak a private value and act as you, and we count how much ordinary work still gets done. Then Base generations built from a complete pinned package set.</p>
+</div></section>
+
+<section><div class="wrap">
+  <h2>What changed from the Fedora blueprint</h2>
+  <table class="compare">
+    <tr><th></th><th>Fedora blueprint</th><th>CrowbarOS now</th></tr>
+    <tr><td>Core idea</td><td>A calm, curated desktop for creative people</td><td>A lean substrate each person shapes into their own OS</td></tr>
+    <tr><td>Source of truth</td><td>Installed packages and settings</td><td>Your intents, their checks, and the pinned build; the Crowbar State is the lockfile</td></tr>
+    <tr><td>Base</td><td>Fedora, non-Atomic, DNF</td><td>Void Linux, Base layer only; Environment and Data change on their own</td></tr>
+    <tr><td>Software</td><td>Five essentials + Bazaar/Flathub</td><td>Tools built on request for the long tail; native apps and the browser first-class, under the same broker</td></tr>
+    <tr><td>AI</td><td>Neutral: no bundled AI</td><td>Model-neutral: you pick the harness and models, and the system is sound with none</td></tr>
+    <tr><td>Customizing</td><td>Settings panels, themes, Community Gallery</td><td>Say or point at what you want; share OS definitions</td></tr>
+    <tr><td>What stays</td><td colspan="2" style="color:var(--frost)">The name, the crow, the palette, the design system and the GPUI shell work, open governance, FOSS values, and "make it yours," taken literally.</td></tr>
+  </table>
+</div></section>
+
+<section><div class="wrap">
+  <h2>The hard problems still open</h2>
+  <ol class="q">
+    <li><strong>Too much asking.</strong> Previews, releases, and asks all end at you. How many a day before you stop reading them?</li>
+    <li><strong>The plan language.</strong> How much can an agent do through handles before it needs to see a value it may not see?</li>
+    <li><strong>Checks for everyone.</strong> Can people who aren't developers say what they rely on in a fixed scenario format?</li>
+    <li><strong>Marks spread.</strong> One file from outside marks what touches it. How much of your Data ends up marked?</li>
+    <li><strong>Admission.</strong> Who reviews the dependency set that build tasks are allowed to read?</li>
+    <li><strong>Loss and recovery.</strong> A lost machine, a lost vault, a lost lead machine.</li>
+  </ol>
+</div></section>
+
+<footer><div class="wrap">Pitch for discussion · Jim Martin and Jason Alexander · Revised November 14, 2026 · Built on the CrowbarOS vision.</div></footer>
+</body>
+</html>

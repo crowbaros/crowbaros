@@ -1,5 +1,10 @@
 # CrowbarOS GPUI probe
 
+> **Status.** This app was built for the earlier Fedora plan. Its interface work
+> carries over to the [vision](../../docs/VISION.md); its RPM packaging and Hyprland
+> wiring do not. It is built and run only in the [Fedora lab](../../lab/fedora/README.md),
+> which is kept for interface work. See [what carries over](../README.md).
+
 A small native Rust application for validating the Fedora → RPM → Hyprland/Wayland
 path. It uses **GPUI 0.2.2**, with its `wayland` feature enabled and default/X11
 features disabled. The renderer is GPUI's Vulkan/Blade backend. There is no browser
@@ -20,17 +25,17 @@ repeats the probe checks through the host Intel GPU.
 From the repository root, after [setting up the lab](../../docs/development/local-vms.md):
 
 ```sh
-rtk python3 infra/vm/lab.py stop test
-rtk python3 infra/vm/lab.py start build
-rtk python3 infra/vm/lab.py wait build
-rtk python3 infra/vm/lab.py view build &
-rtk python3 infra/vm/lab.py gpui-build build
-rtk python3 infra/vm/lab.py stop build
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py wait test
-rtk python3 infra/vm/lab.py view test &
-rtk python3 infra/vm/lab.py gpui-deploy test
-rtk python3 infra/vm/lab.py gpui-run test
+rtk python3 lab/fedora/lab.py stop test
+rtk python3 lab/fedora/lab.py start build
+rtk python3 lab/fedora/lab.py wait build
+rtk python3 lab/fedora/lab.py view build &
+rtk python3 lab/fedora/lab.py gpui-build build
+rtk python3 lab/fedora/lab.py stop build
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py wait test
+rtk python3 lab/fedora/lab.py view test &
+rtk python3 lab/fedora/lab.py gpui-deploy test
+rtk python3 lab/fedora/lab.py gpui-run test
 ```
 
 The build script vendors the locked dependencies, retains their license files,
@@ -67,7 +72,7 @@ ordinary `desktop` user in a transient user service. It does not run the GUI as
 root. Its logs are available with:
 
 ```sh
-rtk python3 infra/vm/lab.py ssh test sudo journalctl -b _SYSTEMD_USER_UNIT=crowbaros-gpui-probe.service --no-pager
+rtk python3 lab/fedora/lab.py ssh test sudo journalctl -b _SYSTEMD_USER_UNIT=crowbaros-gpui-probe.service --no-pager
 ```
 
 After [installing the Intel VirtIO lab driver](../../docs/development/gpu-vulkan.md),
@@ -94,16 +99,15 @@ The ordinary desktop launcher still uses system driver discovery.
 - Focused `on_click` controls already receive Enter/Space activation from GPUI.
   Registering another activation binding makes the action fire twice. The probe
   relies on GPUI's built-in activation and tests for exactly one state change.
-- This disposable integration fixture uses MIT; it does not set the license
-  policy for CrowbarOS's future shell or product applications.
+- The probe is MIT, like all CrowbarOS code.
 
 ## Repeat the input check
 
 Keep the test viewer open, then run from the repository root:
 
 ```sh
-rtk python3 infra/vm/check_gpui.py
-rtk python3 infra/vm/lab.py gpui-run test
+rtk python3 lab/fedora/check_gpui.py
+rtk python3 lab/fedora/lab.py gpui-run test
 ```
 
 The check restarts only the probe, drives real guest keyboard/pointer events,

@@ -1,5 +1,10 @@
 # Studio Settings
 
+> **Status.** This app was built for the earlier Fedora plan. Its interface work
+> carries over to the [vision](../../docs/VISION.md); its RPM packaging and Hyprland
+> wiring do not. It is built and run only in the [Fedora lab](../../lab/fedora/README.md),
+> which is kept for interface work. See [what carries over](../README.md).
+
 The first native CrowbarOS settings slice, implemented in Rust and GPUI 0.2.2:
 
 - Dark, Light, and Warm Paper appearance modes with an immediate app preview.
@@ -23,17 +28,17 @@ preferably on the same workspace as Codex. All compilation happens in the builde
 the test guest only receives the signed package.
 
 ```sh
-rtk python3 infra/vm/lab.py stop test
-rtk python3 infra/vm/lab.py start build
-rtk python3 infra/vm/lab.py wait build
-rtk python3 infra/vm/lab.py view build &
-rtk python3 infra/vm/lab.py studio-build build
-rtk python3 infra/vm/lab.py stop build
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py wait test
-rtk python3 infra/vm/lab.py view test &
-rtk python3 infra/vm/lab.py studio-deploy test
-rtk python3 infra/vm/lab.py studio-run test intel-virtio
+rtk python3 lab/fedora/lab.py stop test
+rtk python3 lab/fedora/lab.py start build
+rtk python3 lab/fedora/lab.py wait build
+rtk python3 lab/fedora/lab.py view build &
+rtk python3 lab/fedora/lab.py studio-build build
+rtk python3 lab/fedora/lab.py stop build
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py wait test
+rtk python3 lab/fedora/lab.py view test &
+rtk python3 lab/fedora/lab.py studio-deploy test
+rtk python3 lab/fedora/lab.py studio-run test intel-virtio
 ```
 
 The last argument selects the [isolated hardware Vulkan profile](../../docs/development/gpu-vulkan.md).
@@ -74,7 +79,7 @@ The GUI is launched as the ordinary `desktop` user. It never uses sudo or
 changes host Omarchy settings. Application logs are available through:
 
 ```sh
-rtk python3 infra/vm/lab.py ssh test sudo journalctl -b \
+rtk python3 lab/fedora/lab.py ssh test sudo journalctl -b \
   _SYSTEMD_USER_UNIT=crowbaros-studio-settings.service --no-pager
 ```
 
@@ -126,7 +131,7 @@ To stop using the app while retaining preferences, close it and remove its RPM
 through DNF. Removing the RPM does not reset a motion change already applied to
 the running compositor; a fresh lab login without the hook uses the lab defaults.
 
-Owned application code uses GPL-3.0-or-later. The earlier GPUI probe's MIT notice,
+Owned application code is MIT. The earlier GPUI probe's MIT notice,
 GPUI/dependency notices, and bundled font OFL licenses are retained. Fonts are
 the same static Manrope weights and IBM Plex Mono used by the validated probe;
 see [font provenance](fonts/README.md).
