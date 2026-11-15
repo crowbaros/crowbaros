@@ -12,6 +12,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "crowbar-broker"
+version = "0.1.0"
+
+[[package]]
+name = "crowbar-gate"
+version = "0.1.0"
+
+[[package]]
+name = "crowbar-labels"
+version = "0.1.0"
+
+[[package]]
+name = "crowbar-plan"
+version = "0.1.0"
+
+[[package]]
+name = "crowbar-sandbox"
+version = "0.1.0"
+
+[[package]]
 name = "crowbar-state"
 version = "0.1.0"
 dependencies = [
