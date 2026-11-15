@@ -19,4 +19,5 @@ Every crossing the gate does not already allow ends in the person's answer. That
 - An agent cannot drive a native app that has no UI description. Whether to offer that through an accessibility interface the shell controls is open.
 - A machine with no authenticator of its own changes authority through the phone or a security key.
 - All of this rests on Base. A compromised kernel or shell can forge an everyday answer. Phone approval does not rest on the desk's kernel, which is why the person can require it for the changes that matter most.
-- The shell needs a way to show exact content that is too long for one screen, without training the person to skip it.
+- The shell needs a way to show exact content that is too long for one screen, without training the person to skip it. [ADR 0018](0018-one-gesture-answers-one-ask.md) answers this: an everyday ask fits one screen, and a longer one changes authority and is armed only after its last page.
+- Where this record says the shell handles the confirm gesture, [ADR 0018](0018-one-gesture-answers-one-ask.md) divides the work: the compositor takes the gesture and sends the yes to the broker, and the shell draws the ask.
