@@ -23,6 +23,10 @@ impl<T> Labeled<T> {
         Labeled { value, label_mark: origin.label_mark() }
     }
 
+    pub(crate) fn with(value: T, label_mark: LabelMark) -> Self {
+        Labeled { value, label_mark }
+    }
+
     pub fn value(&self) -> &T {
         &self.value
     }

@@ -36,6 +36,8 @@ pub enum MarkSource {
     Outside,
     /// An origin the table does not know.
     Unknown,
+    /// A workbench, which reads the open web all the time (ADR 0017).
+    Workbench,
 }
 
 /// The record that a value was produced by a context that had read open
@@ -66,6 +68,11 @@ impl Mark {
     pub fn join(&self, other: &Mark) -> Mark {
         Mark(self.0.union(&other.0).cloned().collect())
     }
+
+    /// Whether every source of this mark is a source of `other`.
+    pub fn is_at_most(&self, other: &Mark) -> bool {
+        self.0.is_subset(&other.0)
+    }
 }
 
 /// The label and mark a value carries.
@@ -84,6 +91,12 @@ impl LabelMark {
         LabelMark { label, mark }
     }
 
+    /// What a compartment holds before it has read anything: public, and
+    /// unmarked.
+    pub(crate) fn clean() -> Self {
+        LabelMark::new(Label::Public, Mark::none())
+    }
+
     pub fn label(&self) -> &Label {
         &self.label
     }
@@ -97,6 +110,12 @@ impl LabelMark {
     pub fn join(&self, other: &LabelMark) -> LabelMark {
         LabelMark::new(self.label.join(&other.label), self.mark.join(&other.mark))
     }
+
+    /// Whether `other` is at least as strict in label and carries every
+    /// source of this mark, so that joining this into it changes nothing.
+    pub fn is_at_most(&self, other: &LabelMark) -> bool {
+        self.label.is_at_most(&other.label) && self.mark.is_at_most(&other.mark)
+    }
 }
 
 impl fmt::Display for MarkSource {
@@ -107,6 +126,7 @@ impl fmt::Display for MarkSource {
             MarkSource::Paste => f.write_str("paste"),
             MarkSource::Outside => f.write_str("outside"),
             MarkSource::Unknown => f.write_str("unknown"),
+            MarkSource::Workbench => f.write_str("workbench"),
         }
     }
 }
