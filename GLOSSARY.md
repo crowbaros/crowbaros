@@ -196,6 +196,10 @@ _Avoid_: Standing grant, allowlist
 The secure key press, handled by the shell and never delivered to a Tool, with which the person answers an everyday ask. A change to authority needs a passkey, a security key, or the phone as well.
 _Avoid_: Click, OK button, voice confirmation
 
+**Compositor**:
+The CrowbarOS program that owns the screen and the input devices, written in Rust on Smithay. It is part of Base. It delivers input only as the shell directs, keeps the confirm gesture from every Tool, and offers no Tool a way to produce input or read the screen.
+_Avoid_: Window manager, Hyprland
+
 **Powerbox**:
 Trusted system UI where the person's choice of a thing is itself the grant of a handle to that thing.
 _Avoid_: Permission prompt, picker

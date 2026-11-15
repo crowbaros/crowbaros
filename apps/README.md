@@ -21,8 +21,10 @@ keeps their interface work and replaces their system wiring.
 | The launcher, dock, and text-input code | Launching through `systemd-run`; Void Linux uses runit |
 | The settings patterns: preview, explicit save, undo, inline errors | The `.desktop` catalog as the software model; CrowbarOS runs Tools through the broker |
 
-The compositor is an open question in the vision, so new code should keep
-compositor calls behind the existing `session.rs` adapters.
+CrowbarOS will have its own compositor, built on Smithay
+([ADR 0015](../docs/adr/0015-our-own-compositor-on-smithay.md)). Keep compositor
+calls behind the existing `session.rs` adapters, which will move from Hyprland
+to an interface that compositor defines.
 
 ## Build and run
 

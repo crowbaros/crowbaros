@@ -34,6 +34,7 @@ The full roadmap is in the [vision](docs/VISION.md#roadmap).
 | --- | --- |
 | [`crates/`](crates/) | The Rust workspace: the Crowbar State, the apply engine, and the skeleton crates for Milestone 2 |
 | [`apps/`](apps/) | The GPUI interfaces: desktop shell, Studio Settings, and the GPUI probe |
+| [`compositor/`](compositor/) | The CrowbarOS Wayland compositor, on Smithay. Not started |
 | [`lab/`](lab/) | VM labs: the Void Linux lab for Base, and the Fedora lab that builds and runs the GPUI apps for now |
 | [`docs/VISION.md`](docs/VISION.md) | The vision, the stack, and the roadmap |
 | [`docs/adr/`](docs/adr/) | Decision records |
@@ -59,7 +60,7 @@ See [`apps/`](apps/README.md) for how to build and run them.
 ## Working in this repository
 
 - [`AGENTS.md`](AGENTS.md) is the standard for how we and our agents work:
-  ownership, pull requests, merging, and checks.
+  pull requests, merging, and checks.
 - Use the terms in the [glossary](GLOSSARY.md). When a term is missing or wrong,
   change the glossary first.
 - A decision that is hard to reverse gets a [decision record](docs/adr/).

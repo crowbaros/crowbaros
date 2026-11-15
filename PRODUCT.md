@@ -25,8 +25,9 @@ system, and the reference for its components.
 
 Foundations from the vision: a Void Linux Base, Rust for owned code, Wayland and
 portals, and GPUI as the candidate toolkit for the shell that draws Tool
-interfaces. The compositor is an open question. So is the format of a Tool's
-interface description: a new vocabulary drawn by GPUI, or a constrained web
+interfaces. The compositor is our own, built on Smithay
+([ADR 0015](docs/adr/0015-our-own-compositor-on-smithay.md)). The format of a Tool's
+interface description is an open question: a new vocabulary drawn by GPUI, or a constrained web
 subset drawn by a trusted engine.
 
 Today the GPUI apps are built as signed RPMs and run under Hyprland in the
