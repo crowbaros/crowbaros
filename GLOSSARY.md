@@ -209,8 +209,16 @@ How private a piece of data is: public, personal, or private, in that order. Pri
 _Avoid_: Tag, classification
 
 **Compartment**:
-One execution context: a task's model context and workspace, or a Tool's sandbox. Once it reads a value it is at that value's label and carries its mark, and so is everything it emits.
-_Avoid_: Sandbox, session, quarantine
+One execution context: a task's model context and workspace, or one running copy of a Tool or of installed software. Each start makes a new compartment, so one principal can have several at once, such as a live Tool and its Preview. Once it reads a value it is at that value's label and carries its mark, and so is everything it emits.
+_Avoid_: Session, quarantine, instance
+
+**Sandbox**:
+The Linux confinement around one compartment's processes. The compartment is the thing confined, and the sandbox is what confines it.
+_Avoid_: Container, jail
+
+**Warden**:
+The part of Base that starts and stops every compartment, on the broker's orders alone. Nothing else starts a principal's process.
+_Avoid_: Launcher, spawner, supervisor
 
 **Untrusted input**:
 Content written by someone other than the person or their OS. It is _admitted_ when it comes from a pinned set the person admitted in advance (the Base package snapshot, the dependency set for build tasks), and _open_ otherwise (web pages, mail, shared intents, files from outside, and what the person pastes). It includes short strings: a file name, a mail subject, error text from a server.
