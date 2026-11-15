@@ -27,11 +27,12 @@ impl ObjectId {
 
 /// The label and mark of each stored object, by the object's id.
 ///
-/// Marks persist in storage (ADR 0008): an object keeps the label and mark of
-/// whatever wrote it, and a later write joins with them, so a write can add to
-/// them and never take them away. An object with no record is an unknown
-/// origin. Saved and loaded through serde, it keeps every label and mark;
-/// loading refuses a record that names an object twice.
+/// Marks persist in storage (ADR 0008). A new object starts at the label and
+/// mark of whatever created it ([`LabelStore::create`]). A later write joins
+/// with them ([`LabelStore::write`]), so a write can add to them and never take
+/// them away. An object with no record is an unknown origin, and a write to it
+/// joins with the unknown row. Saved and loaded through serde, the store keeps
+/// every label and mark; loading refuses a record that names an object twice.
 ///
 /// This holds the records only. Where they live, and who may write them, is
 /// for the Data layer.
@@ -42,17 +43,26 @@ pub struct LabelStore {
 }
 
 impl LabelStore {
-    /// Records a write to `object` by something at `writer`'s label and mark.
-    pub fn write(&mut self, object: &ObjectId, writer: &LabelMark) {
+    /// Records a new object that something at `writer`'s label and mark
+    /// wrote. Only the broker knows an object is new, so only it calls this.
+    /// An object that already has a record is refused.
+    pub fn create(&mut self, object: &ObjectId, writer: &LabelMark) -> Result<(), AlreadyRecorded> {
         match self.records.entry(object.clone()) {
+            Entry::Occupied(_) => Err(AlreadyRecorded { object: object.clone() }),
             Entry::Vacant(entry) => {
                 entry.insert(writer.clone());
-            }
-            Entry::Occupied(mut entry) => {
-                let joined = entry.get().join(writer);
-                entry.insert(joined);
+                Ok(())
             }
         }
+    }
+
+    /// Records a write to `object` by something at `writer`'s label and mark.
+    /// The write joins with what the object holds: its record, or the unknown
+    /// row when it has none, because an object with no record may have been on
+    /// disk before any record was kept (ADR 0019).
+    pub fn write(&mut self, object: &ObjectId, writer: &LabelMark) {
+        let held = self.origin_of(object).label_mark();
+        self.records.insert(object.clone(), held.join(writer));
     }
 
     /// Where reading `object` comes from: a stored result with its record, or
@@ -64,6 +74,26 @@ impl LabelStore {
         }
     }
 }
+
+/// [`LabelStore::create`] was given an object that already has a record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlreadyRecorded {
+    object: ObjectId,
+}
+
+impl AlreadyRecorded {
+    pub fn object(&self) -> &ObjectId {
+        &self.object
+    }
+}
+
+impl fmt::Display for AlreadyRecorded {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the object {:?} already has a record; a write joins with it", self.object.as_str())
+    }
+}
+
+impl std::error::Error for AlreadyRecorded {}
 
 impl<'de> Deserialize<'de> for LabelStore {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
