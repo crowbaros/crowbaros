@@ -58,6 +58,8 @@ See [`apps/`](apps/README.md) for how to build and run them.
 
 ## Working in this repository
 
+- [`AGENTS.md`](AGENTS.md) is the standard for how we and our agents work:
+  ownership, pull requests, merging, and checks.
 - Use the terms in the [glossary](GLOSSARY.md). When a term is missing or wrong,
   change the glossary first.
 - A decision that is hard to reverse gets a [decision record](docs/adr/).
