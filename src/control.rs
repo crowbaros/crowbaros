@@ -1,9 +1,9 @@
 //! The control channel between the compositor and the shell.
 //!
 //! This is the interface that replaces the apps' use of the Hyprland socket.
-//! The compositor makes a socket pair and gives one end to the shell process
-//! it starts. Nothing is bound in the filesystem, so no other process can
-//! open it.
+//! The spike supports inherited socket pairs. The Alpha service instead uses
+//! a private path socket with a kernel-verified shell UID and can reconnect
+//! independently. Production IPC remains issue 71.
 //!
 //! The wire format is one JSON object per line. The shell sends a request and
 //! gets one reply. The compositor may also send an event at any time. The set
@@ -79,6 +79,9 @@ impl State {
     /// Starts serving the compositor's end of the control channel.
     pub fn serve_control(&mut self, stream: UnixStream) -> std::io::Result<()> {
         stream.set_nonblocking(true)?;
+        self.close_control();
+        self.control_generation += 1;
+        let generation = self.control_generation;
         self.control = Some(stream.try_clone()?);
         let mut pending = Vec::new();
         self.loop_handle
@@ -88,7 +91,7 @@ impl State {
                     // The channel may have been closed by a failed write
                     // since the last read. What the shell sent before that
                     // is not read.
-                    if state.control.is_none() {
+                    if state.control_generation != generation || state.control.is_none() {
                         return Ok(PostAction::Remove);
                     }
                     let mut chunk = [0u8; 1024];
