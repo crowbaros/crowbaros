@@ -20,6 +20,6 @@ for weight, style in [(400, "Regular"), (600, "SemiBold"), (700, "Bold")]:
     static.save(f"Manrope-{style}.ttf")
 ```
 
-Run from this directory in the builder after `sudo dnf install python3-fonttools`
-if regeneration is needed. Normal builds use the checked-in static faces and
+If regeneration is needed, run from this directory in a Python environment with
+FontTools 4.68.0 installed. Normal builds use the checked-in static faces and
 do not need FontTools. `BUILD-MANIFEST.txt` records the font digests.
