@@ -15,8 +15,9 @@ use zero when asking the compositor to stretch a surface.
 
 `packaging/prepare-gpui.py` checks the original archive SHA-256 and applies the
 committed patch with zero fuzz. Cargo.lock records the additional protocol crate.
-The generated GPUI source is included in the vendored RPM source archive. This is
-a private application dependency; Studio Settings and system packages are unchanged.
+The generated GPUI source is an ignored build input recreated by that script.
+The former RPM source recipe is archived. This is a private application
+dependency; Studio Settings and system packages are unchanged.
 
 This backport is not claimed as a newly accepted upstream patch. The first shell
 validates one output and explicitly defers multi-monitor output selection/hotplug.

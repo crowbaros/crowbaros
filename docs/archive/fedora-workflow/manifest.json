@@ -1,0 +1,233 @@
+{
+  "source_commit": "e2c07cab37f381a3754e190a0a932e725ba41290",
+  "files": [
+    {
+      "original": "lab/fedora/README.md",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/README.md",
+      "sha256": "e24dbd6cf6170e48c8abf1821c1e53c0dd6118a533cde7e3544469116942df01",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/check_gpui.py",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/check_gpui.py",
+      "sha256": "0430f4f2b05bcb056f7eaa3f539a2f590f01b533c7635448e300d7afdc4820be",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/check_shell.py",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/check_shell.py",
+      "sha256": "429176b5093edbd3fdc02bd362d103543942c14edbb893771e0a135e420a6361",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/check_studio.py",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/check_studio.py",
+      "sha256": "8d7003aabeb9353aedc27f98a0f00e2e4c2aa5a9d28a544a8497573016e1b5a5",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/config.json",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/config.json",
+      "sha256": "875bbc483e28f0eb07bf240b1f9aad0493f0b9ac09b2d92d101f284b7f77b92a",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/fixtures/crowbaros-build-smoke.rs",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/fixtures/crowbaros-build-smoke.rs",
+      "sha256": "945549daca10ba08deb7d7cbc2e6856508e8acb3968ec8810ef62cf0670dda92",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/fixtures/crowbaros-build-smoke.spec",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/fixtures/crowbaros-build-smoke.spec",
+      "sha256": "ed6e250437ca5c65bdba5ce8e46572494347f769bd9ec32aea32fa4bf264eee8",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/fixtures/hyprland-copr.pub",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/fixtures/hyprland-copr.pub",
+      "sha256": "9f47c74eec4fea0f5a8cee1c6532bbeb33eee8134f762314bf16815a720dc047",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/gpu/crowbaros-mesa-intel-virtio.spec",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/gpu/crowbaros-mesa-intel-virtio.spec",
+      "sha256": "c43c2b529b54a81e37ee3989a7fc8241bc871dd19212170a1f01e5d2da784e57",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/build.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/build.sh",
+      "sha256": "eab5c9463ad75b651de01215209528a66decaede571ff72bb50a3b99d4ac6c28",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/deploy-smoke.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/deploy-smoke.sh",
+      "sha256": "4eaa0c145f4c04f2c4fcb5489b295274212d0945a9af8897b00b6269d8d64e81",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/gpu-build.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/gpu-build.sh",
+      "sha256": "f3ef91143f8bf1e38c7b0e942b83296463d8e99960c939dac10c155ac3fb0df2",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/gpu-deploy.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/gpu-deploy.sh",
+      "sha256": "2cd2c7e6225efb4cb466846665976c1209ff91a2d17fc042271f0011a602aa0c",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/gpui-build.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/gpui-build.sh",
+      "sha256": "6f18d5bbebf44d221ab7bdc77b0decfbcc390fb7da167cb1e262cf7ae1d43bbc",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/gpui-deploy.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/gpui-deploy.sh",
+      "sha256": "c5bc8f452969ea314fb9fcb13c174f2092bf244a6c93a5a1ffb31d4391e78f86",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/gpui-run.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/gpui-run.sh",
+      "sha256": "428c0eda5199bcfff83a1e403d2205588c3dde71d9c23211fdd737f263316142",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/shell-build.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/shell-build.sh",
+      "sha256": "c2fdecaa016030f1a17ff32e8a1953ed147cfbc407b43af0509c85f054e2c6a5",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/shell-deploy.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/shell-deploy.sh",
+      "sha256": "a8a7160096a5033618894a97a4d5f96306915f0075480d421768730f4dbb1758",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/shell-run.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/shell-run.sh",
+      "sha256": "a747aae62c52b8fd99713c29ddbabcc978efe83bb5533b0c76996b6bd8394d78",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/smoke-build.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/smoke-build.sh",
+      "sha256": "42ffd255c8f797bacf148ee4c90c11bd847d48b7e6400597b08dc58ae938b3df",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/studio-build.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/studio-build.sh",
+      "sha256": "cabbd0a266287f5f159f1d0d053f68465a49d12fdc6789cc45f0e4bd490eb336",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/studio-deploy.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/studio-deploy.sh",
+      "sha256": "8ecd5fc283f6cf961c27f133b8312d2cf48cb9b9850dd880497769ecdd6e0290",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/studio-run.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/studio-run.sh",
+      "sha256": "d6323372795fd02f42cb944d47778a883e0822cfdf79585f628c9798df023d8c",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/guest/test.sh",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/guest/test.sh",
+      "sha256": "bb3c37505e3b4f79664eaa5aeb2aa6333ef81c8bc8f831a35223177b029325c4",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/lab.py",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/lab.py",
+      "sha256": "14fbddf178152bf4099e83e92ef0200755b85007e84d881ce8f60a84a2b71f15",
+      "operation": "move"
+    },
+    {
+      "original": "lab/fedora/validate_shell.py",
+      "archived": "docs/archive/fedora-workflow/lab/fedora/validate_shell.py",
+      "sha256": "380b69823da7d65117ce984f9389674b2f3f77d6bfebe8ec5aaf5b4650df211c",
+      "operation": "move"
+    },
+    {
+      "original": "apps/gpui-probe/packaging/crowbaros-gpui-probe.spec.in",
+      "archived": "docs/archive/fedora-workflow/apps/gpui-probe/packaging/crowbaros-gpui-probe.spec.in",
+      "sha256": "8b7f7b8900b74c326cd1928ebaf8cef92b8d37ce668210596effca1ea16b28c0",
+      "operation": "move"
+    },
+    {
+      "original": "apps/shell/packaging/crowbaros-shell.service",
+      "archived": "docs/archive/fedora-workflow/apps/shell/packaging/crowbaros-shell.service",
+      "sha256": "6bdc7136a5ee3679da4c8b7a7f05369bf57f41401402a6a4d5eb71419521778c",
+      "operation": "move"
+    },
+    {
+      "original": "apps/shell/packaging/crowbaros-shell.spec.in",
+      "archived": "docs/archive/fedora-workflow/apps/shell/packaging/crowbaros-shell.spec.in",
+      "sha256": "a7491f03e95c190e6f0a675791a91097ab13cbbecd34570e8db90c7b0e833cb8",
+      "operation": "move"
+    },
+    {
+      "original": "apps/shell/packaging/hyprland.lua",
+      "archived": "docs/archive/fedora-workflow/apps/shell/packaging/hyprland.lua",
+      "sha256": "7e0f71d962e551468f651defd541af820e96a8e15cc95cde33a6d5f10410a0f7",
+      "operation": "move"
+    },
+    {
+      "original": "apps/studio-settings/packaging/crowbaros-studio-settings.spec.in",
+      "archived": "docs/archive/fedora-workflow/apps/studio-settings/packaging/crowbaros-studio-settings.spec.in",
+      "sha256": "5347c607fff9af7b2fb5907a672e8e2556aa30435c889991539e2ef91707a930",
+      "operation": "move"
+    },
+    {
+      "original": "apps/studio-settings/packaging/hyprland.lua",
+      "archived": "docs/archive/fedora-workflow/apps/studio-settings/packaging/hyprland.lua",
+      "sha256": "7bc53c8a7f884c983560d37434633fa1871223cd503699371937246c5a32b57b",
+      "operation": "move"
+    },
+    {
+      "original": "apps/README.md",
+      "archived": "docs/archive/fedora-workflow/apps/README.md",
+      "sha256": "933fd7eb56d74594a10056f7b400e702cb6f196d42b0dcac399f3bdb5ab36742",
+      "operation": "copy"
+    },
+    {
+      "original": "apps/shell/README.md",
+      "archived": "docs/archive/fedora-workflow/apps/shell/README.md",
+      "sha256": "06c967eaa3f662119bbb7b4a7b0d1c3248b3108a5640b122b4ec4a6ec7a24988",
+      "operation": "copy"
+    },
+    {
+      "original": "apps/studio-settings/README.md",
+      "archived": "docs/archive/fedora-workflow/apps/studio-settings/README.md",
+      "sha256": "0b5a2fa83f5e10bd5c4333b54b22ebaf4a382d9c2fe129d864cf30053a1f1bd2",
+      "operation": "copy"
+    },
+    {
+      "original": "apps/gpui-probe/README.md",
+      "archived": "docs/archive/fedora-workflow/apps/gpui-probe/README.md",
+      "sha256": "a22ce7536a4da15592bb72066abd43a34b85c0c86e827b56a25ab03eaadd6324",
+      "operation": "copy"
+    },
+    {
+      "original": "docs/development/local-vms.md",
+      "archived": "docs/archive/fedora-workflow/docs/development/local-vms.md",
+      "sha256": "9fc6d6f0d9d9f04c4d23c790f7747d89e8bb13d51f12388922f028bcb129abd2",
+      "operation": "copy"
+    },
+    {
+      "original": "docs/development/gpu-vulkan.md",
+      "archived": "docs/archive/fedora-workflow/docs/development/gpu-vulkan.md",
+      "sha256": "eb913fa199ef750a136317cab9e60751eb9191ef356846750b4ccc1f1d672780",
+      "operation": "copy"
+    }
+  ]
+}

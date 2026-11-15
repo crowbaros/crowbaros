@@ -1,13 +1,15 @@
 # Labs
 
-Each lab runs CrowbarOS work in virtual machines or against stand-ins, so nothing
-here touches the host system or a real account.
-
 | Lab | Purpose | State |
 | --- | --- | --- |
-| [`void/`](void/README.md) | Base: a Void Linux VM on Btrfs, driven by the apply engine. Also the graphical guest that runs the compositor on a TTY | In use. Ran Milestone 1 and the compositor spike |
-| [`adversarial/`](adversarial/README.md) | Milestone 2: fixture services, the red-team harness, attack and task runs | Fixture services and the smoke check built. Harness and runs not started |
-| [`fedora/`](fedora/README.md) | Builds and runs the GPUI apps under Hyprland | In use for interface work only. To be removed |
+| [void/](void/README.md) | Base generations and integrated Alpha desktop checks on Void/runit/seatd | Active |
+| [adversarial/](adversarial/README.md) | M2 fixture services and security tests | Fixture services and the smoke check built. Harness and runs not started |
 
-Lab state lives outside git: `.lab/` for the Void lab, the compositor checks,
-and the adversarial lab, and `.local/` for the Fedora lab.
+The [Fedora workflow](../docs/archive/fedora-workflow/README.md) is archived.
+Current app build/run instructions are in the
+[Void development guide](../docs/development/local-vms.md). The full desktop
+smoke check creates a fresh guest per run in `.lab/void-desktop-checks/`.
+
+State lives outside Git in `.lab/void/`, `.lab/void-graphical/`, and
+`.lab/adversarial/`. Retirement of source tooling does not delete those disks,
+other local VM state, or checkpoints.

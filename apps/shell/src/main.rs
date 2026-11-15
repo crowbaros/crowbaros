@@ -694,7 +694,11 @@ fn main() -> anyhow::Result<()> {
         ]);
         let model = cx.new(|_| Model {
             snapshot: Default::default(),
-            preferences: Preferences::load().unwrap_or_default(),
+            preferences: {
+                let preferences = Preferences::load().unwrap_or_default();
+                log::info!("SHELL appearance theme={:?}", preferences.theme);
+                preferences
+            },
             launcher: None,
             apps: catalog::discover(),
             tx,
@@ -800,6 +804,7 @@ fn main() -> anyhow::Result<()> {
                                 }
                                 if let Some(prefs) = prefs {
                                     if prefs != m.preferences {
+                                        log::info!("SHELL appearance theme={:?}", prefs.theme);
                                         m.preferences = prefs;
                                         refresh = true
                                     }

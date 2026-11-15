@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+exec >>/var/log/crowbar-compositor.log 2>&1
+install -d -o crowbar-compositor -g crowbar-compositor -m 0755 /run/crowbar-display
+install -d -m 0755 /run/crowbar-trusted
+install -d -o crowbar-compositor -g crowbar-shell -m 2750 /run/crowbar-trusted/compositor
+chown crowbar-compositor:crowbar-compositor /var/log/crowbar-compositor.log
+chown crowbar-compositor:crowbar-compositor /home/crowbar-compositor
+test -S /run/seatd.sock || exit 1
+exec openvt -c 2 -s -f -w -- chpst -u crowbar-compositor:crowbar-compositor:_seatd env -i \
+  HOME=/home/crowbar-compositor PATH=/usr/local/bin:/usr/bin:/bin \
+  XDG_RUNTIME_DIR=/run/crowbar-display LIBSEAT_BACKEND=seatd \
+  sh -c 'exec crowbar-compositor --backend tty --mode Virtual-1=1280x960 \
+  --shell-service /run/crowbar-trusted/compositor --shell-uid 1001 >>/var/log/crowbar-compositor.log 2>&1'

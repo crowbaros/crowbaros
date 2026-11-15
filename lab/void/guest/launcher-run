@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+exec >>/var/log/crowbar-launcher.log 2>&1
+install -d -o root -g crowbar-shell -m 0750 /run/crowbar-launch
+install -d -o crowbar-app -g crowbar-app -m 0700 /run/user/1002
+chown crowbar-app:crowbar-app /home/crowbar-app
+exec /usr/local/bin/crowbar-alpha-launcher

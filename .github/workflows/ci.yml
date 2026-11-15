@@ -49,7 +49,9 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Lab scripts compile
-        run: python3 -m py_compile lab/void/*.py lab/fedora/*.py lab/adversarial/*.py
+        run: |
+          python3 -m py_compile lab/void/*.py lab/void/guest/*.py lab/adversarial/*.py
+          python3 -m unittest discover -s lab/void -p "test_*.py"
 
       # The Milestone 2 fixture services on loopback: no VM, stdlib only.
       - name: Adversarial fixtures smoke
@@ -89,12 +91,15 @@ jobs:
         run: cargo test --locked
 
   shell:
-    name: Shell
+    name: Interface (${{ matrix.project }})
+    strategy:
+      matrix:
+        project: [apps/shell, apps/studio-settings]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
       run:
-        working-directory: apps/shell
+        working-directory: ${{ matrix.project }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -116,6 +121,7 @@ jobs:
       # Rebuilds the patched GPUI source from the pinned crate and checks its
       # checksum. See apps/shell/README.md.
       - name: Prepare GPUI
+        if: matrix.project == 'apps/shell'
         run: python3 packaging/prepare-gpui.py
 
       - name: Test

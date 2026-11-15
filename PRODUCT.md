@@ -30,10 +30,11 @@ interfaces. The compositor is our own, built on Smithay
 interface description is an open question: a new vocabulary drawn by GPUI, or a constrained web
 subset drawn by a trusted engine.
 
-Today the GPUI apps are built as signed RPMs and run under Hyprland in the
-[Fedora lab](lab/fedora/README.md). That lab is kept for interface work only and
-is removed when the Void lab has a graphical guest. Keep the active VM visible
-alongside Codex. Physical hardware testing is deferred.
+The GPUI apps run in the [Void Alpha desktop lab](lab/void/README.md), with
+separate compositor, shell, and app users under the temporary rules of ADR 0016.
+The integrated smoke command uses a fresh guest and preserves development VMs.
+Fedora workflow tooling is archived; use the [Void guide](docs/development/local-vms.md).
+Hardware graphics evidence and broader device qualification are recorded separately.
 
 ## Brand commitments
 

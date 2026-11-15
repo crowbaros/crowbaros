@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""The Void lab's graphical guest: runs the CrowbarOS compositor on a TTY.
+"""The Void lab's graphical guest: the compositor, shell, and Studio Settings.
 
 Stdlib only, no sudo. It shares the static xbps and the package cache with
 void_lab.py. Its own files live in <repo>/.lab/void-graphical (outside git).
 
 The guest is a plain Void root on Btrfs, booted straight from its kernel. It
-is not built through the apply engine and has no generations; it exists to
-answer one question, whether the compositor runs on Void without systemd.
+is not built through the apply engine and has no generations. Its desktop
+runs on a TTY under runit, without systemd or a host compositor.
 
     compositor_guest.py rootfs     install the guest root and the build root (rootless)
-    compositor_guest.py build      build the compositor inside the Void build root
-    compositor_guest.py image      make the guest disk with the compositor in it
+    compositor_guest.py build      build and test the compositor and apps in Void
+    compositor_guest.py image      make the guest disk (--desktop enables autostart)
     compositor_guest.py start      boot the guest
+    compositor_guest.py view       open its graphical console
+    compositor_guest.py desktop    build a desktop image, boot it, and open its console
     compositor_guest.py ssh CMD    run a command in the guest as root
     compositor_guest.py stop       power the guest off
     compositor_guest.py check      build, make the disk, boot, run every check, and write an evidence log
@@ -47,7 +49,7 @@ PIDFILE = WORK / "qemu.pid"
 QMP_SOCK = WORK / "qmp.sock"
 SERIAL_LOG = WORK / "serial.log"
 VNC = [WORK / "vnc0.sock", WORK / "vnc1.sock"]
-BINARIES = ["crowbar-compositor", "crowbar-probe"]
+BINARIES = ["crowbar-compositor", "crowbar-probe", "crowbaros-shell", "crowbaros-studio-settings"]
 GUEST_USER = "crowbar"
 
 run = void_lab.run
@@ -77,23 +79,29 @@ def rootfs(force=False):
 
 
 def build():
-    """Builds the compositor against Void's libraries, inside the build root.
+    """Builds the compositor and apps against Void's libraries, inside the build root.
 
     The host's Cargo registry and git checkouts are bound in read-write so the
     build runs offline from the crates the lockfile already names.
     """
     if not BUILD_ROOT.exists():
         rootfs()
+    run(sys.executable, ROOT / "apps/shell/packaging/prepare-gpui.py")
+    for project in ("compositor", "apps/shell", "apps/studio-settings"):
+        run("cargo", "fetch", "--locked", "--target", "x86_64-unknown-linux-gnu",
+            "--manifest-path", ROOT / project / "Cargo.toml")
     TARGET.mkdir(parents=True, exist_ok=True)
     cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
-    env = dict(os.environ, B=str(BUILD_ROOT), SRC=str(ROOT / "compositor"), TARGET=str(TARGET),
+    env = dict(os.environ, B=str(BUILD_ROOT), SRC=str(ROOT), TARGET=str(TARGET),
                CARGO_REGISTRY=str(cargo_home / "registry"), CARGO_GIT=str(cargo_home / "git"))
     run("unshare", "-r", "-m", "sh", LAB / "host/build-compositor.sh", env=env)
     for name in BINARIES:
         print(f"{TARGET / 'release' / name}: sha256 {void_lab.sha256(TARGET / 'release' / name)}")
 
 
-def image():
+def image(desktop=False):
+    if running():
+        raise SystemExit("Stop the graphical guest before rebuilding its disk")
     if not GUEST_ROOT.exists():
         rootfs()
     for name in BINARIES:
@@ -102,10 +110,24 @@ def image():
             break
     if not KEY.exists():
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "crowbar-void-graphical", "-f", KEY)
+    if DISK.exists():
+        backup = WORK / f"disk-before-rebuild-{time.time_ns()}.raw"
+        run("cp", "--reflink=auto", "--sparse=always", DISK, backup)
+        print(f"Preserved the previous guest disk at {backup}")
     env = dict(os.environ, ROOTFS=str(GUEST_ROOT), WORK=str(WORK), OUT=str(DISK),
                BIN=str(TARGET / "release"), BINARIES=" ".join(BINARIES), PUBKEY=str(KEY) + ".pub",
-               ROOT_LABEL=CFG["root_label"], ROOT_GIB=str(CFG["root_gib"]), GUEST_USER=GUEST_USER)
+               ROOT_LABEL=CFG["root_label"], ROOT_GIB=str(CFG["root_gib"]), GUEST_USER=GUEST_USER,
+               REPO_ROOT=str(ROOT), DESKTOP="1" if desktop else "0")
     run("unshare", "-r", "sh", LAB / "host/build-graphical-image.sh", env=env)
+
+
+def view():
+    if not running():
+        raise SystemExit("Start the graphical guest first")
+    subprocess.Popen(["remote-viewer", "--title=CrowbarOS on Void Linux", "--auto-resize=never",
+                      f"vnc://127.0.0.1:{CFG['vnc_port']}"],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
 
 
 def running():
@@ -139,11 +161,12 @@ def start():
         "-device", "virtio-net-pci,netdev=n0",
         # One GPU with two connectors. The second starts unplugged. No default
         # VGA card: it would be a second DRM device, and the primary one.
-        "-vga", "none", "-device", "virtio-gpu-pci,id=gpu0,max_outputs=2",
+        "-vga", "none", "-device", "virtio-gpu-pci,id=gpu0,max_outputs=2,xres=1280,yres=960",
         "-device", "virtio-keyboard-pci", "-device", "virtio-tablet-pci",
         # A VNC server per connector. A VNC client that sets a desktop size on
         # the second one is how the lab plugs the second monitor in.
-        "-vnc", f"unix:{VNC[0]},display=gpu0,head=0",
+        "-vnc", (f"127.0.0.1:{CFG['vnc_port'] - 5900},display=gpu0,head=0"
+                  if CFG.get("vnc_port") else f"unix:{VNC[0]},display=gpu0,head=0"),
         "-vnc", f"unix:{VNC[1]},display=gpu0,head=1",
         "-qmp", f"unix:{QMP_SOCK},server=on,wait=off",
         "-chardev", f"file,id=ser0,path={SERIAL_LOG}", "-serial", "chardev:ser0",
@@ -155,6 +178,7 @@ class Qmp:
 
     def __init__(self):
         self.sock = socket.socket(socket.AF_UNIX)
+        self.sock.settimeout(10)
         self.sock.connect(str(QMP_SOCK))
         self.file = self.sock.makefile("rw")
         self.read()  # greeting
@@ -162,7 +186,10 @@ class Qmp:
 
     def read(self):
         while True:
-            message = json.loads(self.file.readline())
+            line = self.file.readline()
+            if not line:
+                raise ConnectionError("QMP disconnected")
+            message = json.loads(line)
             if "event" not in message:
                 return message
 
@@ -202,8 +229,11 @@ def plug_monitor(head, width, height):
     """Plugs a monitor into a connector by acting as a VNC client that asks
     for a desktop size. QEMU passes the size to virtio-gpu, which raises a
     hotplug event in the guest."""
-    sock = socket.socket(socket.AF_UNIX)
-    sock.connect(str(VNC[head]))
+    if head == 0 and CFG.get("vnc_port"):
+        sock = socket.create_connection(("127.0.0.1", CFG["vnc_port"]), timeout=5)
+    else:
+        sock = socket.socket(socket.AF_UNIX)
+        sock.connect(str(VNC[head]))
     sock.settimeout(5)
     sock.recv(12)                       # server version
     sock.sendall(b"RFB 003.008\n")
@@ -228,6 +258,18 @@ def stop():
         print("The graphical guest is not running")
         return
     pid = int(PIDFILE.read_text().strip())
+    # Let the guest flush its filesystem before QEMU exits. The fallback also
+    # handles a guest that did not boot far enough to bring up SSH.
+    try:
+        ssh("nohup sh -c 'sleep 1; poweroff' >/dev/null 2>&1 &", check=False, timeout=8)
+        for _ in range(150):
+            if not running():
+                PIDFILE.unlink(missing_ok=True)
+                print("Powered off the graphical guest")
+                return
+            time.sleep(0.2)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
     try:
         Qmp().command("quit")
     except (OSError, RuntimeError, ValueError):
@@ -277,28 +319,46 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("rootfs").add_argument("--force", action="store_true")
     sub.add_parser("build")
-    sub.add_parser("image")
+    sub.add_parser("image").add_argument("--desktop", action="store_true")
     sub.add_parser("start")
+    sub.add_parser("view")
+    sub.add_parser("desktop")
     sub.add_parser("stop")
     sub.add_parser("ssh").add_argument("guest_command", nargs=argparse.REMAINDER)
     sub.add_parser("check")
+    sub.add_parser("desktop-check").add_argument("--build-cache", type=Path)
     args = parser.parse_args()
     if args.command == "rootfs":
         rootfs(args.force)
     elif args.command == "build":
         build()
     elif args.command == "image":
-        image()
+        image(args.desktop)
     elif args.command == "start":
         start()
         wait_ssh()
     elif args.command == "stop":
         stop()
+    elif args.command == "view":
+        view()
+    elif args.command == "desktop":
+        if running():
+            raise SystemExit("The graphical guest is running; stop it before rebuilding the desktop")
+        rootfs()
+        build()
+        image(desktop=True)
+        start()
+        wait_ssh()
+        view()
     elif args.command == "ssh":
         result = ssh(shlex.join(args.guest_command) or "true", check=False)
         sys.stdout.write(result.stdout)
         sys.stderr.write(result.stderr)
         sys.exit(result.returncode)
+    elif args.command == "desktop-check":
+        import desktop_check
+        sys.argv = [sys.argv[0]] + (["--build-cache", str(args.build_cache)] if args.build_cache else [])
+        sys.exit(desktop_check.main())
     elif args.command == "check":
         import compositor_check
         sys.exit(compositor_check.main())

@@ -29,7 +29,7 @@ pub struct Client {
     pub title: String,
     pub workspace: Workspace,
 }
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Snapshot {
     pub workspace: i32,
     pub clients: Vec<Client>,
@@ -328,9 +328,37 @@ fn launcher_command(path: &std::path::Path) -> Command {
         .env_remove("WAYLAND_SOCKET");
     command
 }
+/// Alpha-only root stand-in. Its socket checks the shell UID; the helper
+/// chooses app credentials and starts from an empty environment/descriptor set.
+pub fn lab_request(request: serde_json::Value) -> Result<serde_json::Value> {
+    let path = std::env::var_os("CROWBAR_LAUNCH_SOCKET").context("No Alpha launcher")?;
+    let mut stream = UnixStream::connect(path)?;
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    let mut body = serde_json::to_vec(&request)?;
+    body.push(b'\n');
+    stream.write_all(&body)?;
+    let mut response = String::new();
+    BufReader::new(stream)
+        .take(65538)
+        .read_line(&mut response)?;
+    if response.len() > 65537 || !response.ends_with('\n') {
+        bail!("Invalid Alpha launcher response")
+    }
+    let reply: serde_json::Value = serde_json::from_str(&response)?;
+    if reply["ok"] != true {
+        bail!("Alpha launcher: {}", reply["error"]);
+    }
+    Ok(reply)
+}
+
 pub fn launch(path: PathBuf, tx: Sender<Event>) {
     std::thread::spawn(move || {
         let result = (|| -> Result<()> {
+            if std::env::var_os("CROWBAR_LAUNCH_SOCKET").is_some() {
+                lab_request(serde_json::json!({"op": "launch", "desktop": path}))?;
+                return Ok(());
+            }
             let mut child = launcher_command(&path)
                 .current_dir(
                     std::env::var_os("HOME").context("HOME is required to launch applications")?,
@@ -391,10 +419,19 @@ pub fn server(tx: Sender<Event>) -> Result<File> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     std::thread::spawn(move || {
         for mut s in listener.incoming().flatten() {
+            if !same_user(&s) {
+                continue;
+            }
             let _ = s.set_read_timeout(Some(Duration::from_millis(250)));
             let mut bytes = [0u8; 32];
             if let Ok(n) = s.read(&mut bytes) {
                 let event = match &bytes[..n] {
+                    b"snapshot" => {
+                        if let Ok(snapshot) = snapshot() {
+                            let _ = serde_json::to_writer(&mut s, &snapshot);
+                        }
+                        continue;
+                    }
                     b"launcher" => Event::Toggle,
                     b"quit" => Event::Quit,
                     _ => continue,
@@ -405,6 +442,23 @@ pub fn server(tx: Sender<Event>) -> Result<File> {
     });
     Ok(lock)
 }
+fn same_user(stream: &UnixStream) -> bool {
+    use std::os::fd::AsRawFd;
+    // SO_PEERCRED is supplied by the kernel, not by the request.
+    unsafe {
+        let mut peer: libc::ucred = std::mem::zeroed();
+        let mut size = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut peer as *mut libc::ucred).cast(),
+            &mut size,
+        ) == 0
+            && peer.uid == libc::geteuid()
+    }
+}
+
 pub fn start_session() -> Result<()> {
     let status = Command::new("systemctl")
         .args([

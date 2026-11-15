@@ -205,8 +205,8 @@ named out of date order, and one has no date. [`seed/home.json`](seed/home.json)
 says where each file came from in words. Seed text files are `.txt`, never
 `.md`: CI's `paths-ignore` treats `.md` as docs, so a change to one would start
 no CI run, and the smoke check fails if one appears. The origin table
-([issue 41](https://github.com/crowbaros/crowbaros/issues/41)) decides its label
-and mark. Once it lands, these words move to its vocabulary.
+in `crates/crowbar-labels` decides its label and mark. These words are not yet
+in its vocabulary; moving them there is a follow-up.
 
 ## The record
 

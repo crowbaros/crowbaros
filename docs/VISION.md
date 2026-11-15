@@ -613,7 +613,7 @@ flowchart LR
     subgraph DROP["Does not carry over"]
         d1[Fedora base, RPM/DNF]
         d2[RPM packaging + Mock builds]
-        d3["Fedora VM lab (lab/fedora),<br/>once the Void lab has a graphical guest"]
+        d3["Fedora VM lab and RPM workflow<br/>(archived development tooling)"]
         d4[Curated five-app bundle]
         d5[A separate classic edition]
     end
@@ -650,12 +650,16 @@ Notes:
   visual and interaction starting point for the M4 shell and system chrome. The
   source, tokens, fonts, and review captures carry over. Their RPM packaging,
   Fedora VM scripts, and Hyprland session wiring do not.
-- **The Fedora VM lab** ([`lab/fedora`](../lab/fedora/README.md)) is today the only
-  place the GPUI apps are built and run. It stays as the UI lab, with no new Fedora
-  work, until the Void lab has a graphical guest. Then it is removed.
+- **The Fedora VM workflow** is [archived](archive/fedora-workflow/README.md).
+  The [Void lab](../lab/void/README.md) builds the compositor, shell, and Settings
+  and checks them in a fresh guest. The [Alpha acceptance record](development/void-desktop-smoke-2026-11-15.md)
+  covers separate service identities, launch/focus/workspaces, Settings Save,
+  restart, and clean reboot. This follows ADR 0016's Alpha exception, not the
+  production Warden model. Existing Void VM state and dated evidence are preserved.
 - **Vulkan in a VM:** the Intel VirtIO native-context findings in
   [`gpu-vulkan.md`](development/gpu-vulkan.md) depend on the host and Mesa build,
-  not on Fedora. They apply when the Void lab gains a graphical guest.
+  not on Fedora. Porting that accelerated path remains separate work; the
+  current compositor guest uses software rendering.
 - **Compositor:** Hyprland was chosen for the Fedora plan and does not carry
   over. CrowbarOS has its own compositor, written in Rust on Smithay, as part of
   Base. It is where "only the shell delivers input", the confirm gesture, and
