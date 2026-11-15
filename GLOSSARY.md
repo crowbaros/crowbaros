@@ -204,8 +204,16 @@ _Avoid_: Standing rule, permanent permission
 A person's pre-approval, with a rate limit, for a narrow kind of act that crosses the undo boundary, so that act doesn't ask again. It is held by a Tool, a standing task, or a workbench, never by the Agent. An act that crosses needs both the grant (access) and the rule (no ask).
 _Avoid_: Standing grant, allowlist
 
+**Ask**:
+A question the broker puts to the person in trusted UI, with an ID, exact content, and an expiry. The shell draws it, and one confirm gesture or one signature answers it.
+_Avoid_: Prompt, dialog, popup
+
+**Armed**:
+The state of an ask that is visible, on top, holding the keyboard, and steady for long enough that the confirm gesture can answer it.
+_Avoid_: Active, ready
+
 **Confirm gesture**:
-The secure key press, handled by the shell and never delivered to a Tool, with which the person answers an everyday ask. A change to authority needs a passkey, a security key, or the phone as well.
+The secure key press, taken by the compositor and never delivered to any client, with which the person answers an everyday ask. An ask that changes authority is answered by a passkey, a security key, or the phone instead.
 _Avoid_: Click, OK button, voice confirmation
 
 **Compositor**:
