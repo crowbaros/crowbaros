@@ -154,7 +154,7 @@ fn labels_and_marks_survive_saving_and_loading() {
 }
 
 #[test]
-fn a_record_that_would_load_lower_than_it_was_written_is_refused() {
+fn a_malformed_record_is_refused_and_never_read_as_public_or_unmarked() {
     // A record must say both its label and its mark. A missing field is never
     // read as public or as unmarked.
     let cases = [

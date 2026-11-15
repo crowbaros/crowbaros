@@ -7,7 +7,8 @@ use std::fmt;
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::mark::LabelMark;
+use crate::label::Label;
+use crate::mark::{LabelMark, Mark};
 use crate::origin::Origin;
 
 /// The id of a stored object, as the Data layer names it.
@@ -101,6 +102,15 @@ impl<'de> Deserialize<'de> for LabelStore {
     }
 }
 
+/// One stored record as it is loaded: both fields are required, and any other
+/// field is refused.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredRecord {
+    label: Label,
+    mark: Mark,
+}
+
 struct RecordsVisitor;
 
 impl<'de> Visitor<'de> for RecordsVisitor {
@@ -112,13 +122,13 @@ impl<'de> Visitor<'de> for RecordsVisitor {
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<LabelStore, A::Error> {
         let mut records = BTreeMap::new();
-        while let Some((object, record)) = map.next_entry::<ObjectId, LabelMark>()? {
+        while let Some((object, record)) = map.next_entry::<ObjectId, StoredRecord>()? {
             if records.contains_key(&object) {
                 return Err(serde::de::Error::custom(format!(
                     "the object {object:?} is recorded twice"
                 )));
             }
-            records.insert(object, record);
+            records.insert(object, LabelMark::new(record.label, record.mark));
         }
         Ok(LabelStore { records })
     }

@@ -83,9 +83,11 @@ impl Mark {
 
 /// The label and mark a value carries.
 ///
-/// The only ways to get one are the origin table ([`crate::Origin::label_mark`])
-/// and joins of what it gave. Its fields are private, so a value's label and
-/// mark can be raised and never lowered. Setting a field does not compile:
+/// The only ways to get one are the origin table ([`crate::Origin::label_mark`]),
+/// joins of what it gave, and loading a [`crate::LabelStore`]. A loaded record
+/// is trusted to be what was saved: keeping storage from being rewritten is
+/// the Data layer's job. Its fields are private, so a value's label and mark
+/// can be raised and never lowered. Setting a field does not compile:
 ///
 /// ```compile_fail
 /// use crowbar_labels::Origin;
@@ -93,11 +95,16 @@ impl Mark {
 /// page.mark = Origin::Typed.label_mark().mark().clone();
 /// ```
 ///
+/// Nor does reading one straight from text, outside a store:
+///
+/// ```compile_fail
+/// let record: crowbar_labels::LabelMark = serde_json::from_str(r#"{"label": "public", "mark": []}"#).unwrap();
+/// ```
+///
 /// Stored, it must name both its label and its mark: a record missing either,
 /// or with a field, category, or source this crate does not know, is refused
 /// when it is loaded.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct LabelMark {
     label: Label,
     mark: Mark,
