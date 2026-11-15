@@ -32,9 +32,7 @@ working with coding agents. This file is the standard both sides hold.
 - Fill in the [pull request template](.github/pull_request_template.md). Under
   Verification, say what you ran and what you saw, and name what you could not
   run. End with the model and harness that did the work.
-- Merge when CI is green, then delete the branch. Either of us can merge; a
-  review from the other person is not required. GitHub does not enforce green
-  CI on a private repository on our plan, so we hold it ourselves.
+- Merge when CI is green, then delete the branch.
 
 ## Checks
 
