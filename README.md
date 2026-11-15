@@ -7,7 +7,9 @@
 > with the [vision](docs/agent-first/VISION.md), then the [glossary](GLOSSARY.md),
 > the [decision records](docs/adr/), the [design notes](docs/agent-first/design/),
 > the [Milestone 1 record](docs/agent-first/milestone-1.md), and the Rust
-> [apply engine workspace](agent-first/). The Fedora plan below is kept for reference.
+> [apply engine workspace](agent-first/). The desktop design, shell, and Studio
+> Settings below carry over as the starting point for the agent-first shell. The
+> Fedora packaging and VM recipes are kept for reference.
 
 A Fedora-based desktop using Hyprland, Rust, and GPUI.
 

@@ -595,7 +595,7 @@ flowchart LR
         k1[CrowbarOS name and the crow]
         k2["Palette: Void #080D12, Abyss #17212B,<br/>Ice #49D7E8, Steel #6D8191, Frost #D8E5EC"]
         k3[Manrope + IBM Plex Mono]
-        k4[GPUI probe app]
+        k4["GPUI shell and Studio Settings<br/>(DESIGN.md, apps/shell, apps/studio-settings)"]
         k5[Vulkan-in-VM findings]
         k6[FOSS values, open governance,<br/>'make it yours']
     end
@@ -633,6 +633,12 @@ Notes:
   chooses the harness and models, and intents and the State can be edited by hand.
 - **GPUI** ([`apps/gpui-probe`](../../apps/gpui-probe/README.md)) is the candidate
   toolkit for the shell that draws Tool UI. Its RPM packaging does not carry over.
+- **Desktop design:** Jason Alexander's design system ([`DESIGN.md`](../../DESIGN.md)),
+  the GPUI desktop shell ([`apps/shell`](../../apps/shell/README.md)), and Studio
+  Settings ([`apps/studio-settings`](../../apps/studio-settings/README.md)) are the
+  visual and interaction starting point for the M4 shell and system chrome. The
+  source, tokens, fonts, and review captures carry over. Their RPM packaging,
+  Fedora VM scripts, and Hyprland session wiring do not.
 - **Vulkan in a VM:** the Intel VirtIO native-context findings in
   [`gpu-vulkan.md`](../development/gpu-vulkan.md) depend on the host and Mesa build,
   not on Fedora. They apply when the Void lab gains a graphical guest.
