@@ -1,7 +1,6 @@
 # Every compartment has its own user and sandbox, and only the Warden starts one
 
-**Status:** proposed. This is a draft that grows as the design session for
-[issue 39](https://github.com/crowbaros/crowbaros/issues/39) settles each part.
+**Status:** accepted on November 15, 2026, by Jim Martin, at the end of the design session for [issue 39](https://github.com/crowbaros/crowbaros/issues/39).
 
 The [compositor spike](../research/compositor-spike-2026-11-15.md) identified a client by how its Wayland connection was made, and then ran the compositor, the shell, and every client as one user. A process of that user that could trace the shell could copy its sockets and become the shell. So the rules of [ADR 0014](0014-a-yes-comes-from-the-person.md) held inside Wayland and nowhere else. This record says what keeps one principal's processes from another's, and from the trusted parts, outside Wayland.
 
@@ -73,7 +72,7 @@ So a wide compartment cannot answer its own ask, grant itself more, or hide what
 
 **Wide is granted to one compartment at one start.** It is a change to authority, so it needs a passkey, a security key, or the phone (ADR 0014, rule 3). The approval signs what was shown: the principal, the objective, and when it ends. It ends when the compartment ends. It does not carry to the next start, and it cannot be a standing grant. A task, a terminal, or installed software can be wide. The Agent's own context cannot ([ADR 0011](0011-task-principals.md)).
 
-This record fixes only that floor and that grant. A later record decides how a wide compartment reaches the network, whether its writes to Data are staged, what label and mark its output carries, and how its windows are marked.
+This record fixes only that floor and that grant. A later record decides how a wide compartment reaches the network, whether its writes to Data are staged, what label and mark its output carries, and how its windows are marked ([issue 144](https://github.com/crowbaros/crowbaros/issues/144)).
 
 ## Milestone 2 and Base
 
