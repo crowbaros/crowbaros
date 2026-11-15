@@ -228,6 +228,14 @@ _Avoid_: Permission prompt, picker
 How private a piece of data is: public, personal, or private, in that order. Private data also carries a category, such as messages, health, or finance. A label comes from where the data came from.
 _Avoid_: Tag, classification
 
+**Category**:
+What private data carries to say what kind of private it is, such as messages, health, finance, or the one site it was fetched from under a login. A value can carry several. A party is cleared for private data only in the categories its clearance names.
+_Avoid_: Tag, class, label (for the category alone)
+
+**Origin table**:
+The deterministic rules that give every object its label and mark from where it came from: typed text, a paste, a file, mail, a web page, admitted input, or a stored result. An origin no rule covers is private and marked. No model takes part.
+_Avoid_: Classifier, labeling policy
+
 **Compartment**:
 One execution context: a task's model context and workspace, or one running copy of a Tool or of installed software. Each start makes a new compartment, so one principal can have several at once, such as a live Tool and its Preview. Once it reads a value it is at that value's label and carries its mark, and so is everything it emits.
 _Avoid_: Session, quarantine, instance
@@ -245,7 +253,7 @@ The part of Base that starts and stops every compartment, on the broker's orders
 _Avoid_: Launcher, spawner, supervisor
 
 **Untrusted input**:
-Content written by someone other than the person or their OS. It is _admitted_ when it comes from a pinned set the person admitted in advance (the Base package snapshot, the dependency set for build tasks), and _open_ otherwise (web pages, mail, shared intents, files from outside, and what the person pastes). It includes short strings: a file name, a mail subject, error text from a server.
+Content written by someone other than the person or their OS. It is _admitted_ when it comes from a pinned set the person admitted in advance (the Base package snapshot, the dependency set for build tasks), and _open_ otherwise (web pages, mail, shared intents, files from outside). What the person pastes carries the label and mark of where it was copied from. It includes short strings: a file name, a mail subject, error text from a server.
 _Avoid_: External data, tainted input
 
 **Mark**:
