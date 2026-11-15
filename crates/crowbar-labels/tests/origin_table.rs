@@ -6,11 +6,10 @@ use std::collections::BTreeSet;
 
 use crowbar_labels::{AdmittedSet, Category, Fetch, FileOrigin, Label, MailAccount, MarkSource, Origin, Site};
 
-fn private(category: Category) -> Label {
-    Label::private(category)
-}
+mod common;
+use common::private;
 
-fn sources<const N: usize>(list: [MarkSource; N]) -> BTreeSet<MarkSource> {
+fn marks<const N: usize>(list: [MarkSource; N]) -> BTreeSet<MarkSource> {
     BTreeSet::from(list)
 }
 
@@ -27,63 +26,63 @@ fn every_origin_gets_its_label_and_mark_from_the_table() {
     use MarkSource as S;
     let cases: Vec<(&str, Origin, Label, BTreeSet<MarkSource>)> = vec![
         // ADR 0008: what the person types counts as personal by rule.
-        ("typed text", Origin::Typed, Label::Personal, sources([])),
+        ("typed text", Origin::Typed, Label::Personal, marks([])),
         // ADR 0008: a string a fixed template produced is not data.
-        ("fixed template", Origin::Template, Label::Public, sources([])),
+        ("fixed template", Origin::Template, Label::Public, marks([])),
         // Vision: messages are private by default. ADR 0011: mail is open.
         (
             "mail",
             Origin::Mail { account: me.clone() },
-            private(Category::Messages),
-            sources([S::Mail(me.clone())]),
+            private(&[Category::Messages]),
+            marks([S::Mail(me.clone())]),
         ),
         // ADR 0008: a web site's default is public. ADR 0011: web pages are open.
         (
             "web page",
             Origin::WebPage(Fetch::WithoutLogin(news.clone())),
             Label::Public,
-            sources([S::Site(news.clone())]),
+            marks([S::Site(news.clone())]),
         ),
         // ADR 0008: content fetched under a login is private to that site.
         (
             "web page under a login",
             Origin::WebPage(Fetch::UnderLogin(bank.clone())),
-            private(Category::Site(bank.clone())),
-            sources([S::Site(bank.clone())]),
+            private(&[Category::Site(bank.clone())]),
+            marks([S::Site(bank.clone())]),
         ),
         // A file takes the row of where its content came from.
         (
             "downloaded file",
             Origin::File(FileOrigin::Downloaded(Fetch::WithoutLogin(news.clone()))),
             Label::Public,
-            sources([S::Site(news.clone())]),
+            marks([S::Site(news.clone())]),
         ),
         (
             "saved mail attachment",
             Origin::File(FileOrigin::Attachment { account: me.clone() }),
-            private(Category::Messages),
-            sources([S::Mail(me.clone())]),
+            private(&[Category::Messages]),
+            marks([S::Mail(me.clone())]),
         ),
         // ADR 0011: files from outside are open. No record gives their label,
         // so it fails closed.
         (
             "file from outside",
             Origin::File(FileOrigin::FromOutside),
-            private(Category::Unknown),
-            sources([S::Outside]),
+            private(&[Category::Unknown]),
+            marks([S::Outside]),
         ),
         // ADR 0011: admitted input does not mark.
         (
             "Base package snapshot",
             Origin::Admitted(AdmittedSet::BasePackages),
             Label::Public,
-            sources([]),
+            marks([]),
         ),
         (
             "build dependency set",
             Origin::Admitted(AdmittedSet::BuildDependencies),
             Label::Public,
-            sources([]),
+            marks([]),
         ),
         // ADR 0008: a paste is a handle with its origin's label and mark, and
         // nothing more. A paste whose source was not recorded is an unknown
@@ -94,35 +93,35 @@ fn every_origin_gets_its_label_and_mark_from_the_table() {
                 copied_from: Some(own_note),
             },
             Label::Personal,
-            sources([]),
+            marks([]),
         ),
         (
             "paste of a logged-in page",
             Origin::Pasted {
                 copied_from: Some(bank_page),
             },
-            private(Category::Site(bank.clone())),
-            sources([S::Site(bank.clone())]),
+            private(&[Category::Site(bank.clone())]),
+            marks([S::Site(bank.clone())]),
         ),
         (
             "paste with no recorded source",
             Origin::Pasted { copied_from: None },
-            private(Category::Unknown),
-            sources([S::Paste]),
+            private(&[Category::Unknown]),
+            marks([S::Paste]),
         ),
         // Marks persist in storage: a stored result keeps what it was stored with.
         (
             "stored result",
             Origin::Stored(a_mail),
-            private(Category::Messages),
-            sources([S::Mail(me.clone())]),
+            private(&[Category::Messages]),
+            marks([S::Mail(me.clone())]),
         ),
         // Nothing says what an unknown origin gets, so it fails closed.
         (
             "unknown origin",
             Origin::Unknown,
-            private(Category::Unknown),
-            sources([S::Unknown]),
+            private(&[Category::Unknown]),
+            marks([S::Unknown]),
         ),
     ];
 
@@ -153,8 +152,6 @@ fn an_unknown_origin_is_held_to_no_lower_a_label_than_any_known_row() {
     }
     // An unknown origin is never cleared by a clearance that names only known
     // categories.
-    let named = Label::private(Category::Messages)
-        .join(&Label::private(Category::Health))
-        .join(&Label::private(Category::Finance));
+    let named = private(&[Category::Messages, Category::Health, Category::Finance]);
     assert!(!unknown.label().is_at_most(&named));
 }

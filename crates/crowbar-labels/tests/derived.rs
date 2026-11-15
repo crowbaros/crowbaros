@@ -4,36 +4,27 @@
 
 use std::collections::BTreeSet;
 
-use crowbar_labels::{Category, Fetch, Label, Labeled, MailAccount, MarkSource, Origin, Site};
+use crowbar_labels::{Category, Fetch, Label, Labeled, MarkSource, Origin};
+
+mod common;
+use common::{bank, me, sources};
 
 fn mail(text: &str) -> Labeled<String> {
-    Labeled::from_origin(
-        text.to_string(),
-        &Origin::Mail {
-            account: MailAccount::new("me@mail.example"),
-        },
-    )
+    Labeled::from_origin(text.to_string(), &Origin::Mail { account: me() })
 }
 
 fn bank_page(text: &str) -> Labeled<String> {
-    Labeled::from_origin(
-        text.to_string(),
-        &Origin::WebPage(Fetch::UnderLogin(Site::new("bank.example"))),
-    )
+    Labeled::from_origin(text.to_string(), &Origin::WebPage(Fetch::UnderLogin(bank())))
 }
 
 fn typed(text: &str) -> Labeled<String> {
     Labeled::from_origin(text.to_string(), &Origin::Typed)
 }
 
-fn sources<T>(value: &Labeled<T>) -> BTreeSet<MarkSource> {
-    value.label_mark().mark().sources().cloned().collect()
-}
-
 #[test]
 fn a_result_computed_from_mixed_inputs_carries_every_label_and_mark() {
-    let bank = Site::new("bank.example");
-    let me = MailAccount::new("me@mail.example");
+    let bank = bank();
+    let me = me();
     let expected_label = Label::private(Category::Messages).join(&Label::private(Category::Site(bank.clone())));
 
     // (name, result, expected label, expected mark sources)
@@ -65,7 +56,7 @@ fn a_result_computed_from_mixed_inputs_carries_every_label_and_mark() {
     ];
     for (name, result, label, marks) in cases {
         assert_eq!(result.label_mark().label(), &label, "label of {name}");
-        assert_eq!(sources(&result), marks, "mark of {name}");
+        assert_eq!(sources(result.label_mark()), marks, "mark of {name}");
     }
 }
 

@@ -4,21 +4,10 @@
 
 use std::collections::BTreeSet;
 
-use crowbar_labels::{
-    Category, Compartment, Fetch, Label, LabelMark, LabelStore, MailAccount, MarkSource, Origin, Site,
-};
+use crowbar_labels::{Category, Compartment, Fetch, Label, LabelStore, MarkSource, Origin};
 
-fn news() -> Site {
-    Site::new("news.example")
-}
-
-fn me() -> MailAccount {
-    MailAccount::new("me@mail.example")
-}
-
-fn sources(label_mark: &LabelMark) -> BTreeSet<MarkSource> {
-    label_mark.mark().sources().cloned().collect()
-}
+mod common;
+use common::{bank, me, news, sources};
 
 #[test]
 fn a_write_joins_with_what_is_already_stored() {
@@ -82,10 +71,7 @@ fn labels_and_marks_survive_saving_and_loading() {
     let records = [
         ("typed", Origin::Typed.label_mark()),
         ("page", Origin::WebPage(Fetch::WithoutLogin(news())).label_mark()),
-        (
-            "bank",
-            Origin::WebPage(Fetch::UnderLogin(Site::new("bank.example"))).label_mark(),
-        ),
+        ("bank", Origin::WebPage(Fetch::UnderLogin(bank())).label_mark()),
         ("mail", Origin::Mail { account: me() }.label_mark()),
         ("paste", Origin::Pasted { copied_from: None }.label_mark()),
         ("unknown", Origin::Unknown.label_mark()),

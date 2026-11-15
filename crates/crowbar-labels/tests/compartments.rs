@@ -4,25 +4,10 @@
 
 use std::collections::BTreeSet;
 
-use crowbar_labels::{
-    AdmittedSet, Category, Compartment, Fetch, FileOrigin, Label, LabelMark, MailAccount, MarkSource, Origin, Site,
-};
+use crowbar_labels::{AdmittedSet, Category, Compartment, Fetch, FileOrigin, Label, MarkSource, Origin};
 
-fn me() -> MailAccount {
-    MailAccount::new("me@mail.example")
-}
-
-fn bank() -> Site {
-    Site::new("bank.example")
-}
-
-fn news() -> Site {
-    Site::new("news.example")
-}
-
-fn sources(label_mark: &LabelMark) -> BTreeSet<MarkSource> {
-    label_mark.mark().sources().cloned().collect()
-}
+mod common;
+use common::{bank, me, news, sources};
 
 fn reading(origins: &[Origin]) -> Compartment {
     let mut compartment = Compartment::fresh();

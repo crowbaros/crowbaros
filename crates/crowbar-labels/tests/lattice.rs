@@ -3,13 +3,8 @@
 
 use crowbar_labels::{Category, Label, Site};
 
-fn private(categories: &[Category]) -> Label {
-    let mut label = Label::Personal;
-    for category in categories {
-        label = label.join(&Label::private(category.clone()));
-    }
-    label
-}
+mod common;
+use common::private;
 
 #[test]
 fn a_join_is_the_stricter_label_and_the_union_of_categories() {
