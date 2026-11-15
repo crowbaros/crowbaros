@@ -410,6 +410,10 @@ def scenario(suite, check):
           and client.control("GET", "/asks/pending").json() == [])
     check("the home folder is written again, the same",
           entries(suite)[0]["home"] == home.digest(suite.home))
+    reply = client.call("payments", "POST", "/payments", bill, key1)
+    check("an idempotency key from before the reset is new again",
+          reply.status == 201 and reply.header("Idempotent-Replayed") is None
+          and len(effects(suite, "payments.payment-created")) == 1)
 
 
 def run(work, log):
