@@ -28,11 +28,11 @@
 - **One ask at a time.** The compositor shows and arms at most one ask, on the output that has focus. The broker queues the rest, and the shell shows how many are waiting.
 - **Declining.** Escape on the ask, or a click on Decline, declines it, whether the shell or the compositor sees it. The broker records the decline. A shell that declines wrongly costs a new ask, never a false yes.
 - **Expiry.** The broker withdraws an ask past its `expires`, and the compositor disarms it.
-- **The lock screen.** While the session is locked, no ask is shown or armed and the gesture does nothing. The ask waits in the broker's queue, and its second starts again after unlock.
+- **The lock screen.** While the session is locked, no ask is shown or armed and the gesture does nothing. The ask waits in the broker's queue, and its second starts again after unlock. [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) gives the chord one job on the lock screen, which is to open the unlock entry. It still answers no ask there.
 
 ## Visible and on top
 
-While an ask is showing, the compositor dims every other surface, draws the ask's frame, and sends keyboard and pointer input to the ask surface alone. The cursor and drag icons draw under the frame. No client can dim another client, so "on top" is something the compositor enforces, not a stacking order a client can reach. What the frame looks like is decided with the rest of the trusted UI in [issue 66](https://github.com/crowbaros/crowbaros/issues/66).
+While an ask is showing, the compositor dims every other surface, draws the ask's frame, and sends keyboard and pointer input to the ask surface alone. The cursor and drag icons draw under the frame. No client can dim another client, so "on top" is something the compositor enforces, not a stacking order a client can reach. What the frame looks like is decided with the rest of the trusted UI in [issue 66](https://github.com/crowbaros/crowbaros/issues/66). [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) fixes what a frame is and where it is drawn, and leaves its look to the design work under issue 22.
 
 ## The gesture
 

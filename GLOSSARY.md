@@ -220,8 +220,20 @@ _Avoid_: Click, OK button, voice confirmation
 The CrowbarOS program that owns the screen and the input devices, written in Rust on Smithay. It is part of Base. It delivers input only as the shell directs, keeps the confirm gesture from every Tool, and offers no Tool a way to produce input or read the screen.
 _Avoid_: Window manager, Hyprland
 
+**Trusted UI**:
+Everything on screen that Base draws and no client can imitate or cover: what the shell draws, and the frames the compositor draws.
+_Avoid_: System chrome, system UI
+
+**Shell**:
+The Base program that draws the trusted UI other than frames: the bar, the dock, the launcher, an ask's content, the lock screen, and a Tool's UI from its description.
+_Avoid_: Desktop environment, panel
+
+**Frame**:
+What the compositor draws around a window or an ask, which no client can draw or cover.
+_Avoid_: Marking, mark, decoration, border
+
 **Powerbox**:
-Trusted system UI where the person's choice of a thing is itself the grant of a handle to that thing.
+Trusted UI where the person's choice of a thing is itself the grant of a handle to that thing.
 _Avoid_: Permission prompt, picker
 
 **Label**:
