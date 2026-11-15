@@ -13,7 +13,16 @@ use crate::mark::{LabelMark, Mark, MarkSource};
 /// carries its mark, for as long as it lives, and so is everything it emits
 /// (ADR 0008). Nothing here lowers either. A compartment ends when it is
 /// dropped; a new start is a new compartment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// It cannot be copied. A copy taken before a read would keep emitting at the
+/// lower label, from the same start:
+///
+/// ```compile_fail
+/// use crowbar_labels::Compartment;
+/// let before = Compartment::fresh();
+/// let copy = before.clone();
+/// ```
+#[derive(Debug, PartialEq, Eq)]
 pub struct Compartment {
     label_mark: LabelMark,
     growth: Growth,
