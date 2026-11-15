@@ -72,6 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let scale = state.scale_for("winit");
             crowbar_compositor::winit::init_winit(&mut event_loop, &mut state, scale)?;
         }
+        "tty" => crowbar_compositor::tty::init_tty(&mut event_loop, &mut state)?,
         other => return Err(format!("unknown backend {other}").into()),
     }
     tracing::info!(socket = ?state.socket_name, backend = %args.backend, "compositor is up");

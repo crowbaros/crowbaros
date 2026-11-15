@@ -134,7 +134,9 @@ impl DmabufHandler for State {
     }
 
     fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
-        let imported = self.dmabuf_import.as_mut().is_some_and(|import| import(&dmabuf));
+        let imported = self
+            .tty_import_dmabuf(&dmabuf)
+            .unwrap_or_else(|| self.dmabuf_import.as_mut().is_some_and(|import| import(&dmabuf)));
         if imported {
             let _ = notifier.successful::<State>();
         } else {

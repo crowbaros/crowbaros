@@ -14,7 +14,7 @@ use smithay::{
         calloop::{EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, generic::Generic},
         wayland_server::{
             Display, DisplayHandle,
-            backend::{ClientData, ClientId, DisconnectReason},
+            backend::{ClientData, ClientId, DisconnectReason, GlobalId},
             protocol::wl_surface::WlSurface,
         },
     },
@@ -79,6 +79,9 @@ pub struct State {
 
     pub seat: Seat<Self>,
     pub outputs: Vec<Output>,
+    output_globals: Vec<(Output, GlobalId)>,
+    /// The TTY backend, when the compositor runs on one.
+    pub tty: Option<crate::tty::Tty>,
     /// Scales by output name, from the command line.
     pub output_scales: Vec<(String, f64)>,
     pub windows: Vec<Managed>,
@@ -106,7 +109,8 @@ impl State {
         // you can find those implementations in the `crate::handlers` module
 
         // Initialize protocols needed for displaying windows
-        let compositor_state = CompositorState::new::<Self>(&dh);
+        // Version 6 lets the compositor tell each surface its scale.
+        let compositor_state = CompositorState::new_v6::<Self>(&dh);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let popups = PopupManager::default();
@@ -126,7 +130,7 @@ impl State {
         // A seat is a group of keyboards, pointer and touch devices.
         // A seat typically has a pointer and maintains a keyboard focus and a pointer focus.
         let mut seat_state = SeatState::new();
-        let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
+        let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "seat0");
 
         // Notify clients that we have a keyboard, for the sake of the example we assume that keyboard is always present.
         // You may want to track keyboard hot-plug in real compositor.
@@ -177,6 +181,8 @@ impl State {
             last_commit_log: std::time::Instant::now(),
             seat,
             outputs: Vec::new(),
+            output_globals: Vec::new(),
+            tty: None,
             output_scales: Vec::new(),
             windows: Vec::new(),
             next_window_id: 0,
@@ -266,7 +272,8 @@ impl State {
                 serial_number: "Unknown".into(),
             },
         );
-        let _global = output.create_global::<State>(&self.display_handle);
+        let global = output.create_global::<State>(&self.display_handle);
+        self.output_globals.push((output.clone(), global));
         let x = self
             .space
             .outputs()
@@ -284,6 +291,29 @@ impl State {
         self.space.map_output(&output, (x, 0));
         self.outputs.push(output.clone());
         output
+    }
+
+    /// Removes an output. Its windows move to the first output that is left.
+    pub fn remove_output(&mut self, output: &Output) {
+        self.outputs.retain(|o| o != output);
+        self.space.unmap_output(output);
+        self.output_globals.retain(|(o, global)| {
+            if o == output {
+                self.display_handle.remove_global::<State>(global.clone());
+            }
+            o != output
+        });
+        if let Some(first) = self.outputs.first().cloned() {
+            let area = self.usable_area(&first);
+            for managed in &mut self.windows {
+                if self.space.outputs_for_element(&managed.window).is_empty() {
+                    managed.location = area.loc + Point::from((48, 48));
+                    if managed.workspace == self.active_workspace {
+                        self.space.map_element(managed.window.clone(), managed.location, false);
+                    }
+                }
+            }
+        }
     }
 
     /// The surface under a point, in stacking order: overlay and top layers,

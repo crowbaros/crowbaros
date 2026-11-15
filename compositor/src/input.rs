@@ -109,11 +109,16 @@ impl State {
                 self.move_pointer(pos, event.time());
             }
             InputEvent::PointerMotionAbsolute { event, .. } => {
-                let Some(output) = self.outputs.first() else {
+                // An absolute device covers the whole desktop.
+                let Some(bounds) = self
+                    .outputs
+                    .iter()
+                    .filter_map(|o| self.space.output_geometry(o))
+                    .reduce(|a, b| a.merge(b))
+                else {
                     return;
                 };
-                let output_geo = self.space.output_geometry(output).unwrap();
-                let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
+                let pos = event.position_transformed(bounds.size) + bounds.loc.to_f64();
                 self.move_pointer(pos, event.time());
             }
             InputEvent::PointerButton { event, .. } => {

@@ -255,7 +255,7 @@ impl Client {
     /// Maps an xdg-shell window filled with one colour.
     pub fn open_toplevel(&mut self, title: &str, app_id: &str, size: (i32, i32), argb: u32) -> Result<Toplevel, Error> {
         let qh = self.queue.handle();
-        let compositor: WlCompositor = self.required(4)?;
+        let compositor: WlCompositor = self.required(6)?;
         let wm_base: XdgWmBase = self.required(1)?;
         let surface = compositor.create_surface(&qh, ());
         let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
@@ -272,6 +272,7 @@ impl Client {
             given => given,
         };
         surface.attach(Some(&self.buffer(size, argb)?), 0, 0);
+        surface.damage_buffer(0, 0, size.0, size.1);
         surface.commit();
         self.roundtrip()?;
         Ok(Toplevel {
@@ -296,7 +297,7 @@ impl Client {
     /// Maps a layer surface filled with one colour.
     pub fn open_layer(&mut self, request: LayerRequest<'_>, argb: u32) -> Result<LayerWindow, Error> {
         let qh = self.queue.handle();
-        let compositor: WlCompositor = self.required(4)?;
+        let compositor: WlCompositor = self.required(6)?;
         let layer_shell: ZwlrLayerShellV1 = self.required(4)?;
         let surface = compositor.create_surface(&qh, ());
         let layer_surface =
@@ -314,6 +315,7 @@ impl Client {
             self.queue.blocking_dispatch(&mut self.state)?;
         };
         surface.attach(Some(&self.buffer((size.0 as i32, size.1 as i32), argb)?), 0, 0);
+        surface.damage_buffer(0, 0, size.0 as i32, size.1 as i32);
         surface.commit();
         self.roundtrip()?;
         Ok(LayerWindow {

@@ -51,6 +51,13 @@ features = [
     "desktop",
 ]
 
+# The connector scanner from the Smithay repository, at the same commit.
+# Without its default feature, which needs libdisplay-info for monitor names.
+[dependencies.smithay-drm-extras]
+git = "https://github.com/Smithay/smithay.git"
+rev = "fd8e3f50f9556aa6c0485989d1d49ff2c5eefae1"
+default-features = false
+
 [profile.release]
 opt-level = 2
 debug = 0

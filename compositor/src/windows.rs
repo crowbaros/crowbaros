@@ -44,7 +44,15 @@ impl State {
 
     pub fn add_window(&mut self, toplevel: ToplevelSurface) {
         let window = Window::new_wayland_window(toplevel);
-        let Some(output) = self.outputs.first().cloned() else {
+        // A new window opens on the output the pointer is on.
+        let pointer = self.seat.get_pointer().unwrap().current_location();
+        let Some(output) = self
+            .space
+            .output_under(pointer)
+            .next()
+            .cloned()
+            .or_else(|| self.outputs.first().cloned())
+        else {
             return;
         };
         let area = self.usable_area(&output);

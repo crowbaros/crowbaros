@@ -11,6 +11,7 @@ pub mod input;
 pub mod policy;
 pub mod probe;
 pub mod state;
+pub mod tty;
 pub mod windows;
 pub mod winit;
 

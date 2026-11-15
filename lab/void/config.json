@@ -19,5 +19,47 @@
   "root_gib": 8,
   "memory_mib": 2048,
   "vcpus": 2,
-  "ssh_port": 22230
+  "ssh_port": 22230,
+  "graphical": {
+    "comment": "The graphical guest that runs the CrowbarOS compositor. See compositor_guest.py.",
+    "guest_packages": [
+      "base-minimal",
+      "linux",
+      "openssh",
+      "iproute2",
+      "dhcpcd",
+      "kbd",
+      "seatd",
+      "libseat",
+      "libinput",
+      "eudev-libudev",
+      "libxkbcommon",
+      "xkeyboard-config",
+      "mesa-dri",
+      "libgbm",
+      "libdrm",
+      "libglvnd",
+      "wayland",
+      "wayland-utils"
+    ],
+    "build_packages": [
+      "base-minimal",
+      "gcc",
+      "rust",
+      "cargo",
+      "pkg-config",
+      "libseat-devel",
+      "libinput-devel",
+      "eudev-libudev-devel",
+      "libxkbcommon-devel",
+      "libgbm-devel",
+      "libdrm-devel",
+      "wayland-devel"
+    ],
+    "root_label": "crowbar-gfx",
+    "root_gib": 3,
+    "memory_mib": 2048,
+    "vcpus": 2,
+    "ssh_port": 22231
+  }
 }
