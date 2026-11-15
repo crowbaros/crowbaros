@@ -114,15 +114,19 @@ _Avoid_: Coding agent, compile
 
 **Plan**:
 A small program the Agent writes whose variables are handles. A deterministic interpreter runs it, moves the actual values, and tracks the label and mark of every result. The Agent reads a value only where its label and mark allow.
+_Avoid_: Script, workflow, prompt chain
 
 **Bounded result**:
 A choice from a list, or a number in a range, both fixed before the task read anything. It keeps the label and mark of what it was computed from.
 _Avoid_: Typed result, safe value
 
+**Broker**:
+The part of Base through which a compartment reaches everything outside itself: Data, the network, devices, and time. It makes every outbound connection and holds the vault.
+_Avoid_: Proxy, daemon
+
 **Adapter**:
 The part of the broker that speaks one protocol or one service and knows its operations, so a standing rule can name an operation and a credential never leaves the vault.
 _Avoid_: Plugin, connector, integration
-_Avoid_: Script, workflow, prompt chain
 
 **Harness**:
 Whatever fills the agent role: the loop, tools, and conversation around a model. CrowbarOS ships a default harness, and an external one (such as Grok Bot) can replace it. A harness can only propose; it never holds authority.
@@ -209,8 +213,20 @@ How private a piece of data is: public, personal, or private, in that order. Pri
 _Avoid_: Tag, classification
 
 **Compartment**:
-One execution context: a task's model context and workspace, or a Tool's sandbox. Once it reads a value it is at that value's label and carries its mark, and so is everything it emits.
-_Avoid_: Sandbox, session, quarantine
+One execution context: a task's model context and workspace, or one running copy of a Tool or of installed software. Each start makes a new compartment, so one principal can have several at once, such as a live Tool and its Preview. Once it reads a value it is at that value's label and carries its mark, and so is everything it emits.
+_Avoid_: Session, quarantine, instance
+
+**Sandbox**:
+The Linux confinement around one compartment's processes. The compartment is the thing confined, and the sandbox is what confines it.
+_Avoid_: Container, jail
+
+**Wide compartment**:
+A compartment the owner gave everything they have: all their Data, the network, and the devices they name. It never holds what the trusted parts of Base hold, so it cannot answer its own ask.
+_Avoid_: YOLO mode, full access, unconfined, developer mode
+
+**Warden**:
+The part of Base that starts and stops every compartment, on the broker's orders alone. Nothing else starts a principal's process.
+_Avoid_: Launcher, spawner, supervisor
 
 **Untrusted input**:
 Content written by someone other than the person or their OS. It is _admitted_ when it comes from a pinned set the person admitted in advance (the Base package snapshot, the dependency set for build tasks), and _open_ otherwise (web pages, mail, shared intents, files from outside, and what the person pastes). It includes short strings: a file name, a mail subject, error text from a server.

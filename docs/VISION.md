@@ -750,8 +750,9 @@ Raised by the council and not yet decided:
   backups are a separate need.
 - **Life without a model.** The system is sound with no model, but how does a person
   who is not a developer change anything then?
-- **Init system.** Does runit give the Environment what it needs (resource limits
-  per principal, service sandboxing, a health signal at boot), or is the choice
-  open again? Must every machine in the fleet run CrowbarOS Base?
+- **Init system.** Does runit give the Environment what it needs (service
+  sandboxing, a health signal at boot), or is the choice open again? Resource
+  limits for each compartment come from the Warden, not from runit
+  ([ADR 0016](adr/0016-the-warden-starts-every-compartment.md)). Must every machine in the fleet run CrowbarOS Base?
 - **The first person who is not a developer.** The thesis is about most people, and
   everyone who has used this so far is a developer.

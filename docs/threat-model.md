@@ -35,9 +35,9 @@ ADRs it links.
 A failure in any of these breaks the claims on this page.
 
 - Hardware, firmware, the bootloader, and the Linux kernel, including its sandbox.
-- Base: the shell and its trusted UI, the broker and its adapters, the gate, the
-  plan interpreter, the runner, the engine, the vault, and the Tool runtimes (the
-  WASM runtime and the code that sets up a native sandbox).
+- Base: the compositor, the shell and its trusted UI, the broker and its
+  adapters, the gate, the plan interpreter, the runner, the engine, the vault,
+  the WASM runtime, and the Warden, which sets up every sandbox.
 - The lead machine, which holds authority for the fleet.
 - The phone, as an approval device.
 - The step that admits a pinned set (Base packages, the dependency set for build

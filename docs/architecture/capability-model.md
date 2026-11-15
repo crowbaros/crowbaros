@@ -830,7 +830,7 @@ the component runtime itself, as a second layer.
 | seccomp | Removes system calls Tools do not need, for example `ptrace`, `mount`, and kernel module loading. |
 | cgroups v2 | Budgets: CPU, memory, I/O, and process count per principal. |
 | Wayland + portals | No reading other windows, keystrokes, or the screen. Wayland alone does not stop synthesized input: the remote desktop portal exists to produce it, and there are other routes. Base has to close every one (see [A "yes" comes from the person](#a-yes-comes-from-the-person)). Screen capture, camera, and microphone go through portals, which are powerbox-style. |
-| User IDs | One user ID per principal, as an extra boundary. They are not the main control. |
+| User IDs | One user ID per compartment, new at each start, as a second boundary. They are not the main control ([ADR 0016](../adr/0016-the-warden-starts-every-compartment.md)). |
 
 We should evaluate **Microsoft Execution Containers (MXC)**, which became generally
 available in October 2026 as composable sandboxes for agents. MXC might be a
