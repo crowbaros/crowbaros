@@ -1,9 +1,22 @@
 name: CI
 
+# A change to docs alone starts no run: nothing here builds or tests them.
+# A change that also touches any other path runs every job. Keep the two
+# lists the same.
 on:
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".impeccable/**"
+      - "LICENSE"
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".impeccable/**"
+      - "LICENSE"
 
 permissions:
   contents: read

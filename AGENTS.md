@@ -32,12 +32,14 @@ working with coding agents. This file is the standard both sides hold.
 - Fill in the [pull request template](.github/pull_request_template.md). Under
   Verification, say what you ran and what you saw, and name what you could not
   run. End with the model and harness that did the work.
-- Merge when CI is green, then delete the branch.
+- Merge when CI is green, then delete the branch. A change to docs alone
+  starts no CI run, so it merges without one.
 
 ## Checks
 
 - CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml). It runs on every
-  pull request and on `main`. Run its commands before you push.
+  pull request and on `main`, except a change to docs alone: its `paths-ignore`
+  lists name what counts as docs. Run its commands before you push code.
 - A bug fix comes with a test that fails without the fix.
 - CI cannot boot a VM or draw a window, so these checks are yours to run and
   report in the pull request:
