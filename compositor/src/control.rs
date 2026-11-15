@@ -90,13 +90,13 @@ impl State {
                     let read = unsafe { stream.get_mut() }.read(&mut chunk);
                     match read {
                         Ok(0) => {
-                            state.control = None;
+                            state.close_control();
                             return Ok(PostAction::Remove);
                         }
                         Ok(n) => pending.extend_from_slice(&chunk[..n]),
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                         Err(_) => {
-                            state.control = None;
+                            state.close_control();
                             return Ok(PostAction::Remove);
                         }
                     }
@@ -104,9 +104,14 @@ impl State {
                         let line: Vec<u8> = pending.drain(..=end).collect();
                         let reply = state.answer_control(&line[..end]);
                         state.send_control(&reply);
+                        // A request that cannot be answered is the last one
+                        // carried out.
+                        if state.control.is_none() {
+                            return Ok(PostAction::Remove);
+                        }
                     }
                     if pending.len() > MAX_LINE {
-                        state.control = None;
+                        state.close_control();
                         return Ok(PostAction::Remove);
                     }
                     Ok(PostAction::Continue)
@@ -130,7 +135,15 @@ impl State {
         // the channel; it is not waited for.
         if let Err(error) = stream.write_all(&line) {
             tracing::warn!(%error, "control channel closed: the shell is not reading");
-            self.control = None;
+            self.close_control();
+        }
+    }
+
+    /// Closes the channel in both directions. The shell reads end-of-file,
+    /// and no further request from it is read.
+    fn close_control(&mut self) {
+        if let Some(stream) = self.control.take() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
         }
     }
 

@@ -142,6 +142,31 @@ impl Control {
         serde_json::from_str(&line).unwrap_or_else(|e| panic!("not JSON: {line:?}: {e}"))
     }
 
+    /// Sends one line and does not wait for a reply.
+    pub fn send(&mut self, line: &str) -> std::io::Result<()> {
+        writeln!(self.writer, "{line}")
+    }
+
+    /// Reads and discards what the compositor sent until it closes the
+    /// channel: end-of-file, or a reset if requests were still unread. False
+    /// if the channel is still open after the read timeout.
+    pub fn drain_until_closed(&mut self) -> bool {
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            match self.reader.read_until(b'\n', &mut line) {
+                Ok(0) => return true,
+                Ok(_) => {}
+                Err(error) => {
+                    return !matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    );
+                }
+            }
+        }
+    }
+
     /// Sends one line and returns the reply to it, skipping events.
     pub fn request(&mut self, line: &str) -> Value {
         writeln!(self.writer, "{line}").unwrap();

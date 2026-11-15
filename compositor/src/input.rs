@@ -21,6 +21,11 @@ impl State {
     /// still records the key as pressed, and tells a keyboard object that a
     /// client creates while it is held.
     pub fn handle_key(&mut self, keycode: Keycode, state: KeyState, time: InputTime) {
+        if state == KeyState::Pressed {
+            // A key that goes down again was released, whether or not its
+            // release arrived. It is no longer withheld.
+            self.withheld_keys.remove(&keycode);
+        }
         match state {
             KeyState::Pressed if self.completes_confirm_chord(keycode) => {
                 self.withheld_keys.insert(keycode);

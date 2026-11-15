@@ -67,6 +67,32 @@ say "studio: sha256 $(sha256sum "$studio" | cut -d' ' -f1)"
 main=$!
 sleep 10
 capture 1-start
+
+# The shell holds two sockets from the compositor: its Wayland connection and
+# the control channel. A program the shell starts must inherit neither, or it
+# would arrive as the shell. Count the shell's sockets that are not
+# close-on-exec.
+say ""
+say "== sockets the shell would pass on to a program it starts"
+shell_pid=$(pgrep -P "$main" -x crowbaros-shell | head -1 || true)
+inherited=unknown
+if [ -n "$shell_pid" ]; then
+  sockets=0
+  inherited=0
+  for fd in /proc/"$shell_pid"/fd/*; do
+    case $(readlink "$fd" 2>/dev/null) in socket:*) ;; *) continue ;; esac
+    sockets=$((sockets + 1))
+    flags=$(awk '$1=="flags:"{print $2}' "/proc/$shell_pid/fdinfo/${fd##*/}")
+    if [ $((0$flags & 02000000)) -eq 0 ]; then
+      inherited=$((inherited + 1))
+      say "   descriptor ${fd##*/} is a socket and is not close-on-exec"
+    fi
+  done
+  say "   the shell holds $sockets sockets; $inherited would be inherited"
+else
+  say "   the shell's process was not found"
+fi
+say ""
 say "starting a second host window, which makes the host resize ours"
 timeout 7 "$bin/crowbar-compositor" --backend winit >/dev/null 2>&1 &
 sleep 3
@@ -101,6 +127,7 @@ for surface in "layer crowbaros-bar" "layer crowbaros-dock" "layer crowbaros-wal
   { [ "$intervals" -ge 10 ] && [ "$stalled" = 0 ]; } || fail=1
 done
 [ "$errors" = 0 ] || fail=1
+[ "$inherited" = 0 ] || fail=1
 
 say ""
 if [ "$fail" = 0 ]; then say "RESULT: pass"; else say "RESULT: FAIL"; fi

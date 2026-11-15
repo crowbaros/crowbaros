@@ -98,6 +98,31 @@ fn the_release_is_withheld_even_after_the_modifiers_are_let_go() {
     );
 }
 
+/// A release can be lost, for example when the keyboard is unplugged while
+/// the key is held. The next press of that key is then an ordinary key, and
+/// its release must reach the client.
+#[test]
+fn a_withheld_key_whose_release_was_lost_is_an_ordinary_key_the_next_time() {
+    let compositor = Compositor::start();
+    let mut client = focused_client(&compositor);
+
+    compositor.key(KEY_LEFTCTRL, true);
+    compositor.key(KEY_LEFTALT, true);
+    compositor.key(KEY_ENTER, true);
+    compositor.key(KEY_LEFTCTRL, false);
+    compositor.key(KEY_LEFTALT, false);
+    // No release of Enter arrives.
+    client.take_keys().unwrap();
+
+    compositor.key(KEY_ENTER, true);
+    compositor.key(KEY_ENTER, false);
+
+    assert_eq!(
+        keys_only(client.take_keys().unwrap()),
+        [(KEY_ENTER, true), (KEY_ENTER, false)]
+    );
+}
+
 #[test]
 fn enter_without_the_modifiers_is_an_ordinary_key() {
     let compositor = Compositor::start();

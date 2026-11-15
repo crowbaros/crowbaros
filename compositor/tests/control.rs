@@ -133,3 +133,24 @@ fn the_shell_is_told_when_the_compositor_takes_the_confirm_chord() {
 
     assert_eq!(control.read(), json!({"event": "confirm"}));
 }
+
+/// The compositor does not wait for a shell that has stopped reading. Once a
+/// reply cannot be written, the channel is closed in both directions: the
+/// compositor must not go on carrying out requests it cannot answer.
+#[test]
+fn a_shell_that_stops_reading_loses_the_channel_in_both_directions() {
+    let compositor = Compositor::start();
+    let (_shell, mut control) = compositor.shell();
+
+    // Far more replies than a socket buffer holds, and none of them read.
+    for _ in 0..40_000 {
+        if control.send(r#"{"op":"snapshot"}"#).is_err() {
+            break;
+        }
+    }
+
+    assert!(
+        control.drain_until_closed(),
+        "the compositor kept the channel open after it failed to write a reply"
+    );
+}

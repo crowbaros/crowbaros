@@ -384,10 +384,12 @@ impl State {
             surface
                 .drm_output
                 .render_frame(&mut tty.renderer, &elements, [0.1, 0.1, 0.1, 1.0], FrameFlags::DEFAULT);
-        // A software renderer attaches no fence to its buffer, so the flip
-        // must wait until the drawing is done. Without this the screen shows
-        // a half-drawn frame.
+        // Where the driver cannot take the drawing's fence with the flip, the
+        // flip must wait until the drawing is done: a software renderer shows
+        // a half-drawn frame without this. Where it can, there is no wait.
+        // `needs_sync` is Smithay's own test for which case this is.
         if let Ok(frame) = &rendered
+            && frame.needs_sync()
             && let PrimaryPlaneElement::Swapchain(element) = &frame.primary_element
         {
             let _ = element.sync.wait();

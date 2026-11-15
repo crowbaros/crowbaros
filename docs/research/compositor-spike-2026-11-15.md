@@ -623,6 +623,149 @@ removes the shell's Hyprland calls is no longer true.
 `WAYLAND_DISPLAY` is not set. Before, `nested-apps.sh` printed its header and
 stopped without one.
 
+## Council review
+
+Added on 2026-11-15. Three models read the branch, each alone and without
+changing anything: Claude Opus 5.5, Claude Fable 5.2, and GPT-6.1 Sol. Each
+was asked whether the results are solid, what is missing, and what to do next.
+Each scored the spike 7 out of 10 as evidence for the decision. The text above
+this section is as it was written; where the reviewers showed it claims too
+much, the correction is here.
+
+### Where the record claims too much
+
+1. **The conclusion stands provisionally.** "Nothing that was run gives a
+   reason to reopen ADR 0015" is true. Of the four conditions that reopen it:
+   two were tested and not met (a client receiving the confirm key or seeing a
+   protocol it should not; running on Void without systemd); one was shown
+   only nested (GPUI's rendering); and one is not answered (cost). No frame
+   drawn by a GPU has reached a display through this compositor: the Void
+   guest drew in software, and in the NVIDIA run the host's compositor did the
+   scanout.
+2. **"It enforces ADR 0014" covers part of two of the ADR's five rules.** The
+   spike closed the Wayland protocol routes of rule 1 and showed the key of
+   rule 2 is never delivered. It did not touch the other routes rule 1 names
+   (the accessibility bus, a shared X11 server, the remote desktop portal,
+   tracing the shell, terminals), the ask's delay and rate limits in rule 2,
+   or rules 3 to 5.
+3. **Blocking the clipboard-manager protocols does not gate clipboard
+   reads.** An ordinary client gets `wl_data_device_manager`, a new window
+   takes keyboard focus as soon as it opens, and focus is what offers the
+   current selection. So a window that opens itself can read the clipboard
+   with no paste by the person. The same unasked focus gives it the keys the
+   person types next.
+4. **The shell's identity is only as strong as what keeps processes apart.**
+   "No other process can open it" and "nothing for a client to forge" hold
+   inside Wayland. On the machine, a process that may trace the shell can copy
+   the shell's descriptors and become the shell, and in the Void guest the
+   compositor and every client ran as one user. Also, anything that reaches
+   the public socket is an ordinary client, including a confined program whose
+   sandbox leaves that socket in view. Confinement is something a launcher
+   opts into; it is not the default.
+5. **The confirm event reaches the shell's socket, not the shell.** The shell
+   reads events only while it waits for a reply, then logs and drops them.
+   The event names no ask, and the compositor takes the chord whether or not
+   an ask is on screen. "The channel can carry it" is shown for the
+   compositor's end only.
+6. **"Programs the shell starts arrive as ordinary clients" was read from
+   GPUI's code, not run.** It is now partly checked; see below.
+7. **The hours.** The session began at 06:39 UTC, not 06:42, and work went on
+   after 07:50: the Hyprland adapter, this review, and the fixes below. To the
+   end of this section it is about 1.8 hours.
+
+### Fixed after the review
+
+| Finding | Fix | Test that failed first |
+| --- | --- | --- |
+| If the release of a withheld key is lost, the next press of that key loses its release and the key sticks | A key that goes down again is no longer withheld | `compositor/tests/confirm.rs` |
+| When a reply could not be written, the compositor dropped its writing end but went on reading and carrying out requests | The channel closes in both directions | `compositor/tests/control.rs` |
+| The TTY backend waited for the drawing to finish before every flip, on every renderer | It waits only when Smithay's `needs_sync` says the driver cannot take the fence | None. See the runs below |
+| The shell left the variables that name its channels in the environment of the programs it starts | The launcher command removes `CROWBAR_SHELL_CONTROL_FD` and `WAYLAND_SOCKET` | `apps/shell/src/session.rs` |
+| The guest check for unresolved libraries filtered out the lines it looked for | It reads the whole `ldd` output | None; it is a check script |
+
+### New checks
+
+- **Input devices, in the Void guest.** The account that runs the clients
+  cannot open `/dev/uinput` (`root:root`, mode 600) and cannot read
+  `/dev/input/event*` (`root:input`, mode 660). libinput takes any input
+  device that appears, so this is the route by which a program could type the
+  confirm chord as the person.
+- **Tracing, in the Void guest, recorded and not checked.** Yama's
+  `ptrace_scope` is 1 in the guest. With that setting a process may trace
+  only its own descendants, so a client could not trace the compositor or the
+  shell. Nothing here tried a trace, and the setting is the kernel's own
+  default, not something Base sets or checks.
+- **Sockets the shell would pass on, nested.** The running shell holds four
+  sockets and none can be inherited: all are close-on-exec. No program was
+  launched from the shell, so its arrival as an ordinary client is still not
+  seen.
+
+### Runs after the fixes
+
+One binary again did every run: sha256
+`1abd5bb9d8d14bf13697c440f0e6cc7dc71946fcfa1ac6caf79d3bdfd90a3e03`, built in
+the Void build root.
+
+- 19 tests in `compositor/` and 15 in `apps/shell` pass.
+- [The Void guest](evidence/compositor-spike-2026-11-15/void-tty-after-council.log):
+  22 of 22. Both outputs were captured and each showed a whole frame. The
+  guest draws in software, so the path with no wait has not run anywhere. It
+  is the path a GPU takes, and [issue 5](https://github.com/crowbaros/crowbaros/issues/5)
+  will be its first run.
+- [The nested protocol check](evidence/compositor-spike-2026-11-15/nested-protocols-after-council.log):
+  pass, with the same globals as before.
+- [The nested apps check](evidence/compositor-spike-2026-11-15/nested-apps-after-council.log):
+  pass.
+- [The Milestone 1 loop](evidence/compositor-spike-2026-11-15/void-lab-milestone-1-after-council.log),
+  which AGENTS.md asks for when `lab/void/` changes: 22 of 22.
+
+### Not fixed: for the real compositor
+
+These came from the review and are not spike work. Each can change the cost or
+the design.
+
+- **The process model.** Which user each principal runs as, one socket for
+  each principal made by the broker or the compositor, who may hold `_seatd`,
+  and the tracing policy. All three reviewers put this first or second. It
+  wants an ADR before more compositor code.
+- **The control interface.** Request ids, events read as they arrive, a way to
+  reconnect, and a confirm that is tied to one ask. The compositor has to know
+  when the ask became visible and topmost, because the delay in ADR 0014 rule
+  2 depends on it.
+- **Focus and the clipboard.** A focus policy that does not hand a new window
+  the keyboard, and a way for a paste to need the person's say. The second
+  does not fit the core clipboard protocol and may mean changes inside
+  Smithay's selection code.
+- **When the shell fails.** The compositor does not watch or restart the
+  shell. It needs its own fallback that refuses the confirm gesture while the
+  shell is dead or stalled.
+- **Client pixels above the trusted UI.** Cursor and drag-icon surfaces are
+  drawn by clients and usually sit above every layer. The spike draws neither.
+- **Features that collide with ADR 0014.** Input methods need the
+  input-method protocol the table denies. Screen readers need the
+  accessibility bus the ADR closes. Screen sharing needs a portal. Each may
+  need a trusted component the plan does not have.
+- **Hardware.** Explicit sync (`linux-drm-syncobj-v1`), which the
+  [research](compositor-smithay.md) says NVIDIA needs and the spike does not
+  offer; laptops with two GPUs; switching VTs; and unplugging a display.
+- **Session lock and crash recovery.** If the compositor dies, every app goes
+  with it.
+- **CI.** It builds neither `compositor/` nor `apps/`, so none of these tests
+  guard `main`. A job was not added here because it cannot be checked without
+  a push.
+- **The global table holds by convention in one case.** A global whose data
+  type is defined in our own crate could be given its own dispatch and skip
+  the table. The tests and both display checks compare the lists a client
+  sees, which would catch it.
+
+### Scores
+
+| Reviewer | Round 1 |
+| --- | --- |
+| Claude Opus 5.5 | 7/10 |
+| Claude Fable 5.2 | 7/10 |
+| GPT-6.1 Sol | 7/10 |
+
 ---
 
 Work done by Claude Fable 5.2 in the Claude Code harness (through T3 Code).

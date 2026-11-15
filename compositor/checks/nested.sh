@@ -64,7 +64,7 @@ report() { # report NAME FILE
 }
 
 say "# Nested protocol checks, $(date -u +%FT%TZ)"
-say "host: $(uname -sr), session $XDG_SESSION_TYPE${WAYLAND_DISPLAY:+ on $WAYLAND_DISPLAY}"
+say "host: $(uname -sr), session ${XDG_SESSION_TYPE:-unknown}${WAYLAND_DISPLAY:+ on $WAYLAND_DISPLAY}"
 say "compositor: $bin/crowbar-compositor  sha256 $(sha256sum "$bin/crowbar-compositor" | cut -d" " -f1)"
 say "wayland-info: $($info --version 2>/dev/null || echo "$info")"
 

@@ -305,23 +305,36 @@ pub fn focus(address: String) {
         });
     }
 }
+/// The command that starts the application behind a `.desktop` file.
+///
+/// The descriptors of the shell's channels to the compositor are
+/// close-on-exec, so the program cannot use them. The variables that name
+/// them are removed as well, so it does not mistake some other descriptor
+/// for one.
+fn launcher_command(path: &std::path::Path) -> Command {
+    let mut command = Command::new("/usr/bin/systemd-run");
+    command
+        .args([
+            "--user",
+            "--scope",
+            "--collect",
+            "--quiet",
+            "--expand-environment=no",
+            "/usr/bin/gio",
+            "launch",
+        ])
+        .arg(path)
+        .env_remove("CROWBAR_SHELL_CONTROL_FD")
+        .env_remove("WAYLAND_SOCKET");
+    command
+}
 pub fn launch(path: PathBuf, tx: Sender<Event>) {
     std::thread::spawn(move || {
         let result = (|| -> Result<()> {
-            let mut child = Command::new("/usr/bin/systemd-run")
+            let mut child = launcher_command(&path)
                 .current_dir(
                     std::env::var_os("HOME").context("HOME is required to launch applications")?,
                 )
-                .args([
-                    "--user",
-                    "--scope",
-                    "--collect",
-                    "--quiet",
-                    "--expand-environment=no",
-                    "/usr/bin/gio",
-                    "launch",
-                ])
-                .arg(&path)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -543,6 +556,27 @@ mod tests {
         adapter.focus_workspace(2).unwrap();
 
         peer.join().unwrap();
+    }
+
+    /// A program the shell starts must not learn where the shell's own
+    /// channels to the compositor are.
+    #[test]
+    fn a_launched_program_is_not_given_the_shells_channels() {
+        let command = launcher_command(std::path::Path::new("/usr/share/applications/x.desktop"));
+
+        let removed: Vec<_> = command
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(name, _)| name.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            removed.contains(&"CROWBAR_SHELL_CONTROL_FD".to_string()),
+            "{removed:?}"
+        );
+        assert!(
+            removed.contains(&"WAYLAND_SOCKET".to_string()),
+            "{removed:?}"
+        );
     }
 
     /// Plays Hyprland: each connection carries one command and gets one

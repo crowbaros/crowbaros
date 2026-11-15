@@ -127,10 +127,10 @@ def run_checks(ev, built):
 
     ev.log()
     ev.log("== what the binary links, and the Void package each library comes from")
-    libraries = ev.run("ldd /usr/local/bin/crowbar-compositor | awk '$3 ~ /^\\// {print $3}' | sort")
+    linked = ev.run("ldd /usr/local/bin/crowbar-compositor")
     ev.run("for lib in $(ldd /usr/local/bin/crowbar-compositor | awk '$3 ~ /^\\// {print $3}'); do "
              "xbps-query -o \"$(readlink -f $lib)\" | cut -d: -f1; done | sort -u")
-    ev.check("the binary's libraries all resolve", "not found" not in libraries and libraries.strip())
+    ev.check("the binary's libraries all resolve", "=> /" in linked and "not found" not in linked)
 
     ev.log()
     ev.log("== start the compositor on virtual terminal 2 as an ordinary user")
@@ -151,6 +151,21 @@ def run_checks(ev, built):
     ev.check("the first output is up", "output connected name=Virtual-1" in log)
     ev.run("cat /sys/class/tty/tty0/active; ls -l /run/seatd.sock; "
            f"ps -o user,tty,args -C crowbar-compositor; id {guest.GUEST_USER}")
+
+    ev.log()
+    ev.log("== routes around the compositor that ADR 0014 names: input devices and tracing")
+    # libinput takes any input device that appears, so an account that can
+    # open /dev/uinput can type the confirm chord as the person.
+    ev.run("modprobe uinput 2>&1; ls -l /dev/uinput /dev/input/ 2>&1", check=False)
+    uinput = ev.run(f"{AS_USER} sh -c 'exec 3<>/dev/uinput' 2>&1 && echo OPENED || echo REFUSED", check=False)
+    ev.check("the account that runs the compositor's clients cannot open /dev/uinput", "REFUSED" in uinput)
+    events = ev.run(f"{AS_USER} sh -c 'for d in /dev/input/event*; do (exec 3<$d) 2>/dev/null && echo OPENED $d; done'; "
+                    "echo done", check=False)
+    ev.check("that account cannot read the input devices directly", "OPENED" not in events)
+    # Recorded, not checked: every client here runs as the same user as the
+    # compositor, and what stops one tracing another is this setting alone.
+    ev.run("cat /proc/sys/kernel/yama/ptrace_scope 2>&1 || echo 'no Yama ptrace_scope'", check=False)
+
     socket_name = re.search(r'compositor is up socket="([^"]+)"', log)
     display = socket_name.group(1) if socket_name else "wayland-1"
     client = f"{AS_USER} WAYLAND_DISPLAY={display}"
