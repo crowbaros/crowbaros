@@ -20,5 +20,7 @@ The script uses only the Python standard library and needs no sudo. Downloads go
 to `~/.cache/crowbaros/void`. Images, VM runtime files, and evidence logs go to
 `.lab/void/` in the repository root. Both are outside git.
 
-The lab has no graphical guest yet. When it has one, the GPUI apps move here and
-the [Fedora lab](../fedora/README.md) is removed.
+The lab has no graphical guest yet. Its graphical guest will run the CrowbarOS
+compositor ([ADR 0015](../../docs/adr/0015-our-own-compositor-on-smithay.md)).
+When it has one, the GPUI apps move here and the
+[Fedora lab](../fedora/README.md) is removed.

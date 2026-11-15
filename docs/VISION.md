@@ -9,7 +9,8 @@ and 0012 revised; ADRs 0013 and 0014 added), after
 [council round 3](reviews/council-round-3.md) (ADRs 0001, 0003, 0004, 0006, 0007,
 0008, 0011, 0013, and 0014 revised), and after
 [council round 4](reviews/council-round-4.md), a confirmation round that closed
-gaps in the same ADRs. Jim Martin made the decisions in the council rounds. Decisions are in [`docs/adr/`](adr/). Terms are defined in the
+gaps in the same ADRs. Jim Martin made the decisions in the council rounds.
+Revised November 15, 2026: the compositor is decided (ADR 0015 added). Decisions are in [`docs/adr/`](adr/). Terms are defined in the
 [glossary](../GLOSSARY.md). What the design defends against, and what it does
 not, is in the [threat model](threat-model.md).
 
@@ -399,7 +400,8 @@ Decisions: [ADR 0003](adr/0003-security-is-deterministic.md),
 [ADR 0008](adr/0008-private-values-stay-out-of-the-agent-context.md),
 [ADR 0011](adr/0011-task-principals.md),
 [ADR 0013](adr/0013-agents-never-drive-the-persons-browser.md),
-[ADR 0014](adr/0014-a-yes-comes-from-the-person.md). Prior art:
+[ADR 0014](adr/0014-a-yes-comes-from-the-person.md),
+[ADR 0015](adr/0015-our-own-compositor-on-smithay.md). Prior art:
 [agent credentials research](research/agent-credentials-prior-art.md).
 
 ### 4. Tools are living and disposable
@@ -540,12 +542,12 @@ flowchart TB
         I["Agent role + harness protocol (MCP)<br/>Shaping contract, intents, checks, tasks"]
         AP["Capability broker + gate + monitor<br/>handles, effect limits, labels and marks,<br/>plan interpreter, egress, outbox, vault, ledger"]
         ST["Crowbar State + engine (Rust)<br/>Base generations; Environment forks,<br/>change sets; runner and rehearsal"]
-        SH["Shell<br/>declarative UI, powerbox, trusted asks,<br/>point and say"]
+        SH["Shell and compositor<br/>declarative UI, powerbox, trusted asks,<br/>point and say; input and chrome rules"]
     end
     subgraph ADAPT["Adapted"]
         RT["Tool runtimes<br/>WASM components, sandboxed native"]
         SB["Linux sandbox<br/>Landlock, seccomp, namespaces, cgroups"]
-        UI["Wayland, portals, GPUI"]
+        UI["Wayland, portals, GPUI, Smithay"]
     end
     subgraph BORROW["Borrowed"]
         V["Void Linux Base: runit, xbps"]
@@ -646,8 +648,12 @@ Notes:
 - **Vulkan in a VM:** the Intel VirtIO native-context findings in
   [`gpu-vulkan.md`](development/gpu-vulkan.md) depend on the host and Mesa build,
   not on Fedora. They apply when the Void lab gains a graphical guest.
-- **Compositor:** Hyprland was chosen for the Fedora plan. The compositor is open
-  again. Wayland and portals are fixed requirements.
+- **Compositor:** Hyprland was chosen for the Fedora plan and does not carry
+  over. CrowbarOS has its own compositor, written in Rust on Smithay, as part of
+  Base. It is where "only the shell delivers input", the confirm gesture, and
+  system chrome are enforced. Decision:
+  [ADR 0015](adr/0015-our-own-compositor-on-smithay.md). Wayland and portals are
+  fixed requirements.
 
 ## Roadmap
 

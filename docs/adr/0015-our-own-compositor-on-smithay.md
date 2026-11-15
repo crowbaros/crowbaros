@@ -1,7 +1,5 @@
 # CrowbarOS has its own compositor, built on Smithay
 
-**Status: draft.** It becomes a decision when the spike has run and both owners approve. The spike can change it: see [What would change this](#what-would-change-this).
-
 The Wayland compositor is a CrowbarOS program, written in Rust on the [Smithay](https://github.com/Smithay/smithay) library. It is part of Base and part of what we trust. We do not ship Hyprland, a fork of it, or another existing compositor.
 
 The compositor is where three rules of [ADR 0014](0014-a-yes-comes-from-the-person.md) are enforced, so it cannot be a borrowed part that we configure:
@@ -24,7 +22,7 @@ The evidence is in the [compositor research](../research/compositor-smithay.md).
 - **A maintained Hyprland fork.** Rejected: Hyprland is built to be customized from outside, through a control socket, plugins, and protocols open to every client. A fork's standing job would be keeping those removed across a fast-moving upstream, in a large C++ codebase inside the trusted base. We would also package Hyprland and its own libraries for Void ourselves.
 - **Upstream Hyprland, locked down by configuration.** Rejected: configuration cannot guarantee that a route stays closed, and ADR 0014 says a route that is not closed is a hole.
 - **A compositor on wlroots, or sway or labwc as the base.** Rejected: the same rules can be built there, but in C, and the existing compositors offer the sensitive protocols to every client by default. Rust on Smithay matches the rest of the stack and starts from nothing offered.
-- **A fork of niri or cosmic-comp.** Rejected: both are GPL-3.0 and CrowbarOS is MIT. We read them to learn how Smithay is used. We do not copy from them.
+- **niri or cosmic-comp, as shipped or forked.** Rejected. As shipped, each offers virtual input, clipboard access, and screen capture to every ordinary client, and neither has the confirm gesture or marked chrome, so meeting ADR 0014 means a fork. A fork would give a working desktop sooner: multi-monitor, scaling, screen sharing, and the X11 bridge already exist. We give that up for three reasons. Both are GPL-3.0 and CrowbarOS is MIT, so our trusted UI code would take that licence. Our changes cut across input, protocols, and window layout, so every upstream release means rework against a project with other goals. And a trusted part is easier to defend when it holds only what we put there. We read them to learn how Smithay is used. We do not copy from them.
 - **Decide at Milestone 4.** Rejected: the shell would be designed against Hyprland and then reworked, and the Void lab needs a compositor for its graphical guest before then.
 
 ## Consequences
@@ -37,11 +35,11 @@ The evidence is in the [compositor research](../research/compositor-smithay.md).
 - X11 apps run through a separate bridge process per app, or not at all. No X server is shared.
 - NVIDIA is a cost, not a barrier. The proprietary driver needs a glibc Base and Void's nonfree repository. Known problems on Smithay compositors with NVIDIA are an open flicker bug and a freeze seen with the GPUI version we pin; the second may force a change of GPUI version.
 - The Void lab's graphical guest runs this compositor. The Fedora lab is removed when it does.
-- The vision's line that the compositor is open changes when this is approved.
+- The compositor is no longer an open question in the vision.
 
 ## What would change this
 
-The [spike](https://github.com/crowbaros/crowbaros/issues/3) tests the decision before it is final. We reopen it if:
+The [spike](https://github.com/crowbaros/crowbaros/issues/3) tests this decision. We reopen it if:
 
 - the shell's layer surfaces or GPUI's rendering cannot be made to work under a Smithay compositor;
 - a client can still receive the confirm key, or still see a protocol it should not;
