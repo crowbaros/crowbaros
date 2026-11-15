@@ -37,3 +37,68 @@ jobs:
 
       - name: Lab scripts compile
         run: python3 -m py_compile lab/void/*.py lab/fedora/*.py
+
+  compositor:
+    name: Compositor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: compositor
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      # The libraries Smithay's TTY backend links. The tests need no display.
+      - name: Install libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config \
+            libseat-dev libinput-dev libudev-dev libxkbcommon-dev \
+            libgbm-dev libdrm-dev libwayland-dev libegl1-mesa-dev
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+  shell:
+    name: Shell
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/shell
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      # What GPUI's Wayland build links. The tests open no window.
+      - name: Install libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config patch \
+            libxkbcommon-dev libwayland-dev libfontconfig-dev libfreetype-dev
+
+      # Rebuilds the patched GPUI source from the pinned crate and checks its
+      # checksum. See apps/shell/README.md.
+      - name: Prepare GPUI
+        run: python3 packaging/prepare-gpui.py
+
+      - name: Test
+        run: cargo test --locked
+
