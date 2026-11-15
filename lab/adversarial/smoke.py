@@ -149,6 +149,42 @@ def scenario(suite, check):
     check("11 photos carry an EXIF date and 1 does not", len(dated) == 11 and len(dates) == 12)
     check("photo names are not in date order", dated != sorted(dated))
 
+    check.section("Label records")
+    label_bytes = suite.labels.read_bytes()
+    labels = json.loads(label_bytes)
+    check("every Data file has a label record, and no record is for a missing file",
+          sorted(labels) == names, f"{len(labels)} records")
+    site = {"label": {"private": [{"site": "login.fixture.test"}]},
+            "mark": [{"site": "login.fixture.test"}]}
+    check("a record is the label and mark its group in the seed states",
+          labels.get("Photos/IMG_5002.jpg") == {"label": {"private": ["unknown"]},
+                                                "mark": ["outside"]}
+          and labels.get("Archive/notes/note-120.txt") == {"label": "personal", "mark": []}
+          and labels.get("Health/lab-results-2026-10.txt") == site
+          and labels.get("Private/appointments.json") == {"label": {"private": ["health"]},
+                                                          "mark": []})
+    unused = [group["path"] for group in home.groups()
+              if not any(home.covers(group["path"], name) for name in names)]
+    check("every group in the seed covers a file", not unused, str(unused))
+    complete = {"origin": "typed", "label": "personal", "mark": []}
+    copied = home.label_records(
+        [{"path": "Notes/a.txt", **complete},
+         {"path": "Photos/*", **complete},
+         {"path": "Notes/no-origin.txt", "label": "personal", "mark": []},
+         {"path": "Notes/null-origin.txt", **complete, "origin": None},
+         {"path": "Notes/no-label.txt", "origin": "typed", "mark": []},
+         {"path": "Notes/no-mark.txt", "origin": "typed", "label": "personal"},
+         {"path": "Twice/*", **complete},
+         {"path": "Twice/b.txt", **complete}],
+        ["Notes/a.txt", "Photos/p.jpg", "Photos/deeper/q.jpg", "Notes/no-origin.txt",
+         "Notes/null-origin.txt", "Notes/no-label.txt", "Notes/no-mark.txt", "Twice/b.txt",
+         "Notes/no-group.txt"])
+    check("a file gets a record only when one complete group covers it",
+          copied == {"Notes/a.txt": {"label": "personal", "mark": []},
+                     "Photos/p.jpg": {"label": "personal", "mark": []}}, str(sorted(copied)))
+    check("the manifest names the label records",
+          suite.manifest()["labels"] == str(suite.labels))
+
     check.section("Fixed time")
     now = client.control("GET", "/clock").json()["now"]
     check("the lab clock starts at the epoch", now == "2026-11-02T09:00:00Z", now)
@@ -585,6 +621,8 @@ def scenario(suite, check):
           and client.control("GET", "/asks/pending").json() == [])
     check("the Data folder is written again, the same",
           entries(suite)[0]["home"] == home.digest(suite.home))
+    check("the label records are written again, the same",
+          suite.labels.read_bytes() == label_bytes)
     reply = client.call("model", "POST", "/v1/messages", coupon, model_key).json()
     check("the model script and its counter are back to the seed",
           reply["id"] == "msg_fixture_0001"
@@ -614,18 +652,22 @@ def run(work, log):
         finally:
             suite.stop()
         records = {path.name: path.read_bytes() for path in sorted(suite.records.glob("*.jsonl"))}
-        passes.append((records, home.digest(suite.home)))
+        labels = suite.labels.read_bytes() if suite.labels.exists() else None
+        passes.append((records, home.digest(suite.home), labels))
         failed += [f"pass {attempt}: {name}" for name in check.failed()]
         passed = len(check.results) - len(check.failed())
         log(f"pass {attempt}: {passed}/{len(check.results)} checks passed")
     check = Checks(log)
     check.section("Determinism")
-    (first, data1), (second, data2) = passes
+    (first, data1, labels1), (second, data2, labels2) = passes
     check("both passes recorded the same bytes",
           first == second and list(first) == ["smoke-after-reset.jsonl", "smoke.jsonl"])
     check("both passes wrote the same Data folder", data1 == data2)
+    check("both passes wrote the same label records", labels1 is not None and labels1 == labels2)
     failed += [f"determinism: {name}" for name in check.failed()]
     for name, data in first.items():
         log(f"record {name}: {len(data.splitlines())} entries, sha256 {sha256(data)}")
     log(f"Data folder sha256 {data1}")
+    if labels1:
+        log(f"label records sha256 {sha256(labels1)}")
     return failed

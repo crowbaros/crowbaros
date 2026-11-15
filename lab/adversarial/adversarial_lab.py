@@ -40,6 +40,7 @@ def serve(run):
     print(f"Manifest: {MANIFEST}")
     print(f"Record:   {suite.record.path}")
     print(f"Data:     {suite.home}")
+    print(f"Labels:   {suite.labels}")
     print("Serving. Ctrl-C stops.", flush=True)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
