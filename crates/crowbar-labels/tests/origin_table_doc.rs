@@ -1,7 +1,7 @@
 //! The origin table is written twice: as a table in the docs of `Origin`, in
 //! `src/origin.rs`, and as code. This keeps the two the same.
 
-use crowbar_labels::{AdmittedSet, FileOrigin, MailAccount, Origin, Site};
+use crowbar_labels::{AdmittedSet, Fetch, FileOrigin, MailAccount, Origin, Site};
 
 const SOURCE: &str = include_str!("../src/origin.rs");
 
@@ -36,18 +36,9 @@ fn origin_for(row: &str) -> Option<Origin> {
         "Text the person typed" => Origin::Typed,
         "Text a fixed template produced" => Origin::Template,
         "Mail in me@mail.example" => Origin::Mail { account: me },
-        "A page from news.example" => Origin::WebPage {
-            site: news,
-            login: false,
-        },
-        "A page from bank.example, under a login" => Origin::WebPage {
-            site: bank,
-            login: true,
-        },
-        "A file downloaded from news.example" => Origin::File(FileOrigin::Downloaded {
-            site: news,
-            login: false,
-        }),
+        "A page from news.example" => Origin::WebPage(Fetch::WithoutLogin(news)),
+        "A page from bank.example, under a login" => Origin::WebPage(Fetch::UnderLogin(bank)),
+        "A file downloaded from news.example" => Origin::File(FileOrigin::Downloaded(Fetch::WithoutLogin(news))),
         "A file saved from an attachment in me@mail.example" => Origin::File(FileOrigin::Attachment { account: me }),
         "A file from outside the fleet, by any other way" => Origin::File(FileOrigin::FromOutside),
         "The Base package snapshot" => Origin::Admitted(AdmittedSet::BasePackages),
@@ -56,13 +47,7 @@ fn origin_for(row: &str) -> Option<Origin> {
             copied_from: Some(Origin::Typed.label_mark()),
         },
         "A paste from a page of bank.example, under a login" => Origin::Pasted {
-            copied_from: Some(
-                Origin::WebPage {
-                    site: bank,
-                    login: true,
-                }
-                .label_mark(),
-            ),
+            copied_from: Some(Origin::WebPage(Fetch::UnderLogin(bank)).label_mark()),
         },
         "A paste whose source was not recorded" => Origin::Pasted { copied_from: None },
         "Anything else" => Origin::Unknown,

@@ -51,7 +51,9 @@ impl Compartment {
     /// A native sandbox, at the join of everything in the view it is given,
     /// whether or not it opens any of it. Its label and mark never change.
     pub fn fixed<'a>(view: impl IntoIterator<Item = &'a LabelMark>) -> Self {
-        let label_mark = view.into_iter().fold(LabelMark::public_unmarked(), |held, item| held.join(item));
+        let label_mark = view
+            .into_iter()
+            .fold(LabelMark::public_unmarked(), |held, item| held.join(item));
         Compartment {
             label_mark,
             growth: Growth::Fixed,

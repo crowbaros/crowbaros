@@ -58,8 +58,8 @@ pub enum Origin {
     Pasted { copied_from: Option<LabelMark> },
     /// A mail message in one of the person's accounts.
     Mail { account: MailAccount },
-    /// A web page the broker fetched, with or without a login.
-    WebPage { site: Site, login: bool },
+    /// A web page the broker fetched.
+    WebPage(Fetch),
     /// A file brought into the fleet.
     File(FileOrigin),
     /// Content from a set the person admitted in advance.
@@ -75,11 +75,27 @@ pub enum Origin {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileOrigin {
     /// Downloaded by the broker from a site.
-    Downloaded { site: Site, login: bool },
+    Downloaded(Fetch),
     /// Saved from an attachment in one of the person's mail accounts.
     Attachment { account: MailAccount },
     /// From outside the fleet by any other way, such as removable media.
     FromOutside,
+}
+
+/// How the broker fetched something from a site: without a login, or under
+/// one. What is fetched under a login is private to that site (ADR 0008).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fetch {
+    WithoutLogin(Site),
+    UnderLogin(Site),
+}
+
+impl Fetch {
+    pub fn site(&self) -> &Site {
+        match self {
+            Fetch::WithoutLogin(site) | Fetch::UnderLogin(site) => site,
+        }
+    }
 }
 
 /// The pinned sets ADR 0011 admits.
@@ -101,13 +117,12 @@ impl Origin {
                 Label::private(Category::Messages),
                 Mark::from_source(MarkSource::Mail(account.clone())),
             ),
-            Origin::WebPage { site, login } | Origin::File(FileOrigin::Downloaded { site, login }) => {
-                let label = if *login {
-                    Label::private(Category::Site(site.clone()))
-                } else {
-                    Label::Public
+            Origin::WebPage(fetch) | Origin::File(FileOrigin::Downloaded(fetch)) => {
+                let label = match fetch {
+                    Fetch::WithoutLogin(_) => Label::Public,
+                    Fetch::UnderLogin(site) => Label::private(Category::Site(site.clone())),
                 };
-                LabelMark::new(label, Mark::from_source(MarkSource::Site(site.clone())))
+                LabelMark::new(label, Mark::from_source(MarkSource::Site(fetch.site().clone())))
             }
             Origin::File(FileOrigin::FromOutside) => fail_closed(MarkSource::Outside),
             Origin::Pasted {

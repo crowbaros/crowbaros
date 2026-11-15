@@ -4,7 +4,9 @@
 
 use std::collections::BTreeSet;
 
-use crowbar_labels::{Category, Compartment, Label, LabelMark, LabelStore, MailAccount, MarkSource, Origin, Site};
+use crowbar_labels::{
+    Category, Compartment, Fetch, Label, LabelMark, LabelStore, MailAccount, MarkSource, Origin, Site,
+};
 
 fn news() -> Site {
     Site::new("news.example")
@@ -21,11 +23,7 @@ fn sources(label_mark: &LabelMark) -> BTreeSet<MarkSource> {
 #[test]
 fn a_write_joins_with_what_is_already_stored() {
     let typed = Origin::Typed.label_mark();
-    let page = Origin::WebPage {
-        site: news(),
-        login: false,
-    }
-    .label_mark();
+    let page = Origin::WebPage(Fetch::WithoutLogin(news())).label_mark();
     let mail = Origin::Mail { account: me() }.label_mark();
     let template = Origin::Template.label_mark();
     let finance = Compartment::fixed([&typed])
@@ -83,21 +81,10 @@ fn labels_and_marks_survive_saving_and_loading() {
     let mut store = LabelStore::default();
     let records = [
         ("typed", Origin::Typed.label_mark()),
-        (
-            "page",
-            Origin::WebPage {
-                site: news(),
-                login: false,
-            }
-            .label_mark(),
-        ),
+        ("page", Origin::WebPage(Fetch::WithoutLogin(news())).label_mark()),
         (
             "bank",
-            Origin::WebPage {
-                site: Site::new("bank.example"),
-                login: true,
-            }
-            .label_mark(),
+            Origin::WebPage(Fetch::UnderLogin(Site::new("bank.example"))).label_mark(),
         ),
         ("mail", Origin::Mail { account: me() }.label_mark()),
         ("paste", Origin::Pasted { copied_from: None }.label_mark()),
@@ -170,13 +157,7 @@ fn findings_a_marked_task_stored_mark_a_later_task_that_reads_them() {
     let mut research = Compartment::fresh();
     research.read(&Origin::Typed.label_mark()).unwrap();
     research
-        .read(
-            &Origin::WebPage {
-                site: news(),
-                login: false,
-            }
-            .label_mark(),
-        )
+        .read(&Origin::WebPage(Fetch::WithoutLogin(news())).label_mark())
         .unwrap();
     let findings = research.emit("findings");
 

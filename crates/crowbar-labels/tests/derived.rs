@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use crowbar_labels::{Category, Label, Labeled, MailAccount, MarkSource, Origin, Site};
+use crowbar_labels::{Category, Fetch, Label, Labeled, MailAccount, MarkSource, Origin, Site};
 
 fn mail(text: &str) -> Labeled<String> {
     Labeled::from_origin(
@@ -18,10 +18,7 @@ fn mail(text: &str) -> Labeled<String> {
 fn bank_page(text: &str) -> Labeled<String> {
     Labeled::from_origin(
         text.to_string(),
-        &Origin::WebPage {
-            site: Site::new("bank.example"),
-            login: true,
-        },
+        &Origin::WebPage(Fetch::UnderLogin(Site::new("bank.example"))),
     )
 }
 
@@ -90,7 +87,10 @@ fn nothing_computed_from_a_marked_value_drops_its_label_or_mark() {
     assert_eq!(refused.label_mark(), &before, "whether a step was refused");
     assert_eq!(constant.label_mark(), &before, "a result that ignores its input");
     assert_eq!(bounded.label_mark(), &before, "a bounded result");
-    assert!(with_unmarked.label_mark().mark().is_marked(), "joined with an unmarked value");
+    assert!(
+        with_unmarked.label_mark().mark().is_marked(),
+        "joined with an unmarked value"
+    );
     assert!(
         before.label().is_at_most(with_unmarked.label_mark().label()),
         "joined with an unmarked value"

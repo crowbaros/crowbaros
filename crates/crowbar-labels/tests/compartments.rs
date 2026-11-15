@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 
 use crowbar_labels::{
-    AdmittedSet, Category, Compartment, FileOrigin, Label, LabelMark, MailAccount, MarkSource, Origin, Site,
+    AdmittedSet, Category, Compartment, Fetch, FileOrigin, Label, LabelMark, MailAccount, MarkSource, Origin, Site,
 };
 
 fn me() -> MailAccount {
@@ -37,14 +37,8 @@ fn reading(origins: &[Origin]) -> Compartment {
 #[test]
 fn a_compartment_is_at_the_join_of_everything_it_has_read() {
     let mail = Origin::Mail { account: me() };
-    let bank_page = Origin::WebPage {
-        site: bank(),
-        login: true,
-    };
-    let news_page = Origin::WebPage {
-        site: news(),
-        login: false,
-    };
+    let bank_page = Origin::WebPage(Fetch::UnderLogin(bank()));
+    let news_page = Origin::WebPage(Fetch::WithoutLogin(news()));
     let package = Origin::Admitted(AdmittedSet::BuildDependencies);
 
     // (name, what it read in order, label, mark sources)
@@ -103,13 +97,7 @@ fn everything_a_compartment_emits_carries_its_label_and_mark() {
 
 #[test]
 fn a_compartment_started_by_another_runs_at_its_label_and_mark() {
-    let marked = reading(&[
-        Origin::Typed,
-        Origin::WebPage {
-            site: news(),
-            login: false,
-        },
-    ]);
+    let marked = reading(&[Origin::Typed, Origin::WebPage(Fetch::WithoutLogin(news()))]);
     let unmarked = reading(&[Origin::Typed]);
 
     // ADR 0008: a standing task started from a marked context runs marked.
@@ -128,11 +116,7 @@ fn a_compartment_started_by_another_runs_at_its_label_and_mark() {
 #[test]
 fn a_native_compartment_is_fixed_at_the_join_of_its_view() {
     let note = Origin::Typed.label_mark();
-    let download = Origin::File(FileOrigin::Downloaded {
-        site: news(),
-        login: false,
-    })
-    .label_mark();
+    let download = Origin::File(FileOrigin::Downloaded(Fetch::WithoutLogin(news()))).label_mark();
     let mail = Origin::Mail { account: me() }.label_mark();
 
     // A view that holds one file from outside, which it never opens (attack
@@ -150,14 +134,7 @@ fn a_native_compartment_is_fixed_at_the_join_of_its_view() {
         // Above its start label: refused, not raised.
         (mail.clone(), false),
         // Same label, a new mark source: refused too.
-        (
-            Origin::WebPage {
-                site: bank(),
-                login: false,
-            }
-            .label_mark(),
-            false,
-        ),
+        (Origin::WebPage(Fetch::WithoutLogin(bank())).label_mark(), false),
     ];
     let start = native.label_mark().clone();
     for (offered, accepted) in cases {
@@ -194,13 +171,7 @@ fn a_tool_started_on_marked_source_is_marked() {
     let mut build = Compartment::fresh();
     build.read(&Origin::Typed.label_mark()).unwrap();
     build
-        .read(
-            &Origin::WebPage {
-                site: news(),
-                login: false,
-            }
-            .label_mark(),
-        )
+        .read(&Origin::WebPage(Fetch::WithoutLogin(news())).label_mark())
         .unwrap();
     let source = build.emit("fn main() {}");
 

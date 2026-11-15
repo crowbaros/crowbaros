@@ -40,5 +40,5 @@ pub use compartment::{Compartment, ReadRefused};
 pub use label::{Categories, Category, Label, Site};
 pub use labeled::Labeled;
 pub use mark::{LabelMark, MailAccount, Mark, MarkSource};
-pub use origin::{AdmittedSet, FileOrigin, Origin};
+pub use origin::{AdmittedSet, Fetch, FileOrigin, Origin};
 pub use store::LabelStore;

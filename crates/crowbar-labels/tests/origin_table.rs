@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use crowbar_labels::{AdmittedSet, Category, FileOrigin, Label, MailAccount, MarkSource, Origin, Site};
+use crowbar_labels::{AdmittedSet, Category, Fetch, FileOrigin, Label, MailAccount, MarkSource, Origin, Site};
 
 fn private(category: Category) -> Label {
     Label::private(category)
@@ -21,11 +21,7 @@ fn every_origin_gets_its_label_and_mark_from_the_table() {
     let me = MailAccount::new("me@mail.example");
 
     let own_note = Origin::Typed.label_mark();
-    let bank_page = Origin::WebPage {
-        site: bank.clone(),
-        login: true,
-    }
-    .label_mark();
+    let bank_page = Origin::WebPage(Fetch::UnderLogin(bank.clone())).label_mark();
     let a_mail = Origin::Mail { account: me.clone() }.label_mark();
 
     use MarkSource as S;
@@ -44,30 +40,21 @@ fn every_origin_gets_its_label_and_mark_from_the_table() {
         // ADR 0008: a web site's default is public. ADR 0011: web pages are open.
         (
             "web page",
-            Origin::WebPage {
-                site: news.clone(),
-                login: false,
-            },
+            Origin::WebPage(Fetch::WithoutLogin(news.clone())),
             Label::Public,
             sources([S::Site(news.clone())]),
         ),
         // ADR 0008: content fetched under a login is private to that site.
         (
             "web page under a login",
-            Origin::WebPage {
-                site: bank.clone(),
-                login: true,
-            },
+            Origin::WebPage(Fetch::UnderLogin(bank.clone())),
             private(Category::Site(bank.clone())),
             sources([S::Site(bank.clone())]),
         ),
         // A file takes the row of where its content came from.
         (
             "downloaded file",
-            Origin::File(FileOrigin::Downloaded {
-                site: news.clone(),
-                login: false,
-            }),
+            Origin::File(FileOrigin::Downloaded(Fetch::WithoutLogin(news.clone()))),
             Label::Public,
             sources([S::Site(news.clone())]),
         ),
@@ -158,10 +145,7 @@ fn an_unknown_origin_is_held_to_no_lower_a_label_than_any_known_row() {
     for known in [
         Origin::Typed,
         Origin::Template,
-        Origin::WebPage {
-            site: Site::new("news.example"),
-            login: false,
-        },
+        Origin::WebPage(Fetch::WithoutLogin(Site::new("news.example"))),
         Origin::Admitted(AdmittedSet::BasePackages),
     ] {
         let known = known.label_mark();
