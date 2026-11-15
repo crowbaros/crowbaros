@@ -9,7 +9,9 @@ is in the [compositor research](../docs/research/compositor-smithay.md).
 **What is here is the [spike](https://github.com/crowbaros/crowbaros/issues/3),
 not the compositor.** It was written to test ADR 0015 and its code is throwaway.
 The [spike record](../docs/research/compositor-spike-2026-11-15.md) says what it
-proved and what it did not.
+proved and what it did not. The
+[design brief](../docs/research/compositor-design-brief.md) lists the decisions
+the real compositor needs first.
 
 What the compositor does that a borrowed one would not
 ([ADR 0014](../docs/adr/0014-a-yes-comes-from-the-person.md)):
