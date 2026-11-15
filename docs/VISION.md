@@ -665,7 +665,9 @@ Notes:
   Base. It is where "only the shell delivers input", the confirm gesture, and
   system chrome are enforced. Decision:
   [ADR 0015](adr/0015-our-own-compositor-on-smithay.md). Wayland and portals are
-  fixed requirements.
+  fixed requirements. What the first compositor has, what it leaves out on
+  purpose, and where its work sits among the milestones are in
+  [ADR 0020](adr/0020-the-first-compositor-is-small-on-purpose.md).
 
 ## Roadmap
 

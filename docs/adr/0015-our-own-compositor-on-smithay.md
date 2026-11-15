@@ -46,4 +46,6 @@ The [spike](https://github.com/crowbaros/crowbaros/issues/3) tests this decision
 - a client can still receive the confirm key, or still see a protocol it should not;
 - the compositor cannot run on a Void guest without systemd.
 
+[ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) records that none of the three is met after the spike and the NVIDIA run, so this decision stands. It also says what the first compositor has and leaves out.
+
 Cost does not reopen it. This list once had a fourth condition: that the measured cost of the spike showed the full compositor to be beyond two people alongside Milestones 2 to 4. The spike could not measure that, and on November 15, 2026 we dropped the condition: we build this compositor whatever it costs. What can still change is what the first compositor has, and where its work sits among the milestones.

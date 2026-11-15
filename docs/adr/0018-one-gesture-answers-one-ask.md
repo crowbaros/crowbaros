@@ -28,16 +28,16 @@
 - **One ask at a time.** The compositor shows and arms at most one ask, on the output that has focus. The broker queues the rest, and the shell shows how many are waiting.
 - **Declining.** Escape on the ask, or a click on Decline, declines it, whether the shell or the compositor sees it. The broker records the decline. A shell that declines wrongly costs a new ask, never a false yes.
 - **Expiry.** The broker withdraws an ask past its `expires`, and the compositor disarms it.
-- **The lock screen.** While the session is locked, no ask is shown or armed and the gesture does nothing. The ask waits in the broker's queue, and its second starts again after unlock.
+- **The lock screen.** While the session is locked, no ask is shown or armed and the gesture does nothing. The ask waits in the broker's queue, and its second starts again after unlock. [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) gives the chord one job on the lock screen, which is to open the unlock entry. It still answers no ask there.
 
 ## Visible and on top
 
-While an ask is showing, the compositor dims every other surface, draws the ask's frame, and sends keyboard and pointer input to the ask surface alone. The cursor and drag icons draw under the frame. No client can dim another client, so "on top" is something the compositor enforces, not a stacking order a client can reach. What the frame looks like is decided with the rest of the trusted UI in [issue 66](https://github.com/crowbaros/crowbaros/issues/66).
+While an ask is showing, the compositor dims every other surface, draws the ask's frame, and sends keyboard and pointer input to the ask surface alone. The cursor and drag icons draw under the frame. No client can dim another client, so "on top" is something the compositor enforces, not a stacking order a client can reach. What the frame looks like is decided with the rest of the trusted UI in [issue 66](https://github.com/crowbaros/crowbaros/issues/66). [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) fixes what a frame is and where it is drawn, and leaves its look to the design work under issue 22.
 
 ## The gesture
 
 - **The confirm gesture is Ctrl+Alt+Enter, and the keyboard alone can say yes.** The pointer can decline or dismiss an ask, never confirm one. A click can be arranged under a moving cursor; a chord is felt. Which keys make the chord can change later. That nothing in the Environment can rebind it cannot (ADR 0014, rule 5).
-- **The compositor always takes the chord.** It reaches no client, whether or not an ask is showing. With no armed ask it does nothing.
+- **The compositor always takes the chord.** It reaches no client, whether or not an ask is showing. With no armed ask it does nothing. [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) changes one case: with no ask showing and the session unlocked, the chord locks the session.
 - **One keyboard makes the chord.** The modifiers and Enter must be pressed on the same keyboard. The compositor tracks withheld keys for each keyboard, so a release with no press never reaches a client.
 - **A keyboard attached after an ask opened cannot confirm it.** A USB device can pretend to be a keyboard and type the chord.
 
@@ -77,7 +77,7 @@ Each of these must pass, or be refused, before the shell protocol is accepted. [
 9. A client window tries to cover the ask, imitate it, or take its focus. It is dimmed and gets no input.
 10. An ask that changes authority: no touch is asked for before it is armed, and its signature is refused for another ask.
 11. An ask while the session is locked. It is not shown and not armed.
-12. The chord with no ask showing. Nothing happens, and no client sees it.
+12. The chord with no ask showing. Nothing is confirmed, and no client sees it. The session locks (ADR 0020).
 13. A malformed, oversized, or unknown message on each socket. The connection is refused, and the trusted part does not crash.
 
 ## Considered Options

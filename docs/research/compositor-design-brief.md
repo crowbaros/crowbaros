@@ -14,6 +14,16 @@ unless it names another source.
 estimate. ADR 0015 no longer reopens on cost: we build this compositor
 whatever it costs.
 
+**Answered:** November 15, 2026. Every decision below now has a record.
+Decision 1 is [ADR 0016](../adr/0016-the-warden-starts-every-compartment.md),
+decision 2 is [ADR 0018](../adr/0018-one-gesture-answers-one-ask.md), and
+decisions 3 to 9 are
+[ADR 0020](../adr/0020-the-first-compositor-is-small-on-purpose.md). Issue 5
+has run: see the [NVIDIA record](compositor-nvidia-2026-11-15.md). Decision 8
+says the dispatch traits were on Smithay's `master` only days before the
+spike. The [bump measurement](compositor-smithay-bump-2026-11-15.md) found
+they were 198 days old. The text below stays as it was written.
+
 **Read first:** [ADR 0014](../adr/0014-a-yes-comes-from-the-person.md) (the
 rules), [ADR 0015](../adr/0015-our-own-compositor-on-smithay.md) (the
 decision), and the [compositor research](compositor-smithay.md) (what Smithay

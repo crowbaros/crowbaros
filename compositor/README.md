@@ -57,10 +57,13 @@ MIT. Smithay and its example compositors are MIT.
 
 Smithay's default features are off. That leaves out `backend_libei` (input
 emulation), `xwayland`, `backend_x11`, and `backend_vulkan`.
+The `reis` crate is still built, because Smithay depends on it without a
+feature gate. None of its code is linked into the compositor; see the
+[bump measurement](../docs/research/compositor-smithay-bump-2026-11-15.md).
 
 ```sh
 cd compositor
-cargo test                              # 20 tests, no display needed
+cargo test                              # 22 tests, no display needed
 cargo clippy --all-targets -- -D warnings
 ```
 
