@@ -1,6 +1,6 @@
 # Installed software comes from a pinned catalog, and dev tools run in a workbench
 
-**Status:** proposed.
+**Status:** accepted on November 15, 2026, by Jim Martin, at the end of the design session on installing software and dev tooling.
 
 Installing software must be painless in CrowbarOS, and dev tools are the hardest case: they read and write a project all day, run each other, reach package registries and model APIs, and need root inside their own world. The vision made installed software first-class but gave it no way to arrive. This record says where installed software comes from, how dev tools run, and how installed software writes, reaches the network, and holds a login. It also fills the "later record" that [ADR 0016](0016-the-warden-starts-every-compartment.md) leaves open for a wide compartment's network and writes. T3 Code, a desktop app that runs coding agents, is the worked example and the first acceptance test.
 
