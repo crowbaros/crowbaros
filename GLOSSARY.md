@@ -114,15 +114,19 @@ _Avoid_: Coding agent, compile
 
 **Plan**:
 A small program the Agent writes whose variables are handles. A deterministic interpreter runs it, moves the actual values, and tracks the label and mark of every result. The Agent reads a value only where its label and mark allow.
+_Avoid_: Script, workflow, prompt chain
 
 **Bounded result**:
 A choice from a list, or a number in a range, both fixed before the task read anything. It keeps the label and mark of what it was computed from.
 _Avoid_: Typed result, safe value
 
+**Broker**:
+The part of Base through which a compartment reaches everything outside itself: Data, the network, devices, and time. It makes every outbound connection and holds the vault.
+_Avoid_: Proxy, daemon
+
 **Adapter**:
 The part of the broker that speaks one protocol or one service and knows its operations, so a standing rule can name an operation and a credential never leaves the vault.
 _Avoid_: Plugin, connector, integration
-_Avoid_: Script, workflow, prompt chain
 
 **Harness**:
 Whatever fills the agent role: the loop, tools, and conversation around a model. CrowbarOS ships a default harness, and an external one (such as Grok Bot) can replace it. A harness can only propose; it never holds authority.
