@@ -49,7 +49,11 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Lab scripts compile
-        run: python3 -m py_compile lab/void/*.py lab/fedora/*.py
+        run: python3 -m py_compile lab/void/*.py lab/fedora/*.py lab/adversarial/*.py
+
+      # The Milestone 2 fixture services on loopback: no VM, stdlib only.
+      - name: Adversarial fixtures smoke
+        run: python3 lab/adversarial/adversarial_lab.py smoke
 
   compositor:
     name: Compositor
