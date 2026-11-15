@@ -31,6 +31,38 @@ The [compositor spike](../research/compositor-spike-2026-11-15.md) identified a 
 - **No compartment can register a security context.** A program that sandboxes its own children gets no weaker connection for them. Its children are in its compartment and carry its identity.
 - **The Warden tells the compositor who a compartment is and nothing more.** What kind of thing it is, such as a Preview, reaches the compositor through the shell's interface ([issue 55](https://github.com/crowbaros/crowbaros/issues/55)).
 
+## What a compartment starts with
+
+- **A broker connection and nothing else.** The Warden closes every other descriptor before the program runs, and every trusted part opens its own descriptors close-on-exec.
+- **A descriptor arrives later only from the broker**, over that connection: a file the person chose in the powerbox, for example. It is part of the compartment's view, and stopping the compartment is the only way to take it back (ADR 0004).
+- **A Wayland listener only when the broker orders one.** A Tool gets none, because the shell draws a Tool's UI from its description. Installed software, a terminal, and a task browser context that is shown get one. Most compartments are not Wayland clients.
+- **The GPU render node is a need like any other.** It is absent from a sandbox unless the principal's stated needs include it, and the person sees it among the needs. Without it a client draws through shared memory. A render node lets a program call the GPU driver directly, which is a large part of the kernel to expose.
+- **What a program expects to share runs inside its own sandbox.** A D-Bus session bus, an accessibility bus, or an X server that a program needs is started in that compartment, under its user ID, and reaches nothing outside it. Base has no session bus and no shared X server. An X11 app's bridge reaches the compositor through its compartment's listener, so it has that compartment's identity and no more. The only things that cross a sandbox boundary are the broker connection and the Wayland listener.
+
+## A wide compartment
+
+The owner can give one compartment everything they have: all of their Data, the network, tracing inside itself, and the devices they name. It keeps its own user ID and cgroup. It can damage or leak the owner's Data, and the owner accepted that.
+
+Whatever the owner gives, no compartment gets what the trusted parts hold:
+
+- the input devices and the seat;
+- the sockets and the memory of the compositor, the shell, the broker, and the Warden;
+- the values in the vault;
+- a way to write the authority domain or the ledger.
+
+So a wide compartment cannot answer its own ask, grant itself more, or hide what it did. Above it there is only owner authority, which the owner uses by hand and no agent holds.
+
+## Milestone 2 and Base
+
+There is one Warden, and it runs as root in both places. Milestone 2 still needs nothing from Base.
+
+| | Needs |
+| --- | --- |
+| Milestone 2, from stock Linux | Root for the Warden, cgroup v2, a kernel with Landlock and `cgroup.kill`, and a range of user IDs from configuration |
+| Base only | The system users and runit services of the trusted parts, the rules for the seat and the devices, the check at boot, and the Wayland connections |
+
+Milestone 2 runs the Warden with `sudo` in CI, and inside the Void lab guest on a developer's machine, so nobody needs root on their own desktop.
+
 ## The seat and tracing
 
 - **The `_seatd` group has one member, the compositor's user.** The compositor is in neither `input` nor `video`, and gets its devices from seatd. It starts nothing, so nothing inherits the group. The spike's record said to put the person in `_seatd`. This replaces that.
@@ -58,4 +90,8 @@ Base sets each of these. A check at boot verifies them, and a generation that fa
 - **A public socket that offers the smallest set of globals.** Rejected: it leaves a way for a process with no compartment behind it to draw a window, and [ADR 0015](0015-our-own-compositor-on-smithay.md) has the compositor know which principal owns each surface.
 - **A private channel from the Warden to the compositor that passes descriptors.** Rejected: it can carry exact fields, but it is new protocol code in the trusted base, and Smithay already implements the security-context protocol.
 - **One root parent that makes socket pairs and starts the trusted parts.** Rejected: when one part restarts, the parent has to connect the others again.
+- **A Warden mode that needs no root, built on user namespaces.** Rejected: it is a second way to start a compartment, with weaker guarantees than the first, and the Ubuntu release that CI runs on restricts those namespaces.
+- **The render node for every compartment that has a Wayland listener.** Rejected: a terminal would get direct access to the GPU driver for nothing.
+- **One session bus for the desktop.** Rejected: it is a way for one compartment to reach another outside Wayland and outside the broker.
+- **Owner authority for an agent, as the way to open everything.** Rejected: nothing the system promises holds after it, including that a "yes" came from the person. A wide compartment gives an agent task the person's Data without giving it the trusted parts.
 - **A runit service for each compartment, with `chpst` limits.** Rejected: those limits are for each process, with no budget for the group and no way to end a process that forked twice.
