@@ -98,15 +98,16 @@ fn every_origin_gets_its_label_and_mark_from_the_table() {
             Label::Public,
             sources([]),
         ),
-        // ADR 0008: a paste is a handle with its origin's label and mark. The
-        // glossary also lists what the person pastes as open, so it is marked.
+        // ADR 0008: a paste is a handle with its origin's label and mark, and
+        // nothing more. A paste whose source was not recorded is an unknown
+        // origin, and fails closed.
         (
             "paste of the person's own note",
             Origin::Pasted {
                 copied_from: Some(own_note),
             },
             Label::Personal,
-            sources([S::Paste]),
+            sources([]),
         ),
         (
             "paste of a logged-in page",
@@ -114,7 +115,7 @@ fn every_origin_gets_its_label_and_mark_from_the_table() {
                 copied_from: Some(bank_page),
             },
             private(Category::Site(bank.clone())),
-            sources([S::Paste, S::Site(bank.clone())]),
+            sources([S::Site(bank.clone())]),
         ),
         (
             "paste with no recorded source",

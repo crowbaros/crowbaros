@@ -22,8 +22,8 @@ use crate::mark::{LabelMark, MailAccount, Mark, MarkSource};
 /// | A file from outside the fleet, by any other way | `private: unclassified` | `marked: outside` |
 /// | The Base package snapshot | `public` | `none` |
 /// | The dependency set for build tasks | `public` | `none` |
-/// | A paste of a note the person typed | `personal` | `marked: paste` |
-/// | A paste from a page of `bank.example`, under a login | `private: site bank.example` | `marked: site bank.example, paste` |
+/// | A paste of a note the person typed | `personal` | `none` |
+/// | A paste from a page of `bank.example`, under a login | `private: site bank.example` | `marked: site bank.example` |
 /// | A paste whose source was not recorded | `private: unclassified` | `marked: paste` |
 /// | A stored result | as it was stored | as it was stored |
 /// | Anything else | `private: unclassified` | `marked: unknown` |
@@ -32,8 +32,8 @@ use crate::mark::{LabelMark, MailAccount, Mark, MarkSource};
 ///
 /// - **The person's own words are personal and unmarked** (ADR 0008). Strings
 ///   a fixed template produced are the OS's words, and are public.
-/// - **Open input marks** (ADR 0011): web pages, mail, files from outside, and
-///   what the person pastes. The mark names its source.
+/// - **Open input marks** (ADR 0011): web pages, mail, and files from outside.
+///   The mark names its source.
 /// - **Admitted input does not mark** (ADR 0011). Only the two sets ADR 0011
 ///   names are admitted. Whether a catalog snapshot is admitted is undecided
 ///   (ADR 0017), so it is not a row.
@@ -41,8 +41,9 @@ use crate::mark::{LabelMark, MailAccount, Mark, MarkSource};
 ///   private to that site (ADR 0008). A web site's default is public.
 /// - **A file takes the row of where its content came from.** A file written
 ///   inside the fleet is a stored result.
-/// - **A paste carries its source's label and mark** (ADR 0008), and is
-///   marked as a paste.
+/// - **A paste carries its source's label and mark** (ADR 0008), and nothing
+///   more. A paste whose source was not recorded fails closed, marked as a
+///   paste.
 /// - **Where no rule gives a label, the row fails closed**: private, in the
 ///   `unclassified` category, which no party is cleared for unless the person
 ///   names it, and marked.
@@ -111,7 +112,7 @@ impl Origin {
             Origin::File(FileOrigin::FromOutside) => unclassified(MarkSource::Outside),
             Origin::Pasted {
                 copied_from: Some(source),
-            } => source.join(&LabelMark::new(Label::Public, Mark::from_source(MarkSource::Paste))),
+            } => source.clone(),
             Origin::Pasted { copied_from: None } => unclassified(MarkSource::Paste),
             Origin::Stored(stored) => stored.clone(),
             Origin::Unknown => unclassified(MarkSource::Unknown),

@@ -466,8 +466,8 @@ input**. It is graded. See [ADR 0011](../adr/0011-task-principals.md).
   tasks may use. Reading it does not mark a context. Admission is where that risk
   is taken, once, by a step that can be audited.
 - **Open** input is everything else: web pages, mail, messages, shared intents,
-  files from outside, and what the person pastes. Reading it **marks** the
-  context.
+  and files from outside. Reading it **marks** the context. What the person
+  pastes carries the label and mark of where it was copied from.
 
 Untrusted input includes short strings. A file name, a mail subject, a label in a
 stranger's Tool, error text from a server, and a ledger detail are data with

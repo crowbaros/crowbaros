@@ -33,7 +33,8 @@ pub enum MarkSource {
     Site(Site),
     /// Mail that arrived in one of the person's accounts.
     Mail(MailAccount),
-    /// Something the person pasted or dropped.
+    /// Something the person pasted or dropped, from a source that was not
+    /// recorded.
     Paste,
     /// A file that came from outside the fleet some other way, such as
     /// removable media.
