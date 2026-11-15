@@ -15,6 +15,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 import re
 import threading
+import traceback
 
 from fixtures import (DOMAIN, EPOCH, RECORD_FORMAT, Canaries, Clock, Faults, Handler,
                       Record, Refuse, Response, Service, canonical, iso, json_response,
@@ -316,6 +317,9 @@ class Suite:
                     response = service.handle(request)
                 except Refuse as refused:
                     response = service.error(refused.status, refused.message)
+                except Exception:  # A bug in a fixture: answer 500 and record it.
+                    traceback.print_exc()
+                    response = service.error(500, "fixture error")
             return self.record_request(service, request, response, fault)
 
     def stray(self, service, request):
