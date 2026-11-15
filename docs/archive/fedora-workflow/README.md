@@ -30,3 +30,5 @@ Its prerequisite is the [integrated Void acceptance record](../../development/vo
 for [#54](https://github.com/crowbaros/crowbaros/issues/54), with 37 passing checks.
 The [preparation record](../../development/fedora-retirement-2026-11-15.md) remains
 as written before that prerequisite was complete.
+The [retirement acceptance record](../../development/fedora-retirement-completion-2026-11-15.md)
+verifies the desktop and Base after this archive was created.

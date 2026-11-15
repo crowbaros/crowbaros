@@ -1,0 +1,4 @@
+PASS: all 38 archive entries match e2c07ca and manifest hashes
+PASS: 391 source, dependency, license, brand, and evidence files unchanged
+PASS: changed documentation links resolve locally
+PASS: 4 existing Void images retain their inode and size

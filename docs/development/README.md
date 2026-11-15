@@ -9,6 +9,7 @@ The [Fedora workflow](../archive/fedora-workflow/README.md) is archived.
 | [local-vms.md](local-vms.md) | Current Void environments, direct Cargo builds, and remaining integration tasks |
 | [gpu-vulkan.md](gpu-vulkan.md) | Graphics evidence and boundaries for Void qualification |
 | [Void desktop acceptance](void-desktop-smoke-2026-11-15.md) | 37 passing checks for the integrated Alpha session and Settings |
+| [Fedora retirement acceptance](fedora-retirement-completion-2026-11-15.md) | Post-retirement desktop/Base checks and preservation audit |
 | [Fedora retirement preparation](fedora-retirement-2026-11-15.md) | Earlier archive preservation and build checks, recorded before desktop acceptance |
 | [NVIDIA/DRM record](../research/compositor-nvidia-2026-11-15.md) | GPUI and compositor on Void hardware, resize, and suspend/resume |
 | [shell validation](shell-validation-2026-11-14.md) | Historical shell behavior checks and captures |
