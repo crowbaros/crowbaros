@@ -44,9 +44,9 @@ use crate::mark::{LabelMark, MailAccount, Mark, MarkSource};
 /// - **A paste carries its source's label and mark** (ADR 0008), and nothing
 ///   more. A paste whose source was not recorded fails closed, marked as a
 ///   paste.
-/// - **Where no rule gives a label, the row fails closed**: private, in the
-///   `unclassified` category, which no party is cleared for unless the person
-///   names it, and marked.
+/// - **Where no rule gives a label, the row fails closed** (ADR 0019): private,
+///   in the `unclassified` category, which no party is cleared for unless the
+///   person names it, and marked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Origin {
     /// Text the person typed in trusted input.

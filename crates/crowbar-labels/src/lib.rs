@@ -25,8 +25,8 @@
 //! the person can do, and clearances, which the gate checks, are not in this
 //! crate.
 //!
-//! Decisions: ADR 0003, ADR 0008, ADR 0011, ADR 0016, and ADR 0017 in
-//! `docs/adr/`. Design: `docs/architecture/capability-model.md`, "Data,
+//! Decisions: ADR 0003, ADR 0008, ADR 0011, ADR 0016, ADR 0017, and ADR 0019
+//! in `docs/adr/`. Design: `docs/architecture/capability-model.md`, "Data,
 //! labels, and compartments". Scope: `docs/milestones/milestone-2.md`.
 
 mod compartment;
