@@ -59,6 +59,12 @@ pub struct State {
     pub windows: Vec<Managed>,
     pub next_window_id: u32,
     /// How many times the compositor took the confirm chord for itself.
+    pub active_workspace: u32,
+    /// The id of the window with the keyboard focus.
+    pub active_window: Option<u32>,
+    pub focus_counter: u64,
+    /// The compositor's end of the shell's control channel.
+    pub control: Option<UnixStream>,
     pub confirms_taken: u32,
     /// Keys whose press the compositor kept from every client.
     pub withheld_keys: HashSet<Keycode>,
@@ -141,6 +147,10 @@ impl State {
             outputs: Vec::new(),
             windows: Vec::new(),
             next_window_id: 0,
+            active_workspace: 1,
+            active_window: None,
+            focus_counter: 0,
+            control: None,
             confirms_taken: 0,
             withheld_keys: HashSet::new(),
         }
@@ -187,12 +197,14 @@ impl State {
 
     /// Opens the shell's connection. The compositor keeps one end and returns
     /// the other, which goes to the shell process and to nothing else.
-    pub fn connect_shell(&mut self) -> std::io::Result<UnixStream> {
-        let (ours, theirs) = UnixStream::pair()?;
+    pub fn connect_shell(&mut self) -> std::io::Result<ShellChannels> {
+        let (ours, wayland) = UnixStream::pair()?;
         self.display_handle
             .insert_client(ours, Arc::new(ClientState::new(Principal::Shell)))
             .map_err(std::io::Error::other)?;
-        Ok(theirs)
+        let (ours, control) = UnixStream::pair()?;
+        self.serve_control(ours)?;
+        Ok(ShellChannels { wayland, control })
     }
 
     /// Adds an output to the right of the existing ones. Every backend and
@@ -239,6 +251,15 @@ impl State {
                 .map(|(s, p)| (s, (p + location).to_f64()))
         })
     }
+}
+
+/// The shell's ends of its two sockets. Whoever holds them is the shell.
+pub struct ShellChannels {
+    /// A connected Wayland socket. The shell is the only client that sees
+    /// layer-shell.
+    pub wayland: UnixStream,
+    /// The control channel. See `control.rs`.
+    pub control: UnixStream,
 }
 
 /// Data associated with a wayland client that connects to State.

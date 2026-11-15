@@ -3,12 +3,15 @@
 #![allow(dead_code)]
 
 use std::{
+    io::{BufRead, BufReader, Write},
+    os::unix::net::UnixStream,
     path::PathBuf,
     sync::{Once, mpsc},
     thread::JoinHandle,
 };
 
 use crowbar_compositor::{State, probe};
+use serde_json::Value;
 use smithay::reexports::{
     calloop::{self, EventLoop},
     wayland_server::Display,
@@ -106,8 +109,48 @@ impl Compositor {
 
     /// The shell's client: the connection the compositor itself opened.
     pub fn shell_client(&self) -> probe::Client {
-        let stream = self.with(|state| state.connect_shell().unwrap());
-        probe::Client::new(probe::from_stream(stream).unwrap()).unwrap()
+        self.shell().0
+    }
+
+    /// The shell's client and its control channel.
+    pub fn shell(&self) -> (probe::Client, Control) {
+        let channels = self.with(|state| state.connect_shell().unwrap());
+        let client = probe::Client::new(probe::from_stream(channels.wayland).unwrap()).unwrap();
+        channels
+            .control
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let control = Control {
+            reader: BufReader::new(channels.control.try_clone().unwrap()),
+            writer: channels.control,
+        };
+        (client, control)
+    }
+}
+
+/// The shell's end of the control channel: one JSON object per line.
+pub struct Control {
+    reader: BufReader<UnixStream>,
+    writer: UnixStream,
+}
+
+impl Control {
+    /// Reads the next line the compositor sent.
+    pub fn read(&mut self) -> Value {
+        let mut line = String::new();
+        self.reader.read_line(&mut line).expect("the compositor sent nothing");
+        serde_json::from_str(&line).unwrap_or_else(|e| panic!("not JSON: {line:?}: {e}"))
+    }
+
+    /// Sends one line and returns the reply to it, skipping events.
+    pub fn request(&mut self, line: &str) -> Value {
+        writeln!(self.writer, "{line}").unwrap();
+        loop {
+            let value = self.read();
+            if value.get("reply").is_some() {
+                return value;
+            }
+        }
     }
 }
 

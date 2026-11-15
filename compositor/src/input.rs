@@ -47,6 +47,7 @@ impl State {
         );
         if taken.is_some() && state == KeyState::Pressed {
             self.confirms_taken += 1;
+            self.send_event(crate::control::Event::Confirm);
             tracing::info!("confirm chord taken by the compositor");
         }
     }

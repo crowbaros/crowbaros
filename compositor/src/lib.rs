@@ -4,6 +4,7 @@
 //! Throwaway code: it exists to test ADR 0015, not to ship.
 #![allow(irrefutable_let_patterns)]
 
+pub mod control;
 pub mod grabs;
 pub mod handlers;
 pub mod input;
