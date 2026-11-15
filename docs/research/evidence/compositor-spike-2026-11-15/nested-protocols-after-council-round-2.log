@@ -1,0 +1,74 @@
+# Nested protocol checks, 2026-11-15T08:31:02Z
+host: Linux 7.2.15-2-omarchy, session unknown on wayland-1
+compositor: /home/jmartin/Code/crowbaros/.lab/void-graphical/target/release/crowbar-compositor  sha256 0b92eeb8d46b7540c1fbb0e62b2d6e882bfe783866e490090c4416ae7cf3fa55
+wayland-info: /home/jmartin/.cache/crowbaros/wayland-utils/root/usr/bin/wayland-info
+
+== the shell (socket handed over by the compositor): 13 globals
+   wl_compositor 6
+   wl_data_device_manager 3
+   wl_output 4
+   wl_seat 9
+   wl_shm 2
+   wl_subcompositor 1
+   wp_fractional_scale_manager_v1 1
+   wp_security_context_manager_v1 1
+   wp_viewporter 1
+   xdg_wm_base 7
+   zwlr_layer_shell_v1 5
+   zwp_linux_dmabuf_v1 6
+   zxdg_output_manager_v1 3
+
+== an ordinary client (public socket wayland-2): 12 globals
+   wl_compositor 6
+   wl_data_device_manager 3
+   wl_output 4
+   wl_seat 9
+   wl_shm 2
+   wl_subcompositor 1
+   wp_fractional_scale_manager_v1 1
+   wp_security_context_manager_v1 1
+   wp_viewporter 1
+   xdg_wm_base 7
+   zwp_linux_dmabuf_v1 6
+   zxdg_output_manager_v1 3
+
+== a client started through security-context: 10 globals
+   wl_compositor 6
+   wl_output 4
+   wl_seat 9
+   wl_shm 2
+   wl_subcompositor 1
+   wp_fractional_scale_manager_v1 1
+   wp_viewporter 1
+   xdg_wm_base 7
+   zwp_linux_dmabuf_v1 6
+   zxdg_output_manager_v1 3
+
+== forbidden globals
+   global                                                   shell     ordinary  security-context
+   zwp_virtual_keyboard_manager_v1                          absent    absent    absent   
+   zwlr_virtual_pointer_manager_v1                          absent    absent    absent   
+   zwp_input_method_manager_v2                              absent    absent    absent   
+   zwp_input_method_v1                                      absent    absent    absent   
+   zwlr_data_control_manager_v1                             absent    absent    absent   
+   ext_data_control_manager_v1                              absent    absent    absent   
+   ext_image_copy_capture_manager_v1                        absent    absent    absent   
+   ext_output_image_capture_source_manager_v1               absent    absent    absent   
+   ext_foreign_toplevel_image_capture_source_manager_v1     absent    absent    absent   
+   zwlr_screencopy_manager_v1                               absent    absent    absent   
+   zwlr_export_dmabuf_manager_v1                            absent    absent    absent   
+   zwlr_layer_shell_v1                                      OFFERED   absent    absent   
+
+== the whole list each client sees, against the table
+   the shell: exactly the table's list
+   an ordinary client: exactly the table's list
+   a security-context client: exactly the table's list
+
+== an ordinary client asks for a layer surface
+   crowbar-probe: zwlr_layer_shell_v1 is not offered to this client
+
+== the shell asks for a layer surface
+   layer surface created, size (1896, 60)
+
+RESULT: pass
+log: /home/jmartin/Code/crowbaros/.lab/compositor/nested-20261115T083102Z.log

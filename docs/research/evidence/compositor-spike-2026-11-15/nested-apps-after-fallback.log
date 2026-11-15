@@ -1,0 +1,40 @@
+# The GPUI apps under the nested compositor, 2026-11-15T08:00:32Z
+host: Linux 7.2.15-2-omarchy
+gpu: NVIDIA GeForce RTX 4090, 615.78.08
+compositor: sha256 3ad4637587371adad2792937d3631c0f3d4d908b56b34c895cc7d847f36016a3
+shell: sha256 6359b0b619206f2890eb65f8837b617e3c5d1b7779ef09aeabe2e3e7d2988adb
+studio: sha256 5fde6f26d4d2acb79cc7a1e3e861b614cca742616f8ee20e867fc84f03659631
+capture 1-start: 1896x1030
+starting a second host window, which makes the host resize ours
+capture 2-resized: 941x1030
+capture 3-restored: 1896x1030
+
+== GPU the apps chose
+         2 [2026-11-15T08:00:33Z INFO  blade_graphics::hal::init] Adapter: "NVIDIA GeForce RTX 4090"
+
+== room the shell's layer surfaces left for windows (the bar reserves 44, the dock 96)
+   2026-11-15T08:00:33.475410Z 1896x986 at 0,44 output=winit
+   2026-11-15T08:00:33.486991Z 1896x890 at 0,44 output=winit
+
+== commits per surface, every five seconds
+   2026-11-15T08:00:38.064330Z layer crowbaros-bar: 280, layer crowbaros-dock: 279, layer crowbaros-wallpaper: 280, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 337 frames=296
+   2026-11-15T08:00:43.072771Z layer crowbaros-bar: 580, layer crowbaros-dock: 579, layer crowbaros-wallpaper: 580, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 637 frames=596
+   2026-11-15T08:00:48.080958Z layer crowbaros-bar: 882, layer crowbaros-dock: 880, layer crowbaros-wallpaper: 882, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 938 frames=897
+   2026-11-15T08:00:53.093848Z layer crowbaros-bar: 1182, layer crowbaros-dock: 1179, layer crowbaros-wallpaper: 1182, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 1237 frames=1196
+   2026-11-15T08:00:58.110386Z layer crowbaros-bar: 1483, layer crowbaros-dock: 1480, layer crowbaros-wallpaper: 1483, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 1538 frames=1497
+   2026-11-15T08:01:03.127051Z layer crowbaros-bar: 1785, layer crowbaros-dock: 1782, layer crowbaros-wallpaper: 1785, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 1839 frames=1798
+   2026-11-15T08:01:08.143679Z layer crowbaros-bar: 2086, layer crowbaros-dock: 2083, layer crowbaros-wallpaper: 2086, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 2140 frames=2099
+   2026-11-15T08:01:13.144090Z layer crowbaros-bar: 2386, layer crowbaros-dock: 2383, layer crowbaros-wallpaper: 2386, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 2440 frames=2399
+   2026-11-15T08:01:18.144143Z layer crowbaros-bar: 2686, layer crowbaros-dock: 2683, layer crowbaros-wallpaper: 2686, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 2740 frames=2699
+   2026-11-15T08:01:23.144306Z layer crowbaros-bar: 2986, layer crowbaros-dock: 2983, layer crowbaros-wallpaper: 2986, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 3040 frames=2999
+   2026-11-15T08:01:28.160457Z layer crowbaros-bar: 3287, layer crowbaros-dock: 3284, layer crowbaros-wallpaper: 3287, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 3341 frames=3300
+   2026-11-15T08:01:33.177163Z layer crowbaros-bar: 3588, layer crowbaros-dock: 3585, layer crowbaros-wallpaper: 3588, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 3642 frames=3601
+
+swapchain errors logged by the apps ('out of date', 'Acquire failed'): 0
+layer crowbaros-bar: 12 intervals, 0 without a new commit
+layer crowbaros-dock: 12 intervals, 0 without a new commit
+layer crowbaros-wallpaper: 12 intervals, 0 without a new commit
+com.crowbaros.StudioSettings: 12 intervals, 0 without a new commit
+
+RESULT: pass
+log: /home/jmartin/Code/crowbaros/.lab/compositor/nested-apps-20261115T080032Z.log

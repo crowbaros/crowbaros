@@ -36,4 +36,4 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Lab scripts compile
-        run: python3 -m py_compile lab/void/void_lab.py lab/fedora/*.py
+        run: python3 -m py_compile lab/void/*.py lab/fedora/*.py

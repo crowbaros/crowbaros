@@ -23,8 +23,11 @@ keeps their interface work and replaces their system wiring.
 
 CrowbarOS will have its own compositor, built on Smithay
 ([ADR 0015](../docs/adr/0015-our-own-compositor-on-smithay.md)). Keep compositor
-calls behind the existing `session.rs` adapters, which will move from Hyprland
-to an interface that compositor defines.
+calls behind the existing `session.rs` adapters. The shell has two: the control
+channel the compositor spike defines, and the Hyprland socket, which it uses
+when no compositor hands it a control channel. Studio Settings' adapter still
+calls `hyprctl`. The
+[spike record](../docs/research/compositor-spike-2026-11-15.md) has the details.
 
 ## Build and run
 
