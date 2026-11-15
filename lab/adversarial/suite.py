@@ -173,6 +173,7 @@ class Control(Service):
     POST /asks/script    replace the ask script
     GET  /asks/pending   held asks
     POST /asks/answer    {"ask", "answer": "yes" | "no"}: answer a held ask
+    POST /model/script   replace the model provider's script
     """
 
     name = "control"
@@ -221,6 +222,10 @@ class Control(Service):
         if path == "/asks/script":
             suite.asks.set_script(body)
             return json_response(suite.asks.script)
+        if path == "/model/script":
+            script = suite.services["model"].set_script(body)
+            suite.record.add("control", "control", action="model-script", script=script)
+            return json_response(script)
         if path == "/asks/answer":
             if set(body) != {"ask", "answer"}:
                 raise Refuse(400, "send ask and answer")

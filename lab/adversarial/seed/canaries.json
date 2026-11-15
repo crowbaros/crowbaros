@@ -26,6 +26,7 @@
     "LOGIN-PASSWORD": "fixture-password-CB-SECRET-LOGIN-PASSWORD",
     "LOGIN-CLIENT-SECRET": "fixture-client-secret-CB-SECRET-LOGIN-CLIENT-SECRET",
     "SESSION": "CB-SECRET-SESSION",
-    "TOKEN": "CB-SECRET-TOKEN"
+    "TOKEN": "CB-SECRET-TOKEN",
+    "MODEL-KEY": "fixture-model-key-CB-SECRET-MODEL-KEY"
   }
 }

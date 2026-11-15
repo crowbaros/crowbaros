@@ -1,5 +1,5 @@
 """The fixture parties: mail, search, a public site, a hostile site, a site with
-a login, and a payment service. Every one is synthetic and resettable: reset()
+a login, a payment service, and the model provider. Every one is synthetic and resettable: reset()
 reloads its seed, and nothing it holds survives a reset.
 
 A party records an effect for every change of state, through Response.effect.
@@ -10,6 +10,7 @@ from datetime import timedelta
 import copy
 import html
 import re
+import urllib.parse
 
 from fixtures import (Idempotency, Refuse, Response, Service, body_field, canonical,
                       html_response, iso, json_response, load_seed, parse_iso)
@@ -238,7 +239,10 @@ class Hostile(Site):
                 response = self.error(404, "Not found.")
         if request.query or request.body:
             response.effect("hostile.received", method=request.method, path=request.path,
-                            query=request.query, body=body_field(request.body))
+                            query=request.query, body=body_field(request.body),
+                            markers=self.canaries.found(
+                                urllib.parse.unquote_plus(request.query) + "\n"
+                                + request.body.decode("utf-8", "replace")))
         return response
 
 
@@ -424,4 +428,110 @@ class Payments(Service):
         return json_response(payment, 201).effect("payments.payment-created", **payment)
 
 
-PARTIES = (Mail, Search, Public, Hostile, Login, Payments)
+class Model(Service):
+    """A stand-in for the Agent's model provider, shaped like the Anthropic
+    Messages API: POST /v1/messages with an x-api-key. It never streams, so
+    every reply is fixed. Every request is an effect that lists the canary
+    markers found in it: the evidence that a planted string, a private value,
+    or a secret did or did not reach a model request.
+
+    Replies come from a script, replaced through the control service:
+
+        {"default": {"text": "..."}, "rules": [
+          {"match": {"contains": "...", "model": "..."}, "times": 1,
+           "reply": {"text": "..."} or {"tool_use": {"name": "...", "input": {...}}}}]}
+    """
+
+    name = "model"
+    kind = "model provider"
+
+    def reset(self):
+        seed = load_seed("model", self.canaries)
+        self.title = seed["name"]
+        self.key = seed["key"]
+        self.count = 0
+        self.set_script({"default": seed["default"], "rules": seed["rules"]})
+
+    def set_script(self, spec):
+        require(isinstance(spec, dict) and not set(spec) - {"default", "rules"}, 400,
+                "a model script has default and rules only")
+        default = spec.get("default", {"text": "Fixture reply."})
+        rules = spec.get("rules", [])
+        require(isinstance(rules, list), 400, "rules must be a list")
+        self.check_reply(default)
+        for rule in rules:
+            require(isinstance(rule, dict) and not set(rule) - {"match", "reply", "times"},
+                    400, "a rule has match, reply, and times only")
+            match = rule.get("match", {})
+            require(isinstance(match, dict) and not set(match) - {"contains", "model"}
+                    and all(isinstance(v, str) for v in match.values()),
+                    400, "match takes contains and model, each a string")
+            self.check_reply(rule.get("reply"))
+            times = rule.get("times")
+            require(times is None or (isinstance(times, int) and times >= 1), 400,
+                    "times must be 1 or more")
+        self.script = self.canaries.expand({"default": default, "rules": rules})
+        self.used = [0] * len(rules)
+        return self.script
+
+    @staticmethod
+    def check_reply(reply):
+        ok = isinstance(reply, dict) and len(reply) == 1 and (
+            isinstance(reply.get("text"), str) or (
+                isinstance(reply.get("tool_use"), dict)
+                and isinstance(reply["tool_use"].get("name"), str)
+                and isinstance(reply["tool_use"].get("input"), dict)))
+        require(ok, 400, 'a reply is {"text": ...} or {"tool_use": {"name", "input"}}')
+
+    def error(self, status, message):
+        kinds = {400: "invalid_request_error", 401: "authentication_error",
+                 404: "not_found_error", 405: "invalid_request_error"}
+        return json_response({"type": "error", "error": {
+            "type": kinds.get(status, "api_error"), "message": message}}, status)
+
+    def handle(self, request):
+        require(request.method == "POST" and request.path == "/v1/messages", 404,
+                f"no route {request.method} {request.path}")
+        require(request.header("x-api-key") == self.key, 401, "invalid x-api-key")
+        value = request.json()
+        require(isinstance(value.get("model"), str), 400, "model: a string is required")
+        tokens = value.get("max_tokens")
+        require(isinstance(tokens, int) and not isinstance(tokens, bool) and tokens > 0,
+                400, "max_tokens: a whole number above 0 is required")
+        require(isinstance(value.get("messages"), list) and value["messages"], 400,
+                "messages: a non-empty list is required")
+        require(not value.get("stream"), 400, "stream: the fixture does not stream")
+        text = canonical(value)
+        rule, reply = "default", self.script["default"]
+        for index, candidate in enumerate(self.script["rules"]):
+            match = candidate.get("match", {})
+            if "contains" in match and match["contains"] not in text:
+                continue
+            if "model" in match and match["model"] != value["model"]:
+                continue
+            if candidate.get("times") is not None and self.used[index] >= candidate["times"]:
+                continue
+            self.used[index] += 1
+            rule, reply = index, candidate["reply"]
+            break
+        self.count += 1
+        if "text" in reply:
+            content = [{"type": "text", "text": reply["text"]}]
+            stop = "end_turn"
+        else:
+            content = [{"type": "tool_use", "id": f"toolu_fixture_{self.count:04d}",
+                        "name": reply["tool_use"]["name"], "input": reply["tool_use"]["input"]}]
+            stop = "tool_use"
+        message = {"id": f"msg_fixture_{self.count:04d}", "type": "message",
+                   "role": "assistant", "model": value["model"], "content": content,
+                   "stop_reason": stop, "stop_sequence": None,
+                   # Rough, deterministic counts: four characters a token.
+                   "usage": {"input_tokens": len(text) // 4 + 1,
+                             "output_tokens": len(canonical(content)) // 4 + 1}}
+        return json_response(message, headers=[
+            ("request-id", f"req_fixture_{self.count:04d}")]).effect(
+            "model.request-received", message=message["id"], model=value["model"],
+            rule=rule, markers=self.canaries.found(request.body))
+
+
+PARTIES = (Mail, Search, Public, Hostile, Login, Payments, Model)

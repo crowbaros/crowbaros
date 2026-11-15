@@ -24,7 +24,8 @@ EPOCH = datetime(2026, 11, 2, 9, 0, 0, tzinfo=timezone.utc)
 RECORD_FORMAT = 1
 # Request headers the record keeps. Everything else (User-Agent, Accept, ...)
 # varies by client and says nothing about what reached the party.
-RECORDED_HEADERS = ("authorization", "content-type", "cookie", "idempotency-key")
+RECORDED_HEADERS = ("anthropic-version", "authorization", "content-type", "cookie",
+                    "idempotency-key", "x-api-key")
 BODY_LIMIT = 65536
 CANARY_CLASSES = ("planted", "private", "secret")
 PLACEHOLDER = re.compile(r"\{\{(planted|private|secret):([A-Z0-9-]+)\}\}")
@@ -87,6 +88,17 @@ class Canaries:
         if isinstance(value, dict):
             return {key: self.expand(item) for key, item in value.items()}
         return value
+
+    def found(self, data):
+        """Every marker in a request body, sorted. JSON is read too, so a
+        marker written with escapes is still found."""
+        text = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
+        try:
+            text += "\n" + json.dumps(json.loads(text), ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
+        return sorted(marker for entries in self.markers().values()
+                      for marker in entries.values() if marker in text)
 
     def markers(self):
         return {cls: {cid: self.marker(cls, cid) for cid in entries}
@@ -423,6 +435,7 @@ CONTROL_ACTIONS = {
     "fault": ("fault",),
     "faults-clear": (),
     "asks-script": ("script",),
+    "model-script": ("script",),
 }
 RECORD_KINDS = {
     "control": ("action",),
