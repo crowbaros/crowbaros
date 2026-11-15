@@ -10,7 +10,22 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::mark::LabelMark;
 use crate::origin::Origin;
 
-/// The label and mark of each stored object, by the object's name.
+/// The id of a stored object, as the Data layer names it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ObjectId(String);
+
+impl ObjectId {
+    pub fn new(id: &str) -> Self {
+        ObjectId(id.to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The label and mark of each stored object, by the object's id.
 ///
 /// Marks persist in storage (ADR 0008): an object keeps the label and mark of
 /// whatever wrote it, and a later write joins with them, so a write can add to
@@ -23,13 +38,13 @@ use crate::origin::Origin;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct LabelStore {
-    records: BTreeMap<String, LabelMark>,
+    records: BTreeMap<ObjectId, LabelMark>,
 }
 
 impl LabelStore {
     /// Records a write to `object` by something at `writer`'s label and mark.
-    pub fn write(&mut self, object: &str, writer: &LabelMark) {
-        match self.records.entry(object.to_string()) {
+    pub fn write(&mut self, object: &ObjectId, writer: &LabelMark) {
+        match self.records.entry(object.clone()) {
             Entry::Vacant(entry) => {
                 entry.insert(writer.clone());
             }
@@ -42,7 +57,7 @@ impl LabelStore {
 
     /// Where reading `object` comes from: a stored result with its record, or
     /// an unknown origin when there is no record.
-    pub fn origin_of(&self, object: &str) -> Origin {
+    pub fn origin_of(&self, object: &ObjectId) -> Origin {
         match self.records.get(object) {
             Some(record) => Origin::Stored(record.clone()),
             None => Origin::Unknown,
@@ -67,7 +82,7 @@ impl<'de> Visitor<'de> for RecordsVisitor {
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<LabelStore, A::Error> {
         let mut records = BTreeMap::new();
-        while let Some((object, record)) = map.next_entry::<String, LabelMark>()? {
+        while let Some((object, record)) = map.next_entry::<ObjectId, LabelMark>()? {
             if records.contains_key(&object) {
                 return Err(serde::de::Error::custom(format!(
                     "the object {object:?} is recorded twice"

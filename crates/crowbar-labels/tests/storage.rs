@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use crowbar_labels::{Category, Compartment, Fetch, Label, LabelStore, MarkSource, Origin};
+use crowbar_labels::{Category, Compartment, Fetch, Label, LabelStore, MarkSource, ObjectId, Origin};
 
 mod common;
 use common::{bank, me, news, sources};
@@ -51,9 +51,9 @@ fn a_write_joins_with_what_is_already_stored() {
     for (name, writers, label, marks) in cases {
         let mut store = LabelStore::default();
         for writer in writers {
-            store.write("notes/today.md", writer);
+            store.write(&ObjectId::new("notes/today.md"), writer);
         }
-        let stored = store.origin_of("notes/today.md").label_mark();
+        let stored = store.origin_of(&ObjectId::new("notes/today.md")).label_mark();
         assert_eq!(stored.label(), &label, "label after {name}");
         assert_eq!(sources(&stored), marks, "mark after {name}");
     }
@@ -62,7 +62,7 @@ fn a_write_joins_with_what_is_already_stored() {
 #[test]
 fn an_object_with_no_record_falls_to_the_unknown_row() {
     let store = LabelStore::default();
-    assert_eq!(store.origin_of("never/written"), Origin::Unknown);
+    assert_eq!(store.origin_of(&ObjectId::new("never/written")), Origin::Unknown);
 }
 
 #[test]
@@ -84,7 +84,7 @@ fn labels_and_marks_survive_saving_and_loading() {
         ),
     ];
     for (object, label_mark) in &records {
-        store.write(object, label_mark);
+        store.write(&ObjectId::new(object), label_mark);
     }
 
     let saved = serde_json::to_string(&store).unwrap();
@@ -92,7 +92,7 @@ fn labels_and_marks_survive_saving_and_loading() {
     assert_eq!(loaded, store);
     for (object, label_mark) in &records {
         assert_eq!(
-            &loaded.origin_of(object).label_mark(),
+            &loaded.origin_of(&ObjectId::new(object)).label_mark(),
             label_mark,
             "{object} after loading"
         );
@@ -134,7 +134,7 @@ fn a_record_that_would_load_lower_than_it_was_written_is_refused() {
     // The written form, for reference: it loads.
     let ok = r#"{"a": {"label": {"private": ["messages", {"site": "bank.example"}]}, "mark": [{"mail": "me@mail.example"}, "paste"]}}"#;
     let loaded: LabelStore = serde_json::from_str(ok).unwrap();
-    assert!(loaded.origin_of("a").label_mark().mark().is_marked());
+    assert!(loaded.origin_of(&ObjectId::new("a")).label_mark().mark().is_marked());
 }
 
 #[test]
@@ -148,13 +148,15 @@ fn findings_a_marked_task_stored_mark_a_later_task_that_reads_them() {
     let findings = research.emit("findings");
 
     let mut store = LabelStore::default();
-    store.write("memory/findings", findings.label_mark());
+    store.write(&ObjectId::new("memory/findings"), findings.label_mark());
     let saved = serde_json::to_string(&store).unwrap();
     drop(research);
 
     let store: LabelStore = serde_json::from_str(&saved).unwrap();
     let mut later = Compartment::fresh();
     later.read(&Origin::Typed.label_mark()).unwrap();
-    later.read(&store.origin_of("memory/findings").label_mark()).unwrap();
+    later
+        .read(&store.origin_of(&ObjectId::new("memory/findings")).label_mark())
+        .unwrap();
     assert_eq!(sources(later.label_mark()), BTreeSet::from([MarkSource::Site(news())]));
 }
