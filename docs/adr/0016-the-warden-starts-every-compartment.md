@@ -9,7 +9,7 @@ The [compositor spike](../research/compositor-spike-2026-11-15.md) identified a 
 
 - **A compartment is the unit that is isolated.** Each compartment gets a kernel user ID of its own and a sandbox of its own when it starts: namespaces, Landlock, seccomp, and a cgroup. No two live compartments share either, even when they belong to one principal. A live Tool and its Preview are one principal in two compartments, and the Preview's unconfirmed code cannot trace or signal the live build.
 - **The sandbox is the main control and the user ID is the second.** The sandbox decides what a compartment can see ([ADR 0004](0004-capability-safe-tools.md)). The user ID makes the kernel's own checks on tracing, signals, process memory, and socket permissions refuse one compartment reaching another, so a mistake in sandbox setup does not expose everything.
-- **A compartment has two names.** The **principal ID** is stable, and it is what authority binds to. The **compartment ID** is new at each start. The broker and the compositor know a compartment by both.
+- **A compartment has two names.** The **principal ID** is stable, and it is what authority binds to. The **compartment ID** is new at each start and is never used twice, so a ledger entry names one start. The broker mints both, and the broker, the Warden, and the compositor know a compartment by them. The kernel user ID is the Warden's means of enforcing and never leaves it.
 - **A compartment's user ID is temporary.** It comes from a range Base reserves and is not used again until the machine restarts. It owns nothing that outlives the compartment. Data on disk belongs to a Base storage user, and a compartment sees the view it was given through an ID-mapped mount.
 - **No process runs as the person.** There is no login account. A terminal the owner opens is a compartment with a view. Owner authority is root, taken deliberately, outside every compartment.
 
@@ -22,6 +22,8 @@ The [compositor spike](../research/compositor-spike-2026-11-15.md) identified a 
 
 - **The compositor, the shell, the broker, and the Warden are four runit services.** The first three each run as a system user of their own. runit starts and restarts them, and supervises nothing else: a compartment is not a runit service. runit does not need to give limits for each principal, which was an open question in the vision.
 - **None of them starts a principal's process except the Warden.** The compositor starts no process at all.
+- **A fifth trusted part follows the same rules.** The gate, the vault, the runner, and the plan interpreter may live inside the broker. One that becomes a process of its own gets a system user, a runit service, and a path socket with the check below.
+- **Everything else is a compartment.** The Agent's harness runs in one, with a broker connection like any other. The WASM runtime runs inside the compartment of the Tool it runs.
 - **They find each other by path sockets that no sandbox contains.** The sockets are in a Base runtime directory. Each is in a directory that only its two ends can enter, and the listener checks the peer's user ID as the kernel reports it. Any part can restart and reconnect, in any order. The spike's socket pair for the shell is gone, and a control socket of the shell's own gets the same check or is removed.
 
 ## Wayland connections
@@ -38,6 +40,23 @@ The [compositor spike](../research/compositor-spike-2026-11-15.md) identified a 
 - **A Wayland listener only when the broker orders one.** A Tool gets none, because the shell draws a Tool's UI from its description. Installed software, a terminal, and a task browser context that is shown get one. Most compartments are not Wayland clients.
 - **The GPU render node is a need like any other.** It is absent from a sandbox unless the principal's stated needs include it, and the person sees it among the needs. Without it a client draws through shared memory. A render node lets a program call the GPU driver directly, which is a large part of the kernel to expose.
 - **What a program expects to share runs inside its own sandbox.** A D-Bus session bus, an accessibility bus, or an X server that a program needs is started in that compartment, under its user ID, and reaches nothing outside it. Base has no session bus and no shared X server. An X11 app's bridge reaches the compositor through its compartment's listener, so it has that compartment's identity and no more. The only things that cross a sandbox boundary are the broker connection and the Wayland listener.
+
+## The seat and tracing
+
+- **The `_seatd` group has one member, the compositor's user.** The compositor is in neither `input` nor `video`, and gets its devices from seatd. It starts nothing, so nothing inherits the group. The spike's record said to put the person in `_seatd`. This replaces that.
+- **Tracing is refused by the user ID, the PID namespace, and seccomp.** `ptrace_scope` is pinned at 1 as a third layer, and the design does not rest on it. A higher value adds nothing between compartments, whose user IDs already differ, and it would stop a debugger inside a developer's own compartment. Tracing inside one compartment is a stated need that the person sees, like the render node and a user namespace.
+
+## What Base sets and checks
+
+Base sets each of these. A check at boot verifies them, and a generation that fails one is not healthy.
+
+- Every compartment has `no_new_privs` and its own PID, IPC, network, and mount namespaces.
+- seccomp removes the tracing and process-memory calls, unless that compartment's stated needs include tracing inside it.
+- No sandbox's `/dev` holds an input device or `uinput`. `/dev/uinput` can be opened by root only, and the `input` group has no members.
+- `_seatd` has its one member.
+- `ptrace_scope` is 1 or higher.
+- No compartment can create a user namespace unless its stated needs include one. A new user namespace gives a process capabilities inside it, and many kernel privilege bugs start there. A browser's own sandbox is the usual reason to need one.
+- No session bus, `/tmp`, or runtime directory is shared between compartments.
 
 ## A wide compartment
 
@@ -66,23 +85,6 @@ There is one Warden, and it runs as root in both places. Milestone 2 still needs
 | Base only | The system users and runit services of the trusted parts, the rules for the seat and the devices, the check at boot, and the Wayland connections |
 
 Milestone 2 runs the Warden with `sudo` in CI, and inside the Void lab guest on a developer's machine, so nobody needs root on their own desktop.
-
-## The seat and tracing
-
-- **The `_seatd` group has one member, the compositor's user.** The compositor is in neither `input` nor `video`, and gets its devices from seatd. It starts nothing, so nothing inherits the group. The spike's record said to put the person in `_seatd`. This replaces that.
-- **Tracing is refused by the user ID, the PID namespace, and seccomp.** `ptrace_scope` is pinned at 1 as a third layer, and the design does not rest on it. A higher value adds nothing between compartments, whose user IDs already differ, and it would stop a debugger inside a developer's own compartment. The Warden can allow tracing inside one compartment.
-
-## What Base sets and checks
-
-Base sets each of these. A check at boot verifies them, and a generation that fails one is not healthy.
-
-- Every compartment has `no_new_privs` and its own PID, IPC, network, and mount namespaces.
-- seccomp removes the tracing and process-memory calls, unless the Warden allowed tracing inside that compartment.
-- No sandbox's `/dev` holds an input device or `uinput`. `/dev/uinput` can be opened by root only, and the `input` group has no members.
-- `_seatd` has its one member.
-- `ptrace_scope` is 1 or higher.
-- No compartment can create a user namespace unless its stated needs include one. A new user namespace gives a process capabilities inside it, and many kernel privilege bugs start there. A browser's own sandbox is the usual reason to need one.
-- No session bus, `/tmp`, or runtime directory is shared between compartments.
 
 ## Attacks the tests must refuse
 
@@ -124,3 +126,12 @@ Each of these is a test, and each must be refused. The first ten run on stock Li
 - **Owner authority for an agent, as the way to open everything.** Rejected: nothing the system promises holds after it, including that a "yes" came from the person. A wide compartment gives an agent task the person's Data without giving it the trusted parts.
 - **A standing grant that makes a task wide at every start.** Rejected: it saves a touch of the key, and one bad run then reaches everything with the person not there.
 - **A runit service for each compartment, with `chpst` limits.** Rejected: those limits are for each process, with no budget for the group and no way to end a process that forked twice.
+
+## Consequences
+
+- The production compositor has no flag and no build option that opens a public socket. Its tests register through the channel the Warden uses, with a stand-in for the Warden. The spike's harness and probe client carry over ([issue 49](https://github.com/crowbaros/crowbaros/issues/49)).
+- The Alpha desktop lands before the Warden does ([issue 136](https://github.com/crowbaros/crowbaros/issues/136)). Until then it meets three rules. The compositor runs as its own user and is the only member of `_seatd`. The shell is a runit service under its own user. Apps run as a third user, started by a small root stand-in for the Warden, so they inherit nothing from the shell or the compositor. The spike compositor keeps its public socket until issue 49 replaces it, and the session's record says that one app can still reach another.
+- There is no login. How the person unlocks the machine belongs to the session lock and to first run (issues [87](https://github.com/crowbaros/crowbaros/issues/87) and [100](https://github.com/crowbaros/crowbaros/issues/100)).
+- Software that expects a desktop's shared services finds none. Whether portals and assistive software are offered, and how, stays with issues [63](https://github.com/crowbaros/crowbaros/issues/63) and [112](https://github.com/crowbaros/crowbaros/issues/112).
+- The check at boot is part of a generation's health ([issue 76](https://github.com/crowbaros/crowbaros/issues/76)).
+- The Warden is new code that runs as root. It is in the trusted base, and it gets adversarial tests like the gate does.
