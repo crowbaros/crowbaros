@@ -1,4 +1,4 @@
-//! The origin table is written twice: as a table in the module docs of
+//! The origin table is written twice: as a table in the docs of `Origin`, in
 //! `src/origin.rs`, and as code. This keeps the two the same.
 
 use crowbar_labels::{AdmittedSet, FileOrigin, MailAccount, Origin, Site};
@@ -9,7 +9,7 @@ const SOURCE: &str = include_str!("../src/origin.rs");
 fn documented_rows() -> Vec<[String; 3]> {
     SOURCE
         .lines()
-        .filter_map(|line| line.strip_prefix("//! |"))
+        .filter_map(|line| line.strip_prefix("/// |"))
         .skip(2) // the header and the separator
         .map(|row| {
             let cells: Vec<String> = row

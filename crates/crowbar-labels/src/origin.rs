@@ -1,53 +1,51 @@
-//! The origin table: the rules that give every object its label and mark from
-//! where it came from.
-//!
-//! The broker states an object's origin, and the table gives its label and mark.
-//! No model takes part. The table below is the rule; [`Origin::label_mark`] is
-//! the same rule as code, and a test keeps the two the same. Where a row uses an
-//! example, `bank.example` is a site the person is logged in to, `news.example`
-//! is a site they are not, and `me@mail.example` is one of their mail accounts.
-//!
-//! | Origin | Label | Mark |
-//! | --- | --- | --- |
-//! | Text the person typed | `personal` | `none` |
-//! | Text a fixed template produced | `public` | `none` |
-//! | Mail in `me@mail.example` | `private: messages` | `marked: mail me@mail.example` |
-//! | A page from `news.example` | `public` | `marked: site news.example` |
-//! | A page from `bank.example`, under a login | `private: site bank.example` | `marked: site bank.example` |
-//! | A file downloaded from `news.example` | `public` | `marked: site news.example` |
-//! | A file saved from an attachment in `me@mail.example` | `private: messages` | `marked: mail me@mail.example` |
-//! | A file from outside the fleet, by any other way | `private: unclassified` | `marked: outside` |
-//! | The Base package snapshot | `public` | `none` |
-//! | The dependency set for build tasks | `public` | `none` |
-//! | A paste of a note the person typed | `personal` | `marked: paste` |
-//! | A paste from a page of `bank.example`, under a login | `private: site bank.example` | `marked: site bank.example, paste` |
-//! | A paste whose source was not recorded | `private: unclassified` | `marked: paste` |
-//! | A stored result | as it was stored | as it was stored |
-//! | Anything else | `private: unclassified` | `marked: unknown` |
-//!
-//! The rules behind the rows:
-//!
-//! - **The person's own words are personal and unmarked** (ADR 0008). Strings
-//!   a fixed template produced are the OS's words, and are public.
-//! - **Open input marks** (ADR 0011): web pages, mail, files from outside, and
-//!   what the person pastes. The mark names its source.
-//! - **Admitted input does not mark** (ADR 0011). Only the two sets ADR 0011
-//!   names are admitted. Whether a catalog snapshot is admitted is undecided
-//!   (ADR 0017), so it is not a row.
-//! - **Messages are private by default.** A page fetched under a login is
-//!   private to that site (ADR 0008). A web site's default is public.
-//! - **A file takes the row of where its content came from.** A file written
-//!   inside the fleet is a stored result.
-//! - **A paste carries its source's label and mark** (ADR 0008), and is
-//!   marked as a paste.
-//! - **Where no rule gives a label, the row fails closed**: private, in the
-//!   `unclassified` category, which no party is cleared for unless the person
-//!   names it, and marked.
+//! The origin table. The rules are written out on [`Origin`].
 
 use crate::label::{Category, Label, Site};
 use crate::mark::{LabelMark, MailAccount, Mark, MarkSource};
 
 /// Where an object came from, as the broker states it.
+///
+/// The origin table gives each origin its label and mark. No model takes part. The table below is the rule; [`Origin::label_mark`] is
+/// the same rule as code, and a test keeps the two the same. Where a row uses an
+/// example, `bank.example` is a site the person is logged in to, `news.example`
+/// is a site they are not, and `me@mail.example` is one of their mail accounts.
+///
+/// | Origin | Label | Mark |
+/// | --- | --- | --- |
+/// | Text the person typed | `personal` | `none` |
+/// | Text a fixed template produced | `public` | `none` |
+/// | Mail in `me@mail.example` | `private: messages` | `marked: mail me@mail.example` |
+/// | A page from `news.example` | `public` | `marked: site news.example` |
+/// | A page from `bank.example`, under a login | `private: site bank.example` | `marked: site bank.example` |
+/// | A file downloaded from `news.example` | `public` | `marked: site news.example` |
+/// | A file saved from an attachment in `me@mail.example` | `private: messages` | `marked: mail me@mail.example` |
+/// | A file from outside the fleet, by any other way | `private: unclassified` | `marked: outside` |
+/// | The Base package snapshot | `public` | `none` |
+/// | The dependency set for build tasks | `public` | `none` |
+/// | A paste of a note the person typed | `personal` | `marked: paste` |
+/// | A paste from a page of `bank.example`, under a login | `private: site bank.example` | `marked: site bank.example, paste` |
+/// | A paste whose source was not recorded | `private: unclassified` | `marked: paste` |
+/// | A stored result | as it was stored | as it was stored |
+/// | Anything else | `private: unclassified` | `marked: unknown` |
+///
+/// The rules behind the rows:
+///
+/// - **The person's own words are personal and unmarked** (ADR 0008). Strings
+///   a fixed template produced are the OS's words, and are public.
+/// - **Open input marks** (ADR 0011): web pages, mail, files from outside, and
+///   what the person pastes. The mark names its source.
+/// - **Admitted input does not mark** (ADR 0011). Only the two sets ADR 0011
+///   names are admitted. Whether a catalog snapshot is admitted is undecided
+///   (ADR 0017), so it is not a row.
+/// - **Messages are private by default.** A page fetched under a login is
+///   private to that site (ADR 0008). A web site's default is public.
+/// - **A file takes the row of where its content came from.** A file written
+///   inside the fleet is a stored result.
+/// - **A paste carries its source's label and mark** (ADR 0008), and is
+///   marked as a paste.
+/// - **Where no rule gives a label, the row fails closed**: private, in the
+///   `unclassified` category, which no party is cleared for unless the person
+///   names it, and marked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Origin {
     /// Text the person typed in trusted input.

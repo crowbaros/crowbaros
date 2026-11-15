@@ -451,6 +451,10 @@ labels, stable ids, and history**.
   personal; downloaded public content is public.
 - The Agent may **raise** a label without asking. **Lowering** the label on stored
   data is **declassifying**. Only the person can do it.
+- The **origin table** gives each origin its label and mark: typed text, pasted
+  content, files, mail, web pages, admitted dependencies, and stored results. It
+  is written out, next to the code that applies it, in
+  [`crates/crowbar-labels/src/origin.rs`](../../crates/crowbar-labels/src/origin.rs).
 
 ### Untrusted input and marks
 

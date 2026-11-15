@@ -33,7 +33,7 @@ fn a_join_is_the_stricter_label_and_the_union_of_categories() {
         ),
         (
             private(&[Messages]),
-            private(&[bank.clone()]),
+            private(std::slice::from_ref(&bank)),
             private(&[bank.clone(), Messages]),
         ),
     ];
