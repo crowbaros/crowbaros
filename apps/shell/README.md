@@ -1,5 +1,10 @@
 # CrowbarOS desktop shell
 
+> **Status.** This app was built for the earlier Fedora plan. Its interface work
+> carries over to the [vision](../../docs/VISION.md); its RPM packaging and Hyprland
+> wiring do not. It is built and run only in the [Fedora lab](../../lab/fedora/README.md),
+> which is kept for interface work. See [what carries over](../README.md).
+
 The first Rust/GPUI desktop slice: a live workspace bar, a persistent dock,
 installed-application search and the approved Signal Feather wallpaper.
 It runs as an ordinary user on Hyprland. The shell uses real Wayland layer

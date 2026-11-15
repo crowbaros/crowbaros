@@ -1,4 +1,4 @@
-# CrowbarOS (agent-first)
+# CrowbarOS glossary
 
 An operating system that ships a small, stable base which each person turns into their own OS by stating intents to an agent. Changes to a person's tools are checked in a private copy before they go live, and can be kept, undone, and shared.
 

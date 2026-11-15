@@ -1,37 +1,66 @@
 # CrowbarOS
 
-> **New direction: agent-first CrowbarOS.** A lean OS on Void Linux where each
-> person shapes their own OS with their agent. Their intents, checks, and pinned
-> builds are the source, changes to their tools are checked in a fork before they go live, and
-> security comes first and does not depend on the model being right. Start
-> with the [vision](docs/agent-first/VISION.md), then the [glossary](GLOSSARY.md),
-> the [decision records](docs/adr/), the [design notes](docs/agent-first/design/),
-> the [Milestone 1 record](docs/agent-first/milestone-1.md), and the Rust
-> [apply engine workspace](agent-first/). The desktop design, shell, and Studio
-> Settings below carry over as the starting point for the agent-first shell. The
-> Fedora packaging and VM recipes are kept for reference.
+**Quiet surface. Sharp mind.**
 
-A Fedora-based desktop using Hyprland, Rust, and GPUI.
+CrowbarOS is an operating system that ships a small, stable base, which each
+person turns into their own OS by stating intents to an agent. Changes to a
+person's tools are checked in a private copy before they go live, and can be
+kept, undone, and shared. Security comes first and does not depend on a model
+being right.
 
-- [Operating system plan](docs/community_foss_distro_plan.md)
-- [Self-contained visual blueprint](docs/crowbaros.html)
-- [Local Fedora VM setup and development workflow](docs/development/local-vms.md)
-- [Initial VM validation results](docs/development/vm-validation-2026-11-14.md)
-- [Desktop shell source and workflow](apps/shell/README.md)
-- [Desktop shell validation results](docs/development/shell-validation-2026-11-14.md)
-- [Studio Settings source and workflow](apps/studio-settings/README.md)
-- [Studio Settings validation results](docs/development/studio-settings-validation-2026-11-14.md)
-- [Native GPUI app and build instructions](apps/gpui-probe/README.md)
-- [GPUI RPM and desktop validation results](docs/development/gpui-validation-2026-11-14.md)
-- [Hardware Vulkan setup and recovery](docs/development/gpu-vulkan.md)
-- [Intel GPU acceleration validation results](docs/development/gpu-validation-2026-11-14.md)
-- [VM configuration and provisioning recipes](infra/vm/)
+## Start here
 
-The repository contains the plan, brand references, a working local build/test
-lab, and native GPUI applications packaged as signed RPMs. Studio Settings now
-implements appearance previews, saved preferences, and Hyprland reduced motion.
-The test VM runs hardware Vulkan through an experimental Intel VirtIO profile.
-The first GPUI shell now supplies a workspace bar, persistent dock, application
-launcher and wallpaper as a signed RPM. It follows saved appearance preferences
-and starts with the test Hyprland session. The compositor fork and full production
-desktop remain later milestones.
+1. [Vision](docs/VISION.md): the plan of record. The one-page
+   [pitch](docs/pitch.html) is the short version.
+2. [Glossary](GLOSSARY.md): the words this project uses, and the ones it avoids.
+3. [Decision records](docs/adr/) and the [threat model](docs/threat-model.md).
+4. [Design system](DESIGN.md) and [product brief](PRODUCT.md): how CrowbarOS
+   looks and what its interfaces must do.
+
+## Status
+
+| Area | State |
+| --- | --- |
+| Milestone 1: Crowbar State, apply engine, Base generations, boot-menu rollback | Done. [Record](docs/milestones/milestone-1.md) |
+| Milestone 2: the security rules, built to be attacked | Next. [Scope](docs/milestones/milestone-2.md) |
+| Brand and design system | Approved. [Brand kit](docs/branding/), [DESIGN.md](DESIGN.md) |
+| GPUI shell and Studio Settings | First slices built and validated in the Fedora VM lab. They are the starting point for the Milestone 4 shell. [Apps](apps/) |
+
+The full roadmap is in the [vision](docs/VISION.md#roadmap).
+
+## Repository map
+
+| Path | Contents |
+| --- | --- |
+| [`crates/`](crates/) | The Rust workspace: the Crowbar State, the apply engine, and the skeleton crates for Milestone 2 |
+| [`apps/`](apps/) | The GPUI interfaces: desktop shell, Studio Settings, and the GPUI probe |
+| [`lab/`](lab/) | VM labs: the Void Linux lab for Base, and the Fedora lab that builds and runs the GPUI apps for now |
+| [`docs/VISION.md`](docs/VISION.md) | The vision, the stack, and the roadmap |
+| [`docs/adr/`](docs/adr/) | Decision records |
+| [`docs/architecture/`](docs/architecture/) | Design notes: state and apply engine, capability model, gate and monitor |
+| [`docs/milestones/`](docs/milestones/) | Milestone scopes, write-ups, and evidence |
+| [`docs/research/`](docs/research/), [`docs/reviews/`](docs/reviews/) | Prior-art research and the council review rounds |
+| [`docs/branding/`](docs/branding/) | The approved brand kit and the rounds that led to it |
+| [`docs/development/`](docs/development/) | The GPUI lab workflow, Vulkan-in-a-VM setup, and validation records |
+| [`docs/archive/`](docs/archive/) | Superseded material. Not current. Do not build on it |
+| [`DESIGN.md`](DESIGN.md), [`PRODUCT.md`](PRODUCT.md), [`.impeccable/`](.impeccable/) | The design system, the product brief, and the design review evidence |
+
+## Build and test
+
+```sh
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+lab/void/void_lab.py milestone     # the full Milestone 1 loop in a Void Linux VM
+```
+
+The GPUI apps are separate Cargo projects with their own pinned dependencies.
+See [`apps/`](apps/README.md) for how to build and run them.
+
+## Working in this repository
+
+- Use the terms in the [glossary](GLOSSARY.md). When a term is missing or wrong,
+  change the glossary first.
+- A decision that is hard to reverse gets a [decision record](docs/adr/).
+- [`docs/archive/`](docs/archive/) describes the earlier Fedora plan. Where it
+  disagrees with the vision, the vision is right.
+- The crates in `crates/` are MIT. The apps in `apps/` are GPL-3.0-or-later.

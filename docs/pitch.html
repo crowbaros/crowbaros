@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CrowbarOS, agent-first</title>
+<title>CrowbarOS: the pitch</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";mermaid.initialize({startOnLoad:true,theme:"base",themeVariables:{background:"#080D12",primaryColor:"#17212B",primaryTextColor:"#D8E5EC",primaryBorderColor:"#49D7E8",lineColor:"#6D8191",fontFamily:"Manrope",fontSize:"15px"}});</script>
@@ -41,7 +41,7 @@ footer{padding:48px 0 80px;color:var(--steel);font-size:14px}
 </head>
 <body>
 <header><div class="wrap">
-  <div class="eyebrow">CrowbarOS · agent-first</div>
+  <div class="eyebrow">CrowbarOS</div>
   <h1>Don't ship a desktop.<br><em>Ship the ability to make one.</em></h1>
   <p class="lede">An operating system that starts lean, where each person shapes their own OS with their agent. What you asked for, the checks you confirmed, and the build you accepted are the source. Changes to your tools are checked in a private copy before they go live, and can be undone, rebuilt with a better model, carried to a new machine, or shared.</p>
 </div></header>
@@ -83,7 +83,7 @@ footer{padding:48px 0 80px;color:var(--steel);font-size:14px}
 
 <section><div class="wrap">
   <h2>The stack: invent the top, borrow the bottom</h2>
-  <p>Nothing about agent-first needs a new way to talk to a Wi-Fi chip, and drivers are what kill new operating systems. We choose Linux for its drivers. The capability broker decides what each Tool may reach, and the Linux sandbox enforces it.</p>
+  <p>Nothing in this design needs a new way to talk to a Wi-Fi chip, and drivers are what kill new operating systems. We choose Linux for its drivers. The capability broker decides what each Tool may reach, and the Linux sandbox enforces it.</p>
   <pre class="mermaid">
 flowchart TB
   A["NEW · Agent role, harness protocol, intents and Shaping"] --> B["NEW · Capability broker and gate: handles, effect limits, labels, egress, vault, ledger"]
@@ -99,16 +99,16 @@ flowchart TB
 </div></section>
 
 <section><div class="wrap">
-  <h2>The Fedora blueprint vs. agent-first</h2>
+  <h2>What changed from the Fedora blueprint</h2>
   <table class="compare">
-    <tr><th></th><th>CrowbarOS blueprint</th><th>Agent-first CrowbarOS</th></tr>
+    <tr><th></th><th>Fedora blueprint</th><th>CrowbarOS now</th></tr>
     <tr><td>Core idea</td><td>A calm, curated desktop for creative people</td><td>A lean substrate each person shapes into their own OS</td></tr>
     <tr><td>Source of truth</td><td>Installed packages and settings</td><td>Your intents, their checks, and the pinned build; the Crowbar State is the lockfile</td></tr>
     <tr><td>Base</td><td>Fedora, non-Atomic, DNF</td><td>Void Linux, Base layer only; Environment and Data change on their own</td></tr>
     <tr><td>Software</td><td>Five essentials + Bazaar/Flathub</td><td>Tools built on request for the long tail; native apps and the browser first-class, under the same broker</td></tr>
     <tr><td>AI</td><td>Neutral: no bundled AI</td><td>Model-neutral: you pick the harness and models, and the system is sound with none</td></tr>
     <tr><td>Customizing</td><td>Settings panels, themes, Community Gallery</td><td>Say or point at what you want; share OS definitions</td></tr>
-    <tr><td>What stays</td><td colspan="2" style="color:var(--frost)">The name, the crow, the palette, open governance, FOSS values, and "make it yours," taken literally.</td></tr>
+    <tr><td>What stays</td><td colspan="2" style="color:var(--frost)">The name, the crow, the palette, the design system and the GPUI shell work, open governance, FOSS values, and "make it yours," taken literally.</td></tr>
   </table>
 </div></section>
 

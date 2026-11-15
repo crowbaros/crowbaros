@@ -1,5 +1,10 @@
 # Studio Settings
 
+> **Status.** This app was built for the earlier Fedora plan. Its interface work
+> carries over to the [vision](../../docs/VISION.md); its RPM packaging and Hyprland
+> wiring do not. It is built and run only in the [Fedora lab](../../lab/fedora/README.md),
+> which is kept for interface work. See [what carries over](../README.md).
+
 The first native CrowbarOS settings slice, implemented in Rust and GPUI 0.2.2:
 
 - Dark, Light, and Warm Paper appearance modes with an immediate app preview.

@@ -1,4 +1,4 @@
-# CrowbarOS, agent-first: threat model
+# CrowbarOS: threat model
 
 **Status:** design only. None of the defences below is built. Milestone 2 builds
 the ones marked **M2** and attacks them; its acceptance tests are in

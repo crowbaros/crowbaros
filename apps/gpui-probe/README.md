@@ -1,5 +1,10 @@
 # CrowbarOS GPUI probe
 
+> **Status.** This app was built for the earlier Fedora plan. Its interface work
+> carries over to the [vision](../../docs/VISION.md); its RPM packaging and Hyprland
+> wiring do not. It is built and run only in the [Fedora lab](../../lab/fedora/README.md),
+> which is kept for interface work. See [what carries over](../README.md).
+
 A small native Rust application for validating the Fedora → RPM → Hyprland/Wayland
 path. It uses **GPUI 0.2.2**, with its `wayland` feature enabled and default/X11
 features disabled. The renderer is GPUI's Vulkan/Blade backend. There is no browser

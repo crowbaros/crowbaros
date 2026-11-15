@@ -1,4 +1,4 @@
-# CrowbarOS, agent-first: vision
+# CrowbarOS: vision
 
 **Status:** working direction agreed by Jim Martin and Jason Alexander, November 2026.
 Revised November 14, 2026, five times: after the design review (ADRs 0001–0006),
@@ -13,10 +13,11 @@ gaps in the same ADRs. Jim Martin made the decisions in the council rounds. Deci
 [glossary](../GLOSSARY.md). What the design defends against, and what it does
 not, is in the [threat model](threat-model.md).
 
-This replaces the Fedora-based curated desktop in
-[`community_foss_distro_plan.md`](archive/fedora-blueprint/community_foss_distro_plan.md) as the plan of
-record. That document stays in the repository for reference. The one-page
-[pitch](pitch.html) is the short version of this document.
+This is the plan of record. It replaced the Fedora-based curated desktop, which
+is kept, unmaintained, in the [archive](archive/fedora-blueprint/README.md). The
+brand, the design system, and the GPUI shell work carry over: see
+[What carries over and what changes](#what-carries-over-and-what-changes). The
+one-page [pitch](pitch.html) is the short version of this document.
 
 ## Thesis
 
@@ -69,7 +70,7 @@ flowchart LR
 
 ```mermaid
 mindmap
-  root((CrowbarOS<br/>agent-first))
+  root((CrowbarOS))
     1 Intent, checks, and the pinned build are the source
       Checks are scenarios in a fixed format
       Rehearsal by a Base runner
@@ -529,7 +530,7 @@ Decisions: [ADR 0010](adr/0010-share-the-pinned-build.md),
 
 ## The stack: invent the top, borrow the bottom
 
-Nothing about agent-first needs a new Wi-Fi driver, and drivers are what kill new
+Nothing in this design needs a new Wi-Fi driver, and drivers are what kill new
 operating systems. We choose Linux for its drivers. Linux is also part of what we
 trust: the broker decides, and Linux namespaces, Landlock, and seccomp enforce.
 
@@ -602,7 +603,7 @@ flowchart LR
     subgraph DROP["Does not carry over"]
         d1[Fedora base, RPM/DNF]
         d2[RPM packaging + Mock builds]
-        d3[Fedora VM recipes in infra/vm]
+        d3["Fedora VM lab (lab/fedora),<br/>once the Void lab has a graphical guest"]
         d4[Curated five-app bundle]
         d5[A separate classic edition]
     end
@@ -615,7 +616,7 @@ flowchart LR
     end
 ```
 
-| Area | Fedora blueprint | Agent-first CrowbarOS |
+| Area | Fedora blueprint | CrowbarOS now |
 | --- | --- | --- |
 | Core idea | A calm, curated desktop for creative people | A lean substrate each person shapes into their own OS with their agent |
 | Source of truth | Installed packages and settings | The person's intents, their checks, and the pinned build; the Crowbar State is the lockfile |
@@ -628,7 +629,7 @@ flowchart LR
 
 Notes:
 
-- **One edition.** The agent-first direction replaces the classic edition. AI
+- **One edition.** There is no separate classic edition. AI
   neutrality is kept a different way: no model is on the trust path, the person
   chooses the harness and models, and intents and the State can be edited by hand.
 - **GPUI** ([`apps/gpui-probe`](../apps/gpui-probe/README.md)) is the candidate
@@ -639,11 +640,14 @@ Notes:
   visual and interaction starting point for the M4 shell and system chrome. The
   source, tokens, fonts, and review captures carry over. Their RPM packaging,
   Fedora VM scripts, and Hyprland session wiring do not.
+- **The Fedora VM lab** ([`lab/fedora`](../lab/fedora/README.md)) is today the only
+  place the GPUI apps are built and run. It stays as the UI lab, with no new Fedora
+  work, until the Void lab has a graphical guest. Then it is removed.
 - **Vulkan in a VM:** the Intel VirtIO native-context findings in
   [`gpu-vulkan.md`](development/gpu-vulkan.md) depend on the host and Mesa build,
   not on Fedora. They apply when the Void lab gains a graphical guest.
-- **Compositor:** Hyprland was chosen for the Fedora plan. The agent-first compositor
-  is still open. Wayland and portals are fixed requirements.
+- **Compositor:** Hyprland was chosen for the Fedora plan. The compositor is open
+  again. Wayland and portals are fixed requirements.
 
 ## Roadmap
 

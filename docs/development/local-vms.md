@@ -1,5 +1,10 @@
 # Local Fedora build and test lab
 
+> **Status.** CrowbarOS is no longer built on Fedora. This lab is kept only to build
+> and run the GPUI apps, and is removed when the Void lab has a graphical guest. See
+> the [lab note](../../lab/fedora/README.md) and the [vision](../VISION.md). For Base
+> work, use the [Void lab](../../lab/void/README.md).
+
 This is the reproducible development environment for CrowbarOS. Omarchy remains
 the workstation. Fedora builds and OS integration run in separate KVM guests.
 Physical hardware testing is deferred. These guests are development infrastructure,

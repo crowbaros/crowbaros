@@ -7,7 +7,7 @@
 [council round 4](../reviews/council-round-4.md). This note uses three tenses:
 
 - **Milestone 1** is built. It is the Base layer only, in
-  [`agent-first/`](../../crates/) (crates `crowbar-state` and
+  [`crates/`](../../crates/) (crates `crowbar-state` and
   `crowbar-apply`). Statements about it describe the code as it is now.
 - **Milestone 1b** replaces how a Base generation is built and keeps the rest.
   See [ADR 0009](../adr/0009-base-from-a-pinned-package-set.md). It is not
