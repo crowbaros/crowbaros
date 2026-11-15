@@ -8,6 +8,10 @@ The unit of change is the Tool, not the whole Environment. Everything an intent 
 
 A task that changes no installed behaviour gets no fork. Every task has a **workspace**: a private scratch area and a view of the Data it was given. Its writes to Data are staged in the workspace and committed together when the task finishes, inside its effect limits, as one entry in the Data history. Sorting photos is a task with a workspace, not an Environment change.
 
+**Installed software and workbenches write live.** An editor or a dev server cannot wait for a commit at the end, because other programs read its files as it works. So installed software and workbenches ([ADR 0017](0017-a-pinned-catalog-and-workbenches.md)) write straight into the folders they were granted. Btrfs snapshots of each granted folder, and the Data undo window, protect the person. Tasks still stage, wide or not: the rule depends on the kind of compartment, not on how much it was given.
+
+**An update that asks for nothing new is promoted under a standing rule.** The person can set a standing rule once: an update to installed software is promoted without asking when it asks for no new access and its checks pass in a fork. An update that asks for more waits for the person's confirmation. Added by ADR 0017.
+
 A fork has no egress of its own. The task working in it reaches its model and its dependencies only through the broker (ADR 0011).
 
 Revised after council rounds 2 and 3. The first version promoted and undid the whole Environment, gave every task a fork, said forks ran with "egress off", and allowed provisional edits that went live unconfirmed.

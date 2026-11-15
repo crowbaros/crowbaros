@@ -426,6 +426,13 @@ notifications until noon, and a photo sorter are all Tools.
 - **Installed software uses the same rules.** A native app or a browser runs in the
   sandbox with broker-owned egress. For software the broker cannot see inside, the
   checks are per principal and per destination, not per value. We say so plainly.
+- **Installing is painless.** Installed software comes from CrowbarOS's own pinned
+  catalog, filled mostly from nixpkgs, with vendor artifacts as the fallback, and
+  the person can add an entry for anything. One approval installs an app, and an
+  update that asks for nothing new goes live by itself. Dev tools run in a
+  **workbench**: a changeable Linux system for one project, approved once, where
+  package managers work without asking.
+  [ADR 0017](adr/0017-a-pinned-catalog-and-workbenches.md).
 - **Declarative UI.** A Tool describes its UI, and a trusted shell draws it inside
   system chrome a Tool cannot imitate. Every Tool is themed and accessible, and can
   render on any machine in the fleet. The UI description is also the Tool's
@@ -576,7 +583,8 @@ flowchart TB
   person to read, and keeps a Base rollback to a plain Btrfs snapshot plus a boot
   entry.
 
-`xbps` builds Base only. Tools and the Environment do not use it. Whether runit can
+`xbps` builds Base only. Tools and the Environment do not use it, and installed
+software comes from the catalog ([ADR 0017](adr/0017-a-pinned-catalog-and-workbenches.md)). Whether runit can
 carry what the Environment needs is an open question below.
 
 ### Microsoft's October 2026 agent announcements
@@ -624,7 +632,7 @@ flowchart LR
 | Source of truth | Installed packages and settings | The person's intents, their checks, and the pinned build; the Crowbar State is the lockfile |
 | Base | Fedora, non-Atomic, DNF | Void Linux (runit, xbps), Base layer only |
 | Change model | Packages and settings, changed in place | Base at boot; Environment by fork, preview, promote, per Tool; Data with its own history |
-| Software | Five essentials plus Flathub | Tools built on request for the long tail; native apps and the browser first-class, under the same broker |
+| Software | Five essentials plus Flathub | Tools built on request for the long tail; native apps and the browser first-class, under the same broker, from a pinned catalog filled mostly from nixpkgs; dev tools in workbenches |
 | Security | SELinux, signed RPMs | Handles, effect limits, a deterministic gate, labels and marks that survive handoffs, broker-owned egress, a vault |
 | AI | Neutral; no bundled AI | One edition, model-neutral; the person picks the harness and models, and the system is sound with none |
 | Customizing | Settings panels, themes, Community Gallery | Say or point at what you want; share Tools and OS definitions |
