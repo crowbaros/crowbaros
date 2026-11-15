@@ -37,7 +37,7 @@ While an ask is showing, the compositor dims every other surface, draws the ask'
 ## The gesture
 
 - **The confirm gesture is Ctrl+Alt+Enter, and the keyboard alone can say yes.** The pointer can decline or dismiss an ask, never confirm one. A click can be arranged under a moving cursor; a chord is felt. Which keys make the chord can change later. That nothing in the Environment can rebind it cannot (ADR 0014, rule 5).
-- **The compositor always takes the chord.** It reaches no client, whether or not an ask is showing. With no armed ask it does nothing.
+- **The compositor always takes the chord.** It reaches no client, whether or not an ask is showing. With no armed ask it does nothing. [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) changes one case: with no ask showing and the session unlocked, the chord locks the session.
 - **One keyboard makes the chord.** The modifiers and Enter must be pressed on the same keyboard. The compositor tracks withheld keys for each keyboard, so a release with no press never reaches a client.
 - **A keyboard attached after an ask opened cannot confirm it.** A USB device can pretend to be a keyboard and type the chord.
 
@@ -77,7 +77,7 @@ Each of these must pass, or be refused, before the shell protocol is accepted. [
 9. A client window tries to cover the ask, imitate it, or take its focus. It is dimmed and gets no input.
 10. An ask that changes authority: no touch is asked for before it is armed, and its signature is refused for another ask.
 11. An ask while the session is locked. It is not shown and not armed.
-12. The chord with no ask showing. Nothing happens, and no client sees it.
+12. The chord with no ask showing. Nothing is confirmed, and no client sees it. The session locks (ADR 0020).
 13. A malformed, oversized, or unknown message on each socket. The connection is refused, and the trusted part does not crash.
 
 ## Considered Options

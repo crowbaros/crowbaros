@@ -213,7 +213,7 @@ The state of an ask that is visible, on top, holding the keyboard, and steady fo
 _Avoid_: Active, ready
 
 **Confirm gesture**:
-The secure key press, taken by the compositor and never delivered to any client, with which the person answers an everyday ask. An ask that changes authority is answered by a passkey, a security key, or the phone instead.
+The secure key press, taken by the compositor and never delivered to any client, with which the person answers an everyday ask. With no ask showing it locks the session, and on the lock screen it begins unlock. An ask that changes authority is answered by a passkey, a security key, or the phone instead.
 _Avoid_: Click, OK button, voice confirmation
 
 **Compositor**:

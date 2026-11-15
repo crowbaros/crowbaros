@@ -83,9 +83,19 @@ A client reaches only the second level and the fifth. A popup or a subsurface is
 2. **While locked, the compositor shows the shell's lock screen and nothing else.** Every other display is blank, and input goes to the lock screen alone.
 3. **Only the broker ends it.** The broker tells the compositor that the person authenticated. The shell's word is not enough, so a bug in the shell cannot unlock the session.
 4. **The compositor starts locked**, at boot and after a crash. Apps do not survive a crash of the compositor.
-5. **Unlock begins with the confirm chord.** Until the person presses Ctrl+Alt+Enter, the lock screen takes no text. No client can see the chord, so the real lock screen answers it and an imitation cannot.
+5. **Unlock begins with the confirm chord.** Until the person presses Ctrl+Alt+Enter, the lock screen takes no text.
+6. **The chord always reaches the trusted UI.** What it does depends on what is showing:
 
-ADR 0018 says the gesture does nothing while the session is locked. That still holds for asks: no ask is shown, armed, or answered. The chord's one job on the lock screen is to open the unlock entry.
+| State | What the chord does |
+| --- | --- |
+| An armed ask is showing | Answers it (ADR 0018) |
+| An ask is showing and is not armed | Nothing (ADR 0018) |
+| The session is locked | Opens the unlock entry |
+| No ask is showing, and the session is unlocked | Locks the session |
+
+The last row is what makes rule 5 hold. The compositor withholds Enter, and not Ctrl or Alt, so a focused app can guess that the chord was pressed. A fullscreen app that imitates the lock screen could show its own field for the secret at that moment. Because the chord locks an unlocked session, the real lock screen covers the imitation as soon as the person presses it.
+
+This changes two sentences of ADR 0018. It says the chord does nothing with no armed ask: with no ask showing at all, it now locks the session. It says the gesture does nothing while the session is locked: that still holds for asks, and the chord's one job on the lock screen is to open the unlock entry.
 
 What the secret is, and how the person sets it, belongs to issues [87](https://github.com/crowbaros/crowbaros/issues/87) and [100](https://github.com/crowbaros/crowbaros/issues/100).
 
@@ -200,7 +210,8 @@ Each of these is a test, and each must be refused. They add to the attacks in AD
 14. The shell is killed while the session is locked. It stays locked, and no app gets the keyboard. [6]
 15. The compositor is killed. It starts again locked, with no clients. [6]
 16. Text is typed on the lock screen before the chord. None of it reaches the unlock entry. [6]
-17. A display is removed and attached again, with a window on it and an ask showing on it. No window is lost, and the ask is disarmed until it is steady again. [5]
+17. A fullscreen window imitates the lock screen, and the person presses the chord. The session locks, and the real lock screen covers the window. [6]
+18. A display is removed and attached again, with a window on it and an ask showing on it. No window is lost, and the ask is disarmed until it is steady again. [5]
 
 ## Considered Options
 
@@ -215,6 +226,7 @@ Each of these is a test, and each must be refused. They add to the attacks in AD
 - **A lock screen the compositor draws.** Rejected: it needs text entry, and so text layout, in the compositor. The shell draws it, and the compositor and the broker hold the rules.
 - **Unlock on the shell's word.** Rejected: the largest trusted program would be able to unlock the session.
 - **Unlock with no chord first.** Rejected: a fullscreen app that imitates the lock screen could collect the secret.
+- **A chord that does nothing when no ask is showing, as ADR 0018 first said.** Rejected: an imitation of the lock screen can guess the chord from Ctrl and Alt, and nothing real would answer it. The frame on a fullscreen window is a second defence, and it rests on the person noticing a thin line.
 - **An input method, a shared accessibility bus, or a shared X server in the first compositor.** Rejected: each is a route ADR 0014 closes, and each needs a trusted part that does not exist yet.
 - **Pointer constraints for games.** Rejected for now: a window that holds the pointer is one the person may not be able to leave.
 - **Support for every GPU that Mesa drives.** Rejected: one success on one machine does not qualify another. A row needs a machine one of us has.
@@ -232,5 +244,6 @@ Each of these is a test, and each must be refused. They add to the attacks in AD
 - The broker gains one message from the compositor, the source and destination of each paste, and sends it one: that the person authenticated.
 - An app that reads the clipboard when it gains focus, as some password managers and terminals do, gets nothing from another compartment.
 - A person who uses an input method, a screen reader, a touchscreen, or screen sharing cannot use the Beta as their only desktop. The Beta's cohort is chosen with that known ([issue 51](https://github.com/crowbaros/crowbaros/issues/51)).
+- A chord pressed just after an ask expired or was withdrawn locks the session, and the person unlocks again.
 - The compositor has no font renderer. Every word it shows is an image built into it.
 - The design brief's decisions are all answered: 1 by ADR 0016, 2 by ADR 0018, and 3 to 9 here.
