@@ -52,6 +52,10 @@ Whatever the owner gives, no compartment gets what the trusted parts hold:
 
 So a wide compartment cannot answer its own ask, grant itself more, or hide what it did. Above it there is only owner authority, which the owner uses by hand and no agent holds.
 
+**Wide is granted to one compartment at one start.** It is a change to authority, so it needs a passkey, a security key, or the phone (ADR 0014, rule 3). The approval signs what was shown: the principal, the objective, and when it ends. It ends when the compartment ends. It does not carry to the next start, and it cannot be a standing grant. A task, a terminal, or installed software can be wide. The Agent's own context cannot ([ADR 0011](0011-task-principals.md)).
+
+This record fixes only that floor and that grant. A later record decides how a wide compartment reaches the network, whether its writes to Data are staged, what label and mark its output carries, and how its windows are marked.
+
 ## Milestone 2 and Base
 
 There is one Warden, and it runs as root in both places. Milestone 2 still needs nothing from Base.
@@ -77,7 +81,31 @@ Base sets each of these. A check at boot verifies them, and a generation that fa
 - No sandbox's `/dev` holds an input device or `uinput`. `/dev/uinput` can be opened by root only, and the `input` group has no members.
 - `_seatd` has its one member.
 - `ptrace_scope` is 1 or higher.
+- No compartment can create a user namespace unless its stated needs include one. A new user namespace gives a process capabilities inside it, and many kernel privilege bugs start there. A browser's own sandbox is the usual reason to need one.
 - No session bus, `/tmp`, or runtime directory is shared between compartments.
+
+## Attacks the tests must refuse
+
+Each of these is a test, and each must be refused. The first ten run on stock Linux with [issue 68](https://github.com/crowbaros/crowbaros/issues/68). The rest need Base and the compositor, and run with issues [49](https://github.com/crowbaros/crowbaros/issues/49), [82](https://github.com/crowbaros/crowbaros/issues/82), and [136](https://github.com/crowbaros/crowbaros/issues/136).
+
+1. A compartment traces, or reads the memory of, a process in another compartment, and of the broker.
+2. A Preview signals the live compartment of the same Tool.
+3. A process forks twice and starts a new session to outlive a stop. After `cgroup.kill`, no process with that user ID remains.
+4. A compartment runs a setuid program from its view. It gains nothing.
+5. A compartment lists its descriptors at start. It finds the broker connection and no other.
+6. A compartment is given the path of a trusted part's socket on purpose. It is refused on its user ID. This tests the second check without the first.
+7. A fork bomb and a program that takes all the memory reach their budget. The broker and the other compartments keep running.
+8. A compartment tries to make a user namespace, a mount, and a second network interface.
+9. Two compartments try to meet through an abstract socket, System V shared memory, and `/tmp`.
+10. A compartment leaves files and a process behind. The next compartment gets a different user ID and can reach none of it.
+11. A compartment with no listener looks for any Wayland socket. It finds none.
+12. A client on a listener tries to bind the security-context manager, layer shell, and each input and capture global.
+13. A compartment opens `/dev/uinput`, an input device, and the seatd socket: first by looking for them, then with the path given.
+14. Installed software and its children are checked for the `_seatd` group and for any descriptor of a trusted part.
+15. A process that does not have the shell's user ID connects to the shell's socket, and one that is not root connects to the Warden's.
+16. A compartment is stopped. Its windows are gone and its listener accepts nothing.
+17. A wide compartment tries each of the four things it never gets.
+18. Each Base setting is changed in turn: a second member of `_seatd`, a `uinput` that others can open, `ptrace_scope` at 0. The check at boot fails the generation each time.
 
 ## Considered Options
 
@@ -94,4 +122,5 @@ Base sets each of these. A check at boot verifies them, and a generation that fa
 - **The render node for every compartment that has a Wayland listener.** Rejected: a terminal would get direct access to the GPU driver for nothing.
 - **One session bus for the desktop.** Rejected: it is a way for one compartment to reach another outside Wayland and outside the broker.
 - **Owner authority for an agent, as the way to open everything.** Rejected: nothing the system promises holds after it, including that a "yes" came from the person. A wide compartment gives an agent task the person's Data without giving it the trusted parts.
+- **A standing grant that makes a task wide at every start.** Rejected: it saves a touch of the key, and one bad run then reaches everything with the person not there.
 - **A runit service for each compartment, with `chpst` limits.** Rejected: those limits are for each process, with no budget for the group and no way to end a process that forked twice.

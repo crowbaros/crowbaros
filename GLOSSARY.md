@@ -220,6 +220,10 @@ _Avoid_: Session, quarantine, instance
 The Linux confinement around one compartment's processes. The compartment is the thing confined, and the sandbox is what confines it.
 _Avoid_: Container, jail
 
+**Wide compartment**:
+A compartment the owner gave everything they have: all their Data, the network, and the devices they name. It never holds what the trusted parts of Base hold, so it cannot answer its own ask.
+_Avoid_: YOLO mode, full access, unconfined, developer mode
+
 **Warden**:
 The part of Base that starts and stops every compartment, on the broker's orders alone. Nothing else starts a principal's process.
 _Avoid_: Launcher, spawner, supervisor
