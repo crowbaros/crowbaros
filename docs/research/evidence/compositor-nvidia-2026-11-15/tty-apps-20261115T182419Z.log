@@ -1,0 +1,68 @@
+# The GPUI apps under the compositor on a TTY, 2026-11-15T18:24:19Z
+host: Linux 6.18.63_1, Void
+kernel command line: BOOT_IMAGE=/boot/vmlinuz-6.18.63_1 root=UUID=2e65ba7b-de21-454f-b586-782cc885343e ro loglevel=4 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+gpu: NVIDIA GeForce RTX 4090, 595.112.07
+nvidia PreserveVideoMemoryAllocations: 1
+drm devices: by-path card0 renderD128 
+connected: card0-HDMI-A-1 
+compositor: sha256 77f23fc6ea14e9a53b2e0970f8fb9adacec75f9177ea9a0938d1f8bcc87b7b1e
+shell: sha256 7d9959d77306dc65a1fe5d91b10113ecba62d2c447a5bdae9052fe2f284497b9
+studio: sha256 c399480ad80bd99027f7893e13ceb96e29f65849eedebb76af728e0842efec37
+compositor pid 18956 on VT tty2
+
+== DRM device and outputs
+   2026-11-15T18:24:22.733265Z  INFO crowbar_compositor::tty: tty: session opened through libseat seat=seat0
+   2026-11-15T18:24:22.830666Z  INFO smithay::backend::egl::display: Supported EGL display extensions: EGLExtensions { extensions: ["EGL_ANDROID_native_fence_sync", "EGL_EXT_buffer_age", "EGL_EXT_client_sync", "EGL_EXT_create_context_robustness", "EGL_EXT_image_dma_buf_import", "EGL_EXT_image_dma_buf_import_modifiers", "EGL_MESA_image_dma_buf_export", "EGL_EXT_output_base", "EGL_EXT_output_drm", "EGL_EXT_protected_content", "EGL_EXT_stream_consumer_egloutput", "EGL_EXT_stream_acquire_mode", "EGL_EXT_sync_reuse", "EGL_IMG_context_priority", "EGL_KHR_config_attribs", "EGL_KHR_create_context_no_error", "EGL_KHR_context_flush_control", "EGL_KHR_create_context", "EGL_KHR_fence_sync", "EGL_KHR_get_all_proc_addresses", "EGL_KHR_partial_update", "EGL_KHR_swap_buffers_with_damage", "EGL_KHR_no_config_context", "EGL_KHR_gl_colorspace", "EGL_KHR_gl_renderbuffer_image", "EGL_KHR_gl_texture_2D_image", "EGL_KHR_gl_texture_3D_image", "EGL_KHR_gl_texture_cubemap_image", "EGL_KHR_image", "EGL_KHR_image_base", "EGL_KHR_reusable_sync", "EGL_KHR_stream", "EGL_KHR_stream_attrib", "EGL_KHR_stream_consumer_gltexture", "EGL_KHR_stream_cross_process_fd", "EGL_KHR_stream_fifo", "EGL_KHR_stream_producer_eglsurface", "EGL_KHR_surfaceless_context", "EGL_KHR_wait_sync", "EGL_NV_nvrm_fence_sync", "EGL_NV_quadruple_buffer", "EGL_NV_stream_consumer_eglimage", "EGL_NV_stream_cross_display", "EGL_NV_stream_cross_object", "EGL_NV_stream_cross_process", "EGL_NV_stream_cross_system", "EGL_NV_stream_dma", "EGL_NV_stream_flush", "EGL_NV_stream_metadata", "EGL_NV_stream_remote", "EGL_NV_stream_reset", "EGL_NV_stream_socket", "EGL_NV_stream_socket_inet", "EGL_NV_stream_socket_unix", "EGL_NV_stream_sync", "EGL_NV_stream_fifo_next", "EGL_NV_stream_fifo_synchronous", "EGL_NV_stream_consumer_gltexture_yuv", "EGL_NV_stream_attrib", "EGL_NV_stream_origin", "EGL_NV_system_time", "EGL_NV_output_drm_flip_event", "EGL_NV_triple_buffer", "EGL_NV_robustness_video_memory_purge", "EGL_WL_bind_wayland_display", "EGL_WL_wayland_eglstream"], has_fences: true, has_native_fences: true, has_image_base: true, has_import_dmabuf: true, has_import_dmabuf_modifiers: true, has_export_dmabuf: true }
+   2026-11-15T18:24:22.951212Z  INFO crowbar_compositor::tty: tty: DRM device opened gpu=/dev/dri/card0 driver=nvidia-drm software=false
+   2026-11-15T18:24:23.514040Z  INFO drm_atomic:create_surface{crtc=crtc::Handle(62) mode=Mode { name: "6144x2560", clock: 2122750, size: (6144, 2560), hsync: (6304, 6336, 6528), vsync: (2563, 2573, 2710), hskew: 0, vscan: 0, vrefresh: 120, mode_type: ModeTypeFlags(0x0) } connectors=[connector::Handle(128)]}:drm_atomic{crtc=crtc::Handle(62)}: smithay::backend::drm::surface::atomic: Initializing drm surface (crtc::Handle(62):plane::Handle(51)) with mode Mode { name: "6144x2560", clock: 2122750, size: (6144, 2560), hsync: (6304, 6336, 6528), vsync: (2563, 2573, 2710), hskew: 0, vscan: 0, vrefresh: 120, mode_type: ModeTypeFlags(0x0) } and connectors [connector::Handle(128)]
+   2026-11-15T18:24:23.529237Z  INFO smithay::backend::drm::surface::atomic: Adding connector: HDMIA
+   2026-11-15T18:25:05.291999Z  INFO crowbar_compositor::tty: tty: session paused
+
+== whether a flip waits for its drawing (Smithay's needs_sync), per output
+         1 output=HDMI-A-1 needs_sync=false
+
+== GPU the apps chose
+         2 [2026-11-15T18:24:23Z INFO  blade_graphics::hal::init] Adapter: "NVIDIA GeForce RTX 4090"
+
+== commits per surface, every five seconds
+   2026-11-15T18:24:27.738086Z layer crowbaros-bar: 268, layer crowbaros-dock: 267, layer crowbaros-wallpaper: 269, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 370 frames=310
+   2026-11-15T18:24:32.746162Z layer crowbaros-bar: 567, layer crowbaros-dock: 566, layer crowbaros-wallpaper: 568, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 669 frames=609
+   2026-11-15T18:24:37.751765Z layer crowbaros-bar: 865, layer crowbaros-dock: 864, layer crowbaros-wallpaper: 866, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 967 frames=907
+   2026-11-15T18:24:42.762948Z layer crowbaros-bar: 1164, layer crowbaros-dock: 1163, layer crowbaros-wallpaper: 1165, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 1266 frames=1206
+   2026-11-15T18:24:47.776563Z layer crowbaros-bar: 1463, layer crowbaros-dock: 1462, layer crowbaros-wallpaper: 1464, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 1565 frames=1505
+   2026-11-15T18:24:52.779543Z layer crowbaros-bar: 1761, layer crowbaros-dock: 1760, layer crowbaros-wallpaper: 1762, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 1863 frames=1803
+   2026-11-15T18:24:57.788106Z layer crowbaros-bar: 2059, layer crowbaros-dock: 2058, layer crowbaros-wallpaper: 2060, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 2161 frames=2101
+   2026-11-15T18:25:02.802847Z layer crowbaros-bar: 2359, layer crowbaros-dock: 2358, layer crowbaros-wallpaper: 2360, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 2460 frames=2400
+   2026-11-15T18:25:07.817248Z layer crowbaros-bar: 2637, layer crowbaros-dock: 2636, layer crowbaros-wallpaper: 2638, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 2738 frames=2678
+   2026-11-15T18:25:12.824501Z layer crowbaros-bar: 2944, layer crowbaros-dock: 2943, layer crowbaros-wallpaper: 2945, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 3045 frames=2985
+   2026-11-15T18:25:17.830245Z layer crowbaros-bar: 3251, layer crowbaros-dock: 3250, layer crowbaros-wallpaper: 3252, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 3352 frames=3292
+   2026-11-15T18:25:22.836925Z layer crowbaros-bar: 3558, layer crowbaros-dock: 3557, layer crowbaros-wallpaper: 3559, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 3659 frames=3599
+   2026-11-15T18:25:27.846538Z layer crowbaros-bar: 3866, layer crowbaros-dock: 3865, layer crowbaros-wallpaper: 3867, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 3967 frames=3907
+   2026-11-15T18:25:32.858623Z layer crowbaros-bar: 4175, layer crowbaros-dock: 4174, layer crowbaros-wallpaper: 4176, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 4276 frames=4216
+   2026-11-15T18:25:37.867962Z layer crowbaros-bar: 4483, layer crowbaros-dock: 4482, layer crowbaros-wallpaper: 4484, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 4584 frames=4524
+   2026-11-15T18:25:42.884156Z layer crowbaros-bar: 4789, layer crowbaros-dock: 4788, layer crowbaros-wallpaper: 4790, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 4890 frames=4830
+   2026-11-15T18:25:47.899552Z layer crowbaros-bar: 5097, layer crowbaros-dock: 5096, layer crowbaros-wallpaper: 5098, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 5198 frames=5138
+   2026-11-15T18:25:52.899998Z layer crowbaros-bar: 5404, layer crowbaros-dock: 5403, layer crowbaros-wallpaper: 5405, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 5505 frames=5445
+   2026-11-15T18:25:57.901477Z layer crowbaros-bar: 5711, layer crowbaros-dock: 5710, layer crowbaros-wallpaper: 5712, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 5812 frames=5752
+   2026-11-15T18:26:02.917728Z layer crowbaros-bar: 6020, layer crowbaros-dock: 6019, layer crowbaros-wallpaper: 6021, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 6120 frames=6060
+   2026-11-15T18:26:07.918672Z layer crowbaros-bar: 6327, layer crowbaros-dock: 6326, layer crowbaros-wallpaper: 6328, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 6427 frames=6367
+   2026-11-15T18:26:12.919836Z layer crowbaros-bar: 6634, layer crowbaros-dock: 6633, layer crowbaros-wallpaper: 6635, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 6734 frames=6674
+   2026-11-15T18:26:17.935443Z layer crowbaros-bar: 6942, layer crowbaros-dock: 6941, layer crowbaros-wallpaper: 6943, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 7042 frames=6982
+   2026-11-15T18:26:22.936761Z layer crowbaros-bar: 7249, layer crowbaros-dock: 7248, layer crowbaros-wallpaper: 7250, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 7349 frames=7289
+   2026-11-15T18:26:27.942454Z layer crowbaros-bar: 7557, layer crowbaros-dock: 7556, layer crowbaros-wallpaper: 7558, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 7657 frames=7597
+   2026-11-15T18:26:32.954177Z layer crowbaros-bar: 7866, layer crowbaros-dock: 7865, layer crowbaros-wallpaper: 7867, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 7966 frames=7906
+   2026-11-15T18:26:37.965524Z layer crowbaros-bar: 8175, layer crowbaros-dock: 8174, layer crowbaros-wallpaper: 8176, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 8275 frames=8215
+   2026-11-15T18:26:42.977321Z layer crowbaros-bar: 8484, layer crowbaros-dock: 8483, layer crowbaros-wallpaper: 8485, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 8584 frames=8524
+   2026-11-15T18:26:47.992504Z layer crowbaros-bar: 8793, layer crowbaros-dock: 8792, layer crowbaros-wallpaper: 8794, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 8893 frames=8833
+   2026-11-15T18:26:53.004277Z layer crowbaros-bar: 9102, layer crowbaros-dock: 9101, layer crowbaros-wallpaper: 9103, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 9202 frames=9142
+
+swapchain errors logged by the apps ('out of date', 'Acquire failed'): 0
+DRM errors logged by the compositor: 0
+layer crowbaros-bar: 30 intervals, 0 without a new commit
+layer crowbaros-dock: 30 intervals, 0 without a new commit
+layer crowbaros-wallpaper: 30 intervals, 0 without a new commit
+com.crowbaros.StudioSettings: 30 intervals, 0 without a new commit
+
+RESULT: pass
+log: /home/jmartin/Code/crowbaros/.lab/compositor/tty-apps-20261115T182419Z.log
+compositor and app log: /home/jmartin/Code/crowbaros/.lab/compositor/tty-apps-20261115T182419Z.run.log

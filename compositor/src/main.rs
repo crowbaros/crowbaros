@@ -11,6 +11,8 @@ crowbar-compositor: spike for issue 3. Throwaway code.
   --spawn 'CMD ARGS'    Start an ordinary client. May be repeated.
   --scale NAME=FACTOR   Scale for the output with this name. May be repeated.
                         The winit output is named 'winit'.
+  --mode NAME=WxH       Mode for the TTY output with this name, in place of
+                        the one its monitor prefers. May be repeated.
 ";
 
 struct Args {
@@ -18,6 +20,7 @@ struct Args {
     shell: Option<Vec<String>>,
     spawn: Vec<Vec<String>>,
     scales: Vec<(String, f64)>,
+    modes: Vec<(String, (u16, u16))>,
 }
 
 /// Splits a command on spaces. There is no quoting; wrap anything more
@@ -37,6 +40,7 @@ fn parse_args() -> Result<Args, String> {
         shell: None,
         spawn: Vec::new(),
         scales: Vec::new(),
+        modes: Vec::new(),
     };
     let mut rest = std::env::args().skip(1);
     while let Some(flag) = rest.next() {
@@ -50,6 +54,14 @@ fn parse_args() -> Result<Args, String> {
                 let (name, factor) = value.split_once('=').ok_or("--scale takes NAME=FACTOR")?;
                 let factor: f64 = factor.parse().map_err(|_| "--scale factor is not a number")?;
                 args.scales.push((name.to_owned(), factor));
+            }
+            "--mode" => {
+                let value = value()?;
+                let (name, size) = value.split_once('=').ok_or("--mode takes NAME=WxH")?;
+                let (w, h) = size.split_once('x').ok_or("--mode takes NAME=WxH")?;
+                let w: u16 = w.parse().map_err(|_| "--mode width is not a number")?;
+                let h: u16 = h.parse().map_err(|_| "--mode height is not a number")?;
+                args.modes.push((name.to_owned(), (w, h)));
             }
             "--help" | "-h" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument {other}\n\n{USAGE}")),
@@ -72,6 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let display: Display<State> = Display::new()?;
     let mut state = State::new(&mut event_loop, display);
     state.output_scales = args.scales;
+    state.output_modes = args.modes;
 
     match args.backend.as_str() {
         "winit" => {

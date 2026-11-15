@@ -1,0 +1,12 @@
+# The GPUI apps under the compositor on a TTY, 2026-11-15T18:41:06Z
+host: Linux 6.18.63_1, Void
+kernel command line: BOOT_IMAGE=/boot/vmlinuz-6.18.63_1 root=UUID=2e65ba7b-de21-454f-b586-782cc885343e ro loglevel=4 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+gpu: NVIDIA GeForce RTX 4090, 595.112.07
+nvidia PreserveVideoMemoryAllocations: 1
+drm devices: by-path card0 renderD128 
+connected: card0-HDMI-A-1 
+compositor: sha256 a674bfc3a169441458338b9b8012d5e457fc02c55561865629a3cd0d08d6dc90
+shell: sha256 7d9959d77306dc65a1fe5d91b10113ecba62d2c447a5bdae9052fe2f284497b9
+studio: sha256 1d0c092dfda3ad8efb0a3b17e3253c2163c9d59bf4d70cbd80fe8297c683f317
+compositor pid 20441 on VT tty2
+Terminated                 sleep "${WATCH_SECONDS:-68}"

@@ -181,6 +181,7 @@ impl State {
             return;
         };
         let area = self.usable_area(&output);
+        tracing::info!(width = area.size.w, height = area.size.h, "window maximized");
         toplevel.with_pending_state(|state| {
             state.states.set(ToplevelState::Maximized);
             state.size = Some(area.size);

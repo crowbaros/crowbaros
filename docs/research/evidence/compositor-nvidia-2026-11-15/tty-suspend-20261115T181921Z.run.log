@@ -1,0 +1,330 @@
+2026-11-15T18:19:24.450163Z  INFO input_seat{name="seat0"}:add_keyboard_with_context_flags{xkb_config=XkbConfig { rules: "", model: "", layout: "", variant: "", options: None } repeat_delay=200 repeat_rate=25 context_flags=0}:input_keyboard: smithay::input::keyboard: Initializing a xkbcommon handler with keymap query
+2026-11-15T18:19:24.451854Z  INFO input_seat{name="seat0"}:add_keyboard_with_context_flags{xkb_config=XkbConfig { rules: "", model: "", layout: "", variant: "", options: None } repeat_delay=200 repeat_rate=25 context_flags=0}:input_keyboard: smithay::input::keyboard: Loaded Keymap name="English (US)"
+2026-11-15T18:19:24.452377Z  INFO smithay::wayland::socket: Created new socket name=Some("wayland-1")
+2026-11-15T18:19:24.452517Z  INFO crowbar_compositor::tty: tty: session opened through libseat seat=seat0
+2026-11-15T18:19:24.453014Z  WARN smithay::backend::drm::device::fd: Unable to become drm master, assuming unprivileged mode
+2026-11-15T18:19:24.453028Z  INFO smithay::backend::drm::device: DrmDevice initializing
+2026-11-15T18:19:24.533982Z  INFO smithay::backend::egl::display: Successfully selected EGL platform: PLATFORM_GBM_KHR
+2026-11-15T18:19:24.538752Z  INFO smithay::backend::egl::display: EGL Initialized
+2026-11-15T18:19:24.538768Z  INFO smithay::backend::egl::display: EGL Version: (1, 5)
+2026-11-15T18:19:24.538793Z  INFO smithay::backend::egl::display: Supported EGL display extensions: EGLExtensions { extensions: ["EGL_ANDROID_native_fence_sync", "EGL_EXT_buffer_age", "EGL_EXT_client_sync", "EGL_EXT_create_context_robustness", "EGL_EXT_image_dma_buf_import", "EGL_EXT_image_dma_buf_import_modifiers", "EGL_MESA_image_dma_buf_export", "EGL_EXT_output_base", "EGL_EXT_output_drm", "EGL_EXT_protected_content", "EGL_EXT_stream_consumer_egloutput", "EGL_EXT_stream_acquire_mode", "EGL_EXT_sync_reuse", "EGL_IMG_context_priority", "EGL_KHR_config_attribs", "EGL_KHR_create_context_no_error", "EGL_KHR_context_flush_control", "EGL_KHR_create_context", "EGL_KHR_fence_sync", "EGL_KHR_get_all_proc_addresses", "EGL_KHR_partial_update", "EGL_KHR_swap_buffers_with_damage", "EGL_KHR_no_config_context", "EGL_KHR_gl_colorspace", "EGL_KHR_gl_renderbuffer_image", "EGL_KHR_gl_texture_2D_image", "EGL_KHR_gl_texture_3D_image", "EGL_KHR_gl_texture_cubemap_image", "EGL_KHR_image", "EGL_KHR_image_base", "EGL_KHR_reusable_sync", "EGL_KHR_stream", "EGL_KHR_stream_attrib", "EGL_KHR_stream_consumer_gltexture", "EGL_KHR_stream_cross_process_fd", "EGL_KHR_stream_fifo", "EGL_KHR_stream_producer_eglsurface", "EGL_KHR_surfaceless_context", "EGL_KHR_wait_sync", "EGL_NV_nvrm_fence_sync", "EGL_NV_quadruple_buffer", "EGL_NV_stream_consumer_eglimage", "EGL_NV_stream_cross_display", "EGL_NV_stream_cross_object", "EGL_NV_stream_cross_process", "EGL_NV_stream_cross_system", "EGL_NV_stream_dma", "EGL_NV_stream_flush", "EGL_NV_stream_metadata", "EGL_NV_stream_remote", "EGL_NV_stream_reset", "EGL_NV_stream_socket", "EGL_NV_stream_socket_inet", "EGL_NV_stream_socket_unix", "EGL_NV_stream_sync", "EGL_NV_stream_fifo_next", "EGL_NV_stream_fifo_synchronous", "EGL_NV_stream_consumer_gltexture_yuv", "EGL_NV_stream_attrib", "EGL_NV_stream_origin", "EGL_NV_system_time", "EGL_NV_output_drm_flip_event", "EGL_NV_triple_buffer", "EGL_NV_robustness_video_memory_purge", "EGL_WL_bind_wayland_display", "EGL_WL_wayland_eglstream"], has_fences: true, has_native_fences: true, has_image_base: true, has_import_dmabuf: true, has_import_dmabuf_modifiers: true, has_export_dmabuf: true }
+2026-11-15T18:19:24.553095Z  INFO egl{native="/dev/dri/card0" platform="PLATFORM_GBM_KHR" version=(1, 5)}:egl_context{ptr=94780847531089}: smithay::backend::egl::context: EGL context created priority=Some(Medium)
+2026-11-15T18:19:24.599454Z  INFO egl{native="/dev/dri/card0" platform="PLATFORM_GBM_KHR" version=(1, 5)}:egl_context{ptr=94780847531089}:renderer_gles2: smithay::backend::renderer::gles: Initializing OpenGL ES Renderer
+2026-11-15T18:19:24.599476Z  INFO egl{native="/dev/dri/card0" platform="PLATFORM_GBM_KHR" version=(1, 5)}:egl_context{ptr=94780847531089}:renderer_gles2: smithay::backend::renderer::gles: GL Version: "OpenGL ES 3.2 NVIDIA 595.112.07"
+2026-11-15T18:19:24.599491Z  INFO egl{native="/dev/dri/card0" platform="PLATFORM_GBM_KHR" version=(1, 5)}:egl_context{ptr=94780847531089}:renderer_gles2: smithay::backend::renderer::gles: GL Vendor: "NVIDIA Corporation"
+2026-11-15T18:19:24.599500Z  INFO egl{native="/dev/dri/card0" platform="PLATFORM_GBM_KHR" version=(1, 5)}:egl_context{ptr=94780847531089}:renderer_gles2: smithay::backend::renderer::gles: GL Renderer: "NVIDIA GeForce RTX 4090/PCIe/SSE2"
+2026-11-15T18:19:24.599508Z  INFO egl{native="/dev/dri/card0" platform="PLATFORM_GBM_KHR" version=(1, 5)}:egl_context{ptr=94780847531089}:renderer_gles2: smithay::backend::renderer::gles: Supported GL Extensions: ["GL_EXT_shader_clock", "GL_EXT_base_instance", "GL_EXT_blend_func_extended", "GL_EXT_blend_minmax", "GL_EXT_buffer_storage", "GL_EXT_clear_texture", "GL_EXT_clip_control", "GL_EXT_clip_cull_distance", "GL_EXT_color_buffer_float", "GL_EXT_color_buffer_half_float", "GL_EXT_conservative_depth", "GL_EXT_copy_image", "GL_EXT_depth_clamp", "GL_EXT_debug_label", "GL_EXT_discard_framebuffer", "GL_EXT_disjoint_timer_query", "GL_EXT_draw_buffers_indexed", "GL_EXT_draw_elements_base_vertex", "GL_EXT_EGL_image_array", "GL_EXT_EGL_image_storage", "GL_EXT_EGL_image_external_wrap_modes", "GL_EXT_float_blend", "GL_EXT_frag_depth", "GL_EXT_geometry_point_size", "GL_EXT_geometry_shader", "GL_EXT_gpu_shader5", "GL_EXT_map_buffer_range", "GL_EXT_multi_draw_indirect", "GL_EXT_multisample_compatibility", "GL_EXT_multisampled_render_to_texture", "GL_EXT_multisampled_render_to_texture2", "GL_EXT_multiview_texture_multisample", "GL_EXT_multiview_timer_query", "GL_EXT_occlusion_query_boolean", "GL_EXT_polygon_offset_clamp", "GL_EXT_post_depth_coverage", "GL_EXT_primitive_bounding_box", "GL_EXT_raster_multisample", "GL_EXT_render_snorm", "GL_EXT_robustness", "GL_EXT_separate_shader_objects", "GL_EXT_shader_group_vote", "GL_EXT_shader_implicit_conversions", "GL_EXT_shader_integer_mix", "GL_EXT_shader_io_blocks", "GL_EXT_shader_non_constant_global_initializers", "GL_EXT_shader_texture_lod", "GL_EXT_shader_texture_samples", "GL_EXT_shadow_samplers", "GL_EXT_sparse_texture", "GL_EXT_sparse_texture2", "GL_EXT_sRGB", "GL_EXT_sRGB_write_control", "GL_EXT_tessellation_point_size", "GL_EXT_tessellation_shader", "GL_EXT_texture_border_clamp", "GL_EXT_texture_buffer", "GL_EXT_texture_compression_bptc", "GL_EXT_texture_compression_dxt1", "GL_EXT_texture_compression_rgtc", "GL_EXT_texture_compression_s3tc", "GL_EXT_texture_cube_map_array", "GL_EXT_texture_filter_anisotropic", "GL_EXT_texture_filter_minmax", "GL_EXT_texture_format_BGRA8888", "GL_EXT_texture_mirror_clamp_to_edge", "GL_EXT_texture_norm16", "GL_EXT_texture_query_lod", "GL_EXT_texture_rg", "GL_EXT_texture_shadow_lod", "GL_EXT_texture_sRGB_R8", "GL_EXT_texture_sRGB_decode", "GL_EXT_texture_storage", "GL_EXT_texture_view", "GL_EXT_draw_transform_feedback", "GL_EXT_unpack_subimage", "GL_EXT_window_rectangles", "GL_KHR_context_flush_control", "GL_KHR_debug", "GL_EXT_memory_object", "GL_EXT_memory_object_fd", "GL_NV_memory_object_sparse", "GL_KHR_parallel_shader_compile", "GL_KHR_no_error", "GL_KHR_robust_buffer_access_behavior", "GL_KHR_robustness", "GL_EXT_semaphore", "GL_EXT_semaphore_fd", "GL_NV_timeline_semaphore", "GL_KHR_shader_subgroup", "GL_KHR_texture_compression_astc_ldr", "GL_KHR_texture_compression_astc_sliced_3d", "GL_KHR_texture_compression_astc_hdr", "GL_NV_bgr", "GL_NV_bindless_texture", "GL_NV_blend_equation_advanced", "GL_NV_blend_equation_advanced_coherent", "GL_NVX_blend_equation_advanced_multi_draw_buffers", "GL_NV_blend_minmax_factor", "GL_NV_clip_space_w_scaling", "GL_NV_compute_shader_derivatives", "GL_NV_conditional_render", "GL_NV_conservative_raster", "GL_NV_conservative_raster_pre_snap_triangles", "GL_NV_copy_buffer", "GL_NV_copy_image", "GL_NV_draw_buffers", "GL_NV_draw_instanced", "GL_NV_draw_texture", "GL_NV_draw_vulkan_image", "GL_NV_EGL_stream_consumer_external", "GL_NV_explicit_attrib_location", "GL_NV_fbo_color_attachments", "GL_NV_fill_rectangle", "GL_NV_fragment_coverage_to_color", "GL_NV_fragment_shader_barycentric", "GL_NV_fragment_shader_interlock", "GL_NV_framebuffer_blit", "GL_NV_framebuffer_mixed_samples", "GL_NV_framebuffer_multisample", "GL_NV_generate_mipmap_sRGB", "GL_NV_geometry_shader_passthrough", "GL_NV_instanced_arrays", "GL_NV_internalformat_sample_query", "GL_NV_gpu_shader5", "GL_NV_image_formats", "GL_NV_memory_attachment", "GL_NV_mesh_shader", "GL_NV_occlusion_query_samples", "GL_NV_non_square_matrices", "GL_NV_pack_subimage", "GL_NV_packed_float", "GL_NV_packed_float_linear", "GL_NV_path_rendering", "GL_NV_path_rendering_shared_edge", "GL_NV_pixel_buffer_object", "GL_NV_polygon_mode", "GL_NV_primitive_shading_rate", "GL_NV_read_buffer", "GL_NV_read_depth", "GL_NV_read_depth_stencil", "GL_NV_read_stencil", "GL_NV_representative_fragment_test", "GL_NV_sample_locations", "GL_NV_sample_mask_override_coverage", "GL_NV_scissor_exclusive", "GL_NV_shader_atomic_fp16_vector", "GL_NV_shader_noperspective_interpolation", "GL_NV_shader_subgroup_partitioned", "GL_NV_shader_texture_footprint", "GL_NV_shading_rate_image", "GL_NV_shadow_samplers_array", "GL_NV_shadow_samplers_cube", "GL_NV_sRGB_formats", "GL_NV_stereo_view_rendering", "GL_NV_texture_array", "GL_NV_texture_barrier", "GL_NV_texture_border_clamp", "GL_NV_texture_compression_latc", "GL_NV_texture_compression_s3tc", "GL_NV_texture_compression_s3tc_update", "GL_NV_texture_dirty_tile_map", "GL_NV_timer_query", "GL_NV_viewport_array", "GL_NV_viewport_array2", "GL_NV_viewport_swizzle", "GL_KHR_blend_equation_advanced", "GL_KHR_blend_equation_advanced_coherent", "GL_OES_compressed_ETC1_RGB8_texture", "GL_EXT_compressed_ETC1_RGB8_sub_texture", "GL_OES_depth24", "GL_OES_depth32", "GL_OES_depth_texture", "GL_OES_depth_texture_cube_map", "GL_OES_copy_image", "GL_OES_draw_buffers_indexed", "GL_OES_draw_elements_base_vertex", "GL_OES_texture_border_clamp", "GL_OES_tessellation_point_size", "GL_OES_tessellation_shader", "GL_OES_texture_buffer", "GL_OES_geometry_point_size", "GL_OES_geometry_shader", "GL_OES_gpu_shader5", "GL_OES_shader_io_blocks", "GL_OES_texture_view", "GL_OES_primitive_bounding_box", "GL_OES_EGL_image", "GL_OES_EGL_image_external", "GL_OES_EGL_image_external_essl3", "GL_OES_EGL_sync", "GL_OES_element_index_uint", "GL_OES_fbo_render_mipmap", "GL_OES_get_program_binary", "GL_OES_mapbuffer", "GL_OES_packed_depth_stencil", "GL_OES_rgb8_rgba8", "GL_EXT_read_format_bgra", "GL_OES_sample_shading", "GL_OES_sample_variables", "GL_OES_shader_image_atomic", "GL_OES_shader_multisample_interpolation", "GL_OES_standard_derivatives", "GL_OES_surfaceless_context", "GL_OES_texture_cube_map_array", "GL_OES_texture_npot", "GL_OES_texture_float", "GL_OES_texture_float_linear", "GL_OES_texture_half_float", "GL_OES_texture_half_float_linear", "GL_OES_texture_stencil8", "GL_OES_texture_storage_multisample_2d_array", "GL_OES_vertex_array_object", "GL_OES_vertex_half_float", "GL_OES_viewport_array", "GL_OVR_multiview", "GL_OVR_multiview2", "GL_OVR_multiview_multisampled_render_to_texture", "GL_ANDROID_extension_pack_es31a", ""]
+2026-11-15T18:19:24.654389Z  INFO crowbar_compositor::tty: tty: DRM device opened gpu=/dev/dri/card0 driver=nvidia-drm software=false
+2026-11-15T18:19:25.014740Z  INFO smithay::backend::libinput: Initializing a libinput backend
+2026-11-15T18:19:25.210305Z  INFO new{name="HDMI-A-1" physical=PhysicalProperties { size: Size<smithay::utils::geometry::Raw> { w: 0, h: 0 }, subpixel: Unknown, make: "CrowbarOS", model: "HDMI-A-1", serial_number: "Unknown" }}: smithay::output: Creating new Output name="HDMI-A-1"
+2026-11-15T18:19:25.210331Z  INFO smithay::wayland::output: Creating new wl_output output="HDMI-A-1"
+2026-11-15T18:19:25.211769Z  INFO drm_atomic:create_surface{crtc=crtc::Handle(62) mode=Mode { name: "3840x2160", clock: 594000, size: (3840, 2160), hsync: (4016, 4104, 4400), vsync: (2168, 2178, 2250), hskew: 0, vscan: 0, vrefresh: 60, mode_type: ModeTypeFlags(PREFERRED) } connectors=[connector::Handle(128)]}:drm_atomic{crtc=crtc::Handle(62)}: smithay::backend::drm::surface::atomic: Initializing drm surface (crtc::Handle(62):plane::Handle(51)) with mode Mode { name: "3840x2160", clock: 594000, size: (3840, 2160), hsync: (4016, 4104, 4400), vsync: (2168, 2178, 2250), hskew: 0, vscan: 0, vrefresh: 60, mode_type: ModeTypeFlags(PREFERRED) } and connectors [connector::Handle(128)]
+2026-11-15T18:19:25.224599Z  INFO smithay::backend::drm::surface::atomic: Adding connector: HDMIA
+2026-11-15T18:19:25.224613Z  INFO smithay::backend::drm::surface::atomic: Setting new mode: "3840x2160"
+2026-11-15T18:19:25.229939Z  WARN smithay::backend::drm::surface::atomic: Failed to destroy old mode property blob: No such file or directory (os error 2)
+2026-11-15T18:19:25.294149Z  INFO crowbar_compositor::tty: output connected name=HDMI-A-1 width=3840 height=2160 scale=1.0
+2026-11-15T18:19:25.294175Z  INFO crowbar_compositor: compositor is up socket="wayland-1" backend=tty
+2026-11-15T18:19:25.298967Z  INFO smithay::backend::libinput: New device "event2"
+2026-11-15T18:19:25.298991Z  INFO smithay::backend::libinput: New device "event7"
+2026-11-15T18:19:25.298999Z  INFO smithay::backend::libinput: New device "event10"
+2026-11-15T18:19:25.299007Z  INFO smithay::backend::libinput: New device "event8"
+2026-11-15T18:19:25.299014Z  INFO smithay::backend::libinput: New device "event9"
+2026-11-15T18:19:25.299020Z  INFO smithay::backend::libinput: New device "event12"
+2026-11-15T18:19:25.299027Z  INFO smithay::backend::libinput: New device "event3"
+2026-11-15T18:19:25.299034Z  INFO smithay::backend::libinput: New device "event4"
+2026-11-15T18:19:25.299041Z  INFO smithay::backend::libinput: New device "event5"
+2026-11-15T18:19:25.299048Z  INFO smithay::backend::libinput: New device "event6"
+2026-11-15T18:19:25.299056Z  INFO smithay::backend::libinput: New device "event1"
+2026-11-15T18:19:25.299062Z  INFO smithay::backend::libinput: New device "event0"
+2026-11-15T18:19:25.299069Z  INFO smithay::backend::libinput: New device "event14"
+2026-11-15T18:19:25.300144Z  INFO crowbar_compositor::tty: tty: whether a flip waits for its drawing (Smithay's needs_sync) output=HDMI-A-1 needs_sync=false
+[2026-11-15T18:19:25Z WARN  cosmic_text::font::system] failed to get system locale, falling back to en-US
+[2026-11-15T18:19:25Z WARN  cosmic_text::font::system] failed to get system locale, falling back to en-US
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Adapter: "NVIDIA GeForce RTX 4090"
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Adapter: "NVIDIA GeForce RTX 4090"
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T18:19:25Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T18:19:25Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::resource] Creating texture 0x557b53d038d0 of size 1x1x1 and format Bgra8Unorm, name 'path intermediate', handle 0
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::resource] Creating texture 0x557b53ee19d0 of size 1x1x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 1
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T18:19:25Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::resource] Creating texture 0x55ea7739c890 of size 980x720x1 and format Bgra8Unorm, name 'path intermediate', handle 0
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::resource] Creating texture 0x55ea77372af0 of size 980x720x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 1
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::surface] Retaining current format: Bgra8Unorm
+[2026-11-15T18:19:25Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: Ignored }
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:25Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::resource] Creating texture 0x557b53d3caa0 of size 1x44x1 and format Bgra8Unorm, name 'path intermediate', handle 2
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::resource] Creating texture 0x557b53cd88a0 of size 1x44x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 3
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::resource] Creating texture 0x557b53d386e0 of size 1024x1024x1 and format Bgra8Unorm, name 'atlas', handle 4
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::resource] Creating buffer 0x557b53e62e20 of size 65536, name 'chunk-0', handle 5
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::resource] Creating texture 0x557b53cc83a0 of size 1024x1024x1 and format R8Unorm, name 'atlas', handle 6
+2026-11-15T18:19:25.989596Z  INFO crowbar_compositor::handlers::layer_shell: usable area is now 3840x2116 at 0,44 output=HDMI-A-1
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T18:19:25Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T18:19:25Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating texture 0x557b53cbab30 of size 286x96x1 and format Bgra8Unorm, name 'path intermediate', handle 7
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating texture 0x557b53ed2ec0 of size 286x96x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 8
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating texture 0x557b53f1df90 of size 1024x1024x1 and format R8Unorm, name 'atlas', handle 9
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating buffer 0x557b4ff42e40 of size 65536, name 'chunk-0', handle 10
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::surface] Retaining current format: Bgra8Unorm
+2026-11-15T18:19:26.056077Z  INFO crowbar_compositor::handlers::layer_shell: usable area is now 3840x2020 at 0,44 output=HDMI-A-1
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b53d038d0, handle 0
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b53ee19d0, handle 1
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating texture 0x557b53d038d0 of size 3840x2160x1 and format Bgra8Unorm, name 'path intermediate', handle 1
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating texture 0x557b53ee19d0 of size 3840x2160x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 0
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating buffer 0x557b53ef6420 of size 4096, name 'chunk-0', handle 11
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::surface] Retaining current format: Bgra8Unorm
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b53d3caa0, handle 2
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b53cd88a0, handle 3
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating texture 0x557b4fc3d720 of size 3840x44x1 and format Bgra8Unorm, name 'path intermediate', handle 3
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating texture 0x557b53d49850 of size 3840x44x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 2
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating buffer 0x557b53d7cc60 of size 4096, name 'chunk-0', handle 12
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating buffer 0x557b53a5ac60 of size 6160, name 'chunk-1', handle 13
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating buffer 0x557b53d18580 of size 4096, name 'chunk-0', handle 14
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T18:19:26Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T18:19:26Z INFO  crowbaros_studio_settings] STUDIO event=opened theme=Dark studio=false reduced_motion=true
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating texture 0x55ea775add80 of size 1024x1024x1 and format R8Unorm, name 'atlas', handle 2
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating buffer 0x55ea77424d90 of size 65536, name 'chunk-0', handle 3
+[2026-11-15T18:19:26Z INFO  gpui::platform::linux::platform] activate is not implemented on Linux, ignoring the call
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating buffer 0x55ea7753b3b0 of size 9120, name 'chunk-0', handle 4
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating buffer 0x55ea773c7960 of size 41104, name 'chunk-1', handle 5
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating buffer 0x55ea7738d210 of size 4096, name 'chunk-2', handle 6
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating buffer 0x55ea77443340 of size 7056, name 'chunk-3', handle 7
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating buffer 0x55ea773dc710 of size 4096, name 'chunk-4', handle 8
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating texture 0x557b53ccfde0 of size 1672x1024x1 and format Bgra8Unorm, name 'atlas', handle 15
+[2026-11-15T18:19:26Z INFO  blade_graphics::hal::resource] Creating buffer 0x557b5047e800 of size 6293408, name 'chunk-0', handle 16
+2026-11-15T18:19:29.459669Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 209, layer crowbaros-dock: 208, layer crowbaros-wallpaper: 210, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 254 frames=249
+2026-11-15T18:19:34.473982Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 507, layer crowbaros-dock: 506, layer crowbaros-wallpaper: 508, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 552 frames=547
+2026-11-15T18:19:39.487853Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 805, layer crowbaros-dock: 804, layer crowbaros-wallpaper: 806, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 850 frames=845
+2026-11-15T18:19:44.499073Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 1103, layer crowbaros-dock: 1102, layer crowbaros-wallpaper: 1104, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 1148 frames=1143
+2026-11-15T18:19:49.513702Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 1401, layer crowbaros-dock: 1400, layer crowbaros-wallpaper: 1402, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 1446 frames=1441
+2026-11-15T18:19:54.799738Z  INFO smithay::backend::libinput: Removed device "event14"
+2026-11-15T18:19:54.799775Z  INFO smithay::backend::libinput: Removed device "event0"
+2026-11-15T18:19:54.799789Z  INFO smithay::backend::libinput: Removed device "event1"
+2026-11-15T18:19:54.799801Z  INFO smithay::backend::libinput: Removed device "event6"
+2026-11-15T18:19:54.799831Z  INFO smithay::backend::libinput: Removed device "event5"
+2026-11-15T18:19:54.799861Z  INFO smithay::backend::libinput: Removed device "event4"
+2026-11-15T18:19:54.799891Z  INFO smithay::backend::libinput: Removed device "event3"
+2026-11-15T18:19:54.799919Z  INFO smithay::backend::libinput: Removed device "event12"
+2026-11-15T18:19:54.799954Z  INFO smithay::backend::libinput: Removed device "event9"
+2026-11-15T18:19:54.799987Z  INFO smithay::backend::libinput: Removed device "event8"
+2026-11-15T18:19:54.800016Z  INFO smithay::backend::libinput: Removed device "event10"
+2026-11-15T18:19:54.800048Z  INFO smithay::backend::libinput: Removed device "event7"
+2026-11-15T18:19:54.800077Z  INFO smithay::backend::libinput: Removed device "event2"
+2026-11-15T18:20:23.306604Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 1697, layer crowbaros-dock: 1696, layer crowbaros-wallpaper: 1698, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 1742 frames=1737
+2026-11-15T18:20:23.306794Z  WARN crowbar_compositor::control: control channel closed: the shell is not reading error=Broken pipe (os error 32)
+2026-11-15T18:20:23.306909Z  INFO crowbar_compositor::tty: tty: session paused
+2026-11-15T18:20:23.322843Z  WARN crowbar_compositor::tty: tty: render failed error=The underlying drm surface encountered an error: Device is currently paused, operation rejected
+2026-11-15T18:20:23.339469Z  WARN crowbar_compositor::tty: tty: render failed error=The underlying drm surface encountered an error: Device is currently paused, operation rejected
+2026-11-15T18:20:23.355912Z  WARN crowbar_compositor::tty: tty: render failed error=The underlying drm surface encountered an error: Device is currently paused, operation rejected
+2026-11-15T18:20:23.372138Z  WARN crowbar_compositor::tty: tty: render failed error=The underlying drm surface encountered an error: Device is currently paused, operation rejected
+2026-11-15T18:20:23.388370Z  WARN crowbar_compositor::tty: tty: render failed error=The underlying drm surface encountered an error: Device is currently paused, operation rejected
+2026-11-15T18:20:23.403414Z  INFO crowbar_compositor::tty: tty: session resumed
+2026-11-15T18:20:23.760485Z  INFO smithay::backend::libinput: New device "event2"
+2026-11-15T18:20:23.760504Z  INFO smithay::backend::libinput: New device "event7"
+2026-11-15T18:20:23.760510Z  INFO smithay::backend::libinput: New device "event10"
+2026-11-15T18:20:23.760515Z  INFO smithay::backend::libinput: New device "event8"
+2026-11-15T18:20:23.760520Z  INFO smithay::backend::libinput: New device "event9"
+2026-11-15T18:20:23.760525Z  INFO smithay::backend::libinput: New device "event12"
+2026-11-15T18:20:23.760530Z  INFO smithay::backend::libinput: New device "event3"
+2026-11-15T18:20:23.760535Z  INFO smithay::backend::libinput: New device "event4"
+2026-11-15T18:20:23.760540Z  INFO smithay::backend::libinput: New device "event5"
+2026-11-15T18:20:23.760545Z  INFO smithay::backend::libinput: New device "event6"
+2026-11-15T18:20:23.760550Z  INFO smithay::backend::libinput: New device "event1"
+2026-11-15T18:20:23.760555Z  INFO smithay::backend::libinput: New device "event0"
+2026-11-15T18:20:23.760560Z  INFO smithay::backend::libinput: New device "event14"
+2026-11-15T18:20:28.321898Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 1973, layer crowbaros-dock: 1972, layer crowbaros-wallpaper: 1975, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 2021 frames=2017
+2026-11-15T18:20:33.323495Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 2273, layer crowbaros-dock: 2272, layer crowbaros-wallpaper: 2275, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 2321 frames=2317
+2026-11-15T18:20:38.336344Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 2572, layer crowbaros-dock: 2571, layer crowbaros-wallpaper: 2574, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 2620 frames=2616
+2026-11-15T18:20:43.349308Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 2870, layer crowbaros-dock: 2869, layer crowbaros-wallpaper: 2872, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 2918 frames=2914
+2026-11-15T18:20:48.360623Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 3168, layer crowbaros-dock: 3167, layer crowbaros-wallpaper: 3170, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 3216 frames=3212
+2026-11-15T18:20:53.373448Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 3466, layer crowbaros-dock: 3465, layer crowbaros-wallpaper: 3468, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 3514 frames=3510
+2026-11-15T18:20:58.388026Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 3764, layer crowbaros-dock: 3763, layer crowbaros-wallpaper: 3766, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 3812 frames=3808
+2026-11-15T18:21:03.399946Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 4063, layer crowbaros-dock: 4062, layer crowbaros-wallpaper: 4065, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 4110 frames=4106
+2026-11-15T18:21:08.413459Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 4361, layer crowbaros-dock: 4360, layer crowbaros-wallpaper: 4363, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 4408 frames=4404
+2026-11-15T18:21:13.424516Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 4659, layer crowbaros-dock: 4658, layer crowbaros-wallpaper: 4661, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 4706 frames=4702
+2026-11-15T18:21:18.431943Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 4957, layer crowbaros-dock: 4956, layer crowbaros-wallpaper: 4959, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 5004 frames=5000
+2026-11-15T18:21:23.441356Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 5255, layer crowbaros-dock: 5254, layer crowbaros-wallpaper: 5257, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 5302 frames=5298
+2026-11-15T18:21:28.454334Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 5553, layer crowbaros-dock: 5552, layer crowbaros-wallpaper: 5555, window 0x1 : 1, window 0x1 com.crowbaros.StudioSettings: 5600 frames=5596
+Io error: Broken pipe (os error Io error: 32)Broken pipe
+ (os error 32)
+[2026-11-15T18:21:33Z ERROR] OtherError(IoError(Os { code: 32, kind: BrokenPipe, message: "Broken pipe" }))
+[2026-11-15T18:21:33Z ERROR] OtherError(IoError(Os { code: 32, kind: BrokenPipe, message: "Broken pipe" }))
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying texture 0x55ea775add80, handle 2
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b53ccfde0, handle 15
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying buffer 0x55ea77424d90, handle 3
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying buffer 0x557b5047e800, handle 16
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying buffer 0x55ea7753b3b0, handle 4
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying buffer 0x55ea773c7960, handle 5
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying buffer 0x55ea7738d210, handle 6
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying buffer 0x55ea77443340, handle 7
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying buffer 0x55ea773dc710, handle 8
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying buffer 0x557b53ef6420, handle 11
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying texture 0x55ea7739c890, handle 0
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b53d038d0, handle 1
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b53ee19d0, handle 0
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying texture 0x55ea77372af0, handle 1
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b53cc83a0, handle 6
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b53d386e0, handle 4
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying buffer 0x557b53e62e20, handle 5
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying buffer 0x557b53d7cc60, handle 12
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying buffer 0x557b53a5ac60, handle 13
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b4fc3d720, handle 3
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b53d49850, handle 2
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b53f1df90, handle 9
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying buffer 0x557b4ff42e40, handle 10
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying buffer 0x557b53d18580, handle 14
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b53cbab30, handle 7
+[2026-11-15T18:21:33Z INFO  blade_graphics::hal::resource] Destroying texture 0x557b53ed2ec0, handle 8
