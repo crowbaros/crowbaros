@@ -2,9 +2,7 @@
 
 use std::{io::Write, process::Command, time::Instant};
 
-use crowbar_compositor::probe::{
-    self, Anchor, Client, Error, KeyEvent, KeyboardInteractivity, Layer, LayerRequest,
-};
+use crowbar_compositor::probe::{self, Anchor, Client, Error, KeyEvent, KeyboardInteractivity, Layer, LayerRequest};
 
 const USAGE: &str = "\
 crowbar-probe: an ordinary Wayland client for testing a compositor.
@@ -13,7 +11,8 @@ crowbar-probe: an ordinary Wayland client for testing a compositor.
   keylog [TITLE]     Open a window and print every keyboard event it gets.
   layer              Try to create a layer surface and say what happened.
   toplevels          List other clients' windows, if the compositor tells.
-  sandbox CMD ARGS   Register a security context and run CMD inside it.
+  security-context CMD ARGS
+                     Register a security context and run CMD inside it.
 ";
 
 fn main() {
@@ -23,7 +22,7 @@ fn main() {
         Some("keylog") => keylog(args.get(1).map(String::as_str).unwrap_or("crowbar-probe keylog")),
         Some("layer") => layer(),
         Some("toplevels") => toplevels(),
-        Some("sandbox") if args.len() > 1 => sandbox(&args[1..]),
+        Some("security-context") if args.len() > 1 => security_context(&args[1..]),
         _ => {
             eprint!("{USAGE}");
             std::process::exit(2);
@@ -64,7 +63,11 @@ fn keylog(title: &str) -> Result<(), Error> {
         }
         first = false;
         for scale in client.state.buffer_scales.drain(..) {
-            writeln!(out, "{:8.3} preferred_buffer_scale {scale}", start.elapsed().as_secs_f64())?;
+            writeln!(
+                out,
+                "{:8.3} preferred_buffer_scale {scale}",
+                start.elapsed().as_secs_f64()
+            )?;
         }
         for event in client.state.keys.drain(..) {
             let text = match event {
@@ -106,16 +109,16 @@ fn layer() -> Result<(), Error> {
     Ok(())
 }
 
-fn sandbox(command: &[String]) -> Result<(), Error> {
+fn security_context(command: &[String]) -> Result<(), Error> {
     let mut client = client()?;
     let runtime = std::env::var_os("XDG_RUNTIME_DIR").ok_or("XDG_RUNTIME_DIR is not set")?;
-    let path = std::path::PathBuf::from(runtime).join(format!("crowbar-sandbox-{}", std::process::id()));
-    let sandbox = client.sandbox(&path)?;
+    let path = std::path::PathBuf::from(runtime).join(format!("crowbar-security-context-{}", std::process::id()));
+    let listener = client.security_context(&path)?;
     let status = Command::new(&command[0])
         .args(&command[1..])
-        .env("WAYLAND_DISPLAY", &sandbox.path)
+        .env("WAYLAND_DISPLAY", &listener.path)
         .env_remove("WAYLAND_SOCKET")
         .status()?;
-    let _ = std::fs::remove_file(&sandbox.path);
+    let _ = std::fs::remove_file(&listener.path);
     std::process::exit(status.code().unwrap_or(1));
 }

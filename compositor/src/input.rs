@@ -1,7 +1,7 @@
 use smithay::{
     backend::input::{
-        AbsolutePositionEvent, InputTime, KeyState, Keycode, PointerMotionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
-        KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent, InputTime, KeyState,
+        KeyboardKeyEvent, Keycode, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
     },
     input::{
         keyboard::{FilterResult, Keysym},
@@ -62,8 +62,10 @@ impl State {
             return pos;
         };
         Point::from((
-            pos.x.clamp(bounds.loc.x as f64, (bounds.loc.x + bounds.size.w - 1) as f64),
-            pos.y.clamp(bounds.loc.y as f64, (bounds.loc.y + bounds.size.h - 1) as f64),
+            pos.x
+                .clamp(bounds.loc.x as f64, (bounds.loc.x + bounds.size.w - 1) as f64),
+            pos.y
+                .clamp(bounds.loc.y as f64, (bounds.loc.y + bounds.size.h - 1) as f64),
         ))
     }
 

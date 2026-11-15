@@ -80,7 +80,13 @@ fn an_exclusive_layer_takes_the_keyboard_until_it_closes() {
 
     assert_eq!(app.take_keys().unwrap(), [KeyEvent::Leave]);
     let seen = shell.take_keys().unwrap();
-    assert!(seen.contains(&KeyEvent::Key { key: KEY_A, pressed: true }), "{seen:?}");
+    assert!(
+        seen.contains(&KeyEvent::Key {
+            key: KEY_A,
+            pressed: true
+        }),
+        "{seen:?}"
+    );
 
     launcher.layer_surface.destroy();
     launcher.surface.destroy();

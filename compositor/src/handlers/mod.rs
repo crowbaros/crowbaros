@@ -6,20 +6,18 @@ use std::sync::Arc;
 
 use crate::{
     State,
-    policy::{self, Principal},
+    policy::{self, ClientKind},
     state::ClientState,
 };
+use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::reexports::wayland_server::{
     self, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::ClientId,
 };
-use smithay::wayland::{Dispatch2, GlobalDispatch2};
-use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::wayland::compositor::with_states;
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
 use smithay::wayland::fractional_scale::{FractionalScaleHandler, with_fractional_scale};
-use smithay::wayland::security_context::{
-    SecurityContext, SecurityContextHandler, SecurityContextListenerSource,
-};
+use smithay::wayland::security_context::{SecurityContext, SecurityContextHandler, SecurityContextListenerSource};
+use smithay::wayland::{Dispatch2, GlobalDispatch2};
 
 //
 // Wl Seat
@@ -153,10 +151,9 @@ impl SecurityContextHandler for State {
     fn context_created(&mut self, source: SecurityContextListenerSource, _context: SecurityContext) {
         self.loop_handle
             .insert_source(source, move |client_stream, _, state| {
-                let _ = state.display_handle.insert_client(
-                    client_stream,
-                    Arc::new(ClientState::new(Principal::Sandboxed)),
-                );
+                let _ = state
+                    .display_handle
+                    .insert_client(client_stream, Arc::new(ClientState::new(ClientKind::SecurityContext)));
             })
             .expect("security context listener");
     }

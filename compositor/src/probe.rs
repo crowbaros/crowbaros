@@ -29,6 +29,9 @@ use wayland_protocols::ext::foreign_toplevel_list::v1::client::{
     ext_foreign_toplevel_handle_v1::{self, ExtForeignToplevelHandleV1},
     ext_foreign_toplevel_list_v1::{self, ExtForeignToplevelListV1},
 };
+use wayland_protocols::wp::security_context::v1::client::{
+    wp_security_context_manager_v1::WpSecurityContextManagerV1, wp_security_context_v1::WpSecurityContextV1,
+};
 use wayland_protocols::xdg::shell::client::{
     xdg_surface::{self, XdgSurface},
     xdg_toplevel::{self, XdgToplevel},
@@ -37,9 +40,6 @@ use wayland_protocols::xdg::shell::client::{
 pub use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
     zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
-};
-use wayland_protocols::wp::security_context::v1::client::{
-    wp_security_context_manager_v1::WpSecurityContextManagerV1, wp_security_context_v1::WpSecurityContextV1,
 };
 
 /// One global as the registry advertised it.
@@ -70,11 +70,18 @@ pub fn from_stream(stream: UnixStream) -> io::Result<Connection> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeyEvent {
     /// Focus arrived. `held` lists the keys the compositor reported as down.
-    Enter { held: Vec<u32> },
+    Enter {
+        held: Vec<u32>,
+    },
     Leave,
     /// `key` is the evdev code (`KEY_*` in `linux/input-event-codes.h`).
-    Key { key: u32, pressed: bool },
-    Modifiers { depressed: u32 },
+    Key {
+        key: u32,
+        pressed: bool,
+    },
+    Modifiers {
+        depressed: u32,
+    },
 }
 
 #[derive(Default)]
@@ -165,8 +172,8 @@ impl Client {
 }
 
 /// A listening socket registered through security-context. Clients that
-/// connect to `path` are sandboxed for as long as this value lives.
-pub struct Sandbox {
+/// connect to `path` are security-context clients for as long as this value lives.
+pub struct SecurityContextListener {
     pub path: PathBuf,
     _keep_open: OwnedFd,
 }
@@ -178,11 +185,7 @@ impl Client {
         I: Proxy + 'static,
         ClientState: Dispatch<I, ()>,
     {
-        let global = self
-            .state
-            .globals
-            .iter()
-            .find(|g| g.interface == I::interface().name)?;
+        let global = self.state.globals.iter().find(|g| g.interface == I::interface().name)?;
         Some(self.bind_by_name(global.name, version.min(global.version)))
     }
 
@@ -196,8 +199,8 @@ impl Client {
     }
 
     /// Registers a new listening socket at `path` as a security context, the
-    /// way a sandbox engine does before it starts an app.
-    pub fn sandbox(&mut self, path: &Path) -> Result<Sandbox, Error> {
+    /// way a container engine does before it starts a program.
+    pub fn security_context(&mut self, path: &Path) -> Result<SecurityContextListener, Error> {
         let manager: WpSecurityContextManagerV1 = self
             .bind(1)
             .ok_or("wp_security_context_manager_v1 is not offered to this client")?;
@@ -210,7 +213,7 @@ impl Client {
         context.set_instance_id(std::process::id().to_string());
         context.commit();
         self.roundtrip()?;
-        Ok(Sandbox {
+        Ok(SecurityContextListener {
             path: path.to_path_buf(),
             _keep_open: close_ours,
         })
@@ -333,7 +336,14 @@ impl Client {
 }
 
 impl Dispatch<XdgWmBase, ()> for ClientState {
-    fn event(_: &mut Self, wm_base: &XdgWmBase, event: xdg_wm_base::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        _: &mut Self,
+        wm_base: &XdgWmBase,
+        event: xdg_wm_base::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         if let xdg_wm_base::Event::Ping { serial } = event {
             wm_base.pong(serial);
         }
@@ -341,7 +351,14 @@ impl Dispatch<XdgWmBase, ()> for ClientState {
 }
 
 impl Dispatch<XdgSurface, ()> for ClientState {
-    fn event(state: &mut Self, xdg_surface: &XdgSurface, event: xdg_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        xdg_surface: &XdgSurface,
+        event: xdg_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         if let xdg_surface::Event::Configure { serial } = event {
             xdg_surface.ack_configure(serial);
             state.xdg_configured = true;
@@ -350,7 +367,14 @@ impl Dispatch<XdgSurface, ()> for ClientState {
 }
 
 impl Dispatch<XdgToplevel, ()> for ClientState {
-    fn event(state: &mut Self, _: &XdgToplevel, event: xdg_toplevel::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &XdgToplevel,
+        event: xdg_toplevel::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         match event {
             xdg_toplevel::Event::Configure { width, height, .. } => state.toplevel_size = (width, height),
             xdg_toplevel::Event::Close => state.closed = true,
@@ -393,13 +417,17 @@ impl Dispatch<WlSeat, ()> for ClientState {
 }
 
 impl Dispatch<WlKeyboard, ()> for ClientState {
-    fn event(state: &mut Self, _: &WlKeyboard, event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &WlKeyboard,
+        event: wl_keyboard::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         match event {
             wl_keyboard::Event::Enter { keys, .. } => state.keys.push(KeyEvent::Enter {
-                held: keys
-                    .chunks_exact(4)
-                    .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect(),
+                held: keys.as_chunks::<4>().0.iter().map(|c| u32::from_ne_bytes(*c)).collect(),
             }),
             wl_keyboard::Event::Leave { .. } => state.keys.push(KeyEvent::Leave),
             wl_keyboard::Event::Key {

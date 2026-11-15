@@ -185,12 +185,7 @@ impl State {
                     .toplevel()
                     .map(|toplevel| {
                         with_states(toplevel.wl_surface(), |states| {
-                            let data = states
-                                .data_map
-                                .get::<XdgToplevelSurfaceData>()
-                                .unwrap()
-                                .lock()
-                                .unwrap();
+                            let data = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
                             (
                                 data.app_id.clone().unwrap_or_default(),
                                 data.title.clone().unwrap_or_default(),

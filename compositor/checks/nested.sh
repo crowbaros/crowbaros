@@ -64,7 +64,7 @@ report() { # report NAME FILE
 
 say "# Nested protocol checks, $(date -u +%FT%TZ)"
 say "host: $(uname -sr), session $XDG_SESSION_TYPE${WAYLAND_DISPLAY:+ on $WAYLAND_DISPLAY}"
-say "compositor: $bin/crowbar-compositor  sha256 $(sha256sum "$bin/crowbar-compositor" | cut -c1-16)"
+say "compositor: $bin/crowbar-compositor  sha256 $(sha256sum "$bin/crowbar-compositor" | cut -d" " -f1)"
 say "wayland-info: $($info --version 2>/dev/null || echo "$info")"
 
 # The shell's view. The compositor hands the "shell" its connected socket, so
@@ -78,19 +78,19 @@ start_compositor "$work/shell-info.sh"
 for _ in $(seq 50); do [ -s "$work/shell.txt" ] && break; sleep 0.1; done
 
 WAYLAND_DISPLAY=$socket "$info" >"$work/ordinary.txt" 2>&1
-WAYLAND_DISPLAY=$socket "$bin/crowbar-probe" sandbox "$info" >"$work/sandboxed.txt" 2>&1
+WAYLAND_DISPLAY=$socket "$bin/crowbar-probe" security-context "$info" >"$work/confined.txt" 2>&1
 
 report "the shell (socket handed over by the compositor)" "$work/shell.txt"
 report "an ordinary client (public socket $socket)" "$work/ordinary.txt"
-report "a client started through security-context" "$work/sandboxed.txt"
+report "a client started through security-context" "$work/confined.txt"
 
 say ""
 say "== forbidden globals"
-printf '   %-56s %-9s %-9s %-9s\n' global shell ordinary sandboxed | tee -a "$log"
+printf '   %-56s %-9s %-9s %-16s\n' global shell ordinary security-context | tee -a "$log"
 fail=0
 for name in "${forbidden[@]}"; do
   row=()
-  for who in shell ordinary sandboxed; do
+  for who in shell ordinary confined; do
     if interfaces "$work/$who.txt" | grep -q "^$name "; then row+=(OFFERED); else row+=(absent); fi
   done
   printf '   %-56s %-9s %-9s %-9s\n' "$name" "${row[@]}" | tee -a "$log"

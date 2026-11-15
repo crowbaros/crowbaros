@@ -95,14 +95,10 @@ impl State {
         }
         self.focus_counter += 1;
         let stamp = self.focus_counter;
-        self.active_window = self
-            .windows
-            .iter_mut()
-            .find(|m| Some(&m.window) == window)
-            .map(|m| {
-                m.focus_stamp = stamp;
-                m.id
-            });
+        self.active_window = self.windows.iter_mut().find(|m| Some(&m.window) == window).map(|m| {
+            m.focus_stamp = stamp;
+            m.id
+        });
         // A layer surface that holds the keyboard keeps it.
         if self.layer_focus.is_none() {
             let surface = window.and_then(|w| w.toplevel()).map(|t| t.wl_surface().clone());

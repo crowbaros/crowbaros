@@ -17,7 +17,9 @@ const KEY_LEFTALT: u32 = 56;
 fn focused_client(compositor: &Compositor) -> Client {
     let mut client = compositor.ordinary_client();
     client.listen_to_keyboard().unwrap();
-    client.open_toplevel("keys", "test.keys", (300, 200), 0xffff_ffff).unwrap();
+    client
+        .open_toplevel("keys", "test.keys", (300, 200), 0xffff_ffff)
+        .unwrap();
     let seen = client.take_keys().unwrap();
     assert!(
         seen.iter().any(|e| matches!(e, KeyEvent::Enter { .. })),
@@ -121,7 +123,9 @@ fn a_client_that_gains_focus_during_the_chord_is_not_told_the_key_is_down() {
     compositor.key(KEY_ENTER, true);
     let mut second = compositor.ordinary_client();
     second.listen_to_keyboard().unwrap();
-    second.open_toplevel("late", "test.late", (300, 200), 0xffff_ffff).unwrap();
+    second
+        .open_toplevel("late", "test.late", (300, 200), 0xffff_ffff)
+        .unwrap();
     compositor.key(KEY_ENTER, false);
 
     let seen = second.take_keys().unwrap();

@@ -13,9 +13,13 @@ fn a_snapshot_lists_the_windows_and_names_the_active_one() {
     let compositor = Compositor::start();
     let (_shell, mut control) = compositor.shell();
     let mut first = compositor.ordinary_client();
-    first.open_toplevel("First window", "test.first", (300, 200), 0xffff_ffff).unwrap();
+    first
+        .open_toplevel("First window", "test.first", (300, 200), 0xffff_ffff)
+        .unwrap();
     let mut second = compositor.ordinary_client();
-    second.open_toplevel("Second \"quoted\" window", "test.second", (300, 200), 0xffff_ffff).unwrap();
+    second
+        .open_toplevel("Second \"quoted\" window", "test.second", (300, 200), 0xffff_ffff)
+        .unwrap();
 
     let reply = control.request(r#"{"op":"snapshot"}"#);
 
@@ -40,10 +44,14 @@ fn focus_window_moves_the_keyboard_to_that_window() {
     let (_shell, mut control) = compositor.shell();
     let mut first = compositor.ordinary_client();
     first.listen_to_keyboard().unwrap();
-    first.open_toplevel("First", "test.first", (300, 200), 0xffff_ffff).unwrap();
+    first
+        .open_toplevel("First", "test.first", (300, 200), 0xffff_ffff)
+        .unwrap();
     let mut second = compositor.ordinary_client();
     second.listen_to_keyboard().unwrap();
-    second.open_toplevel("Second", "test.second", (300, 200), 0xffff_ffff).unwrap();
+    second
+        .open_toplevel("Second", "test.second", (300, 200), 0xffff_ffff)
+        .unwrap();
     first.take_keys().unwrap();
     second.take_keys().unwrap();
 
@@ -62,10 +70,15 @@ fn focus_workspace_shows_only_that_workspaces_windows() {
     let (_shell, mut control) = compositor.shell();
     let mut first = compositor.ordinary_client();
     first.listen_to_keyboard().unwrap();
-    first.open_toplevel("First", "test.first", (300, 200), 0xffff_ffff).unwrap();
+    first
+        .open_toplevel("First", "test.first", (300, 200), 0xffff_ffff)
+        .unwrap();
     first.take_keys().unwrap();
 
-    assert_eq!(control.request(r#"{"op":"focus_workspace","id":2}"#), json!({"reply": "ok"}));
+    assert_eq!(
+        control.request(r#"{"op":"focus_workspace","id":2}"#),
+        json!({"reply": "ok"})
+    );
 
     // The window on workspace 1 is no longer shown and loses the keyboard.
     assert_eq!(first.take_keys().unwrap(), [KeyEvent::Leave]);
@@ -73,7 +86,9 @@ fn focus_workspace_shows_only_that_workspaces_windows() {
 
     // A window opened now belongs to workspace 2.
     let mut second = compositor.ordinary_client();
-    second.open_toplevel("Second", "test.second", (300, 200), 0xffff_ffff).unwrap();
+    second
+        .open_toplevel("Second", "test.second", (300, 200), 0xffff_ffff)
+        .unwrap();
     let snapshot = control.request(r#"{"op":"snapshot"}"#);
     assert_eq!(snapshot["workspace"], 2);
     assert_eq!(snapshot["windows"][0]["workspace"], 1);
@@ -81,7 +96,10 @@ fn focus_workspace_shows_only_that_workspaces_windows() {
     assert_eq!(snapshot["active"], "0x2");
 
     // Going back shows the first window again and returns the keyboard to it.
-    assert_eq!(control.request(r#"{"op":"focus_workspace","id":1}"#), json!({"reply": "ok"}));
+    assert_eq!(
+        control.request(r#"{"op":"focus_workspace","id":1}"#),
+        json!({"reply": "ok"})
+    );
     assert!(matches!(first.take_keys().unwrap()[..], [KeyEvent::Enter { .. }, ..]));
     assert_eq!(control.request(r#"{"op":"snapshot"}"#)["active"], "0x1");
 }

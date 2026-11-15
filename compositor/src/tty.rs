@@ -23,8 +23,7 @@ use smithay::{
         renderer::{
             ImportDma, ImportMemWl,
             element::{
-                Id, Kind, render_elements, solid::SolidColorRenderElement,
-                surface::WaylandSurfaceRenderElement,
+                Id, Kind, render_elements, solid::SolidColorRenderElement, surface::WaylandSurfaceRenderElement,
             },
             gles::GlesRenderer,
             utils::CommitCounter,
@@ -54,8 +53,7 @@ use tracing::{info, warn};
 
 use crate::State;
 
-type GbmDrmOutput =
-    DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
+type GbmDrmOutput = DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
 type GbmDrmOutputManager =
     DrmOutputManager<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
 
@@ -149,14 +147,16 @@ pub fn init_tty(
         })?;
 
     let udev = UdevBackend::new(&seat)?;
-    event_loop.handle().insert_source(udev, move |event, _, state| match event {
-        UdevEvent::Changed { device_id } if device_id == node.dev_id() => {
-            info!("tty: udev says the DRM device changed; scanning connectors");
-            state.tty_scan();
-        }
-        UdevEvent::Added { path, .. } => info!(path = %path.display(), "tty: another DRM device appeared; ignored"),
-        _ => {}
-    })?;
+    event_loop
+        .handle()
+        .insert_source(udev, move |event, _, state| match event {
+            UdevEvent::Changed { device_id } if device_id == node.dev_id() => {
+                info!("tty: udev says the DRM device changed; scanning connectors");
+                state.tty_scan();
+            }
+            UdevEvent::Added { path, .. } => info!(path = %path.display(), "tty: another DRM device appeared; ignored"),
+            _ => {}
+        })?;
 
     let mut libinput = Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(session.clone().into());
     libinput
@@ -320,12 +320,12 @@ impl State {
         let retry = self.tty_render_surface(&mut tty, crtc);
         self.tty = Some(tty);
         if retry {
-            let _ = self
-                .loop_handle
-                .insert_source(Timer::from_duration(Duration::from_millis(16)), move |_, _, state| {
-                    state.tty_render(crtc);
-                    TimeoutAction::Drop
-                });
+            let _ =
+                self.loop_handle
+                    .insert_source(Timer::from_duration(Duration::from_millis(16)), move |_, _, state| {
+                        state.tty_render(crtc);
+                        TimeoutAction::Drop
+                    });
         }
     }
 

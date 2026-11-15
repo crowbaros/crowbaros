@@ -7,8 +7,7 @@ use smithay::{
     backend::{
         egl::EGLDevice,
         renderer::{
-            ImportDma, damage::OutputDamageTracker, element::surface::WaylandSurfaceRenderElement,
-            gles::GlesRenderer,
+            ImportDma, damage::OutputDamageTracker, element::surface::WaylandSurfaceRenderElement, gles::GlesRenderer,
         },
         winit::{self, WinitEvent},
     },
@@ -53,7 +52,9 @@ pub fn init_winit(
             }
             other => {
                 tracing::warn!(?other, "dmabuf: no render node, offering version 3");
-                state.dmabuf_state.create_global::<State>(&state.display_handle, formats)
+                state
+                    .dmabuf_state
+                    .create_global::<State>(&state.display_handle, formats)
             }
         };
         state.dmabuf_global = Some(global);
@@ -68,15 +69,7 @@ pub fn init_winit(
     event_loop.handle().insert_source(winit, move |event, _, state| {
         match event {
             WinitEvent::Resized { size, .. } => {
-                output.change_current_state(
-                    Some(Mode {
-                        size,
-                        refresh: 60_000,
-                    }),
-                    None,
-                    None,
-                    None,
-                );
+                output.change_current_state(Some(Mode { size, refresh: 60_000 }), None, None, None);
                 layer_map_for_output(&output).arrange();
             }
             WinitEvent::Input(event) => state.process_input_event(event),
@@ -87,12 +80,7 @@ pub fn init_winit(
 
                 {
                     let (renderer, mut framebuffer) = backend.bind().unwrap();
-                    smithay::desktop::space::render_output::<
-                        _,
-                        WaylandSurfaceRenderElement<GlesRenderer>,
-                        _,
-                        _,
-                    >(
+                    smithay::desktop::space::render_output::<_, WaylandSurfaceRenderElement<GlesRenderer>, _, _>(
                         &output,
                         renderer,
                         &mut framebuffer,

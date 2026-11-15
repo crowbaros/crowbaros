@@ -10,6 +10,7 @@ use smithay::{
     backend::{allocator::dmabuf::Dmabuf, input::Keycode},
     desktop::{PopupManager, Space, Window, WindowSurfaceType, layer_map_for_output},
     input::{Seat, SeatState},
+    output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::{
         calloop::{EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, generic::Generic},
         wayland_server::{
@@ -18,7 +19,6 @@ use smithay::{
             protocol::wl_surface::WlSurface,
         },
     },
-    output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     utils::{Logical, Point},
     wayland::{
         compositor::{
@@ -40,7 +40,7 @@ use smithay::{
 };
 
 use crate::{
-    policy::{self, Principal},
+    policy::{self, ClientKind},
     windows::Managed,
 };
 
@@ -69,7 +69,7 @@ pub struct State {
     /// Created by a backend that has a renderer. The tests have none.
     pub dmabuf_global: Option<DmabufGlobal>,
     /// How the backend's renderer takes a client's dmabuf.
-    pub dmabuf_import: Option<Box<dyn FnMut(&Dmabuf) -> bool>>,
+    pub dmabuf_import: Option<DmabufImport>,
     /// A layer surface that asked for the keyboard and has it.
     pub layer_focus: Option<WlSurface>,
     /// Commits per window or layer surface, and frames drawn. Evidence only.
@@ -212,7 +212,7 @@ impl State {
                 // You may also associate some data with the client when inserting the client.
                 state
                     .display_handle
-                    .insert_client(client_stream, Arc::new(ClientState::new(Principal::Ordinary)))
+                    .insert_client(client_stream, Arc::new(ClientState::new(ClientKind::Ordinary)))
                     .unwrap();
             })
             .expect("Failed to init the wayland event source.");
@@ -239,7 +239,7 @@ impl State {
     pub fn connect_shell(&mut self) -> std::io::Result<ShellChannels> {
         let (ours, wayland) = UnixStream::pair()?;
         self.display_handle
-            .insert_client(ours, Arc::new(ClientState::new(Principal::Shell)))
+            .insert_client(ours, Arc::new(ClientState::new(ClientKind::Shell)))
             .map_err(std::io::Error::other)?;
         let (ours, control) = UnixStream::pair()?;
         self.serve_control(ours)?;
@@ -281,12 +281,7 @@ impl State {
             .map(|geo| geo.loc.x + geo.size.w)
             .max()
             .unwrap_or(0);
-        output.change_current_state(
-            Some(mode),
-            None,
-            Some(Scale::Fractional(scale)),
-            Some((x, 0).into()),
-        );
+        output.change_current_state(Some(mode), None, Some(Scale::Fractional(scale)), Some((x, 0).into()));
         output.set_preferred(mode);
         self.space.map_output(&output, (x, 0));
         self.outputs.push(output.clone());
@@ -472,6 +467,9 @@ impl State {
     }
 }
 
+/// How a backend's renderer takes a client's dmabuf.
+pub type DmabufImport = Box<dyn FnMut(&Dmabuf) -> bool>;
+
 /// The shell's ends of its two sockets. Whoever holds them is the shell.
 pub struct ShellChannels {
     /// A connected Wayland socket. The shell is the only client that sees
@@ -486,14 +484,14 @@ pub struct ShellChannels {
 pub struct ClientState {
     pub compositor_state: CompositorClientState,
     /// Fixed when the connection is made. See `policy.rs`.
-    pub principal: Principal,
+    pub kind: ClientKind,
 }
 
 impl ClientState {
-    pub fn new(principal: Principal) -> Self {
+    pub fn new(kind: ClientKind) -> Self {
         ClientState {
             compositor_state: CompositorClientState::default(),
-            principal,
+            kind,
         }
     }
 }

@@ -9,12 +9,10 @@ use smithay::{
     input::pointer::{
         AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
         GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
-        GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab,
-        PointerInnerHandle, RelativeMotionEvent,
+        GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab, PointerInnerHandle,
+        RelativeMotionEvent,
     },
-    reexports::{
-        wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::protocol::wl_surface::WlSurface,
-    },
+    reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::protocol::wl_surface::WlSurface},
     utils::{Logical, Point, Rectangle, Size},
     wayland::{compositor, shell::xdg::SurfaceCachedState},
 };
@@ -108,12 +106,11 @@ impl PointerGrab<State> for ResizeSurfaceGrab {
             new_window_height = (self.initial_rect.size.h as f64 + delta.y) as i32;
         }
 
-        let (min_size, max_size) =
-            compositor::with_states(self.window.toplevel().unwrap().wl_surface(), |states| {
-                let mut guard = states.cached_state.get::<SurfaceCachedState>();
-                let data = guard.current();
-                (data.min_size, data.max_size)
-            });
+        let (min_size, max_size) = compositor::with_states(self.window.toplevel().unwrap().wl_surface(), |states| {
+            let mut guard = states.cached_state.get::<SurfaceCachedState>();
+            let data = guard.current();
+            (data.min_size, data.max_size)
+        });
 
         let min_width = min_size.w.max(1);
         let min_height = min_size.h.max(1);
@@ -145,12 +142,7 @@ impl PointerGrab<State> for ResizeSurfaceGrab {
         handle.relative_motion(data, focus, event);
     }
 
-    fn button(
-        &mut self,
-        data: &mut State,
-        handle: &mut PointerInnerHandle<'_, State>,
-        event: &ButtonEvent,
-    ) {
+    fn button(&mut self, data: &mut State, handle: &mut PointerInnerHandle<'_, State>, event: &ButtonEvent) {
         handle.button(data, event);
 
         // The button is a button code as defined in the
@@ -178,12 +170,7 @@ impl PointerGrab<State> for ResizeSurfaceGrab {
         }
     }
 
-    fn axis(
-        &mut self,
-        data: &mut State,
-        handle: &mut PointerInnerHandle<'_, State>,
-        details: AxisFrame,
-    ) {
+    fn axis(&mut self, data: &mut State, handle: &mut PointerInnerHandle<'_, State>, details: AxisFrame) {
         handle.axis(data, details)
     }
 

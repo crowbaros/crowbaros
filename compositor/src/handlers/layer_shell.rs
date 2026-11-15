@@ -6,8 +6,8 @@ use smithay::{
     wayland::{
         compositor::with_states,
         shell::wlr_layer::{
-            KeyboardInteractivity, Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData,
-            WlrLayerShellHandler, WlrLayerShellState,
+            KeyboardInteractivity, Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler,
+            WlrLayerShellState,
         },
     },
 };
@@ -109,9 +109,7 @@ pub fn handle_commit(state: &mut State, surface: &WlSurface) {
     let mut map = layer_map_for_output(&output);
     // Arrange before the first configure so the size the client asked for counts.
     map.arrange();
-    if !initial_configure_sent
-        && let Some(layer) = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
-    {
+    if !initial_configure_sent && let Some(layer) = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL) {
         layer.layer_surface().send_configure();
     }
     drop(map);

@@ -98,13 +98,13 @@ impl Compositor {
 
     /// A client that arrives through a security-context listener which an
     /// ordinary client registered.
-    pub fn sandboxed_client(&self) -> (probe::Client, probe::Sandbox) {
+    pub fn security_context_client(&self) -> (probe::Client, probe::SecurityContextListener) {
         static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path = runtime_dir().join(format!("sandbox-{n}"));
-        let sandbox = self.ordinary_client().sandbox(&path).unwrap();
-        let client = probe::Client::new(probe::connect(&sandbox.path).unwrap()).unwrap();
-        (client, sandbox)
+        let path = runtime_dir().join(format!("security-context-{n}"));
+        let listener = self.ordinary_client().security_context(&path).unwrap();
+        let client = probe::Client::new(probe::connect(&listener.path).unwrap()).unwrap();
+        (client, listener)
     }
 
     /// The shell's client: the connection the compositor itself opened.

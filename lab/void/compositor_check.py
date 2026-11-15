@@ -13,8 +13,10 @@ import time
 import compositor_guest as guest
 
 RUNTIME = "/run/user/1000"
+# LIBSEAT_BACKEND names the seat manager outright. Void builds libseat with an
+# elogind backend as well; this guest runs no elogind.
 AS_USER = (f"chpst -u {guest.GUEST_USER}:{guest.GUEST_USER}:_seatd:video:input "
-           f"env HOME=/home/{guest.GUEST_USER} XDG_RUNTIME_DIR={RUNTIME}")
+           f"env HOME=/home/{guest.GUEST_USER} XDG_RUNTIME_DIR={RUNTIME} LIBSEAT_BACKEND=seatd")
 FORBIDDEN = [
     "zwp_virtual_keyboard_manager_v1", "zwlr_virtual_pointer_manager_v1",
     "zwp_input_method_manager_v2", "zwp_input_method_v1",
@@ -148,12 +150,12 @@ def run_checks(ev):
     ev.log()
     ev.log("== what an ordinary client is offered (wayland-info inside the guest)")
     ordinary = interfaces(ev.guest(f"{client} wayland-info | grep -E \"^interface|name:|scale:\""))
-    sandboxed = interfaces(ev.guest(f"{client} crowbar-probe sandbox wayland-info | grep ^interface"))
+    confined = interfaces(ev.guest(f"{client} crowbar-probe security-context wayland-info | grep ^interface"))
     ev.check("no forbidden global is offered to an ordinary client",
              not set(FORBIDDEN) & set(ordinary), ", ".join(sorted(set(FORBIDDEN) & set(ordinary))))
     ev.check("a security-context client gets a smaller set",
-             sandboxed and set(sandboxed) < set(ordinary),
-             "missing: " + ", ".join(sorted(set(ordinary) - set(sandboxed))))
+             confined and set(confined) < set(ordinary),
+             "missing: " + ", ".join(sorted(set(ordinary) - set(confined))))
     layer = ev.guest(f"{client} crowbar-probe layer 2>&1 || true")
     ev.check("an ordinary client cannot create a layer surface", "not offered" in layer)
 

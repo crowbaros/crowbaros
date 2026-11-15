@@ -15,8 +15,7 @@ use smithay::{
     wayland::{
         compositor::with_states,
         shell::xdg::{
-            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
-            XdgToplevelSurfaceData,
+            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData,
         },
     },
 };
@@ -129,11 +128,7 @@ impl XdgShellHandler for State {
     }
 }
 
-fn check_grab(
-    seat: &Seat<State>,
-    surface: &WlSurface,
-    serial: Serial,
-) -> Option<PointerGrabStartData<State>> {
+fn check_grab(seat: &Seat<State>, surface: &WlSurface, serial: Serial) -> Option<PointerGrabStartData<State>> {
     let pointer = seat.get_pointer()?;
 
     // Check that this surface has a click grab.

@@ -43,10 +43,10 @@ fn the_shell_sees_layer_shell_and_an_ordinary_client_does_not() {
 #[test]
 fn a_client_started_through_security_context_sees_the_reduced_set() {
     let compositor = Compositor::start();
-    let (sandboxed, _sandbox) = compositor.sandboxed_client();
+    let (confined, _listener) = compositor.security_context_client();
 
     assert_eq!(
-        sandboxed.interfaces(),
+        confined.interfaces(),
         [
             "wl_compositor",
             "wl_output",
