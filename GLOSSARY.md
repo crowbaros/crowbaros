@@ -91,10 +91,18 @@ _Avoid_: Undo, reset, restore
 A task's private scratch area and its view of the Data it was given. Its writes to Data are staged there and committed together when the task finishes.
 _Avoid_: Fork, sandbox, temp directory
 
+**Catalog**:
+CrowbarOS's record of the installed software a person can install, each entry pinned to its source by hash, with the needs the person sees. A person can add private entries of their own.
+_Avoid_: App store, repository, package list
+
+**Workbench**:
+A changeable Linux system for one project's dev tools, made from a profile the person approved once. Unlike a workspace, its writes go live, and what is installed inside it is not pinned.
+_Avoid_: Dev box, dev container, workspace
+
 ## Authority and safety
 
 **Principal**:
-Anything that can hold authority: a person, an agent, a task, a Tool, or installed software.
+Anything that can hold authority: a person, an agent, a task, a Tool, installed software, or a workbench.
 
 **Agent**:
 The person's own principal that does Shaping, edits intents with them, and starts tasks. It is a role the OS defines, whatever harness fills it.
@@ -189,11 +197,11 @@ Where acts on the person's behalf wait for a visible delay before they leave the
 _Avoid_: Queue, drafts
 
 **Standing grant**:
-Long-lived access to a thing, held by a Tool or a standing task, never by the Agent, and recorded in the authority domain. For a Tool it binds to the Tool's identity, the needs the person saw, and a clean build.
+Long-lived access to a thing, held by a Tool, a standing task, or a workbench, never by the Agent, and recorded in the authority domain. For a Tool it binds to the Tool's identity, the needs the person saw, and a clean build. For a workbench it binds to its identity and the needs of its profile.
 _Avoid_: Standing rule, permanent permission
 
 **Standing rule**:
-A person's pre-approval, with a rate limit, for a narrow kind of act that crosses the undo boundary, so that act doesn't ask again. It is held by a Tool or a standing task, never by the Agent. An act that crosses needs both the grant (access) and the rule (no ask).
+A person's pre-approval, with a rate limit, for a narrow kind of act that crosses the undo boundary, so that act doesn't ask again. It is held by a Tool, a standing task, or a workbench, never by the Agent. An act that crosses needs both the grant (access) and the rule (no ask).
 _Avoid_: Standing grant, allowlist
 
 **Confirm gesture**:

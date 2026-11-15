@@ -10,6 +10,7 @@ The [compositor spike](../research/compositor-spike-2026-11-15.md) identified a 
 - **The sandbox is the main control and the user ID is the second.** The sandbox decides what a compartment can see ([ADR 0004](0004-capability-safe-tools.md)). The user ID makes the kernel's own checks on tracing, signals, process memory, and socket permissions refuse one compartment reaching another, so a mistake in sandbox setup does not expose everything.
 - **A compartment has two names.** The **principal ID** is stable, and it is what authority binds to. The **compartment ID** is new at each start and is never used twice, so a ledger entry names one start. The broker mints both, and the broker, the Warden, and the compositor know a compartment by them. The kernel user ID is the Warden's means of enforcing and never leaves it.
 - **A compartment's user ID is temporary.** It comes from a range Base reserves and is not used again until the machine restarts. It owns nothing that outlives the compartment. Data on disk belongs to a Base storage user, and a compartment sees the view it was given through an ID-mapped mount.
+- **A workbench gets a block of user IDs.** A workbench ([ADR 0017](0017-a-pinned-catalog-and-workbenches.md)) holds files owned by many users, so the Warden gives its compartment a block of temporary user IDs instead of one, and writes the user namespace map itself. Blocks never overlap between live compartments. The workbench's subvolume is stored under a block of the storage user's on disk, and is mapped in at each start.
 - **No process runs as the person.** There is no login account. A terminal the owner opens is a compartment with a view. Owner authority is root, taken deliberately, outside every compartment.
 
 ## The Warden
@@ -34,11 +35,12 @@ The [compositor spike](../research/compositor-spike-2026-11-15.md) identified a 
 
 ## What a compartment starts with
 
-- **A broker connection and nothing else.** The Warden closes every other descriptor before the program runs, and every trusted part opens its own descriptors close-on-exec.
-- **A descriptor arrives later only from the broker**, over that connection: a file the person chose in the powerbox, for example. It is part of the compartment's view, and stopping the compartment is the only way to take it back (ADR 0004).
-- **A Wayland listener only when the broker orders one.** A Tool gets none, because the shell draws a Tool's UI from its description. Installed software, a terminal, and a task browser context that is shown get one. Most compartments are not Wayland clients.
-- **The GPU render node is a need like any other.** It is absent from a sandbox unless the principal's stated needs include it, and the person sees it among the needs. Without it a client draws through shared memory. A render node lets a program call the GPU driver directly, which is a large part of the kernel to expose.
-- **What a program expects to share runs inside its own sandbox.** A D-Bus session bus, an accessibility bus, or an X server that a program needs is started in that compartment, under its user ID, and reaches nothing outside it. Base has no session bus and no shared X server. An X11 app's bridge reaches the compositor through its compartment's listener, so it has that compartment's identity and no more. The only things that cross a sandbox boundary are the broker connection and the Wayland listener.
+- **Broker connections and nothing else.** A compartment may hold more than one, such as the HTTP proxy, the ssh-agent, and the TCP relay of ADR 0017, and every one comes from the broker. The Warden closes every other descriptor before the program runs, and every trusted part opens its own descriptors close-on-exec.
+- **A descriptor arrives later only from the broker**, over one of those connections: a file the person chose in the powerbox, for example. It is part of the compartment's view, and stopping the compartment is the only way to take it back (ADR 0004).
+- **A Wayland listener only when the broker orders one.** A Tool gets none, because the shell draws a Tool's UI from its description. Installed software, a workbench, a terminal, and a task browser context that is shown get one. Most compartments are not Wayland clients.
+- **The GPU is a need like any other.** It is absent from a sandbox unless the principal's stated needs include it, and the person sees it among the needs. It means the render node, on NVIDIA the other device nodes the driver needs, and the driver folder Base provides (ADR 0017). Without it a client draws through shared memory. A render node lets a program call the GPU driver directly, which is a large part of the kernel to expose.
+- **`/dev/kvm` is a need like any other**, for a workbench that runs virtual machines.
+- **What a program expects to share runs inside its own sandbox.** A D-Bus session bus, an accessibility bus, or an X server that a program needs is started in that compartment, under its user ID, and reaches nothing outside it. Base has no session bus and no shared X server. An X11 app's bridge reaches the compositor through its compartment's listener, so it has that compartment's identity and no more. The only things that cross a sandbox boundary are the broker connections and the Wayland listener.
 
 ## The seat and tracing
 
@@ -70,9 +72,9 @@ Whatever the owner gives, no compartment gets what the trusted parts hold:
 
 So a wide compartment cannot answer its own ask, grant itself more, or hide what it did. Above it there is only owner authority, which the owner uses by hand and no agent holds.
 
-**Wide is granted to one compartment at one start.** It is a change to authority, so it needs a passkey, a security key, or the phone (ADR 0014, rule 3). The approval signs what was shown: the principal, the objective, and when it ends. It ends when the compartment ends. It does not carry to the next start, and it cannot be a standing grant. A task, a terminal, or installed software can be wide. The Agent's own context cannot ([ADR 0011](0011-task-principals.md)).
+**Wide is granted to one compartment at one start.** It is a change to authority, so it needs a passkey, a security key, or the phone (ADR 0014, rule 3). The approval signs what was shown: the principal, the objective, and when it ends. It ends when the compartment ends. It does not carry to the next start, and it cannot be a standing grant. A task, a terminal, installed software, or a workbench can be wide. The Agent's own context cannot ([ADR 0011](0011-task-principals.md)).
 
-This record fixes only that floor and that grant. A later record decides how a wide compartment reaches the network, whether its writes to Data are staged, what label and mark its output carries, and how its windows are marked ([issue 144](https://github.com/crowbaros/crowbaros/issues/144)).
+This record fixes only that floor and that grant. [ADR 0017](0017-a-pinned-catalog-and-workbenches.md) decides how a wide compartment reaches the network, whether its writes to Data are staged, and what label and mark its output carries. How its windows are marked is left to [issue 144](https://github.com/crowbaros/crowbaros/issues/144).
 
 ## Milestone 2 and Base
 
@@ -93,7 +95,7 @@ Each of these is a test, and each must be refused. The first ten run on stock Li
 2. A Preview signals the live compartment of the same Tool.
 3. A process forks twice and starts a new session to outlive a stop. After `cgroup.kill`, no process with that user ID remains.
 4. A compartment runs a setuid program from its view. It gains nothing.
-5. A compartment lists its descriptors at start. It finds the broker connection and no other.
+5. A compartment lists its descriptors at start. It finds its broker connections and no other.
 6. A compartment is given the path of a trusted part's socket on purpose. It is refused on its user ID. This tests the second check without the first.
 7. A fork bomb and a program that takes all the memory reach their budget. The broker and the other compartments keep running.
 8. A compartment tries to make a user namespace, a mount, and a second network interface.
@@ -105,7 +107,7 @@ Each of these is a test, and each must be refused. The first ten run on stock Li
 14. Installed software and its children are checked for the `_seatd` group and for any descriptor of a trusted part.
 15. A process that does not have the shell's user ID connects to the shell's socket, and one that is not root connects to the Warden's.
 16. A compartment is stopped. Its windows are gone and its listener accepts nothing.
-17. A wide compartment tries each of the four things it never gets.
+17. A wide compartment tries each of the four things it never gets, and so does a workbench that holds every need.
 18. Each Base setting is changed in turn: a second member of `_seatd`, a `uinput` that others can open, `ptrace_scope` at 0. The check at boot fails the generation each time.
 
 ## Considered Options
