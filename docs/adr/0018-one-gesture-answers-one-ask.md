@@ -1,6 +1,6 @@
 # The broker owns each ask, the shell draws it, and the compositor carries the yes
 
-**Status:** proposed. This records the design session for [issue 55](https://github.com/crowbaros/crowbaros/issues/55).
+**Status:** accepted on November 15, 2026, by Jim Martin, at the end of the design session for [issue 55](https://github.com/crowbaros/crowbaros/issues/55).
 
 [ADR 0014](0014-a-yes-comes-from-the-person.md) says a yes is worth something only if nothing else can produce it. The [compositor spike](../research/compositor-spike-2026-11-15.md) took the confirm chord before any client saw it, but its channel to the shell had no request IDs, no version, and no way to reconnect, and its confirm event named no ask. [ADR 0016](0016-the-warden-starts-every-compartment.md) then made the shell a service of its own that meets the compositor and the broker over path sockets. This record says how those parts talk, and how one press of the confirm gesture answers exactly one ask.
 
