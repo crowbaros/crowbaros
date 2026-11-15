@@ -12,9 +12,11 @@
 //! compartments". Scope: `docs/milestones/milestone-2.md`.
 
 mod label;
+mod labeled;
 mod mark;
 mod origin;
 
 pub use label::{Categories, Category, Label, Site};
+pub use labeled::Labeled;
 pub use mark::{LabelMark, MailAccount, Mark, MarkSource};
 pub use origin::{AdmittedSet, FileOrigin, Origin};
