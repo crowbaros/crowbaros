@@ -1,6 +1,7 @@
 //! Labels: how private a piece of data is.
 
 use std::collections::BTreeSet;
+use std::fmt;
 
 /// A web site, named by its host. Host names compare without regard to ASCII
 /// case, as DNS does.
@@ -88,4 +89,42 @@ impl Label {
             _ => true,
         }
     }
+}
+
+impl fmt::Display for Category {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Category::Messages => f.write_str("messages"),
+            Category::Health => f.write_str("health"),
+            Category::Finance => f.write_str("finance"),
+            Category::Site(site) => write!(f, "site {}", site.host()),
+            Category::Unclassified => f.write_str("unclassified"),
+        }
+    }
+}
+
+/// The wording of the origin table: `public`, `personal`, or `private:`
+/// followed by the categories.
+impl fmt::Display for Label {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Label::Public => f.write_str("public"),
+            Label::Personal => f.write_str("personal"),
+            Label::Private(categories) => {
+                f.write_str("private: ")?;
+                write_list(f, categories.iter())
+            }
+        }
+    }
+}
+
+/// Writes items separated by a comma and a space.
+pub(crate) fn write_list<T: fmt::Display>(f: &mut fmt::Formatter<'_>, items: impl Iterator<Item = T>) -> fmt::Result {
+    for (i, item) in items.enumerate() {
+        if i > 0 {
+            f.write_str(", ")?;
+        }
+        write!(f, "{item}")?;
+    }
+    Ok(())
 }
