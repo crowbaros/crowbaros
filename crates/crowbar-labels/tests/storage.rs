@@ -132,7 +132,10 @@ fn a_record_that_would_load_lower_than_it_was_written_is_refused() {
         assert!(serde_json::from_str::<LabelStore>(json).is_err(), "{name} was accepted");
     }
     // The written form, for reference: it loads.
-    let ok = r#"{"a": {"label": {"private": ["messages", {"site": "bank.example"}]}, "mark": [{"mail": "me@mail.example"}, "paste"]}}"#;
+    let ok = r#"{"a": {
+        "label": {"private": ["messages", {"site": "bank.example"}]},
+        "mark": [{"mail": "me@mail.example"}, "paste"]
+    }}"#;
     let loaded: LabelStore = serde_json::from_str(ok).unwrap();
     assert!(loaded.origin_of(&ObjectId::new("a")).label_mark().mark().is_marked());
 }

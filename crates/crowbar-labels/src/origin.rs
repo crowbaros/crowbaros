@@ -5,10 +5,11 @@ use crate::mark::{LabelMark, MailAccount, Mark, MarkSource};
 
 /// Where an object came from, as the broker states it.
 ///
-/// The origin table gives each origin its label and mark. No model takes part. The table below is the rule; [`Origin::label_mark`] is
-/// the same rule as code, and a test keeps the two the same. Where a row uses an
-/// example, `bank.example` is a site the person is logged in to, `news.example`
-/// is a site they are not, and `me@mail.example` is one of their mail accounts.
+/// The origin table gives each origin its label and mark. No model takes
+/// part. The table below is the rule; [`Origin::label_mark`] is the same rule
+/// as code, and a test keeps the two the same. Where a row uses an example,
+/// `bank.example` is a site the person is logged in to, `news.example` is a
+/// site they are not, and `me@mail.example` is one of their mail accounts.
 ///
 /// | Origin | Label | Mark |
 /// | --- | --- | --- |
@@ -23,7 +24,7 @@ use crate::mark::{LabelMark, MailAccount, Mark, MarkSource};
 /// | The Base package snapshot | `public` | `none` |
 /// | The dependency set for build tasks | `public` | `none` |
 /// | A paste of a note the person typed | `personal` | `none` |
-/// | A paste from a page of `bank.example`, under a login | `private: site bank.example` | `marked: site bank.example` |
+/// | A paste of a page of `bank.example`, under a login | `private: site bank.example` | `marked: site bank.example` |
 /// | A paste whose source was not recorded | `private: unknown` | `marked: paste` |
 /// | A stored result | as it was stored | as it was stored |
 /// | Anything else | `private: unknown` | `marked: unknown` |

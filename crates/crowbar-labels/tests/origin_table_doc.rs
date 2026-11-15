@@ -46,7 +46,7 @@ fn origin_for(row: &str) -> Option<Origin> {
         "A paste of a note the person typed" => Origin::Pasted {
             copied_from: Some(Origin::Typed.label_mark()),
         },
-        "A paste from a page of bank.example, under a login" => Origin::Pasted {
+        "A paste of a page of bank.example, under a login" => Origin::Pasted {
             copied_from: Some(Origin::WebPage(Fetch::UnderLogin(bank)).label_mark()),
         },
         "A paste whose source was not recorded" => Origin::Pasted { copied_from: None },
