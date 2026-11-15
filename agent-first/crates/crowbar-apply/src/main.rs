@@ -1,10 +1,10 @@
 //! `crowbar`: the Milestone 1 command line for Crowbar State.
 
 use crowbar_apply::bootmenu::MenuOptions;
-use crowbar_apply::engine::{Engine, STATE_PATH, load_state};
+use crowbar_apply::engine::{Engine, Failure, STATE_PATH, load_state};
 use crowbar_apply::generations::{Layout, parse_cmdline_generation};
 use crowbar_apply::system::{Btrfs, Xbps, run};
-use crowbar_apply::{Result, err, ledger, timefmt};
+use crowbar_apply::{Result, ledger, timefmt};
 use crowbar_state::State;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
@@ -26,6 +26,14 @@ options:
   --top DIR    Btrfs top level holding gens/ and crowbar/ (default: mount it at /run/crowbar/top)
   --root DIR   system root to read for plan/drift (default: /)
   --from ID    generation to build from (default: the booted one, from /proc/cmdline)
+
+exit status:
+  0  done
+  1  failed; the boot menu, the boot default, the generation records, and the
+     subvolumes are as they were
+  2  drift: the system differs from its recorded state
+  3  the change is in place, but a later step failed; the message says which
+  4  failed, and something could not be put back; the message says what is left
 ";
 
 const DEFAULT_TOP: &str = "/run/crowbar/top";
@@ -124,7 +132,24 @@ fn print_changes(changes: &[crowbar_apply::plan::Change]) {
     }
 }
 
-fn real_main() -> Result<ExitCode> {
+/// The change is committed, but a step after the commit point failed. That is
+/// not a failed command and not a clean one, so it has its own exit status.
+fn after_commit(what_stands: &str, problems: &[String]) -> ExitCode {
+    if problems.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    eprintln!("crowbar: {what_stands}, but:");
+    for problem in problems {
+        eprintln!("  - {problem}");
+    }
+    ExitCode::from(3)
+}
+
+fn err<T>(message: impl Into<String>) -> std::result::Result<T, Failure> {
+    Err(crowbar_apply::Error(message.into()).into())
+}
+
+fn real_main() -> std::result::Result<ExitCode, Failure> {
     let args = parse_args()?;
     let command: Vec<&str> = args.command.iter().map(String::as_str).collect();
     match command.as_slice() {
@@ -162,6 +187,7 @@ fn real_main() -> Result<ExitCode> {
                 ),
                 None => println!("Nothing to build."),
             }
+            return Ok(after_commit("the new generation is in place", &report.after_commit));
         }
         ["generations"] => {
             let e = engine(ensure_top(args.top)?);
@@ -206,12 +232,14 @@ fn real_main() -> Result<ExitCode> {
                 },
                 _ => return err(USAGE),
             };
-            e.rollback(target, booted)?;
+            let problems = e.rollback(target, booted)?;
             println!("Generation {target} is now the boot default.");
+            return Ok(after_commit("the rollback is in effect", &problems));
         }
         ["ledger"] => {
             let e = engine(ensure_top(args.top)?);
-            for entry in ledger::read(&e.layout.ledger_path())? {
+            let ledger = ledger::read(&e.layout.ledger_path())?;
+            for entry in &ledger.entries {
                 println!(
                     "{}  {:<8} {:<7} gen {:<4} {}",
                     entry.time,
@@ -221,6 +249,14 @@ fn real_main() -> Result<ExitCode> {
                     entry.detail
                 );
             }
+            if !ledger.damaged_lines.is_empty() {
+                let lines: Vec<String> = ledger.damaged_lines.iter().map(usize::to_string).collect();
+                eprintln!(
+                    "crowbar: skipped {} damaged ledger line(s): {}",
+                    lines.len(),
+                    lines.join(", ")
+                );
+            }
         }
         ["render-boot-menu"] => engine(ensure_top(args.top)?).render_menu()?,
         ["init-image", state] => {
@@ -228,13 +264,14 @@ fn real_main() -> Result<ExitCode> {
                 return err("init-image needs --top");
             };
             let (_, text) = read_state(state)?;
-            let g = engine(top.clone()).init(&text)?;
+            let (g, problems) = engine(top.clone()).init(&text)?;
             println!(
                 "Registered generation 1 ({} / {}) under {}",
                 g.kernel,
                 g.initrd,
                 top.display()
             );
+            return Ok(after_commit("generation 1 is registered", &problems));
         }
         ["help"] | [] => print!("{USAGE}"),
         _ => return err(USAGE),
@@ -245,9 +282,13 @@ fn real_main() -> Result<ExitCode> {
 fn main() -> ExitCode {
     match real_main() {
         Ok(code) => code,
-        Err(e) => {
-            eprintln!("crowbar: {e}");
-            ExitCode::FAILURE
+        Err(failure) => {
+            eprintln!("crowbar: {failure}");
+            if failure.left_behind {
+                ExitCode::from(4)
+            } else {
+                ExitCode::FAILURE
+            }
         }
     }
 }

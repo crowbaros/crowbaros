@@ -38,6 +38,41 @@ fn sanitize(title: &str) -> String {
         .collect()
 }
 
+/// Whether `path` can go into the menu as generation `id`'s kernel or initrd.
+///
+/// The path is written into `grub.cfg` as it is, and that one file boots every
+/// generation. So a path taken from inside a generation is held to a strict
+/// character set (no whitespace, no newline, no quote, no brace) and must stay
+/// under that generation's own subvolume.
+pub fn boot_path_ok(path: &str, id: u32) -> bool {
+    path.starts_with(&format!("/gens/{id}/"))
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '+' | '-'))
+        && !path
+            .split('/')
+            .skip(1)
+            .any(|part| part.is_empty() || part == "." || part == "..")
+}
+
+/// Whether a rendered menu has an entry for generation `id` or boots it by default.
+///
+/// Only the two lines `render_grub_cfg` writes count: the `set default` line,
+/// and a `menuentry` line that ends with the entry's id. A title holds text
+/// taken from the State (a file path, a hostname), so the same words inside a
+/// title must not be read as an entry. `sanitize` keeps `"` out of a title, so
+/// a title cannot contain the closing quote that the match requires.
+pub fn references(cfg: &str, id: u32) -> bool {
+    let default = format!("set default=\"gen-{id}\"");
+    let entry_end = format!("\" --id gen-{id} {{");
+    cfg.lines().any(|line| {
+        line == default
+            || line
+                .strip_prefix("menuentry \"")
+                .is_some_and(|rest| rest.ends_with(&entry_end))
+    })
+}
+
 /// Entries are listed newest first; `default` selects the entry GRUB boots
 /// when nobody touches the menu.
 pub fn render_grub_cfg(entries: &[BootEntry], default: u32, opts: &MenuOptions) -> String {
@@ -92,5 +127,36 @@ mod tests {
         assert!(!cfg.contains("generation 3 quoted x [default]"));
         assert!(cfg.contains("rootflags=subvol=gens/3 rw crowbar.generation=3"));
         assert!(cfg.contains("initrd /gens/1/boot/initramfs-6.18.img"));
+    }
+
+    #[test]
+    fn a_title_that_quotes_an_entry_id_is_not_an_entry() {
+        let mut two = entry(2);
+        two.title = "CrowbarOS generation 2: file /etc/--id gen-3 x, set default=\"gen-3\"".into();
+        let cfg = render_grub_cfg(&[entry(1), two], 2, &MenuOptions::default());
+        assert!(cfg.contains("--id gen-3 x"), "{cfg}");
+        assert!(references(&cfg, 1));
+        assert!(references(&cfg, 2));
+        assert!(!references(&cfg, 3), "{cfg}");
+        // The default line counts on its own.
+        let cfg = render_grub_cfg(&[entry(1)], 3, &MenuOptions::default());
+        assert!(references(&cfg, 3));
+    }
+
+    #[test]
+    fn boot_paths_are_held_to_a_strict_character_set() {
+        assert!(boot_path_ok("/gens/2/boot/vmlinuz-6.18.63_1", 2));
+        assert!(boot_path_ok("/gens/2/usr/lib/kernel+x/vmlinuz-6.18", 2));
+        for bad in [
+            "/gens/2/boot/vmlinuz-9 ; halt",
+            "/gens/2/boot/x\n}\nmenuentry \"pwn\" {",
+            "/gens/2/boot/vmlinuz-$x",
+            "/gens/3/boot/vmlinuz-6.18",
+            "/gens/2/../3/boot/vmlinuz-6.18",
+            "/gens/2//boot/vmlinuz-6.18",
+            "/boot/vmlinuz-6.18",
+        ] {
+            assert!(!boot_path_ok(bad, 2), "{bad:?}");
+        }
     }
 }

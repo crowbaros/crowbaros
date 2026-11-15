@@ -6,8 +6,11 @@
 //! /crowbar/default             id GRUB boots by default
 //! /crowbar/grub.cfg            generated boot menu
 //! /crowbar/ledger.jsonl        append-only history of applies and rollbacks
+//! /crowbar/lock                held (flock) by the one apply or rollback in progress
 //! ```
 
+use crate::bootmenu::boot_path_ok;
+use crate::confine::in_root;
 use crate::{Result, err, write_atomic};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -52,6 +55,9 @@ impl Layout {
     }
     pub fn ledger_path(&self) -> PathBuf {
         self.top.join("crowbar/ledger.jsonl")
+    }
+    pub fn lock_path(&self) -> PathBuf {
+        self.top.join("crowbar/lock")
     }
 
     pub fn list(&self) -> Result<Vec<Generation>> {
@@ -147,28 +153,46 @@ fn version_key(version: &str) -> Vec<(u64, String)> {
 
 /// Find the newest kernel with a matching initramfs in a generation root and
 /// return both as paths relative to the Btrfs top level.
+///
+/// Everything is resolved inside the generation: `/boot` itself, and each
+/// kernel and initramfs, which may be symlinks. The paths returned are the
+/// resolved files, so GRUB never has to follow a link, and a link can never
+/// send the search (or GRUB) to another root.
 pub fn find_boot_files(gen_root: &Path, id: u32) -> Result<(String, String)> {
-    let boot = gen_root.join("boot");
-    let mut versions = Vec::new();
-    if boot.exists() {
-        for entry in std::fs::read_dir(&boot)? {
+    let boot = in_root(gen_root, "/boot")?;
+    let regular_file = |name: &str| -> Result<Option<String>> {
+        let found = in_root(gen_root, &format!("{}/{name}", boot.system))?;
+        let is_file = std::fs::symlink_metadata(&found.host).is_ok_and(|m| m.file_type().is_file());
+        Ok(is_file.then(|| format!("/gens/{id}{}", found.system)))
+    };
+    let mut pairs = Vec::new();
+    if boot.host.is_dir() {
+        for entry in std::fs::read_dir(&boot.host)? {
             let name = entry?.file_name().to_string_lossy().into_owned();
-            if let Some(version) = name.strip_prefix("vmlinuz-")
-                && boot.join(format!("initramfs-{version}.img")).exists()
-            {
-                versions.push(version.to_string());
+            let Some(version) = name.strip_prefix("vmlinuz-") else {
+                continue;
+            };
+            let (Some(kernel), Some(initrd)) =
+                (regular_file(&name)?, regular_file(&format!("initramfs-{version}.img"))?)
+            else {
+                continue;
+            };
+            for path in [&kernel, &initrd] {
+                if !boot_path_ok(path, id) {
+                    return err(format!(
+                        "generation {id} has a boot file whose path cannot go into the boot menu: {path:?}"
+                    ));
+                }
             }
+            pairs.push((version.to_string(), kernel, initrd));
         }
     }
-    versions.sort_by_key(|v| version_key(v));
-    match versions.last() {
-        Some(v) => Ok((
-            format!("/gens/{id}/boot/vmlinuz-{v}"),
-            format!("/gens/{id}/boot/initramfs-{v}.img"),
-        )),
+    pairs.sort_by_key(|(version, _, _)| version_key(version));
+    match pairs.pop() {
+        Some((_, kernel, initrd)) => Ok((kernel, initrd)),
         None => err(format!(
             "generation {id} has no kernel with a matching initramfs in {}",
-            boot.display()
+            boot.host.display()
         )),
     }
 }
@@ -192,6 +216,69 @@ mod tests {
         );
         assert_eq!(parse_cmdline_generation("root=LABEL=x crowbar.generation=abc"), None);
         assert_eq!(parse_cmdline_generation("root=LABEL=x"), None);
+    }
+
+    fn boot_root() -> (crate::testutil::Scratch, std::path::PathBuf) {
+        let dir = crate::testutil::scratch();
+        let root = dir.0.join("gens/7");
+        std::fs::create_dir_all(root.join("boot")).unwrap();
+        (dir, root)
+    }
+
+    #[test]
+    fn boot_files_behind_symlinks_resolve_inside_the_generation() {
+        use std::os::unix::fs::symlink;
+        let (_dir, root) = boot_root();
+        std::fs::create_dir_all(root.join("images")).unwrap();
+        std::fs::write(root.join("images/kernel"), "k").unwrap();
+        std::fs::write(root.join("images/initrd"), "i").unwrap();
+        // Absolute in the generation's namespace; neither exists on the host.
+        symlink("/images/kernel", root.join("boot/vmlinuz-9")).unwrap();
+        symlink("/images/initrd", root.join("boot/initramfs-9.img")).unwrap();
+
+        let (kernel, initrd) = find_boot_files(&root, 7).unwrap();
+        assert_eq!(kernel, "/gens/7/images/kernel");
+        assert_eq!(initrd, "/gens/7/images/initrd");
+    }
+
+    #[test]
+    fn a_boot_file_that_only_exists_on_the_host_is_not_found() {
+        use std::os::unix::fs::symlink;
+        let (dir, root) = boot_root();
+        let host_file = dir.0.join("host-initrd");
+        std::fs::write(&host_file, "i").unwrap();
+        std::fs::write(root.join("boot/vmlinuz-9"), "k").unwrap();
+        symlink(&host_file, root.join("boot/initramfs-9.img")).unwrap();
+        assert!(find_boot_files(&root, 7).is_err());
+
+        // A kernel that is a dangling link is not a kernel either.
+        std::fs::remove_file(root.join("boot/vmlinuz-9")).unwrap();
+        std::fs::remove_file(root.join("boot/initramfs-9.img")).unwrap();
+        symlink("/nowhere", root.join("boot/vmlinuz-9")).unwrap();
+        std::fs::write(root.join("boot/initramfs-9.img"), "i").unwrap();
+        assert!(find_boot_files(&root, 7).is_err());
+    }
+
+    #[test]
+    fn a_boot_path_that_would_add_to_the_menu_is_refused() {
+        use std::os::unix::fs::symlink;
+        let (_dir, root) = boot_root();
+        std::fs::write(root.join("boot/vmlinuz-9 ; halt"), "k").unwrap();
+        std::fs::write(root.join("boot/initramfs-9 ; halt.img"), "i").unwrap();
+        let refused = find_boot_files(&root, 7).unwrap_err();
+        assert!(refused.0.contains("cannot go into the boot menu"), "{refused}");
+
+        // The same through a /boot link whose target carries a menu entry.
+        let (_dir, root) = boot_root();
+        std::fs::remove_dir(root.join("boot")).unwrap();
+        let evil = "/real\n}\nmenuentry \"pwn\" {";
+        std::fs::create_dir_all(root.join(evil.trim_start_matches('/'))).unwrap();
+        symlink(evil, root.join("boot")).unwrap();
+        let dir = root.join(evil.trim_start_matches('/'));
+        std::fs::write(dir.join("vmlinuz-9"), "k").unwrap();
+        std::fs::write(dir.join("initramfs-9.img"), "i").unwrap();
+        let refused = find_boot_files(&root, 7).unwrap_err();
+        assert!(refused.0.contains("cannot go into the boot menu"), "{refused}");
     }
 
     #[test]

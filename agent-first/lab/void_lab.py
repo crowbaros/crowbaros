@@ -346,7 +346,9 @@ def milestone():
 
         ev.log("== Apply a deliberately broken change: 03-broken-mount.toml")
         ev.guest("diff -u /etc/crowbar/state.toml /root/states/03-broken-mount.toml", check=False)
-        ev.guest("crowbar plan /root/states/03-broken-mount.toml")
+        plan = ev.guest("crowbar plan /root/states/03-broken-mount.toml")
+        ev.check("plan flags the broken mount as boot-affecting",
+                 re.search(r"^\s*! managed mounts: 0 -> 1", plan.stdout, re.M))
         ev.guest("CROWBAR_ACTOR=milestone-1 crowbar apply /root/states/03-broken-mount.toml")
         ev.guest("crowbar generations")
         reboot(ev, serial)
