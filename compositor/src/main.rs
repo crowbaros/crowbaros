@@ -8,6 +8,8 @@ crowbar-compositor: spike for issue 3. Throwaway code.
                         Default: winit when WAYLAND_DISPLAY or DISPLAY is set.
   --shell 'CMD ARGS'    Start the shell. It gets its own connected socket and
                         is the only client that sees layer-shell.
+  --shell-service DIR  Accept the separate shell service on private path sockets.
+  --shell-uid UID      Kernel user ID permitted on those sockets. No child launch.
   --spawn 'CMD ARGS'    Start an ordinary client. May be repeated.
   --scale NAME=FACTOR   Scale for the output with this name. May be repeated.
                         The winit output is named 'winit'.
@@ -17,6 +19,8 @@ crowbar-compositor: spike for issue 3. Throwaway code.
 
 struct Args {
     backend: String,
+    shell_service: Option<String>,
+    shell_uid: Option<u32>,
     shell: Option<Vec<String>>,
     spawn: Vec<Vec<String>>,
     scales: Vec<(String, f64)>,
@@ -38,6 +42,8 @@ fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         backend: if nested { "winit".into() } else { "tty".into() },
         shell: None,
+        shell_service: None,
+        shell_uid: None,
         spawn: Vec::new(),
         scales: Vec::new(),
         modes: Vec::new(),
@@ -47,6 +53,8 @@ fn parse_args() -> Result<Args, String> {
         let mut value = || rest.next().ok_or(format!("{flag} needs a value"));
         match flag.as_str() {
             "--backend" => args.backend = value()?,
+            "--shell-service" => args.shell_service = Some(value()?),
+            "--shell-uid" => args.shell_uid = Some(value()?.parse().map_err(|_| "invalid shell uid")?),
             "--shell" => args.shell = Some(words(&value()?)?),
             "--spawn" => args.spawn.push(words(&value()?)?),
             "--scale" => {
@@ -66,6 +74,12 @@ fn parse_args() -> Result<Args, String> {
             "--help" | "-h" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument {other}\n\n{USAGE}")),
         }
+    }
+    if args.shell_service.is_some() != args.shell_uid.is_some() {
+        return Err("--shell-service requires --shell-uid".into());
+    }
+    if args.shell_service.is_some() && (args.shell.is_some() || !args.spawn.is_empty()) {
+        return Err("service mode never starts child processes".into());
     }
     Ok(args)
 }
@@ -96,6 +110,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     tracing::info!(socket = ?state.socket_name, backend = %args.backend, "compositor is up");
 
+    if let Some(directory) = &args.shell_service {
+        // The Alpha lab explicitly retains the spike's public ordinary-client
+        // socket until issue 49. Apps have a different UID from the compositor.
+        use std::os::unix::fs::PermissionsExt;
+        let public = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").ok_or("missing runtime directory")?)
+            .join(&state.socket_name);
+        std::fs::set_permissions(public, std::fs::Permissions::from_mode(0o666))?;
+        state.listen_for_shell(std::path::Path::new(directory), args.shell_uid.unwrap())?;
+    }
     let mut children = Vec::new();
     if let Some(command) = &args.shell {
         children.push(state.spawn_shell(command)?);

@@ -135,7 +135,9 @@ impl Store {
         lock.try_lock()
             .map_err(|_| "Another settings save is in progress. Try again.".to_string())?;
         if &self.load()? != expected {
-            return Err("Preferences changed in another window. Use Reload saved, then make your changes again.".into());
+            return Err(
+                "Preferences changed in another window. Use Reload saved, then make your changes again.".into(),
+            );
         }
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -227,6 +229,26 @@ mod tests {
             let _ = fs::remove_dir_all(self.0.path.parent().unwrap());
         }
     }
+    #[test]
+    fn no_animation_session_saves_preferences_without_a_motion_effect() {
+        let f = Fixture::new();
+        let motion = crate::session::Session::NoAnimations;
+        let preferences = Preferences {
+            theme: Theme::Light,
+            reduced_motion: false,
+            ..Preferences::default()
+        };
+        f.0.save(&preferences, &None, &motion).unwrap();
+        assert_eq!(f.0.load().unwrap(), Some(preferences.clone()));
+        assert!(motion.reduced().unwrap(), "actual motion remains disabled");
+        let second = Preferences {
+            theme: Theme::WarmPaper,
+            ..preferences.clone()
+        };
+        assert!(f.0.save(&second, &None, &motion).is_err());
+        assert_eq!(f.0.load().unwrap(), Some(preferences));
+    }
+
     #[test]
     fn saves_roundtrip_and_rejects_stale_window() {
         let f = Fixture::new();

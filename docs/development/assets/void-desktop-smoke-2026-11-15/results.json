@@ -1,0 +1,187 @@
+[
+  {
+    "name": "Void Linux and runit PID 1",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "seatd and three Alpha services supervised",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "guest binaries match this build",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "crowbar-compositor linked libraries resolve",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "crowbar-probe linked libraries resolve",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "crowbaros-shell linked libraries resolve",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "crowbaros-studio-settings linked libraries resolve",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "fresh guest has no saved preferences",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "Terminal launch through the shell",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "Settings launch through the shell",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "dock focuses an existing app without duplicating it",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "workspace switch clears focus on hidden windows",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "preview has not written preferences",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "Save persists Light appearance",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "Undo keeps saved preferences unchanged",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "Settings relaunch restores saved appearance",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "crowbar-compositor has the assigned non-root identity",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "crowbaros-shell has the assigned non-root identity",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "crowbaros-studio-settings has the assigned non-root identity",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "foot has the assigned non-root identity",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "only compositor belongs to seatd",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "ordinary app child processes were inspected",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "foot cannot gain privileges",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "foot inherited no trusted sockets or seat devices",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "foot inherited no privileged environment",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "bash(705) cannot gain privileges",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "bash(705) inherited no trusted sockets or seat devices",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "bash(705) inherited no privileged environment",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "crowbaros-studio-settings cannot gain privileges",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "crowbaros-studio-settings inherited no trusted sockets or seat devices",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "crowbaros-studio-settings inherited no privileged environment",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "trusted sockets reject the app UID even with paths exposed",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "shell restarts without killing the app",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "restarted shell still controls the compositor",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "compositor records active shell and app rendering",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "saved preferences survive clean reboot",
+    "passed": true,
+    "detail": ""
+  },
+  {
+    "name": "post-reboot session uses the same built binaries",
+    "passed": true,
+    "detail": ""
+  }
+]

@@ -1,5 +1,7 @@
 # Interface development: the GPUI lab and its records
 
+Current Void acceptance: [integrated desktop smoke](void-desktop-smoke-2026-11-15.md), including the Alpha session and Settings Save. The earlier records below remain historical evidence.
+
 These pages cover building, running, and validating the GPUI apps in
 [`apps/`](../../apps/README.md). All of it runs in the
 [Fedora lab](../../lab/fedora/README.md), which is kept for interface work only

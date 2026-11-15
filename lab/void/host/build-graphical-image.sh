@@ -2,7 +2,7 @@
 # Assemble the graphical guest's disk from its Void root, inside `unshare -r`
 # so files are recorded as owned by root. One Btrfs filesystem, no partition
 # table: the lab boots the kernel directly.
-# Inputs: ROOTFS WORK OUT BIN BINARIES PUBKEY ROOT_LABEL ROOT_GIB GUEST_USER
+# Inputs: ROOTFS WORK OUT BIN BINARIES PUBKEY ROOT_LABEL ROOT_GIB GUEST_USER REPO_ROOT DESKTOP
 set -eu
 S="$WORK/staging"
 rm -rf "$S"
@@ -25,12 +25,26 @@ for s in agetty-ttyS0 dhcpcd sshd seatd; do ln -sfn "/etc/sv/$s" "$SV/$s"; done
 install -d -m 700 "$S/root/.ssh"
 install -m 600 "$PUBKEY" "$S/root/.ssh/authorized_keys"
 
-# The person's account. seatd lets members of _seatd open a seat. The account
-# is in neither `input` nor `video`: seatd opens the devices, so the person's
-# programs get no direct access to them.
-chroot "$S" useradd -m -u 1000 -G _seatd "$GUEST_USER"
+# The legacy compositor-only check retains its ordinary client fixture.
+if [ "$DESKTOP" = 1 ]; then
+  chroot "$S" useradd -m -u 1000 -G _seatd crowbar-compositor
+  chroot "$S" useradd -m -u 1001 crowbar-shell
+  chroot "$S" useradd -m -u 1002 crowbar-app
+  rm -f "$SV/agetty-tty2"
+  for service in compositor shell launcher; do
+    install -D -m 755 "$REPO_ROOT/lab/void/guest/$service-run" "$S/etc/sv/crowbar-$service/run"
+    ln -sfn "/etc/sv/crowbar-$service" "$SV/crowbar-$service"
+  done
+  install -D -m 755 "$REPO_ROOT/lab/void/guest/alpha-launcher.py" "$S/usr/local/bin/crowbar-alpha-launcher"
+  install -D -m 755 "$REPO_ROOT/lab/void/guest/alpha-shell.py" "$S/usr/local/bin/crowbar-alpha-shell"
+else
+  chroot "$S" useradd -m -u 1000 -G _seatd "$GUEST_USER"
+fi
 
 for name in $BINARIES; do install -D -m 755 "$BIN/$name" "$S/usr/local/bin/$name"; done
+install -d "$S/usr/share/crowbaros-shell" "$S/usr/share/applications"
+install -m 644 "$REPO_ROOT/apps/shell/assets/wallpaper.png" "$REPO_ROOT/apps/shell/assets/mark.png" "$S/usr/share/crowbaros-shell/"
+install -m 644 "$REPO_ROOT/apps/studio-settings/packaging/com.crowbaros.StudioSettings.desktop" "$S/usr/share/applications/"
 
 rm -f "$OUT"
 truncate -s "${ROOT_GIB}G" "$OUT"

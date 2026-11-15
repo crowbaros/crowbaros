@@ -38,6 +38,18 @@ fn a_snapshot_lists_the_windows_and_names_the_active_one() {
 }
 
 #[test]
+fn a_reconnecting_shell_replaces_only_its_old_control_channel() {
+    let compositor = Compositor::start();
+    let (_old_shell, mut old) = compositor.shell();
+    assert_eq!(old.request(r#"{"op":"snapshot"}"#)["workspace"], 1);
+    let (_new_shell, mut new) = compositor.shell();
+    assert!(old.drain_until_closed());
+    for _ in 0..10 {
+        assert_eq!(new.request(r#"{"op":"snapshot"}"#)["reply"], "snapshot");
+    }
+}
+
+#[test]
 fn focus_window_moves_the_keyboard_to_that_window() {
     use crowbar_compositor::probe::KeyEvent;
     let compositor = Compositor::start();

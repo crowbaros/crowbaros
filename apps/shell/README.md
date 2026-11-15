@@ -1,24 +1,17 @@
 # CrowbarOS desktop shell
 
-> **Status.** This app was built for the earlier Fedora plan. Its interface work
-> carries over to the [vision](../../docs/VISION.md); its RPM packaging and Hyprland
-> wiring do not. It is built and run only in the [Fedora lab](../../lab/fedora/README.md),
-> which is kept for interface work. See [what carries over](../README.md).
->
-> **Compositor.** `src/session.rs` has two adapters. When the CrowbarOS
-> compositor starts the shell, it hands over a control channel
-> ([`compositor/src/control.rs`](../../compositor/src/control.rs)) and the shell
-> uses only that. With no control channel, as in the Fedora lab, the shell uses
-> the Hyprland socket as before. See the
-> [spike record](../../docs/research/compositor-spike-2026-11-15.md).
+Current Void entry point: [the isolated desktop smoke check](../../lab/void/README.md#full-desktop-smoke-check).
+It builds and tests this app in Void and runs a fresh guest. The Alpha service
+model follows [ADR 0016](../../docs/adr/0016-the-warden-starts-every-compartment.md).
+Fedora commands below describe the legacy workflow pending #65.
 
 The first Rust/GPUI desktop slice: a live workspace bar, a persistent dock,
 installed-application search and the approved Signal Feather wallpaper.
-It runs as an ordinary user on Hyprland. The shell uses real Wayland layer
+On Void it runs as a separate unprivileged runit service. The shell uses real Wayland layer
 surfaces: the bar reserves 44 px, the dock reserves 96 px, and the launcher
 captures keyboard input only while open.
 
-## Build and run in the local lab
+## Legacy Fedora build and run
 
 ```bash
 rtk python3 lab/fedora/lab.py start build

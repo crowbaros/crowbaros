@@ -1,0 +1,37 @@
+2026-11-15T20:35:50.070192Z  INFO crowbar_compositor::tty: tty: session opened through libseat seat=seat0
+2026-11-15T20:35:50.070452Z  WARN smithay::backend::drm::device::fd: Unable to become drm master, assuming unprivileged mode
+2026-11-15T20:35:50.489160Z  INFO crowbar_compositor::tty: tty: DRM device opened gpu=/dev/dri/card0 driver=virtio_gpu software=true
+2026-11-15T20:35:50.509621Z  WARN smithay::backend::drm::compositor: Preferred format AB24 not available: NoSupportedPlaneFormat
+2026-11-15T20:35:50.534027Z  WARN smithay::backend::drm::surface::atomic: Failed to destroy old mode property blob: No such file or directory (os error 2)
+2026-11-15T20:35:50.534087Z  INFO crowbar_compositor::tty: output connected name=Virtual-1 width=1280 height=960 scale=1.0
+2026-11-15T20:35:50.534103Z  INFO crowbar_compositor: compositor is up socket="wayland-1" backend=tty
+2026-11-15T20:35:50.536083Z  INFO crowbar_compositor::tty: tty: whether a flip waits for its drawing (Smithay's needs_sync) output=Virtual-1 needs_sync=true
+2026-11-15T20:35:50.942422Z  INFO crowbar_compositor::handlers::layer_shell: usable area is now 1280x916 at 0,44 output=Virtual-1
+2026-11-15T20:35:50.970202Z  INFO crowbar_compositor::handlers::layer_shell: usable area is now 1280x820 at 0,44 output=Virtual-1
+2026-11-15T20:35:55.073079Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 247, layer crowbaros-dock: 246, layer crowbaros-wallpaper: 248 frames=288
+2026-11-15T20:36:00.080785Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 557, layer crowbaros-dock: 556, layer crowbaros-wallpaper: 558 frames=598
+2026-11-15T20:36:05.086788Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 874, layer crowbaros-dock: 879, layer crowbaros-wallpaper: 875, window 0x1 foot: 31, window 0x2 : 1 frames=931
+2026-11-15T20:36:10.095831Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 1233, layer crowbaros-dock: 1238, layer crowbaros-wallpaper: 1227, window 0x1 foot: 71, window 0x2 : 1, window 0x2 com.crowbaros.StudioSettings: 350 frames=1489
+2026-11-15T20:36:14.391669Z  WARN crowbar_compositor::session: refused non-shell peer on trusted socket
+2026-11-15T20:36:14.391717Z  WARN crowbar_compositor::session: refused non-shell peer on trusted socket
+2026-11-15T20:36:14.834116Z  INFO crowbar_compositor::handlers::layer_shell: usable area is now 1280x916 at 0,44 output=Virtual-1
+2026-11-15T20:36:14.857186Z  INFO crowbar_compositor::handlers::layer_shell: usable area is now 1280x820 at 0,44 output=Virtual-1
+2026-11-15T20:36:15.097774Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 1590, layer crowbaros-dock: 1596, layer crowbaros-wallpaper: 1585, window 0x1 foot: 91, window 0x2 : 1, window 0x2 com.crowbaros.StudioSettings: 593, window 0x3 : 1, window 0x3 com.crowbaros.StudioSettings: 135 frames=2117
+
+thread 'main' (568) panicked at /cargo/git/checkouts/smithay-312425d48e59d8c8/fd8e3f5/src/backend/session/libseat.rs:215:57:
+called `Result::unwrap()` on an `Err` value: Errno { code: 107, description: Some("Transport endpoint is not connected") }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-11-15T20:36:17.962742Z  WARN smithay::backend::drm::surface::atomic: Unable to clear state: DRM access error: Failed to commit on clear_state on device `Some("/dev/dri/card0")` (Permission denied (os error 13))
+2026-11-15T20:36:17.963949Z ERROR smithay::backend::drm::device::atomic: Failed to restore previous state. Error: Permission denied (os error 13)
+2026-11-15T20:36:20.851628Z  INFO crowbar_compositor::tty: tty: session opened through libseat seat=seat0
+2026-11-15T20:36:20.852014Z  WARN smithay::backend::drm::device::fd: Unable to become drm master, assuming unprivileged mode
+2026-11-15T20:36:20.986935Z  INFO crowbar_compositor::tty: tty: DRM device opened gpu=/dev/dri/card0 driver=virtio_gpu software=true
+2026-11-15T20:36:21.003309Z  WARN smithay::backend::drm::compositor: Preferred format AB24 not available: NoSupportedPlaneFormat
+2026-11-15T20:36:21.013883Z  WARN smithay::backend::drm::surface::atomic: Failed to destroy old mode property blob: No such file or directory (os error 2)
+2026-11-15T20:36:21.013945Z  INFO crowbar_compositor::tty: output connected name=Virtual-1 width=1280 height=960 scale=1.0
+2026-11-15T20:36:21.013960Z  INFO crowbar_compositor: compositor is up socket="wayland-1" backend=tty
+2026-11-15T20:36:21.017150Z  INFO crowbar_compositor::tty: tty: whether a flip waits for its drawing (Smithay's needs_sync) output=Virtual-1 needs_sync=true
+2026-11-15T20:36:21.152859Z  INFO crowbar_compositor::handlers::layer_shell: usable area is now 1280x916 at 0,44 output=Virtual-1
+2026-11-15T20:36:21.178241Z  INFO crowbar_compositor::handlers::layer_shell: usable area is now 1280x820 at 0,44 output=Virtual-1
+2026-11-15T20:36:25.862181Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 293, layer crowbaros-dock: 292, layer crowbaros-wallpaper: 293 frames=308
+2026-11-15T20:36:30.869577Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 603, layer crowbaros-dock: 602, layer crowbaros-wallpaper: 603 frames=618
