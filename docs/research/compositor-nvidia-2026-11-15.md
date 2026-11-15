@@ -197,7 +197,8 @@ script makes it. With NVIDIA, add:
   logged `Unable to fallback on default cursor icon 'left_ptr'` for every
   pointer change, because no cursor theme is installed.
 - **Studio Settings cannot be maximized** from its own title bar. It handles
-  a drag and not a double-click. The compositor does not handle un-maximize.
+  a drag and not a double-click ([issue 36](https://github.com/crowbaros/crowbaros/issues/36)). The
+  compositor does not handle un-maximize.
 - **The commit counts list a `window 0x1` with an empty app id and one
   commit**, next to Studio Settings, which is also `window 0x1`. It is
   probably the window's first commit, counted before its app id was set. It
