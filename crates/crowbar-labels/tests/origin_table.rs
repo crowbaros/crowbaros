@@ -139,7 +139,7 @@ fn every_origin_gets_its_label_and_mark_from_the_table() {
 }
 
 #[test]
-fn an_unknown_origin_is_held_to_no_lower_a_label_than_any_known_row() {
+fn an_unknown_origin_is_above_every_public_and_personal_row_and_outside_every_named_category() {
     let unknown = Origin::Unknown.label_mark();
     for known in [
         Origin::Typed,
