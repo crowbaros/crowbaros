@@ -17,18 +17,6 @@ working with coding agents. This file is the standard both sides hold.
 - Dated validation records and evidence logs stay as written. New results get a
   new record.
 
-## Who owns what
-
-| Area | Owner |
-| --- | --- |
-| `DESIGN.md`, `PRODUCT.md`, `apps/`, `docs/branding/`, `.impeccable/`, `lab/fedora/`, `docs/development/` | Jason Alexander |
-| `crates/`, `lab/void/`, `lab/adversarial/`, `docs/architecture/`, `docs/milestones/`, `docs/research/`, `docs/reviews/` | Jim Martin |
-| `docs/VISION.md`, `docs/adr/`, `GLOSSARY.md`, `docs/threat-model.md`, `AGENTS.md`, `.github/`, `LICENSE` | Both |
-
-The owner approves a change to their area. A change to a shared file needs both
-people. In someone else's area, make the smallest change that works and say why
-in the pull request.
-
 ## Branches and pull requests
 
 - `main` changes only through a pull request from a short-lived branch.
@@ -39,14 +27,14 @@ in the pull request.
 - **Squash merge.** The pull request title becomes the one commit on `main`, so
   write it as a conventional commit that states the outcome in plain language:
   `fix(apply): a failed apply no longer leaves a half-built generation`.
-  The scope is the area: `state`, `apply`, `shell`, `studio`, `lab`, `design`,
-  `vision`, `adr`, `ci`.
+  The scope is the area: `state`, `apply`, `shell`, `compositor`, `studio`,
+  `lab`, `design`, `vision`, `adr`, `ci`.
 - Fill in the [pull request template](.github/pull_request_template.md). Under
   Verification, say what you ran and what you saw, and name what you could not
   run. End with the model and harness that did the work.
-- Merge when CI is green and the owner has approved, then delete the branch.
-  GitHub does not enforce this on a private repository on our plan, so we hold
-  it ourselves.
+- Merge when CI is green and the other person has approved, then delete the
+  branch. GitHub does not enforce this on a private repository on our plan, so
+  we hold it ourselves.
 
 ## Checks
 
