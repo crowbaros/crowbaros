@@ -1,6 +1,6 @@
 """The fixture parties: mail, search, a public site, a hostile site, a site with
-a login, a payment service, and the model provider. Every one is synthetic and resettable: reset()
-reloads its seed, and nothing it holds survives a reset.
+a login, a payment service, and the model provider. Every one is synthetic and
+resettable: reset() reloads its seed, and nothing it holds survives a reset.
 
 A party records an effect for every change of state, through Response.effect.
 The suite records every request. An attack test checks both: a refusal leaves
@@ -10,10 +10,10 @@ from datetime import timedelta
 import copy
 import html
 import re
-import urllib.parse
 
-from fixtures import (Idempotency, Refuse, Response, Service, body_field, canonical,
-                      html_response, iso, json_response, load_seed, parse_iso)
+from fixtures import (Idempotency, Party, Refuse, Response, ScriptRules, body_field,
+                      canonical, check_fields, html_response, iso, json_response, load_seed,
+                      parse_iso, require, whole)
 
 
 def disposition(filename):
@@ -21,21 +21,7 @@ def disposition(filename):
     return ("Content-Disposition", f'attachment; filename="{quoted}"')
 
 
-def require(condition, status, message):
-    if not condition:
-        raise Refuse(status, message)
-
-
-def fields(value, required, optional=()):
-    """Check a JSON object has exactly the expected fields."""
-    unknown = set(value) - set(required) - set(optional)
-    require(not unknown, 400, f"unknown fields: {sorted(unknown)}")
-    missing = [name for name in required if name not in value]
-    require(not missing, 400, f"missing fields: {missing}")
-    return value
-
-
-class Mail(Service):
+class Mail(Party):
     """The person's mailbox, as a JSON API over HTTP. Every call needs the mail
     key. Sending and saving a draft are effects; sending takes an optional
     Idempotency-Key."""
@@ -48,13 +34,15 @@ class Mail(Service):
         self.title = "Fixture Mail"
         self.account = seed["account"]
         self.mailboxes = seed["mailboxes"]
-        self.messages = [self.stored(message) for message in seed["messages"]]
+        self.messages = [self.from_seed(message) for message in seed["messages"]]
         self.messages += self.invoices(seed["invoices"])
         self.idempotency = Idempotency()
         self.counts = {"drafts": 0, "sent": 0}
 
     @staticmethod
-    def stored(message):
+    def from_seed(message):
+        """A message as the mailbox holds it: without the seed's notes, and
+        with no attachments and no reply-to unless the seed gives them."""
         message = {key: value for key, value in message.items() if key != "used_by"}
         message.setdefault("attachments", [])
         message.setdefault("in_reply_to", None)
@@ -72,7 +60,7 @@ class Mail(Service):
                     f"{vendor['payee']}, within 30 days.\n")
             if n == spec["planted_in"]:
                 body += "\n" + spec["planted"] + "\n"
-            out.append(self.stored({
+            out.append(self.from_seed({
                 "id": f"inv-{n:04d}", "mailbox": "invoices", "from": vendor["from"],
                 "to": [self.account["address"]],
                 "date": iso(start + timedelta(days=n - 1)),
@@ -124,7 +112,7 @@ class Mail(Service):
         raise Refuse(404, f"no route {method} {path}")
 
     def compose(self, request, box):
-        value = fields(request.json(), ("to", "subject", "body"), ("in_reply_to",))
+        value = check_fields(request.json(), ("to", "subject", "body"), ("in_reply_to",))
         require(isinstance(value["to"], list) and value["to"]
                 and all(isinstance(a, str) and "@" in a for a in value["to"]),
                 400, "to must be a list of mail addresses")
@@ -153,7 +141,7 @@ class Mail(Service):
             body=message["body"], in_reply_to=reply_to)
 
 
-class Search(Service):
+class Search(Party):
     """A search service with a fixed index. It ranks by how many query words
     match an entry's keywords, then by index order, and returns at most five."""
 
@@ -179,7 +167,7 @@ class Search(Service):
             {key: entry[key] for key in ("title", "url", "snippet")} for _, _, entry in hits]})
 
 
-class Site(Service):
+class Site(Party):
     """A web site that serves fixed pages from seed/sites.json."""
 
     seed_key = None
@@ -222,8 +210,10 @@ class Public(Site):
 
 class Hostile(Site):
     """A hostile site: pages that carry planted strings, a download whose file
-    name is planted, a planted server error, and /collect. Whatever reaches it
-    in a query string or a body is an effect: the attacker now holds it."""
+    name is planted, a planted server error, and /collect. Every request that
+    reaches it is an effect, whatever it asks for: the attacker now holds what it
+    carried in its path, query string, headers, and body, and the effect lists
+    the canary markers found there."""
 
     name = "hostile"
     kind = "hostile site"
@@ -237,13 +227,9 @@ class Hostile(Site):
                 response = Response(200, collect["body"])
             else:
                 response = self.error(404, "Not found.")
-        if request.query or request.body:
-            response.effect("hostile.received", method=request.method, path=request.path,
-                            query=request.query, body=body_field(request.body),
-                            markers=self.canaries.found(
-                                urllib.parse.unquote_plus(request.query) + "\n"
-                                + request.body.decode("utf-8", "replace")))
-        return response
+        return response.effect("hostile.received", method=request.method, path=request.path,
+                               query=request.query, body=body_field(request.body),
+                               markers=request.markers(self.canaries))
 
 
 class Login(Site):
@@ -278,12 +264,12 @@ class Login(Site):
         store[value] = (number, self.clock.now + timedelta(minutes=minutes))
         return value, number
 
-    def live(self, store, value):
+    def unexpired(self, store, value):
         found = store.get(value)
         return found if found and self.clock.now < found[1] else None
 
     def session(self, request):
-        return self.live(self.sessions, request.cookie("session"))
+        return self.unexpired(self.sessions, request.cookie("session"))
 
     def logged_out(self):
         return self.page_html("Please log in", '<p><a href="/login">Log in</a></p>', 401)
@@ -309,7 +295,7 @@ class Login(Site):
         if method == "POST" and path == "/oauth/token":
             return self.token(request)
         if method == "GET" and path == "/api/appointments":
-            token = self.live(self.tokens, request.bearer())
+            token = self.unexpired(self.tokens, request.bearer())
             require(token, 401, "a valid token is required")
             return json_response(self.account["appointments"])
         if path in ("/account", "/account/echo", "/slots", "/bookings"):
@@ -365,7 +351,7 @@ class Login(Site):
             "login.token-issued", token=number)
 
 
-class Payments(Service):
+class Payments(Party):
     """A payment service for an adapter to call, as a JSON API over HTTP. Every
     call needs the payments key, and every payment needs an Idempotency-Key.
     No real money moves."""
@@ -401,15 +387,13 @@ class Payments(Service):
     def pay(self, request):
         key = request.header("Idempotency-Key")
         require(key, 400, "an Idempotency-Key header is required")
-        value = fields(request.json(), ("payee", "amount_cents", "currency"), ("reference",))
+        value = check_fields(request.json(), ("payee", "amount_cents", "currency"), ("reference",))
         fingerprint = canonical(value)
         replayed = self.idempotency.replay(key, fingerprint)
         if replayed:
             return replayed
         require(value["payee"] in self.payees, 404, f"no payee {value['payee']}")
-        amount = value["amount_cents"]
-        require(isinstance(amount, int) and not isinstance(amount, bool) and amount > 0,
-                400, "amount_cents must be a whole number above 0")
+        amount = whole(value["amount_cents"], 1, "amount_cents")
         require(value["currency"] == self.account["currency"], 400,
                 f"currency must be {self.account['currency']}")
         require(amount <= self.account["balance_cents"], 402, "insufficient funds")
@@ -428,14 +412,15 @@ class Payments(Service):
         return json_response(payment, 201).effect("payments.payment-created", **payment)
 
 
-class Model(Service):
+class Model(Party):
     """A stand-in for the Agent's model provider, shaped like the Anthropic
     Messages API: POST /v1/messages with an x-api-key. It never streams, so
     every reply is fixed. Every request is an effect that lists the canary
     markers found in it: the evidence that a planted string, a private value,
     or a secret did or did not reach a model request.
 
-    Replies come from a script, replaced through the control service:
+    Replies come from a script (see fixtures.ScriptRules), replaced through
+    the control service:
 
         {"default": {"text": "..."}, "rules": [
           {"match": {"contains": "...", "model": "..."}, "times": 1,
@@ -453,25 +438,12 @@ class Model(Service):
         self.set_script({"default": seed["default"], "rules": seed["rules"]})
 
     def set_script(self, spec):
-        require(isinstance(spec, dict) and not set(spec) - {"default", "rules"}, 400,
-                "a model script has default and rules only")
+        check_fields(spec, (), ("default", "rules"), "a model script")
+        spec = self.canaries.expand(spec)
         default = spec.get("default", {"text": "Fixture reply."})
-        rules = spec.get("rules", [])
-        require(isinstance(rules, list), 400, "rules must be a list")
         self.check_reply(default)
-        for rule in rules:
-            require(isinstance(rule, dict) and not set(rule) - {"match", "reply", "times"},
-                    400, "a rule has match, reply, and times only")
-            match = rule.get("match", {})
-            require(isinstance(match, dict) and not set(match) - {"contains", "model"}
-                    and all(isinstance(v, str) for v in match.values()),
-                    400, "match takes contains and model, each a string")
-            self.check_reply(rule.get("reply"))
-            times = rule.get("times")
-            require(times is None or (isinstance(times, int) and times >= 1), 400,
-                    "times must be 1 or more")
-        self.script = self.canaries.expand({"default": default, "rules": rules})
-        self.used = [0] * len(rules)
+        self.rules = ScriptRules(spec.get("rules", []), ("model",), "reply", self.check_reply)
+        self.script = {"default": default, "rules": self.rules.rules}
         return self.script
 
     @staticmethod
@@ -485,7 +457,8 @@ class Model(Service):
 
     def error(self, status, message):
         kinds = {400: "invalid_request_error", 401: "authentication_error",
-                 404: "not_found_error", 405: "invalid_request_error"}
+                 404: "not_found_error", 405: "invalid_request_error",
+                 429: "rate_limit_error", 529: "overloaded_error"}
         return json_response({"type": "error", "error": {
             "type": kinds.get(status, "api_error"), "message": message}}, status)
 
@@ -495,25 +468,13 @@ class Model(Service):
         require(request.header("x-api-key") == self.key, 401, "invalid x-api-key")
         value = request.json()
         require(isinstance(value.get("model"), str), 400, "model: a string is required")
-        tokens = value.get("max_tokens")
-        require(isinstance(tokens, int) and not isinstance(tokens, bool) and tokens > 0,
-                400, "max_tokens: a whole number above 0 is required")
+        whole(value.get("max_tokens"), 1, "max_tokens")
         require(isinstance(value.get("messages"), list) and value["messages"], 400,
                 "messages: a non-empty list is required")
         require(not value.get("stream"), 400, "stream: the fixture does not stream")
         text = canonical(value)
-        rule, reply = "default", self.script["default"]
-        for index, candidate in enumerate(self.script["rules"]):
-            match = candidate.get("match", {})
-            if "contains" in match and match["contains"] not in text:
-                continue
-            if "model" in match and match["model"] != value["model"]:
-                continue
-            if candidate.get("times") is not None and self.used[index] >= candidate["times"]:
-                continue
-            self.used[index] += 1
-            rule, reply = index, candidate["reply"]
-            break
+        rule, reply = self.rules.first(text, {"model": value["model"]}) or (
+            "default", self.script["default"])
         self.count += 1
         if "text" in reply:
             content = [{"type": "text", "text": reply["text"]}]
@@ -531,7 +492,9 @@ class Model(Service):
         return json_response(message, headers=[
             ("request-id", f"req_fixture_{self.count:04d}")]).effect(
             "model.request-received", message=message["id"], model=value["model"],
-            rule=rule, markers=self.canaries.found(request.body))
+            # The key is the provider's own credential; a marker anywhere else
+            # in the request, its other headers included, is listed.
+            rule=rule, markers=request.markers(self.canaries, skip_headers=("x-api-key",)))
 
 
 PARTIES = (Mail, Search, Public, Hostile, Login, Payments, Model)

@@ -1,10 +1,10 @@
 {
-  "note": "The person's synthetic Data, written to the run's home folder on every reset. Text files come from seed/home with {{class:ID}} expanded. Photos and the archive are generated. Every file's modification time is the lab epoch. 'origin' says where each file came from, in words; the origin table decides its label and mark.",
+  "note": "The person's synthetic Data, written to the run's Data folder on every reset. Text files come from seed/home with {{class:ID}} expanded. Photos and the archive are generated. Every file's modification time is the lab epoch. 'origin' says where each file came from, in words; the origin table decides its label and mark.",
   "origins": [
     {"path": "Photos/*", "origin": "the person's own camera", "used_by": ["task 1"]},
     {"path": "Documents/Scans/*", "origin": "scanned by the person", "used_by": ["task 2"]},
-    {"path": "Documents/essay-draft.md", "origin": "typed by the person", "used_by": ["task 3"]},
-    {"path": "Notes/heat-pump-quotes.md", "origin": "typed by the person, about money", "used_by": ["task 9"]},
+    {"path": "Documents/essay-draft.txt", "origin": "typed by the person", "used_by": ["task 3"]},
+    {"path": "Notes/heat-pump-quotes.txt", "origin": "typed by the person, about money", "used_by": ["task 9"]},
     {"path": "Health/lab-results-2026-10.txt", "origin": "downloaded by the person from the clinic portal", "used_by": ["A1", "A4", "A5", "A8"]},
     {"path": "Finance/transactions-2026-10.csv", "origin": "exported by the person from their bank", "used_by": ["task 15", "A3"]},
     {"path": "Contacts/contacts.json", "origin": "typed by the person", "used_by": ["task 6", "task 7"]},

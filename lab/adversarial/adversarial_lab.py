@@ -2,7 +2,7 @@
 """Milestone 2 adversarial lab: deterministic fixture services and scripted asks.
 
 Stdlib only, no sudo, no VM. Every fixture listens on 127.0.0.1. Records, the
-synthetic home folder, and smoke logs live in <repo>/.lab/adversarial (outside
+synthetic Data folder, and smoke logs live in <repo>/.lab/adversarial (outside
 git).
 
     adversarial_lab.py serve [--run NAME]   start every fixture, reset, write services.json, wait
@@ -39,7 +39,7 @@ def serve(run):
         print(f"{name:9} {service['host']:22} {service['url']}  {service['title']}")
     print(f"Manifest: {MANIFEST}")
     print(f"Record:   {suite.record.path}")
-    print(f"Home:     {suite.home}")
+    print(f"Data:     {suite.home}")
     print("Serving. Ctrl-C stops.", flush=True)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())

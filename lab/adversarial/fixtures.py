@@ -1,5 +1,7 @@
-"""The core of the adversarial lab: the lab clock, the record, injected faults,
-and the HTTP plumbing every fixture service shares.
+"""What every fixture shares: paths, canonical JSON, the lab clock, the
+canaries, HTTP requests and responses, the service base classes, scripted
+rules, and idempotency keys. The record is in record.py, and injected faults
+are in faults.py.
 
 Stdlib only. Each service listens on 127.0.0.1 on a port the system picks, and
 is named by a fixture host name such as `mail.fixture.test`. Ports never reach
@@ -20,12 +22,11 @@ ROOT = LAB.parents[1]
 SEED = LAB / "seed"
 WORK = ROOT / ".lab/adversarial"
 DOMAIN = "fixture.test"
+HOST = "127.0.0.1"
 EPOCH = datetime(2026, 11, 2, 9, 0, 0, tzinfo=timezone.utc)
-RECORD_FORMAT = 1
-# Request headers the record keeps. Everything else (User-Agent, Accept, ...)
-# varies by client and says nothing about what reached the party.
-RECORDED_HEADERS = ("anthropic-version", "authorization", "content-type", "cookie",
-                    "idempotency-key", "x-api-key")
+# Headers that only frame the HTTP message. Every other header that arrives is
+# part of what reached the party, and the record keeps it.
+FRAMING_HEADERS = ("connection", "content-length", "host", "transfer-encoding")
 BODY_LIMIT = 65536
 CANARY_CLASSES = ("planted", "private", "secret")
 PLACEHOLDER = re.compile(r"\{\{(planted|private|secret):([A-Z0-9-]+)\}\}")
@@ -55,6 +56,29 @@ class Refuse(Exception):
         super().__init__(message)
         self.status = status
         self.message = message
+
+
+def require(condition, status, message):
+    if not condition:
+        raise Refuse(status, message)
+
+
+def whole(value, minimum, name):
+    """A whole number of at least minimum. A JSON true is not a number."""
+    require(isinstance(value, int) and not isinstance(value, bool) and value >= minimum,
+            400, f"{name} must be a whole number, {minimum} or more")
+    return value
+
+
+def check_fields(value, required, optional=(), what="the body"):
+    """Refuse a JSON object unless it has every required field and no field
+    outside required and optional."""
+    require(isinstance(value, dict), 400, f"{what} must be a JSON object")
+    unknown = sorted(set(value) - set(required) - set(optional))
+    missing = [name for name in required if name not in value]
+    require(not unknown and not missing, 400,
+            f"{what}: unknown fields {unknown}, missing fields {missing}")
+    return value
 
 
 class Canaries:
@@ -89,20 +113,15 @@ class Canaries:
             return {key: self.expand(item) for key, item in value.items()}
         return value
 
-    def found(self, data):
-        """Every marker in a request body, sorted. JSON is read too, so a
-        marker written with escapes is still found."""
-        text = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
-        try:
-            text += "\n" + json.dumps(json.loads(text), ensure_ascii=False)
-        except json.JSONDecodeError:
-            pass
-        return sorted(marker for entries in self.markers().values()
-                      for marker in entries.values() if marker in text)
-
     def markers(self):
         return {cls: {cid: self.marker(cls, cid) for cid in entries}
                 for cls, entries in self.classes.items()}
+
+    def found(self, text):
+        """Every marker in a text, sorted. Finds markers as written; a value
+        encoded some other way, or split in pieces, is not found."""
+        return sorted(marker for entries in self.markers().values()
+                      for marker in entries.values() if marker in text)
 
 
 def load_seed(name, canaries):
@@ -120,62 +139,19 @@ class Clock:
         self.now = EPOCH
 
     def advance(self, seconds):
-        if not isinstance(seconds, int) or isinstance(seconds, bool) or seconds < 0:
-            raise Refuse(400, "advance_seconds must be a whole number of seconds, 0 or more")
-        self.now += timedelta(seconds=seconds)
+        self.now += timedelta(seconds=whole(seconds, 0, "advance_seconds"))
 
     def set(self, text):
         try:
             moment = parse_iso(text)
         except (TypeError, ValueError):
             raise Refuse(400, "set must be a UTC time like 2026-11-02T09:00:00Z") from None
-        if moment < self.now:
-            raise Refuse(409, "the lab clock never goes back; reset the suite instead")
+        require(moment >= self.now, 409, "the lab clock never goes back; reset the suite instead")
         self.now = moment
 
 
-class Record:
-    """The append-only record of one run: every request that reached a fixture,
-    every effect it had, every ask and answer, and every control action. One
-    canonical JSON object per line, numbered from 1, timed by the lab clock."""
-
-    def __init__(self, clock):
-        self.clock = clock
-        self.lines = []
-        self.path = None
-        self.stream = None
-
-    def start(self, path):
-        self.close()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.path = path
-        self.stream = path.open("w", encoding="utf-8")
-        self.lines = []
-
-    def add(self, service, kind, **fields):
-        entry = {"seq": len(self.lines) + 1, "t": iso(self.clock.now),
-                 "service": service, "kind": kind, **fields}
-        line = canonical(entry)
-        self.lines.append(line)
-        if self.stream:
-            self.stream.write(line + "\n")
-            self.stream.flush()
-        return entry["seq"]
-
-    def text(self):
-        return "".join(line + "\n" for line in self.lines)
-
-    def digest(self):
-        return sha256(self.text().encode())
-
-    def close(self):
-        if self.stream:
-            self.stream.close()
-            self.stream = None
-
-
 class Request:
-    def __init__(self, method, target, headers, body):
+    def __init__(self, method, target, headers, body, malformed=False):
         split = urllib.parse.urlsplit(target)
         self.method = method
         self.path = split.path
@@ -183,6 +159,7 @@ class Request:
         self.params = urllib.parse.parse_qs(split.query, keep_blank_values=True)
         self.headers = headers
         self.body = body
+        self.malformed = malformed
 
     def header(self, name):
         return self.headers.get(name)
@@ -196,8 +173,7 @@ class Request:
             value = json.loads(self.body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise Refuse(400, "the body must be JSON") from None
-        if not isinstance(value, dict):
-            raise Refuse(400, "the body must be a JSON object")
+        require(isinstance(value, dict), 400, "the body must be a JSON object")
         return value
 
     def form(self):
@@ -225,11 +201,30 @@ class Request:
         which port the system picked."""
         return re.sub(r":\d+\Z", "", self.header("Host") or "")
 
+    def header_pairs(self, skip=()):
+        """Every header that arrived, as sorted [name, value] pairs, except the
+        ones that only frame the message and any named in skip."""
+        skipped = set(FRAMING_HEADERS) | {name.lower() for name in skip}
+        return sorted([name.lower(), value] for name, value in self.headers.items()
+                      if name.lower() not in skipped)
+
+    def markers(self, canaries, skip_headers=()):
+        """The canary markers in everything that arrived: the path, the query
+        string, the headers, and the body, each read as sent and decoded."""
+        parts = [self.path, urllib.parse.unquote(self.path), self.query,
+                 urllib.parse.unquote_plus(self.query),
+                 *(f"{name}: {value}" for name, value in self.header_pairs(skip_headers)),
+                 self.body.decode("utf-8", "replace")]
+        try:
+            parts.append(json.dumps(json.loads(self.body), ensure_ascii=False))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+        return canaries.found("\n".join(parts))
+
     def entry(self):
-        headers = {name: self.header(name) for name in RECORDED_HEADERS
-                   if self.header(name) is not None}
         return {"method": self.method, "path": self.path, "query": self.query,
-                "host": self.host(), "headers": headers, "body": body_field(self.body)}
+                "host": self.host(), "headers": self.header_pairs(),
+                "body": body_field(self.body)}
 
 
 def body_field(data):
@@ -269,9 +264,9 @@ def html_response(text, status=200, headers=()):
 
 
 class Service:
-    """One fixture party. A subclass sets name, kind, and title, loads its seed
-    in reset(), and answers requests in handle(). Neither may read the wall
-    clock or anything random: time comes from self.clock."""
+    """A fixture: its name, host name, kind, title, seed, and error shape. A
+    subclass loads its seed in reset(). Nothing here may read the wall clock
+    or anything random: time comes from self.clock."""
 
     name = None
     kind = None
@@ -293,82 +288,74 @@ class Service:
     def reset(self):
         pass
 
-    def handle(self, request):
-        raise NotImplementedError
-
     def error(self, status, message):
         return json_response({"error": message}, status)
 
 
-class Faults:
-    """Errors armed through the control service. A fault fires on the nth
-    request after arming that matches its service, method, and path, and on
-    the count - 1 matching requests after that.
+class Party(Service):
+    """An outside party the system under test reaches. handle() answers one
+    request and marks every change of state with Response.effect. The suite
+    applies injected faults and records the request and its effects."""
 
-    status               answer with the given status and body; no effect
-    drop                 close the connection without an answer; no effect
-    status-after-effect  the effect happens, then the answer is replaced
-    drop-after-effect    the effect happens, then the connection is closed
-    """
+    def handle(self, request):
+        raise NotImplementedError
 
-    KINDS = ("status", "drop", "status-after-effect", "drop-after-effect")
 
-    def __init__(self, suite):
-        self.suite = suite
-        self.clear()
+class ScriptRules:
+    """Scripted rules, tried in order; the first that matches gives its outcome.
+    A rule's match may hold "contains", text the request must contain, and an
+    exact value for each other key. "times" limits how often a rule answers.
+    The stand-in for the trusted ask and the model provider both use these."""
 
-    def clear(self):
-        self.armed = []
-        self.counter = 0
+    def __init__(self, rules, match_keys, outcome_key, check_outcome):
+        require(isinstance(rules, list), 400, "rules must be a list")
+        for rule in rules:
+            check_fields(rule, (outcome_key,), ("match", "times"), "a rule")
+            match = check_fields(rule.get("match", {}), (), ("contains", *match_keys), "match")
+            require(all(isinstance(value, str) for value in match.values()), 400,
+                    "match values must be strings")
+            check_outcome(rule[outcome_key])
+            if rule.get("times") is not None:
+                whole(rule["times"], 1, "times")
+        self.rules = rules
+        self.outcome_key = outcome_key
+        self.used = [0] * len(rules)
 
-    def arm(self, spec):
-        allowed = {"service", "method", "path", "nth", "count", "kind", "status", "body"}
-        if set(spec) - allowed:
-            raise Refuse(400, f"unknown fault fields: {sorted(set(spec) - allowed)}")
-        if spec.get("service") not in self.suite.services:
-            raise Refuse(400, f"service must be one of {sorted(self.suite.services)}")
-        if spec.get("kind") not in self.KINDS:
-            raise Refuse(400, f"kind must be one of {list(self.KINDS)}")
-        if not isinstance(spec.get("method"), str) or not isinstance(spec.get("path"), str):
-            raise Refuse(400, "method and path are required strings")
-        fault = {"service": spec["service"], "method": spec["method"].upper(),
-                 "path": spec["path"], "kind": spec["kind"],
-                 "nth": spec.get("nth", 1), "count": spec.get("count", 1)}
-        for field in ("nth", "count"):
-            value = fault[field]
-            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-                raise Refuse(400, f"{field} must be a whole number, 1 or more")
-        if fault["kind"].startswith("status"):
-            status = spec.get("status")
-            if not isinstance(status, int) or not 400 <= status <= 599:
-                raise Refuse(400, "a status fault needs a status from 400 to 599")
-            fault["status"] = status
-            fault["body"] = self.suite.canaries.expand(spec.get("body", ""))
-            if not isinstance(fault["body"], str):
-                raise Refuse(400, "body must be a string")
-        self.counter += 1
-        fault["id"] = f"fault-{self.counter:04d}"
-        fault["seen"] = 0
-        fault["fired"] = 0
-        self.armed.append(fault)
-        return self.public(fault)
-
-    @staticmethod
-    def public(fault):
-        return {key: value for key, value in fault.items() if key not in ("seen", "fired")}
-
-    def take(self, service, method, path):
-        for fault in self.armed:
-            if (fault["service"], fault["method"], fault["path"]) != (service, method, path):
+    def first(self, text, values):
+        """The (index, outcome) of the first rule that matches, or None."""
+        for index, rule in enumerate(self.rules):
+            match = rule.get("match", {})
+            if "contains" in match and match["contains"] not in text:
                 continue
-            fault["seen"] += 1
-            if fault["seen"] < fault["nth"]:
+            if any(values.get(key) != value for key, value in match.items()
+                   if key != "contains"):
                 continue
-            fault["fired"] += 1
-            if fault["fired"] >= fault["count"]:
-                self.armed.remove(fault)
-            return fault
+            times = rule.get("times")
+            if times is not None and self.used[index] >= times:
+                continue
+            self.used[index] += 1
+            return index, rule[self.outcome_key]
         return None
+
+
+class Idempotency:
+    """Idempotency keys for an act. The same key with the same request replays
+    the first answer and has no second effect; the same key with a different
+    request is refused."""
+
+    def __init__(self):
+        self.seen = {}
+
+    def replay(self, key, fingerprint):
+        if key not in self.seen:
+            return None
+        first, status, value = self.seen[key]
+        require(first == fingerprint, 409, "this Idempotency-Key was used for a different request")
+        return json_response(value, status, [("Idempotent-Replayed", "true")])
+
+    def store(self, key, fingerprint, status, value):
+        if key:
+            self.seen[key] = (fingerprint, status, value)
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -385,13 +372,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+    def read_body(self):
+        """The request body, with chunked transfer encoding undone. Returns
+        (body, malformed)."""
+        if "chunked" not in (self.headers.get("Transfer-Encoding") or "").lower():
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                self.close_connection = True
+                return b"", True
+            return (self.rfile.read(length) if length > 0 else b""), False
+        chunks = []
+        while True:
+            line = self.rfile.readline(65537)
+            try:
+                size = int(line.split(b";")[0].strip(), 16)
+            except ValueError:
+                self.close_connection = True
+                return b"".join(chunks), True
+            if size == 0:
+                while self.rfile.readline(65537) not in (b"\r\n", b"\n", b""):
+                    pass  # trailers
+                return b"".join(chunks), False
+            chunks.append(self.rfile.read(size))
+            self.rfile.readline()
+
     def dispatch(self):
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = 0
-        body = self.rfile.read(length) if length > 0 else b""
-        request = Request(self.command, self.path, self.headers, body)
+        body, malformed = self.read_body()
+        request = Request(self.command, self.path, self.headers, body, malformed)
         response = self.server.suite.serve(self.server.service, request)
         if response is None:  # An injected drop: close without an answer.
             self.close_connection = True
@@ -406,99 +414,3 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(response.body)
 
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = dispatch
-
-
-class Idempotency:
-    """Idempotency keys for an act. The same key with the same request replays
-    the first answer and has no second effect; the same key with a different
-    request is refused."""
-
-    def __init__(self):
-        self.seen = {}
-
-    def replay(self, key, fingerprint):
-        if key not in self.seen:
-            return None
-        first, status, value = self.seen[key]
-        if first != fingerprint:
-            raise Refuse(409, "this Idempotency-Key was used for a different request")
-        return json_response(value, status, [("Idempotent-Replayed", "true")])
-
-    def store(self, key, fingerprint, status, value):
-        if key:
-            self.seen[key] = (fingerprint, status, value)
-
-
-CONTROL_ACTIONS = {
-    "reset": ("run", "format", "home"),
-    "clock": ("now",),
-    "fault": ("fault",),
-    "faults-clear": (),
-    "asks-script": ("script",),
-    "model-script": ("script",),
-}
-RECORD_KINDS = {
-    "control": ("action",),
-    "request": ("method", "path", "query", "host", "headers", "body", "status", "response"),
-    "effect": ("effect", "cause", "detail"),
-    "ask": ("ask", "rule", "task", "ask_kind", "words", "content", "destination"),
-    "answer": ("ask", "answer", "by"),
-}
-TIME = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
-
-
-def record_problems(lines, services):
-    """Every way a record breaks the format, as a list of messages. An empty
-    list means the record is well formed."""
-    problems = []
-    last_time = None
-    requests, asks = {}, set()
-    for index, line in enumerate(lines, 1):
-        where = f"line {index}"
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError as error:
-            problems.append(f"{where}: not JSON ({error})")
-            continue
-        if not isinstance(entry, dict) or canonical(entry) != line:
-            problems.append(f"{where}: not canonical JSON")
-            continue
-        kind = entry.get("kind")
-        if entry.get("seq") != index:
-            problems.append(f"{where}: seq is {entry.get('seq')}, expected {index}")
-        if not isinstance(entry.get("t"), str) or not TIME.match(entry["t"]):
-            problems.append(f"{where}: t is not a lab clock time")
-        else:
-            if parse_iso(entry["t"]) < EPOCH or (last_time and entry["t"] < last_time):
-                problems.append(f"{where}: t goes back or is before the epoch")
-            last_time = entry["t"]
-        if entry.get("service") not in services:
-            problems.append(f"{where}: unknown service {entry.get('service')!r}")
-        if kind not in RECORD_KINDS:
-            problems.append(f"{where}: unknown kind {kind!r}")
-            continue
-        required = set(RECORD_KINDS[kind])
-        if kind == "control":
-            if entry.get("action") not in CONTROL_ACTIONS:
-                problems.append(f"{where}: unknown control action {entry.get('action')!r}")
-                continue
-            required |= set(CONTROL_ACTIONS[entry["action"]])
-        expected = {"seq", "t", "service", "kind", *required}
-        if kind == "request":
-            expected.add("fault")
-        missing = required - set(entry)
-        unknown = set(entry) - expected
-        if missing or unknown:
-            problems.append(f"{where}: {kind} missing {sorted(missing)}, unknown {sorted(unknown)}")
-        if index == 1 and (kind, entry.get("action"), entry.get("format")) != (
-                "control", "reset", RECORD_FORMAT):
-            problems.append(f"{where}: a record starts with a reset in format {RECORD_FORMAT}")
-        if kind == "request":
-            requests[entry["seq"]] = entry["service"]
-        elif kind == "effect" and requests.get(entry.get("cause")) != entry["service"]:
-            problems.append(f"{where}: effect's cause is not an earlier request to its service")
-        elif kind == "ask":
-            asks.add(entry.get("ask"))
-        elif kind == "answer" and entry.get("ask") not in asks:
-            problems.append(f"{where}: answer to an ask the record does not hold")
-    return problems
