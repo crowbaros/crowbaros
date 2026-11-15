@@ -63,4 +63,6 @@ See [`apps/`](apps/README.md) for how to build and run them.
 - A decision that is hard to reverse gets a [decision record](docs/adr/).
 - [`docs/archive/`](docs/archive/) describes the earlier Fedora plan. Where it
   disagrees with the vision, the vision is right.
-- The crates in `crates/` are MIT. The apps in `apps/` are GPL-3.0-or-later.
+- CrowbarOS is [MIT](LICENSE). Third-party parts keep their own terms: the GPUI
+  layer-shell backport and the adapted GPUI text input in `apps/shell` are
+  Apache-2.0, and the bundled fonts are OFL-1.1.

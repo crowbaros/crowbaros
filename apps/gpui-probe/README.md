@@ -99,8 +99,7 @@ The ordinary desktop launcher still uses system driver discovery.
 - Focused `on_click` controls already receive Enter/Space activation from GPUI.
   Registering another activation binding makes the action fire twice. The probe
   relies on GPUI's built-in activation and tests for exactly one state change.
-- This disposable integration fixture uses MIT; it does not set the license
-  policy for CrowbarOS's future shell or product applications.
+- The probe is MIT, like all CrowbarOS code.
 
 ## Repeat the input check
 

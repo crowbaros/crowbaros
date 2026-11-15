@@ -131,7 +131,7 @@ To stop using the app while retaining preferences, close it and remove its RPM
 through DNF. Removing the RPM does not reset a motion change already applied to
 the running compositor; a fresh lab login without the hook uses the lab defaults.
 
-Owned application code uses GPL-3.0-or-later. The earlier GPUI probe's MIT notice,
+Owned application code is MIT. The earlier GPUI probe's MIT notice,
 GPUI/dependency notices, and bundled font OFL licenses are retained. Fonts are
 the same static Manrope weights and IBM Plex Mono used by the validated probe;
 see [font provenance](fonts/README.md).

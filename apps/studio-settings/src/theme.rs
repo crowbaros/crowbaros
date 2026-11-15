@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 use crate::settings::{Preferences, Theme};
 
 #[derive(Clone, Copy)]

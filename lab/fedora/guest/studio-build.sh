@@ -14,7 +14,7 @@ python3 - <<'PY'
 import json, pathlib, re, shutil
 root = pathlib.Path.cwd()
 graph = json.loads((pathlib.Path.home() / 'artifacts/studio/dependency-graph.json').read_text())
-records, expressions = [], {'GPL-3.0-or-later', 'MIT', 'OFL-1.1'}
+records, expressions = [], {'MIT', 'OFL-1.1'}
 licenses = root / 'dependency-licenses'
 licenses.mkdir(exist_ok=True)
 for package in graph['packages']:

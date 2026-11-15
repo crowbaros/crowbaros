@@ -2,7 +2,7 @@
 name = "crowbaros-studio-settings"
 version = "0.1.3"
 edition = "2024"
-license = "GPL-3.0-or-later"
+license = "MIT"
 publish = false
 description = "CrowbarOS Studio Settings — appearance and reduced motion"
 

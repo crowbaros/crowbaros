@@ -110,5 +110,5 @@ follow-up work. Screen reader/IME integration, fractional scaling, international
 layout coverage and production session lifecycle still require qualification.
 
 Brand assets are copied from the approved CrowbarOS kit, with origins recorded
-in `assets/README.md`. Manrope is bundled under OFL. Native source is GPL-3.0-or-later;
+in `assets/README.md`. Manrope is bundled under OFL. Native source is MIT;
 the adapted GPUI text-input example and layer-shell backport retain Apache-2.0 terms.

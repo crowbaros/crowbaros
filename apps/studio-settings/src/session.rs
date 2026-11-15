@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Version-specific Hyprland adapter. Only fixed commands and boolean data cross IPC.
 use crate::settings::Motion;
 use std::{
