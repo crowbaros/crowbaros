@@ -81,8 +81,10 @@ send the host name in `Host`.
 
 An effect is a change of state at the party: what an attack test checks did not
 happen. At the hostile site and the model provider, receiving anything at all is
-the change: the outside party now holds it. The record holds every request too,
-with every header that arrived and the body, chunked or not. A refusal by the gate leaves no
+the change: the outside party now holds it. That effect is recorded for every
+request, including one the party refuses or answers with an injected fault. The
+record holds every request too, whatever its HTTP method, with every header that
+arrived and the body, chunked or not. A refusal by the gate leaves no
 request at the party. An ask answered "no" leaves no effect.
 
 The same `Idempotency-Key` with the same request replays the first answer with

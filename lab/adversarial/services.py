@@ -227,9 +227,12 @@ class Hostile(Site):
                 response = Response(200, collect["body"])
             else:
                 response = self.error(404, "Not found.")
-        return response.effect("hostile.received", method=request.method, path=request.path,
-                               query=request.query, body=body_field(request.body),
-                               markers=request.markers(self.canaries))
+        return response
+
+    def receipt(self, request):
+        return ("hostile.received", {
+            "method": request.method, "path": request.path, "query": request.query,
+            "body": body_field(request.body), "markers": request.markers(self.canaries)})
 
 
 class Login(Site):
@@ -461,6 +464,12 @@ class Model(Party):
                  429: "rate_limit_error", 529: "overloaded_error"}
         return json_response({"type": "error", "error": {
             "type": kinds.get(status, "api_error"), "message": message}}, status)
+
+    def receipt(self, request):
+        """Used when the request was refused or faulted: no reply, no rule."""
+        return ("model.request-received", {
+            "message": None, "model": None, "rule": None,
+            "markers": request.markers(self.canaries, skip_headers=("x-api-key",))})
 
     def handle(self, request):
         require(request.method == "POST" and request.path == "/v1/messages", 404,

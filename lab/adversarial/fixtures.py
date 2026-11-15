@@ -300,6 +300,12 @@ class Party(Service):
     def handle(self, request):
         raise NotImplementedError
 
+    def receipt(self, request):
+        """The effect of the party merely receiving this request, or None. The
+        suite records it for every request, refused or faulted ones included,
+        unless handle() already marked an effect of the same name."""
+        return None
+
 
 class ScriptRules:
     """Scripted rules, tried in order; the first that matches gives its outcome.
@@ -413,4 +419,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(response.body)
 
-    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = dispatch
+    def __getattr__(self, name):
+        # Every HTTP method, OPTIONS, TRACE, or one the client made up, goes to
+        # the suite, so nothing that reaches a fixture escapes the record.
+        if name.startswith("do_"):
+            return self.dispatch
+        raise AttributeError(name)

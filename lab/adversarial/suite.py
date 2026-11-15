@@ -95,15 +95,11 @@ class Asks(Service):
             except Refuse as refused:
                 return suite.record_request(self, request,
                                             self.error(refused.status, refused.message), fault)
-            held = self.open(ask)
+            held = self.open(ask, request, fault)
         held["event"].wait()
-        response = json_response({"ask": held["ask"], "answer": held["answer"]})
-        if fault:
-            with suite.lock:
-                return suite.record_request(self, request, response, fault)
-        return response
+        return held["sent"]
 
-    def open(self, ask):
+    def open(self, ask, request, fault):
         """Record an ask and its scripted answer. The caller holds the lock."""
         self.counter += 1
         ask_id = f"ask-{self.counter:04d}"
@@ -112,7 +108,8 @@ class Asks(Service):
                               ask_kind=ask["kind"], words=ask["words"], content=ask["content"],
                               destination=ask.get("destination"))
         held = {"ask": ask_id, "task": ask["task"], "kind": ask["kind"],
-                "event": threading.Event(), "answer": None,
+                "event": threading.Event(), "answer": None, "sent": None,
+                "request": request, "fault": fault,
                 "deadline": self.clock.now + timedelta(seconds=self.script["hold_timeout_seconds"])}
         self.pending[ask_id] = held
         if answer != "hold":
@@ -126,6 +123,12 @@ class Asks(Service):
         require(held is not None, 404, f"no held ask {ask_id}")
         held["answer"] = answer
         self.suite.record.add(self.name, "answer", ask=ask_id, answer=answer, by=by)
+        held["sent"] = json_response({"ask": ask_id, "answer": answer})
+        if held["fault"]:
+            # Recorded now, under the lock, so a reset that releases the ask
+            # cannot move its request into the next run's record.
+            held["sent"] = self.suite.record_request(self, held["request"], held["sent"],
+                                                     held["fault"])
         held["event"].set()
 
     def expire(self):
@@ -319,17 +322,21 @@ class Suite:
         return Response(421, f"Misdirected request: address this fixture as {service.host}.\n")
 
     def record_request(self, service, request, response, fault=None):
-        """Record a request and the effects of its response. Returns what to
-        send: the response, the fault's answer, or None to drop the connection.
-        The caller holds the lock."""
+        """Record a request, the party's receipt of it, and the effects of its
+        response. Returns what to send: the response, the fault's answer, or
+        None to drop the connection. The caller holds the lock."""
         sent = fault.answer(service) if fault else response
+        effects = list(response.effects if response else [])
+        receipt = service.receipt(request) if isinstance(service, Party) else None
+        if receipt and receipt[0] not in [name for name, _ in effects]:
+            effects.insert(0, receipt)
         entry = request.entry()
         entry["status"] = sent.status if sent else None
         entry["response"] = {"bytes": len(sent.body), "sha256": sha256(sent.body)} if sent else None
         if fault:
             entry["fault"] = fault.id
         seq = self.record.add(service.name, "request", **entry)
-        for name, detail in (response.effects if response else []):
+        for name, detail in effects:
             self.record.add(service.name, "effect", effect=name, cause=seq, detail=detail)
         return sent
 
