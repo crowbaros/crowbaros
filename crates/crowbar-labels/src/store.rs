@@ -90,7 +90,11 @@ impl AlreadyRecorded {
 
 impl fmt::Display for AlreadyRecorded {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "the object {:?} already has a record; a write joins with it", self.object.as_str())
+        write!(
+            f,
+            "the object {:?} already has a record; a write joins with it",
+            self.object.as_str()
+        )
     }
 }
 

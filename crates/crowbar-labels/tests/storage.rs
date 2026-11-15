@@ -79,7 +79,11 @@ fn a_write_to_an_object_with_no_record_joins_with_the_unknown_row() {
 
     // (writer, stored label, stored mark sources)
     let cases = [
-        (&typed, private(&[Category::Unknown]), BTreeSet::from([MarkSource::Unknown])),
+        (
+            &typed,
+            private(&[Category::Unknown]),
+            BTreeSet::from([MarkSource::Unknown]),
+        ),
         (
             &page,
             private(&[Category::Unknown]),
@@ -116,7 +120,11 @@ fn creating_an_object_that_already_has_a_record_is_refused() {
 
     let refused = store.create(&object, &Origin::Typed.label_mark()).unwrap_err();
     assert_eq!(refused.object(), &object);
-    assert_eq!(store.origin_of(&object).label_mark(), page, "a refused create changed the record");
+    assert_eq!(
+        store.origin_of(&object).label_mark(),
+        page,
+        "a refused create changed the record"
+    );
 }
 
 #[test]
@@ -205,7 +213,9 @@ fn findings_a_marked_task_stored_mark_a_later_task_that_reads_them() {
     let findings = research.emit("findings");
 
     let mut store = LabelStore::default();
-    store.create(&ObjectId::new("memory/findings"), findings.label_mark()).unwrap();
+    store
+        .create(&ObjectId::new("memory/findings"), findings.label_mark())
+        .unwrap();
     let saved = serde_json::to_string(&store).unwrap();
     drop(research);
 

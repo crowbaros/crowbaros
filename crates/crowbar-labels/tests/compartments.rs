@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use crowbar_labels::{AdmittedSet, Category, Compartment, Fetch, FileOrigin, Label, MarkSource, Origin};
 
 mod common;
-use common::{bank, me, news, sources};
+use common::{bank, me, news, private, sources};
 
 fn reading(origins: &[Origin]) -> Compartment {
     let mut compartment = Compartment::fresh();
@@ -104,8 +104,8 @@ fn a_native_compartment_is_fixed_at_the_join_of_its_view() {
     let download = Origin::File(FileOrigin::Downloaded(Fetch::WithoutLogin(news()))).label_mark();
     let mail = Origin::Mail { account: me() }.label_mark();
 
-    // A view that holds one file from outside, which it never opens (attack
-    // A13): the compartment is marked from its start.
+    // A view that holds a download, which it never opens: the compartment is
+    // marked from its start.
     let mut native = Compartment::fixed([&note, &download]);
     assert_eq!(native.label_mark().label(), &Label::Personal);
     assert_eq!(sources(native.label_mark()), BTreeSet::from([MarkSource::Site(news())]));
@@ -130,6 +130,31 @@ fn a_native_compartment_is_fixed_at_the_join_of_its_view() {
             assert_eq!(refusal.held(), &start);
         }
         assert_eq!(native.label_mark(), &start, "a fixed compartment never changes");
+    }
+}
+
+#[test]
+fn a_native_compartment_given_a_file_from_outside_it_never_opens_is_marked() {
+    // Attack A13: a native sandbox is given a view that holds one file from
+    // outside, never opens it, and writes a result. The result is marked, and
+    // so is anything that depends on it.
+    let note = Origin::Typed.label_mark();
+    let from_outside = Origin::File(FileOrigin::FromOutside).label_mark();
+
+    let native = Compartment::fixed([&note, &from_outside]);
+    let result = native.emit("sorted 12 photos");
+    let act = result.map(|summary| format!("send: {summary}"));
+
+    for (name, label_mark) in [
+        ("the result", result.label_mark()),
+        ("an act that depends on it", act.label_mark()),
+    ] {
+        assert_eq!(
+            sources(label_mark),
+            BTreeSet::from([MarkSource::Outside]),
+            "mark of {name}"
+        );
+        assert_eq!(label_mark.label(), &private(&[Category::Unknown]), "label of {name}");
     }
 }
 
