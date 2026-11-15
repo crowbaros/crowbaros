@@ -21,5 +21,5 @@ for weight, style in [(400, "Regular"), (600, "SemiBold"), (700, "Bold")]:
 ```
 
 Run from this directory in the builder after `sudo dnf install python3-fonttools`
-if regeneration is needed. Normal RPM builds use the checked-in static faces and
+if regeneration is needed. Normal builds use the checked-in static faces and
 do not need FontTools. `BUILD-MANIFEST.txt` records the font digests.

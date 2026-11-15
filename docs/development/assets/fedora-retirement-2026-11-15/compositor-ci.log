@@ -1,0 +1,179 @@
+    Checking bitflags v2.13.2
+    Checking cfg-if v1.0.5
+    Checking once_cell v1.21.4
+    Checking linux-raw-sys v0.12.1
+    Checking log v0.4.35
+    Checking smallvec v1.16.5
+    Checking downcast-rs v1.2.1
+    Checking scoped-tls v1.0.1
+    Checking pin-project-lite v0.2.17
+    Checking xkeysym v0.2.1
+    Checking cursor-icon v1.2.0
+    Checking xcursor v0.3.11
+    Checking smol_str v0.3.7
+    Checking raw-window-handle v0.6.2
+    Checking linux-raw-sys v0.9.4
+    Checking dpi v0.1.2
+    Checking libc v0.2.191
+    Checking bytemuck v1.25.2
+    Checking rand_core v0.10.1
+    Checking linux-raw-sys v0.4.15
+    Checking drm-fourcc v2.2.0
+    Checking thiserror v2.0.21
+    Checking percent-encoding v2.3.2
+    Checking x11rb-protocol v0.14.0
+    Checking as-raw-xcb-connection v1.0.1
+    Checking libloading v0.8.9
+    Checking libloading v0.9.1
+    Checking cpufeatures v0.3.1
+    Checking regex-syntax v0.8.11
+    Checking foldhash v0.2.0
+    Checking enumflags2 v0.7.12
+    Checking serde_core v1.0.229
+    Checking libseat-sys v0.2.0
+    Checking input-sys v1.19.0
+    Checking hashbrown v0.17.1
+    Checking equivalent v1.0.3
+    Checking fastrand v2.5.0
+    Checking lazy_static v1.5.1
+    Checking profiling v1.0.18
+    Checking portable-atomic v1.15.0
+    Checking zmij v1.0.23
+    Checking thread_local v1.1.10
+    Checking nu-ansi-term v0.50.3
+    Checking sharded-slab v0.1.7
+    Checking keyboard-types v0.8.3
+    Checking siphasher v1.0.4
+    Checking itoa v1.0.19
+    Checking chacha20 v0.10.2
+    Checking glam v0.33.12
+    Checking memchr v2.8.3
+    Checking appendlist v1.4.0
+    Checking dlib v0.5.3
+    Checking tracing-core v0.1.36
+    Checking wayland-sys v0.31.11
+    Checking winit-core v0.31.0-beta.4
+    Checking drm-sys v0.8.1
+    Checking rustix v0.38.44
+    Checking tracing v0.1.44
+    Checking tracing-log v0.2.0
+    Checking xkbcommon-dl v0.4.2
+    Checking indexmap v2.14.2
+    Checking memmap2 v0.9.12
+    Checking x11-dl v2.21.0
+    Checking getrandom v0.4.3
+    Checking io-lifetimes v1.0.11
+    Checking libudev-sys v0.1.4
+    Checking errno v0.3.15
+    Checking gbm-sys v0.4.0
+    Checking libseat v0.2.4
+    Checking regex-automata v0.4.18
+    Checking udev v0.9.3
+    Checking rand v0.10.3
+    Checking xkbcommon v0.9.0
+    Checking input v0.10.0
+    Checking rustix v1.1.6
+    Checking serde v1.0.229
+    Checking serde_json v1.0.154
+    Checking matchers v0.2.0
+    Checking tracing-subscriber v0.3.23
+    Checking winit-common v0.31.0-beta.4
+    Checking wayland-backend v0.3.17
+    Checking polling v3.11.0
+    Checking drm-ffi v0.9.1
+    Checking gethostname v1.1.0
+    Checking tempfile v3.27.0
+    Checking calloop v0.14.5
+    Checking drm v0.14.1
+    Checking reis v0.7.1
+    Checking wayland-client v0.31.15
+    Checking wayland-server v0.31.14
+    Checking wayland-csd-frame v0.3.0
+    Checking wayland-egl v0.32.11
+    Checking gbm v0.18.0
+    Checking smithay-drm-extras v0.1.0 (https://github.com/Smithay/smithay.git?rev=fd8e3f50f9556aa6c0485989d1d49ff2c5eefae1#fd8e3f50)
+    Checking wayland-protocols v0.32.13
+    Checking calloop-wayland-source v0.4.1
+    Checking wayland-cursor v0.31.14
+    Checking x11rb v0.14.0
+    Checking winit-x11 v0.31.0-beta.4
+    Checking wayland-protocols-misc v0.3.12
+    Checking wayland-protocols-experimental v20251230.0.3
+    Checking wayland-protocols-wlr v0.3.12
+    Checking wayland-protocols-plasma v0.3.12
+    Checking smithay-client-toolkit v0.21.1
+    Checking winit-wayland v0.31.0-beta.4
+    Checking winit v0.31.0-beta.4
+    Checking smithay v0.7.0 (https://github.com/Smithay/smithay.git?rev=fd8e3f50f9556aa6c0485989d1d49ff2c5eefae1#fd8e3f50)
+    Checking crowbar-compositor v0.0.0 (/home/jasona/coding/my-linux/compositor)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.96s
+   Compiling crowbar-compositor v0.0.0 (/home/jasona/coding/my-linux/compositor)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.30s
+     Running unittests src/lib.rs (target/debug/deps/crowbar_compositor-efb85e6d3860e6c3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/crowbar_compositor-dad356338f626b92)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/crowbar-probe.rs (target/debug/deps/crowbar_probe-85dbfcfde41ccff5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/confirm.rs (target/debug/deps/confirm-4acde5f3bc2a36e0)
+
+running 7 tests
+test the_confirm_chord_never_reaches_the_focused_client ... ok
+test the_release_is_withheld_even_after_the_modifiers_are_let_go ... ok
+test a_plain_key_reaches_the_focused_client ... ok
+test enter_without_the_modifiers_is_an_ordinary_key ... ok
+test a_keyboard_object_made_during_the_chord_is_not_told_the_key_is_down ... ok
+test a_withheld_key_whose_release_was_lost_is_an_ordinary_key_the_next_time ... ok
+test a_client_that_gains_focus_during_the_chord_is_not_told_the_key_is_down ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/control.rs (target/debug/deps/control-4e634a1ac2798f3a)
+
+running 7 tests
+test a_request_outside_the_fixed_set_is_refused_and_the_channel_stays_open ... ok
+test the_shell_is_told_when_the_compositor_takes_the_confirm_chord ... ok
+test a_shell_that_stops_reading_loses_the_channel_in_both_directions ... ok
+test a_snapshot_lists_the_windows_and_names_the_active_one ... ok
+test focus_workspace_shows_only_that_workspaces_windows ... ok
+test focus_window_moves_the_keyboard_to_that_window ... ok
+test a_request_still_unread_when_the_channel_closes_is_not_carried_out ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/globals.rs (target/debug/deps/globals-81036fc1e9b215a6)
+
+running 4 tests
+test an_ordinary_client_sees_only_the_ordinary_globals ... ok
+wl_display#1: error 0: Invalid binding of zwlr_layer_shell_v1 version 1 for global 7.
+test the_shell_sees_layer_shell_and_an_ordinary_client_does_not ... ok
+test a_client_started_through_security_context_sees_the_reduced_set ... ok
+test binding_a_hidden_global_by_its_number_disconnects_the_client ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/layers.rs (target/debug/deps/layers-ede7268ecf251787)
+
+running 2 tests
+test a_maximized_window_gets_the_room_the_shell_layers_leave ... ok
+test an_exclusive_layer_takes_the_keyboard_until_it_closes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests crowbar_compositor
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

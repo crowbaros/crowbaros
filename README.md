@@ -24,7 +24,7 @@ being right.
 | Milestone 1: Crowbar State, apply engine, Base generations, boot-menu rollback | Done. [Record](docs/milestones/milestone-1.md) |
 | Milestone 2: the security rules, built to be attacked | Next. [Scope](docs/milestones/milestone-2.md) |
 | Brand and design system | Approved. [Brand kit](docs/branding/), [DESIGN.md](DESIGN.md) |
-| GPUI shell and Studio Settings | First slices built and validated in the Fedora VM lab. They are the starting point for the Milestone 4 shell. [Apps](apps/) |
+| GPUI shell and Studio Settings | Integrated Void Alpha session with separate runit services, saved appearance, and 37 passing desktop checks. [Record](docs/development/void-desktop-smoke-2026-11-15.md), [apps](apps/) |
 | Compositor | Decided: our own, on Smithay ([ADR 0015](docs/adr/0015-our-own-compositor-on-smithay.md)). A spike tested the decision. [Record](docs/research/compositor-spike-2026-11-15.md); [NVIDIA runs](docs/research/compositor-nvidia-2026-11-15.md) |
 
 The full roadmap is in the [vision](docs/VISION.md#roadmap).
@@ -36,14 +36,14 @@ The full roadmap is in the [vision](docs/VISION.md#roadmap).
 | [`crates/`](crates/) | The Rust workspace: the Crowbar State, the apply engine, and the skeleton crates for Milestone 2 |
 | [`apps/`](apps/) | The GPUI interfaces: desktop shell, Studio Settings, and the GPUI probe |
 | [`compositor/`](compositor/) | The CrowbarOS Wayland compositor, on Smithay. Holds the spike that tested the decision; the real one is not started |
-| [`lab/`](lab/) | VM labs: the Void Linux lab for Base, and the Fedora lab that builds and runs the GPUI apps for now |
+| [`lab/`](lab/) | Void Base and desktop labs, plus adversarial scaffolding; Fedora tooling is archived |
 | [`docs/VISION.md`](docs/VISION.md) | The vision, the stack, and the roadmap |
 | [`docs/adr/`](docs/adr/) | Decision records |
 | [`docs/architecture/`](docs/architecture/) | Design notes: state and apply engine, capability model, gate and monitor |
 | [`docs/milestones/`](docs/milestones/) | Milestone scopes, write-ups, and evidence |
 | [`docs/research/`](docs/research/), [`docs/reviews/`](docs/reviews/) | Prior-art research and the council review rounds |
 | [`docs/branding/`](docs/branding/) | The approved brand kit and the rounds that led to it |
-| [`docs/development/`](docs/development/) | The GPUI lab workflow, Vulkan-in-a-VM setup, and validation records |
+| [`docs/development/`](docs/development/) | Current Void build/run guidance and unchanged historical validation records |
 | [`docs/archive/`](docs/archive/) | Superseded material. Not current. Do not build on it |
 | [`DESIGN.md`](DESIGN.md), [`PRODUCT.md`](PRODUCT.md), [`.impeccable/`](.impeccable/) | The design system, the product brief, and the design review evidence |
 
