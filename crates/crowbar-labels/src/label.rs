@@ -3,9 +3,12 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 /// A web site, named by its host. Host names compare without regard to ASCII
 /// case, as DNS does.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
 pub struct Site(String);
 
 impl Site {
@@ -18,6 +21,18 @@ impl Site {
     }
 }
 
+impl From<String> for Site {
+    fn from(host: String) -> Self {
+        Site::new(&host)
+    }
+}
+
+impl From<Site> for String {
+    fn from(site: Site) -> Self {
+        site.0
+    }
+}
+
 /// The category that private data carries.
 ///
 /// Messages, health, and finance are the categories the vision names. A page
@@ -25,7 +40,8 @@ impl Site {
 /// category too. `Unclassified` is what the origin table gives data whose
 /// origin it does not know; no party is cleared for it unless the person names
 /// it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Category {
     Messages,
     Health,
@@ -40,16 +56,36 @@ pub enum Category {
 /// Labels form a lattice. [`Label::join`] is the least label at or above both,
 /// and [`Label::is_at_most`] is its order. Two private labels with different
 /// categories are not ordered: neither is at most the other.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Label {
     Public,
     Personal,
     Private(Categories),
 }
 
-/// The categories of a private label. Never empty.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// The categories of a private label. Never empty: a stored private label
+/// with no category is refused when it is loaded.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "BTreeSet<Category>", into = "BTreeSet<Category>")]
 pub struct Categories(BTreeSet<Category>);
+
+impl TryFrom<BTreeSet<Category>> for Categories {
+    type Error = &'static str;
+
+    fn try_from(categories: BTreeSet<Category>) -> Result<Self, Self::Error> {
+        if categories.is_empty() {
+            return Err("a private label needs at least one category");
+        }
+        Ok(Categories(categories))
+    }
+}
+
+impl From<Categories> for BTreeSet<Category> {
+    fn from(categories: Categories) -> Self {
+        categories.0
+    }
+}
 
 impl Categories {
     pub fn iter(&self) -> impl Iterator<Item = &Category> {

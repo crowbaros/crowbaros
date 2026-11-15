@@ -3,10 +3,13 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::label::{Label, Site, write_list};
 
 /// One of the person's mail accounts, as the broker's mail adapter names it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct MailAccount(String);
 
 impl MailAccount {
@@ -23,7 +26,8 @@ impl MailAccount {
 ///
 /// ADR 0011 lets a marked task act under a standing rule the person wrote for
 /// that source, so a mark keeps its sources and the gate can check them.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MarkSource {
     /// A web site the broker fetched from.
     Site(Site),
@@ -45,7 +49,8 @@ pub enum MarkSource {
 ///
 /// A value is marked when it has at least one source. Nothing here removes a
 /// source: a join is the union, and no method takes one away.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Mark(BTreeSet<MarkSource>);
 
 impl Mark {
@@ -79,8 +84,19 @@ impl Mark {
 ///
 /// The only ways to get one are the origin table ([`crate::Origin::label_mark`])
 /// and joins of what it gave. Its fields are private, so a value's label and
-/// mark can be raised and never lowered.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// mark can be raised and never lowered. Setting a field does not compile:
+///
+/// ```compile_fail
+/// use crowbar_labels::Origin;
+/// let mut page = Origin::Unknown.label_mark();
+/// page.mark = Origin::Typed.label_mark().mark().clone();
+/// ```
+///
+/// Stored, it must name both its label and its mark: a record missing either,
+/// or with a field, category, or source this crate does not know, is refused
+/// when it is loaded.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LabelMark {
     label: Label,
     mark: Mark,

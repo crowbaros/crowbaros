@@ -20,7 +20,10 @@ impl<T> Labeled<T> {
     /// A value that came from `origin`, with the label and mark the origin
     /// table gives.
     pub fn from_origin(value: T, origin: &Origin) -> Self {
-        Labeled { value, label_mark: origin.label_mark() }
+        Labeled {
+            value,
+            label_mark: origin.label_mark(),
+        }
     }
 
     pub(crate) fn with(value: T, label_mark: LabelMark) -> Self {
@@ -38,13 +41,19 @@ impl<T> Labeled<T> {
     /// A result computed from this value. It carries this value's label and
     /// mark, whatever `f` returns.
     pub fn map<U>(&self, f: impl FnOnce(&T) -> U) -> Labeled<U> {
-        Labeled { value: f(&self.value), label_mark: self.label_mark.clone() }
+        Labeled {
+            value: f(&self.value),
+            label_mark: self.label_mark.clone(),
+        }
     }
 
     /// A result computed from this value and `other`. It carries the join of
     /// both labels and marks.
     pub fn combine<U, V>(&self, other: &Labeled<U>, f: impl FnOnce(&T, &U) -> V) -> Labeled<V> {
-        Labeled { value: f(&self.value, &other.value), label_mark: self.label_mark.join(&other.label_mark) }
+        Labeled {
+            value: f(&self.value, &other.value),
+            label_mark: self.label_mark.join(&other.label_mark),
+        }
     }
 
     /// The same value at a label at least as strict as `label`. The Agent may
@@ -52,6 +61,9 @@ impl<T> Labeled<T> {
     /// declassify, which only the person can do, and is not here.
     pub fn raise(self, label: &Label) -> Self {
         let raised = LabelMark::new(label.clone(), Mark::none());
-        Labeled { value: self.value, label_mark: self.label_mark.join(&raised) }
+        Labeled {
+            value: self.value,
+            label_mark: self.label_mark.join(&raised),
+        }
     }
 }

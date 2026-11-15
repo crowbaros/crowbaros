@@ -98,17 +98,22 @@ impl Origin {
         match self {
             Origin::Typed => LabelMark::new(Label::Personal, Mark::none()),
             Origin::Template | Origin::Admitted(_) => LabelMark::new(Label::Public, Mark::none()),
-            Origin::Mail { account } | Origin::File(FileOrigin::Attachment { account }) => {
-                LabelMark::new(Label::private(Category::Messages), Mark::from_source(MarkSource::Mail(account.clone())))
-            }
+            Origin::Mail { account } | Origin::File(FileOrigin::Attachment { account }) => LabelMark::new(
+                Label::private(Category::Messages),
+                Mark::from_source(MarkSource::Mail(account.clone())),
+            ),
             Origin::WebPage { site, login } | Origin::File(FileOrigin::Downloaded { site, login }) => {
-                let label = if *login { Label::private(Category::Site(site.clone())) } else { Label::Public };
+                let label = if *login {
+                    Label::private(Category::Site(site.clone()))
+                } else {
+                    Label::Public
+                };
                 LabelMark::new(label, Mark::from_source(MarkSource::Site(site.clone())))
             }
             Origin::File(FileOrigin::FromOutside) => unclassified(MarkSource::Outside),
-            Origin::Pasted { copied_from: Some(source) } => {
-                source.join(&LabelMark::new(Label::Public, Mark::from_source(MarkSource::Paste)))
-            }
+            Origin::Pasted {
+                copied_from: Some(source),
+            } => source.join(&LabelMark::new(Label::Public, Mark::from_source(MarkSource::Paste))),
             Origin::Pasted { copied_from: None } => unclassified(MarkSource::Paste),
             Origin::Stored(stored) => stored.clone(),
             Origin::Unknown => unclassified(MarkSource::Unknown),

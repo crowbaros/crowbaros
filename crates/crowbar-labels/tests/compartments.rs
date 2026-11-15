@@ -27,7 +27,9 @@ fn sources(label_mark: &LabelMark) -> BTreeSet<MarkSource> {
 fn reading(origins: &[Origin]) -> Compartment {
     let mut compartment = Compartment::fresh();
     for origin in origins {
-        compartment.read(&origin.label_mark()).expect("a compartment that can grow reads anything");
+        compartment
+            .read(&origin.label_mark())
+            .expect("a compartment that can grow reads anything");
     }
     compartment
 }
@@ -35,16 +37,32 @@ fn reading(origins: &[Origin]) -> Compartment {
 #[test]
 fn a_compartment_is_at_the_join_of_everything_it_has_read() {
     let mail = Origin::Mail { account: me() };
-    let bank_page = Origin::WebPage { site: bank(), login: true };
-    let news_page = Origin::WebPage { site: news(), login: false };
+    let bank_page = Origin::WebPage {
+        site: bank(),
+        login: true,
+    };
+    let news_page = Origin::WebPage {
+        site: news(),
+        login: false,
+    };
     let package = Origin::Admitted(AdmittedSet::BuildDependencies);
 
     // (name, what it read in order, label, mark sources)
     let cases = [
         ("a new start", vec![], Label::Public, BTreeSet::new()),
-        ("the person's words", vec![Origin::Typed], Label::Personal, BTreeSet::new()),
+        (
+            "the person's words",
+            vec![Origin::Typed],
+            Label::Personal,
+            BTreeSet::new(),
+        ),
         ("admitted input", vec![package.clone()], Label::Public, BTreeSet::new()),
-        ("a public page", vec![news_page.clone()], Label::Public, BTreeSet::from([MarkSource::Site(news())])),
+        (
+            "a public page",
+            vec![news_page.clone()],
+            Label::Public,
+            BTreeSet::from([MarkSource::Site(news())]),
+        ),
         (
             "words, then a mail, then words",
             vec![Origin::Typed, mail.clone(), Origin::Typed],
@@ -74,14 +92,24 @@ fn a_compartment_is_at_the_join_of_everything_it_has_read() {
 #[test]
 fn everything_a_compartment_emits_carries_its_label_and_mark() {
     let compartment = reading(&[Origin::Typed, Origin::Mail { account: me() }]);
-    for emitted in [compartment.emit("a log line"), compartment.emit(""), compartment.emit("model request")] {
+    for emitted in [
+        compartment.emit("a log line"),
+        compartment.emit(""),
+        compartment.emit("model request"),
+    ] {
         assert_eq!(emitted.label_mark(), compartment.label_mark(), "{:?}", emitted.value());
     }
 }
 
 #[test]
 fn a_compartment_started_by_another_runs_at_its_label_and_mark() {
-    let marked = reading(&[Origin::Typed, Origin::WebPage { site: news(), login: false }]);
+    let marked = reading(&[
+        Origin::Typed,
+        Origin::WebPage {
+            site: news(),
+            login: false,
+        },
+    ]);
     let clean = reading(&[Origin::Typed]);
 
     // ADR 0008: a standing task started from a marked context runs marked.
@@ -100,7 +128,11 @@ fn a_compartment_started_by_another_runs_at_its_label_and_mark() {
 #[test]
 fn a_native_compartment_is_fixed_at_the_join_of_its_view() {
     let note = Origin::Typed.label_mark();
-    let download = Origin::File(FileOrigin::Downloaded { site: news(), login: false }).label_mark();
+    let download = Origin::File(FileOrigin::Downloaded {
+        site: news(),
+        login: false,
+    })
+    .label_mark();
     let mail = Origin::Mail { account: me() }.label_mark();
 
     // A view that holds one file from outside, which it never opens (attack
@@ -118,7 +150,14 @@ fn a_native_compartment_is_fixed_at_the_join_of_its_view() {
         // Above its start label: refused, not raised.
         (mail.clone(), false),
         // Same label, a new mark source: refused too.
-        (Origin::WebPage { site: bank(), login: false }.label_mark(), false),
+        (
+            Origin::WebPage {
+                site: bank(),
+                login: false,
+            }
+            .label_mark(),
+            false,
+        ),
     ];
     let start = native.label_mark().clone();
     for (offered, accepted) in cases {
@@ -138,7 +177,11 @@ fn a_workbench_is_always_marked() {
     let note = Origin::Typed.label_mark();
     for view in [vec![], vec![&note]] {
         let workbench = Compartment::workbench(view.iter().copied());
-        assert!(workbench.label_mark().mark().is_marked(), "view of {} items", view.len());
+        assert!(
+            workbench.label_mark().mark().is_marked(),
+            "view of {} items",
+            view.len()
+        );
         assert!(sources(workbench.label_mark()).contains(&MarkSource::Workbench));
         assert!(workbench.emit("pushed commit").label_mark().mark().is_marked());
     }
@@ -150,7 +193,15 @@ fn a_tool_started_on_marked_source_is_marked() {
     // became source; every later start that reads that source is marked.
     let mut build = Compartment::fresh();
     build.read(&Origin::Typed.label_mark()).unwrap();
-    build.read(&Origin::WebPage { site: news(), login: false }.label_mark()).unwrap();
+    build
+        .read(
+            &Origin::WebPage {
+                site: news(),
+                login: false,
+            }
+            .label_mark(),
+        )
+        .unwrap();
     let source = build.emit("fn main() {}");
 
     let live = Compartment::fixed([source.label_mark()]);

@@ -18,7 +18,9 @@ fn documented_rows() -> Vec<[String; 3]> {
                 .split(" | ")
                 .map(|cell| cell.trim().replace('`', ""))
                 .collect();
-            cells.try_into().unwrap_or_else(|cells| panic!("a row needs three cells: {cells:?}"))
+            cells
+                .try_into()
+                .unwrap_or_else(|cells| panic!("a row needs three cells: {cells:?}"))
         })
         .collect()
 }
@@ -34,16 +36,33 @@ fn origin_for(row: &str) -> Option<Origin> {
         "Text the person typed" => Origin::Typed,
         "Text a fixed template produced" => Origin::Template,
         "Mail in me@mail.example" => Origin::Mail { account: me },
-        "A page from news.example" => Origin::WebPage { site: news, login: false },
-        "A page from bank.example, under a login" => Origin::WebPage { site: bank, login: true },
-        "A file downloaded from news.example" => Origin::File(FileOrigin::Downloaded { site: news, login: false }),
+        "A page from news.example" => Origin::WebPage {
+            site: news,
+            login: false,
+        },
+        "A page from bank.example, under a login" => Origin::WebPage {
+            site: bank,
+            login: true,
+        },
+        "A file downloaded from news.example" => Origin::File(FileOrigin::Downloaded {
+            site: news,
+            login: false,
+        }),
         "A file saved from an attachment in me@mail.example" => Origin::File(FileOrigin::Attachment { account: me }),
         "A file from outside the fleet, by any other way" => Origin::File(FileOrigin::FromOutside),
         "The Base package snapshot" => Origin::Admitted(AdmittedSet::BasePackages),
         "The dependency set for build tasks" => Origin::Admitted(AdmittedSet::BuildDependencies),
-        "A paste of a note the person typed" => Origin::Pasted { copied_from: Some(Origin::Typed.label_mark()) },
+        "A paste of a note the person typed" => Origin::Pasted {
+            copied_from: Some(Origin::Typed.label_mark()),
+        },
         "A paste from a page of bank.example, under a login" => Origin::Pasted {
-            copied_from: Some(Origin::WebPage { site: bank, login: true }.label_mark()),
+            copied_from: Some(
+                Origin::WebPage {
+                    site: bank,
+                    login: true,
+                }
+                .label_mark(),
+            ),
         },
         "A paste whose source was not recorded" => Origin::Pasted { copied_from: None },
         "Anything else" => Origin::Unknown,

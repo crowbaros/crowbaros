@@ -26,12 +26,24 @@ fn a_join_is_the_stricter_label_and_the_union_of_categories() {
         (private(&[Health]), Label::Personal, private(&[Health])),
         (private(&[Messages]), private(&[Messages]), private(&[Messages])),
         (private(&[Messages]), private(&[Finance]), private(&[Finance, Messages])),
-        (private(&[Finance, Messages]), private(&[Health]), private(&[Messages, Health, Finance])),
-        (private(&[Messages]), private(&[bank.clone()]), private(&[bank.clone(), Messages])),
+        (
+            private(&[Finance, Messages]),
+            private(&[Health]),
+            private(&[Messages, Health, Finance]),
+        ),
+        (
+            private(&[Messages]),
+            private(&[bank.clone()]),
+            private(&[bank.clone(), Messages]),
+        ),
     ];
     for (left, right, expected) in cases {
         assert_eq!(left.join(&right), expected, "{left:?} join {right:?}");
-        assert_eq!(right.join(&left), expected, "join is not symmetric for {left:?}, {right:?}");
+        assert_eq!(
+            right.join(&left),
+            expected,
+            "join is not symmetric for {left:?}, {right:?}"
+        );
     }
 }
 

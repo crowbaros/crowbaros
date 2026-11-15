@@ -7,11 +7,22 @@ use std::collections::BTreeSet;
 use crowbar_labels::{Category, Label, Labeled, MailAccount, MarkSource, Origin, Site};
 
 fn mail(text: &str) -> Labeled<String> {
-    Labeled::from_origin(text.to_string(), &Origin::Mail { account: MailAccount::new("me@mail.example") })
+    Labeled::from_origin(
+        text.to_string(),
+        &Origin::Mail {
+            account: MailAccount::new("me@mail.example"),
+        },
+    )
 }
 
 fn bank_page(text: &str) -> Labeled<String> {
-    Labeled::from_origin(text.to_string(), &Origin::WebPage { site: Site::new("bank.example"), login: true })
+    Labeled::from_origin(
+        text.to_string(),
+        &Origin::WebPage {
+            site: Site::new("bank.example"),
+            login: true,
+        },
+    )
 }
 
 fn typed(text: &str) -> Labeled<String> {
@@ -48,7 +59,12 @@ fn a_result_computed_from_mixed_inputs_carries_every_label_and_mark() {
             expected_label,
             BTreeSet::from([MarkSource::Mail(me.clone()), MarkSource::Site(bank.clone())]),
         ),
-        ("two typed notes", typed("a").combine(&typed("b"), |a, b| a.clone() + b), Label::Personal, BTreeSet::new()),
+        (
+            "two typed notes",
+            typed("a").combine(&typed("b"), |a, b| a.clone() + b),
+            Label::Personal,
+            BTreeSet::new(),
+        ),
     ];
     for (name, result, label, marks) in cases {
         assert_eq!(result.label_mark().label(), &label, "label of {name}");
@@ -75,7 +91,10 @@ fn nothing_computed_from_a_marked_value_drops_its_label_or_mark() {
     assert_eq!(constant.label_mark(), &before, "a result that ignores its input");
     assert_eq!(bounded.label_mark(), &before, "a bounded result");
     assert!(with_clean.label_mark().mark().is_marked(), "joined with a clean value");
-    assert!(before.label().is_at_most(with_clean.label_mark().label()), "joined with a clean value");
+    assert!(
+        before.label().is_at_most(with_clean.label_mark().label()),
+        "joined with a clean value"
+    );
 }
 
 #[test]
@@ -87,7 +106,11 @@ fn a_label_can_be_raised_and_a_raise_never_lowers_it() {
         (typed("note"), health.clone(), health.clone()),
         (typed("note"), Label::Public, Label::Personal),
         (mail("hi"), Label::Personal, Label::private(Category::Messages)),
-        (mail("hi"), health.clone(), Label::private(Category::Messages).join(&health)),
+        (
+            mail("hi"),
+            health.clone(),
+            Label::private(Category::Messages).join(&health),
+        ),
     ];
     for (start, raise_to, expected) in cases {
         let marked = start.label_mark().mark().clone();

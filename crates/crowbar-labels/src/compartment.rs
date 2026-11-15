@@ -32,21 +32,30 @@ enum Growth {
 impl Compartment {
     /// A new start that has read nothing: public, and unmarked.
     pub fn fresh() -> Self {
-        Compartment { label_mark: LabelMark::clean(), growth: Growth::Grows }
+        Compartment {
+            label_mark: LabelMark::clean(),
+            growth: Growth::Grows,
+        }
     }
 
     /// A new start made by `parent`, such as a task the Agent starts. What
     /// starts it is something the parent emits, so it runs at the parent's
     /// label and mark.
     pub fn started_by(parent: &Compartment) -> Self {
-        Compartment { label_mark: parent.label_mark.clone(), growth: Growth::Grows }
+        Compartment {
+            label_mark: parent.label_mark.clone(),
+            growth: Growth::Grows,
+        }
     }
 
     /// A native sandbox, at the join of everything in the view it is given,
     /// whether or not it opens any of it. Its label and mark never change.
     pub fn fixed<'a>(view: impl IntoIterator<Item = &'a LabelMark>) -> Self {
         let label_mark = view.into_iter().fold(LabelMark::clean(), |held, item| held.join(item));
-        Compartment { label_mark, growth: Growth::Fixed }
+        Compartment {
+            label_mark,
+            growth: Growth::Fixed,
+        }
     }
 
     /// A workbench: a native sandbox that is always marked, because it reads
@@ -72,7 +81,10 @@ impl Compartment {
                 Ok(())
             }
             Growth::Fixed if value.is_at_most(&self.label_mark) => Ok(()),
-            Growth::Fixed => Err(ReadRefused { held: self.label_mark.clone(), offered: value.clone() }),
+            Growth::Fixed => Err(ReadRefused {
+                held: self.label_mark.clone(),
+                offered: value.clone(),
+            }),
         }
     }
 
