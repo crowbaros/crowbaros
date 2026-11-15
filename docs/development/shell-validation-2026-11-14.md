@@ -91,7 +91,7 @@ sources, confirmed the palette/Manrope/approved image provenance, and preserved
 HTML/CSS detectors do not apply; this is not an accessibility certification.
 
 Use the [shell workflow](../../apps/shell/README.md) for build, deployment, recovery
-and `infra/vm/validate_shell.py`. Keep the VM viewer open and pause manual input
+and `lab/fedora/validate_shell.py`. Keep the VM viewer open and pause manual input
 while the automated native checks run. The broader
 [local VM guide](local-vms.md) covers image creation and signing prerequisites.
 The self-contained HTML blueprint was rebuilt and passed its existing offline,

@@ -118,9 +118,9 @@ Follow the [application README](../../apps/studio-settings/README.md) and
 active viewer open on the Codex workspace. Once installed:
 
 ```sh
-rtk python3 infra/vm/lab.py studio-run test intel-virtio
-rtk python3 infra/vm/check_studio.py
-rtk python3 infra/vm/lab.py ssh test sudo journalctl -b -t crowbaros-settings-session --no-pager
+rtk python3 lab/fedora/lab.py studio-run test intel-virtio
+rtk python3 lab/fedora/check_studio.py
+rtk python3 lab/fedora/lab.py ssh test sudo journalctl -b -t crowbaros-settings-session --no-pager
 ```
 
 The GUI check intentionally changes the lab user's preferences and finishes with

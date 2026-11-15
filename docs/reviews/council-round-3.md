@@ -53,18 +53,18 @@ Jim answered yes to all twelve.
 
 | # | Question | Decision | Recorded in |
 | --- | --- | --- | --- |
-| 1 | Bounded results | Nothing crosses freely. The interpreter keeps the label and mark on every result. An act that depends on a marked result is marked. A private result reaches the Agent by a release or inside a budget, zero by default. | [ADR 0008](../../adr/0008-private-values-stay-out-of-the-agent-context.md) |
-| 2 | Sites | A site is an outside party with a clearance, public by default. It may receive back what it supplied and what the person released to it. | ADR 0008, [ADR 0011](../../adr/0011-task-principals.md) |
-| 3 | Acting on a logged-in site | Allowing a site approves no act. Every request that can change state waits for the person. Unasked acts go only through an adapter that knows the operation. | [ADR 0013](../../adr/0013-agents-never-drive-the-persons-browser.md) |
-| 4 | The person's words | Only what the person types or says. A paste arrives as a handle. A request by voice needs the confirm gesture before anything crosses. | ADR 0008, [ADR 0014](../../adr/0014-a-yes-comes-from-the-person.md) |
+| 1 | Bounded results | Nothing crosses freely. The interpreter keeps the label and mark on every result. An act that depends on a marked result is marked. A private result reaches the Agent by a release or inside a budget, zero by default. | [ADR 0008](../adr/0008-private-values-stay-out-of-the-agent-context.md) |
+| 2 | Sites | A site is an outside party with a clearance, public by default. It may receive back what it supplied and what the person released to it. | ADR 0008, [ADR 0011](../adr/0011-task-principals.md) |
+| 3 | Acting on a logged-in site | Allowing a site approves no act. Every request that can change state waits for the person. Unasked acts go only through an adapter that knows the operation. | [ADR 0013](../adr/0013-agents-never-drive-the-persons-browser.md) |
+| 4 | The person's words | Only what the person types or says. A paste arrives as a handle. A request by voice needs the confirm gesture before anything crosses. | ADR 0008, [ADR 0014](../adr/0014-a-yes-comes-from-the-person.md) |
 | 5 | Strings from outside | Every string the person did not type and a template did not produce is data with its origin's label and mark. | ADR 0008 |
-| 6 | Marks in storage | Marks persist on Tool source and Agent memory. A native sandbox's mark is fixed at start. | ADR 0008, ADR 0011, [ADR 0004](../../adr/0004-capability-safe-tools.md) |
+| 6 | Marks in storage | Marks persist on Tool source and Agent memory. A native sandbox's mark is fixed at start. | ADR 0008, ADR 0011, [ADR 0004](../adr/0004-capability-safe-tools.md) |
 | 7 | Builds and real inputs | A build task sees synthetic results only. A replay reaches it as pass or fail. | ADR 0011 |
 | 8 | Who holds standing authority | A Tool or a standing task, never the Agent. An ad hoc task that crosses is authorized once at its start. | ADR 0011 |
-| 9 | Secrets obtained with secrets | The adapter stores them in the vault and returns a handle. | [ADR 0006](../../adr/0006-broker-owns-all-egress.md) |
+| 9 | Secrets obtained with secrets | The adapter stores them in the vault and returns a handle. | [ADR 0006](../adr/0006-broker-owns-all-egress.md) |
 | 10 | Hardening the "yes" | Close the four Linux mechanisms; a short delay before an ask accepts the gesture; asks rate-limited per task. | ADR 0014 |
-| 11 | Milestone 2 scope | Named attacks, a set of ordinary tasks, a measurement of mark creep, and the flow rules built first. | [Milestone 2](../milestone-2.md) |
-| 12 | What agents want from the gate | A dry run, refusals that name the rule and limit, idempotency keys, and reading a handle's label and mark. | [ADR 0003](../../adr/0003-security-is-deterministic.md) |
+| 11 | Milestone 2 scope | Named attacks, a set of ordinary tasks, a measurement of mark creep, and the flow rules built first. | [Milestone 2](../milestones/milestone-2.md) |
+| 12 | What agents want from the gate | A dry run, refusals that name the rule and limit, idempotency keys, and reading a handle's label and mark. | [ADR 0003](../adr/0003-security-is-deterministic.md) |
 
 Choices made while writing these up, not put to Jim as questions:
 

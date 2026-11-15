@@ -7,13 +7,13 @@
 [council round 4](../reviews/council-round-4.md). This note uses three tenses:
 
 - **Milestone 1** is built. It is the Base layer only, in
-  [`agent-first/`](../../../agent-first/) (crates `crowbar-state` and
+  [`agent-first/`](../../crates/) (crates `crowbar-state` and
   `crowbar-apply`). Statements about it describe the code as it is now.
 - **Milestone 1b** replaces how a Base generation is built and keeps the rest.
-  See [ADR 0009](../../adr/0009-base-from-a-pinned-package-set.md). It is not
+  See [ADR 0009](../adr/0009-base-from-a-pinned-package-set.md). It is not
   next. Council round 2 put Milestone 2 first: the adversarial slice, on stock
   Linux, which needs nothing from Base. See
-  [Milestone 2](../milestone-2.md).
+  [Milestone 2](../milestones/milestone-2.md).
 - **Later** is not built: intents, checks, rehearsal, the Environment and Data
   layers, and recovery. Milestone 2 prototypes parts of these on stock Linux.
   Its part one is the flow rules: labels, marks, and the plan over handles. Its
@@ -26,13 +26,13 @@
   person's words plus the checks they confirmed. A check is a scenario in a
   fixed data format. The **Crowbar State** is the lockfile that pins the intents, their frozen
   checks, and the exact builds. See
-  [ADR 0001](../../adr/0001-intent-is-the-source.md).
+  [ADR 0001](../adr/0001-intent-is-the-source.md).
 - A person's OS has **three layers**: Base, Environment, and Data. Each one
   changes and rolls back on its own. See
-  [ADR 0002](../../adr/0002-three-layers.md).
+  [ADR 0002](../adr/0002-three-layers.md).
 - **Authority is not in the State.** Grants, rules, effect limits, and clearances
   have their own domain and are never rolled back with software. See
-  [ADR 0012](../../adr/0012-authority-outside-the-state.md).
+  [ADR 0012](../adr/0012-authority-outside-the-state.md).
 - The **engine** (Rust, the `crowbar` command) is the only code path that changes
   the system. Every change records a **generation** of the layer it changed.
 - **Base** generations are Btrfs subvolumes that you choose in the boot menu.
@@ -40,7 +40,7 @@
   each generation from empty out of a complete pinned package set.
 - The **Environment** changes by **fork, verify, promote**, one Tool at a time.
   Nothing is applied live and undone later, and nothing goes live unconfirmed.
-  See [ADR 0007](../../adr/0007-fork-verify-promote.md). **Later.**
+  See [ADR 0007](../adr/0007-fork-verify-promote.md). **Later.**
 - **Data** is never rolled back with the other two layers. It has its own
   history and undo window. Milestone 1b moves it out of the generations. The
   rest is **Later.**
@@ -90,7 +90,7 @@ noon" is tested in a second.
 runner signs the result together with the content hash of the build and of every
 check. A promote accepts only a build whose hash carries a passing result. What
 passed is what goes live. See
-[ADR 0001](../../adr/0001-intent-is-the-source.md).
+[ADR 0001](../adr/0001-intent-is-the-source.md).
 
 - **Intents come from Shaping.** The person's Agent helps them work out what they
   want before anything is built. The depth of Shaping scales with how unclear
@@ -103,7 +103,7 @@ passed is what goes live. See
   however small. "Make the text bigger" costs one confirmation.
 - **An edit that asks for new authority** needs the authority change confirmed
   as well, with a hardware root. See
-  [ADR 0014](../../adr/0014-a-yes-comes-from-the-person.md).
+  [ADR 0014](../adr/0014-a-yes-comes-from-the-person.md).
 - **The intents are a curated, current set, not a log of requests.** When the
   person says "…except from Sam", the Agent merges that into the existing intent
   and shows the diff. The ledger keeps the history. The person can adjust any
@@ -113,7 +113,7 @@ passed is what goes live. See
   See [the gate, the monitor, and autonomy](gate-monitor-and-autonomy.md).
 - **No secret values appear in intents.** An intent names the secret it needs
   ("a Nextcloud login"). The value lives in the vault. See
-  [ADR 0006](../../adr/0006-broker-owns-all-egress.md).
+  [ADR 0006](../adr/0006-broker-owns-all-egress.md).
 
 ### Compiling and re-deriving
 
@@ -141,7 +141,7 @@ frozen check.
 **The build task never sees real inputs.** Recorded inputs are real mail and real
 web responses, so they are open untrusted input and often private. The runner
 does the replay, not the build task. See
-[ADR 0011](../../adr/0011-task-principals.md).
+[ADR 0011](../adr/0011-task-principals.md).
 
 - A build task sees results on synthetic inputs only.
 - A replay of real recorded inputs reaches the build task as pass or fail. That
@@ -166,14 +166,14 @@ tell.
 A person shares a Tool as its **pinned build together with its intent and
 checks**. The recipient's OS runs the checks in rehearsal, shows what the Tool
 needs, and the recipient grants that fresh. See
-[ADR 0010](../../adr/0010-share-the-pinned-build.md).
+[ADR 0010](../adr/0010-share-the-pinned-build.md).
 
 - Someone else's words are untrusted input. They are never handed to the
   recipient's Agent as instructions.
 - A Tool from a stranger runs only as WASM. Rebuilding it locally from its
   intent stays possible. The build task that reads the stranger's words is
   marked, so the result gets no grant without the person's answer. See
-  [ADR 0011](../../adr/0011-task-principals.md).
+  [ADR 0011](../adr/0011-task-principals.md).
 - The author's reason for each need is shown as the author's claim, next to the
   need itself in the OS's fixed words.
 - An **OS definition** is the same thing for a whole OS: the intents and checks
@@ -251,7 +251,7 @@ ledger, and Agent memory are separate domains too.
 Every section that describes a person's OS is tied to an explicit person, never
 to "the" user. The first version supports one person per machine, but the State
 must not make more people impossible later. See
-[ADR 0005](../../adr/0005-one-person-first.md).
+[ADR 0005](../adr/0005-one-person-first.md).
 
 **Secrets are never in the State.** It refers to them by name only.
 
@@ -375,7 +375,7 @@ flowchart LR
   Forks branch from it and return as change sets.
 - **The lead machine orders promotes.** In the first version one machine in the
   fleet puts promotes in order. See
-  [ADR 0012](../../adr/0012-authority-outside-the-state.md).
+  [ADR 0012](../adr/0012-authority-outside-the-state.md).
 - **Leases.** Ports, devices, and model time are leased to a task by name.
 
 **A task that changes no installed behaviour gets no fork.** Every task has a
@@ -541,7 +541,7 @@ Other limits of the Milestone 1 engine, which Milestone 1b must also settle:
 
 ## Milestone 1b: Base from a pinned package set
 
-Decided by [ADR 0009](../../adr/0009-base-from-a-pinned-package-set.md). It
+Decided by [ADR 0009](../adr/0009-base-from-a-pinned-package-set.md). It
 follows Milestone 2 in the order of work.
 
 - **Each Base generation is built from empty** out of a complete package set that
@@ -785,4 +785,4 @@ for as long as an undo of the change set that replaced it is offered.
     into parts, so that undoing a theme does not undo the keybindings?
 
 Resolved: **what the base image owns.** The State owns the full Base package set
-([ADR 0009](../../adr/0009-base-from-a-pinned-package-set.md)).
+([ADR 0009](../adr/0009-base-from-a-pinned-package-set.md)).

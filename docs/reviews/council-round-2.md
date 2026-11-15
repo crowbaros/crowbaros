@@ -48,20 +48,20 @@ Jim answered yes to all fourteen.
 
 | # | Question | Decision | Recorded in |
 | --- | --- | --- | --- |
-| 1 | Labels across handoffs | Labels and marks survive every handoff. Only handles and bounded results cross freely; anything else needs a release by the person. | [ADR 0008](../../adr/0008-private-values-stay-out-of-the-agent-context.md) |
-| 2 | What untrusted input costs | Untrusted input is graded (admitted or open). A marked task keeps its model through a broker-built request and loses its standing authority to act or send. | [ADR 0011](../../adr/0011-task-principals.md) |
+| 1 | Labels across handoffs | Labels and marks survive every handoff. Only handles and bounded results cross freely; anything else needs a release by the person. | [ADR 0008](../adr/0008-private-values-stay-out-of-the-agent-context.md) |
+| 2 | What untrusted input costs | Untrusted input is graded (admitted or open). A marked task keeps its model through a broker-built request and loses its standing authority to act or send. | [ADR 0011](../adr/0011-task-principals.md) |
 | 3 | Code from a marked task | Build tasks are clean by construction. A grant binds to the Tool's identity, the needs the person saw, and a clean build. | ADR 0011 |
 | 4 | Private data and a cloud model | A model provider is a party with a clearance per label. The default is personal. | ADR 0008 |
 | 5 | Plan over handles | Adopted as the main way private values stay out of the Agent's context. Prototyped in Milestone 2. | ADR 0008 |
-| 6 | Provisional edits | Dropped. Every change is previewed, and one confirmation promotes it. | [ADR 0007](../../adr/0007-fork-verify-promote.md) |
+| 6 | Provisional edits | Dropped. Every change is previewed, and one confirmation promotes it. | [ADR 0007](../adr/0007-fork-verify-promote.md) |
 | 7 | Unit of undo and promote | The Tool. Change sets, automatic re-run of checks, undo of one change set. Rolling back the whole Environment is a recovery action. | ADR 0007 |
 | 8 | Tasks that change no software | A task has a workspace. Data writes are staged and committed together. A fork is only for changes to installed behaviour. | ADR 0007 |
-| 9 | What native code is promised | Only what Linux can enforce. A label fixed at start; limits on count and rate hold on broker operations and at commit. | [ADR 0004](../../adr/0004-capability-safe-tools.md) |
-| 10 | The browser | Agents never drive the person's browser profile. A task gets its own context per task and site, with approved fill. | [ADR 0013](../../adr/0013-agents-never-drive-the-persons-browser.md) |
-| 11 | What makes a "yes" the person's | Only the shell delivers input; a confirm gesture for everyday asks; a hardware root for authority changes; voice never confirms; trusted UI in Base, not themeable. | [ADR 0014](../../adr/0014-a-yes-comes-from-the-person.md) |
-| 12 | Checks as data | A check is a scenario in a fixed format, worded by templates. A Base runner binds the result to the build. | [ADR 0001](../../adr/0001-intent-is-the-source.md) |
+| 9 | What native code is promised | Only what Linux can enforce. A label fixed at start; limits on count and rate hold on broker operations and at commit. | [ADR 0004](../adr/0004-capability-safe-tools.md) |
+| 10 | The browser | Agents never drive the person's browser profile. A task gets its own context per task and site, with approved fill. | [ADR 0013](../adr/0013-agents-never-drive-the-persons-browser.md) |
+| 11 | What makes a "yes" the person's | Only the shell delivers input; a confirm gesture for everyday asks; a hardware root for authority changes; voice never confirms; trusted UI in Base, not themeable. | [ADR 0014](../adr/0014-a-yes-comes-from-the-person.md) |
+| 12 | Checks as data | A check is a scenario in a fixed format, worded by templates. A Base runner binds the result to the build. | [ADR 0001](../adr/0001-intent-is-the-source.md) |
 | 13 | Order of work | The adversarial slice (M2) first, on stock Linux. The Base rework (M1b) after it. | [Vision](../VISION.md), Roadmap |
-| 14 | Three security defaults | A stranger's Tool runs only as WASM, with its author's reasons shown as claims. One lead machine holds authority and orders promotes. No private Data on an unencrypted disk. | ADR 0004, [ADR 0010](../../adr/0010-share-the-pinned-build.md), [ADR 0012](../../adr/0012-authority-outside-the-state.md), ADR 0008 |
+| 14 | Three security defaults | A stranger's Tool runs only as WASM, with its author's reasons shown as claims. One lead machine holds authority and orders promotes. No private Data on an unencrypted disk. | ADR 0004, [ADR 0010](../adr/0010-share-the-pinned-build.md), [ADR 0012](../adr/0012-authority-outside-the-state.md), ADR 0008 |
 
 Choices made while writing these up, not put to Jim as questions:
 

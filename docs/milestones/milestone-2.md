@@ -1,8 +1,8 @@
 # Milestone 2: the adversarial slice (scope)
 
 **Status:** not started. This page is the scope agreed after
-[council round 3](reviews/council-round-3.md) and tightened after
-[round 4](reviews/council-round-4.md). It will become the write-up when the
+[council round 3](../reviews/council-round-3.md) and tightened after
+[round 4](../reviews/council-round-4.md). It will become the write-up when the
 milestone is built, as [Milestone 1](milestone-1.md) did.
 
 Milestone 2 tests the riskiest assumption left: that the rules for labels, marks,

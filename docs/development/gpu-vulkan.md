@@ -46,20 +46,20 @@ Run from the project root. Checkpoint names must be new; the existing `before-gp
 checkpoint already protects this workstation's pre-acceleration state.
 
 ```sh
-rtk python3 infra/vm/lab.py stop test
-rtk python3 infra/vm/lab.py snapshot test before-gpu
-rtk python3 infra/vm/lab.py start build
-rtk python3 infra/vm/lab.py wait build
-rtk python3 infra/vm/lab.py view build &
-rtk python3 infra/vm/lab.py gpu-build build
-rtk python3 infra/vm/lab.py stop build
+rtk python3 lab/fedora/lab.py stop test
+rtk python3 lab/fedora/lab.py snapshot test before-gpu
+rtk python3 lab/fedora/lab.py start build
+rtk python3 lab/fedora/lab.py wait build
+rtk python3 lab/fedora/lab.py view build &
+rtk python3 lab/fedora/lab.py gpu-build build
+rtk python3 lab/fedora/lab.py stop build
 ```
 
 `gpu-build` checks the pinned upstream archive SHA-256, builds an SRPM and binary
 RPM in clean Fedora 45 Mock buildroots, signs the RPM and repository metadata,
 and retrieves `.local/vms/gpu-repo.tar.gz`. Source, SRPM, binary, and build logs
 remain under `~/artifacts/gpu/` in the builder. The RPM spec is
-[`infra/vm/gpu/crowbaros-mesa-intel-virtio.spec`](../../infra/vm/gpu/crowbaros-mesa-intel-virtio.spec).
+[`lab/fedora/gpu/crowbaros-mesa-intel-virtio.spec`](../../lab/fedora/gpu/crowbaros-mesa-intel-virtio.spec).
 Build dependencies are fetched from live Fedora repositories; this is a
 repeatable recipe, not a byte-identical release build.
 
@@ -76,11 +76,11 @@ c.update(venus_enabled=False, drm_native_context_enabled=True,
          gpui_vulkan_driver='intel-virtio')
 p.write_text(json.dumps(c, indent=2) + '\n')
 PY
-rtk python3 infra/vm/lab.py configure test
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py wait test
-rtk python3 infra/vm/lab.py view test &
-rtk python3 infra/vm/lab.py gpu-deploy test
+rtk python3 lab/fedora/lab.py configure test
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py wait test
+rtk python3 lab/fedora/lab.py view test &
+rtk python3 lab/fedora/lab.py gpu-deploy test
 ```
 
 The VM configuration enables blob resources, a 1 GiB host-visible address window,
@@ -99,19 +99,19 @@ Force the private ICD when testing. A plain `vulkaninfo` still follows Fedora's
 system driver discovery and can report software Vulkan; that is intentional.
 
 ```sh
-rtk python3 infra/vm/lab.py ssh test sudo -u desktop env \
+rtk python3 lab/fedora/lab.py ssh test sudo -u desktop env \
   XDG_RUNTIME_DIR=/run/user/1001 WAYLAND_DISPLAY=wayland-1 \
   VK_DRIVER_FILES=/opt/crowbaros-lab/mesa-intel-virtio/share/vulkan/icd.d/intel_icd.x86_64.json \
   timeout 20 vulkaninfo --summary
 
-rtk python3 infra/vm/lab.py ssh test sudo -u desktop env \
+rtk python3 lab/fedora/lab.py ssh test sudo -u desktop env \
   XDG_RUNTIME_DIR=/run/user/1001 WAYLAND_DISPLAY=wayland-1 \
   VK_DRIVER_FILES=/opt/crowbaros-lab/mesa-intel-virtio/share/vulkan/icd.d/intel_icd.x86_64.json \
   timeout 45 vkcube --wsi wayland --c 1800
 
-rtk python3 infra/vm/check_gpui.py --vulkan-driver intel-virtio \
+rtk python3 lab/fedora/check_gpui.py --vulkan-driver intel-virtio \
   --output .local/gpu/gpui-validation
-rtk python3 infra/vm/lab.py gpui-run test intel-virtio
+rtk python3 lab/fedora/lab.py gpui-run test intel-virtio
 ```
 
 These direct commands assume the lab's UID 1001 and `wayland-1` socket; `gpui-run`
@@ -139,7 +139,7 @@ checkpoint contains the installed hardware driver and GPUI package.
 For a per-app fallback, quit the probe and run:
 
 ```sh
-rtk python3 infra/vm/lab.py gpui-run test software
+rtk python3 lab/fedora/lab.py gpui-run test software
 ```
 
 To return the VM to the original graphics profile, stop it, merge these three

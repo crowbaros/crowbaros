@@ -104,8 +104,8 @@ commands and the [VM workflow](local-vms.md) for lifecycle and recovery. Keep th
 active VM viewer open on the Codex workspace while working.
 
 ```sh
-rtk python3 infra/vm/check_gpui.py
-rtk python3 infra/vm/lab.py gpui-run test
+rtk python3 lab/fedora/check_gpui.py
+rtk python3 lab/fedora/lab.py gpui-run test
 ```
 
 Local evidence is in `.local/gpui/validation/`: input/full journals, screenshots,

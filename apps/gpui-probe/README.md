@@ -20,17 +20,17 @@ repeats the probe checks through the host Intel GPU.
 From the repository root, after [setting up the lab](../../docs/development/local-vms.md):
 
 ```sh
-rtk python3 infra/vm/lab.py stop test
-rtk python3 infra/vm/lab.py start build
-rtk python3 infra/vm/lab.py wait build
-rtk python3 infra/vm/lab.py view build &
-rtk python3 infra/vm/lab.py gpui-build build
-rtk python3 infra/vm/lab.py stop build
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py wait test
-rtk python3 infra/vm/lab.py view test &
-rtk python3 infra/vm/lab.py gpui-deploy test
-rtk python3 infra/vm/lab.py gpui-run test
+rtk python3 lab/fedora/lab.py stop test
+rtk python3 lab/fedora/lab.py start build
+rtk python3 lab/fedora/lab.py wait build
+rtk python3 lab/fedora/lab.py view build &
+rtk python3 lab/fedora/lab.py gpui-build build
+rtk python3 lab/fedora/lab.py stop build
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py wait test
+rtk python3 lab/fedora/lab.py view test &
+rtk python3 lab/fedora/lab.py gpui-deploy test
+rtk python3 lab/fedora/lab.py gpui-run test
 ```
 
 The build script vendors the locked dependencies, retains their license files,
@@ -67,7 +67,7 @@ ordinary `desktop` user in a transient user service. It does not run the GUI as
 root. Its logs are available with:
 
 ```sh
-rtk python3 infra/vm/lab.py ssh test sudo journalctl -b _SYSTEMD_USER_UNIT=crowbaros-gpui-probe.service --no-pager
+rtk python3 lab/fedora/lab.py ssh test sudo journalctl -b _SYSTEMD_USER_UNIT=crowbaros-gpui-probe.service --no-pager
 ```
 
 After [installing the Intel VirtIO lab driver](../../docs/development/gpu-vulkan.md),
@@ -102,8 +102,8 @@ The ordinary desktop launcher still uses system driver discovery.
 Keep the test viewer open, then run from the repository root:
 
 ```sh
-rtk python3 infra/vm/check_gpui.py
-rtk python3 infra/vm/lab.py gpui-run test
+rtk python3 lab/fedora/check_gpui.py
+rtk python3 lab/fedora/lab.py gpui-run test
 ```
 
 The check restarts only the probe, drives real guest keyboard/pointer events,

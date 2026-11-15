@@ -12,7 +12,7 @@ against is in the [threat model](../threat-model.md).
 ## Summary
 
 - **Security comes first, and it is deterministic.** No model is on the trust
-  path. See [ADR 0003](../../adr/0003-security-is-deterministic.md).
+  path. See [ADR 0003](../adr/0003-security-is-deterministic.md).
 - **The gate allows; the monitor can only pause.** The **gate** is a deterministic
   rules engine and the only thing that allows an action. It checks every broker
   operation and every commit of staged writes. The **monitor** is a
@@ -21,7 +21,7 @@ against is in the [threat model](../threat-model.md).
 - **Work happens in tasks.** A **task** is a fresh principal with a stated
   objective, effect limits, a budget, and an expiry. The Agent coordinates tasks
   and does not collect their authority. See
-  [ADR 0011](../../adr/0011-task-principals.md).
+  [ADR 0011](../adr/0011-task-principals.md).
 - **Effect limits bound every task and every grant:** which objects, how many, for
   how long, at what cost, and how often.
 - **The undo boundary is the default for autonomy, not a safety property.** An
@@ -39,7 +39,7 @@ against is in the [threat model](../threat-model.md).
   the label and mark on every result, and on what can be observed about a
   result. The Agent does not read a result from a marked task. A private result
   reaches the Agent only by a **release** or inside a budget the person set. See
-  [ADR 0008](../../adr/0008-private-values-stay-out-of-the-agent-context.md).
+  [ADR 0008](../adr/0008-private-values-stay-out-of-the-agent-context.md).
 - **Egress goes only to parties cleared for the data.** A model provider's
   default clearance is personal. A web site's is public.
 - **Standing authority binds to a Tool or a standing task, never to the Agent.**
@@ -48,7 +48,7 @@ against is in the [threat model](../threat-model.md).
 - **A "yes" comes from the person.** Only the shell delivers input. Everyday asks
   take a confirm gesture, and a change to standing authority needs a hardware
   root. See
-  [ADR 0014](../../adr/0014-a-yes-comes-from-the-person.md).
+  [ADR 0014](../adr/0014-a-yes-comes-from-the-person.md).
 - **The gate explains itself to agents:** a dry run, refusals that name the rule
   and the limit, idempotency keys, and a handle's label and mark.
 - **Intents change only through the person's own Agent, with the person's
@@ -58,7 +58,7 @@ against is in the [threat model](../threat-model.md).
 - **Notify only on surprise.** "Mode" controls only how much the person is told.
 - **Authority has its own domain.** Standing grants, standing rules, effect
   limits, Allowances, and clearances are not in the Crowbar State and are never rolled back
-  with software. See [ADR 0012](../../adr/0012-authority-outside-the-state.md).
+  with software. See [ADR 0012](../adr/0012-authority-outside-the-state.md).
 - Everything goes in the **ledger**, with one-step revoke or undo.
 
 ## Agent, harness, model, and tasks
@@ -90,7 +90,7 @@ flowchart LR
 - **Model** is what a harness thinks with. We assume the common case is a cloud
   model. Open weights on the person's own hardware (for example, a DGX Spark in
   the fleet) are the other case. See
-  [ADR 0008](../../adr/0008-private-values-stay-out-of-the-agent-context.md).
+  [ADR 0008](../adr/0008-private-values-stay-out-of-the-agent-context.md).
 - **Agent memory** is what the Agent has learned about the person. It is the
   person's Data, not the harness's, so changing the harness keeps it.
 
@@ -142,14 +142,14 @@ task finishes, inside its effect limits. Only a task that changes installed
 behaviour (a Tool, a service, the desktop) also gets a **fork** of the
 Environment. The person sees the result as a **preview**, and one confirmation
 promotes exactly the build that was previewed. See
-[ADR 0007](../../adr/0007-fork-verify-promote.md) and
+[ADR 0007](../adr/0007-fork-verify-promote.md) and
 [state and apply engine](state-and-apply-engine.md).
 
 ### Untrusted input costs a task authority
 
 **Untrusted input** is content written by someone other than the person or their
 OS. Injection arrives this way. It is graded
-([ADR 0011](../../adr/0011-task-principals.md)):
+([ADR 0011](../adr/0011-task-principals.md)):
 
 - **Admitted** input comes from a pinned set the person admitted in advance: the
   Base package snapshot, and the dependency set with its documentation that build
@@ -211,7 +211,7 @@ re-derived from the intent and the checks alone.
 A **compartment** is one execution context: a task's model context and its
 workspace, or a Tool's sandbox. Once it reads a value, it is at least at that
 value's label and carries that value's mark, and so is everything it emits. See
-[ADR 0008](../../adr/0008-private-values-stay-out-of-the-agent-context.md) and
+[ADR 0008](../adr/0008-private-values-stay-out-of-the-agent-context.md) and
 the [capability model](capability-model.md).
 
 **Nothing a model does removes a label or a mark, and nothing crosses freely.**
@@ -278,7 +278,7 @@ cannot promote: the person's confirmation does. Any MCP-capable agent
 can fill the Agent role.
 
 The gate must explain itself to agents
-([ADR 0003](../../adr/0003-security-is-deterministic.md)). The protocol requires:
+([ADR 0003](../adr/0003-security-is-deterministic.md)). The protocol requires:
 
 - a "would this be allowed?" dry run with no side effects, which must not itself
   reveal a value;
@@ -372,7 +372,7 @@ flowchart LR
 - **It does not see inside a native sandbox.** A native process works inside the
   view it was given, and the kernel enforces that view. Writes made inside a view
   are staged, and the gate counts them when they are committed. See
-  [ADR 0004](../../adr/0004-capability-safe-tools.md).
+  [ADR 0004](../adr/0004-capability-safe-tools.md).
 - **It is the only thing that allows.** It signs what it allows, and the broker
   issues a handle only with that signature.
 - **It reads authority; it does not write it.** Standing grants, standing rules,
@@ -508,7 +508,7 @@ For native code, each limit holds only where Linux or the broker can enforce it.
 "Which objects" is the view the sandbox is given. "How many" and "how often"
 hold on broker operations as they happen, and on writes inside a view when they
 are committed, not at each write. "For how long" ends by stopping the sandbox.
-[ADR 0004](../../adr/0004-capability-safe-tools.md) has the table.
+[ADR 0004](../adr/0004-capability-safe-tools.md) has the table.
 
 ### The outbox
 
@@ -530,13 +530,13 @@ When the system asks, it says what will happen, not which permission is needed:
 
 Every crossing the gate does not already allow ends in the person's answer. That
 answer is only worth something if nothing else can produce it
-([ADR 0014](../../adr/0014-a-yes-comes-from-the-person.md)).
+([ADR 0014](../adr/0014-a-yes-comes-from-the-person.md)).
 
 - **Only the shell delivers input.** No principal can synthesize keyboard,
   pointer, or touch input to a surface the shell draws. Agents operate Tools
   through the UI description, never through input events. On Linux, Base has to
   close every route by which one process produces or reads another's input.
-  [ADR 0014](../../adr/0014-a-yes-comes-from-the-person.md) lists the known
+  [ADR 0014](../adr/0014-a-yes-comes-from-the-person.md) lists the known
   ones. A route that is not closed is a hole.
 - **Everyday answers use the confirm gesture.** The shell draws the ask in system
   chrome. The person answers with a secure key press that the shell handles
@@ -597,7 +597,7 @@ These are two different things.
 
 An act that crosses needs both: the grant gives the access, and the rule lets
 the act happen without asking. Both bind to a Tool or to a **standing task**,
-never to the Agent ([ADR 0011](../../adr/0011-task-principals.md)).
+never to the Agent ([ADR 0011](../adr/0011-task-principals.md)).
 
 **A grant binds to three things:** the Tool's identity in the State, the exact
 needs the person saw when they granted, and a clean build. A rebuild that keeps
@@ -610,7 +610,7 @@ the code can do.
 Both are recorded in the **authority domain**, with their effect limits. They are
 not in the Crowbar State. The State says what each Tool *needs*; the authority
 domain records what the person *granted*. Three consequences follow
-([ADR 0012](../../adr/0012-authority-outside-the-state.md)):
+([ADR 0012](../adr/0012-authority-outside-the-state.md)):
 
 - **Undoing software never restores a revoked grant.** Rolling back to a
   generation whose Tools need a grant that has since been revoked leaves those
@@ -865,7 +865,7 @@ recovery action.
    purchases a seller will not let us delay?
 7. **Too much asking.** Previews, releases, task authorizations, and asks all
    end at the person. How many a day before they stop reading them?
-   [Milestone 2](../milestone-2.md) counts them over a set of ordinary tasks.
+   [Milestone 2](../milestones/milestone-2.md) counts them over a set of ordinary tasks.
 8. **Long content in an ask.** How does the shell show exact content that is too
    long for one screen, without training the person to skip it?
 9. **Agents and Base.** Base changes need owner authority. May a task prepare an

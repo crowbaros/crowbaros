@@ -29,8 +29,8 @@ import threading
 import time
 
 LAB = Path(__file__).resolve().parent
-WORKSPACE = LAB.parent
-ROOT = WORKSPACE.parent
+ROOT = LAB.parents[1]
+WORKSPACE = ROOT  # the Cargo workspace is the repository root
 CFG = json.loads((LAB / "config.json").read_text())
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "crowbaros/void"
 WORK = ROOT / ".lab/void"

@@ -15,7 +15,7 @@ import uuid
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-INFRA = ROOT / "infra/vm"
+INFRA = ROOT / "lab/fedora"
 STATE = ROOT / ".local/vms"
 CFG = json.loads((INFRA / "config.json").read_text())
 if (STATE / "config.local.json").exists():

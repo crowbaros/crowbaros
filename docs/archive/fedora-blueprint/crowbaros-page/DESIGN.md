@@ -98,9 +98,9 @@ components:
 
 **Creative North Star: "Quiet surface. Sharp mind."**
 
-This is a scoped record of the completed [single-file plan page](../crowbaros.html). It inherits the approved identity from [the brand-kit design system](../branding/crowbaros-brand-kit/DESIGN.md) and [product commitments](../branding/crowbaros-brand-kit/PRODUCT.md). The canonical brand documents remain authoritative for logos, the crow, native desktop studies and appearance variants. This file documents their extension into a reading surface; it does not establish a replacement identity or native OS behavior.
+This is a scoped record of the completed [single-file plan page](../crowbaros.html). It inherits the approved identity from [the brand-kit design system](../../../branding/crowbaros-brand-kit/DESIGN.md) and [product commitments](../../../branding/crowbaros-brand-kit/PRODUCT.md). The canonical brand documents remain authoritative for logos, the crow, native desktop studies and appearance variants. This file documents their extension into a reading surface; it does not establish a replacement identity or native OS behavior.
 
-The [surface brief](../../.impeccable/crowbaros-brief.txt) owns the atlas composition and Read mode. Summaries lead to inspectable specifications, with complete source preserved in the appendix. Frontmatter records actual reusable values from [page.css](page.css); responsive exceptions and behavior remain in the implementation. The sidecar carries breakpoints, effects and isolated component examples.
+The [surface brief](../../../../.impeccable/crowbaros-brief.txt) owns the atlas composition and Read mode. Summaries lead to inspectable specifications, with complete source preserved in the appendix. Frontmatter records actual reusable values from [page.css](page.css); responsive exceptions and behavior remain in the implementation. The sidecar carries breakpoints, effects and isolated component examples.
 
 **Key Characteristics:**
 

@@ -2,4 +2,4 @@
 __pycache__/
 *.pyc
 /.lab/
-/agent-first/target/
+/target/

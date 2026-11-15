@@ -2,10 +2,10 @@
 
 **Status:** design only. None of the defences below is built. Milestone 2 builds
 the ones marked **M2** and attacks them; its acceptance tests are in
-[Milestone 2](milestone-2.md). Written after
+[Milestone 2](milestones/milestone-2.md). Written after
 [council round 2](reviews/council-round-2.md) and corrected after
 [rounds 3](reviews/council-round-3.md) and [4](reviews/council-round-4.md). Terms are in the
-[glossary](../../GLOSSARY.md); the rules are in the [vision](VISION.md) and the
+[glossary](../GLOSSARY.md); the rules are in the [vision](VISION.md) and the
 ADRs it links.
 
 ## What is protected

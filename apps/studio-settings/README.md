@@ -23,17 +23,17 @@ preferably on the same workspace as Codex. All compilation happens in the builde
 the test guest only receives the signed package.
 
 ```sh
-rtk python3 infra/vm/lab.py stop test
-rtk python3 infra/vm/lab.py start build
-rtk python3 infra/vm/lab.py wait build
-rtk python3 infra/vm/lab.py view build &
-rtk python3 infra/vm/lab.py studio-build build
-rtk python3 infra/vm/lab.py stop build
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py wait test
-rtk python3 infra/vm/lab.py view test &
-rtk python3 infra/vm/lab.py studio-deploy test
-rtk python3 infra/vm/lab.py studio-run test intel-virtio
+rtk python3 lab/fedora/lab.py stop test
+rtk python3 lab/fedora/lab.py start build
+rtk python3 lab/fedora/lab.py wait build
+rtk python3 lab/fedora/lab.py view build &
+rtk python3 lab/fedora/lab.py studio-build build
+rtk python3 lab/fedora/lab.py stop build
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py wait test
+rtk python3 lab/fedora/lab.py view test &
+rtk python3 lab/fedora/lab.py studio-deploy test
+rtk python3 lab/fedora/lab.py studio-run test intel-virtio
 ```
 
 The last argument selects the [isolated hardware Vulkan profile](../../docs/development/gpu-vulkan.md).
@@ -74,7 +74,7 @@ The GUI is launched as the ordinary `desktop` user. It never uses sudo or
 changes host Omarchy settings. Application logs are available through:
 
 ```sh
-rtk python3 infra/vm/lab.py ssh test sudo journalctl -b \
+rtk python3 lab/fedora/lab.py ssh test sudo journalctl -b \
   _SYSTEMD_USER_UNIT=crowbaros-studio-settings.service --no-pager
 ```
 

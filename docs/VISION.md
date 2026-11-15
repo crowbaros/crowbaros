@@ -9,12 +9,12 @@ and 0012 revised; ADRs 0013 and 0014 added), after
 [council round 3](reviews/council-round-3.md) (ADRs 0001, 0003, 0004, 0006, 0007,
 0008, 0011, 0013, and 0014 revised), and after
 [council round 4](reviews/council-round-4.md), a confirmation round that closed
-gaps in the same ADRs. Jim Martin made the decisions in the council rounds. Decisions are in [`docs/adr/`](../adr/). Terms are defined in the
-[glossary](../../GLOSSARY.md). What the design defends against, and what it does
+gaps in the same ADRs. Jim Martin made the decisions in the council rounds. Decisions are in [`docs/adr/`](adr/). Terms are defined in the
+[glossary](../GLOSSARY.md). What the design defends against, and what it does
 not, is in the [threat model](threat-model.md).
 
 This replaces the Fedora-based curated desktop in
-[`community_foss_distro_plan.md`](../community_foss_distro_plan.md) as the plan of
+[`community_foss_distro_plan.md`](archive/fedora-blueprint/community_foss_distro_plan.md) as the plan of
 record. That document stays in the repository for reference. The one-page
 [pitch](pitch.html) is the short version of this document.
 
@@ -145,13 +145,13 @@ A better model never rewrites the OS silently. A re-derive is accepted only when
 Passing the checks is necessary evidence. It is not proof that nothing the person
 relies on has changed, which is why the replay and the pinned build exist.
 
-Decision: [ADR 0001](../adr/0001-intent-is-the-source.md).
+Decision: [ADR 0001](adr/0001-intent-is-the-source.md).
 
 ### 2. Layers and domains that change on their own
 
 | Layer | What it holds | How it changes |
 | --- | --- | --- |
-| **Base** | Kernel, drivers, core services. Built with `xbps`. | Rarely. Each generation is built from a complete pinned package set and takes effect at boot. [Milestone 1](milestone-1.md) built the generation layout, boot menu, and rollback; the pinned build comes in Milestone 1b. |
+| **Base** | Kernel, drivers, core services. Built with `xbps`. | Rarely. Each generation is built from a complete pinned package set and takes effect at boot. [Milestone 1](milestones/milestone-1.md) built the generation layout, boot menu, and rollback; the pinned build comes in Milestone 1b. |
 | **Environment** | Tools, services, desktop, automations. | Often. It changes by **fork, verify, promote**, one Tool at a time. |
 | **Data** | The person's own things. | Has its own history and undo window. Rolling back Base or Environment never rolls it back. |
 
@@ -205,10 +205,10 @@ things have their own history and are never rolled back with software:
 The State says what each Tool *needs*. The authority domain records what the
 person *granted*.
 
-Decisions: [ADR 0002](../adr/0002-three-layers.md),
-[ADR 0007](../adr/0007-fork-verify-promote.md),
-[ADR 0009](../adr/0009-base-from-a-pinned-package-set.md),
-[ADR 0012](../adr/0012-authority-outside-the-state.md).
+Decisions: [ADR 0002](adr/0002-three-layers.md),
+[ADR 0007](adr/0007-fork-verify-promote.md),
+[ADR 0009](adr/0009-base-from-a-pinned-package-set.md),
+[ADR 0012](adr/0012-authority-outside-the-state.md).
 
 ### 3. Security is deterministic and comes first
 
@@ -393,12 +393,12 @@ card's authorization cap is not an exact settlement limit, which is why the
 Allowance is funded separately. Prior art:
 [agent payments research](research/agent-payments-prior-art.md).
 
-Decisions: [ADR 0003](../adr/0003-security-is-deterministic.md),
-[ADR 0006](../adr/0006-broker-owns-all-egress.md),
-[ADR 0008](../adr/0008-private-values-stay-out-of-the-agent-context.md),
-[ADR 0011](../adr/0011-task-principals.md),
-[ADR 0013](../adr/0013-agents-never-drive-the-persons-browser.md),
-[ADR 0014](../adr/0014-a-yes-comes-from-the-person.md). Prior art:
+Decisions: [ADR 0003](adr/0003-security-is-deterministic.md),
+[ADR 0006](adr/0006-broker-owns-all-egress.md),
+[ADR 0008](adr/0008-private-values-stay-out-of-the-agent-context.md),
+[ADR 0011](adr/0011-task-principals.md),
+[ADR 0013](adr/0013-agents-never-drive-the-persons-browser.md),
+[ADR 0014](adr/0014-a-yes-comes-from-the-person.md). Prior art:
 [agent credentials research](research/agent-credentials-prior-art.md).
 
 ### 4. Tools are living and disposable
@@ -418,7 +418,7 @@ notifications until noon, and a photo sorter are all Tools.
   label fixed when it starts and a view of the Data it was given. The kernel
   enforces the view. Limits on how many and how often hold on broker operations,
   and on the commit of staged writes, not on each write inside the view. Revoking
-  access means stopping the sandbox. [ADR 0004](../adr/0004-capability-safe-tools.md)
+  access means stopping the sandbox. [ADR 0004](adr/0004-capability-safe-tools.md)
   lists which mechanism enforces which limit.
 - **Installed software uses the same rules.** A native app or a browser runs in the
   sandbox with broker-owned egress. For software the broker cannot see inside, the
@@ -438,7 +438,7 @@ notifications until noon, and a photo sorter are all Tools.
   audio. Pixels are sent only for native windows, and only when the person allows
   it. A visible indicator shows whenever the OS is listening or watching.
 
-Decision: [ADR 0004](../adr/0004-capability-safe-tools.md).
+Decision: [ADR 0004](adr/0004-capability-safe-tools.md).
 
 ### 5. The agent is a role
 
@@ -502,7 +502,7 @@ adopts one silently.
 - **One person per machine first.** The first version supports one owner per
   machine. Everything is tied to an explicit person, so several people on one
   machine stays possible later. Decision:
-  [ADR 0005](../adr/0005-one-person-first.md).
+  [ADR 0005](adr/0005-one-person-first.md).
 
 ### 7. Your OS is portable and shareable
 
@@ -524,8 +524,8 @@ adopts one silently.
   explicitly included. Secrets are named, never included.
 - The **Community Gallery** shares Tools and whole OS definitions on those terms.
 
-Decisions: [ADR 0010](../adr/0010-share-the-pinned-build.md),
-[ADR 0012](../adr/0012-authority-outside-the-state.md).
+Decisions: [ADR 0010](adr/0010-share-the-pinned-build.md),
+[ADR 0012](adr/0012-authority-outside-the-state.md).
 
 ## The stack: invent the top, borrow the bottom
 
@@ -631,16 +631,16 @@ Notes:
 - **One edition.** The agent-first direction replaces the classic edition. AI
   neutrality is kept a different way: no model is on the trust path, the person
   chooses the harness and models, and intents and the State can be edited by hand.
-- **GPUI** ([`apps/gpui-probe`](../../apps/gpui-probe/README.md)) is the candidate
+- **GPUI** ([`apps/gpui-probe`](../apps/gpui-probe/README.md)) is the candidate
   toolkit for the shell that draws Tool UI. Its RPM packaging does not carry over.
-- **Desktop design:** Jason Alexander's design system ([`DESIGN.md`](../../DESIGN.md)),
-  the GPUI desktop shell ([`apps/shell`](../../apps/shell/README.md)), and Studio
-  Settings ([`apps/studio-settings`](../../apps/studio-settings/README.md)) are the
+- **Desktop design:** Jason Alexander's design system ([`DESIGN.md`](../DESIGN.md)),
+  the GPUI desktop shell ([`apps/shell`](../apps/shell/README.md)), and Studio
+  Settings ([`apps/studio-settings`](../apps/studio-settings/README.md)) are the
   visual and interaction starting point for the M4 shell and system chrome. The
   source, tokens, fonts, and review captures carry over. Their RPM packaging,
   Fedora VM scripts, and Hyprland session wiring do not.
 - **Vulkan in a VM:** the Intel VirtIO native-context findings in
-  [`gpu-vulkan.md`](../development/gpu-vulkan.md) depend on the host and Mesa build,
+  [`gpu-vulkan.md`](development/gpu-vulkan.md) depend on the host and Mesa build,
   not on Fedora. They apply when the Void lab gains a graphical guest.
 - **Compositor:** Hyprland was chosen for the Fedora plan. The agent-first compositor
   is still open. Wayland and portals are fixed requirements.
@@ -667,8 +667,8 @@ flowchart LR
 
 | Milestone | Scope | Proves |
 | --- | --- | --- |
-| **M1** (done) | State → apply → Base generation → broken change → boot-menu rollback, in a Void VM on Btrfs. See [Milestone 1](milestone-1.md). | The generation layout, boot menu, and rollback |
-| **M2** (next) | The security rules, built to be attacked, on stock Linux with no CrowbarOS Base. First: a broker and gate, task principals in Linux sandboxes, labels and marks, and a plan over handles run by a deterministic interpreter with a cloud model as the Agent. It passes when every named attack is refused and a fixed set of ordinary tasks has been run, with completions, asks, and releases per task reported. Second, and cut if the milestone slips: checks as scenarios with the Base runner, fork, preview, promote, undo, and grants across rebuilds. Scope and acceptance tests: [Milestone 2](milestone-2.md). | ADRs 0003, 0008, 0011 first; then 0001 and 0007. No model on the trust path. |
+| **M1** (done) | State → apply → Base generation → broken change → boot-menu rollback, in a Void VM on Btrfs. See [Milestone 1](milestones/milestone-1.md). | The generation layout, boot menu, and rollback |
+| **M2** (next) | The security rules, built to be attacked, on stock Linux with no CrowbarOS Base. First: a broker and gate, task principals in Linux sandboxes, labels and marks, and a plan over handles run by a deterministic interpreter with a cloud model as the Agent. It passes when every named attack is refused and a fixed set of ordinary tasks has been run, with completions, asks, and releases per task reported. Second, and cut if the milestone slips: checks as scenarios with the Base runner, fork, preview, promote, undo, and grants across rebuilds. Scope and acceptance tests: [Milestone 2](milestones/milestone-2.md). | ADRs 0003, 0008, 0011 first; then 0001 and 0007. No model on the trust path. |
 | **M1b** | Build each Base generation from empty out of a complete pinned package set, with the State owning every package. Read-only generations. Data and machine state on their own subvolumes, so an apply never drops what was written before the reboot. Automatic fallback when a new generation fails to boot. Crash safety during an apply. | "The State is a lockfile" for Base; ADR 0009 |
 | **M3** | Data layer v0: objects with provenance, labels, stable ids, and history, as an index over files. Staged writes and commit. Compartments for every execution context. Label-based egress, including model calls. | Information-flow control on real Data |
 | **M4** | Shell: declarative UI renderer inside system chrome, powerbox, trusted asks with the confirm gesture and a hardware root, point and say with local perception. Recovery screen. | Living software; ADR 0014 |

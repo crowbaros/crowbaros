@@ -52,17 +52,17 @@ priority.
 | # | Question | Decision | Recorded in |
 | --- | --- | --- | --- |
 | 1 | Scope of the thesis | Bespoke software is a long tail. The browser and native apps are first-class. | [Vision](../VISION.md), Thesis |
-| 2 | Source of truth | Intent, checks, and the pinned build together. | [ADR 0001](../../adr/0001-intent-is-the-source.md) |
+| 2 | Source of truth | Intent, checks, and the pinned build together. | [ADR 0001](../adr/0001-intent-is-the-source.md) |
 | 3 | What a check is | An executable test, frozen at confirmation, run in rehearsal. | ADR 0001 |
-| 4 | The undo boundary | An autonomy default. Effects are authorized by effect limits. Acts on the person's behalf wait in an outbox. | [ADR 0003](../../adr/0003-security-is-deterministic.md) |
-| 5 | How the Environment changes | Fork, verify, promote, with one fork per task. | [ADR 0007](../../adr/0007-fork-verify-promote.md) |
-| 6 | Where the thinking happens | Assume a cloud model. Private values stay out of its context. | [ADR 0008](../../adr/0008-private-values-stay-out-of-the-agent-context.md) |
-| 7 | One Agent or many task principals | The Agent coordinates task principals. Authority shrinks on untrusted input. | [ADR 0011](../../adr/0011-task-principals.md) |
-| 8 | Tool runtime | The contract is the broker protocol. WASM is one runtime. | [ADR 0004](../../adr/0004-capability-safe-tools.md) |
-| 9 | Base engine | Build each generation from a complete pinned package set. | [ADR 0009](../../adr/0009-base-from-a-pinned-package-set.md) |
+| 4 | The undo boundary | An autonomy default. Effects are authorized by effect limits. Acts on the person's behalf wait in an outbox. | [ADR 0003](../adr/0003-security-is-deterministic.md) |
+| 5 | How the Environment changes | Fork, verify, promote, with one fork per task. | [ADR 0007](../adr/0007-fork-verify-promote.md) |
+| 6 | Where the thinking happens | Assume a cloud model. Private values stay out of its context. | [ADR 0008](../adr/0008-private-values-stay-out-of-the-agent-context.md) |
+| 7 | One Agent or many task principals | The Agent coordinates task principals. Authority shrinks on untrusted input. | [ADR 0011](../adr/0011-task-principals.md) |
+| 8 | Tool runtime | The contract is the broker protocol. WASM is one runtime. | [ADR 0004](../adr/0004-capability-safe-tools.md) |
+| 9 | Base engine | Build each generation from a complete pinned package set. | [ADR 0009](../adr/0009-base-from-a-pinned-package-set.md) |
 | 10 | Next milestone | A fix-up, then an adversarial slice. | Vision, Roadmap (M1b, M2) |
-| 11 | Sharing default | The pinned build with its intent and checks. Shared words are untrusted input. | [ADR 0010](../../adr/0010-share-the-pinned-build.md) |
-| 12 | Approver, authority, fleet trust | A gate that allows and a monitor that can only pause. Authority outside the State. A clearance per machine, with the phone as an approval device. | ADR 0003, [ADR 0012](../../adr/0012-authority-outside-the-state.md), ADR 0008 |
+| 11 | Sharing default | The pinned build with its intent and checks. Shared words are untrusted input. | [ADR 0010](../adr/0010-share-the-pinned-build.md) |
+| 12 | Approver, authority, fleet trust | A gate that allows and a monitor that can only pause. Authority outside the State. A clearance per machine, with the phone as an approval device. | ADR 0003, [ADR 0012](../adr/0012-authority-outside-the-state.md), ADR 0008 |
 
 Two choices were made while writing these up and were not put to Jim as questions:
 

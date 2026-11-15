@@ -6,9 +6,9 @@ The scripted run passed **22 of 22 checks**. Its log is in
 byte-for-byte copy of the log the run wrote. This page states exactly what was
 verified and what was not.
 
-[Council round 1](reviews/council-round-1.md) reviewed this milestone the same day.
+[Council round 1](../reviews/council-round-1.md) reviewed this milestone the same day.
 It found defects that the first run did not exercise, and
-[round 2](reviews/council-round-2.md) and [round 3](reviews/council-round-3.md) found more in the fixes. Twenty-one are fixed, and the run above was made after the fixes. [Round 4](reviews/council-round-4.md) found one of those fixes unsafe, and it is corrected. The rest come from the engine's model of
+[round 2](../reviews/council-round-2.md) and [round 3](../reviews/council-round-3.md) found more in the fixes. Twenty-one are fixed, and the run above was made after the fixes. [Round 4](../reviews/council-round-4.md) found one of those fixes unsafe, and it is corrected. The rest come from the engine's model of
 converging a copy of the running root, which Milestone 1b replaces
 ([ADR 0009](../adr/0009-base-from-a-pinned-package-set.md)). See
 [Known limitations](#known-limitations-of-the-milestone-1-engine).
@@ -40,25 +40,25 @@ flowchart LR
 ## How to run it
 
 Requirements: QEMU with `/dev/kvm`, OVMF at the paths in
-[`agent-first/lab/config.json`](../../agent-first/lab/config.json), `unshare`,
+[`lab/void/config.json`](../../lab/void/config.json), `unshare`,
 `mkfs.btrfs` with `--subvol` (btrfs-progs 6.11 or later), `mkfs.vfat`, `sfdisk`, a
 Rust toolchain with the `x86_64-unknown-linux-musl` target, and network access to
 the Void repository. **No sudo is needed.** Work that needs root runs as fake root
 in an `unshare -r` user namespace.
 
 ```sh
-agent-first/lab/void_lab.py milestone   # build everything, run the loop, record evidence
+lab/void/void_lab.py milestone   # build everything, run the loop, record evidence
 ```
 
 Or step by step:
 
 ```sh
-agent-first/lab/void_lab.py fetch       # static xbps, pinned SHA-256, into ~/.cache/crowbaros/void
-agent-first/lab/void_lab.py rootfs      # Void root via xbps-install.static (rootless)
-agent-first/lab/void_lab.py image       # musl crowbar binary + bootable GPT/ESP/Btrfs disk
-agent-first/lab/void_lab.py start       # boot a fresh copy of the base disk
-agent-first/lab/void_lab.py ssh crowbar generations
-agent-first/lab/void_lab.py stop
+lab/void/void_lab.py fetch       # static xbps, pinned SHA-256, into ~/.cache/crowbaros/void
+lab/void/void_lab.py rootfs      # Void root via xbps-install.static (rootless)
+lab/void/void_lab.py image       # musl crowbar binary + bootable GPT/ESP/Btrfs disk
+lab/void/void_lab.py start       # boot a fresh copy of the base disk
+lab/void/void_lab.py ssh crowbar generations
+lab/void/void_lab.py stop
 ```
 
 Downloads go to `~/.cache/crowbaros/void`. The rootfs, disk images, VM sockets,
@@ -92,16 +92,16 @@ flowchart TB
 - QEMU runs directly, not through libvirt. The script needs the serial console as
   a socket so it can read boot output and press keys in GRUB. It also uses a
   monitor socket for `system_reset`, and forwards host port `127.0.0.1:22230` to
-  guest SSH. Like `infra/vm/lab.py`, the script uses only the Python standard
+  guest SSH. Like `lab/fedora/lab.py`, the script uses only the Python standard
   library, reads a JSON config, and keeps local state out of git.
 
 ### The three states
 
 | File | Change | Expected |
 | --- | --- | --- |
-| [`01-base.toml`](../../agent-first/lab/states/01-base.toml) | Base image: hostname and services | Generation 1 |
-| [`02-tools.toml`](../../agent-first/lab/states/02-tools.toml) | Adds `jq`, `htop`, and a managed `/etc/motd` | Generation 2 boots |
-| [`03-broken-mount.toml`](../../agent-first/lab/states/03-broken-mount.toml) | Adds an fstab mount of `LABEL=crowbar-data`, a disk that does not exist | Generation 3 does not boot: Void's stage 1 runs `mount -a … \|\| emergency_shell` |
+| [`01-base.toml`](../../lab/void/states/01-base.toml) | Base image: hostname and services | Generation 1 |
+| [`02-tools.toml`](../../lab/void/states/02-tools.toml) | Adds `jq`, `htop`, and a managed `/etc/motd` | Generation 2 boots |
+| [`03-broken-mount.toml`](../../lab/void/states/03-broken-mount.toml) | Adds an fstab mount of `LABEL=crowbar-data`, a disk that does not exist | Generation 3 does not boot: Void's stage 1 runs `mount -a … \|\| emergency_shell` |
 
 ## Verified
 
@@ -264,10 +264,10 @@ pinned package set.
 
 | Path | What it is |
 | --- | --- |
-| [`agent-first/crates/crowbar-state`](../../agent-first/crates/crowbar-state/src/lib.rs) | The Crowbar State schema, parsing, and validation |
-| [`agent-first/crates/crowbar-apply`](../../agent-first/crates/crowbar-apply/src/) | Plan, apply, generations, confined path resolution, GRUB menu, fstab block, ledger, and the `crowbar` command |
-| [`agent-first/lab/void_lab.py`](../../agent-first/lab/void_lab.py) | VM lab: fetch, rootfs, image, start, ssh, stop, milestone |
-| [`agent-first/lab/host/`](../../agent-first/lab/host/) | Rootless rootfs and disk-image build scripts (run inside `unshare -r`) |
-| [`agent-first/lab/states/`](../../agent-first/lab/states/) | The three Milestone 1 states |
+| [`crates/crowbar-state`](../../crates/crowbar-state/src/lib.rs) | The Crowbar State schema, parsing, and validation |
+| [`crates/crowbar-apply`](../../crates/crowbar-apply/src/) | Plan, apply, generations, confined path resolution, GRUB menu, fstab block, ledger, and the `crowbar` command |
+| [`lab/void/void_lab.py`](../../lab/void/void_lab.py) | VM lab: fetch, rootfs, image, start, ssh, stop, milestone |
+| [`lab/void/host/`](../../lab/void/host/) | Rootless rootfs and disk-image build scripts (run inside `unshare -r`) |
+| [`lab/void/states/`](../../lab/void/states/) | The three Milestone 1 states |
 
-Design background: [state and apply engine](design/state-and-apply-engine.md).
+Design background: [state and apply engine](../architecture/state-and-apply-engine.md).

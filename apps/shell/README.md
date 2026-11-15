@@ -9,15 +9,15 @@ captures keyboard input only while open.
 ## Build and run in the local lab
 
 ```bash
-rtk python3 infra/vm/lab.py start build
-rtk python3 infra/vm/lab.py view build
-rtk python3 infra/vm/lab.py wait build
-rtk python3 infra/vm/lab.py shell-build build
-rtk python3 infra/vm/lab.py start test
-rtk python3 infra/vm/lab.py view test
-rtk python3 infra/vm/lab.py wait test
-rtk python3 infra/vm/lab.py shell-deploy test
-rtk python3 infra/vm/lab.py shell-run test intel-virtio
+rtk python3 lab/fedora/lab.py start build
+rtk python3 lab/fedora/lab.py view build
+rtk python3 lab/fedora/lab.py wait build
+rtk python3 lab/fedora/lab.py shell-build build
+rtk python3 lab/fedora/lab.py start test
+rtk python3 lab/fedora/lab.py view test
+rtk python3 lab/fedora/lab.py wait test
+rtk python3 lab/fedora/lab.py shell-deploy test
+rtk python3 lab/fedora/lab.py shell-run test intel-virtio
 ```
 
 Keep the relevant VM viewer visible during work. The experimental accelerated
@@ -69,7 +69,7 @@ in `/etc/crowbaros-lab/shell-vulkan.env`; it is not globally registered.
 Stop the service from the administrator SSH session if needed:
 
 ```bash
-rtk python3 infra/vm/lab.py ssh test sudo -u desktop env XDG_RUNTIME_DIR=/run/user/1001 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus systemctl --user stop crowbaros-shell
+rtk python3 lab/fedora/lab.py ssh test sudo -u desktop env XDG_RUNTIME_DIR=/run/user/1001 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus systemctl --user stop crowbaros-shell
 ```
 
 The `before-shell` offline checkpoint preserves the previously working lab.
@@ -83,7 +83,7 @@ Studio-off, reduced-motion baseline, keep the viewer visible, and pause manual
 interaction while running:
 
 ```bash
-rtk python3 infra/vm/validate_shell.py
+rtk python3 lab/fedora/validate_shell.py
 ```
 
 The check drives native input, exercises application launch and focus, follows a

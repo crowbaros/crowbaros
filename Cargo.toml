@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/crowbar-state", "crates/crowbar-apply"]
+# The GPUI apps pin their own dependency graphs and are built on their own.
+exclude = ["apps"]
 
 [workspace.package]
 version = "0.1.0"

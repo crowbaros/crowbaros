@@ -21,22 +21,22 @@ What the design defends against, and what it does not, is in the
   gets everything through the broker. WASM components and sandboxed native
   processes are both runtimes for that contract. Native code is promised only
   what Linux can enforce. See
-  [ADR 0004](../../adr/0004-capability-safe-tools.md).
+  [ADR 0004](../adr/0004-capability-safe-tools.md).
 - **Each task is its own principal.** The Agent coordinates tasks and does not
-  collect their authority. See [ADR 0011](../../adr/0011-task-principals.md).
+  collect their authority. See [ADR 0011](../adr/0011-task-principals.md).
 - **Tools describe their UI; the trusted shell draws it** inside system chrome a
   Tool cannot imitate.
 - **Powerbox, not prompts.** Wherever possible, the person picking something *is*
   the grant.
 - **A "yes" comes from the person.** Only the shell delivers input, and no
   principal can synthesize it. See
-  [ADR 0014](../../adr/0014-a-yes-comes-from-the-person.md).
+  [ADR 0014](../adr/0014-a-yes-comes-from-the-person.md).
 - **Labels and marks apply to execution contexts, not only to stored Data.** A
   **compartment** that reads a value is at that value's label and carries its
   mark from then on. Nothing a model does removes either, nothing crosses
   freely, and marks persist in storage. The Agent works by **plan over handles**,
   so private values stay out of its context. See
-  [ADR 0008](../../adr/0008-private-values-stay-out-of-the-agent-context.md).
+  [ADR 0008](../adr/0008-private-values-stay-out-of-the-agent-context.md).
 - **Open untrusted input costs a task its standing authority.** The task keeps
   thinking. Build tasks are clean by construction. See ADR 0011.
 - **Standing authority binds to a Tool or a standing task, never to the Agent.**
@@ -44,11 +44,11 @@ What the design defends against, and what it does not, is in the
 - **Every outside party has a clearance.** A compartment may connect only to
   parties cleared for everything it holds. See ADR 0008.
 - **Agents never drive the person's browser profile.** See
-  [ADR 0013](../../adr/0013-agents-never-drive-the-persons-browser.md).
+  [ADR 0013](../adr/0013-agents-never-drive-the-persons-browser.md).
 - **The broker makes every outbound connection and holds every secret.** See
-  [ADR 0006](../../adr/0006-broker-owns-all-egress.md).
+  [ADR 0006](../adr/0006-broker-owns-all-egress.md).
 - **What was granted is stored outside the Crowbar State.** See
-  [ADR 0012](../../adr/0012-authority-outside-the-state.md).
+  [ADR 0012](../adr/0012-authority-outside-the-state.md).
 
 ## Principals
 
@@ -87,7 +87,7 @@ flowchart TB
   end with it. Every task has a **workspace**: a private scratch area and a view
   of the Data it was given. Only a task that changes installed behaviour also
   gets a **fork** of the Environment. See
-  [ADR 0007](../../adr/0007-fork-verify-promote.md).
+  [ADR 0007](../adr/0007-fork-verify-promote.md).
 - **A standing task** is a recurring task the person defined by name, with a
   fixed objective and limits. The Agent can start it and cannot change it.
 - **A build task** writes or changes a Tool's code. It is clean by construction
@@ -114,7 +114,7 @@ Two parts act for no one. They decide and review:
 
 Every principal and handle is tied to an explicit person. The first version
 supports one person per machine, but nothing here assumes there is only one. See
-[ADR 0005](../../adr/0005-one-person-first.md).
+[ADR 0005](../adr/0005-one-person-first.md).
 
 How the gate and the monitor decide is in
 [the gate, the monitor, and autonomy](gate-monitor-and-autonomy.md).
@@ -122,7 +122,7 @@ How the gate and the monitor decide is in
 ### The gate explains itself to agents
 
 The harness protocol requires four things of the gate. See
-[ADR 0003](../../adr/0003-security-is-deterministic.md).
+[ADR 0003](../adr/0003-security-is-deterministic.md).
 
 - **A dry run.** "Would this be allowed?", with no side effects. A dry run must
   not itself reveal a value.
@@ -237,7 +237,7 @@ value. We say so plainly.
 **A Tool from a stranger runs only as WASM**, unless the recipient rebuilds it
 locally. The build task that reads the stranger's words is marked, so the rebuilt
 Tool gets no grant without the person's answer. See
-[ADR 0010](../../adr/0010-share-the-pinned-build.md).
+[ADR 0010](../adr/0010-share-the-pinned-build.md).
 
 ### What native code is promised
 
@@ -298,7 +298,7 @@ claim.
 - **Needs live in the State. Grants do not.** What the person actually granted is
   recorded in the **authority domain**, outside the State and its generations.
   Rolling back software never restores a revoked grant, and a shared State carries
-  no authority. See [ADR 0012](../../adr/0012-authority-outside-the-state.md).
+  no authority. See [ADR 0012](../adr/0012-authority-outside-the-state.md).
 - **For a component**, the system checks that the Tool's imports match its `needs`
   exactly.
 - **For native code**, the sandbox is built from the `needs`: nothing else is
@@ -324,7 +324,7 @@ events, and recorded inputs, with no real effects. A **runner** in Base runs the
 not the task that built the Tool. The runner signs the result together with the
 content hash of the build and of every check, and a promote accepts only a build
 whose hash carries a passing result. See
-[ADR 0001](../../adr/0001-intent-is-the-source.md).
+[ADR 0001](../adr/0001-intent-is-the-source.md).
 
 So every interface the broker offers a Tool has three forms:
 
@@ -399,7 +399,7 @@ Flatpak apps already use. We adopt the portal protocol instead of inventing one.
 
 A pick in the powerbox and an answer to an ask are only worth something if nothing
 else can produce them. See
-[ADR 0014](../../adr/0014-a-yes-comes-from-the-person.md).
+[ADR 0014](../adr/0014-a-yes-comes-from-the-person.md).
 
 - **Only the shell delivers input.** No principal can synthesize keyboard,
   pointer, or touch input to a surface the shell draws, and nothing but the shell
@@ -439,7 +439,7 @@ labels, stable ids, and history**.
 - **Writes are staged.** A task's writes to Data are staged in its workspace and
   committed together when the task finishes, inside its effect limits, as one
   entry in the Data history. The commit is where the gate counts them. See
-  [ADR 0007](../../adr/0007-fork-verify-promote.md).
+  [ADR 0007](../adr/0007-fork-verify-promote.md).
 
 ### Labels
 
@@ -455,7 +455,7 @@ labels, stable ids, and history**.
 ### Untrusted input and marks
 
 Content written by someone other than the person or their OS is **untrusted
-input**. It is graded. See [ADR 0011](../../adr/0011-task-principals.md).
+input**. It is graded. See [ADR 0011](../adr/0011-task-principals.md).
 
 - **Admitted** input comes from a pinned set the person admitted in advance: the
   Base package snapshot, and the dependency set with its documentation that build
@@ -536,7 +536,7 @@ does not keep the Tool's grants (see [Manifests](#manifests)).
 Someone else's words are open untrusted input. A shared Tool arrives as its
 pinned build with its intent and checks, and the words are never handed to the
 recipient's Agent as instructions. See
-[ADR 0010](../../adr/0010-share-the-pinned-build.md).
+[ADR 0010](../adr/0010-share-the-pinned-build.md).
 
 ### Compartments
 
@@ -602,7 +602,7 @@ both fixed before the task read anything.
 ### Plan over handles
 
 We assume most people's Agent thinks with a cloud model. See
-[ADR 0008](../../adr/0008-private-values-stay-out-of-the-agent-context.md).
+[ADR 0008](../adr/0008-private-values-stay-out-of-the-agent-context.md).
 
 - The Agent writes a **plan**: a small program whose variables are handles.
 - A **deterministic interpreter** in the fleet runs the plan. It moves the actual
@@ -685,14 +685,14 @@ machine or an outside party may hold. For private data it names the categories.
 **One machine leads.** In the first version the **lead machine** holds the
 authority domain and puts promotes in order. The other machines work on leases
 from it that expire, so a revoked grant stops working everywhere within a known
-time. See [ADR 0012](../../adr/0012-authority-outside-the-state.md).
+time. See [ADR 0012](../adr/0012-authority-outside-the-state.md).
 
 ### The browser
 
 The person's browser profile holds their sessions, cookies, and history. Only the
 person drives it. No agent, task, or Tool can drive it, read it, or receive its
 cookies. See
-[ADR 0013](../../adr/0013-agents-never-drive-the-persons-browser.md).
+[ADR 0013](../adr/0013-agents-never-drive-the-persons-browser.md).
 
 - A task that needs the web gets a **task browser context**: a fresh browser
   context for one task and the sites named in that task, with no sessions.
@@ -793,7 +793,7 @@ credential, with a vault secret (an OAuth exchange, a session cookie from a
 login) or without one (a device flow, a sign-up, a reset link), it stores the
 credential in the vault and returns a handle. A Tool does not get to hold the
 credential as an ordinary value. A protocol with no such adapter is listed as
-unsupported. See [ADR 0006](../../adr/0006-broker-owns-all-egress.md).
+unsupported. See [ADR 0006](../adr/0006-broker-owns-all-egress.md).
 
 One limit stays: a verified certificate identifies a host. It does not identify
 the account, recipient, or bucket on that host. An unasked act on a person's
@@ -899,7 +899,7 @@ bounds them.
     the source, and how does the person correct a wrong label?
 11. **Releases and mark creep in practice.** How often does a real task need a
     release, how many will a person read in a day, and how much of real Data ends
-    up marked? [Milestone 2](../milestone-2.md) measures this.
+    up marked? [Milestone 2](../milestones/milestone-2.md) measures this.
 12. **Clearance.** Who sets a machine's clearance, and what does a phone hold?
 13. **Leases.** How long does a lease from the lead machine last, and what happens
     when the lead machine is lost?
