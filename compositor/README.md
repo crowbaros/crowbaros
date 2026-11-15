@@ -88,3 +88,10 @@ it that way:
 ```sh
 lab/void/compositor_guest.py check
 ```
+
+On a real machine with no desktop session, `checks/tty-apps.sh` runs the
+shell and Studio Settings on a TTY through DRM, over SSH, and counts their
+commits; `--suspend` also suspends and resumes the machine. `--mode NAME=WxH`
+picks an output's mode in place of the one its monitor prefers. The
+[NVIDIA record](../docs/research/compositor-nvidia-2026-11-15.md) says how they
+were run.

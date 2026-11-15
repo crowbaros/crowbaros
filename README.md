@@ -25,7 +25,7 @@ being right.
 | Milestone 2: the security rules, built to be attacked | Next. [Scope](docs/milestones/milestone-2.md) |
 | Brand and design system | Approved. [Brand kit](docs/branding/), [DESIGN.md](DESIGN.md) |
 | GPUI shell and Studio Settings | First slices built and validated in the Fedora VM lab. They are the starting point for the Milestone 4 shell. [Apps](apps/) |
-| Compositor | Decided: our own, on Smithay ([ADR 0015](docs/adr/0015-our-own-compositor-on-smithay.md)). A spike tested the decision. [Record](docs/research/compositor-spike-2026-11-15.md) |
+| Compositor | Decided: our own, on Smithay ([ADR 0015](docs/adr/0015-our-own-compositor-on-smithay.md)). A spike tested the decision. [Record](docs/research/compositor-spike-2026-11-15.md); [NVIDIA runs](docs/research/compositor-nvidia-2026-11-15.md) |
 
 The full roadmap is in the [vision](docs/VISION.md#roadmap).
 
