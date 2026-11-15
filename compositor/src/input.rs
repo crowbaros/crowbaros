@@ -1,14 +1,14 @@
 use smithay::{
     backend::input::{
-        AbsolutePositionEvent, InputTime, KeyState, Keycode, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
+        AbsolutePositionEvent, InputTime, KeyState, Keycode, PointerMotionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
         KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
     },
     input::{
         keyboard::{FilterResult, Keysym},
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::SERIAL_COUNTER,
+    utils::{Logical, Point, SERIAL_COUNTER},
+    wayland::compositor::get_parent,
 };
 
 use crate::state::State;
@@ -52,74 +52,83 @@ impl State {
         }
     }
 
+    fn clamp_to_outputs(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
+        let Some(bounds) = self
+            .outputs
+            .iter()
+            .filter_map(|o| self.space.output_geometry(o))
+            .reduce(|a, b| a.merge(b))
+        else {
+            return pos;
+        };
+        Point::from((
+            pos.x.clamp(bounds.loc.x as f64, (bounds.loc.x + bounds.size.w - 1) as f64),
+            pos.y.clamp(bounds.loc.y as f64, (bounds.loc.y + bounds.size.h - 1) as f64),
+        ))
+    }
+
+    fn move_pointer(&mut self, pos: Point<f64, Logical>, time: InputTime) {
+        let serial = SERIAL_COUNTER.next_serial();
+        let pointer = self.seat.get_pointer().unwrap();
+        let under = self.surface_under(pos);
+        pointer.motion(
+            self,
+            under,
+            &MotionEvent {
+                location: pos,
+                serial,
+                time,
+            },
+        );
+        pointer.frame(self);
+    }
+
+    /// A click gives the keyboard to the window under the pointer.
+    fn focus_under_pointer(&mut self) {
+        let pos = self.seat.get_pointer().unwrap().current_location();
+        let Some((surface, _)) = self.surface_under(pos) else {
+            return;
+        };
+        let mut root = surface;
+        while let Some(parent) = get_parent(&root) {
+            root = parent;
+        }
+        if let Some(window) = self.managed(&root).map(|m| m.window.clone()) {
+            self.focus_window(Some(&window));
+        }
+    }
+
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         match event {
             InputEvent::Keyboard { event, .. } => {
                 self.handle_key(event.key_code(), event.state(), Event::time(&event));
             }
-            InputEvent::PointerMotion { .. } => {}
-            InputEvent::PointerMotionAbsolute { event, .. } => {
-                let output = self.space.outputs().next().unwrap();
-
-                let output_geo = self.space.output_geometry(output).unwrap();
-
-                let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
-
-                let serial = SERIAL_COUNTER.next_serial();
-
+            InputEvent::PointerMotion { event, .. } => {
                 let pointer = self.seat.get_pointer().unwrap();
-
-                let under = self.surface_under(pos);
-
-                pointer.motion(
-                    self,
-                    under,
-                    &MotionEvent {
-                        location: pos,
-                        serial,
-                        time: event.time(),
-                    },
-                );
-                pointer.frame(self);
+                let pos = self.clamp_to_outputs(pointer.current_location() + event.delta());
+                self.move_pointer(pos, event.time());
+            }
+            InputEvent::PointerMotionAbsolute { event, .. } => {
+                let Some(output) = self.outputs.first() else {
+                    return;
+                };
+                let output_geo = self.space.output_geometry(output).unwrap();
+                let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
+                self.move_pointer(pos, event.time());
             }
             InputEvent::PointerButton { event, .. } => {
                 let pointer = self.seat.get_pointer().unwrap();
-                let keyboard = self.seat.get_keyboard().unwrap();
-
                 let serial = SERIAL_COUNTER.next_serial();
-
-                let button = event.button_code();
-
                 let button_state = event.state();
 
                 if ButtonState::Pressed == button_state && !pointer.is_grabbed() {
-                    if let Some((window, _loc)) = self
-                        .space
-                        .element_under(pointer.current_location())
-                        .map(|(w, l)| (w.clone(), l))
-                    {
-                        self.space.raise_element(&window, true);
-                        keyboard.set_focus(
-                            self,
-                            Some(window.toplevel().unwrap().wl_surface().clone()),
-                            serial,
-                        );
-                        self.space.elements().for_each(|window| {
-                            window.toplevel().unwrap().send_pending_configure();
-                        });
-                    } else {
-                        self.space.elements().for_each(|window| {
-                            window.set_activated(false);
-                            window.toplevel().unwrap().send_pending_configure();
-                        });
-                        keyboard.set_focus(self, Option::<WlSurface>::None, serial);
-                    }
-                };
+                    self.focus_under_pointer();
+                }
 
                 pointer.button(
                     self,
                     &ButtonEvent {
-                        button,
+                        button: event.button_code(),
                         state: button_state,
                         serial,
                         time: event.time(),

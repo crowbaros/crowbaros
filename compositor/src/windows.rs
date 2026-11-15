@@ -95,8 +95,11 @@ impl State {
                 m.focus_stamp = stamp;
                 m.id
             });
-        let surface = window.and_then(|w| w.toplevel()).map(|t| t.wl_surface().clone());
-        keyboard.set_focus(self, surface, serial);
+        // A layer surface that holds the keyboard keeps it.
+        if self.layer_focus.is_none() {
+            let surface = window.and_then(|w| w.toplevel()).map(|t| t.wl_surface().clone());
+            keyboard.set_focus(self, surface, serial);
+        }
         for managed in &self.windows {
             if let Some(toplevel) = managed.window.toplevel() {
                 toplevel.send_pending_configure();

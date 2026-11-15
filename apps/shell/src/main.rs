@@ -103,7 +103,7 @@ impl Render for Bar {
                 m.snapshot.active.title.clone()
             }
         } else {
-            "Connecting to Hyprland…".into()
+            "Connecting to the compositor…".into()
         };
         let clock = m.clock.clone();
         let mut workspaces = vec![1, 2, 3, 4];
@@ -658,6 +658,7 @@ fn main() -> anyhow::Result<()> {
         }
         None => {}
     }
+    session::connect();
     let (tx, rx) = mpsc::channel();
     let _lock = session::server(tx.clone())?;
     let watcher = tx.clone();

@@ -22,8 +22,12 @@ use wayland_client::{
         wl_seat::{self, WlSeat},
         wl_shm::{self, WlShm},
         wl_shm_pool::WlShmPool,
-        wl_surface::WlSurface,
+        wl_surface::{self, WlSurface},
     },
+};
+use wayland_protocols::ext::foreign_toplevel_list::v1::client::{
+    ext_foreign_toplevel_handle_v1::{self, ExtForeignToplevelHandleV1},
+    ext_foreign_toplevel_list_v1::{self, ExtForeignToplevelListV1},
 };
 use wayland_protocols::xdg::shell::client::{
     xdg_surface::{self, XdgSurface},
@@ -49,6 +53,12 @@ pub struct Global {
 /// Connects to a compositor socket by path, as any program could.
 pub fn connect(path: &Path) -> io::Result<Connection> {
     from_stream(UnixStream::connect(path)?)
+}
+
+/// Connects the way any Wayland client does: `WAYLAND_SOCKET` if it is set,
+/// otherwise `WAYLAND_DISPLAY`.
+pub fn connect_env() -> io::Result<Connection> {
+    Connection::connect_to_env().map_err(io::Error::other)
 }
 
 /// Wraps an already connected socket, as the shell receives one.
@@ -78,6 +88,19 @@ pub struct ClientState {
     /// Size from the latest zwlr_layer_surface_v1.configure.
     pub layer_size: Option<(u32, u32)>,
     pub closed: bool,
+    /// Every wl_surface.preferred_buffer_scale the compositor sent.
+    pub buffer_scales: Vec<i32>,
+    /// Windows of other clients, where the compositor offers
+    /// ext-foreign-toplevel-list. CrowbarOS does not; a host desktop may.
+    pub foreign_toplevels: Vec<ForeignToplevel>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ForeignToplevel {
+    handle: Option<ExtForeignToplevelHandleV1>,
+    pub identifier: String,
+    pub app_id: String,
+    pub title: String,
 }
 
 /// A mapped xdg-shell window.
@@ -393,8 +416,71 @@ impl Dispatch<WlKeyboard, ()> for ClientState {
     }
 }
 
+impl Client {
+    /// Lists the windows the compositor is willing to tell this client about.
+    pub fn foreign_toplevels(&mut self) -> Result<Vec<ForeignToplevel>, Error> {
+        let _list: ExtForeignToplevelListV1 = self.required(1)?;
+        self.roundtrip()?;
+        self.roundtrip()?;
+        Ok(self.state.foreign_toplevels.clone())
+    }
+}
+
+impl Dispatch<ExtForeignToplevelListV1, ()> for ClientState {
+    fn event(
+        state: &mut Self,
+        _: &ExtForeignToplevelListV1,
+        event: ext_foreign_toplevel_list_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let ext_foreign_toplevel_list_v1::Event::Toplevel { toplevel } = event {
+            state.foreign_toplevels.push(ForeignToplevel {
+                handle: Some(toplevel),
+                ..Default::default()
+            });
+        }
+    }
+
+    wayland_client::event_created_child!(ClientState, ExtForeignToplevelListV1, [
+        ext_foreign_toplevel_list_v1::EVT_TOPLEVEL_OPCODE => (ExtForeignToplevelHandleV1, ()),
+    ]);
+}
+
+impl Dispatch<ExtForeignToplevelHandleV1, ()> for ClientState {
+    fn event(
+        state: &mut Self,
+        handle: &ExtForeignToplevelHandleV1,
+        event: ext_foreign_toplevel_handle_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some(entry) = state
+            .foreign_toplevels
+            .iter_mut()
+            .find(|t| t.handle.as_ref() == Some(handle))
+        else {
+            return;
+        };
+        match event {
+            ext_foreign_toplevel_handle_v1::Event::Identifier { identifier } => entry.identifier = identifier,
+            ext_foreign_toplevel_handle_v1::Event::Title { title } => entry.title = title,
+            ext_foreign_toplevel_handle_v1::Event::AppId { app_id } => entry.app_id = app_id,
+            _ => {}
+        }
+    }
+}
+
 delegate_noop!(ClientState: WlCompositor);
-delegate_noop!(ClientState: ignore WlSurface);
+impl Dispatch<WlSurface, ()> for ClientState {
+    fn event(state: &mut Self, _: &WlSurface, event: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let wl_surface::Event::PreferredBufferScale { factor } = event {
+            state.buffer_scales.push(factor);
+        }
+    }
+}
 delegate_noop!(ClientState: ignore WlShm);
 delegate_noop!(ClientState: WlShmPool);
 delegate_noop!(ClientState: ignore WlBuffer);

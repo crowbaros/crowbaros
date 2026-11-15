@@ -13,7 +13,9 @@ use smithay::reexports::wayland_server::{
     self, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::ClientId,
 };
 use smithay::wayland::{Dispatch2, GlobalDispatch2};
+use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::wayland::compositor::with_states;
+use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
 use smithay::wayland::fractional_scale::{FractionalScaleHandler, with_fractional_scale};
 use smithay::wayland::security_context::{
     SecurityContext, SecurityContextHandler, SecurityContextListenerSource,
@@ -119,6 +121,25 @@ impl FractionalScaleHandler for State {
         with_states(&surface, |states| {
             with_fractional_scale(states, |fractional| fractional.set_preferred_scale(scale));
         });
+    }
+}
+
+//
+// Dmabuf
+//
+
+impl DmabufHandler for State {
+    fn dmabuf_state(&mut self) -> &mut DmabufState {
+        &mut self.dmabuf_state
+    }
+
+    fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
+        let imported = self.dmabuf_import.as_mut().is_some_and(|import| import(&dmabuf));
+        if imported {
+            let _ = notifier.successful::<State>();
+        } else {
+            notifier.failed();
+        }
     }
 }
 

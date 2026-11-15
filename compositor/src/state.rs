@@ -1,8 +1,14 @@
-use std::{collections::HashSet, ffi::OsString, os::unix::net::UnixStream, sync::Arc};
+use std::{
+    collections::HashSet,
+    ffi::OsString,
+    os::unix::{net::UnixStream, process::CommandExt},
+    process::{Child, Command},
+    sync::Arc,
+};
 
 use smithay::{
-    backend::input::Keycode,
-    desktop::{PopupManager, Space, Window, WindowSurfaceType},
+    backend::{allocator::dmabuf::Dmabuf, input::Keycode},
+    desktop::{PopupManager, Space, Window, WindowSurfaceType, layer_map_for_output},
     input::{Seat, SeatState},
     reexports::{
         calloop::{EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, generic::Generic},
@@ -15,12 +21,18 @@ use smithay::{
     output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     utils::{Logical, Point},
     wayland::{
-        compositor::{CompositorClientState, CompositorState},
-        fractional_scale::FractionalScaleManagerState,
+        compositor::{
+            CompositorClientState, CompositorState, SurfaceData, get_parent, send_surface_state, with_states,
+        },
+        dmabuf::{DmabufGlobal, DmabufState},
+        fractional_scale::{FractionalScaleManagerState, with_fractional_scale},
         output::OutputManagerState,
         security_context::SecurityContextState,
         selection::data_device::DataDeviceState,
-        shell::{wlr_layer::WlrLayerShellState, xdg::XdgShellState},
+        shell::{
+            wlr_layer::{Layer, WlrLayerShellState},
+            xdg::{XdgShellState, XdgToplevelSurfaceData},
+        },
         shm::ShmState,
         socket::ListeningSocketSource,
         viewporter::ViewporterState,
@@ -53,9 +65,22 @@ pub struct State {
     pub viewporter_state: ViewporterState,
     pub fractional_scale_state: FractionalScaleManagerState,
     pub security_context_state: SecurityContextState,
+    pub dmabuf_state: DmabufState,
+    /// Created by a backend that has a renderer. The tests have none.
+    pub dmabuf_global: Option<DmabufGlobal>,
+    /// How the backend's renderer takes a client's dmabuf.
+    pub dmabuf_import: Option<Box<dyn FnMut(&Dmabuf) -> bool>>,
+    /// A layer surface that asked for the keyboard and has it.
+    pub layer_focus: Option<WlSurface>,
+    /// Commits per window or layer surface, and frames drawn. Evidence only.
+    pub commit_counts: std::collections::BTreeMap<String, u64>,
+    pub frames: u64,
+    pub last_commit_log: std::time::Instant,
 
     pub seat: Seat<Self>,
     pub outputs: Vec<Output>,
+    /// Scales by output name, from the command line.
+    pub output_scales: Vec<(String, f64)>,
     pub windows: Vec<Managed>,
     pub next_window_id: u32,
     /// How many times the compositor took the confirm chord for itself.
@@ -143,8 +168,16 @@ impl State {
             viewporter_state,
             fractional_scale_state,
             security_context_state,
+            dmabuf_state: DmabufState::new(),
+            dmabuf_global: None,
+            dmabuf_import: None,
+            layer_focus: None,
+            commit_counts: Default::default(),
+            frames: 0,
+            last_commit_log: std::time::Instant::now(),
             seat,
             outputs: Vec::new(),
+            output_scales: Vec::new(),
             windows: Vec::new(),
             next_window_id: 0,
             active_workspace: 1,
@@ -207,6 +240,15 @@ impl State {
         Ok(ShellChannels { wayland, control })
     }
 
+    /// The configured scale for an output, or 1.
+    pub fn scale_for(&self, name: &str) -> f64 {
+        self.output_scales
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, scale)| *scale)
+            .unwrap_or(1.0)
+    }
+
     /// Adds an output to the right of the existing ones. Every backend and
     /// the tests create outputs here.
     pub fn add_output(&mut self, name: &str, size: (i32, i32), scale: f64) -> Output {
@@ -244,12 +286,159 @@ impl State {
         output
     }
 
+    /// The surface under a point, in stacking order: overlay and top layers,
+    /// then windows, then bottom and background layers.
     pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
-        self.space.element_under(pos).and_then(|(window, location)| {
-            window
-                .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
-                .map(|(s, p)| (s, (p + location).to_f64()))
-        })
+        let output = self.space.output_under(pos).next()?;
+        let output_loc = self.space.output_geometry(output)?.loc;
+        let layers = layer_map_for_output(output);
+        let on_layers = |kinds: [Layer; 2]| {
+            kinds.into_iter().find_map(|kind| {
+                let layer = layers.layer_under(kind, pos - output_loc.to_f64())?;
+                let layer_loc = layers.layer_geometry(layer)?.loc + output_loc;
+                layer
+                    .surface_under(pos - layer_loc.to_f64(), WindowSurfaceType::ALL)
+                    .map(|(surface, loc)| (surface, (loc + layer_loc).to_f64()))
+            })
+        };
+        on_layers([Layer::Overlay, Layer::Top])
+            .or_else(|| {
+                self.space.element_under(pos).and_then(|(window, location)| {
+                    window
+                        .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
+                        .map(|(s, p)| (s, (p + location).to_f64()))
+                })
+            })
+            .or_else(|| on_layers([Layer::Bottom, Layer::Background]))
+    }
+
+    /// Starts the shell and hands it its two sockets. `WAYLAND_SOCKET` is the
+    /// standard variable a Wayland client reads for an already connected
+    /// socket. `WAYLAND_DISPLAY` names the public socket, for the programs
+    /// the shell starts.
+    pub fn spawn_shell(&mut self, command: &[String]) -> std::io::Result<Child> {
+        use std::os::fd::AsRawFd;
+        let channels = self.connect_shell()?;
+        let (wayland, control) = (channels.wayland.as_raw_fd(), channels.control.as_raw_fd());
+        let mut child = Command::new(&command[0]);
+        child
+            .args(&command[1..])
+            .env("WAYLAND_SOCKET", wayland.to_string())
+            .env("CROWBAR_SHELL_CONTROL_FD", control.to_string())
+            .env("WAYLAND_DISPLAY", &self.socket_name)
+            .env_remove("HYPRLAND_INSTANCE_SIGNATURE");
+        // Safety: only async-signal-safe calls between fork and exec.
+        unsafe {
+            child.pre_exec(move || {
+                for fd in [wayland, control] {
+                    let fd = std::os::fd::BorrowedFd::borrow_raw(fd);
+                    rustix::io::fcntl_setfd(fd, rustix::io::FdFlags::empty())?;
+                }
+                Ok(())
+            });
+        }
+        child.spawn()
+    }
+
+    /// Starts a program as an ordinary client of the public socket.
+    pub fn spawn_ordinary(&self, command: &[String]) -> std::io::Result<Child> {
+        Command::new(&command[0])
+            .args(&command[1..])
+            .env("WAYLAND_DISPLAY", &self.socket_name)
+            .env_remove("WAYLAND_SOCKET")
+            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+            .spawn()
+    }
+
+    /// Tells every surface the scale of the output it is on.
+    pub fn update_surface_scales(&self) {
+        let apply = |surface: &WlSurface, states: &SurfaceData, output: &Output| {
+            let scale = output.current_scale();
+            send_surface_state(surface, states, scale.integer_scale(), output.current_transform());
+            with_fractional_scale(states, |fractional| {
+                fractional.set_preferred_scale(scale.fractional_scale());
+            });
+        };
+        for window in self.space.elements() {
+            if let Some(output) = self.space.outputs_for_element(window).first() {
+                window.with_surfaces(|surface, states| apply(surface, states, output));
+            }
+        }
+        for output in &self.outputs {
+            for layer in layer_map_for_output(output).layers() {
+                layer.with_surfaces(|surface, states| apply(surface, states, output));
+            }
+        }
+    }
+
+    /// Sends frame callbacks to everything shown on an output.
+    pub fn send_frames(&self, output: &Output) {
+        let time = self.start_time.elapsed();
+        let throttle = Some(std::time::Duration::ZERO);
+        for window in self.space.elements() {
+            window.send_frame(output, time, throttle, |_, _| Some(output.clone()));
+        }
+        for layer in layer_map_for_output(output).layers() {
+            layer.send_frame(output, time, throttle, |_, _| Some(output.clone()));
+        }
+    }
+
+    /// Counts a commit against the window or layer surface it belongs to.
+    /// The counts are logged, so a client that stops drawing shows up.
+    pub fn count_commit(&mut self, surface: &WlSurface) {
+        let mut root = surface.clone();
+        while let Some(parent) = get_parent(&root) {
+            root = parent;
+        }
+        let label = if let Some(managed) = self.managed(&root) {
+            let app_id = managed
+                .window
+                .toplevel()
+                .and_then(|t| {
+                    with_states(t.wl_surface(), |states| {
+                        states
+                            .data_map
+                            .get::<XdgToplevelSurfaceData>()
+                            .and_then(|data| data.lock().unwrap().app_id.clone())
+                    })
+                })
+                .unwrap_or_default();
+            format!("window {:#x} {app_id}", managed.id)
+        } else if let Some(namespace) = self.outputs.iter().find_map(|output| {
+            layer_map_for_output(output)
+                .layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)
+                .map(|layer| layer.namespace().to_owned())
+        }) {
+            format!("layer {namespace}")
+        } else {
+            return;
+        };
+        *self.commit_counts.entry(label).or_insert(0) += 1;
+    }
+
+    /// Logs the commit counts every few seconds.
+    pub fn log_commit_counts(&mut self) {
+        if self.last_commit_log.elapsed() < std::time::Duration::from_secs(5) {
+            return;
+        }
+        self.last_commit_log = std::time::Instant::now();
+        let mut counts: Vec<_> = self.commit_counts.iter().collect();
+        counts.sort();
+        let text: Vec<String> = counts.iter().map(|(label, n)| format!("{label}: {n}")).collect();
+        tracing::info!(frames = self.frames, "commits so far: {}", text.join(", "));
+    }
+
+    /// Housekeeping after a frame.
+    pub fn after_frame(&mut self) {
+        self.space.refresh();
+        self.popups.cleanup();
+        for output in &self.outputs {
+            layer_map_for_output(output).cleanup();
+        }
+        self.update_surface_scales();
+        self.frames += 1;
+        self.log_commit_counts();
+        let _ = self.display_handle.flush_clients();
     }
 }
 

@@ -2,10 +2,12 @@ use smithay::{
     desktop::{LayerSurface, WindowSurfaceType, layer_map_for_output},
     output::Output,
     reexports::wayland_server::protocol::{wl_output::WlOutput, wl_surface::WlSurface},
+    utils::SERIAL_COUNTER,
     wayland::{
         compositor::with_states,
         shell::wlr_layer::{
-            Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState,
+            KeyboardInteractivity, Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData,
+            WlrLayerShellHandler, WlrLayerShellState,
         },
     },
 };
@@ -43,6 +45,42 @@ impl WlrLayerShellHandler for State {
                 map.unmap_layer(&layer);
             }
         }
+        self.refresh_layer_focus();
+    }
+}
+
+impl State {
+    /// A top or overlay layer surface that asks for the keyboard exclusively
+    /// gets it. When the last one goes, the active window gets it back.
+    pub fn refresh_layer_focus(&mut self) {
+        let wanted = self.outputs.iter().find_map(|output| {
+            let map = layer_map_for_output(output);
+            map.layers()
+                .rev()
+                .find(|layer| {
+                    matches!(layer.layer(), Layer::Overlay | Layer::Top)
+                        && layer.cached_state().keyboard_interactivity == KeyboardInteractivity::Exclusive
+                })
+                .map(|layer| layer.wl_surface().clone())
+        });
+        if wanted == self.layer_focus {
+            return;
+        }
+        self.layer_focus = wanted.clone();
+        match wanted {
+            Some(surface) => {
+                let keyboard = self.seat.get_keyboard().unwrap();
+                keyboard.set_focus(self, Some(surface), SERIAL_COUNTER.next_serial());
+            }
+            None => {
+                let active = self
+                    .windows
+                    .iter()
+                    .find(|m| Some(m.id) == self.active_window)
+                    .map(|m| m.window.clone());
+                self.focus_window(active.as_ref());
+            }
+        }
     }
 }
 
@@ -76,4 +114,6 @@ pub fn handle_commit(state: &mut State, surface: &WlSurface) {
     {
         layer.layer_surface().send_configure();
     }
+    drop(map);
+    state.refresh_layer_focus();
 }
