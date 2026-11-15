@@ -17,6 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Workspace {
     pub id: i32,
 }
@@ -42,6 +43,74 @@ pub enum Event {
     Snapshot(Snapshot),
     Launch(Result<(), String>),
 }
+/// What the shell asks of the compositor it runs under: the windows and
+/// workspaces, and the two focus requests.
+pub trait Adapter: Send + Sync {
+    fn snapshot(&self) -> Result<Snapshot>;
+    fn focus_workspace(&self, id: i32) -> Result<()>;
+    fn focus_window(&self, address: &str) -> Result<()>;
+}
+
+/// The Hyprland socket. The Fedora lab runs the shell under Hyprland, which
+/// hands over no control channel, so the shell falls back to this there.
+pub struct Hyprland {
+    socket: PathBuf,
+}
+
+impl Hyprland {
+    /// Where the running Hyprland session listens, from its environment.
+    fn socket_path() -> Result<PathBuf> {
+        let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
+            .context("No Hyprland session signature")?;
+        if sig.contains('/') || sig.contains("..") {
+            bail!("Invalid Hyprland signature")
+        }
+        Ok(
+            PathBuf::from(
+                std::env::var_os("XDG_RUNTIME_DIR").context("Missing runtime directory")?,
+            )
+            .join("hypr")
+            .join(sig)
+            .join(".socket.sock"),
+        )
+    }
+
+    fn request(&self, command: &str) -> Result<String> {
+        let mut s = UnixStream::connect(&self.socket)?;
+        s.set_read_timeout(Some(Duration::from_millis(500)))?;
+        s.set_write_timeout(Some(Duration::from_millis(500)))?;
+        s.write_all(command.as_bytes())?;
+        let mut out = String::new();
+        s.take(4 * 1024 * 1024).read_to_string(&mut out)?;
+        Ok(out)
+    }
+}
+
+impl Adapter for Hyprland {
+    fn snapshot(&self) -> Result<Snapshot> {
+        Ok(Snapshot {
+            workspace: serde_json::from_str::<Workspace>(&self.request("j/activeworkspace")?)?.id,
+            clients: serde_json::from_str(&self.request("j/clients")?)?,
+            active: serde_json::from_str(&self.request("j/activewindow")?)?,
+            connected: true,
+        })
+    }
+
+    fn focus_workspace(&self, id: i32) -> Result<()> {
+        self.request(&format!(
+            "/eval hl.dispatch(hl.dsp.focus({{workspace=\"{id}\"}}))"
+        ))
+        .map(drop)
+    }
+
+    fn focus_window(&self, address: &str) -> Result<()> {
+        self.request(&format!(
+            "/eval hl.dispatch(hl.dsp.focus({{window=\"address:{address}\"}}))"
+        ))
+        .map(drop)
+    }
+}
+
 /// The shell's end of the compositor's control channel.
 ///
 /// The CrowbarOS compositor starts the shell and hands it a connected socket
@@ -63,11 +132,11 @@ impl Compositor {
         })
     }
 
-    /// Adopts the socket the compositor handed over. The descriptor is made
-    /// close-on-exec, so the programs the shell starts do not inherit it.
-    fn inherited() -> Result<Self> {
-        let fd: RawFd = std::env::var("CROWBAR_SHELL_CONTROL_FD")
-            .context("No compositor control channel")?
+    /// Adopts the socket the compositor handed over, named by the value of
+    /// `CROWBAR_SHELL_CONTROL_FD`. The descriptor is made close-on-exec, so
+    /// the programs the shell starts do not inherit it.
+    fn inherited(descriptor: &str) -> Result<Self> {
+        let fd: RawFd = descriptor
             .parse()
             .context("Invalid compositor control channel")?;
         // Safety: the compositor passed this descriptor to this process for
@@ -123,8 +192,10 @@ impl Compositor {
             bail!("Unexpected message from the compositor")
         }
     }
+}
 
-    pub fn snapshot(&self) -> Result<Snapshot> {
+impl Adapter for Compositor {
+    fn snapshot(&self) -> Result<Snapshot> {
         #[derive(Deserialize)]
         struct Window {
             id: String,
@@ -138,7 +209,8 @@ impl Compositor {
             active: Option<String>,
             windows: Vec<Window>,
         }
-        let reply: Reply = serde_json::from_value(self.request(serde_json::json!({"op": "snapshot"}))?)?;
+        let reply: Reply =
+            serde_json::from_value(self.request(serde_json::json!({"op": "snapshot"}))?)?;
         let clients: Vec<Client> = reply
             .windows
             .into_iter()
@@ -162,31 +234,52 @@ impl Compositor {
         })
     }
 
-    pub fn focus_workspace(&self, id: i32) -> Result<()> {
+    fn focus_workspace(&self, id: i32) -> Result<()> {
         self.request(serde_json::json!({"op": "focus_workspace", "id": id}))
             .map(drop)
     }
 
-    pub fn focus_window(&self, address: &str) -> Result<()> {
+    fn focus_window(&self, address: &str) -> Result<()> {
         self.request(serde_json::json!({"op": "focus_window", "id": address}))
             .map(drop)
     }
 }
 
-fn connection() -> Result<&'static Compositor> {
-    static CONNECTION: OnceLock<Option<Compositor>> = OnceLock::new();
-    CONNECTION
-        .get_or_init(|| {
-            Compositor::inherited()
-                .inspect_err(|e| log::warn!("Compositor: {e}"))
-                .ok()
-        })
-        .as_ref()
-        .context("No compositor control channel")
+/// Picks the adapter for the compositor the shell runs under.
+///
+/// A control channel means the CrowbarOS compositor started the shell, and
+/// only that channel is used: if it is unusable, the shell does not fall back
+/// to Hyprland. With no control channel, the shell uses the Hyprland socket.
+fn adapter_for(
+    control_descriptor: Option<String>,
+    hyprland_socket: Result<PathBuf>,
+) -> Result<Box<dyn Adapter>> {
+    match control_descriptor {
+        Some(descriptor) => Ok(Box::new(Compositor::inherited(&descriptor)?)),
+        None => Ok(Box::new(Hyprland {
+            socket: hyprland_socket.context("No compositor control channel")?,
+        })),
+    }
 }
 
-/// Adopts the compositor's control channel. Call before starting any thread
-/// or program, so that no child inherits the descriptor.
+fn connection() -> Result<&'static dyn Adapter> {
+    static CONNECTION: OnceLock<Option<Box<dyn Adapter>>> = OnceLock::new();
+    CONNECTION
+        .get_or_init(|| {
+            adapter_for(
+                std::env::var("CROWBAR_SHELL_CONTROL_FD").ok(),
+                Hyprland::socket_path(),
+            )
+            .inspect_err(|e| log::warn!("Compositor: {e}"))
+            .ok()
+        })
+        .as_deref()
+        .context("No compositor to talk to")
+}
+
+/// Picks the compositor adapter and, under the CrowbarOS compositor, adopts
+/// its control channel. Call before starting any thread or program, so that
+/// no child inherits the descriptor.
 pub fn connect() {
     let _ = connection();
 }
@@ -390,7 +483,10 @@ mod tests {
     fn focus_requests_use_the_compositors_wire_format() {
         let (compositor, peer) = scripted(vec![
             (r#"{"id":3,"op":"focus_workspace"}"#, "{\"reply\":\"ok\"}\n"),
-            (r#"{"id":"0x1f","op":"focus_window"}"#, "{\"reply\":\"ok\"}\n"),
+            (
+                r#"{"id":"0x1f","op":"focus_window"}"#,
+                "{\"reply\":\"ok\"}\n",
+            ),
         ]);
 
         compositor.focus_workspace(3).unwrap();
@@ -422,6 +518,163 @@ mod tests {
 
         assert!(error.to_string().contains("no such window"), "{error}");
         peer.join().unwrap();
+    }
+
+    #[test]
+    fn a_control_channel_descriptor_is_adopted_and_used() {
+        use std::os::fd::IntoRawFd;
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let peer = std::thread::spawn(move || {
+            let mut reader = BufReader::new(theirs.try_clone().unwrap());
+            let mut writer = theirs;
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let sent: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(sent, serde_json::json!({"op": "focus_workspace", "id": 2}));
+            writer.write_all(b"{\"reply\":\"ok\"}\n").unwrap();
+        });
+        let descriptor = ours.into_raw_fd().to_string();
+
+        let adapter = adapter_for(
+            Some(descriptor),
+            Err(anyhow::anyhow!("No Hyprland session signature")),
+        )
+        .unwrap();
+        adapter.focus_workspace(2).unwrap();
+
+        peer.join().unwrap();
+    }
+
+    /// Plays Hyprland: each connection carries one command and gets one
+    /// reply, then closes.
+    fn scripted_hyprland(script: Vec<(&'static str, &'static str)>) -> (PathBuf, JoinHandle<()>) {
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "crowbaros-shell-test-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hyprland.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let peer = std::thread::spawn(move || {
+            for (expected, reply) in script {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut bytes = [0u8; 256];
+                let n = stream.read(&mut bytes).unwrap();
+                assert_eq!(std::str::from_utf8(&bytes[..n]).unwrap(), expected);
+                stream.write_all(reply.as_bytes()).unwrap();
+            }
+            let _ = fs::remove_dir_all(dir);
+        });
+        (path, peer)
+    }
+
+    #[test]
+    fn without_a_control_channel_the_shell_reads_its_snapshot_from_hyprland() {
+        let (socket, peer) = scripted_hyprland(vec![
+            ("j/activeworkspace", r#"{"id":2,"name":"2"}"#),
+            (
+                "j/clients",
+                r#"[{"address":"0x1","class":"org.example.Terminal","title":"Terminal","workspace":{"id":1,"name":"1"}}]"#,
+            ),
+            (
+                "j/activewindow",
+                r#"{"address":"0x1","class":"org.example.Terminal","title":"Terminal","workspace":{"id":1,"name":"1"}}"#,
+            ),
+        ]);
+
+        let adapter = adapter_for(None, Ok(socket)).unwrap();
+        let snapshot = adapter.snapshot().unwrap();
+
+        let terminal = Client {
+            address: "0x1".into(),
+            class: "org.example.Terminal".into(),
+            title: "Terminal".into(),
+            workspace: Workspace { id: 1 },
+        };
+        assert_eq!(
+            snapshot,
+            Snapshot {
+                workspace: 2,
+                clients: vec![terminal.clone()],
+                active: terminal,
+                connected: true,
+            }
+        );
+        peer.join().unwrap();
+    }
+
+    /// Hyprland 0.57.2 was seen to list a window whose workspace has no `id`.
+    #[test]
+    fn a_hyprland_window_whose_workspace_has_no_id_does_not_lose_the_snapshot() {
+        let (socket, peer) = scripted_hyprland(vec![
+            ("j/activeworkspace", r#"{"id":1,"name":"1"}"#),
+            (
+                "j/clients",
+                concat!(
+                    r#"[{"address":"0x1","class":"org.example.Terminal","title":"Terminal","workspace":{"id":1,"name":"1"}},"#,
+                    r#"{"address":"0x2","class":"org.example.Notes","title":"Notes","workspace":{"address":"0x0","type":"special","name":"notes"}}]"#
+                ),
+            ),
+            (
+                "j/activewindow",
+                r#"{"address":"0x1","class":"org.example.Terminal","title":"Terminal","workspace":{"id":1,"name":"1"}}"#,
+            ),
+        ]);
+
+        let snapshot = adapter_for(None, Ok(socket)).unwrap().snapshot().unwrap();
+
+        assert_eq!(snapshot.workspace, 1);
+        assert_eq!(
+            snapshot.clients,
+            vec![
+                Client {
+                    address: "0x1".into(),
+                    class: "org.example.Terminal".into(),
+                    title: "Terminal".into(),
+                    workspace: Workspace { id: 1 },
+                },
+                Client {
+                    address: "0x2".into(),
+                    class: "org.example.Notes".into(),
+                    title: "Notes".into(),
+                    workspace: Workspace { id: 0 },
+                },
+            ]
+        );
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn without_a_control_channel_focus_requests_go_to_hyprland() {
+        let (socket, peer) = scripted_hyprland(vec![
+            (r#"/eval hl.dispatch(hl.dsp.focus({workspace="3"}))"#, "ok"),
+            (
+                r#"/eval hl.dispatch(hl.dsp.focus({window="address:0x1f"}))"#,
+                "ok",
+            ),
+        ]);
+
+        let adapter = adapter_for(None, Ok(socket)).unwrap();
+        adapter.focus_workspace(3).unwrap();
+        adapter.focus_window("0x1f").unwrap();
+
+        peer.join().unwrap();
+    }
+
+    /// A compositor that handed over a channel is the one to talk to. If the
+    /// channel is unusable, the shell must not quietly talk to something else.
+    #[test]
+    fn a_broken_control_channel_does_not_fall_back_to_hyprland() {
+        let (socket, _peer) = scripted_hyprland(vec![]);
+
+        assert!(adapter_for(Some("not-a-descriptor".into()), Ok(socket)).is_err());
+    }
+
+    #[test]
+    fn with_neither_a_control_channel_nor_hyprland_there_is_no_adapter() {
+        assert!(adapter_for(None, Err(anyhow::anyhow!("No Hyprland session signature"))).is_err());
     }
 
     /// Requests carry no id, so a reply that arrives after the shell stopped

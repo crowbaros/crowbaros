@@ -15,6 +15,7 @@
 # installed on the host: the shell runs in a private mount namespace where the
 # repository's assets sit at that path.
 set -euo pipefail
+: "${WAYLAND_DISPLAY:?set WAYLAND_DISPLAY to the Wayland session to nest in}"
 
 here=$(cd "$(dirname "$0")/.." && pwd)
 root=$(cd "$here/.." && pwd)

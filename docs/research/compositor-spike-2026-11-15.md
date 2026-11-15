@@ -193,6 +193,9 @@ Hyprland wiring does not carry over, and the issue says the spike need not
 merge. If the Fedora lab must keep a working shell for interface work, leave
 `apps/shell` out of what merges.
 
+*Decided later the same day: the shell keeps a Hyprland adapter. See
+[After the record](#after-the-record).*
+
 ## It enforces ADR 0014
 
 ### How the compositor tells the shell apart
@@ -568,6 +571,57 @@ On the host used here, two things were not installed and were not installed
 for the run: `wayland-info` and QEMU's virtio-gpu modules. Both were taken
 from the distribution's signed packages, unpacked into a cache directory, and
 used from there (`QEMU_MODULE_DIR` for QEMU).
+
+## After the record
+
+Added on 2026-11-15, after Jim read the record. The text above is as it was
+written.
+
+**The shell keeps a Hyprland adapter.** Jim decided the Fedora lab must keep a
+working shell. `apps/shell/src/session.rs` now picks one of two adapters when
+the shell starts:
+
+| The shell was started | It talks to |
+| --- | --- |
+| With `CROWBAR_SHELL_CONTROL_FD` set | The control channel, and nothing else. If the descriptor is unusable, the shell does not fall back to Hyprland |
+| Without it | The Hyprland socket, with the same five calls the shell made before the spike |
+
+So the consequence named under [the control channel](#the-control-channel) no
+longer holds, and the statement under [Not run](#not-run) that the change
+removes the shell's Hyprland calls is no longer true.
+
+**Run:**
+
+- Six new tests in `apps/shell/src/session.rs`. `apps/shell` now has 14, and
+  they pass. Five were written before their code: the snapshot against a
+  scripted Hyprland socket; the two focus requests against it; a broken
+  control channel does not fall back; neither a control channel nor Hyprland
+  gives no adapter; and the missing `id` below. The sixth, that a control
+  channel descriptor is adopted and used, was written after its code.
+- The three snapshot queries, once, read-only, against the host's Hyprland
+  0.57.2 through the new adapter. The first try failed with "missing field
+  `id`": that Hyprland lists a window whose workspace object has no `id`, and
+  one such window lost the whole snapshot. The code on `main` has the same
+  defect. A test that fails without the fix was added, and the fix is one
+  `#[serde(default)]`. The second try returned seven windows and the active
+  one.
+- [The nested check again](evidence/compositor-spike-2026-11-15/nested-apps-after-fallback.log),
+  with the rebuilt shell and the same compositor binary: pass, and the bar
+  showed workspace 1 and "Studio Settings", so the control channel is still
+  the one in use under our compositor.
+
+**Not run:**
+
+- The shell itself under Hyprland. It was not started on the host's session,
+  because it would put a bar, a dock, and a wallpaper on a desktop in use.
+- The two focus requests against a real Hyprland. They would have moved focus
+  on a desktop in use, and whether Hyprland 0.57.2 accepts the `/eval
+  hl.dispatch(…)` form the shell sends is not known.
+- The Fedora lab. No lab VM exists on this machine.
+
+**Also changed:** both nested checks now stop with a message when
+`WAYLAND_DISPLAY` is not set. Before, `nested-apps.sh` printed its header and
+stopped without one.
 
 ---
 

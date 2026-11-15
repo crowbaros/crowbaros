@@ -5,10 +5,11 @@
 > wiring do not. It is built and run only in the [Fedora lab](../../lab/fedora/README.md),
 > which is kept for interface work. See [what carries over](../README.md).
 >
-> **Compositor.** `src/session.rs` now talks to the CrowbarOS compositor's
-> control channel ([`compositor/src/control.rs`](../../compositor/src/control.rs)),
-> not to the Hyprland socket. Under Hyprland the bar shows "Connecting to the
-> compositor…" and the workspace and focus buttons do nothing. See the
+> **Compositor.** `src/session.rs` has two adapters. When the CrowbarOS
+> compositor starts the shell, it hands over a control channel
+> ([`compositor/src/control.rs`](../../compositor/src/control.rs)) and the shell
+> uses only that. With no control channel, as in the Fedora lab, the shell uses
+> the Hyprland socket as before. See the
 > [spike record](../../docs/research/compositor-spike-2026-11-15.md).
 
 The first Rust/GPUI desktop slice: a live workspace bar, a persistent dock,

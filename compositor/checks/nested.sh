@@ -10,6 +10,7 @@
 #
 # The log goes to .lab/compositor/ in the repository root, outside git.
 set -euo pipefail
+: "${WAYLAND_DISPLAY:?set WAYLAND_DISPLAY to the Wayland session to nest in}"
 
 here=$(cd "$(dirname "$0")/.." && pwd)
 root=$(cd "$here/.." && pwd)
