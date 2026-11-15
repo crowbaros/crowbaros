@@ -10,6 +10,10 @@ nothing. Decisions go into ADRs.
 models. Each claim below is from that record or its "Council review" section
 unless it names another source.
 
+**Revised:** November 15, 2026. The session no longer produces a cost
+estimate. ADR 0015 no longer reopens on cost: we build this compositor
+whatever it costs.
+
 **Read first:** [ADR 0014](../adr/0014-a-yes-comes-from-the-person.md) (the
 rules), [ADR 0015](../adr/0015-our-own-compositor-on-smithay.md) (the
 decision), and the [compositor research](compositor-smithay.md) (what Smithay
@@ -17,14 +21,13 @@ gives and does not give).
 
 ## Where ADR 0015 stands
 
-It stands provisionally. These are its four conditions for reopening:
+It stands provisionally. These are its three conditions for reopening:
 
 | Condition | Status |
 | --- | --- |
 | The shell's layer surfaces or GPUI's rendering cannot be made to work | Not met nested, on NVIDIA. **Not tested on DRM with a GPU.** [Issue 5](https://github.com/crowbaros/crowbaros/issues/5) |
 | A client can still receive the confirm key, or see a protocol it should not | Not met in what was tested. Two leaks of the key were found and closed |
 | The compositor cannot run on a Void guest without systemd | Not met. It runs |
-| The cost is beyond two people alongside Milestones 2 to 4 | **Not answered.** The spike measured an agent's hours, which says nothing about this |
 
 The session should not plan past the first row before issue 5 has run. It is
 the only run that can still reopen the decision on hardware.
@@ -58,7 +61,6 @@ not build on it.
 - **A GPU drawing through this compositor.** No such frame has reached a
   display. Issue 5 covers NVIDIA through DRM, Void's `nvidia` package, explicit
   sync, the GPUI apps on that session, and suspend and resume.
-- **Cost.** There is no estimate of the real compositor.
 - **A program started from the shell.** The shell's sockets cannot be
   inherited, but no program was launched to see it arrive as an ordinary
   client. On Base it would not start at all: the shell launches through
@@ -178,7 +180,7 @@ build it as a trusted part, or leave it out on purpose and say so.
 ### 6. The desktop's scope
 
 **The question.** What is the smallest desktop the first real compositor
-supports? This bounds the cost more than anything else.
+supports? This bounds the work more than anything else.
 
 **What the spike showed.** Nine workspaces, floating windows, maximize, two
 outputs at different scales, and one hotplug. Nothing else.
@@ -202,16 +204,14 @@ that were on Smithay's `master` only days before the spike. The spike pins one
 commit.
 
 **To decide:** how often the pin moves, and who fixes what a bump breaks.
-Measure one bump before estimating.
+Measure one bump before deciding.
 
-### 9. Cost and order
+### 9. Order
 
 **To decide, last:**
 
 - A list of what the first compositor must have and what it leaves out on
   purpose, from decisions 3 to 7.
-- An estimate against that list. niri's and cosmic-comp's histories are the
-  nearest comparison.
 - Where the work sits among Milestones 2 to 4. The vision puts the shell and
   the confirm gesture in Milestone 4, and the process model in Milestone 2.
 - The first slices. The reviewers' advice was security first, each with tests
@@ -224,7 +224,7 @@ Measure one bump before estimating.
 2. An ADR for the control interface and the confirm (decision 2).
 3. A scope for the first compositor: what it has, and what it leaves out on
    purpose (decisions 3 to 7).
-4. An estimate, and the compositor's place among the milestones (decision 9).
+4. The compositor's place among the milestones (decision 9).
 5. Issues for the first slices.
 
 ---
