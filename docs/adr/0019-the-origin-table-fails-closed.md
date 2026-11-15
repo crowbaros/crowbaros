@@ -17,7 +17,7 @@
 ## Labels and marks only rise
 
 - **A compartment whose label was fixed at start refuses more.** A native sandbox is fixed at the join of its view, and a workbench is also always marked. A value above that, offered later, is refused with a refusal that names the rule. The compartment does not rise, and it is not restarted.
-- **A write joins with what is stored.** A writer that never read the old object still cannot clear its mark. A Tool re-derived from its intent and checks writes its source as a new object, and the old source stays marked in history.
+- **A write joins with what is stored.** A writer that never read the old object still cannot clear its mark. An object with no record may have been on disk before records were kept, so a write to it joins with the unknown row. Only a new object starts at the label and mark of what wrote it, and only the broker, which knows the object is new, records it so. A Tool re-derived from its intent and checks writes its source as a new object, and the old source stays marked in history.
 - **A stored record names both its label and its mark.** Loading refuses a record that is missing either, that names a field, category, or source the code does not know, or that names one object twice. A missing field is never read as public or unmarked.
 
 ## Considered Options
