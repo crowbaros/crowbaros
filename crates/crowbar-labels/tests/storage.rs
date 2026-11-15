@@ -35,7 +35,7 @@ fn a_write_joins_with_what_is_already_stored() {
 
     // (name, writers in order, stored label, stored mark sources)
     let cases = [
-        ("one clean write", vec![&typed], Label::Personal, BTreeSet::new()),
+        ("one unmarked write", vec![&typed], Label::Personal, BTreeSet::new()),
         (
             "a marked write",
             vec![&page],
@@ -43,7 +43,7 @@ fn a_write_joins_with_what_is_already_stored() {
             BTreeSet::from([MarkSource::Site(news())]),
         ),
         (
-            "a clean writer overwrites a marked object",
+            "an unmarked writer overwrites a marked object",
             vec![&page, &typed],
             Label::Personal,
             BTreeSet::from([MarkSource::Site(news())]),
@@ -151,7 +151,7 @@ fn a_record_that_would_load_lower_than_it_was_written_is_refused() {
         ),
         ("a label it does not know", r#"{"a": {"label": "cleared", "mark": []}}"#),
         (
-            "the same object twice, the second clean",
+            "the same object twice, the second unmarked",
             r#"{"a": {"label": "public", "mark": ["unknown"]}, "a": {"label": "public", "mark": []}}"#,
         ),
     ];

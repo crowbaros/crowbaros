@@ -82,7 +82,7 @@ fn every_origin_gets_its_label_and_mark_from_the_table() {
         (
             "file from outside",
             Origin::File(FileOrigin::FromOutside),
-            private(Category::Unclassified),
+            private(Category::Unknown),
             sources([S::Outside]),
         ),
         // ADR 0011: admitted input does not mark.
@@ -120,7 +120,7 @@ fn every_origin_gets_its_label_and_mark_from_the_table() {
         (
             "paste with no recorded source",
             Origin::Pasted { copied_from: None },
-            private(Category::Unclassified),
+            private(Category::Unknown),
             sources([S::Paste]),
         ),
         // Marks persist in storage: a stored result keeps what it was stored with.
@@ -134,7 +134,7 @@ fn every_origin_gets_its_label_and_mark_from_the_table() {
         (
             "unknown origin",
             Origin::Unknown,
-            private(Category::Unclassified),
+            private(Category::Unknown),
             sources([S::Unknown]),
         ),
     ];

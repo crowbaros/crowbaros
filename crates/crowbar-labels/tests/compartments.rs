@@ -76,7 +76,7 @@ fn a_compartment_is_at_the_join_of_everything_it_has_read() {
             BTreeSet::from([MarkSource::Mail(me()), MarkSource::Site(bank())]),
         ),
         (
-            "a marked page, then only clean input",
+            "a marked page, then only unmarked input",
             vec![news_page, Origin::Typed, package.clone(), Origin::Template, package],
             Label::Personal,
             BTreeSet::from([MarkSource::Site(news())]),
@@ -110,15 +110,15 @@ fn a_compartment_started_by_another_runs_at_its_label_and_mark() {
             login: false,
         },
     ]);
-    let clean = reading(&[Origin::Typed]);
+    let unmarked = reading(&[Origin::Typed]);
 
     // ADR 0008: a standing task started from a marked context runs marked.
     let child = Compartment::started_by(&marked);
     assert_eq!(child.label_mark(), marked.label_mark());
-    assert_eq!(Compartment::started_by(&clean).label_mark(), clean.label_mark());
+    assert_eq!(Compartment::started_by(&unmarked).label_mark(), unmarked.label_mark());
 
     // A new start that nothing marked started, and that has read nothing,
-    // starts clean. Ending the marked one does not change that.
+    // starts public and unmarked. Ending the marked one does not change that.
     drop(marked);
     let next = Compartment::fresh();
     assert!(!next.label_mark().mark().is_marked());

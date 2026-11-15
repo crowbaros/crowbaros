@@ -19,14 +19,14 @@ use crate::mark::{LabelMark, MailAccount, Mark, MarkSource};
 /// | A page from `bank.example`, under a login | `private: site bank.example` | `marked: site bank.example` |
 /// | A file downloaded from `news.example` | `public` | `marked: site news.example` |
 /// | A file saved from an attachment in `me@mail.example` | `private: messages` | `marked: mail me@mail.example` |
-/// | A file from outside the fleet, by any other way | `private: unclassified` | `marked: outside` |
+/// | A file from outside the fleet, by any other way | `private: unknown` | `marked: outside` |
 /// | The Base package snapshot | `public` | `none` |
 /// | The dependency set for build tasks | `public` | `none` |
 /// | A paste of a note the person typed | `personal` | `none` |
 /// | A paste from a page of `bank.example`, under a login | `private: site bank.example` | `marked: site bank.example` |
-/// | A paste whose source was not recorded | `private: unclassified` | `marked: paste` |
+/// | A paste whose source was not recorded | `private: unknown` | `marked: paste` |
 /// | A stored result | as it was stored | as it was stored |
-/// | Anything else | `private: unclassified` | `marked: unknown` |
+/// | Anything else | `private: unknown` | `marked: unknown` |
 ///
 /// The rules behind the rows:
 ///
@@ -45,7 +45,7 @@ use crate::mark::{LabelMark, MailAccount, Mark, MarkSource};
 ///   more. A paste whose source was not recorded fails closed, marked as a
 ///   paste.
 /// - **Where no rule gives a label, the row fails closed** (ADR 0019): private,
-///   in the `unclassified` category, which no party is cleared for unless the
+///   in the `unknown` category, which no party is cleared for unless the
 ///   person names it, and marked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Origin {
@@ -109,18 +109,18 @@ impl Origin {
                 };
                 LabelMark::new(label, Mark::from_source(MarkSource::Site(site.clone())))
             }
-            Origin::File(FileOrigin::FromOutside) => unclassified(MarkSource::Outside),
+            Origin::File(FileOrigin::FromOutside) => fail_closed(MarkSource::Outside),
             Origin::Pasted {
                 copied_from: Some(source),
             } => source.clone(),
-            Origin::Pasted { copied_from: None } => unclassified(MarkSource::Paste),
+            Origin::Pasted { copied_from: None } => fail_closed(MarkSource::Paste),
             Origin::Stored(stored) => stored.clone(),
-            Origin::Unknown => unclassified(MarkSource::Unknown),
+            Origin::Unknown => fail_closed(MarkSource::Unknown),
         }
     }
 }
 
-/// The fail-closed row: private, unclassified, and marked.
-fn unclassified(source: MarkSource) -> LabelMark {
-    LabelMark::new(Label::private(Category::Unclassified), Mark::from_source(source))
+/// The fail-closed row: private, in the unknown category, and marked.
+fn fail_closed(source: MarkSource) -> LabelMark {
+    LabelMark::new(Label::private(Category::Unknown), Mark::from_source(source))
 }

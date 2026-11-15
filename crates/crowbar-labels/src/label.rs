@@ -37,7 +37,7 @@ impl From<Site> for String {
 ///
 /// Messages, health, and finance are the categories the vision names. A page
 /// fetched under a login is private to that site (ADR 0008), so a site is a
-/// category too. `Unclassified` is what the origin table gives data whose
+/// category too. `Unknown` is what the origin table gives data whose
 /// origin it does not know; no party is cleared for it unless the person names
 /// it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -47,7 +47,7 @@ pub enum Category {
     Health,
     Finance,
     Site(Site),
-    Unclassified,
+    Unknown,
 }
 
 /// How private a piece of data is: public, personal, or private, in that
@@ -134,7 +134,7 @@ impl fmt::Display for Category {
             Category::Health => f.write_str("health"),
             Category::Finance => f.write_str("finance"),
             Category::Site(site) => write!(f, "site {}", site.host()),
-            Category::Unclassified => f.write_str("unclassified"),
+            Category::Unknown => f.write_str("unknown"),
         }
     }
 }

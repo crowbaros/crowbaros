@@ -110,7 +110,7 @@ impl LabelMark {
 
     /// What a compartment holds before it has read anything: public, and
     /// unmarked.
-    pub(crate) fn clean() -> Self {
+    pub(crate) fn public_unmarked() -> Self {
         LabelMark::new(Label::Public, Mark::none())
     }
 
