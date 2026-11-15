@@ -252,10 +252,28 @@ impl State {
 
     fn tty_connect(&mut self, connector: connector::Info, crtc: crtc::Handle) {
         let name = connector_name(&connector);
-        let Some(mode) = connector
-            .modes()
+        let asked = self
+            .output_modes
             .iter()
-            .find(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
+            .find(|(n, _)| *n == name)
+            .map(|(_, size)| *size);
+        if asked.is_some_and(|size| !connector.modes().iter().any(|mode| mode.size() == size)) {
+            warn!(%name, ?asked, "tty: the monitor does not offer the mode asked for; using its preferred one");
+        }
+        let Some(mode) = asked
+            .and_then(|size| {
+                connector
+                    .modes()
+                    .iter()
+                    .filter(|mode| mode.size() == size)
+                    .max_by_key(|mode| mode.vrefresh())
+            })
+            .or_else(|| {
+                connector
+                    .modes()
+                    .iter()
+                    .find(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
+            })
             .or_else(|| connector.modes().first())
             .copied()
         else {

@@ -82,6 +82,8 @@ pub struct State {
     pub tty: Option<crate::tty::Tty>,
     /// Scales by output name, from the command line.
     pub output_scales: Vec<(String, f64)>,
+    /// Modes asked for with --mode, by output name.
+    pub output_modes: Vec<(String, (u16, u16))>,
     pub windows: Vec<Managed>,
     pub next_window_id: u32,
     pub active_workspace: u32,
@@ -182,6 +184,7 @@ impl State {
             output_globals: Vec::new(),
             tty: None,
             output_scales: Vec::new(),
+            output_modes: Vec::new(),
             windows: Vec::new(),
             next_window_id: 0,
             active_workspace: 1,
