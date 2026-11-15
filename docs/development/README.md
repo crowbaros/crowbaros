@@ -1,23 +1,24 @@
-# Interface development: the GPUI lab and its records
+# Interface development on Void
 
-Current Void acceptance: [integrated desktop smoke](void-desktop-smoke-2026-11-15.md), including the Alpha session and Settings Save. The earlier records below remain historical evidence.
+Use the [Void development guide](local-vms.md) for current build/run commands
+and the fresh-guest [desktop smoke check](../../lab/void/README.md#full-desktop-smoke-check).
+The [Fedora workflow](../archive/fedora-workflow/README.md) is archived.
 
-These pages cover building, running, and validating the GPUI apps in
-[`apps/`](../../apps/README.md). All of it runs in the
-[Fedora lab](../../lab/fedora/README.md), which is kept for interface work only
-and will be removed when the Void lab has a graphical guest. CrowbarOS itself is
-no longer built on Fedora: see the [vision](../VISION.md).
+| Page | Purpose |
+| --- | --- |
+| [local-vms.md](local-vms.md) | Current Void environments, direct Cargo builds, and remaining integration tasks |
+| [gpu-vulkan.md](gpu-vulkan.md) | Graphics evidence and boundaries for Void qualification |
+| [Void desktop acceptance](void-desktop-smoke-2026-11-15.md) | 37 passing checks for the integrated Alpha session and Settings |
+| [Fedora retirement acceptance](fedora-retirement-completion-2026-11-15.md) | Post-retirement desktop/Base checks and preservation audit |
+| [Fedora retirement preparation](fedora-retirement-2026-11-15.md) | Earlier archive preservation and build checks, recorded before desktop acceptance |
+| [NVIDIA/DRM record](../research/compositor-nvidia-2026-11-15.md) | GPUI and compositor on Void hardware, resize, and suspend/resume |
+| [shell validation](shell-validation-2026-11-14.md) | Historical shell behavior checks and captures |
+| [Settings validation](studio-settings-validation-2026-11-14.md) | Historical persistence, input, and visual checks |
+| [GPUI validation](gpui-validation-2026-11-14.md) | Historical toolkit rendering/input evidence |
+| [GPU validation](gpu-validation-2026-11-14.md) | Historical Intel VirtIO results |
+| [VM validation](vm-validation-2026-11-14.md) | Historical Fedora VM results |
 
-| Page | Contents | Carries over to the Void lab |
-| --- | --- | --- |
-| [`local-vms.md`](local-vms.md) | Setting up and using the Fedora builder and test VMs | No |
-| [`gpu-vulkan.md`](gpu-vulkan.md) | Hardware Vulkan in a VM through Intel VirtIO native contexts | Yes. It depends on the host and the Mesa build, not on Fedora |
-| [`shell-validation-2026-11-14.md`](shell-validation-2026-11-14.md) | What was tested for the desktop shell | The behavior checks, yes. The packaging, no |
-| [`studio-settings-validation-2026-11-14.md`](studio-settings-validation-2026-11-14.md) | What was tested for Studio Settings | The behavior checks, yes. The packaging, no |
-| [`gpui-validation-2026-11-14.md`](gpui-validation-2026-11-14.md) | GPUI rendering and input in the test VM | The rendering and input results, yes |
-| [`gpu-validation-2026-11-14.md`](gpu-validation-2026-11-14.md) | Hardware Vulkan results | Yes |
-| [`vm-validation-2026-11-14.md`](vm-validation-2026-11-14.md) | The Fedora VMs themselves | No |
-
-The dated pages are records of what was tested on that day. They are not updated.
-
-For Base work, use the [Void lab](../../lab/void/README.md).
+Dated validation pages and their assets stay unchanged. Historical commands in
+them are evidence, not supported setup instructions. The archive manifest maps
+retired script/recipe paths to their copies. Current Base work uses the
+[Void lab](../../lab/void/README.md).

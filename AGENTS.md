@@ -47,7 +47,7 @@ working with coding agents. This file is the standard both sides hold.
 | Change touches | Run | Show |
 | --- | --- | --- |
 | How Base is built, booted, or rolled back; `lab/void/` | `lab/void/void_lab.py milestone` | The evidence log it writes |
-| `apps/`, `lab/fedora/` | The app's build and run steps in its README | Before and after captures; a short recording for motion |
+| `apps/` | The app's Void build and run steps in its README | Before and after captures; a short recording for motion |
 
 ## Releases
 

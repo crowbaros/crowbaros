@@ -1,0 +1,199 @@
+[20:54:53] Evidence and new guest disk: /home/jasona/coding/my-linux/.lab/void-desktop-checks/20261115T135453-ttufdh29
+[20:56:41] guest$ . /etc/os-release; printf "%s\n" "$ID"; cat /proc/1/comm
+[20:56:42] void
+runit
+[20:56:42] PASS: Void Linux and runit PID 1
+[20:56:42] guest$ sv status seatd crowbar-compositor crowbar-shell crowbar-launcher
+[20:56:42] run: seatd: (pid 553) 11s; run: log: (pid 551) 11s
+run: crowbar-compositor: (pid 555) 11s
+run: crowbar-shell: (pid 558) 11s
+run: crowbar-launcher: (pid 556) 11s
+[20:56:42] PASS: seatd and three Alpha services supervised
+[20:56:42] guest$ sha256sum /usr/local/bin/crowbar-compositor /usr/local/bin/crowbar-probe /usr/local/bin/crowbaros-shell /usr/local/bin/crowbaros-studio-settings
+[20:56:42] a611ce2357c9be9cb0009f6c5205e5692a8fb5f57d2952e843dfcf255436a82f  /usr/local/bin/crowbar-compositor
+2cd1220054f6b59003315de2d6c5bff49ad983b49b76388ecbc7467f96d83b3a  /usr/local/bin/crowbar-probe
+6f89986e9527f5eb5fbdf922f288315c85cbf29ba23f601bff52aef5782e9f8e  /usr/local/bin/crowbaros-shell
+7746697f3be86d46cb25f028d517bde38387ed6e4a3cf3d13971c65c7941c83d  /usr/local/bin/crowbaros-studio-settings
+[20:56:42] PASS: guest binaries match this build
+[20:56:42] guest$ ldd /usr/local/bin/crowbar-compositor
+[20:56:42] 	linux-vdso.so.1 (0x00007fd3fd735000)
+	libgbm.so.1 => /usr/lib/libgbm.so.1 (0x00007fd3fd724000)
+	libseat.so.1 => /usr/lib/libseat.so.1 (0x00007fd3fd719000)
+	libudev.so.1 => /usr/lib/libudev.so.1 (0x00007fd3fcdd8000)
+	libinput.so.10 => /usr/lib/libinput.so.10 (0x00007fd3fcd6d000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007fd3fcd06000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007fd3fccd9000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007fd3fcbeb000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007fd3fca01000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007fd3fd737000)
+	libdrm.so.2 => /usr/lib/libdrm.so.2 (0x00007fd3fd700000)
+	libexpat.so.1 => /usr/lib/libexpat.so.1 (0x00007fd3fc9d2000)
+	libelogind.so.0 => /usr/lib/libelogind.so.0 (0x00007fd3fc94f000)
+	libmtdev.so.1 => /usr/lib/libmtdev.so.1 (0x00007fd3fd6f9000)
+	libevdev.so.2 => /usr/lib/libevdev.so.2 (0x00007fd3fc931000)
+	libwacom.so.9 => /usr/lib/libwacom.so.9 (0x00007fd3fc920000)
+	liblua5.4.so.5.4 => /usr/lib/liblua5.4.so.5.4 (0x00007fd3fc8d9000)
+	libcap.so.2 => /usr/lib/libcap.so.2 (0x00007fd3fc8cd000)
+	libgudev-1.0.so.0 => /usr/lib/libgudev-1.0.so.0 (0x00007fd3fc8c0000)
+	libgobject-2.0.so.0 => /usr/lib/libgobject-2.0.so.0 (0x00007fd3fc85c000)
+	libglib-2.0.so.0 => /usr/lib/libglib-2.0.so.0 (0x00007fd3fc706000)
+	libffi.so.7 => /usr/lib/libffi.so.7 (0x00007fd3fc6fa000)
+	libpcre2-8.so.0 => /usr/lib/libpcre2-8.so.0 (0x00007fd3fc649000)
+[20:56:42] PASS: crowbar-compositor linked libraries resolve
+[20:56:42] guest$ ldd /usr/local/bin/crowbar-probe
+[20:56:42] 	linux-vdso.so.1 (0x00007f673eb1b000)
+	libgbm.so.1 => /usr/lib/libgbm.so.1 (0x00007f673ea36000)
+	libseat.so.1 => /usr/lib/libseat.so.1 (0x00007f673ea2b000)
+	libudev.so.1 => /usr/lib/libudev.so.1 (0x00007f673ea03000)
+	libinput.so.10 => /usr/lib/libinput.so.10 (0x00007f673e998000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007f673e931000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f673e904000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007f673e814000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f673e62a000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f673eb1d000)
+	libdrm.so.2 => /usr/lib/libdrm.so.2 (0x00007f673e613000)
+	libexpat.so.1 => /usr/lib/libexpat.so.1 (0x00007f673e5e4000)
+	libelogind.so.0 => /usr/lib/libelogind.so.0 (0x00007f673e561000)
+	libmtdev.so.1 => /usr/lib/libmtdev.so.1 (0x00007f673e55a000)
+	libevdev.so.2 => /usr/lib/libevdev.so.2 (0x00007f673e53a000)
+	libwacom.so.9 => /usr/lib/libwacom.so.9 (0x00007f673e529000)
+	liblua5.4.so.5.4 => /usr/lib/liblua5.4.so.5.4 (0x00007f673e4e2000)
+	libcap.so.2 => /usr/lib/libcap.so.2 (0x00007f673e4d6000)
+	libgudev-1.0.so.0 => /usr/lib/libgudev-1.0.so.0 (0x00007f673e4c9000)
+	libgobject-2.0.so.0 => /usr/lib/libgobject-2.0.so.0 (0x00007f673e463000)
+	libglib-2.0.so.0 => /usr/lib/libglib-2.0.so.0 (0x00007f673e30d000)
+	libffi.so.7 => /usr/lib/libffi.so.7 (0x00007f673e301000)
+	libpcre2-8.so.0 => /usr/lib/libpcre2-8.so.0 (0x00007f673e250000)
+[20:56:42] PASS: crowbar-probe linked libraries resolve
+[20:56:42] guest$ ldd /usr/local/bin/crowbaros-shell
+[20:56:42] 	linux-vdso.so.1 (0x00007f4758116000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007f4756b36000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007f47580a4000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f4758077000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007f4756a48000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f475685e000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f4758118000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007f475805d000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007f475684b000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007f4756813000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007f4756805000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007f47567e2000)
+[20:56:42] PASS: crowbaros-shell linked libraries resolve
+[20:56:42] guest$ ldd /usr/local/bin/crowbaros-studio-settings
+[20:56:43] 	linux-vdso.so.1 (0x00007f7eb4ed6000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007f7eb4e01000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007f7eb3b99000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f7eb4dd4000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007f7eb3aab000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f7eb38c1000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f7eb4ed8000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007f7eb4dba000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007f7eb4da5000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007f7eb3889000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007f7eb387b000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007f7eb3858000)
+[20:56:43] PASS: crowbaros-studio-settings linked libraries resolve
+[20:56:43] PASS: fresh guest has no saved preferences
+[20:56:44] PASS: Terminal launch through the shell
+[20:56:45] PASS: Settings launch through the shell
+[20:56:47] PASS: dock focuses an existing app without duplicating it
+[20:56:48] PASS: workspace switch clears focus on hidden windows
+[20:56:50] PASS: preview has not written preferences
+[20:56:51] PASS: Save persists Light appearance
+[20:56:53] PASS: Undo keeps saved preferences unchanged
+[20:56:55] PASS: Settings relaunch restores saved appearance
+[20:56:55] guest$ python3 -c '
+import grp, json, os
+from pathlib import Path
+names = {'"'"'crowbar-compositor'"'"': 1000, '"'"'crowbaros-shell'"'"': 1001, '"'"'crowbaros-studio-settings'"'"': 1002, '"'"'foot'"'"': 1002}
+found = {}
+seat = grp.getgrnam('"'"'_seatd'"'"')
+for proc in Path('"'"'/proc'"'"').glob('"'"'[0-9]*'"'"'):
+ try:
+  name = Path(os.readlink(proc/'"'"'exe'"'"')).name
+  status = dict(line.split('"'"':'"'"',1) for line in (proc/'"'"'status'"'"').read_text().splitlines() if '"'"':'"'"' in line)
+  if name not in names and int(status['"'"'Uid'"'"'].split()[0]) != 1002: continue
+  if name not in names: name += '"'"'('"'"' + proc.name + '"'"')'"'"'
+  found[name] = {'"'"'uid'"'"': list(map(int,status['"'"'Uid'"'"'].split())), '"'"'groups'"'"': list(map(int,status['"'"'Groups'"'"'].split())), '"'"'no_new_privs'"'"': status['"'"'NoNewPrivs'"'"'].strip(), '"'"'capabilities'"'"': status['"'"'CapEff'"'"'].strip(), '"'"'fds'"'"': {p.name: os.readlink(p) for p in (proc/'"'"'fd'"'"').iterdir() if int(p.name)>2}, '"'"'env'"'"': (proc/'"'"'environ'"'"').read_bytes().decode().split(chr(0))}
+ except (FileNotFoundError, ProcessLookupError): pass
+print(json.dumps({'"'"'processes'"'"': found, '"'"'seat_members'"'"': seat.gr_mem, '"'"'seat_gid'"'"': seat.gr_gid}))
+'
+[20:56:55] {"processes": {"crowbaros-shell": {"uid": [1001, 1001, 1001, 1001], "groups": [1001], "no_new_privs": "0", "capabilities": "0000000000000000", "fds": {"3": "socket:[3442]", "4": "socket:[3445]", "5": "socket:[3445]", "6": "/run/user/1001/crowbaros-shell/lock", "7": "socket:[3446]", "9": "anon_inode:[eventpoll]", "10": "anon_inode:[eventfd]", "11": "anon_inode:[timerfd]", "12": "anon_inode:[eventfd]", "13": "anon_inode:[eventfd]", "14": "anon_inode:[eventpoll]", "15": "anon_inode:[eventfd]", "16": "anon_inode:[timerfd]", "17": "/memfd:allocation fd (deleted)", "18": "/memfd:wayland-cursor-rs (deleted)", "19": "/memfd:mesa-shared (deleted)", "20": "anon_inode:[eventfd]", "23": "/memfd:mesa-shared (deleted)", "24": "/memfd:mesa-shared (deleted)", "28": "/memfd:mesa-shared (deleted)", "30": "/memfd:mesa-shared (deleted)", "32": "/memfd:mesa-shared (deleted)", "33": "/memfd:mesa-shared (deleted)", "34": "/memfd:mesa-shared (deleted)", "35": "/memfd:mesa-shared (deleted)", "37": "/memfd:mesa-shared (deleted)", "38": "/memfd:mesa-shared (deleted)", "39": "/memfd:mesa-shared (deleted)"}, "env": ["HOME=/home/crowbar-shell", "PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C.UTF-8", "XDG_RUNTIME_DIR=/run/user/1001", "WAYLAND_DISPLAY=/run/crowbar-display/wayland-1", "CROWBAR_LAUNCH_SOCKET=/run/crowbar-launch/socket", "RUST_LOG=info", "WAYLAND_SOCKET=3", "CROWBAR_SHELL_CONTROL_FD=4", ""]}, "crowbar-compositor": {"uid": [1000, 1000, 1000, 1000], "groups": [997, 1000], "no_new_privs": "0", "capabilities": "0000000000000000", "fds": {"3": "anon_inode:[eventpoll]", "4": "/dev/tty2", "5": "anon_inode:[eventfd]", "6": "anon_inode:[timerfd]", "7": "anon_inode:[eventpoll]", "8": "/memfd:smithay-keymap (deleted)", "9": "/run/crowbar-display/wayland-1.lock", "10": "socket:[1333]", "11": "anon_inode:[eventfd]", "12": "socket:[1334]", "13": "/dev/dri/card0", "14": "/dev/dri/card0", "15": "/memfd:allocation fd (deleted)", "16": "/dev/dri/card0", "17": "socket:[7320]", "18": "/memfd:smithay-dmabuffeedback-format-table (deleted)", "19": "anon_inode:[eventpoll]", "20": "anon_inode:[timerfd]", "21": "socket:[7321]", "22": "/dev/input/event5", "23": "/dev/input/event6", "24": "/dev/input/event1", "25": "/dev/input/event0", "26": "/dev/input/event3", "27": "/dev/input/event2", "28": "anon_inode:sync_file", "29": "/dmabuf:", "30": "/dmabuf:", "31": "socket:[7323]", "32": "socket:[7324]", "33": "/dmabuf:", "34": "/dmabuf:", "35": "socket:[1343]", "36": "socket:[1345]", "37": "socket:[1345]", "38": "/memfd:wayland-cursor-rs (deleted)", "39": "/memfd:mesa-shared (deleted)", "40": "/memfd:mesa-shared (deleted)", "41": "/memfd:mesa-shared (deleted)", "42": "/memfd:mesa-shared (deleted)", "43": "socket:[3516]", "45": "/memfd:foot-wayland-shm-buffer-pool (deleted)", "46": "/memfd:foot-wayland-shm-buffer-pool (deleted)", "47": "/memfd:mesa-shared (deleted)", "48": "/memfd:mesa-shared (deleted)", "49": "/memfd:mesa-shared (deleted)", "50": "/memfd:mesa-shared (deleted)", "51": "/memfd:mesa-shared (deleted)", "52": "/memfd:mesa-shared (deleted)", "53": "/memfd:mesa-shared (deleted)", "54": "/memfd:mesa-shared (deleted)", "55": "socket:[1719]", "56": "/memfd:wayland-cursor-rs (deleted)", "57": "/memfd:foot-wayland-shm-buffer-pool (deleted)", "61": "/memfd:mesa-shared (deleted)", "62": "/memfd:mesa-shared (deleted)", "63": "/memfd:mesa-shared (deleted)", "64": "/memfd:mesa-shared (deleted)"}, "env": ["HOME=/home/crowbar-compositor", "LIBSEAT_BACKEND=seatd", "PATH=/usr/local/bin:/usr/bin:/bin", "XDG_RUNTIME_DIR=/run/crowbar-display", "PWD=/etc/sv/crowbar-compositor", ""]}, "foot": {"uid": [1002, 1002, 1002, 1002], "groups": [], "no_new_privs": "1", "capabilities": "0000000000000000", "fds": {"3": "anon_inode:[eventpoll]", "4": "socket:[7385]", "5": "anon_inode:[timerfd]", "6": "/dev/ptmx", "7": "anon_inode:[timerfd]", "8": "anon_inode:[timerfd]", "9": "anon_inode:[timerfd]", "10": "anon_inode:[timerfd]", "11": "anon_inode:[timerfd]", "12": "anon_inode:[timerfd]", "13": "anon_inode:[timerfd]", "14": "/memfd:foot-wayland-shm-buffer-pool (deleted)", "15": "/memfd:foot-wayland-shm-buffer-pool (deleted)"}, "env": ["HOME=/home/crowbar-app", "USER=crowbar-app", "LOGNAME=crowbar-app", "PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C.UTF-8", "XDG_RUNTIME_DIR=/run/user/1002", "XDG_CURRENT_DESKTOP=CrowbarOS", "XDG_SESSION_TYPE=wayland", "WAYLAND_DISPLAY=/run/crowbar-display/wayland-1", "CROWBAR_SESSION=alpha-no-animations", "RUST_LOG=info", "GIO_LAUNCHED_DESKTOP_FILE=/usr/share/applications/foot.desktop", "GIO_LAUNCHED_DESKTOP_FILE_PID=703", ""]}, "bash(705)": {"uid": [1002, 1002, 1002, 1002], "groups": [], "no_new_privs": "1", "capabilities": "0000000000000000", "fds": {"255": "/dev/pts/0"}, "env": ["HOME=/home/crowbar-app", "USER=crowbar-app", "LOGNAME=crowbar-app", "PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C.UTF-8", "XDG_RUNTIME_DIR=/run/user/1002", "XDG_CURRENT_DESKTOP=CrowbarOS", "XDG_SESSION_TYPE=wayland", "WAYLAND_DISPLAY=/run/crowbar-display/wayland-1", "CROWBAR_SESSION=alpha-no-animations", "RUST_LOG=info", "GIO_LAUNCHED_DESKTOP_FILE=/usr/share/applications/foot.desktop", "GIO_LAUNCHED_DESKTOP_FILE_PID=703", "TERM=foot", "COLORTERM=truecolor", "PWD=/home/crowbar-app", "SHELL=/bin/bash", ""]}, "crowbaros-studio-settings": {"uid": [1002, 1002, 1002, 1002], "groups": [], "no_new_privs": "1", "capabilities": "0000000000000000", "fds": {"3": "socket:[2600]", "4": "anon_inode:[eventpoll]", "5": "anon_inode:[eventfd]", "6": "anon_inode:[timerfd]", "7": "anon_inode:[eventfd]", "8": "anon_inode:[eventfd]", "9": "anon_inode:[eventpoll]", "10": "anon_inode:[eventfd]", "11": "anon_inode:[timerfd]", "12": "/memfd:allocation fd (deleted)", "13": "/memfd:wayland-cursor-rs (deleted)", "15": "anon_inode:[eventfd]", "16": "/memfd:mesa-shared (deleted)", "20": "/memfd:mesa-shared (deleted)", "23": "/memfd:mesa-shared (deleted)", "25": "/memfd:mesa-shared (deleted)"}, "env": ["HOME=/home/crowbar-app", "USER=crowbar-app", "LOGNAME=crowbar-app", "PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C.UTF-8", "XDG_RUNTIME_DIR=/run/user/1002", "XDG_CURRENT_DESKTOP=CrowbarOS", "XDG_SESSION_TYPE=wayland", "WAYLAND_DISPLAY=/run/crowbar-display/wayland-1", "CROWBAR_SESSION=alpha-no-animations", "RUST_LOG=info", "GIO_LAUNCHED_DESKTOP_FILE=/usr/share/applications/com.crowbaros.StudioSettings.desktop", "GIO_LAUNCHED_DESKTOP_FILE_PID=818", ""]}}, "seat_members": ["crowbar-compositor"], "seat_gid": 997}
+[20:56:55] PASS: crowbar-compositor has the assigned non-root identity
+[20:56:55] PASS: crowbaros-shell has the assigned non-root identity
+[20:56:55] PASS: crowbaros-studio-settings has the assigned non-root identity
+[20:56:55] PASS: foot has the assigned non-root identity
+[20:56:55] PASS: only compositor belongs to seatd
+[20:56:55] PASS: ordinary app child processes were inspected
+[20:56:55] PASS: foot cannot gain privileges
+[20:56:55] PASS: foot inherited no trusted sockets or seat devices
+[20:56:55] PASS: foot inherited no privileged environment
+[20:56:55] PASS: bash(705) cannot gain privileges
+[20:56:55] PASS: bash(705) inherited no trusted sockets or seat devices
+[20:56:55] PASS: bash(705) inherited no privileged environment
+[20:56:55] PASS: crowbaros-studio-settings cannot gain privileges
+[20:56:55] PASS: crowbaros-studio-settings inherited no trusted sockets or seat devices
+[20:56:55] PASS: crowbaros-studio-settings inherited no privileged environment
+[20:56:55] guest$ python3 -c 'import os,json; print(json.dumps({p:os.stat(p).st_mode & 0o7777 for p in ['"'"'/run/crowbar-trusted/compositor/control'"'"', '"'"'/run/crowbar-trusted/compositor/wayland'"'"', '"'"'/run/crowbar-launch/socket'"'"', '"'"'/run/user/1001/crowbaros-shell/control.sock'"'"', '"'"'/run/crowbar-trusted/compositor'"'"', '"'"'/run/crowbar-launch'"'"', '"'"'/run/user/1001'"'"', '"'"'/run/user/1001/crowbaros-shell'"'"']}))'
+[20:56:55] {"/run/crowbar-trusted/compositor/control": 432, "/run/crowbar-trusted/compositor/wayland": 432, "/run/crowbar-launch/socket": 432, "/run/user/1001/crowbaros-shell/control.sock": 384, "/run/crowbar-trusted/compositor": 1512, "/run/crowbar-launch": 488, "/run/user/1001": 448, "/run/user/1001/crowbaros-shell": 448}
+[20:56:55] guest$ chmod o+x /run/crowbar-trusted/compositor /run/crowbar-launch /run/user/1001 /run/user/1001/crowbaros-shell; chmod o+rw /run/crowbar-trusted/compositor/control /run/crowbar-trusted/compositor/wayland /run/crowbar-launch/socket /run/user/1001/crowbaros-shell/control.sock
+[20:56:55]
+[20:56:55] guest$ chpst -u crowbar-app:crowbar-app python3 -c '
+import json, socket
+results = []
+for path in ['"'"'/run/crowbar-trusted/compositor/control'"'"', '"'"'/run/crowbar-trusted/compositor/wayland'"'"', '"'"'/run/crowbar-launch/socket'"'"', '"'"'/run/user/1001/crowbaros-shell/control.sock'"'"']:
+ s = socket.socket(socket.AF_UNIX); s.settimeout(2)
+ try:
+  s.connect(path); s.sendall(b'"'"'{"op":"snapshot"}\n'"'"')
+  data = s.recv(1024)
+  results.append(not data or b'"'"'"ok": false'"'"' in data)
+ except (PermissionError, ConnectionResetError, BrokenPipeError): results.append(True)
+ except TimeoutError: results.append(False)
+ finally: s.close()
+print(json.dumps(results))
+'
+[20:56:55] [true, true, true, true]
+[20:56:55] PASS: trusted sockets reject the app UID even with paths exposed
+[20:56:55] guest$ python3 -c 'import os; modes={'"'"'/run/crowbar-trusted/compositor/control'"'"': 432, '"'"'/run/crowbar-trusted/compositor/wayland'"'"': 432, '"'"'/run/crowbar-launch/socket'"'"': 432, '"'"'/run/user/1001/crowbaros-shell/control.sock'"'"': 384, '"'"'/run/crowbar-trusted/compositor'"'"': 1512, '"'"'/run/crowbar-launch'"'"': 488, '"'"'/run/user/1001'"'"': 448, '"'"'/run/user/1001/crowbaros-shell'"'"': 448}; [os.chmod(p,m) for p,m in modes.items()]'
+[20:56:55]
+[20:56:55] guest$ pgrep -x crowbaros-shell; pgrep -x foot
+[20:56:56] 558
+703
+[20:56:56] guest$ sv restart crowbar-shell
+[20:56:56] ok: run: crowbar-shell: (pid 873) 1s
+[20:56:56] guest$ pgrep -x crowbaros-shell; pgrep -x foot
+[20:56:56] 873
+703
+[20:56:56] PASS: shell restarts without killing the app
+[20:56:56] PASS: restarted shell still controls the compositor
+[20:56:56] guest$ tail -20 /var/log/crowbar-compositor.log
+[20:56:57] 2026-11-15T20:56:30.506452Z  INFO crowbar_compositor::tty: tty: session opened through libseat seat=seat0
+2026-11-15T20:56:30.506691Z  WARN smithay::backend::drm::device::fd: Unable to become drm master, assuming unprivileged mode
+2026-11-15T20:56:31.204331Z  INFO crowbar_compositor::tty: tty: DRM device opened gpu=/dev/dri/card0 driver=virtio_gpu software=true
+2026-11-15T20:56:31.289947Z  WARN smithay::backend::drm::compositor: Preferred format AB24 not available: NoSupportedPlaneFormat
+2026-11-15T20:56:31.320998Z  WARN smithay::backend::drm::surface::atomic: Failed to destroy old mode property blob: No such file or directory (os error 2)
+2026-11-15T20:56:31.321077Z  INFO crowbar_compositor::tty: output connected name=Virtual-1 width=1280 height=960 scale=1.0
+2026-11-15T20:56:31.321095Z  INFO crowbar_compositor: compositor is up socket="wayland-1" backend=tty
+2026-11-15T20:56:31.323790Z  INFO crowbar_compositor::tty: tty: whether a flip waits for its drawing (Smithay's needs_sync) output=Virtual-1 needs_sync=true
+2026-11-15T20:56:31.833444Z  INFO crowbar_compositor::handlers::layer_shell: usable area is now 1280x916 at 0,44 output=Virtual-1
+2026-11-15T20:56:31.877809Z  INFO crowbar_compositor::handlers::layer_shell: usable area is now 1280x820 at 0,44 output=Virtual-1
+2026-11-15T20:56:35.522414Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 215, layer crowbaros-dock: 214, layer crowbaros-wallpaper: 215 frames=267
+2026-11-15T20:56:40.535977Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 526, layer crowbaros-dock: 525, layer crowbaros-wallpaper: 526 frames=578
+2026-11-15T20:56:45.552277Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 850, layer crowbaros-dock: 855, layer crowbaros-wallpaper: 850, window 0x1 foot: 31, window 0x2 : 1, window 0x2 com.crowbaros.StudioSettings: 58 frames=957
+2026-11-15T20:56:50.554115Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 1195, layer crowbaros-dock: 1200, layer crowbaros-wallpaper: 1188, window 0x1 foot: 71, window 0x2 : 1, window 0x2 com.crowbaros.StudioSettings: 387 frames=1480
+2026-11-15T20:56:55.268912Z  WARN crowbar_compositor::session: refused non-shell peer on trusted socket
+2026-11-15T20:56:55.271440Z  WARN crowbar_compositor::session: refused non-shell peer on trusted socket
+2026-11-15T20:56:55.567097Z  INFO crowbar_compositor::state: commits so far: layer crowbaros-bar: 1557, layer crowbaros-dock: 1564, layer crowbaros-wallpaper: 1550, window 0x1 foot: 91, window 0x2 : 1, window 0x2 com.crowbaros.StudioSettings: 664, window 0x3 : 1, window 0x3 com.crowbaros.StudioSettings: 112 frames=2133
+2026-11-15T20:56:55.729442Z  INFO crowbar_compositor::handlers::layer_shell: usable area is now 1280x916 at 0,44 output=Virtual-1
+2026-11-15T20:56:55.756436Z  INFO crowbar_compositor::handlers::layer_shell: usable area is now 1280x820 at 0,44 output=Virtual-1
+[20:56:57] PASS: compositor records active shell and app rendering
+[20:56:57] guest$ cat /proc/sys/kernel/random/boot_id
+[20:56:57] 54327471-87ab-4ccf-b197-04fcf36a36c2
+[20:56:57] guest$ nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &
+[20:56:57]
+[20:57:12] PASS: saved preferences survive clean reboot
+[20:57:13] guest$ sha256sum /usr/local/bin/crowbaros-studio-settings
+[20:57:13] 7746697f3be86d46cb25f028d517bde38387ed6e4a3cf3d13971c65c7941c83d  /usr/local/bin/crowbaros-studio-settings
+[20:57:13] PASS: post-reboot session uses the same built binaries
+[20:57:18] RESULT: 37 passed, 0 failed
+[20:57:18] Evidence: /home/jasona/coding/my-linux/.lab/void-desktop-checks/20261115T135453-ttufdh29

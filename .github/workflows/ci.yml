@@ -50,7 +50,7 @@ jobs:
 
       - name: Lab scripts compile
         run: |
-          python3 -m py_compile lab/void/*.py lab/void/guest/*.py lab/fedora/*.py
+          python3 -m py_compile lab/void/*.py lab/void/guest/*.py
           python3 -m unittest discover -s lab/void -p "test_*.py"
 
   compositor:
