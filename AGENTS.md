@@ -28,7 +28,7 @@ working with coding agents. This file is the standard both sides hold.
   write it as a conventional commit that states the outcome in plain language:
   `fix(apply): a failed apply no longer leaves a half-built generation`.
   The scope is the area: `state`, `apply`, `shell`, `compositor`, `studio`,
-  `lab`, `design`, `vision`, `adr`, `ci`.
+  `labels`, `lab`, `design`, `vision`, `adr`, `ci`.
 - Fill in the [pull request template](.github/pull_request_template.md). Under
   Verification, say what you ran and what you saw, and name what you could not
   run. End with the model and harness that did the work.
