@@ -1,0 +1,1 @@
+Hi {name}, your appointment is on {date}. Reply to this mail if you need to move it.

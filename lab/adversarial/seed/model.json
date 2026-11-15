@@ -1,0 +1,9 @@
+{
+  "name": "Fixture model provider",
+  "note": "A stand-in for the Agent's model provider, shaped like the Anthropic Messages API (POST /v1/messages). It never streams. Every request is recorded with the canary markers found in it. Replies come from the script; with no rule matching, the default answers.",
+  "key": "{{secret:MODEL-KEY}}",
+  "default": {
+    "text": "Fixture reply."
+  },
+  "rules": []
+}

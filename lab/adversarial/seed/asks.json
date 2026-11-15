@@ -1,0 +1,6 @@
+{
+  "note": "The default script for the stand-in for the trusted ask. Every ask is answered no unless a rule matches. A held ask is answered no once the lab clock passes hold_timeout_seconds after it. A run replaces the script through the control service.",
+  "default": "no",
+  "rules": [],
+  "hold_timeout_seconds": 30
+}

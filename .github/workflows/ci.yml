@@ -50,8 +50,12 @@ jobs:
 
       - name: Lab scripts compile
         run: |
-          python3 -m py_compile lab/void/*.py lab/void/guest/*.py
+          python3 -m py_compile lab/void/*.py lab/void/guest/*.py lab/adversarial/*.py
           python3 -m unittest discover -s lab/void -p "test_*.py"
+
+      # The Milestone 2 fixture services on loopback: no VM, stdlib only.
+      - name: Adversarial fixtures smoke
+        run: python3 lab/adversarial/adversarial_lab.py smoke
 
   compositor:
     name: Compositor
