@@ -7,6 +7,42 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// The Alpha compositor has no window/workspace animations. Keep the person's
+/// preference for other sessions, without pretending to apply an effect here.
+pub enum Session {
+    NoAnimations,
+    Hyprland(Hyprland),
+}
+
+pub fn is_alpha() -> bool {
+    std::env::var("CROWBAR_SESSION").as_deref() == Ok("alpha-no-animations")
+}
+
+impl Session {
+    pub fn connect() -> Result<Self, String> {
+        if is_alpha() {
+            Ok(Self::NoAnimations)
+        } else {
+            Hyprland::connect().map(Self::Hyprland)
+        }
+    }
+}
+
+impl Motion for Session {
+    fn reduced(&self) -> Result<bool, String> {
+        match self {
+            Self::NoAnimations => Ok(true),
+            Self::Hyprland(session) => session.reduced(),
+        }
+    }
+    fn set_reduced(&self, reduced: bool) -> Result<(), String> {
+        match self {
+            Self::NoAnimations => Ok(()),
+            Self::Hyprland(session) => session.set_reduced(reduced),
+        }
+    }
+}
+
 fn command(args: &[&str]) -> Result<String, String> {
     let mut child = Command::new("/usr/bin/hyprctl")
         .args(args)
@@ -47,7 +83,7 @@ pub struct Hyprland {
 pub fn restore_motion(reduced: bool) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        match Hyprland::connect().and_then(|session| session.set_reduced(reduced)) {
+        match Session::connect().and_then(|session| session.set_reduced(reduced)) {
             Ok(()) => {
                 log::info!("STUDIO event=session-restored reduced_motion={reduced}");
                 return Ok(());

@@ -1,0 +1,162 @@
+  PID  PPID   UID   GID COMMAND
+    1     0     0     0 runit
+    2     0     0     0 [kthreadd]
+    3     2     0     0 [pool_workqueue_release]
+    4     2     0     0 [kworker/R-rcu_gp]
+    5     2     0     0 [kworker/R-sync_wq]
+    6     2     0     0 [kworker/R-kvfree_rcu_reclaim]
+    7     2     0     0 [kworker/R-slub_flushwq]
+    8     2     0     0 [kworker/R-netns]
+    9     2     0     0 [kworker/0:0-events]
+   10     2     0     0 [kworker/0:1-events]
+   11     2     0     0 [kworker/0:0H-events_highpri]
+   12     2     0     0 [kworker/u16:0-async]
+   13     2     0     0 [kworker/R-mm_percpu_wq]
+   14     2     0     0 [kworker/u16:1-btrfs-endio]
+   15     2     0     0 [ksoftirqd/0]
+   16     2     0     0 [rcu_preempt]
+   17     2     0     0 [rcu_exp_par_gp_kthread_worker/0]
+   18     2     0     0 [rcu_exp_gp_kthread_worker]
+   19     2     0     0 [migration/0]
+   20     2     0     0 [idle_inject/0]
+   21     2     0     0 [cpuhp/0]
+   22     2     0     0 [cpuhp/1]
+   23     2     0     0 [idle_inject/1]
+   24     2     0     0 [migration/1]
+   25     2     0     0 [ksoftirqd/1]
+   26     2     0     0 [kworker/1:0-mm_percpu_wq]
+   27     2     0     0 [kworker/1:0H-events_highpri]
+   28     2     0     0 [cpuhp/2]
+   29     2     0     0 [idle_inject/2]
+   30     2     0     0 [migration/2]
+   31     2     0     0 [ksoftirqd/2]
+   32     2     0     0 [kworker/2:0-slub_flushwq]
+   33     2     0     0 [kworker/2:0H-kblockd]
+   34     2     0     0 [cpuhp/3]
+   35     2     0     0 [idle_inject/3]
+   36     2     0     0 [migration/3]
+   37     2     0     0 [ksoftirqd/3]
+   38     2     0     0 [kworker/3:0-slub_flushwq]
+   39     2     0     0 [kworker/3:0H-events_highpri]
+   40     2     0     0 [kdevtmpfs]
+   41     2     0     0 [kworker/R-inet_frag_wq]
+   42     2     0     0 [rcu_tasks_kthread]
+   43     2     0     0 [rcu_tasks_rude_kthread]
+   44     2     0     0 [rcu_tasks_trace_kthread]
+   45     2     0     0 [kauditd]
+   46     2     0     0 [khungtaskd]
+   47     2     0     0 [oom_reaper]
+   48     2     0     0 [kworker/u16:2-btrfs-endio]
+   49     2     0     0 [kworker/R-writeback]
+   50     2     0     0 [kcompactd0]
+   51     2     0     0 [ksmd]
+   52     2     0     0 [khugepaged]
+   53     2     0     0 [kworker/R-kblockd]
+   54     2     0     0 [kworker/R-blkcg_punt_bio]
+   55     2     0     0 [kworker/R-kintegrityd]
+   56     2     0     0 [irq/9-acpi]
+   57     2     0     0 [kworker/3:1-events]
+   58     2     0     0 [kworker/2:1-mm_percpu_wq]
+   59     2     0     0 [kworker/R-edac-poller]
+   60     2     0     0 [kworker/R-devfreq_wq]
+   61     2     0     0 [watchdogd]
+   62     2     0     0 [kworker/R-quota_events_unbound]
+   63     2     0     0 [kworker/2:1H]
+   64     2     0     0 [kswapd0]
+   65     2     0     0 [kworker/R-kthrotld]
+   66     2     0     0 [kworker/1:1-mm_percpu_wq]
+   67     2     0     0 [kworker/R-nvme-wq]
+   68     2     0     0 [kworker/R-nvme-reset-wq]
+   69     2     0     0 [kworker/R-nvme-delete-wq]
+   70     2     0     0 [kworker/R-mld]
+   71     2     0     0 [kworker/0:1H-kblockd]
+   72     2     0     0 [kworker/R-ipv6_addrconf]
+   73     2     0     0 [kworker/R-kstrp]
+   75     2     0     0 [kworker/u16:3-btrfs-endio]
+   78     2     0     0 [kworker/u17:0]
+   79     2     0     0 [kworker/R-charger_manager]
+   80     2     0     0 [kworker/1:1H-kblockd]
+  268     2     0     0 [kworker/3:1H-kblockd]
+  277     2     0     0 [kworker/3:2-events]
+  288     2     0     0 [kworker/R-ata_sff]
+  290     2     0     0 [scsi_eh_0]
+  291     2     0     0 [kworker/R-scsi_tmf_0]
+  292     2     0     0 [scsi_eh_1]
+  293     2     0     0 [kworker/R-scsi_tmf_1]
+  294     2     0     0 [scsi_eh_2]
+  295     2     0     0 [kworker/R-scsi_tmf_2]
+  296     2     0     0 [scsi_eh_3]
+  297     2     0     0 [kworker/R-scsi_tmf_3]
+  298     2     0     0 [scsi_eh_4]
+  299     2     0     0 [kworker/R-scsi_tmf_4]
+  300     2     0     0 [scsi_eh_5]
+  301     2     0     0 [kworker/R-scsi_tmf_5]
+  302     2     0     0 [kworker/u16:4-btrfs-endio]
+  303     2     0     0 [kworker/u16:5-btrfs-endio]
+  304     2     0     0 [kworker/u16:6-events_unbound]
+  305     2     0     0 [kworker/u16:7-scsi_tmf_0]
+  306     2     0     0 [kworker/u16:8-scsi_tmf_1]
+  307     2     0     0 [kworker/u16:9-scsi_tmf_2]
+  308     2     0     0 [kworker/u16:10-scsi_tmf_3]
+  309     2     0     0 [kworker/u16:11-sync_wq]
+  310     2     0     0 [kworker/u16:12-events_unbound]
+  311     2     0     0 [kworker/u16:13]
+  312     2     0     0 [kworker/2:2-events]
+  338     2     0     0 [kworker/0:2-events]
+  339     2     0     0 [kworker/R-btrfs-worker]
+  340     2     0     0 [kworker/R-btrfs-delalloc]
+  341     2     0     0 [kworker/R-btrfs-flush_delalloc]
+  342     2     0     0 [kworker/R-btrfs-cache]
+  343     2     0     0 [kworker/R-btrfs-fixup]
+  344     2     0     0 [kworker/R-btrfs-endio]
+  345     2     0     0 [kworker/R-btrfs-endio-meta]
+  346     2     0     0 [kworker/R-btrfs-rmw]
+  347     2     0     0 [kworker/R-btrfs-endio-write]
+  348     2     0     0 [kworker/R-btrfs-compressed-write]
+  349     2     0     0 [kworker/R-btrfs-freespace-write]
+  350     2     0     0 [kworker/R-btrfs-delayed-meta]
+  351     2     0     0 [kworker/R-btrfs-qgroup-rescan]
+  352     2     0     0 [btrfs-cleaner]
+  353     2     0     0 [btrfs-transaction]
+  444     2     0     0 [kworker/R-vfio-irqfd-cleanup]
+  524     1     0     0 runsvdir -P /run/runit/runsvdir/current log: ...........................................................................................................................................................................................................................................................................................................................................................................................................
+  530   524     0     0 runsv agetty-tty1
+  531   524     0     0 runsv udevd
+  532   524     0     0 runsv agetty-ttyS0
+  533   530     0     0 agetty --noclear tty1 38400 linux
+  534   532     0     0 agetty -L -8 ttyS0 115200 vt100
+  535   531     0     0 vlogger -t udevd -p daemon
+  536   524     0     0 runsv dhcpcd
+  537   531     0     0 udevd
+  538   524     0     0 runsv sshd
+  539   524     0     0 runsv seatd
+  540   524     0     0 runsv crowbar-compositor
+  541   536     0     0 vlogger -t dhcpcd -p daemon
+  542   524     0     0 runsv crowbar-shell
+  543   524     0     0 runsv crowbar-launcher
+  544   538     0     0 vlogger -t sshd -p daemon
+  545   536     0     0 dhcpcd: [manager] [ip4] [ip6]
+  546   538     0     0 sshd: /usr/bin/sshd -D [listener] 0 of 10-100 startups
+  548   540     0     0 openvt -c 2 -s -f -w -- chpst -u crowbar-compositor:crowbar-compositor:_seatd env -i HOME=/home/crowbar-compositor PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR=/run/crowbar-display LIBSEAT_BACKEND=seatd sh -c exec crowbar-compositor --backend tty --mode Virtual-1=1280x960 \   --shell-service /run/crowbar-trusted/compositor --shell-uid 1001 >>/var/log/crowbar-compositor.log 2>&1
+  549   539     0     0 vlogger -t seatd -p daemon
+  550   539     0     0 /usr/bin/seatd -g _seatd
+  553   542  1001  1001 crowbaros-shell
+  554   543     0     0 /usr/bin/python3 /usr/local/bin/crowbar-alpha-launcher
+  565   548  1000  1000 crowbar-compositor --backend tty --mode Virtual-1=1280x960 --shell-service /run/crowbar-trusted/compositor --shell-uid 1001
+  573     2     0     0 [kworker/R-cfg80211]
+  574     2     0     0 [kworker/1:2]
+  636   537     0     0 udevd
+  660     1  1002  1002 /usr/local/bin/crowbaros-studio-settings
+  689   546     0     0 sshd-session: root [postauth]
+  691   689     0     0 sshd-session: root@notty
+  692   691     0     0 bash -c ps -eo pid,ppid,uid,gid,args; sv status /var/service/*
+  693   692     0     0 ps -eo pid,ppid,uid,gid,args
+run: /var/service/agetty-tty1: (pid 533) 12s
+run: /var/service/agetty-ttyS0: (pid 534) 12s
+run: /var/service/crowbar-compositor: (pid 548) 12s
+run: /var/service/crowbar-launcher: (pid 554) 12s
+run: /var/service/crowbar-shell: (pid 553) 12s
+run: /var/service/dhcpcd: (pid 545) 12s; run: log: (pid 541) 12s
+run: /var/service/seatd: (pid 550) 12s; run: log: (pid 549) 12s
+run: /var/service/sshd: (pid 546) 12s; run: log: (pid 544) 12s
+run: /var/service/udevd: (pid 537) 12s; run: log: (pid 535) 12s

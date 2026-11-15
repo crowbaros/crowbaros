@@ -1,0 +1,393 @@
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::init] Adapter: "llvmpipe (LLVM 22.1.8, 256 bits)"
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-15T20:35:50Z INFO  crowbaros_shell] SHELL appearance theme=Dark
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:35:50Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52dc4ec80 of size 1x1x1 and format Bgra8Unorm, name 'path intermediate', handle 0
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52dc4c610 of size 1x1x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 1
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:35:50Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52e9a3db0 of size 1x44x1 and format Bgra8Unorm, name 'path intermediate', handle 2
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52eb49d20 of size 1x44x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 3
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52e59ed30 of size 1024x1024x1 and format Bgra8Unorm, name 'atlas', handle 4
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating buffer 0x55c52d398cf0 of size 65536, name 'chunk-0', handle 5
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52d39dd20 of size 1024x1024x1 and format R8Unorm, name 'atlas', handle 6
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:35:50Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:35:50Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52f9541a0 of size 286x96x1 and format Bgra8Unorm, name 'path intermediate', handle 7
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52f853d40 of size 286x96x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 8
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52f94aeb0 of size 1024x1024x1 and format R8Unorm, name 'atlas', handle 9
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating buffer 0x55c52d485260 of size 65536, name 'chunk-0', handle 10
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::surface] Retaining current format: Bgra8Unorm
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Destroying texture 0x55c52dc4ec80, handle 0
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Destroying texture 0x55c52dc4c610, handle 1
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52cde6330 of size 1280x960x1 and format Bgra8Unorm, name 'path intermediate', handle 1
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52d0f57d0 of size 1280x960x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 0
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52bc07c00 of size 1672x1024x1 and format Bgra8Unorm, name 'atlas', handle 11
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating buffer 0x55c52ee5a8e0 of size 6293408, name 'chunk-0', handle 12
+[2026-11-15T20:35:50Z INFO  blade_graphics::hal::resource] Creating buffer 0x55c52f262690 of size 4096, name 'chunk-0', handle 13
+[2026-11-15T20:35:51Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:35:51Z INFO  blade_graphics::hal::surface] Retaining current format: Bgra8Unorm
+[2026-11-15T20:35:51Z INFO  blade_graphics::hal::resource] Destroying texture 0x55c52e9a3db0, handle 2
+[2026-11-15T20:35:51Z INFO  blade_graphics::hal::resource] Destroying texture 0x55c52eb49d20, handle 3
+[2026-11-15T20:35:51Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52d4f3190 of size 1280x44x1 and format Bgra8Unorm, name 'path intermediate', handle 3
+[2026-11-15T20:35:51Z INFO  blade_graphics::hal::resource] Creating texture 0x55c52b8bb820 of size 1280x44x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 2
+[2026-11-15T20:35:51Z INFO  blade_graphics::hal::resource] Creating buffer 0x55c52d920a40 of size 4096, name 'chunk-0', handle 14
+[2026-11-15T20:35:51Z INFO  blade_graphics::hal::resource] Creating buffer 0x55c52f886bd0 of size 6160, name 'chunk-1', handle 15
+[2026-11-15T20:35:51Z INFO  blade_graphics::hal::resource] Creating buffer 0x55c52d415120 of size 4096, name 'chunk-0', handle 16
+[2026-11-15T20:35:51Z INFO  blade_graphics::hal::resource] Creating buffer 0x55c52f411b30 of size 4096, name 'chunk-1', handle 17
+[2026-11-15T20:36:03Z WARN  gpui::platform::linux::platform] wayland: Unable to fallback on default cursor icon 'left_ptr' for theme 'default'
+[2026-11-15T20:36:04Z WARN  gpui::platform::linux::platform] wayland: Unable to fallback on default cursor icon 'left_ptr' for theme 'default'
+[2026-11-15T20:36:06Z WARN  gpui::platform::linux::platform] wayland: Unable to fallback on default cursor icon 'left_ptr' for theme 'default'
+[2026-11-15T20:36:06Z WARN  gpui::platform::linux::platform] wayland: Unable to fallback on default cursor icon 'left_ptr' for theme 'default'
+[2026-11-15T20:36:06Z WARN  gpui::platform::linux::platform] wayland: Unable to fallback on default cursor icon 'left_ptr' for theme 'default'
+[2026-11-15T20:36:07Z WARN  gpui::platform::linux::platform] wayland: Unable to fallback on default cursor icon 'left_ptr' for theme 'default'
+[2026-11-15T20:36:10Z INFO  crowbaros_shell] SHELL appearance theme=Light
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::init] Adapter: "llvmpipe (LLVM 22.1.8, 256 bits)"
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-15T20:36:14Z INFO  crowbaros_shell] SHELL appearance theme=Light
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:36:14Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c8bd3b4a0 of size 1x1x1 and format Bgra8Unorm, name 'path intermediate', handle 0
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c8bcded30 of size 1x1x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 1
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:36:14Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c8be69530 of size 1x44x1 and format Bgra8Unorm, name 'path intermediate', handle 2
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c8bfbd0d0 of size 1x44x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 3
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c8c4c5850 of size 1024x1024x1 and format Bgra8Unorm, name 'atlas', handle 4
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating buffer 0x558c8c7b01d0 of size 65536, name 'chunk-0', handle 5
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c8ce2ddc0 of size 1024x1024x1 and format R8Unorm, name 'atlas', handle 6
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:36:14Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:14Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c8bcfad80 of size 286x96x1 and format Bgra8Unorm, name 'path intermediate', handle 7
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c8bcfd6a0 of size 286x96x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 8
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c8db07a00 of size 1024x1024x1 and format R8Unorm, name 'atlas', handle 9
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating buffer 0x558c8db18e00 of size 65536, name 'chunk-0', handle 10
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::surface] Retaining current format: Bgra8Unorm
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Destroying texture 0x558c8bd3b4a0, handle 0
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Destroying texture 0x558c8bcded30, handle 1
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c899ef600 of size 1280x960x1 and format Bgra8Unorm, name 'path intermediate', handle 1
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c899ef500 of size 1280x960x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 0
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c899ef400 of size 1672x1024x1 and format Bgra8Unorm, name 'atlas', handle 11
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating buffer 0x558c8b506d30 of size 6293408, name 'chunk-0', handle 12
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating buffer 0x558c8b8bed50 of size 4096, name 'chunk-0', handle 13
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::surface] Retaining current format: Bgra8Unorm
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Destroying texture 0x558c8be69530, handle 2
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Destroying texture 0x558c8bfbd0d0, handle 3
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c8b7d1b20 of size 1280x44x1 and format Bgra8Unorm, name 'path intermediate', handle 3
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating texture 0x558c89b60600 of size 1280x44x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 2
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating buffer 0x558c8d5f6700 of size 4096, name 'chunk-0', handle 14
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating buffer 0x558c8cb71d90 of size 6160, name 'chunk-1', handle 15
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating buffer 0x558c8d9fe520 of size 4096, name 'chunk-0', handle 16
+[2026-11-15T20:36:14Z INFO  blade_graphics::hal::resource] Creating buffer 0x558c8b614720 of size 4096, name 'chunk-1', handle 17
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::init] Adapter: "llvmpipe (LLVM 22.1.8, 256 bits)"
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-15T20:36:21Z INFO  crowbaros_shell] SHELL appearance theme=Light
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:36:21Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x557067944440 of size 1x1x1 and format Bgra8Unorm, name 'path intermediate', handle 0
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x557065bae700 of size 1x1x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 1
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:36:21Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x5570691d3aa0 of size 1x44x1 and format Bgra8Unorm, name 'path intermediate', handle 2
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x557068d25410 of size 1x44x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 3
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x557068d3b520 of size 1024x1024x1 and format Bgra8Unorm, name 'atlas', handle 4
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating buffer 0x55706896cd30 of size 65536, name 'chunk-0', handle 5
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x557067ed0fb0 of size 1024x1024x1 and format R8Unorm, name 'atlas', handle 6
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-15T20:36:21Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_impl")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_device_position_transformed")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("to_tile_position")
+[2026-11-15T20:36:21Z INFO  naga::back::spv::writer] Skip function Some("blend_color")
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x557069e86a80 of size 286x96x1 and format Bgra8Unorm, name 'path intermediate', handle 7
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x5570686d2750 of size 286x96x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 8
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x557069bbe9c0 of size 1024x1024x1 and format R8Unorm, name 'atlas', handle 9
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating buffer 0x5570698344a0 of size 65536, name 'chunk-0', handle 10
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::surface] Retaining current format: Bgra8Unorm
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Destroying texture 0x557067944440, handle 0
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Destroying texture 0x557065bae700, handle 1
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x557065bae600 of size 1280x960x1 and format Bgra8Unorm, name 'path intermediate', handle 1
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x557065bae500 of size 1280x960x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 0
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x557065bae400 of size 1672x1024x1 and format Bgra8Unorm, name 'atlas', handle 11
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating buffer 0x557065cf5850 of size 6293408, name 'chunk-0', handle 12
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating buffer 0x557065c3fe60 of size 4096, name 'chunk-0', handle 13
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::surface] Using surface present mode MAILBOX
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::surface] Retaining current format: Bgra8Unorm
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Destroying texture 0x5570691d3aa0, handle 2
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Destroying texture 0x557068d25410, handle 3
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x5570677c0f60 of size 1280x44x1 and format Bgra8Unorm, name 'path intermediate', handle 3
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating texture 0x5570677fa640 of size 1280x44x1 and format Bgra8Unorm, name 'path intermediate msaa', handle 2
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating buffer 0x557069517ba0 of size 4096, name 'chunk-0', handle 14
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating buffer 0x557069bb8730 of size 6160, name 'chunk-1', handle 15
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating buffer 0x55706a049f60 of size 4096, name 'chunk-0', handle 16
+[2026-11-15T20:36:21Z INFO  blade_graphics::hal::resource] Creating buffer 0x557067c7f360 of size 4096, name 'chunk-1', handle 17
+[2026-11-15T20:36:30Z WARN  gpui::platform::linux::platform] wayland: Unable to fallback on default cursor icon 'left_ptr' for theme 'default'
+[2026-11-15T20:36:31Z WARN  gpui::platform::linux::platform] wayland: Unable to fallback on default cursor icon 'left_ptr' for theme 'default'

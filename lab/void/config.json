@@ -40,7 +40,16 @@
       "libdrm",
       "libglvnd",
       "wayland",
-      "wayland-utils"
+      "wayland-utils",
+      "libxkbcommon-x11",
+      "fontconfig",
+      "freetype",
+      "vulkan-loader",
+      "mesa-vulkan-lavapipe",
+      "foot",
+      "dbus",
+      "glib",
+      "python3"
     ],
     "build_packages": [
       "base-minimal",
@@ -54,12 +63,17 @@
       "libxkbcommon-devel",
       "libgbm-devel",
       "libdrm-devel",
-      "wayland-devel"
+      "wayland-devel",
+      "libxkbcommon-x11",
+      "fontconfig-devel",
+      "freetype-devel",
+      "patch"
     ],
     "root_label": "crowbar-gfx",
-    "root_gib": 3,
-    "memory_mib": 2048,
-    "vcpus": 2,
-    "ssh_port": 22231
+    "root_gib": 6,
+    "memory_mib": 4096,
+    "vcpus": 4,
+    "ssh_port": 22231,
+    "vnc_port": 5905
   }
 }

@@ -25,8 +25,10 @@ CrowbarOS will have its own compositor, built on Smithay
 ([ADR 0015](../docs/adr/0015-our-own-compositor-on-smithay.md)). Keep compositor
 calls behind the existing `session.rs` adapters. The shell has two: the control
 channel the compositor spike defines, and the Hyprland socket, which it uses
-when no compositor hands it a control channel. Studio Settings' adapter still
-calls `hyprctl`. The
+when no compositor hands it a control channel. The Void Alpha session uses
+independent runit services and UID-checked channels; Settings has an adapter
+for the compositor's lack of animations. The older Hyprland adapter remains
+for the legacy workflow. The
 [spike record](../docs/research/compositor-spike-2026-11-15.md) has the details.
 
 ## Build and run
@@ -34,11 +36,11 @@ calls `hyprctl`. The
 Each app is its own Cargo project with a pinned `Cargo.lock`. They are not
 members of the root workspace.
 
-Today the apps are built, run, and validated only in the
-[Fedora lab](../lab/fedora/README.md), which stays for interface work until the
-Void lab has a graphical guest. Each app's README gives its lab commands, and
-[`docs/development/`](../docs/development/README.md) has the workflow and the
-validation records.
+Use the [Void desktop smoke command](../lab/void/README.md#full-desktop-smoke-check)
+to build and exercise the interfaces in a fresh guest without overwriting a
+development VM. Its Alpha process model follows ADR 0016 and explicitly stops
+short of production compartment isolation. Fedora tooling retirement is #65.
+[`docs/development/`](../docs/development/README.md) keeps dated validation records.
 
 ## Interfaces that are not designed yet
 

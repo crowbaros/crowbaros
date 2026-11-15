@@ -90,7 +90,7 @@ impl Settings {
         let expected = self.saved.clone();
         let draft = self.draft.clone();
         let task = cx.background_executor().spawn(async move {
-            let result = session::Hyprland::connect()
+            let result = session::Session::connect()
                 .and_then(|motion| store.save(&draft, &expected, &motion));
             (draft, result)
         });
@@ -107,7 +107,7 @@ impl Settings {
                             draft.reduced_motion
                         );
                         this.saved = Some(draft);
-                        this.status = "Saved. Desktop motion applied.".into();
+                        this.status = "Saved.".into();
                         this.confirming_close = false;
                     }
                     Err(error) => {
@@ -393,16 +393,16 @@ impl Settings {
             .child(div().flex().flex_col().border_t_1().border_b_1().border_color(rgb(p.line))
                 .child(self.toggle(5,"Studio Mode","Use neutral grays for visual work. This does not calibrate your display.",self.draft.studio,p,window,cx))
                 .child(div().h(px(1.)).bg(rgb(p.line)))
-                .child(self.toggle(6,"Reduced motion","Turn off desktop window and workspace animations when you save.",self.draft.reduced_motion,p,window,cx)))
+                .child(self.toggle(6,if session::is_alpha() { "Reduced motion preference" } else { "Reduced motion" },if session::is_alpha() { "Saved for compatible desktops. This desktop has no animations." } else { "Turn off desktop window and workspace animations when you save." },self.draft.reduced_motion,p,window,cx)))
             .child(div().text_size(px(12.)).text_color(rgb(p.muted))
-                .child("Appearance currently styles Studio Settings. Reduced motion applies to your Hyprland desktop and is restored at login."))
+                .child(if session::is_alpha() { "Saved appearance also styles the shell. Other applications keep their own themes." } else { "Appearance currently styles Studio Settings. Reduced motion applies to your Hyprland desktop and is restored at login." }))
     }
     fn about(&self, p: Palette) -> Div {
         div().flex().flex_col().gap_5()
             .child(div().text_size(px(28.)).font_weight(FontWeight::BOLD).child("Studio Settings"))
             .child(div().text_size(px(14.)).child("Your workspace, with room to make it your own."))
             .child(div().flex().flex_col().gap_3().text_size(px(13.)).text_color(rgb(p.muted))
-                .child("This first slice saves appearance preferences and controls desktop motion. It runs as your ordinary user account.")
+                .child("Preview your appearance, then save it for your next session. Available motion controls depend on your desktop." )
                 .child("Themes currently apply to this app. Desktop-wide styling, display controls, wallpaper and other settings will follow.")
                 .child("Keyboard: Tab and Shift+Tab move focus. Enter or Space activates a control. Ctrl+S saves; Ctrl+Z undoes the preview; Ctrl+Q closes."))
             .child(div().border_t_1().border_color(rgb(p.line)).pt_5().flex().flex_col().gap_2()

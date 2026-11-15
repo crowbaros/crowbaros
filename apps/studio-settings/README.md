@@ -1,27 +1,28 @@
 # Studio Settings
 
-> **Status.** This app was built for the earlier Fedora plan. Its interface work
-> carries over to the [vision](../../docs/VISION.md); its RPM packaging and Hyprland
-> wiring do not. It is built and run only in the [Fedora lab](../../lab/fedora/README.md),
-> which is kept for interface work. See [what carries over](../README.md).
+Current Void entry point: [the isolated desktop smoke check](../../lab/void/README.md#full-desktop-smoke-check).
+It builds and tests this app in Void and runs a fresh guest. The Alpha service
+model follows [ADR 0016](../../docs/adr/0016-the-warden-starts-every-compartment.md).
+Fedora commands below describe the legacy workflow pending #65.
 
 The first native CrowbarOS settings slice, implemented in Rust and GPUI 0.2.2:
 
 - Dark, Light, and Warm Paper appearance modes with an immediate app preview.
 - A neutral Studio Mode override that retains the underlying appearance choice.
-- Reduced motion applied to Hyprland when changes are saved.
+- A saved reduced-motion preference; the Void Alpha compositor has no animations.
+  The legacy Hyprland adapter still applies motion on Save.
 - Explicit save/undo, keyboard navigation, inline errors, and unsaved-close protection.
 - Versioned user preferences and a small, separate compositor adapter.
 
-Appearance currently styles **Studio Settings itself**. Desktop-wide theme tokens,
-GTK/Qt integration, wallpaper, fonts, display settings, and the full shell are
+Saved appearance styles **Studio Settings and the shell** in the Void Alpha
+session. GTK/Qt integration, wallpaper, fonts, and display settings remain
 future work. Studio Mode does not calibrate a display. Text fields/IME and
 screen-reader semantics are not validated by this slice.
 
 See the [validation record](../../docs/development/studio-settings-validation-2026-11-14.md)
 for the tested RPM, screenshots, behavior checks, and remaining integration gates.
 
-## Build, package and run
+## Legacy Fedora build, package and run
 
 Use the [Fedora VM lab](../../docs/development/local-vms.md). Keep its viewer open,
 preferably on the same workspace as Codex. All compilation happens in the builder;

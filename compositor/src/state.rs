@@ -92,6 +92,7 @@ pub struct State {
     pub focus_counter: u64,
     /// The compositor's end of the shell's control channel.
     pub control: Option<UnixStream>,
+    pub control_generation: u64,
     /// How many times the compositor took the confirm chord for itself.
     pub confirms_taken: u32,
     /// Keys whose press the compositor kept from every client.
@@ -191,6 +192,7 @@ impl State {
             active_window: None,
             focus_counter: 0,
             control: None,
+            control_generation: 0,
             confirms_taken: 0,
             withheld_keys: HashSet::new(),
         }
