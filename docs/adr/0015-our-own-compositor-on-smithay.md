@@ -44,5 +44,6 @@ The [spike](https://github.com/crowbaros/crowbaros/issues/3) tests this decision
 
 - the shell's layer surfaces or GPUI's rendering cannot be made to work under a Smithay compositor;
 - a client can still receive the confirm key, or still see a protocol it should not;
-- the compositor cannot run on a Void guest without systemd;
-- the measured cost of the spike shows the full compositor is beyond two people alongside Milestones 2 to 4.
+- the compositor cannot run on a Void guest without systemd.
+
+Cost does not reopen it. This list once had a fourth condition: that the measured cost of the spike showed the full compositor to be beyond two people alongside Milestones 2 to 4. The spike could not measure that, and on November 15, 2026 we dropped the condition: we build this compositor whatever it costs. What can still change is what the first compositor has, and where its work sits among the milestones.
