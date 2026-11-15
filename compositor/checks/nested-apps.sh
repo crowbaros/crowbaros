@@ -36,9 +36,13 @@ cat >"$work/shell.sh" <<SH
 #!/bin/sh
 exec unshare --user --map-root-user --mount sh -c '
   mount -t overlay overlay -o lowerdir=/usr/share,upperdir=$work/upper,workdir=$work/ovl-work /usr/share &&
-  exec "$shell"'
+  RUST_LOG=info exec "$shell"'
 SH
-chmod +x "$work/shell.sh"
+cat >"$work/studio.sh" <<SH
+#!/bin/sh
+RUST_LOG=info exec "$studio"
+SH
+chmod +x "$work/shell.sh" "$work/studio.sh"
 
 capture() { # capture NAME: our own window only, through the host's toplevel capture
   command -v grim >/dev/null || return 0
@@ -56,7 +60,9 @@ say "compositor: sha256 $(sha256sum "$bin/crowbar-compositor" | cut -d' ' -f1)"
 say "shell: sha256 $(sha256sum "$shell" | cut -d' ' -f1)"
 say "studio: sha256 $(sha256sum "$studio" | cut -d' ' -f1)"
 
-"$bin/crowbar-compositor" --backend winit --shell "$work/shell.sh" --spawn "$studio" >"$work/run.log" 2>&1 &
+# Both apps log at info, so the warning blade prints for a stale swapchain
+# would reach the log. The compositor's own filter is set apart from theirs.
+"$bin/crowbar-compositor" --backend winit --shell "$work/shell.sh" --spawn "$work/studio.sh" >"$work/run.log" 2>&1 &
 main=$!
 sleep 10
 capture 1-start

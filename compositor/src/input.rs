@@ -8,57 +8,56 @@ use smithay::{
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
     utils::{Logical, Point, SERIAL_COUNTER},
-    wayland::compositor::get_parent,
 };
 
-use crate::state::State;
+use crate::{state::State, windows::root_surface};
 
 impl State {
     /// Every key from every backend enters here. `keycode` is the XKB
     /// keycode, which is the evdev code plus 8.
+    ///
+    /// The confirm chord's key is taken here and never given to Smithay's
+    /// keyboard. Intercepting it in Smithay's filter is not enough: Smithay
+    /// still records the key as pressed, and tells a keyboard object that a
+    /// client creates while it is held.
     pub fn handle_key(&mut self, keycode: Keycode, state: KeyState, time: InputTime) {
-        let serial = SERIAL_COUNTER.next_serial();
-        let taken = self.seat.get_keyboard().unwrap().input::<(), _>(
-            self,
-            keycode,
-            state,
-            serial,
-            time,
-            |compositor, modifiers, key| match state {
-                KeyState::Pressed => {
-                    if modifiers.ctrl && modifiers.alt && key.modified_sym() == Keysym::Return {
-                        compositor.withheld_keys.insert(keycode);
-                        FilterResult::Intercept(())
-                    } else {
-                        FilterResult::Forward
-                    }
-                }
-                // Smithay forwards a release unless the filter takes it too,
-                // whatever happened to the press. A withheld press must
-                // withhold its release, even if the modifiers went up first.
-                KeyState::Released => {
-                    if compositor.withheld_keys.remove(&keycode) {
-                        FilterResult::Intercept(())
-                    } else {
-                        FilterResult::Forward
-                    }
-                }
-            },
-        );
-        if taken.is_some() && state == KeyState::Pressed {
-            self.confirms_taken += 1;
-            self.send_event(crate::control::Event::Confirm);
-            tracing::info!("confirm chord taken by the compositor");
+        match state {
+            KeyState::Pressed if self.completes_confirm_chord(keycode) => {
+                self.withheld_keys.insert(keycode);
+                self.confirms_taken += 1;
+                self.send_event(crate::control::Event::Confirm);
+                tracing::info!("confirm chord taken by the compositor");
+                return;
+            }
+            // A withheld press withholds its release, even if the modifiers
+            // went up first.
+            KeyState::Released if self.withheld_keys.remove(&keycode) => return,
+            _ => {}
         }
+        let serial = SERIAL_COUNTER.next_serial();
+        self.seat
+            .get_keyboard()
+            .unwrap()
+            .input::<(), _>(self, keycode, state, serial, time, |_, _, _| FilterResult::Forward);
+    }
+
+    /// Whether pressing this key now makes the confirm chord: Enter while
+    /// Ctrl and Alt are down.
+    fn completes_confirm_chord(&mut self, keycode: Keycode) -> bool {
+        let keyboard = self.seat.get_keyboard().unwrap();
+        let modifiers = keyboard.modifier_state();
+        if !(modifiers.ctrl && modifiers.alt) {
+            return false;
+        }
+        keyboard.with_xkb_state(self, |context| {
+            let xkb = context.xkb().lock().unwrap();
+            // Safety: the state is read here and not kept past the lock.
+            unsafe { xkb.state() }.key_get_one_sym(keycode) == Keysym::Return
+        })
     }
 
     fn clamp_to_outputs(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
-        let Some(bounds) = self
-            .outputs
-            .iter()
-            .filter_map(|o| self.space.output_geometry(o))
-            .reduce(|a, b| a.merge(b))
-        else {
+        let Some(bounds) = self.desktop_bounds() else {
             return pos;
         };
         Point::from((
@@ -91,10 +90,7 @@ impl State {
         let Some((surface, _)) = self.surface_under(pos) else {
             return;
         };
-        let mut root = surface;
-        while let Some(parent) = get_parent(&root) {
-            root = parent;
-        }
+        let root = root_surface(&surface);
         if let Some(window) = self.managed(&root).map(|m| m.window.clone()) {
             self.focus_window(Some(&window));
         }
@@ -112,12 +108,7 @@ impl State {
             }
             InputEvent::PointerMotionAbsolute { event, .. } => {
                 // An absolute device covers the whole desktop.
-                let Some(bounds) = self
-                    .outputs
-                    .iter()
-                    .filter_map(|o| self.space.output_geometry(o))
-                    .reduce(|a, b| a.merge(b))
-                else {
+                let Some(bounds) = self.desktop_bounds() else {
                     return;
                 };
                 let pos = event.position_transformed(bounds.size) + bounds.loc.to_f64();

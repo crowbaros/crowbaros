@@ -1,3 +1,5 @@
+// From Smithay's `smallvil` example (MIT; see LICENSE-smithay.txt), with small changes.
+
 use crate::{State, grabs::resize_grab, state::ClientState};
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,

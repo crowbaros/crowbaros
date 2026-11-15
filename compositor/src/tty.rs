@@ -63,6 +63,12 @@ render_elements! {
     Cursor=SolidColorRenderElement,
 }
 
+/// The name the kernel's connector has on the command line and in logs, such
+/// as `Virtual-1`.
+fn connector_name(connector: &connector::Info) -> String {
+    format!("{}-{}", connector.interface().as_str(), connector.interface_id())
+}
+
 /// The side of the pointer square, in logical pixels. Clients' own cursor
 /// images are not drawn in this spike.
 const CURSOR_SIZE: i32 = 12;
@@ -72,10 +78,11 @@ struct Surface {
     drm_output: GbmDrmOutput,
     /// A page flip is queued and its vblank has not arrived.
     flip_pending: bool,
+    /// A timer is already set to draw this output again.
+    retry_pending: bool,
 }
 
 pub struct Tty {
-    node: DrmNode,
     pub renderer: GlesRenderer,
     manager: GbmDrmOutputManager,
     scanner: DrmScanner,
@@ -200,7 +207,6 @@ pub fn init_tty(
         })?;
 
     state.tty = Some(Tty {
-        node,
         renderer,
         manager,
         scanner: DrmScanner::new(),
@@ -242,7 +248,7 @@ impl State {
     }
 
     fn tty_connect(&mut self, connector: connector::Info, crtc: crtc::Handle) {
-        let name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
+        let name = connector_name(&connector);
         let Some(mode) = connector
             .modes()
             .iter()
@@ -279,6 +285,7 @@ impl State {
                         output,
                         drm_output,
                         flip_pending: false,
+                        retry_pending: false,
                     },
                 );
                 self.loop_handle.insert_idle(move |state| state.tty_render(crtc));
@@ -292,7 +299,7 @@ impl State {
     }
 
     fn tty_disconnect(&mut self, connector: connector::Info, crtc: crtc::Handle) {
-        let name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
+        let name = connector_name(&connector);
         let surface = self.tty.as_mut().and_then(|tty| tty.surfaces.remove(&crtc));
         if let Some(surface) = surface {
             info!(%name, "output disconnected");
@@ -317,12 +324,20 @@ impl State {
         let Some(mut tty) = self.tty.take() else {
             return;
         };
-        let retry = self.tty_render_surface(&mut tty, crtc);
+        let mut retry = self.tty_render_surface(&mut tty, crtc);
+        // One timer per output, however many callers asked for a redraw.
+        if let Some(surface) = tty.surfaces.get_mut(&crtc) {
+            retry = retry && !surface.retry_pending;
+            surface.retry_pending |= retry;
+        }
         self.tty = Some(tty);
         if retry {
             let _ =
                 self.loop_handle
                     .insert_source(Timer::from_duration(Duration::from_millis(16)), move |_, _, state| {
+                        if let Some(surface) = state.tty.as_mut().and_then(|tty| tty.surfaces.get_mut(&crtc)) {
+                            surface.retry_pending = false;
+                        }
                         state.tty_render(crtc);
                         TimeoutAction::Drop
                     });
@@ -403,10 +418,5 @@ impl State {
     pub fn tty_import_dmabuf(&mut self, dmabuf: &smithay::backend::allocator::dmabuf::Dmabuf) -> Option<bool> {
         let tty = self.tty.as_mut()?;
         Some(tty.renderer.import_dmabuf(dmabuf, None).is_ok())
-    }
-
-    /// The DRM node the TTY backend drives.
-    pub fn tty_node(&self) -> Option<DrmNode> {
-        self.tty.as_ref().map(|tty| tty.node)
     }
 }

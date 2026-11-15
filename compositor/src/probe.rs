@@ -255,6 +255,12 @@ impl Client {
         self.roundtrip()
     }
 
+    /// Asks the seat for a second keyboard object, as a client may at any time.
+    pub fn new_keyboard(&mut self) -> Result<(), Error> {
+        self.state.keyboard = None;
+        self.listen_to_keyboard()
+    }
+
     /// Maps an xdg-shell window filled with one colour.
     pub fn open_toplevel(&mut self, title: &str, app_id: &str, size: (i32, i32), argb: u32) -> Result<Toplevel, Error> {
         let qh = self.queue.handle();

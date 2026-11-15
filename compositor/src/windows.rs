@@ -5,7 +5,10 @@ use smithay::{
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER},
-    wayland::shell::xdg::ToplevelSurface,
+    wayland::{
+        compositor::{get_parent, with_states},
+        shell::xdg::{ToplevelSurface, XdgToplevelSurfaceData},
+    },
 };
 
 use crate::State;
@@ -24,6 +27,31 @@ pub struct Managed {
 
 /// Workspaces are numbered from 1 to this.
 pub const WORKSPACES: u32 = 9;
+
+impl Managed {
+    /// The window's app id and title, as its client set them.
+    pub fn app_id_and_title(&self) -> (String, String) {
+        let Some(toplevel) = self.window.toplevel() else {
+            return Default::default();
+        };
+        with_states(toplevel.wl_surface(), |states| {
+            let data = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
+            (
+                data.app_id.clone().unwrap_or_default(),
+                data.title.clone().unwrap_or_default(),
+            )
+        })
+    }
+}
+
+/// The surface at the top of a subsurface tree.
+pub fn root_surface(surface: &WlSurface) -> WlSurface {
+    let mut root = surface.clone();
+    while let Some(parent) = get_parent(&root) {
+        root = parent;
+    }
+    root
+}
 
 impl State {
     /// The part of an output that layer surfaces have not reserved, in

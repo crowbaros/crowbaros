@@ -1,4 +1,5 @@
-//! Seam 1: the Wayland socket as a client sees it.
+//! The Wayland socket as a client sees it: which globals each kind of client
+//! is offered.
 
 mod common;
 

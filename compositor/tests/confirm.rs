@@ -1,4 +1,4 @@
-//! Seam 2: the one key entry point both backends call.
+//! The one function every key enters by, whichever backend it came from.
 //!
 //! The confirm chord in this spike is Ctrl+Alt+Enter. ADR 0014 says the
 //! confirm gesture is never delivered to a Tool or an app.
@@ -129,6 +129,34 @@ fn a_client_that_gains_focus_during_the_chord_is_not_told_the_key_is_down() {
     compositor.key(KEY_ENTER, false);
 
     let seen = second.take_keys().unwrap();
+    let held: Vec<u32> = seen
+        .iter()
+        .filter_map(|e| match e {
+            KeyEvent::Enter { held } => Some(held.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert!(seen.iter().any(|e| matches!(e, KeyEvent::Enter { .. })), "{seen:?}");
+    assert!(!held.contains(&KEY_ENTER), "{seen:?}");
+    assert_eq!(keys_only(seen), []);
+}
+
+/// A client may ask the seat for a keyboard object whenever it likes. The new
+/// object is told which keys are down.
+#[test]
+fn a_keyboard_object_made_during_the_chord_is_not_told_the_key_is_down() {
+    let compositor = Compositor::start();
+    let mut client = focused_client(&compositor);
+
+    compositor.key(KEY_LEFTCTRL, true);
+    compositor.key(KEY_LEFTALT, true);
+    compositor.key(KEY_ENTER, true);
+    client.take_keys().unwrap();
+    client.new_keyboard().unwrap();
+    compositor.key(KEY_ENTER, false);
+
+    let seen = client.take_keys().unwrap();
     let held: Vec<u32> = seen
         .iter()
         .filter_map(|e| match e {

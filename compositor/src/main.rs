@@ -20,8 +20,14 @@ struct Args {
     scales: Vec<(String, f64)>,
 }
 
-fn words(text: &str) -> Vec<String> {
-    text.split_whitespace().map(str::to_owned).collect()
+/// Splits a command on spaces. There is no quoting; wrap anything more
+/// complex in a script.
+fn words(text: &str) -> Result<Vec<String>, String> {
+    let words: Vec<String> = text.split_whitespace().map(str::to_owned).collect();
+    if words.is_empty() {
+        return Err("a command cannot be empty".into());
+    }
+    Ok(words)
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -37,8 +43,8 @@ fn parse_args() -> Result<Args, String> {
         let mut value = || rest.next().ok_or(format!("{flag} needs a value"));
         match flag.as_str() {
             "--backend" => args.backend = value()?,
-            "--shell" => args.shell = Some(words(&value()?)),
-            "--spawn" => args.spawn.push(words(&value()?)),
+            "--shell" => args.shell = Some(words(&value()?)?),
+            "--spawn" => args.spawn.push(words(&value()?)?),
             "--scale" => {
                 let value = value()?;
                 let (name, factor) = value.split_once('=').ok_or("--scale takes NAME=FACTOR")?;

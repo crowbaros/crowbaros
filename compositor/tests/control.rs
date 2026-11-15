@@ -1,4 +1,4 @@
-//! Seam 3: the control channel the compositor hands to the shell.
+//! The control channel the compositor hands to the shell.
 //!
 //! It replaces the apps' use of the Hyprland socket. The wire format is one
 //! JSON object per line, and the commands are a fixed set.

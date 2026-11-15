@@ -1,6 +1,6 @@
-# Nested protocol checks, 2026-11-15T07:28:52Z
+# Nested protocol checks, 2026-11-15T07:42:32Z
 host: Linux 7.2.15-2-omarchy, session wayland on wayland-1
-compositor: /home/jmartin/Code/crowbaros/.lab/void-graphical/target/release/crowbar-compositor  sha256 6bce787cc7a19e73544a1cf6ce037fd9a01580aab3606aecab23b67905d7431d
+compositor: /home/jmartin/Code/crowbaros/.lab/void-graphical/target/release/crowbar-compositor  sha256 3ad4637587371adad2792937d3631c0f3d4d908b56b34c895cc7d847f36016a3
 wayland-info: /home/jmartin/.cache/crowbaros/wayland-utils/root/usr/bin/wayland-info
 
 == the shell (socket handed over by the compositor): 13 globals
@@ -66,4 +66,4 @@ wayland-info: /home/jmartin/.cache/crowbaros/wayland-utils/root/usr/bin/wayland-
    layer surface created, size (1896, 60)
 
 RESULT: pass
-log: /home/jmartin/Code/crowbaros/.lab/compositor/nested-20261115T072852Z.log
+log: /home/jmartin/Code/crowbaros/.lab/compositor/nested-20261115T074232Z.log

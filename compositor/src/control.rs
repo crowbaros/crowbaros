@@ -25,10 +25,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use smithay::{
-    reexports::calloop::{Interest, Mode, PostAction, generic::Generic},
-    wayland::{compositor::with_states, shell::xdg::XdgToplevelSurfaceData},
-};
+use smithay::reexports::calloop::{Interest, Mode, PostAction, generic::Generic};
 
 use crate::{State, windows::WORKSPACES};
 
@@ -129,7 +126,10 @@ impl State {
         };
         let mut line = serde_json::to_vec(message).expect("control messages serialize");
         line.push(b'\n');
-        if stream.write_all(&line).is_err() {
+        // The socket does not block. A shell that has stopped reading loses
+        // the channel; it is not waited for.
+        if let Err(error) = stream.write_all(&line) {
+            tracing::warn!(%error, "control channel closed: the shell is not reading");
             self.control = None;
         }
     }
@@ -180,19 +180,7 @@ impl State {
             .windows
             .iter()
             .map(|managed| {
-                let (app_id, title) = managed
-                    .window
-                    .toplevel()
-                    .map(|toplevel| {
-                        with_states(toplevel.wl_surface(), |states| {
-                            let data = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
-                            (
-                                data.app_id.clone().unwrap_or_default(),
-                                data.title.clone().unwrap_or_default(),
-                            )
-                        })
-                    })
-                    .unwrap_or_default();
+                let (app_id, title) = managed.app_id_and_title();
                 WindowInfo {
                     id: window_name(managed.id),
                     app_id,

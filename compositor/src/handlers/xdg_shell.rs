@@ -1,3 +1,5 @@
+// From Smithay's `smallvil` example (MIT; see LICENSE-smithay.txt), with small changes.
+
 use smithay::{
     desktop::{PopupKind, PopupManager, Space, Window, find_popup_root_surface, get_popup_toplevel_coords},
     input::{

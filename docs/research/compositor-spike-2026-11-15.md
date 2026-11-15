@@ -15,22 +15,26 @@ This is the record that [issue 3](https://github.com/crowbaros/crowbaros/issues/
 asks for. The spike's code is in [`compositor/`](../../compositor/README.md) and
 is throwaway. The evidence is in
 [`evidence/compositor-spike-2026-11-15/`](evidence/compositor-spike-2026-11-15/):
-three logs, copied byte for byte from the logs the runs wrote, and four
+four logs, copied byte for byte from the logs the runs wrote, and five
 captures.
+
+**Time box.** The issue left it "to be set by Jim and Jason" and none was
+recorded there. Asked at the start, Jim chose one working session with the
+hours recorded. [Cost](#cost) has them.
 
 ## Summary
 
 | Item in the issue | Result | Evidence |
 | --- | --- | --- |
 | Runs nested in a window on the development host | Shown | `nested-protocols.log`, `nested-apps.log` |
-| Bar, dock, launcher, and wallpaper as layer surfaces, with correct exclusive zones | Bar, dock, and wallpaper shown with the real shell. Launcher and the exclusive zones shown by tests only | Capture below, `tests/layers.rs` |
+| Bar, dock, launcher, and wallpaper as layer surfaces, with correct exclusive zones | Bar, dock, wallpaper, and their exclusive zones shown with the real shell. The launcher shown by a test only | Capture below, `nested-apps.log`, `tests/layers.rs` |
 | Studio Settings opens as a floating window through GPUI's Vulkan path | Shown | Capture below, `nested-apps.log` |
 | The two Hyprland socket uses replaced by an interface we define | Replaced and tested on both sides. The window list was seen working in the real shell. The two focus calls were not clicked in the real shell | [The control channel](#the-control-channel) |
-| A key chord is intercepted; a focused client sees neither press nor release | Shown, with real key events in the Void guest | `void-tty.log`, `tests/confirm.rs` |
+| A key chord is intercepted; a focused client sees neither press nor release | Shown, with real key events in the Void guest. Two leaks were found on the way and closed | `void-tty.log`, `tests/confirm.rs` |
 | Layer-shell offered to the shell and not to a second client | Shown | `nested-protocols.log` |
 | Input, clipboard-manager, and capture globals absent from `wayland-info` | Shown | `nested-protocols.log`, `void-tty.log` |
 | A security-context client sees the reduced set | Shown | `nested-protocols.log`, `void-tty.log` |
-| `backend_libei` off in the build | Shown | [Build](#the-build) |
+| `backend_libei` off in the build | Shown, with one caveat about what Cargo still compiles | [Build](#the-build) |
 | The same binary on a TTY in a Void guest: udev, libinput, libseat on seatd, DRM, no systemd | Shown | `void-tty.log` |
 | Two outputs with different scales, and one hotplug | Shown | `void-tty.log`, captures below |
 | NVIDIA with Void's `nvidia` package | **Not run.** A nested run on NVIDIA showed no first-frame freeze | [NVIDIA](#nvidia) |
@@ -53,9 +57,10 @@ captures.
 
 **One binary did every run on a display.** It was built inside a Void build
 root, so it links Void's libraries. Its SHA-256 is
-`6bce787cc7a19e73544a1cf6ce037fd9a01580aab3606aecab23b67905d7431d`, and all
-three logs name it. It ran unchanged on the host (nested) and in the guest (on
-a TTY).
+`3ad4637587371adad2792937d3631c0f3d4d908b56b34c895cc7d847f36016a3`. The two
+nested logs name it, and `void-tty.log` shows `sha256sum` printing the same
+value for the file inside the guest. It ran unchanged on the host (nested) and
+in the guest (on a TTY).
 
 ## It runs our apps
 
@@ -84,12 +89,18 @@ as an ordinary client. It runs for a minute.
   [the table below](#which-client-sees-which-global). It ran without
   xdg-decoration, cursor-shape, xdg-activation, and text-input.
 
-**Exclusive zones.** `tests/layers.rs` maps a 44-pixel bar and a 96-pixel dock
-(the shell's sizes) on a 1280 by 800 output. The bar is configured at 1280 by
-44, and a maximized window is configured at 1280 by 660. In the capture above
-Studio Settings sits under the bar by accident of timing: it connected before
-the shell's layers existed, so it was placed against the full output. The
-spike does not move windows when the usable area changes.
+**Exclusive zones.** The shell's bar reserves 44 pixels and its dock 96. With
+the real shell on the 1896 by 1030 output, the compositor logged the room left
+for windows as `1896x986 at 0,44` once the bar was up and `1896x890 at 0,44`
+once the dock was (`nested-apps.log`). 1030 less 44 less 96 is 890.
+`tests/layers.rs` shows the client's side of the same thing on a 1280 by 800
+output: the bar is configured at 1280 by 44, and a maximized window at 1280 by
+660.
+
+In the capture Studio Settings starts 4 pixels below the bar by accident of
+timing. It connected before the shell's layers existed, so it was placed 48
+pixels into the full output. The spike does not move windows when the usable
+area changes.
 
 **The launcher** was not opened with the real shell, because the host's
 keyboard and pointer cannot be driven from a script without touching the
@@ -141,12 +152,25 @@ bar. All of them now go to the control channel. The shell makes the inherited
 descriptor close-on-exec before it starts anything, so a program the shell
 launches does not inherit the channel.
 
-**Tested:** `compositor/tests/control.rs` drives the compositor's end with the
-literal lines above. `apps/shell/src/session.rs` has tests that drive the
-shell's end against a scripted peer.
+**Requests carry no id.** A reply that came after the shell stopped waiting
+(it waits half a second) would be read as the answer to the next request. A
+test found exactly that. The shell now closes the channel when an exchange
+fails, and its bar goes back to "Connecting to the compositor…". The real
+interface wants ids, or one request in flight at a time by construction.
+
+**One thing the issue did not ask for:** the compositor tells the shell when it
+takes the confirm chord (`{"event":"confirm"}`). ADR 0014 has the shell answer
+an ask, so the shell has to hear of the gesture somehow, and this showed the
+channel can carry it. It is three lines and can go.
+
+**Tested:** `compositor/tests/control.rs` (five tests) drives the compositor's
+end with the literal lines above. `apps/shell/src/session.rs` has five tests
+that drive the shell's end against a scripted peer.
 
 **Seen in the real shell:** the bar shows workspace 1 as active and "Studio
 Settings" as the active window (capture above). Both come from `snapshot`.
+[Before the adapter changed](evidence/compositor-spike-2026-11-15/nested-shell-before-adapter.png),
+the same bar under the same compositor read "Connecting to Hyprland…".
 
 **Not seen in the real shell:** a click on a workspace number or a dock entry.
 Those calls are covered by the tests on both sides only.
@@ -258,19 +282,38 @@ Ctrl (29) and Alt (56), which shows it held the keyboard throughout, and
 nothing for Enter (28). The compositor logged `confirm chord taken by the
 compositor`.
 
-**Tested** (`tests/confirm.rs`, five tests through the one function both
+**Tested** (`tests/confirm.rs`, six tests through the one function both
 backends call): a plain key arrives; the chord's key does not; Enter without
 the modifiers is an ordinary key; a client that gains the focus while the
-chord is held is not told that Enter is down. The shell is told on the control
-channel (`{"event":"confirm"}`), and no client is.
+chord is held is not told that Enter is down, and neither is a keyboard object
+a client creates while it is held. The shell is told on the control channel,
+and no client is.
 
-**A leak the tests found.** Smithay forwards a key release unless the filter
-intercepts the release too, whatever happened to the press. With the obvious
-filter, releasing Ctrl or Alt before Enter sent the focused client a release
-for Enter with no press. The compositor now remembers each key whose press it
-withheld and withholds that key's release. This is the kind of hole ADR 0014
-says must be closed, and it shows the filter needs adversarial tests, as ADR
-0015 says.
+**Two leaks were found and closed.** Both came from using Smithay's key filter
+(`FilterResult::Intercept`), which is the mechanism the research and ADR 0015
+name.
+
+1. *The release.* Smithay forwards a key release unless the filter intercepts
+   the release too, whatever happened to the press. Releasing Ctrl or Alt
+   before Enter sent the focused client a release for Enter with no press. A
+   test found it.
+2. *A new keyboard object.* Smithay records an intercepted key as pressed. A
+   client that already has the focus and asks the seat for another keyboard
+   object while Enter is held was told, in that object's `enter` event, that
+   key 28 is down. The review of this branch found it by reading Smithay, and
+   a test then reproduced it.
+
+The fix for both is to stop using the filter for this. The compositor now
+decides before Smithay's keyboard sees the key: if the press completes the
+chord, the key is never given to Smithay at all, and its release is dropped the
+same way. Smithay has nothing to forward and nothing to report. The Void run
+above was made with this version.
+
+**This is the main lesson for the real compositor.** "Smithay's keyboard input
+can withhold a key from every client" is true of the key event and not of
+everything Smithay later says about the keyboard. The confirm gesture needs to
+be taken ahead of the seat, and it needs adversarial tests, as ADR 0015 says.
+Two holes in about forty lines is the evidence.
 
 **What the client still learns.** It sees Ctrl and Alt go down and up, so it
 can tell that a chord may have been made. A gesture on a single dedicated key
@@ -282,17 +325,20 @@ would tell it nothing.
 the features it wants. `backend_libei` is not among them, and neither are
 `xwayland`, `backend_x11`, and `backend_vulkan`.
 
-At this commit Smithay still depends on the `reis` crate (the libei protocol)
-without a feature gate, so Cargo compiles it. The backend module that uses it
-is compiled out, and the release binary contains no `reis` symbol and no
-libei string.
+**The caveat.** At this commit Smithay still depends on the `reis` crate (the
+libei protocol) without a feature gate and re-exports it, so Cargo compiles it.
+The backend module is the only Smithay code that uses it, and that module is
+compiled out. `nm` finds six symbols in the release binary that carry the
+crate's name; they are hash-table code instantiated in that crate. The binary
+holds no `libei` or `ei_handshake` string, and the compositor opens no libei
+socket. Removing the crate from the build needs a change in Smithay.
 
 ## It runs on Base
 
 **Run:** `lab/void/compositor_guest.py check`. It builds the compositor inside
 a Void build root, makes a guest disk, boots it, and starts the compositor on
-virtual terminal 2 as the ordinary user `crowbar` (in the groups `_seatd`,
-`video`, and `input`). It passed **19 of 19 checks** (`void-tty.log`).
+virtual terminal 2 as the ordinary user `crowbar`, whose only extra group is
+`_seatd`. It passed **20 of 20 checks** (`void-tty.log`).
 
 **Seen:**
 
@@ -347,9 +393,13 @@ Base, Base would build its own libseat.
 
 - **Make `XDG_RUNTIME_DIR`.** Nothing creates `/run/user/1000` without logind.
   The lab makes it by hand.
-- **Put the person in `_seatd`.** That group is what lets a process open the
-  seat. Anything in that group can ask seatd for the input devices, so who is
-  in it matters to ADR 0014's "creating or reading input devices".
+- **Put the person in `_seatd`, and in nothing else.** That group is what lets
+  a process open the seat. The compositor needed neither `input` nor `video`:
+  seatd opens the devices for it. So the person's programs can be kept from
+  reading `/dev/input` directly, which ADR 0014 lists ("creating or reading
+  input devices"). But anything in `_seatd` can ask seatd for those same
+  devices when no session holds the seat, so who is in that group matters just
+  as much. The spike does not close that.
 
 ## NVIDIA
 
@@ -369,8 +419,10 @@ five seconds for a minute.
 
 **Seen** (`nested-apps.log`): the bar, the dock, the wallpaper, and Studio
 Settings each committed about 60 times a second in all twelve intervals, with
-none stalled. The apps logged no `out of date` and no `Acquire failed`. A
-resize in the middle did not change that.
+none stalled. Both apps ran with their logs at `info`, where blade's warning
+would show, and logged no `out of date` and no `Acquire failed`. Both named
+the adapter `NVIDIA GeForce RTX 4090`. A resize in the middle did not change
+any of that.
 
 **What this does and does not say.** The freeze did not happen here: blade on
 NVIDIA 615.78.08, under this compositor, nested, with the open kernel modules
@@ -387,16 +439,16 @@ second machine, or this one with the host session stopped.
 
 | Part | Lines |
 | --- | --- |
-| The compositor (`src/`, without the probe) | 2,894 |
-| … of which unchanged from `smallvil` | 1,143 |
-| … of which the TTY backend, adapted from `anvil` | 412 |
-| … so new or changed, outside the TTY backend | about 1,340 |
-| The probe client | 668 |
-| Tests | 617 |
-| Check scripts and the Void lab's graphical guest | 801 |
-| The shell's adapter (`session.rs`) | 242 added, 36 removed |
+| The compositor (`src/`, without the probe) | 2,935 |
+| … of which unchanged from `smallvil` | 1,141 |
+| … of which the TTY backend, adapted from `anvil` | 422 |
+| … so new or changed, outside the TTY backend | about 1,370 |
+| The probe client | 674 |
+| Tests | 647 |
+| Check scripts and the Void lab's graphical guest | 823 |
+| The shell's adapter (`session.rs`), with its tests | 284 added, 36 removed |
 
-**Hours: about HOURS_PLACEHOLDER of wall-clock time**, in one session by one coding
+**Hours: about 1.2 hours of wall-clock time** (06:42 to 07:50 UTC), in one session by one coding
 agent (the model and harness are named at the end), with Jim answering two
 questions. That covers reading the issue, the ADRs, and the research, all the
 code and scripts above, every run, and this record.
@@ -409,8 +461,9 @@ screen capture for the shell, text input, damage and frame timing done well,
 and the long tail of hardware. What the spike does show about cost is narrower
 and still useful: the three ADR 0014 rules it tested cost little once a
 Smithay compositor exists (about 70 lines for the table, about 40 for the
-chord, about 210 for the control channel), and the Void TTY path needed no
-workaround beyond the two in [Findings](#findings-to-carry-forward). Whether
+chord, about 200 for the control channel), and the Void TTY path needed no
+workaround beyond the two in [Findings](#findings-to-carry-forward). It also
+shows that those few lines were wrong twice before they were right. Whether
 the full compositor fits two people beside Milestones 2 to 4 is a judgment for
 Jim and Jason. This record does not settle it.
 
@@ -419,14 +472,14 @@ Jim and Jason. This record does not settle it.
 | Condition in ADR 0015 | Reading |
 | --- | --- |
 | The shell's layer surfaces or GPUI's rendering cannot be made to work | Not met. Both work, nested, on NVIDIA |
-| A client can still receive the confirm key, or still see a protocol it should not | Not met in what was tested. One such leak was found and closed |
+| A client can still receive the confirm key, or still see a protocol it should not | Not met in what was tested. Two ways to learn of the key were found and closed, both by taking the key ahead of Smithay's keyboard. That more exist cannot be ruled out by a spike |
 | The compositor cannot run on a Void guest without systemd | Not met. It runs |
 | The measured cost shows the full compositor is beyond two people | Not answered by this measurement. See [Cost](#cost) |
 
 ## Findings to carry forward
 
-1. **Withhold the release of every key whose press was withheld.** Smithay
-   does not do this for you. See [the confirm chord](#the-confirm-chord).
+1. **Take the confirm gesture before Smithay's keyboard sees it.** Do not use
+   the key filter for it. See [the confirm chord](#the-confirm-chord).
 2. **Filter every global in one place.** Hand-writing the two dispatch `impl`
    blocks gives a default-deny table. A new global is hidden until someone
    lists it.
@@ -445,7 +498,8 @@ Jim and Jason. This record does not settle it.
    opened it and never saw the virtio-gpu hotplug. On real hardware the same
    question is which GPU the compositor picks.
 7. **Smithay's `Space` draws layer surfaces and arranges exclusive zones.**
-   The layer-shell handler in the spike is about 110 lines.
+   The layer-shell handler in the spike is about 130 lines.
+8. **With seatd the person's account needs no `input` or `video` group.**
 
 ## Not run
 
@@ -453,6 +507,11 @@ Jim and Jason. This record does not settle it.
   and resume. See [NVIDIA](#nvidia).
 - The GPUI apps in the Void guest. The guest has no Vulkan driver installed and
   the apps were built on the host. The Fedora lab is therefore still needed.
+- The Fedora lab. AGENTS.md asks for an app's README steps when `apps/`
+  changes, and the shell's are the Fedora lab under Hyprland. They were not
+  run: the change removes the shell's Hyprland calls, so that run can only
+  show the bar's "Connecting to the compositor…" text. The before and after
+  captures in this record are under the spike's compositor instead.
 - Pointer clicks and typing in the real shell and in Studio Settings. The
   host's input was not driven. In the guest the pointer was moved, not clicked.
 - The launcher, with the real shell.
@@ -460,7 +519,9 @@ Jim and Jason. This record does not settle it.
 - Unplugging a monitor, changing a mode, and a VT switch away and back. The
   code for a VT switch exists and was not exercised.
 - Any real hardware. The TTY runs were in a VM on a virtual GPU.
-- CI. `compositor/` is outside the root workspace and CI does not build it.
+- CI on this branch. `compositor/` and `apps/` are outside the root workspace,
+  so CI builds neither and runs none of their tests. CI's own commands were
+  run by hand; see [How to repeat](#how-to-repeat).
 
 ## Known defects in the spike
 
@@ -475,6 +536,17 @@ Jim and Jason. This record does not settle it.
 - `Unable to become drm master, assuming unprivileged mode` is logged at start
   in the guest. Output works all the same. `anvil` logs the same line.
 
+## Other runs
+
+- **The Milestone 1 loop**, because `lab/void/config.json` changed and
+  AGENTS.md asks for it: `lab/void/void_lab.py milestone` passed 22 of 22
+  checks. Its log is
+  [`void-lab-milestone-1-rerun.log`](evidence/compositor-spike-2026-11-15/void-lab-milestone-1-rerun.log).
+- **The tests:** 17 in `compositor/` and 8 in `apps/shell` (5 of them new)
+  pass. `cargo clippy --all-targets -- -D warnings` is clean in `compositor/`.
+- **CI's commands** for the root workspace (format, clippy, tests, and the lab
+  scripts' compile step) pass.
+
 ## How to repeat
 
 ```sh
@@ -482,7 +554,8 @@ Jim and Jason. This record does not settle it.
 cd compositor && cargo test
 cd ../apps/shell && python3 packaging/prepare-gpui.py && cargo test --locked
 
-# The Void guest. Needs QEMU with virtio-gpu; see lab/void/README.md.
+# The Void guest: builds, makes the disk, boots, and checks.
+# Needs QEMU with virtio-gpu; see lab/void/README.md.
 lab/void/compositor_guest.py check
 
 # Nested on a Wayland session, with the binary the Void build made.

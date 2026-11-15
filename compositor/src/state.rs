@@ -19,11 +19,9 @@ use smithay::{
             protocol::wl_surface::WlSurface,
         },
     },
-    utils::{Logical, Point},
+    utils::{Logical, Point, Rectangle},
     wayland::{
-        compositor::{
-            CompositorClientState, CompositorState, SurfaceData, get_parent, send_surface_state, with_states,
-        },
+        compositor::{CompositorClientState, CompositorState, SurfaceData, send_surface_state},
         dmabuf::{DmabufGlobal, DmabufState},
         fractional_scale::{FractionalScaleManagerState, with_fractional_scale},
         output::OutputManagerState,
@@ -31,7 +29,7 @@ use smithay::{
         selection::data_device::DataDeviceState,
         shell::{
             wlr_layer::{Layer, WlrLayerShellState},
-            xdg::{XdgShellState, XdgToplevelSurfaceData},
+            xdg::XdgShellState,
         },
         shm::ShmState,
         socket::ListeningSocketSource,
@@ -41,7 +39,7 @@ use smithay::{
 
 use crate::{
     policy::{self, ClientKind},
-    windows::Managed,
+    windows::{Managed, root_surface},
 };
 
 pub struct State {
@@ -86,13 +84,13 @@ pub struct State {
     pub output_scales: Vec<(String, f64)>,
     pub windows: Vec<Managed>,
     pub next_window_id: u32,
-    /// How many times the compositor took the confirm chord for itself.
     pub active_workspace: u32,
     /// The id of the window with the keyboard focus.
     pub active_window: Option<u32>,
     pub focus_counter: u64,
     /// The compositor's end of the shell's control channel.
     pub control: Option<UnixStream>,
+    /// How many times the compositor took the confirm chord for itself.
     pub confirms_taken: u32,
     /// Keys whose press the compositor kept from every client.
     pub withheld_keys: HashSet<Keycode>,
@@ -288,8 +286,18 @@ impl State {
         output
     }
 
-    /// Removes an output. Its windows move to the first output that is left.
+    /// The rectangle that holds every output.
+    pub fn desktop_bounds(&self) -> Option<Rectangle<i32, Logical>> {
+        self.outputs
+            .iter()
+            .filter_map(|o| self.space.output_geometry(o))
+            .reduce(|a, b| a.merge(b))
+    }
+
+    /// Removes an output. The windows that were on it move to the first
+    /// output that is left, whether their workspace is shown or not.
     pub fn remove_output(&mut self, output: &Output) {
+        let gone = self.space.output_geometry(output);
         self.outputs.retain(|o| o != output);
         self.space.unmap_output(output);
         self.output_globals.retain(|(o, global)| {
@@ -298,14 +306,16 @@ impl State {
             }
             o != output
         });
-        if let Some(first) = self.outputs.first().cloned() {
-            let area = self.usable_area(&first);
-            for managed in &mut self.windows {
-                if self.space.outputs_for_element(&managed.window).is_empty() {
-                    managed.location = area.loc + Point::from((48, 48));
-                    if managed.workspace == self.active_workspace {
-                        self.space.map_element(managed.window.clone(), managed.location, false);
-                    }
+        let (Some(gone), Some(first)) = (gone, self.outputs.first().cloned()) else {
+            return;
+        };
+        let area = self.usable_area(&first);
+        for managed in &mut self.windows {
+            let location = self.space.element_location(&managed.window).unwrap_or(managed.location);
+            if gone.contains(location) {
+                managed.location = area.loc + Point::from((48, 48));
+                if managed.workspace == self.active_workspace {
+                    self.space.map_element(managed.window.clone(), managed.location, false);
                 }
             }
         }
@@ -411,23 +421,9 @@ impl State {
     /// Counts a commit against the window or layer surface it belongs to.
     /// The counts are logged, so a client that stops drawing shows up.
     pub fn count_commit(&mut self, surface: &WlSurface) {
-        let mut root = surface.clone();
-        while let Some(parent) = get_parent(&root) {
-            root = parent;
-        }
+        let root = root_surface(surface);
         let label = if let Some(managed) = self.managed(&root) {
-            let app_id = managed
-                .window
-                .toplevel()
-                .and_then(|t| {
-                    with_states(t.wl_surface(), |states| {
-                        states
-                            .data_map
-                            .get::<XdgToplevelSurfaceData>()
-                            .and_then(|data| data.lock().unwrap().app_id.clone())
-                    })
-                })
-                .unwrap_or_default();
+            let (app_id, _) = managed.app_id_and_title();
             format!("window {:#x} {app_id}", managed.id)
         } else if let Some(namespace) = self.outputs.iter().find_map(|output| {
             layer_map_for_output(output)

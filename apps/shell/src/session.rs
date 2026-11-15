@@ -49,7 +49,9 @@ pub enum Event {
 /// line: a request gets one reply, and the compositor may send events at any
 /// time. See `compositor/src/control.rs`.
 pub struct Compositor {
-    lines: Mutex<(BufReader<UnixStream>, UnixStream)>,
+    /// The read and write halves of the socket. `None` once an exchange has
+    /// failed.
+    lines: Mutex<Option<(BufReader<UnixStream>, UnixStream)>>,
 }
 
 impl Compositor {
@@ -57,7 +59,7 @@ impl Compositor {
         stream.set_read_timeout(Some(Duration::from_millis(500)))?;
         stream.set_write_timeout(Some(Duration::from_millis(500)))?;
         Ok(Self {
-            lines: Mutex::new((BufReader::new(stream.try_clone()?), stream)),
+            lines: Mutex::new(Some((BufReader::new(stream.try_clone()?), stream))),
         })
     }
 
@@ -81,12 +83,29 @@ impl Compositor {
 
     /// Sends one request and returns its reply. Events that arrive first are
     /// logged and skipped.
+    ///
+    /// Requests carry no id. If the exchange fails part-way, for example
+    /// because the reply is late, the channel is closed for good: a late
+    /// reply must never be read as the answer to a later request.
     fn request(&self, request: serde_json::Value) -> Result<serde_json::Value> {
         let mut lines = self
             .lines
             .lock()
             .map_err(|_| anyhow::anyhow!("Compositor channel failed"))?;
-        let (reader, writer) = &mut *lines;
+        let (mut reader, mut writer) = lines.take().context("The compositor channel is closed")?;
+        let message = Self::exchange(&mut reader, &mut writer, request)?;
+        *lines = Some((reader, writer));
+        match message["reply"].as_str() {
+            Some("error") => bail!("The compositor refused: {}", message["message"]),
+            _ => Ok(message),
+        }
+    }
+
+    fn exchange(
+        reader: &mut BufReader<UnixStream>,
+        writer: &mut UnixStream,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         writer.write_all(format!("{request}\n").as_bytes())?;
         loop {
             let mut line = String::new();
@@ -98,11 +117,10 @@ impl Compositor {
                 log::info!("SHELL event=compositor-event name={event}");
                 continue;
             }
-            return match message["reply"].as_str() {
-                Some("error") => bail!("The compositor refused: {}", message["message"]),
-                Some(_) => Ok(message),
-                None => bail!("Unexpected message from the compositor"),
-            };
+            if message["reply"].is_string() {
+                return Ok(message);
+            }
+            bail!("Unexpected message from the compositor")
         }
     }
 
@@ -404,5 +422,29 @@ mod tests {
 
         assert!(error.to_string().contains("no such window"), "{error}");
         peer.join().unwrap();
+    }
+
+    /// Requests carry no id, so a reply that arrives after the shell stopped
+    /// waiting must not be read as the answer to the next request.
+    #[test]
+    fn after_a_late_reply_the_channel_fails_instead_of_answering_the_wrong_request() {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let peer = std::thread::spawn(move || {
+            let mut reader = BufReader::new(theirs.try_clone().unwrap());
+            let mut writer = theirs;
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            std::thread::sleep(Duration::from_millis(800));
+            // The shell may have closed the channel by now; either is fine.
+            let _ = writer.write_all(b"{\"reply\":\"ok\"}\n");
+            // Keep the peer's end open, so a next request could be written.
+            writer
+        });
+        let compositor = Compositor::new(ours).unwrap();
+
+        assert!(compositor.focus_workspace(1).is_err());
+        let _peer_end = peer.join().unwrap();
+
+        assert!(compositor.focus_window("0x1").is_err());
     }
 }

@@ -58,7 +58,7 @@ emulation), `xwayland`, `backend_x11`, and `backend_vulkan`.
 
 ```sh
 cd compositor
-cargo test                              # 16 tests, no display needed
+cargo test                              # 17 tests, no display needed
 cargo clippy --all-targets -- -D warnings
 ```
 

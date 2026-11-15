@@ -1,3 +1,5 @@
+// From Smithay's `smallvil` example (MIT; see LICENSE-smithay.txt), with small changes.
+
 //! Resize grab is the state of a composer during which the client window is being resized.
 //!
 //! eg. Usually whenever a user clicks on the app's border and starts dragging, the compositors

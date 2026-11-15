@@ -25,8 +25,10 @@ for s in agetty-ttyS0 dhcpcd sshd seatd; do ln -sfn "/etc/sv/$s" "$SV/$s"; done
 install -d -m 700 "$S/root/.ssh"
 install -m 600 "$PUBKEY" "$S/root/.ssh/authorized_keys"
 
-# The person's account. seatd lets members of _seatd open a seat.
-chroot "$S" useradd -m -u 1000 -G _seatd,video,input "$GUEST_USER"
+# The person's account. seatd lets members of _seatd open a seat. The account
+# is in neither `input` nor `video`: seatd opens the devices, so the person's
+# programs get no direct access to them.
+chroot "$S" useradd -m -u 1000 -G _seatd "$GUEST_USER"
 
 for name in $BINARIES; do install -D -m 755 "$BIN/$name" "$S/usr/local/bin/$name"; done
 

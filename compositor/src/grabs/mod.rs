@@ -1,3 +1,5 @@
+// From Smithay's `smallvil` example (MIT; see LICENSE-smithay.txt), with small changes.
+
 pub mod move_grab;
 pub use move_grab::MoveSurfaceGrab;
 

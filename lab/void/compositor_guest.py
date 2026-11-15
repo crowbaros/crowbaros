@@ -14,7 +14,7 @@ answer one question, whether the compositor runs on Void without systemd.
     compositor_guest.py start      boot the guest
     compositor_guest.py ssh CMD    run a command in the guest as root
     compositor_guest.py stop       power the guest off
-    compositor_guest.py check      run every check and write an evidence log
+    compositor_guest.py check      build, make the disk, boot, run every check, and write an evidence log
 
 QEMU needs the virtio-gpu device. Where the distribution splits it into its
 own package (Arch: qemu-hw-display-virtio-gpu-pci), install that, or point

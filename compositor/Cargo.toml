@@ -23,8 +23,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
-# The probe is an ordinary Wayland client. It shares no code with the server
-# side beyond the protocol crates.
+# The probe (src/probe.rs) is an ordinary Wayland client. It uses these client
+# crates and nothing from Smithay.
 wayland-client = "0.31.14"
 wayland-protocols = { version = "0.32.13", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }

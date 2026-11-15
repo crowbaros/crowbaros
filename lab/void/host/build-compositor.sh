@@ -15,4 +15,4 @@ mount --bind "$CARGO_REGISTRY" "$B/cargo/registry"
 mount --bind "$CARGO_GIT" "$B/cargo/git"
 chroot "$B" /usr/bin/env -i HOME=/root PATH=/usr/bin:/usr/sbin \
   CARGO_HOME=/cargo CARGO_TARGET_DIR=/target \
-  sh -c 'rustc --version && cargo build --release --locked --offline --manifest-path /src/Cargo.toml 2>&1 | tail -5'
+  sh -c 'rustc --version && cargo build --release --locked --offline --manifest-path /src/Cargo.toml'

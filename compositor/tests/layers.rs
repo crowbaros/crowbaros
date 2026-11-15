@@ -1,4 +1,5 @@
-//! Seam 1: layer surfaces and the room they reserve.
+//! The Wayland socket as a client sees it: layer surfaces, the room they
+//! reserve, and the keyboard.
 
 mod common;
 
