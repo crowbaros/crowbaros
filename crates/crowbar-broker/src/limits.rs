@@ -1,0 +1,217 @@
+//! Effect limits: what a task, a grant, or a handle may affect.
+
+use std::collections::BTreeSet;
+use std::fmt;
+
+use crowbar_labels::ObjectId;
+
+/// A moment, in whole seconds, on the broker's clock. The broker passes the
+/// time in, so a rehearsal can run on a simulated clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Time(u64);
+
+impl Time {
+    pub const fn from_secs(secs: u64) -> Self {
+        Time(secs)
+    }
+
+    pub fn as_secs(self) -> u64 {
+        self.0
+    }
+}
+
+/// An amount of money, in hundredths of the person's currency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Cost(u64);
+
+impl Cost {
+    pub const fn cents(cents: u64) -> Self {
+        Cost(cents)
+    }
+
+    pub fn as_cents(self) -> u64 {
+        self.0
+    }
+}
+
+/// How often: at most `count` in any window of `window_secs` seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Rate {
+    count: u64,
+    window_secs: u64,
+}
+
+impl Rate {
+    pub const fn per(count: u64, window_secs: u64) -> Self {
+        Rate { count, window_secs }
+    }
+
+    pub fn count(self) -> u64 {
+        self.count
+    }
+
+    pub fn window_secs(self) -> u64 {
+        self.window_secs
+    }
+
+    /// Whether this rate never allows more than `bound` does, in any window
+    /// of the bound's length. That holds when it allows no more at a time and
+    /// its window is no shorter. Any other pair is refused, even where some
+    /// arithmetic could show it fits.
+    fn is_within(&self, bound: &Rate) -> bool {
+        self.count <= bound.count && self.window_secs >= bound.window_secs
+    }
+}
+
+/// Effect limits: what a task, a grant, or a handle may affect. Which
+/// objects, how many, for how long, at what cost, and how often.
+///
+/// A dimension that is not set is not limited. Every dimension narrows the
+/// same way: a limit set is [`EffectLimits::within`] a bound when it allows
+/// nothing the bound does not, so a task, a copy of a handle, or anything
+/// else bounded by these limits can narrow them and never widen them.
+///
+/// This holds the limits. The gate checks each operation against them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EffectLimits {
+    objects: Option<BTreeSet<ObjectId>>,
+    count: Option<u64>,
+    until: Option<Time>,
+    cost: Option<Cost>,
+    rate: Option<Rate>,
+}
+
+impl EffectLimits {
+    pub fn new() -> Self {
+        EffectLimits::default()
+    }
+
+    /// Which objects: these, and no others.
+    pub fn objects(self, objects: impl IntoIterator<Item = ObjectId>) -> Self {
+        EffectLimits {
+            objects: Some(objects.into_iter().collect()),
+            ..self
+        }
+    }
+
+    /// How many: at most this many objects or operations.
+    pub fn count(self, count: u64) -> Self {
+        EffectLimits {
+            count: Some(count),
+            ..self
+        }
+    }
+
+    /// For how long: nothing is affected at or after `time`.
+    pub fn until(self, time: Time) -> Self {
+        EffectLimits {
+            until: Some(time),
+            ..self
+        }
+    }
+
+    /// At what cost: at most this much money, across everything the limits
+    /// cover.
+    pub fn cost(self, cost: Cost) -> Self {
+        EffectLimits {
+            cost: Some(cost),
+            ..self
+        }
+    }
+
+    /// How often: at most this rate.
+    pub fn rate(self, rate: Rate) -> Self {
+        EffectLimits {
+            rate: Some(rate),
+            ..self
+        }
+    }
+
+    /// Which objects, if that is limited.
+    pub fn which_objects(&self) -> Option<&BTreeSet<ObjectId>> {
+        self.objects.as_ref()
+    }
+
+    /// How many, if that is limited.
+    pub fn how_many(&self) -> Option<u64> {
+        self.count
+    }
+
+    /// When the time limit ends, if there is one.
+    pub fn ends_at(&self) -> Option<Time> {
+        self.until
+    }
+
+    /// At what cost, if that is limited.
+    pub fn max_cost(&self) -> Option<Cost> {
+        self.cost
+    }
+
+    /// How often, if that is limited.
+    pub fn how_often(&self) -> Option<Rate> {
+        self.rate
+    }
+
+    /// Whether these limits allow nothing `bound` does not.
+    pub fn within(&self, bound: &EffectLimits) -> Result<(), Widening> {
+        if !fits(&self.objects, &bound.objects, |limit, bound| limit.is_subset(bound)) {
+            return Err(Widening::Objects);
+        }
+        if !fits(&self.count, &bound.count, |limit, bound| limit <= bound) {
+            return Err(Widening::Count);
+        }
+        if !fits(&self.until, &bound.until, |limit, bound| limit <= bound) {
+            return Err(Widening::Until);
+        }
+        if !fits(&self.cost, &bound.cost, |limit, bound| limit <= bound) {
+            return Err(Widening::Cost);
+        }
+        if !fits(&self.rate, &bound.rate, Rate::is_within) {
+            return Err(Widening::Rate);
+        }
+        Ok(())
+    }
+
+    /// The end of the time limit, if it has come by `now`.
+    pub(crate) fn ended_by(&self, now: Time) -> Option<Time> {
+        self.until.filter(|until| now >= *until)
+    }
+}
+
+/// Whether one dimension of a limit set is within the same dimension of its
+/// bound. No limit is the widest there is: it fits only a bound with no limit.
+fn fits<T>(limit: &Option<T>, bound: &Option<T>, narrower: impl Fn(&T, &T) -> bool) -> bool {
+    match (limit, bound) {
+        (_, None) => true,
+        (None, Some(_)) => false,
+        (Some(limit), Some(bound)) => narrower(limit, bound),
+    }
+}
+
+/// The dimension in which a limit set allows more than its bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Widening {
+    /// A right the bound does not carry. Rights belong to a handle, not to
+    /// effect limits, and widen the same way.
+    Rights,
+    Objects,
+    Count,
+    Until,
+    Cost,
+    Rate,
+}
+
+impl fmt::Display for Widening {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Widening::Rights => "a right the original does not carry",
+            Widening::Objects => "objects beyond the original's",
+            Widening::Count => "more than the original's count",
+            Widening::Until => "a later end than the original's",
+            Widening::Cost => "more than the original's cost",
+            Widening::Rate => "a rate the original does not allow",
+        })
+    }
+}
+
+impl std::error::Error for Widening {}

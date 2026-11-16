@@ -14,6 +14,9 @@ dependencies = [
 [[package]]
 name = "crowbar-broker"
 version = "0.1.0"
+dependencies = [
+ "crowbar-labels",
+]
 
 [[package]]
 name = "crowbar-gate"

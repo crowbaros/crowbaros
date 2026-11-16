@@ -186,6 +186,15 @@ classDiagram
   until the task ends, or until the Tool exits. Grants that last longer are
   **standing grants**. They are recorded in the authority domain, so they have
   their own history and are visible to the person.
+- **Passed on only narrowed.** A holder may pass a copy of a handle to another
+  principal only when the handle was issued delegable. The copy carries the
+  original's rights or fewer and effect limits within the original's, and its
+  uses count against the original's limits too. It carries the label and mark of
+  what it names joined with the delegator's compartment, because a copy is
+  something that compartment emits. It ends when the original ends, and it is
+  never passed on again. No handle passes to the Agent, which holds none of its
+  tasks' authority. The rules are written out on `HandleTable::delegate` in
+  [`crates/crowbar-broker`](../../crates/crowbar-broker/src/handle.rs).
 - **Revocable in one step** from the ledger. For a component, the runtime drops
   the import. Linux cannot revoke an open file descriptor, so for native code
   revoking means stopping the sandbox. The broker then restarts the Tool with the
@@ -876,8 +885,9 @@ bounds them.
 
 ## Open questions
 
-1. **Delegation.** Can a Tool pass a handle to another Tool? If yes, does the new
-   holder need the gate's signature, and how does the ledger show the chain?
+1. **Delegation.** A handle passes on only narrowed (see [Handles](#handles)).
+   Still open: does each copy need the gate's signature, and how does the ledger
+   show the chain?
 2. **Admission.** Who admits the dependency set that build tasks read, how is it
    reviewed, and how does it receive updates? How are build tools confined?
 3. **The plan language.** How much can a plan over handles express, when the

@@ -15,7 +15,7 @@ cargo fmt --all --check
 | [`crowbar-apply`](crowbar-apply/) | The `crowbar` command: plan, apply, generations, rollback, drift, ledger | 1 | Built |
 | [`crowbar-labels`](crowbar-labels/) | Labels, marks, and the origin table | 2, first deliverable | Skeleton |
 | [`crowbar-gate`](crowbar-gate/) | The gate: the deterministic rules engine that allows or refuses | 2, part one | Skeleton |
-| [`crowbar-broker`](crowbar-broker/) | The capability broker: handles, egress, adapters, the Tool contract | 2, part one | Skeleton |
+| [`crowbar-broker`](crowbar-broker/) | The capability broker: handles, egress, adapters, the Tool contract | 2, part one | Handles and effect limits |
 | [`crowbar-plan`](crowbar-plan/) | Plans over handles and their deterministic interpreter | 2, part one | Skeleton |
 | [`crowbar-sandbox`](crowbar-sandbox/) | Task principals as compartments in Linux sandboxes | 2, part one | Skeleton |
 
