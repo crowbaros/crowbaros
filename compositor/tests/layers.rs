@@ -1,17 +1,18 @@
-//! The Wayland socket as a client sees it: layer surfaces, the room they
-//! reserve, and the keyboard.
+//! The Wayland socket as the shell sees it: layer surfaces and the room
+//! they reserve.
 
 mod common;
 
-use common::Compositor;
-use crowbar_compositor::probe::{Anchor, KeyboardInteractivity, Layer, LayerRequest};
+use common::{Compositor, OUTPUT_SIZE};
+use crowbar_probe::{Anchor, KeyEvent, KeyboardInteractivity, Layer, LayerRequest};
 
-/// The test output is 1280 by 800. The bar reserves 44 at the top and the
-/// dock 96 at the bottom, the sizes the shell uses.
+/// The bar reserves 44 at the top and the dock 96 at the bottom, the sizes
+/// the shell uses.
 #[test]
-fn a_maximized_window_gets_the_room_the_shell_layers_leave() {
+fn the_shells_layers_get_their_size_and_reserve_their_room() {
     let compositor = Compositor::start();
-    let mut shell = compositor.shell_client();
+    let mut shell = compositor.shell();
+
     let bar = shell
         .open_layer(
             LayerRequest {
@@ -38,48 +39,93 @@ fn a_maximized_window_gets_the_room_the_shell_layers_leave() {
             0xff40_6020,
         )
         .unwrap();
-    assert_eq!(bar.size, (1280, 44));
+
+    assert_eq!(bar.size, (OUTPUT_SIZE.0 as u32, 44));
     assert_eq!(dock.size, (400, 96));
-
-    let mut app = compositor.ordinary_client();
-    let window = app.open_toplevel("app", "test.app", (300, 200), 0xffff_ffff).unwrap();
-    window.toplevel.set_maximized();
-    window.surface.commit();
-    app.roundtrip().unwrap();
-
-    assert_eq!(app.state.toplevel_size, (1280, 800 - 44 - 96));
+    let usable = compositor.with(|state| {
+        let output = state.outputs().next().unwrap().clone();
+        let area = state.usable_area(&output);
+        (area.loc.x, area.loc.y, area.size.w, area.size.h)
+    });
+    assert_eq!(usable, (0, 44, OUTPUT_SIZE.0, OUTPUT_SIZE.1 - 44 - 96));
 }
 
-/// The launcher is an overlay layer surface that asks for the keyboard.
+/// A new window opens in the room the shell's layers leave, not under the bar.
 #[test]
-fn an_exclusive_layer_takes_the_keyboard_until_it_closes() {
-    use crowbar_compositor::probe::KeyEvent;
-    const KEY_A: u32 = 30;
+fn a_new_window_opens_below_the_bar() {
     let compositor = Compositor::start();
-    let mut app = compositor.ordinary_client();
-    app.listen_to_keyboard().unwrap();
-    app.open_toplevel("app", "test.app", (300, 200), 0xffff_ffff).unwrap();
-    app.take_keys().unwrap();
-    let mut shell = compositor.shell_client();
-    shell.listen_to_keyboard().unwrap();
-
-    let launcher = shell
+    let mut shell = compositor.shell();
+    shell
         .open_layer(
             LayerRequest {
-                namespace: "test-launcher",
-                layer: Layer::Overlay,
-                anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
-                size: (0, 0),
-                exclusive_zone: -1,
-                keyboard: KeyboardInteractivity::Exclusive,
+                namespace: "test-bar",
+                layer: Layer::Top,
+                anchor: Anchor::Top | Anchor::Left | Anchor::Right,
+                size: (0, 44),
+                exclusive_zone: 44,
+                keyboard: KeyboardInteractivity::None,
             },
-            0x8000_0000,
+            0xff20_4060,
         )
         .unwrap();
+    let (mut client, _listener) = compositor.compartment("c1");
+
+    client
+        .open_toplevel("app", "test.app", (300, 200), 0xffff_ffff)
+        .unwrap();
+
+    let at = compositor.with(|state| {
+        let window = state.space.elements().next().unwrap().clone();
+        let at = state.space.element_location(&window).unwrap();
+        (at.x, at.y)
+    });
+    assert_eq!(at, (48, 44 + 48));
+}
+
+/// The launcher is a layer surface that takes keys. A click on it gives it
+/// the keyboard, and a click on a layer that takes none does not.
+#[test]
+fn a_click_gives_the_keyboard_to_a_layer_only_if_the_layer_takes_keys() {
+    const KEY_A: u32 = 30;
+    let compositor = Compositor::start();
+    let mut shell = compositor.shell();
+    shell.listen_to_keyboard().unwrap();
+    let layer = |shell: &mut crowbar_probe::Client, name, anchor, keyboard| {
+        shell
+            .open_layer(
+                LayerRequest {
+                    namespace: name,
+                    layer: Layer::Top,
+                    anchor,
+                    size: (0, 44),
+                    exclusive_zone: 44,
+                    keyboard,
+                },
+                0xff20_4060,
+            )
+            .unwrap()
+    };
+    let sides = Anchor::Left | Anchor::Right;
+    layer(&mut shell, "test-bar", Anchor::Top | sides, KeyboardInteractivity::None);
+    layer(
+        &mut shell,
+        "test-launcher",
+        Anchor::Bottom | sides,
+        KeyboardInteractivity::OnDemand,
+    );
+
+    compositor.click(600, 20);
     compositor.key(KEY_A, true);
     compositor.key(KEY_A, false);
+    assert_eq!(
+        shell.take_keys().unwrap(),
+        [],
+        "a layer that takes no keys got the keyboard"
+    );
 
-    assert_eq!(app.take_keys().unwrap(), [KeyEvent::Leave]);
+    compositor.click(600, OUTPUT_SIZE.1 - 20);
+    compositor.key(KEY_A, true);
+    compositor.key(KEY_A, false);
     let seen = shell.take_keys().unwrap();
     assert!(
         seen.contains(&KeyEvent::Key {
@@ -88,10 +134,4 @@ fn an_exclusive_layer_takes_the_keyboard_until_it_closes() {
         }),
         "{seen:?}"
     );
-
-    launcher.layer_surface.destroy();
-    launcher.surface.destroy();
-    shell.roundtrip().unwrap();
-
-    assert!(matches!(app.take_keys().unwrap()[..], [KeyEvent::Enter { .. }, ..]));
 }

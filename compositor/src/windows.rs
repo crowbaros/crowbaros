@@ -1,51 +1,25 @@
-//! The windows the compositor manages: where they go and which has focus.
+//! The windows the compositor shows: where a new one goes, and which has the
+//! keyboard.
+//!
+//! This is the least that lets a client be seen and typed into. Frames,
+//! moving and resizing, workspaces, and the two cases in which a new window
+//! takes the keyboard are built with issue 78 (ADR 0020). Until then a new
+//! window never takes the keyboard. A click gives it.
 
 use smithay::{
-    desktop::{Window, layer_map_for_output},
-    output::Output,
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Point, Rectangle, SERIAL_COUNTER},
+    desktop::{Window, WindowSurfaceType, layer_map_for_output},
+    reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
+    utils::{Point, SERIAL_COUNTER},
     wayland::{
-        compositor::{get_parent, with_states},
-        shell::xdg::{ToplevelSurface, XdgToplevelSurfaceData},
+        compositor::get_parent,
+        shell::{wlr_layer::KeyboardInteractivity, xdg::ToplevelSurface},
     },
 };
 
-use crate::State;
-
-/// A toplevel window and the compositor's own facts about it.
-pub struct Managed {
-    /// The compositor's name for the window. Clients never choose it.
-    pub id: u32,
-    pub window: Window,
-    pub workspace: u32,
-    /// Where the window sits. Kept while its workspace is not shown.
-    pub location: Point<i32, Logical>,
-    /// Larger means focused more recently.
-    pub focus_stamp: u64,
-}
-
-/// Workspaces are numbered from 1 to this.
-pub const WORKSPACES: u32 = 9;
-
-impl Managed {
-    /// The window's app id and title, as its client set them.
-    pub fn app_id_and_title(&self) -> (String, String) {
-        let Some(toplevel) = self.window.toplevel() else {
-            return Default::default();
-        };
-        with_states(toplevel.wl_surface(), |states| {
-            let data = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
-            (
-                data.app_id.clone().unwrap_or_default(),
-                data.title.clone().unwrap_or_default(),
-            )
-        })
-    }
-}
+use crate::{State, identity, identity::Identity, state::NEW_WINDOW_OFFSET};
 
 /// The surface at the top of a subsurface tree.
-pub fn root_surface(surface: &WlSurface) -> WlSurface {
+pub(crate) fn root_surface(surface: &WlSurface) -> WlSurface {
     let mut root = surface.clone();
     while let Some(parent) = get_parent(&root) {
         root = parent;
@@ -54,141 +28,101 @@ pub fn root_surface(surface: &WlSurface) -> WlSurface {
 }
 
 impl State {
-    /// The part of an output that layer surfaces have not reserved, in
-    /// global coordinates.
-    pub fn usable_area(&self, output: &Output) -> Rectangle<i32, Logical> {
-        let mut area = layer_map_for_output(output).non_exclusive_zone();
-        if let Some(geometry) = self.space.output_geometry(output) {
-            area.loc += geometry.loc;
-        }
-        area
+    /// The window whose toplevel surface this is.
+    pub(crate) fn window_for(&self, surface: &WlSurface) -> Option<Window> {
+        self.space
+            .elements()
+            .find(|window| {
+                window
+                    .toplevel()
+                    .is_some_and(|toplevel| toplevel.wl_surface() == surface)
+            })
+            .cloned()
     }
 
-    pub fn managed(&self, surface: &WlSurface) -> Option<&Managed> {
-        self.windows
-            .iter()
-            .find(|m| m.window.toplevel().is_some_and(|t| t.wl_surface() == surface))
+    /// Who owns a surface: the identity of the client that made it.
+    pub fn owner(&self, surface: &WlSurface) -> Option<Identity> {
+        let client = self.display_handle.get_client(surface.id()).ok()?;
+        identity::of(&client).cloned()
     }
 
-    pub fn add_window(&mut self, toplevel: ToplevelSurface) {
-        let window = Window::new_wayland_window(toplevel);
-        // A new window opens on the output the pointer is on.
-        let pointer = self.seat.get_pointer().unwrap().current_location();
+    /// The owner of each window, in the order the windows are stacked.
+    pub fn window_owners(&self) -> Vec<Identity> {
+        self.space
+            .elements()
+            .filter_map(|window| self.owner(window.toplevel()?.wl_surface()))
+            .collect()
+    }
+
+    /// Shows a new window on the output the pointer is on. It does not take
+    /// the keyboard.
+    pub(crate) fn add_window(&mut self, toplevel: ToplevelSurface) {
+        let pointer = self.pointer().current_location();
         let Some(output) = self
             .space
             .output_under(pointer)
             .next()
             .cloned()
-            .or_else(|| self.outputs.first().cloned())
+            .or_else(|| self.outputs().next().cloned())
         else {
             return;
         };
         let area = self.usable_area(&output);
-        let step = 32 * (self.windows.len() as i32 % 8);
-        let location = Point::from((area.loc.x + 48 + step, area.loc.y + 48 + step));
-        self.space.map_element(window.clone(), location, true);
-        self.next_window_id += 1;
-        self.windows.push(Managed {
-            id: self.next_window_id,
-            window: window.clone(),
-            workspace: self.active_workspace,
-            location,
-            focus_stamp: 0,
-        });
-        self.focus_window(Some(&window));
+        let step = 32 * (self.space.elements().count() as i32 % 8);
+        let location = area.loc + NEW_WINDOW_OFFSET + Point::from((step, step));
+        self.space
+            .map_element(Window::new_wayland_window(toplevel), location, false);
+        self.queue_redraw(&output);
     }
 
-    pub fn remove_window(&mut self, toplevel: &ToplevelSurface) {
-        self.windows
-            .retain(|m| m.window.toplevel().is_some_and(|t| t != toplevel));
-        let next = self
-            .windows
-            .iter()
-            .filter(|m| m.workspace == self.active_workspace)
-            .max_by_key(|m| m.focus_stamp)
-            .map(|m| m.window.clone());
-        self.focus_window(next.as_ref());
-    }
-
-    /// Gives the keyboard to a window and raises it, or clears the focus.
-    pub fn focus_window(&mut self, window: Option<&Window>) {
-        let serial = SERIAL_COUNTER.next_serial();
-        let keyboard = self.seat.get_keyboard().unwrap();
-        for managed in &self.windows {
-            let active = Some(&managed.window) == window;
-            managed.window.set_activated(active);
-        }
-        if let Some(window) = window {
-            self.space.raise_element(window, true);
-        }
-        self.focus_counter += 1;
-        let stamp = self.focus_counter;
-        self.active_window = self.windows.iter_mut().find(|m| Some(&m.window) == window).map(|m| {
-            m.focus_stamp = stamp;
-            m.id
-        });
-        // A layer surface that holds the keyboard keeps it.
-        if self.layer_focus.is_none() {
-            let surface = window.and_then(|w| w.toplevel()).map(|t| t.wl_surface().clone());
-            keyboard.set_focus(self, surface, serial);
-        }
-        for managed in &self.windows {
-            if let Some(toplevel) = managed.window.toplevel() {
-                toplevel.send_pending_configure();
-            }
-        }
-    }
-
-    /// Shows one workspace's windows and hides the rest. The keyboard goes
-    /// to the window of that workspace that had it last.
-    pub fn show_workspace(&mut self, workspace: u32) {
-        if workspace == self.active_workspace {
+    pub(crate) fn remove_window(&mut self, toplevel: &ToplevelSurface) {
+        let Some(window) = self.window_for(toplevel.wl_surface()) else {
             return;
+        };
+        self.space.unmap_elem(&window);
+        self.drop_focus_from(toplevel.wl_surface());
+        self.queue_redraw_all();
+    }
+
+    /// Takes the keyboard from a surface that is going away. Nothing else
+    /// takes it: the next click decides.
+    pub(crate) fn drop_focus_from(&mut self, surface: &WlSurface) {
+        let keyboard = self.keyboard();
+        if keyboard.current_focus().as_ref() == Some(surface) {
+            keyboard.set_focus(self, None, SERIAL_COUNTER.next_serial());
         }
-        self.active_workspace = workspace;
-        for managed in &mut self.windows {
-            if managed.workspace == workspace {
-                self.space.map_element(managed.window.clone(), managed.location, false);
-            } else {
-                if let Some(location) = self.space.element_location(&managed.window) {
-                    managed.location = location;
+    }
+
+    /// A click gives the keyboard to what is under the pointer: a window, or
+    /// a layer surface of the shell's that takes keys. A click on anything
+    /// else leaves the keyboard where it is.
+    pub(crate) fn focus_under_pointer(&mut self) {
+        let position = self.pointer().current_location();
+        let Some((surface, _)) = self.surface_under(position) else {
+            return;
+        };
+        let root = root_surface(&surface);
+        let takes_keys = match self.window_for(&root) {
+            Some(window) => {
+                self.space.raise_element(&window, true);
+                for other in self.space.elements() {
+                    other.set_activated(other == &window);
+                    if let Some(toplevel) = other.toplevel() {
+                        toplevel.send_pending_configure();
+                    }
                 }
-                self.space.unmap_elem(&managed.window);
+                self.queue_redraw_all();
+                true
             }
-        }
-        let next = self
-            .windows
-            .iter()
-            .filter(|m| m.workspace == workspace)
-            .max_by_key(|m| m.focus_stamp)
-            .map(|m| m.window.clone());
-        self.focus_window(next.as_ref());
-    }
-
-    /// Sizes a window to the usable area of its output.
-    pub fn maximize(&mut self, toplevel: &ToplevelSurface) {
-        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as ToplevelState;
-        let Some(window) = self.managed(toplevel.wl_surface()).map(|m| m.window.clone()) else {
-            return;
+            None => self.outputs().any(|output| {
+                layer_map_for_output(output)
+                    .layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)
+                    .is_some_and(|layer| layer.cached_state().keyboard_interactivity != KeyboardInteractivity::None)
+            }),
         };
-        let Some(output) = self
-            .space
-            .outputs_for_element(&window)
-            .first()
-            .cloned()
-            .or_else(|| self.outputs.first().cloned())
-        else {
-            return;
-        };
-        let area = self.usable_area(&output);
-        tracing::info!(width = area.size.w, height = area.size.h, "window maximized");
-        toplevel.with_pending_state(|state| {
-            state.states.set(ToplevelState::Maximized);
-            state.size = Some(area.size);
-        });
-        self.space.map_element(window, area.loc, true);
-        if toplevel.is_initial_configure_sent() {
-            toplevel.send_configure();
+        if takes_keys {
+            let keyboard = self.keyboard();
+            keyboard.set_focus(self, Some(root), SERIAL_COUNTER.next_serial());
         }
     }
 }

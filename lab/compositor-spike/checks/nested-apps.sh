@@ -18,7 +18,7 @@ set -euo pipefail
 : "${WAYLAND_DISPLAY:?set WAYLAND_DISPLAY to the Wayland session to nest in}"
 
 here=$(cd "$(dirname "$0")/.." && pwd)
-root=$(cd "$here/.." && pwd)
+root=$(cd "$here/../.." && pwd)
 shell=${1:?usage: checks/nested-apps.sh SHELL_BINARY STUDIO_BINARY}
 studio=${2:?usage: checks/nested-apps.sh SHELL_BINARY STUDIO_BINARY}
 bin=${CROWBAR_BIN:-$here/target/debug}

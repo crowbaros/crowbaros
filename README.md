@@ -25,7 +25,7 @@ being right.
 | Milestone 2: the security rules, built to be attacked | Next. [Scope](docs/milestones/milestone-2.md) |
 | Brand and design system | Approved. [Brand kit](docs/branding/), [DESIGN.md](DESIGN.md) |
 | GPUI shell and Studio Settings | Integrated Void Alpha session with separate runit services, saved appearance, and 37 passing desktop checks. [Record](docs/development/void-desktop-smoke-2026-11-15.md), [apps](apps/) |
-| Compositor | Decided: our own, on Smithay ([ADR 0015](docs/adr/0015-our-own-compositor-on-smithay.md)). A spike tested the decision. [Record](docs/research/compositor-spike-2026-11-15.md); [NVIDIA runs](docs/research/compositor-nvidia-2026-11-15.md) |
+| Compositor | Our own, on Smithay ([ADR 0015](docs/adr/0015-our-own-compositor-on-smithay.md)). The first of six slices is built: client identity, the protocol table, and drawing only on change ([ADR 0020](docs/adr/0020-the-first-compositor-is-small-on-purpose.md), [record](docs/research/compositor-slice-1-2026-11-15.md)). The Alpha desktop still runs the spike that tested the decision. [Spike record](docs/research/compositor-spike-2026-11-15.md); [NVIDIA runs](docs/research/compositor-nvidia-2026-11-15.md) |
 
 The full roadmap is in the [vision](docs/VISION.md#roadmap).
 
@@ -35,8 +35,8 @@ The full roadmap is in the [vision](docs/VISION.md#roadmap).
 | --- | --- |
 | [`crates/`](crates/) | The Rust workspace: the Crowbar State, the apply engine, and the skeleton crates for Milestone 2 |
 | [`apps/`](apps/) | The GPUI interfaces: desktop shell, Studio Settings, and the GPUI probe |
-| [`compositor/`](compositor/) | The CrowbarOS Wayland compositor, on Smithay. Holds the spike that tested the decision; the real one is not started |
-| [`lab/`](lab/) | Void Base and desktop labs, plus adversarial scaffolding; Fedora tooling is archived |
+| [`compositor/`](compositor/) | The CrowbarOS Wayland compositor, on Smithay |
+| [`lab/`](lab/) | Void Base and desktop labs, the compositor spike that the Alpha desktop still runs, and adversarial scaffolding; Fedora tooling is archived |
 | [`docs/VISION.md`](docs/VISION.md) | The vision, the stack, and the roadmap |
 | [`docs/adr/`](docs/adr/) | Decision records |
 | [`docs/architecture/`](docs/architecture/) | Design notes: state and apply engine, capability model, gate and monitor |

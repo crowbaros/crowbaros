@@ -9,7 +9,7 @@ scripts, RPM recipes, and session hooks are no longer active entry points.
 | Environment | Current capability | State directory |
 | --- | --- | --- |
 | [Base lab](../../lab/void/README.md) | M1 generation/apply/manual-rollback loop | `.lab/void/` |
-| Graphical lab | Smithay compositor, shell, and Settings on Void/runit/seatd; software rendering | `.lab/void-graphical/` |
+| Graphical lab | The compositor on a TTY, checked with a stand-in for the Warden; software rendering | `.lab/void-graphical/` |
 | Isolated desktop smoke | Fresh guest per run; launch/focus/workspaces, Save/Undo, restart/reboot, identity checks | `.lab/void-desktop-checks/<run>/` |
 | Existing desktop preview | A previously prepared VM may already be running | Preserve its disk and recorded configuration |
 
@@ -69,7 +69,7 @@ not a build dependency):
 
 ```sh
 python3 apps/shell/packaging/prepare-gpui.py
-cargo build --release --locked --manifest-path compositor/Cargo.toml
+cargo build --release --locked --manifest-path lab/compositor-spike/Cargo.toml
 cargo build --release --locked --manifest-path apps/shell/Cargo.toml
 cargo test --release --locked --manifest-path apps/shell/Cargo.toml
 cargo build --release --locked --manifest-path apps/studio-settings/Cargo.toml
@@ -81,12 +81,17 @@ backport. It is portable build tooling and stays in `apps/shell/packaging/`.
 Cargo downloads require access to the pinned dependency sources on a cold build.
 Tests are headless; they do not establish correct GUI behavior or session recovery.
 
+The Alpha desktop runs the [compositor spike](../../lab/compositor-spike/README.md).
+The [compositor](../../compositor/README.md) does not run the shell yet: it has
+no public socket, and the shell's protocol is
+[#71](https://github.com/crowbaros/crowbaros/issues/71).
+
 For a same-user rendering experiment inside an existing **development** Wayland
-session, start the compositor nested (paths assume the default Cargo target
+session, start the spike nested (paths assume the default Cargo target
 directories). This does not exercise the separate Alpha identities or launcher:
 
 ```sh
-CROWBAR_SESSION=alpha-no-animations compositor/target/release/crowbar-compositor \
+CROWBAR_SESSION=alpha-no-animations lab/compositor-spike/target/release/crowbar-compositor \
   --shell "$PWD/apps/shell/target/release/crowbaros-shell" \
   --spawn "$PWD/apps/studio-settings/target/release/crowbaros-studio-settings"
 ```
@@ -101,7 +106,7 @@ over a TTY/GPU used by another active session.
 | Existing source | Remaining task |
 | --- | --- |
 | Shell Hyprland/systemd fallback, Settings Hyprland adapter, and spike control protocol | [#71](https://github.com/crowbaros/crowbaros/issues/71): production IPC, adapter removal, and corresponding regressions |
-| Public ordinary Wayland socket and shared Alpha app UID | [#49](https://github.com/crowbaros/crowbaros/issues/49): production compositor isolation |
+| Public ordinary Wayland socket and shared Alpha app UID | The compositor built with [#49](https://github.com/crowbaros/crowbaros/issues/49) has no public socket. The Alpha desktop keeps the spike's until it runs that compositor |
 
 The Alpha services do not use those legacy adapters. Apps launch through the
 root stand-in without inherited trusted descriptors or seat membership. Settings

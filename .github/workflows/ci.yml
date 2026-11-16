@@ -87,13 +87,17 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sudo -E
         run: cargo test --locked -p crowbar-sandbox --test compartments -- --ignored
 
+  # The compositor, and the spike that the Alpha desktop still runs (ADR 0020).
   compositor:
-    name: Compositor
+    name: Compositor (${{ matrix.project }})
+    strategy:
+      matrix:
+        project: [compositor, lab/compositor-spike]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
       run:
-        working-directory: compositor
+        working-directory: ${{ matrix.project }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -112,13 +116,19 @@ jobs:
             libgbm-dev libdrm-dev libwayland-dev libegl1-mesa-dev
 
       - name: Format
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Lint
         run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Test
         run: cargo test --locked
+
+      # The backend for a window on a host session is left out of the
+      # compositor by default, so nothing above builds it.
+      - name: Lint the nested backend
+        if: matrix.project == 'compositor'
+        run: cargo clippy --all-targets --locked --features nested -- -D warnings
 
   shell:
     name: Interface (${{ matrix.project }})

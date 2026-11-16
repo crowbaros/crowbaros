@@ -17,7 +17,8 @@ target/release/crowbaros-gpui-probe --version
 ```
 
 Run the binary as an ordinary user inside a development Wayland session, or
-pass its absolute path to the compositor's `--spawn` option. Rendering needs
+pass its absolute path to the `--spawn` option of the
+[compositor spike](../../lab/compositor-spike/README.md). Rendering needs
 a working Vulkan driver. The probe is optional and is not installed by the
 current graphical guest builder.
 
