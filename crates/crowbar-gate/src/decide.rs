@@ -3,7 +3,9 @@
 use std::collections::BTreeSet;
 
 use crowbar_authority::{Authority, Decision, Holder, Party, StandingId};
-use crowbar_capability::{Ask, AskWhy, Cost, GateRule, Issue, Limit, Principal, Rate, Refuse, Resource, Time};
+use crowbar_capability::{
+    Ask, AskWhy, Cost, EffectLimits, GateRule, Issue, Limit, Principal, Rate, Refuse, Resource, Time,
+};
 use crowbar_labels::{Label, LabelStore};
 
 use crate::boundary;
@@ -47,10 +49,11 @@ const HOUR: u64 = 3_600;
 ///    unknown principal or operation is refused here too.
 /// 2. **The right**, and for a delegation, that the handle may be passed
 ///    on, and not to the Agent.
-/// 3. **The effect limits**: how many, at what cost, and how often. A
-///    copy's uses count against its original's limits too, so passing a
-///    handle on never multiplies what it allows. A delegation's copy must
-///    be within the original's limits. A cost that depends on a value asks.
+/// 3. **The effect limits**: which objects, how many, at what cost, and how
+///    often. A copy's uses count against its original's limits too, so
+///    passing a handle on never multiplies what it allows. A delegation's
+///    copy must be within the original's limits. A cost that depends on a
+///    value asks.
 /// 4. **The label and mark at issuance**: a Data handle's label and mark
 ///    are at or above the join of its objects' origins. An object with no
 ///    record is the unknown row.
@@ -214,13 +217,19 @@ fn use_of(
         cost,
         at: now,
     };
+    if !affects_only_allowed(&handle.limits, using) {
+        return Err(Refuse::with(GateRule::Limits, Limit::Objects));
+    }
     if let Some(past) = usage.handle(handle.id).past(&handle.limits, more) {
         return Err(beyond(past));
     }
-    if let Some(original) = &handle.original
-        && let Some(past) = usage.handle(original.id).past(&original.limits, more)
-    {
-        return Err(beyond(past));
+    if let Some(original) = &handle.original {
+        if !affects_only_allowed(&original.limits, using) {
+            return Err(Refuse::with(GateRule::Limits, Limit::Objects));
+        }
+        if let Some(past) = usage.handle(original.id).past(&original.limits, more) {
+            return Err(beyond(past));
+        }
     }
 
     if let Some(party) = party {
@@ -243,6 +252,22 @@ fn use_of(
         Some(why) => Verdict::Ask(why),
         None => Verdict::Allow(under),
     })
+}
+
+/// Whether every object `using` affects is one `limits` allows.
+fn affects_only_allowed(limits: &EffectLimits, using: &Use) -> bool {
+    limits
+        .which_objects()
+        .is_none_or(|allowed| using.objects.is_subset(allowed))
+}
+
+/// Whether a grant on `granted` covers a handle on `held`: the same
+/// resource, or for Data, some of the granted objects.
+fn grant_covers(granted: &Resource, held: &Resource) -> bool {
+    match (granted, held) {
+        (Resource::Data(granted), Resource::Data(held)) => held.is_subset(granted),
+        _ => granted == held,
+    }
 }
 
 /// The refusal for a use that would go past a limit.
@@ -268,11 +293,14 @@ fn covered(
 ) -> Result<Vec<StandingId>, AskWhy> {
     let authority = authority.ok_or(AskWhy::NoAuthority)?;
     let holder = standing_holder(caller).ok_or(AskWhy::Crosses)?;
-    let within = |id: StandingId, limits| usage.standing(id).past(limits, more).is_none();
+    let within =
+        |id: StandingId, limits| affects_only_allowed(limits, using) && usage.standing(id).past(limits, more).is_none();
     let (grant, _) = authority
         .grants(&holder)
         .find(|(id, grant)| {
-            grant.resource == handle.resource && grant.rights.contains(using.right) && within(*id, &grant.limits)
+            grant_covers(&grant.resource, &handle.resource)
+                && grant.rights.contains(using.right)
+                && within(*id, &grant.limits)
         })
         .ok_or(AskWhy::Crosses)?;
     let mut rules = authority

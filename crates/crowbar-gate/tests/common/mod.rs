@@ -56,21 +56,21 @@ pub fn handle(n: u128, holder: Principal) -> Presented {
     }
 }
 
-/// A use of the adapter operation `operation`, needing `right`, on one
-/// object, at no cost.
+/// A use of the adapter operation `operation`, needing `right`, on the cat
+/// photo, at no cost.
 pub fn using(operation: &str, right: Right) -> Use {
     Use {
         operation: operation.to_string(),
         right,
-        objects: 1,
+        objects: [photo("cat.jpg")].into(),
         cost: UseCost::Fixed(Cost::cents(0)),
     }
 }
 
-/// Reading `objects` objects: inside the undo boundary.
+/// Reading `objects` photos: inside the undo boundary.
 pub fn reading(objects: u64) -> Use {
     Use {
-        objects,
+        objects: (0..objects).map(|n| photo(&format!("{n}.jpg"))).collect(),
         ..using("data.read", Right::Read)
     }
 }

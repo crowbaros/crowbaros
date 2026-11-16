@@ -1,8 +1,10 @@
 //! What the gate decides on: an operation, as the broker states it.
 
+use std::collections::BTreeSet;
+
 use crowbar_authority::Party;
 use crowbar_capability::{Cost, EffectLimits, HandleId, IdempotencyKey, Issue, Principal, Resource, Right, Rights};
-use crowbar_labels::{Compartment, LabelMark, LabelStore};
+use crowbar_labels::{Compartment, LabelMark, LabelStore, ObjectId};
 use serde::Serialize;
 
 /// One operation for the gate to decide: who asks, the key they attached,
@@ -69,16 +71,16 @@ pub struct Use {
     pub operation: String,
     /// The right the operation needs on the handle.
     pub right: Right,
-    /// How many objects it affects. A use that affects no object counts as
-    /// one operation.
-    pub objects: u64,
+    /// Which objects it affects. A use that affects no object counts as one
+    /// operation.
+    pub objects: BTreeSet<ObjectId>,
     pub cost: UseCost,
 }
 
 impl Use {
     /// What the use counts against a "how many" limit.
     pub(crate) fn units(&self) -> u64 {
-        self.objects.max(1)
+        (self.objects.len() as u64).max(1)
     }
 }
 

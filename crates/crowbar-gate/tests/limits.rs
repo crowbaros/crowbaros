@@ -7,7 +7,7 @@ use crowbar_gate::{Act, AskWhy, GateRule, Limit, Original, Presented, Use, UseCo
 use crowbar_labels::Compartment;
 
 mod common;
-use common::{Bench, NOW, allowed, asked, by, handle, later, reading, refused, task, using};
+use common::{Bench, NOW, allowed, asked, by, handle, later, photo, reading, refused, task, using};
 
 fn use_at(bench: &mut Bench, held: &Presented, what: &Use, now: crowbar_capability::Time) -> crowbar_gate::Decision {
     let compartment = Compartment::fresh();
@@ -180,6 +180,35 @@ fn a_copy_is_held_to_its_own_limits_as_well() {
         refused(GateRule::Limits, Limit::Count(1))
     );
     assert_eq!(use_at(&mut bench, &original, &reading(1), NOW), allowed());
+}
+
+/// Reading the photo `name`.
+fn reading_photo(name: &str) -> Use {
+    Use {
+        objects: [photo(name)].into(),
+        ..reading(0)
+    }
+}
+
+#[test]
+fn a_use_affects_only_the_objects_its_handle_and_its_original_allow() {
+    let mut bench = Bench::new();
+    let original = handle(1, task("sort-photos"));
+    let copy = &copies(&original, EffectLimits::new().objects([photo("cat.jpg")]), 1)[0];
+    assert_eq!(use_at(&mut bench, copy, &reading_photo("cat.jpg"), NOW), allowed());
+    assert_eq!(
+        use_at(&mut bench, copy, &reading_photo("dog.jpg"), NOW),
+        refused(GateRule::Limits, Limit::Objects)
+    );
+    assert_eq!(use_at(&mut bench, &original, &reading_photo("dog.jpg"), NOW), allowed());
+
+    let mut narrowed = handle(2, task("sort-photos"));
+    narrowed.limits = EffectLimits::new().objects([photo("cat.jpg")]);
+    let copy = &copies(&narrowed, EffectLimits::new(), 1)[0];
+    assert_eq!(
+        use_at(&mut bench, copy, &reading_photo("dog.jpg"), NOW),
+        refused(GateRule::Limits, Limit::Objects)
+    );
 }
 
 #[test]

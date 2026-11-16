@@ -127,6 +127,26 @@ fn a_crossing_under_a_standing_grant_and_rule_is_allowed_and_names_both() {
 }
 
 #[test]
+fn a_grant_on_a_set_of_data_objects_covers_a_handle_on_some_of_them() {
+    let wider = Grant {
+        resource: Resource::Data([ObjectId::new("writing/journal.md"), ObjectId::new("writing/notes.md")].into()),
+        ..grant()
+    };
+    let mut bench = Bench::with(vec![Change::Granted(wider), Change::RuleAdded(rule())]);
+    let under = standing(bench.authority.as_ref().expect("readable"), &morning_pages());
+    let caller = tool("morning-pages");
+
+    let decision = sync_by(
+        &mut bench,
+        &caller,
+        &Compartment::fresh(),
+        &on_writing(caller.clone()),
+        NOW,
+    );
+    assert_eq!(decision, Decision::Allowed { under });
+}
+
+#[test]
 fn an_operation_the_table_does_not_list_crosses_and_asks_without_standing_authority() {
     let mut bench = Bench::with(vec![Change::Granted(grant())]);
     let caller = tool("morning-pages");
