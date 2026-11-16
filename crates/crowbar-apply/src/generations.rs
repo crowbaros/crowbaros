@@ -7,7 +7,11 @@
 //! /crowbar/grub.cfg            generated boot menu
 //! /crowbar/ledger.jsonl        append-only history of applies and rollbacks
 //! /crowbar/lock                held (flock) by the one apply or rollback in progress
+//! /crowbar/authority/          the authority domain: what the person granted (ADR 0012)
 //! ```
+//!
+//! Everything under `/crowbar` is outside every generation, so rolling back
+//! returns none of it to an earlier state.
 
 use crate::bootmenu::boot_path_ok;
 use crate::confine::in_root;
@@ -58,6 +62,12 @@ impl Layout {
     }
     pub fn lock_path(&self) -> PathBuf {
         self.top.join("crowbar/lock")
+    }
+    /// Where the authority domain is kept: on the top level, beside the
+    /// generations and inside none of them, so a snapshot never copies it
+    /// and a rollback never returns it to an earlier state (ADR 0012).
+    pub fn authority_dir(&self) -> PathBuf {
+        self.top.join("crowbar/authority")
     }
 
     pub fn list(&self) -> Result<Vec<Generation>> {

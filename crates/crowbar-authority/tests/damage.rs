@@ -157,12 +157,12 @@ fn a_changed_byte_in_the_last_change_is_refused_too() {
     assert_damaged(dir.path(), 3, Damage::Unreadable);
 }
 
-/// The lines of a record, for a test to tamper with.
-type Lines = Vec<Vec<u8>>;
+/// One way to tamper with the lines of a record.
+type Tamper = fn(&mut Vec<Vec<u8>>);
 
 #[test]
 fn a_record_with_a_change_removed_or_out_of_order_is_refused() {
-    let cases: [(&str, fn(&mut Lines), usize); 4] = [
+    let cases: [(&str, Tamper, usize); 4] = [
         // Without its second change, the third no longer follows the first.
         ("a change removed from the middle", |lines| drop(lines.remove(1)), 2),
         ("the first change removed", |lines| drop(lines.remove(0)), 1),

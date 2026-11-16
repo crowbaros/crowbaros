@@ -36,6 +36,8 @@ dependencies = [
 name = "crowbar-apply"
 version = "0.1.0"
 dependencies = [
+ "crowbar-authority",
+ "crowbar-broker",
  "crowbar-state",
  "serde",
  "serde_json",

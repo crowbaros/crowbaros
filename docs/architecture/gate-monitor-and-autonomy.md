@@ -620,6 +620,16 @@ domain records what the person *granted*. Three consequences follow
 - **Changing authority always asks the person**, in trusted UI, with a hardware
   root. No task and no Agent can write to the authority domain.
 
+The store is [`crates/crowbar-authority`](../../crates/crowbar-authority/src/lib.rs).
+Each change the person makes is one entry added to a file that is only appended
+to, kept on the top level beside the generations and inside none of them.
+Revoking adds an entry and takes nothing away, and no change brings a revoked
+grant or rule back: granting the same thing again is a new grant. Each entry
+carries a hash of itself and of the entry before it. A record with a changed,
+removed, or reordered entry is refused whole, because reading around it could
+leave out a revocation. With no authority to read, every crossing asks. The
+person's signature over each change is not built yet.
+
 When the person approves the same kind of action repeatedly, the OS offers a
 standing rule in fixed words:
 
@@ -709,6 +719,12 @@ authority is one ledger entry: which principal asked, the intent and the task it
 served, the concrete action, whether it crossed the boundary and under which
 grant or rule, the gate's decision and signature, and the resulting handle or
 generation.
+
+Built so far, as the `Ledger` in
+[`crates/crowbar-authority`](../../crates/crowbar-authority/src/lib.rs): an entry
+for a gate decision or an effect, with the principal, the operation, and the
+grant or rule it crossed under. Entries are chained by hash and only ever added.
+A line that goes bad is reported by number, and the rest is still read.
 
 ```mermaid
 sequenceDiagram

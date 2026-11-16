@@ -218,7 +218,10 @@ impl Log {
     /// What a crash left of a write is removed, and a last entry with no
     /// line break gets one, so the next entry starts on a line of its own.
     pub fn open<T: DeserializeOwned>(path: &Path, on_damage: OnDamage) -> Result<(Log, Contents<T>), Error> {
-        let dir = path.parent().expect("a log has a directory");
+        let dir = match path.parent() {
+            Some(dir) if !dir.as_os_str().is_empty() => dir,
+            _ => Path::new("."),
+        };
         // The directory and the file are made for their owner alone.
         DirBuilder::new()
             .recursive(true)

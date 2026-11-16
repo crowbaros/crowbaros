@@ -428,6 +428,7 @@ flowchart TB
             GC[grub.cfg]
             LED[ledger.jsonl]
             LCK[lock]
+            AUT["authority/<br/>what the person granted"]
         end
     end
     ESP["ESP: standalone GRUB<br/>(finds the label, loads /crowbar/grub.cfg)"] --> GC
@@ -724,6 +725,11 @@ decisions, egress, and uses of owner authority, with one-step revoke and undo. I
 also gets tamper evidence: hash chaining, and signatures from the broker and the
 gate, with hardware-bound keys where the machine has them. The ledger is its own
 domain: it is never part of the State or of a generation.
+
+The ledger of gate decisions and effects, chained by hash, is built in
+[`crates/crowbar-authority`](../../crates/crowbar-authority/src/lib.rs), beside
+the authority domain, which is kept in `/crowbar/authority/`. The entries above
+have not moved onto it, and nothing is signed yet.
 
 ## Garbage collection (Later)
 

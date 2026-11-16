@@ -16,6 +16,7 @@ cargo fmt --all --check
 | [`crowbar-labels`](crowbar-labels/) | Labels, marks, and the origin table | 2, first deliverable | Skeleton |
 | [`crowbar-gate`](crowbar-gate/) | The gate: the deterministic rules engine that allows or refuses | 2, part one | Skeleton |
 | [`crowbar-broker`](crowbar-broker/) | The capability broker: handles, egress, adapters, the Tool contract | 2, part one | Handles and effect limits |
+| [`crowbar-authority`](crowbar-authority/) | The authority domain and the ledger, stored outside the State and its generations | 2, part one | Standing grants and rules, clearances, the ceiling, revocation, and the ledger of decisions and effects |
 | [`crowbar-plan`](crowbar-plan/) | Plans over handles and their deterministic interpreter | 2, part one | Skeleton |
 | [`crowbar-sandbox`](crowbar-sandbox/) | Task principals as compartments in Linux sandboxes | 2, part one | Skeleton |
 
