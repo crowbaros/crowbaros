@@ -17,7 +17,12 @@ pub enum Error {
     Damaged { path: PathBuf, line: usize, damage: Damage },
     /// An earlier write through this writer failed, and how much of it
     /// reached the disk is not known. Opening the file again finds out.
-    Broken { path: PathBuf },
+    AfterFailedWrite { path: PathBuf },
+    /// There is no authority record here. A record that is missing is not an
+    /// empty one: it may have held a revocation or a lowered clearance.
+    Missing { path: PathBuf },
+    /// There is already an authority record here, so none is made.
+    AlreadyThere { path: PathBuf },
     /// The entry cannot be written down, such as a path that is not text.
     NotStorable(String),
     /// No standing grant or rule has this id.
@@ -32,7 +37,9 @@ impl fmt::Display for Error {
             Error::Io { path, error } => write!(f, "{}: {error}", path.display()),
             Error::Locked { path } => write!(f, "{}: another writer has it open", path.display()),
             Error::Damaged { path, line, damage } => write!(f, "{}: line {line} {damage}", path.display()),
-            Error::Broken { path } => write!(f, "{}: an earlier write failed; open it again", path.display()),
+            Error::AfterFailedWrite { path } => write!(f, "{}: an earlier write failed; open it again", path.display()),
+            Error::Missing { path } => write!(f, "{}: there is no authority record here", path.display()),
+            Error::AlreadyThere { path } => write!(f, "{}: there is already an authority record here", path.display()),
             Error::NotStorable(why) => write!(f, "the entry cannot be stored: {why}"),
             Error::NotStanding(id) => write!(f, "no standing grant or rule has the id {id}"),
             Error::RuleWithoutRate => f.write_str("a standing rule needs a rate limit"),

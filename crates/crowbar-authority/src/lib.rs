@@ -28,7 +28,9 @@
 //! before the call that made it returns.
 //!
 //! - **A crash** loses at most the write it interrupted. What it left is
-//!   reported and removed by the next writer.
+//!   reported, and removed by the next writer.
+//! - **A missing authority record is refused**, not read as an empty one. A
+//!   new machine makes its record once, with [`AuthorityStore::create`].
 //! - **A damaged authority record is refused whole**, and the error names the
 //!   line: a changed byte, a removed or reordered change, or a change the
 //!   ones before it do not admit. Reading around it could leave out a
@@ -42,8 +44,8 @@
 //! - who may write: the person's signature over each change to authority
 //!   (ADR 0014), and file ownership that keeps every task out;
 //! - the gate's signature on each ledger entry, and a count kept outside the
-//!   files, without which a file replaced by an earlier whole copy of itself
-//!   is not caught;
+//!   files, without which a file cut back, or replaced by an earlier whole
+//!   copy of itself, is not caught;
 //! - a grant's binding to a Tool's needs and a clean build, budgets, and
 //!   Allowances;
 //! - a machine's clearance, the lead machine, and leases (Milestone 6);
@@ -57,11 +59,11 @@
 //! Glossary: authority, standing grant, standing rule, clearance, ledger.
 
 mod authority;
+mod chain;
 mod error;
 mod ledger;
-mod log;
 
-pub use authority::{Authority, AuthorityStore, Change, Grant, Holder, Party, Rule, StandingId};
+pub use authority::{Authority, AuthorityStore, Change, Grant, Holder, Party, Rule, StandingId, Status};
+pub use chain::Recorded;
 pub use error::{Damage, Error};
 pub use ledger::{Decision, Event, Ledger, LedgerEntry, LedgerHistory, Outcome};
-pub use log::Recorded;

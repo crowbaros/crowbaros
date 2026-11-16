@@ -2,17 +2,17 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crowbar_broker::{EffectLimits, Resource, Rights, Time};
 use crowbar_labels::{Label, MarkSource, Site};
 use serde::{Deserialize, Serialize};
 
+use crate::chain::{self, Chain, Contents, OnDamage, Recorded};
 use crate::error::{Damage, Error};
-use crate::log::{self, Contents, OnDamage, Recorded};
 
 /// The file the authority domain is kept in, inside its directory.
-pub(crate) const FILE: &str = "authority.log";
+const FILE: &str = "changes";
 
 /// What can hold standing authority: a Tool, a standing task, or a
 /// workbench. The Agent is not here, and nor is an ad hoc task, so neither
@@ -105,7 +105,7 @@ impl fmt::Display for StandingId {
 #[serde(rename_all = "snake_case")]
 pub enum Change {
     Granted(Grant),
-    RuleSet(Rule),
+    RuleAdded(Rule),
     /// A standing grant or a standing rule was revoked. Nothing brings it
     /// back: granting the same thing again is a new grant, with a new id.
     Revoked(StandingId),
@@ -136,20 +136,54 @@ pub struct Authority {
 /// when.
 #[derive(Debug)]
 struct Standing<T> {
-    what: T,
+    held: T,
     revoked: Option<Time>,
 }
 
+impl<T> Standing<T> {
+    fn status(&self) -> Status {
+        match self.revoked {
+            Some(time) => Status::Revoked(time),
+            None => Status::Held,
+        }
+    }
+}
+
+/// Whether a standing grant or rule is still held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Held,
+    /// Revoked at this time. Nothing brings it back.
+    Revoked(Time),
+}
+
+/// Those of `all` that `holder` holds: recorded for it and not revoked.
+fn held_by<'a, T>(
+    all: &'a BTreeMap<StandingId, Standing<T>>,
+    holder: &Holder,
+    holder_of: fn(&T) -> &Holder,
+) -> impl Iterator<Item = (StandingId, &'a T)> + use<'a, T> {
+    let holder = holder.clone();
+    all.iter()
+        .filter(move |(_, standing)| standing.revoked.is_none() && holder_of(&standing.held) == &holder)
+        .map(|(id, standing)| (*id, &standing.held))
+}
+
 impl Authority {
-    /// Reads the authority domain kept in `dir`. A directory that holds none
-    /// yet grants nothing.
+    /// Reads the authority domain kept in `dir`, as it stands at this
+    /// moment. A change made after the read is not in it.
     ///
     /// A record with a line that cannot be trusted is refused whole, and the
     /// error names the line. Reading around it could leave out a revocation,
-    /// so nothing is read and the gate has no authority to allow under.
+    /// so nothing is read and the gate has no authority to allow under. A
+    /// directory with no record is refused too: a record that is missing is
+    /// not an empty one.
     pub fn load(dir: &Path) -> Result<Authority, Error> {
         let path = dir.join(FILE);
-        Authority::replay(log::read(&path)?, &path)
+        match chain::read(&path)? {
+            Some(contents) => Authority::replay(contents, &path),
+            None => Err(Error::Missing { path }),
+        }
     }
 
     /// The authority that the changes in `contents` add up to.
@@ -173,21 +207,13 @@ impl Authority {
     /// The standing grants `holder` holds: those recorded for it and not
     /// revoked.
     pub fn grants(&self, holder: &Holder) -> impl Iterator<Item = (StandingId, &Grant)> + use<'_> {
-        let holder = holder.clone();
-        self.grants
-            .iter()
-            .filter(move |(_, grant)| grant.revoked.is_none() && grant.what.holder == holder)
-            .map(|(id, grant)| (*id, &grant.what))
+        held_by(&self.grants, holder, |grant| &grant.holder)
     }
 
     /// The standing rules `holder` holds: those recorded for it and not
     /// revoked.
     pub fn rules(&self, holder: &Holder) -> impl Iterator<Item = (StandingId, &Rule)> + use<'_> {
-        let holder = holder.clone();
-        self.rules
-            .iter()
-            .filter(move |(_, rule)| rule.revoked.is_none() && rule.what.holder == holder)
-            .map(|(id, rule)| (*id, &rule.what))
+        held_by(&self.rules, holder, |rule| &rule.holder)
     }
 
     /// The clearance of `party`: the one the person set last, or the default
@@ -212,9 +238,11 @@ impl Authority {
         self.unfinished_write
     }
 
-    /// When the standing grant or rule with this id was revoked, if it was.
-    pub fn revoked_at(&self, id: StandingId) -> Option<Time> {
-        self.revocation(id).flatten()
+    /// Whether the standing grant or rule with this id is still held, or
+    /// `None` when no grant or rule has the id.
+    pub fn status(&self, id: StandingId) -> Option<Status> {
+        let grant = self.grants.get(&id).map(Standing::status);
+        grant.or_else(|| self.rules.get(&id).map(Standing::status))
     }
 
     /// Every change to authority, in the order it was made. Authority has
@@ -223,21 +251,14 @@ impl Authority {
         &self.history
     }
 
-    /// Whether the id names a standing grant or rule, and when that was
-    /// revoked.
-    fn revocation(&self, id: StandingId) -> Option<Option<Time>> {
-        let grant = self.grants.get(&id).map(|standing| standing.revoked);
-        grant.or_else(|| self.rules.get(&id).map(|standing| standing.revoked))
-    }
-
     /// Whether `change` may follow the changes already recorded. The store
     /// asks before it writes a change down, and again for each change it
     /// reads back.
     fn admits(&self, change: &Change) -> Result<(), Error> {
         match change {
-            Change::RuleSet(rule) if rule.limits.how_often().is_none() => Err(Error::RuleWithoutRate),
-            Change::Revoked(id) => self.revocation(*id).map(|_| ()).ok_or(Error::NotStanding(*id)),
-            Change::Granted(_) | Change::RuleSet(_) | Change::ClearanceSet { .. } | Change::CeilingSet(_) => Ok(()),
+            Change::RuleAdded(rule) if rule.limits.how_often().is_none() => Err(Error::RuleWithoutRate),
+            Change::Revoked(id) => self.status(*id).map(|_| ()).ok_or(Error::NotStanding(*id)),
+            Change::Granted(_) | Change::RuleAdded(_) | Change::ClearanceSet { .. } | Change::CeilingSet(_) => Ok(()),
         }
     }
 
@@ -247,12 +268,12 @@ impl Authority {
         let id = StandingId(recorded.seq);
         match &recorded.entry {
             Change::Granted(grant) => {
-                let what = grant.clone();
-                self.grants.insert(id, Standing { what, revoked: None });
+                let held = grant.clone();
+                self.grants.insert(id, Standing { held, revoked: None });
             }
-            Change::RuleSet(rule) => {
-                let what = rule.clone();
-                self.rules.insert(id, Standing { what, revoked: None });
+            Change::RuleAdded(rule) => {
+                let held = rule.clone();
+                self.rules.insert(id, Standing { held, revoked: None });
             }
             Change::Revoked(revoked) => {
                 let revoked_at = match self.grants.get_mut(revoked) {
@@ -274,23 +295,48 @@ impl Authority {
 /// The authority domain, open for the person's changes.
 #[derive(Debug)]
 pub struct AuthorityStore {
-    log: log::Log,
+    chain: Chain,
     authority: Authority,
 }
 
 impl AuthorityStore {
-    /// Opens the authority domain kept in `dir`, and makes it if it is not
-    /// there.
+    /// Makes the authority domain in `dir`, with nothing granted. A machine
+    /// does this once. Where there is already a record, none is made.
+    pub fn create(dir: &Path) -> Result<AuthorityStore, Error> {
+        let path = dir.join(FILE);
+        match path.try_exists() {
+            Ok(false) => AuthorityStore::at(path),
+            Ok(true) => Err(Error::AlreadyThere { path }),
+            Err(error) => Err(Error::Io { path, error }),
+        }
+    }
+
+    /// Opens the authority domain kept in `dir`. One writer has it open at a
+    /// time. A directory with no record is refused: a record that is missing
+    /// is not an empty one.
     pub fn open(dir: &Path) -> Result<AuthorityStore, Error> {
         let path = dir.join(FILE);
-        let (log, contents) = log::Log::open(&path, OnDamage::Refuse)?;
+        match path.try_exists() {
+            Ok(true) => AuthorityStore::at(path),
+            Ok(false) => Err(Error::Missing { path }),
+            Err(error) => Err(Error::Io { path, error }),
+        }
+    }
+
+    fn at(path: PathBuf) -> Result<AuthorityStore, Error> {
+        let (chain, contents) = Chain::open(&path, OnDamage::Refuse)?;
         let authority = Authority::replay(contents, &path)?;
-        Ok(AuthorityStore { log, authority })
+        Ok(AuthorityStore { chain, authority })
     }
 
     /// The authority domain as it stands, for the gate to read.
-    pub fn authority(&self) -> &Authority {
-        &self.authority
+    ///
+    /// After a change that failed to reach the disk, this is refused until
+    /// the store is opened again: the record may hold that change, such as
+    /// a revocation, and what is held here does not.
+    pub fn authority(&self) -> Result<&Authority, Error> {
+        self.chain.usable()?;
+        Ok(&self.authority)
     }
 
     /// Records a standing grant.
@@ -300,8 +346,8 @@ impl AuthorityStore {
 
     /// Records a standing rule. A rule always has a rate limit, so one
     /// without is refused.
-    pub fn rule(&mut self, rule: Rule, now: Time) -> Result<StandingId, Error> {
-        self.change(Change::RuleSet(rule), now).map(StandingId)
+    pub fn add_rule(&mut self, rule: Rule, now: Time) -> Result<StandingId, Error> {
+        self.change(Change::RuleAdded(rule), now).map(StandingId)
     }
 
     /// Revokes the standing grant or rule with this id. It is no longer held
@@ -309,10 +355,10 @@ impl AuthorityStore {
     ///
     /// Revoking what is already revoked changes nothing and records nothing.
     pub fn revoke(&mut self, id: StandingId, now: Time) -> Result<(), Error> {
-        match self.authority.revocation(id) {
+        match self.authority.status(id) {
             None => Err(Error::NotStanding(id)),
-            Some(Some(_)) => Ok(()),
-            Some(None) => self.change(Change::Revoked(id), now).map(|_| ()),
+            Some(Status::Revoked(_)) => Ok(()),
+            Some(Status::Held) => self.change(Change::Revoked(id), now).map(|_| ()),
         }
     }
 
@@ -332,7 +378,7 @@ impl AuthorityStore {
     /// not admit is refused before anything is written.
     fn change(&mut self, change: Change, now: Time) -> Result<u64, Error> {
         self.authority.admits(&change)?;
-        let seq = self.log.append(now, &change)?;
+        let seq = self.chain.append(now, &change)?;
         self.authority.record(Recorded {
             seq,
             time: now,

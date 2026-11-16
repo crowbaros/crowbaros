@@ -18,9 +18,10 @@
 //! entry that checks out and lacks only its line break is kept.
 //!
 //! What this does not catch: the file replaced by an earlier whole copy of
-//! itself, or cut back to the end of an earlier entry. That needs a count
-//! kept outside the file, and it comes with signatures and hardware-bound
-//! keys.
+//! itself, or cut back. A file cut at the end of an entry reads as a shorter
+//! file, and one cut inside its last entry reads as a crash during that
+//! write. Telling either from the truth needs a count kept outside the file,
+//! and that comes with signatures and hardware-bound keys.
 
 use std::fs::{DirBuilder, File, OpenOptions, TryLockError};
 use std::io::Write;
@@ -91,7 +92,7 @@ struct Envelope<T> {
 
 /// The file, open for appending by its one writer.
 #[derive(Debug)]
-pub(crate) struct Log {
+pub(crate) struct Chain {
     file: File,
     path: PathBuf,
     /// The number the next entry takes.
@@ -101,7 +102,7 @@ pub(crate) struct Log {
     /// Whether a write failed. How much of it reached the disk is not known,
     /// so nothing more is written until the file is opened again, which
     /// finds out.
-    broken: bool,
+    write_failed: bool,
 }
 
 /// What `prev` names on the first line.
@@ -126,11 +127,11 @@ fn io(path: &Path) -> impl Fn(std::io::Error) -> Error + '_ {
     }
 }
 
-/// Reads the file at `path`. A file that is not there holds nothing.
-pub(crate) fn read<T: DeserializeOwned>(path: &Path) -> Result<Contents<T>, Error> {
+/// Reads the file at `path`, or says there is none.
+pub(crate) fn read<T: DeserializeOwned>(path: &Path) -> Result<Option<Contents<T>>, Error> {
     match std::fs::read(path) {
-        Ok(bytes) => Ok(scan(&bytes).contents),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(scan(&[]).contents),
+        Ok(bytes) => Ok(Some(scan(&bytes).contents)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(io(path)(error)),
     }
 }
@@ -211,13 +212,13 @@ fn read_line<T: DeserializeOwned>(line: &[u8]) -> Option<Envelope<T>> {
     serde_json::from_slice(json).ok()
 }
 
-impl Log {
+impl Chain {
     /// Opens the file at `path` for appending, and makes it and its directory
     /// if they are not there. One writer has it open at a time.
     ///
     /// What a crash left of a write is removed, and a last entry with no
     /// line break gets one, so the next entry starts on a line of its own.
-    pub fn open<T: DeserializeOwned>(path: &Path, on_damage: OnDamage) -> Result<(Log, Contents<T>), Error> {
+    pub fn open<T: DeserializeOwned>(path: &Path, on_damage: OnDamage) -> Result<(Chain, Contents<T>), Error> {
         let dir = match path.parent() {
             Some(dir) if !dir.as_os_str().is_empty() => dir,
             _ => Path::new("."),
@@ -258,24 +259,20 @@ impl Log {
             file.write_all(b"\n").map_err(io(path))?;
             file.sync_all().map_err(io(path))?;
         }
-        let log = Log {
+        let chain = Chain {
             file,
             path: path.to_path_buf(),
             next: scan.next,
             last: scan.last,
-            broken: false,
+            write_failed: false,
         };
-        Ok((log, scan.contents))
+        Ok((chain, scan.contents))
     }
 
     /// Appends one entry and returns its place in the file. The entry is on
     /// disk when this returns.
     pub fn append<T: Serialize>(&mut self, time: Time, entry: &T) -> Result<u64, Error> {
-        if self.broken {
-            return Err(Error::Broken {
-                path: self.path.clone(),
-            });
-        }
+        self.usable()?;
         let seq = self.next;
         let json = serde_json::to_string(&Envelope {
             seq,
@@ -291,11 +288,22 @@ impl Log {
             .write_all(format!("{line}\n").as_bytes())
             .and_then(|()| self.file.sync_all());
         if let Err(error) = written {
-            self.broken = true;
+            self.write_failed = true;
             return Err(io(&self.path)(error));
         }
         self.next = seq + 1;
         self.last = hash(line.as_bytes());
         Ok(seq)
+    }
+
+    /// Whether every write through this writer reached the disk. After one
+    /// that failed, what the writer knows may not be what the file holds.
+    pub fn usable(&self) -> Result<(), Error> {
+        match self.write_failed {
+            true => Err(Error::AfterFailedWrite {
+                path: self.path.clone(),
+            }),
+            false => Ok(()),
+        }
     }
 }

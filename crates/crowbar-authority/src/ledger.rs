@@ -6,11 +6,11 @@ use crowbar_broker::{Principal, Time};
 use serde::{Deserialize, Serialize};
 
 use crate::authority::StandingId;
+use crate::chain::{self, Chain, Contents, OnDamage, Recorded};
 use crate::error::{Damage, Error};
-use crate::log::{self, Log, OnDamage, Recorded};
 
 /// The file the ledger is kept in, inside its directory.
-const FILE: &str = "ledger.log";
+const FILE: &str = "entries";
 
 /// One thing that happened: which principal asked for which operation, and
 /// what was decided or done.
@@ -87,27 +87,42 @@ pub struct LedgerHistory {
 /// is not.
 #[derive(Debug)]
 pub struct Ledger {
-    log: Log,
+    chain: Chain,
+    unfinished_write: Option<usize>,
 }
 
 impl Ledger {
     /// Opens the ledger kept in `dir`, and makes it if it is not there. One
     /// writer has it open at a time.
     pub fn open(dir: &Path) -> Result<Ledger, Error> {
-        let (log, _) = Log::open::<LedgerEntry>(&dir.join(FILE), OnDamage::Continue)?;
-        Ok(Ledger { log })
+        let (chain, contents) = Chain::open::<LedgerEntry>(&dir.join(FILE), OnDamage::Continue)?;
+        Ok(Ledger {
+            chain,
+            unfinished_write: contents.unfinished_write,
+        })
+    }
+
+    /// The size in bytes of a write a crash cut short, if opening the ledger
+    /// found one after the last entry and removed it. Nothing on disk says so
+    /// afterwards, so the caller that wants it kept records it.
+    pub fn unfinished_write(&self) -> Option<usize> {
+        self.unfinished_write
     }
 
     /// Adds one entry and returns its number. It is on disk when this
     /// returns.
     pub fn append(&mut self, entry: &LedgerEntry, now: Time) -> Result<u64, Error> {
-        self.log.append(now, entry)
+        self.chain.append(now, entry)
     }
 
     /// Reads the ledger kept in `dir`. A directory that holds none yet has
     /// an empty history.
     pub fn read(dir: &Path) -> Result<LedgerHistory, Error> {
-        let contents = log::read(&dir.join(FILE))?;
+        let contents = chain::read(&dir.join(FILE))?.unwrap_or(Contents {
+            entries: Vec::new(),
+            damage: Vec::new(),
+            unfinished_write: None,
+        });
         Ok(LedgerHistory {
             entries: contents.entries,
             damaged: contents.damage,

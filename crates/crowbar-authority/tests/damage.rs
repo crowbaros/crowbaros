@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crowbar_authority::{Authority, AuthorityStore, Damage, Error, Grant, Party};
+use crowbar_authority::{Authority, AuthorityStore, Damage, Error, Grant, Party, Status};
 use crowbar_broker::EffectLimits;
 use crowbar_labels::{Label, Site};
 
@@ -12,7 +12,7 @@ mod common;
 use common::{LATER, NOW, Scratch, morning_pages, sync_rule, writing_grant};
 
 fn file(dir: &Path) -> PathBuf {
-    dir.join("authority.log")
+    dir.join("changes")
 }
 
 /// The lines of the record, each with its line break.
@@ -31,7 +31,7 @@ fn write_lines(dir: &Path, lines: &[Vec<u8>]) {
 #[test]
 fn a_write_cut_short_by_a_crash_loses_only_that_change() {
     let dir = Scratch::new();
-    let mut store = AuthorityStore::open(dir.path()).expect("opened");
+    let mut store = AuthorityStore::create(dir.path()).expect("made");
     let id = store.grant(writing_grant(), NOW).expect("recorded");
     store.revoke(id, NOW).expect("revoked");
     drop(store);
@@ -44,13 +44,16 @@ fn a_write_cut_short_by_a_crash_loses_only_that_change() {
 
     // The two changes before it stand, and the reader says what it left out.
     let authority = Authority::load(dir.path()).expect("loaded");
-    assert_eq!(authority.revoked_at(id), Some(NOW));
+    assert_eq!(authority.status(id), Some(Status::Revoked(NOW)));
     assert_eq!(authority.history().len(), 2);
     assert_eq!(authority.unfinished_write(), Some(half.len()));
 
     // The next change is recorded whole, after the two that stand.
     let mut store = AuthorityStore::open(dir.path()).expect("opened");
-    assert_eq!(store.authority().unfinished_write(), Some(half.len()));
+    assert_eq!(
+        store.authority().expect("readable").unfinished_write(),
+        Some(half.len())
+    );
     let again = store.grant(writing_grant(), LATER).expect("recorded");
     drop(store);
 
@@ -66,7 +69,7 @@ fn a_write_cut_short_by_a_crash_loses_only_that_change() {
 #[test]
 fn a_change_that_lost_only_its_line_break_still_stands() {
     let dir = Scratch::new();
-    let mut store = AuthorityStore::open(dir.path()).expect("opened");
+    let mut store = AuthorityStore::create(dir.path()).expect("made");
     let id = store.grant(writing_grant(), NOW).expect("recorded");
     store.revoke(id, NOW).expect("revoked");
     drop(store);
@@ -79,7 +82,7 @@ fn a_change_that_lost_only_its_line_break_still_stands() {
     // It is a whole change that checks out, so it stands: dropping it would
     // bring the grant back.
     let authority = Authority::load(dir.path()).expect("loaded");
-    assert_eq!(authority.revoked_at(id), Some(NOW));
+    assert_eq!(authority.status(id), Some(Status::Revoked(NOW)));
     assert_eq!(authority.unfinished_write(), None);
 
     // The next change starts on a line of its own.
@@ -88,19 +91,19 @@ fn a_change_that_lost_only_its_line_break_still_stands() {
     drop(store);
     let authority = Authority::load(dir.path()).expect("loaded");
     assert_eq!(authority.history().len(), 3);
-    assert_eq!(authority.revoked_at(id), Some(NOW));
+    assert_eq!(authority.status(id), Some(Status::Revoked(NOW)));
 }
 
 /// A record of three changes: a grant limited to 5 objects, a rule, and the
 /// grant's revocation.
 fn three_changes(dir: &Path) {
-    let mut store = AuthorityStore::open(dir).expect("opened");
+    let mut store = AuthorityStore::create(dir).expect("made");
     let limited = Grant {
         limits: EffectLimits::new().count(5),
         ..writing_grant()
     };
     let id = store.grant(limited, NOW).expect("recorded");
-    store.rule(sync_rule(), NOW).expect("recorded");
+    store.add_rule(sync_rule(), NOW).expect("recorded");
     store.revoke(id, LATER).expect("revoked");
 }
 
@@ -191,7 +194,7 @@ fn a_change_from_another_record_is_refused() {
     // Another store's first change is a whole, well-formed line. Put in
     // place of this record's revocation, it would bring the grant back.
     let other = Scratch::new();
-    AuthorityStore::open(other.path())
+    AuthorityStore::create(other.path())
         .expect("opened")
         .grant(writing_grant(), NOW)
         .expect("recorded");
@@ -219,7 +222,7 @@ fn a_damaged_record_is_left_as_it_was_found() {
 #[test]
 fn only_one_writer_has_the_record_open() {
     let dir = Scratch::new();
-    let mut first = AuthorityStore::open(dir.path()).expect("opened");
+    let mut first = AuthorityStore::create(dir.path()).expect("made");
 
     let refused = AuthorityStore::open(dir.path()).map(|_| ()).unwrap_err();
     assert!(matches!(refused, Error::Locked { .. }), "{refused}");
@@ -248,7 +251,7 @@ fn sha256(bytes: &[u8]) -> String {
 #[test]
 fn a_well_formed_line_that_revokes_what_was_never_granted_is_refused() {
     let dir = Scratch::new();
-    AuthorityStore::open(dir.path())
+    AuthorityStore::create(dir.path())
         .expect("opened")
         .grant(writing_grant(), NOW)
         .expect("recorded");
@@ -270,7 +273,7 @@ fn a_well_formed_line_that_revokes_what_was_never_granted_is_refused() {
 #[test]
 fn a_change_is_added_to_the_record_and_nothing_before_it_is_rewritten() {
     let dir = Scratch::new();
-    let mut store = AuthorityStore::open(dir.path()).expect("opened");
+    let mut store = AuthorityStore::create(dir.path()).expect("made");
     let id = store.grant(writing_grant(), NOW).expect("recorded");
     let granted = std::fs::read(file(dir.path())).expect("the record");
 
@@ -290,7 +293,7 @@ fn the_record_is_made_for_its_owner_alone() {
     use std::os::unix::fs::PermissionsExt;
     let dir = Scratch::new();
     let domain = dir.path().join("crowbar/authority");
-    AuthorityStore::open(&domain).expect("opened");
+    AuthorityStore::create(&domain).expect("made");
 
     let mode = |path: &Path| std::fs::metadata(path).expect("made").permissions().mode() & 0o777;
     assert_eq!(mode(&domain), 0o700);

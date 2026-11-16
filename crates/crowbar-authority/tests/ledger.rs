@@ -10,7 +10,7 @@ mod common;
 use common::{LATER, NOW, Scratch};
 
 fn file(dir: &Path) -> PathBuf {
-    dir.join("ledger.log")
+    dir.join("entries")
 }
 
 fn task() -> Principal {
@@ -170,10 +170,13 @@ fn a_write_cut_short_by_a_crash_loses_only_that_entry() {
     assert_eq!(history.damaged, vec![]);
     assert_eq!(history.unfinished_write, Some(half.len()));
 
+    // The writer that removes it says so, because nothing on disk will.
     let mut ledger = Ledger::open(dir.path()).expect("opened");
+    assert_eq!(ledger.unfinished_write(), Some(half.len()));
     assert_eq!(ledger.append(&sent(), LATER).expect("recorded"), 2);
     drop(ledger);
     let history = Ledger::read(dir.path()).expect("read");
     assert_eq!(history.entries.len(), 2);
     assert_eq!(history.unfinished_write, None);
+    assert_eq!(Ledger::open(dir.path()).expect("opened").unfinished_write(), None);
 }

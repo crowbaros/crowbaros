@@ -627,8 +627,10 @@ Revoking adds an entry and takes nothing away, and no change brings a revoked
 grant or rule back: granting the same thing again is a new grant. Each entry
 carries a hash of itself and of the entry before it. A record with a changed,
 removed, or reordered entry is refused whole, because reading around it could
-leave out a revocation. With no authority to read, every crossing asks. The
-person's signature over each change is not built yet.
+leave out a revocation, and so is a record that is missing. With no authority
+to read, every crossing asks. Not built yet: the person's signature over each
+change, and a count kept outside the file, without which a record cut back or
+replaced by an earlier copy of itself is not caught.
 
 When the person approves the same kind of action repeatedly, the OS offers a
 standing rule in fixed words:

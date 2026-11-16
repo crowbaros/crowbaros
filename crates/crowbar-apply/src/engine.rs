@@ -736,7 +736,7 @@ fstype = "ext4"
 
     #[test]
     fn rolling_back_does_not_bring_back_a_revoked_grant() {
-        use crowbar_authority::{Authority, AuthorityStore};
+        use crowbar_authority::{Authority, AuthorityStore, Status};
         use crowbar_broker::Time;
         let dir = scratch();
         let top = &dir.0;
@@ -747,7 +747,7 @@ fstype = "ext4"
         let holder = writing_grant().holder;
 
         // The person grants, and generation 2 is built while the grant holds.
-        let mut store = AuthorityStore::open(&e.layout.authority_dir()).unwrap();
+        let mut store = AuthorityStore::create(&e.layout.authority_dir()).unwrap();
         let id = store.grant(writing_grant(), Time::from_secs(1_000)).unwrap();
         let good = State::from_toml_str(GOOD).unwrap();
         assert_eq!(e.apply(&good, GOOD, 1).unwrap().to, Some(2));
@@ -764,7 +764,7 @@ fstype = "ext4"
 
         let authority = Authority::load(&e.layout.authority_dir()).unwrap();
         assert_eq!(authority.grants(&holder).count(), 0);
-        assert_eq!(authority.revoked_at(id), Some(Time::from_secs(2_000)));
+        assert_eq!(authority.status(id), Some(Status::Revoked(Time::from_secs(2_000))));
 
         // And generation 2 took no copy of the record from the time the
         // grant held, for a boot into it to read instead.
@@ -786,7 +786,7 @@ fstype = "ext4"
 
         // Authority is recorded before and between the applies, so a
         // snapshot that took it along would hold it.
-        let mut store = AuthorityStore::open(&e.layout.authority_dir()).unwrap();
+        let mut store = AuthorityStore::create(&e.layout.authority_dir()).unwrap();
         store.grant(writing_grant(), Time::from_secs(1_000)).unwrap();
         let good = State::from_toml_str(GOOD).unwrap();
         e.apply(&good, GOOD, 1).unwrap();
