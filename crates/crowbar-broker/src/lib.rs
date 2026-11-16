@@ -17,7 +17,7 @@
 //!   passes on narrowed copies. Its rules are written out on the type. It
 //!   issues and passes on only with an `Allowed` from the gate
 //!   (`crowbar-gate`) that covers the operation, and it tells the gate what it
-//!   knows about a handle a caller presents ([`HandleTable::state`]). Each of
+//!   knows about a handle a caller presents ([`HandleTable::presented`]). Each of
 //!   its refusals is a reason on the gate's closed list.
 //! - [`EffectLimits`] say which objects, how many, for how long, at what cost,
 //!   and how often. They narrow and never widen.

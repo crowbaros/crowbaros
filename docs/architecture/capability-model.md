@@ -892,7 +892,7 @@ bounds them.
 
 1. **Delegation.** Closed by
    [ADR 0021](../adr/0021-the-gate-decides-from-metadata-and-counts-from-the-ledger.md):
-   the gate decides each copy and gives it an allowance of its own, the copy's
+   the gate decides each copy and gives it an `Allowed` of its own, the copy's
    ledger entry names its original, and every use of a copy counts against both.
 2. **Admission.** Who admits the dependency set that build tasks read, how is it
    reviewed, and how does it receive updates? How are build tools confined?

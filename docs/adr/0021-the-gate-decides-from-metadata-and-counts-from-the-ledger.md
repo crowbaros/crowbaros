@@ -7,9 +7,9 @@
 ## Shape
 
 - **The gate is a pure library at Alpha.** Its decision is `decide(authority, usage, operation, now)`. Nothing inside it reads a file, a clock, or the network: the broker passes in the time, the use count, and the operation. It moves to a process of its own later.
-- **An allowance stands in for a signature until then.** `Allowed` is a value that only `crowbar-gate` can make and that cannot be copied. It covers one operation, and the gate makes it only after the ledger has recorded the decision. `HandleTable::issue` and `HandleTable::delegate` take one and refuse one that does not cover what they are asked to do. A key in the broker's own process would protect nothing, so the gate does not sign yet. Signing comes with the gate's own process, and settles open question 5 of the [gate design](../architecture/gate-monitor-and-autonomy.md).
+- **`Allowed` stands in for a signature until then.** It is a value that only `crowbar-gate` can make and that cannot be copied. It covers one operation, and the gate makes it only after the ledger has recorded the decision. `HandleTable::issue` and `HandleTable::delegate` take one and refuse one that does not cover what they are asked to do. A key in the broker's own process would protect nothing, so the gate does not sign yet. Signing comes with the gate's own process, and settles open question 5 of the [gate design](../architecture/gate-monitor-and-autonomy.md).
 - **The shared types live in `crowbar-capability`.** The broker depends on the gate, the gate on authority, and authority on neither. Principals, resources, rights, effect limits, handle ids, what the broker asks to issue, the gate's reasons, and idempotency keys are in that crate. `crowbar-broker` re-exports the ones it used to define.
-- **The gate decides delegation.** Every copy gets its own allowance, its ledger entry names its original, and every use of a copy counts against both the copy and the original. This closes question 1 of the capability model. The handle table keeps its own checks as a second line of defence, and runs them before it looks at the allowance.
+- **The gate decides delegation.** Every copy gets its own `Allowed`, its ledger entry names its original, and every use of a copy counts against both the copy and the original. This closes question 1 of the capability model. The handle table keeps its own checks as a second line of defence, and runs them before it looks at the `Allowed`.
 
 ## The decision
 
@@ -30,7 +30,7 @@
 ## State
 
 - **The gate counts uses from the ledger.** It rebuilds the count from the ledger's history when it starts, then adds each entry it writes, through the same function. A restart does not reset a limit such as "5 an hour". A ledger entry for a decision names the handle, its original, the task, how many objects it affected, its cost, and its idempotency key. An entry also records when a principal's open ask closes.
-- **Idempotency keys come from the task, one set per task, and the ledger records them** with a digest of the operation. A repeated key gets the first decision again and counts nothing. An allowed repeat carries no allowance, so nothing is carried out twice. A key reused on a different operation is refused. An operation without a key is decided and counted each time.
+- **Idempotency keys come from the task, one set per task, and the ledger records them** with a digest of the operation. A repeated key gets the first decision again and counts nothing. An allowed repeat carries no `Allowed`, so nothing is carried out twice. A key reused on a different operation is refused. An operation without a key is decided and counted each time.
 - **The gate fails closed.**
   - An unknown handle, principal, or operation is refused. An unknown operation is one whose name is not `service.operation`.
   - With no authority record to read, every crossing asks, and no party is cleared above public, because the person may have lowered a clearance. A refusal stays a refusal.
@@ -43,7 +43,7 @@
 - **The gate keeps its count in memory only.** Rejected: a restart would reset every rate limit.
 - **A value-dependent check reads the value inside the gate.** Rejected: a dry run could then be used to learn the value a little at a time (attack A19).
 - **The table names an unlisted operation as inside the boundary.** Rejected: a new adapter would cross without asking until someone listed it.
-- **Copies need no allowance of their own.** Rejected: the ledger could not show the chain, and nothing would stop a holder passing a handle on more widely than the gate would allow.
+- **Copies need no `Allowed` of their own.** Rejected: the ledger could not show the chain, and nothing would stop a holder passing a handle on more widely than the gate would allow.
 
 ## Consequences
 
@@ -51,4 +51,5 @@
 - Each adapter has to add its operations to the boundary table, and the checks and rehearsal work has to test that each row is true.
 - Ask rate limits apply to every principal, not only to tasks. A Tool that floods the person is the same problem.
 - The ledger's format changed before anything was deployed: a refusal records a rule and a limit, not a string.
+- The gate's proof is called `Allowed`, never an allowance: an Allowance is money the person sets aside.
 - Machine clearances wait for Milestone 6.

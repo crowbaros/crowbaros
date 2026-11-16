@@ -73,7 +73,7 @@ pub fn gate_on_issue(issue: &Issue, now: Time) -> Ruling {
     gate().decide(Some(&Authority::default()), &operation, now)
 }
 
-/// The gate's allowance to issue `issue` at [`NOW`].
+/// What the gate gives to allow issuing `issue` at [`NOW`].
 pub fn allow(issue: &Issue) -> Allowed {
     match gate_on_issue(issue, NOW) {
         Ruling::Allowed(allowed) => allowed,
@@ -81,16 +81,16 @@ pub fn allow(issue: &Issue) -> Allowed {
     }
 }
 
-/// An allowance for something else: an issue of photos to another task.
+/// An `Allowed` for something else: an issue of photos to another task.
 pub fn spare() -> Allowed {
     allow(&photos_for(task("spare")))
 }
 
 /// Passes `handle` on as the broker does: the gate decides on what the
 /// table states about the handle, and the table passes it on with the
-/// gate's allowance.
+/// gate's `Allowed`.
 ///
-/// Where the gate refuses, the table is given an allowance for something
+/// Where the gate refuses, the table is given an `Allowed` for something
 /// else, to show that it refuses on its own, and under the same rule.
 pub fn delegate(
     table: &mut HandleTable,
@@ -118,7 +118,7 @@ pub fn delegate(
 /// What the gate rules on `delegation` of `handle`, from what the table
 /// states about the handle.
 pub fn gate_on_delegation(table: &HandleTable, handle: &Handle, delegation: &Delegation<'_>, now: Time) -> Ruling {
-    let presented = table.state(handle);
+    let presented = table.presented(handle);
     let operation = Operation {
         caller: Caller {
             principal: delegation.from,

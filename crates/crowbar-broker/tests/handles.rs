@@ -130,7 +130,7 @@ fn a_handle_that_has_already_expired_is_not_issued() {
         Ruling::Refused(Refuse { rule: GateRule::Expired, limit: Limit::Until(until) }) if until == NOW
     ));
 
-    // An allowance the broker holds until the time has run out is refused
+    // An `Allowed` the broker holds until the time has run out is refused
     // by the table on its own.
     let until = Time::from_secs(NOW.as_secs() + 60);
     issue.limits = EffectLimits::new().until(until);
@@ -139,7 +139,7 @@ fn a_handle_that_has_already_expired_is_not_issued() {
 }
 
 #[test]
-fn an_allowance_covers_only_the_operation_the_gate_allowed() {
+fn what_the_gate_allowed_covers_only_that_operation() {
     let mut table = HandleTable::new();
     let mut delegable = photos_for(task("sort-photos"));
     delegable.delegable = true;
@@ -157,14 +157,14 @@ fn an_allowance_covers_only_the_operation_the_gate_allowed() {
         panic!("the gate allows the delegation");
     };
 
-    // An allowance to pass a handle on is not an allowance to issue one.
+    // What allows passing a handle on does not allow issuing one.
     assert_eq!(table.issue(to_pass_on, NOW).unwrap_err(), Refusal::NotAllowed);
-    // An allowance to issue is not an allowance to pass a handle on.
+    // What allows issuing does not allow passing a handle on.
     assert_eq!(
         table.delegate(&original, to_tool(), spare(), NOW).unwrap_err(),
         Refusal::NotAllowed
     );
-    // Nor is an allowance to pass it on with fewer rights, to someone else.
+    // Nor does what allows passing it on to someone else.
     let Ruling::Allowed(narrower) = gate_on_delegation(
         &table,
         &original,
@@ -183,7 +183,7 @@ fn an_allowance_covers_only_the_operation_the_gate_allowed() {
 }
 
 #[test]
-fn the_table_states_what_the_gate_checks_about_a_handle() {
+fn a_presented_handle_shows_the_gate_what_the_table_knows() {
     let mut table = HandleTable::new();
     let mut delegable = photos_for(task("sort-photos"));
     delegable.delegable = true;
@@ -204,14 +204,14 @@ fn the_table_states_what_the_gate_checks_about_a_handle() {
     )
     .expect("delegated");
 
-    let state = table.state(&copy).expect("the table issued it");
-    assert_eq!(state.id, copy.id());
-    assert_eq!(state.holder, Principal::Tool("photo-sorter".to_string()));
-    assert_eq!(state.rights, Rights::from([Right::Read]));
-    assert_eq!(state.limits, EffectLimits::new().count(2));
-    assert!(!state.delegable);
-    assert_eq!(state.ended, None);
-    let of = state.original.expect("a copy names its original");
+    let presented = table.presented(&copy).expect("the table issued it");
+    assert_eq!(presented.id, copy.id());
+    assert_eq!(presented.holder, Principal::Tool("photo-sorter".to_string()));
+    assert_eq!(presented.rights, Rights::from([Right::Read]));
+    assert_eq!(presented.limits, EffectLimits::new().count(2));
+    assert!(!presented.delegable);
+    assert_eq!(presented.ended, None);
+    let of = presented.original.expect("a copy names its original");
     assert_eq!(
         (of.id, of.limits, of.ended),
         (original.id(), EffectLimits::new().count(5), false)
@@ -219,12 +219,12 @@ fn the_table_states_what_the_gate_checks_about_a_handle() {
 
     table.revoke(&original.id()).expect("the table knows the original");
     assert_eq!(
-        table.state(&original).expect("still recorded").ended,
+        table.presented(&original).expect("still recorded").ended,
         Some(Ending::Revoked)
     );
     assert!(
         table
-            .state(&copy)
+            .presented(&copy)
             .expect("still recorded")
             .original
             .expect("a copy")
@@ -233,7 +233,7 @@ fn the_table_states_what_the_gate_checks_about_a_handle() {
 
     let mut other = HandleTable::new();
     let elsewhere = other.issue(spare(), NOW).expect("issued");
-    assert!(table.state(&elsewhere).is_none());
+    assert!(table.presented(&elsewhere).is_none());
 }
 
 #[test]

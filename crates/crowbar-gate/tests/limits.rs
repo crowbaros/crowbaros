@@ -168,7 +168,7 @@ fn copies_together_never_exceed_their_originals_rate() {
 }
 
 #[test]
-fn a_copy_is_held_to_its_own_ceiling_as_well() {
+fn a_copy_is_held_to_its_own_limits_as_well() {
     let mut bench = Bench::new();
     let mut original = handle(1, task("sort-photos"));
     original.limits = EffectLimits::new().count(10);

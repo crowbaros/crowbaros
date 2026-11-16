@@ -48,12 +48,12 @@ impl Record for InMemory {
     }
 }
 
-/// The gate's allowance for one operation: it stands in for the gate's
+/// What the gate gives for one operation it allowed: it stands in for the gate's
 /// signature until the gate has a process of its own.
 ///
 /// Only the gate makes one, after it has recorded the decision in the
 /// ledger, and it covers that one operation. The broker's table issues a
-/// handle, or passes one on, only with an allowance that covers it.
+/// handle, or passes one on, only with an `Allowed` that covers it.
 ///
 /// It cannot be made outside this crate:
 ///
@@ -63,7 +63,7 @@ impl Record for InMemory {
 /// }
 /// ```
 ///
-/// nor copied, so one allowance is spent once:
+/// nor copied, so each one is spent once:
 ///
 /// ```compile_fail,E0599
 /// fn copy(allowed: &crowbar_gate::Allowed) -> crowbar_gate::Allowed {
@@ -77,7 +77,7 @@ pub struct Allowed {
     covers: Box<Covers>,
 }
 
-/// The one operation an allowance covers.
+/// The one operation an `Allowed` covers.
 #[derive(Debug)]
 enum Covers {
     Issue(Issue),
@@ -105,7 +105,7 @@ impl Allowed {
     }
 
     /// The handle to issue, if this allows an issue. Otherwise the
-    /// allowance comes back unspent.
+    /// `Allowed` comes back unspent.
     pub fn into_issue(self) -> Result<Issue, Allowed> {
         match *self.covers {
             Covers::Issue(issue) => Ok(issue),
@@ -141,7 +141,7 @@ impl Allowed {
 /// What the gate ruled on an operation it was asked to carry out.
 #[derive(Debug)]
 pub enum Ruling {
-    /// Allowed: carry it out with this allowance.
+    /// Allowed: carry it out, spending this `Allowed`.
     Allowed(Allowed),
     Refused(Refuse),
     /// Put to the person. What the ask shows, and what happens after it, is
@@ -149,7 +149,7 @@ pub enum Ruling {
     Asked(Ask),
     /// The idempotency key was decided before, with this decision. Nothing is
     /// carried out again and nothing is counted again, so an allowed repeat
-    /// carries no allowance.
+    /// carries no `Allowed`.
     Repeated(Decision),
 }
 
@@ -173,7 +173,7 @@ impl Ruling {
 /// It starts from the ledger's history and counts on from there. Every
 /// decision is recorded before it is returned: allowed, refused, or asked.
 /// A ledger that cannot be added to refuses every operation under
-/// [`GateRule::Ledger`], because an allowance that is not recorded is not
+/// [`GateRule::Ledger`], because an `Allowed` that is not recorded is not
 /// counted. Dry runs still answer.
 #[derive(Debug)]
 pub struct Gate<L: Record> {
@@ -256,7 +256,7 @@ impl<L: Record> Gate<L> {
     }
 }
 
-/// What an allowance for `operation` covers, if it names a handle where it
+/// What an `Allowed` for `operation` covers, if it names a handle where it
 /// must.
 fn covers(operation: &Operation<'_>) -> Option<Covers> {
     Some(match &operation.act {

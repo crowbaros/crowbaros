@@ -7,7 +7,7 @@ use crowbar_capability::{
     EffectLimits, GateRule, HandleId, Issue, Limit, Principal, Refuse, Resource, ResourceKind, Right, Rights, TaskId,
     Time, Widening,
 };
-use crowbar_gate::{Allowed, Ending as Ended, Original, Presented};
+use crowbar_gate::{Allowed, Ending, Original, Presented};
 use crowbar_labels::{Compartment, LabelMark};
 
 /// A holder passing a handle on.
@@ -103,13 +103,6 @@ struct Entry {
     original: Option<Key>,
 }
 
-/// Why a handle stopped working before its time ran out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Ending {
-    Revoked,
-    HolderEnded,
-}
-
 /// Why the table refused. Each names the rule.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
@@ -136,7 +129,7 @@ pub enum Refusal {
     DelegableToAgent,
     /// A delegated copy would allow more than the original in this dimension.
     Widens(Widening),
-    /// The table was given no allowance from the gate that covers this.
+    /// The table was given no `Allowed` from the gate that covers this.
     NotAllowed,
 }
 
@@ -249,7 +242,7 @@ impl View<'_> {
 ///   may hold a handle, such as a value in a plan, but never one it could
 ///   pass on: it holds none of its tasks' authority (ADR 0011). The table
 ///   issues only what an [`Allowed`] from the gate covers, and the
-///   allowance is spent.
+///   `Allowed` is spent.
 /// - **Exercise** takes the handle itself, the caller the broker knows from
 ///   the connection, a right, and the time. It refuses a handle this table
 ///   did not issue, a caller that is not the holder, a handle that has ended
@@ -260,15 +253,15 @@ impl View<'_> {
 ///   at once, with every copy passed on from it.
 /// - **The end of a holder** ends every handle it holds, with their copies.
 /// - **Delegation** passes on a narrowed copy, under the rules on
-///   [`HandleTable::delegate`], and only with an allowance that covers it.
-/// - **State** tells the gate what the table knows about a handle a caller
-///   presents, for the gate to check before it decides.
+///   [`HandleTable::delegate`], and only with an `Allowed` that covers it.
+/// - **Presenting** a handle tells the gate what the table knows about it,
+///   for the gate to check before it decides.
 ///
 /// The table's own checks on issuing and passing on are a second line of
 /// defence behind the gate's, and run first, so the table refuses on its own
-/// whatever allowance it is given.
+/// whatever `Allowed` it is given.
 ///
-/// Nothing is issued without an allowance:
+/// Nothing is issued without an `Allowed`:
 ///
 /// ```compile_fail,E0308
 /// use crowbar_broker::{HandleTable, Issue, Time};
@@ -299,7 +292,7 @@ impl HandleTable {
         HandleTable::default()
     }
 
-    /// Issues the handle `allowed` covers to its holder. An allowance for
+    /// Issues the handle `allowed` covers to its holder. An `Allowed` for
     /// anything other than an issue is refused, and comes back unspent.
     pub fn issue(&mut self, allowed: Allowed, now: Time) -> Result<Handle, Refusal> {
         let issue = allowed.into_issue().map_err(|_| Refusal::NotAllowed)?;
@@ -383,7 +376,7 @@ impl HandleTable {
     /// it, what it names, its rights, limits, label and mark, whether it has
     /// ended, and for a copy, its original. `None` when this table did not
     /// issue it. Nothing here checks the caller: the gate does.
-    pub fn state(&self, handle: &Handle) -> Option<Presented> {
+    pub fn presented(&self, handle: &Handle) -> Option<Presented> {
         let entry = self.entries.get(&handle.key)?;
         // Records of ended handles stay, so a copy's original is always
         // found. Were it not, the table would state nothing, and the gate
@@ -407,10 +400,7 @@ impl HandleTable {
             limits: entry.issue.limits.clone(),
             label_mark: entry.issue.label_mark.clone(),
             delegable: entry.issue.delegable,
-            ended: entry.ended.map(|ending| match ending {
-                Ending::Revoked => Ended::Revoked,
-                Ending::HolderEnded => Ended::HolderEnded,
-            }),
+            ended: entry.ended,
             original,
         })
     }

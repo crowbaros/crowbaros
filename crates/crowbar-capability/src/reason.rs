@@ -46,7 +46,7 @@ pub enum GateRule {
     Idempotency,
     /// The ledger could not be added to, so nothing is allowed.
     Ledger,
-    /// The broker was given no allowance from the gate that covers this.
+    /// The broker was given no `Allowed` from the gate that covers this.
     NotAllowed,
 }
 

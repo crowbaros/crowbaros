@@ -1,6 +1,6 @@
 //! A task attaches an idempotency key so an operation is decided and
 //! carried out once. A repeat gets the first decision again, counts nothing,
-//! and carries no allowance. The same key on a different operation is
+//! and carries no `Allowed`. The same key on a different operation is
 //! refused. Each task has its own keys.
 
 use crowbar_capability::{EffectLimits, IdempotencyKey, Principal, Right};

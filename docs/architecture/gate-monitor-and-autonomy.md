@@ -384,7 +384,7 @@ Built so far, in [`crates/crowbar-gate`](../../crates/crowbar-gate/src/lib.rs): 
 decision on each issue, delegation, use, and egress, as a pure function of
 authority, the use count, the operation, and the time; dry runs; one closed list
 of reasons; the use count and idempotency keys, rebuilt from the ledger; and the
-allowance that stands in for a signature until the gate has a process of its own.
+`Allowed` that stands in for a signature until the gate has a process of its own.
 [ADR 0021](../adr/0021-the-gate-decides-from-metadata-and-counts-from-the-ledger.md)
 records the order of the checks and what the gate decides from.
 
