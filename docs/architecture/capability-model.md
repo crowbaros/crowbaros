@@ -193,7 +193,8 @@ classDiagram
   what it names joined with the delegator's compartment, because a copy is
   something that compartment emits. It ends when the original ends, and it is
   never passed on again. No handle passes to the Agent, which holds none of its
-  tasks' authority. The rules are written out on `HandleTable::delegate` in
+  tasks' authority. The gate decides each copy, and its ledger entry names its
+  original. The rules are written out on `HandleTable::delegate` in
   [`crates/crowbar-broker`](../../crates/crowbar-broker/src/handle.rs).
 - **Revocable in one step** from the ledger. For a component, the runtime drops
   the import. Linux cannot revoke an open file descriptor, so for native code
@@ -889,9 +890,10 @@ bounds them.
 
 ## Open questions
 
-1. **Delegation.** A handle passes on only narrowed (see [Handles](#handles)).
-   Still open: does each copy need the gate's signature, and how does the ledger
-   show the chain?
+1. **Delegation.** Closed by
+   [ADR 0021](../adr/0021-the-gate-decides-from-metadata-and-counts-from-the-ledger.md):
+   the gate decides each copy and gives it an allowance of its own, the copy's
+   ledger entry names its original, and every use of a copy counts against both.
 2. **Admission.** Who admits the dependency set that build tasks read, how is it
    reviewed, and how does it receive updates? How are build tools confined?
 3. **The plan language.** How much can a plan over handles express, when the

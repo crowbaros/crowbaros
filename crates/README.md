@@ -14,8 +14,9 @@ cargo fmt --all --check
 | [`crowbar-state`](crowbar-state/) | The Crowbar State document: schema, parsing, validation | 1 | Built |
 | [`crowbar-apply`](crowbar-apply/) | The `crowbar` command: plan, apply, generations, rollback, drift, ledger | 1 | Built |
 | [`crowbar-labels`](crowbar-labels/) | Labels, marks, and the origin table | 2, first deliverable | Skeleton |
-| [`crowbar-gate`](crowbar-gate/) | The gate: the deterministic rules engine that allows or refuses | 2, part one | Skeleton |
-| [`crowbar-broker`](crowbar-broker/) | The capability broker: handles, egress, adapters, the Tool contract | 2, part one | Handles and effect limits |
+| [`crowbar-capability`](crowbar-capability/) | The terms the broker, the gate, and the ledger share: principals, resources, rights, effect limits, handle ids, and the gate's reasons | 2, part one | Built |
+| [`crowbar-gate`](crowbar-gate/) | The gate: the deterministic rules engine that allows, refuses, or asks | 2, part one | Decisions on issue, delegate, use, and egress; dry runs; the use count and idempotency keys from the ledger |
+| [`crowbar-broker`](crowbar-broker/) | The capability broker: handles, egress, adapters, the Tool contract | 2, part one | Handles and effect limits, issued and passed on only with the gate's allowance |
 | [`crowbar-authority`](crowbar-authority/) | The authority domain and the ledger, stored outside the State and its generations | 2, part one | Standing grants and rules, clearances, the ceiling, revocation, and the ledger of decisions and effects |
 | [`crowbar-plan`](crowbar-plan/) | Plans over handles and their deterministic interpreter | 2, part one | Skeleton |
 | [`crowbar-sandbox`](crowbar-sandbox/) | The Warden: every compartment in its own Linux sandbox | 2, part one | Sandbox, budgets, and stop, as a library |
