@@ -28,21 +28,24 @@ logs are UTC, so they read November 16.
 
 ## What was run
 
-One commit of the compositor did every run: `ac3478f`. The guest check script
-changed after it, and that change is in the commit that adds this record.
+The tests, the nested check, and the Void guest check ran on commit
+`fa881a2`, which holds the fixes from the review below. The Alpha desktop
+check and the milestone ran before those fixes, on `096e352` and `ac3478f`.
+Neither runs this compositor: the first runs the spike, and the second is
+Base alone.
 
 | Check | Where | Result |
 | --- | --- | --- |
-| `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --all --check` in `compositor/` | Jim's tower, Linux 7.2.15, Rust 1.99.1 | 54 tests pass, with no warnings. The lint also passes with `--features nested` |
+| `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --all --check` in `compositor/` | Jim's tower, Linux 7.2.15, Rust 1.99.1 | 57 tests pass, with no warnings. The lint also passes with `--features nested` |
 | The same three in `lab/compositor-spike/` | The same | 22 tests pass |
 | `compositor/checks/nested.sh` | Nested on the tower's Wayland session | Pass |
-| `lab/void/compositor_guest.py check` | The Void guest: Linux 6.18.63, runit, seatd, software rendering | 36 of 36. It also runs the 54 tests inside the Void build root |
+| `lab/void/compositor_guest.py check` | The Void guest: Linux 6.18.63, runit, seatd, software rendering | 36 of 36. It also runs the 57 tests inside the Void build root |
 | `lab/void/compositor_guest.py desktop-check` | A fresh Void guest | 37 of 37, with the spike |
 | `lab/void/void_lab.py milestone` | The Void Base guest | 22 of 22 |
 
 The Void guest check's binaries: `crowbar-compositor` is sha256
-`b046c951c81c5706ba652888b17566081ca7d290f58fedd5ea21b765805f5112`, and
-`crowbar-probe` is `37a275b109317ea9b63513d2e7f45b342f673068fdf8507f1c016330e84bcbdc`.
+`fb904402b0abc6bb293fd56ea5694e43141a87f9800452f06607cfb38a747c22`, and
+`crowbar-probe` is `0396f0a160f609414443921b68b281551d08c96506bee952430b80d74c03bc16`.
 Both were built in the Void build root.
 
 ## Identity
@@ -69,7 +72,8 @@ listener as `crowbar-app`.
 | The Warden's stand-in registers a listener for `org.crowbaros.Probe`, `compartment-1` | The compositor logs both IDs, and a client of the listener is offered the compartment's row |
 | A listener with no principal ID or no compartment ID, and a second listener for a live compartment | Each accepts nothing (tests) |
 | A client of a listener, and the shell, try to register a listener | Not offered to either |
-| The Warden's stand-in exits | The listener accepts nothing |
+| The Warden's stand-in exits | The listener accepts nothing, with its socket still in place |
+| A client connects when the compositor has no descriptor left to accept with | The compositor goes on. The listener waits a second and accepts again (tests) |
 
 The compositor started no process, and every descriptor it opened on the TTY
 is close-on-exec: 33 were open, with the seat, the DRM device, and the input
@@ -93,21 +97,24 @@ What each client saw, by `wayland-info`, in the guest:
 row, so a test that only looks for them would pass with no table at all. The
 test adds one global for each of the 25 names in the row, and for two names
 with no row. Each added global refuses nobody itself. Then every kind of
-client asks for each one, by its name and by guessing its number. None is
-offered and none is bound. A second test adds a global that does have a row,
+client asks for each one, by its name and by guessing its number: every
+number it was not told about, up to a global the test adds last. The test
+fails if that range stops short of the added globals. None is offered and
+none is bound. A second test adds a global that does have a row,
 and the client its row names binds it by the same guess, so the first test
 cannot pass for lack of a way to bind.
 
 In the guest and nested, where nothing can be added, a client of a listener
 asked for all 25 and for the three globals that other clients are offered, at
-every global number it was not told about. Each of the 28 was refused at each
-number.
+every global number it was not told about, up to 16 past the last one it was.
+That reaches every global the compositor has there. Each of the 28 was
+refused at each number.
 
 ## Drawing
 
 - **A still desktop draws nothing.** With a window on screen and nothing
   changing, the guest drew 8 frames before a ten-second wait and 8 after it.
-  The compositor's process had run 1,376 times before the wait and 1,376 after.
+  The compositor's process had run 1,399 times before the wait and 1,399 after.
 - **A change draws again.** Moving the pointer, which the TTY backend draws,
   took the count to 18, and it stopped there.
 - **A client that commits on every frame is held to the display's rate**, even
@@ -132,6 +139,20 @@ The guard was checked against a build that calls into `reis`: it fails.
 | `pgrep -x crowbar-compositor` never matches: the kernel keeps 15 characters of a process's name. Two checks in the guest script passed without testing anything | The script finds the process by its whole name, and stops if it finds none |
 | `openvt` hands the program it starts a second descriptor for the terminal, which is not close-on-exec | Recorded. The compositor did not open it. A Base service that starts the compositor through `openvt` passes it the same one |
 
+## Found in review
+
+Three reviewers read the branch at `6206ff0`: Claude Opus 5.5, Claude Fable
+5.2, and GPT-6.1 Sol. Each finding below was fixed in `fa881a2`, and the
+first three have a test that failed first.
+
+| Finding | What was done |
+| --- | --- |
+| The test of attack 1 guessed numbers only up to 8 past the last global a client was told about. The 27 globals it adds had numbers 11 to 37, and no client guessed past 18 | It guesses every number up to a global added last, and fails if that range does not cover them |
+| A window that grew across the edge of its output was not drawn on the output it grew onto: a commit queued the outputs the window was on before it | A commit queues the outputs the window was on and the ones it is on now |
+| A compartment that opened connections until the compositor had no descriptor left ended the compositor, and with it every other compartment's windows | A listener that cannot accept is left alone for a second and tried again |
+| A trusted socket that could not accept tried again at once: 27,861 times in a third of a second | It waits the same way |
+| The guest check for a stopped compartment's listener passed whenever the probe failed, a timeout included | It passes only on the probe's own refusal, with the socket still in place |
+
 ## What the records did not say, and what Jim decided
 
 Slice 1 met three gaps in the records. Jim decided each on the same day.
@@ -155,6 +176,11 @@ lists which slice creates each remaining global of the table.
   the shell and Studio Settings were not run on it. The checks that run them
   stay with the spike.
 - **A real Warden.** Every listener came from the stand-in.
+- **A limit on what one compartment can make the compositor hold.** Nothing
+  caps a compartment's connections or buffers, and each costs the compositor
+  a descriptor. A compartment that uses them all up no longer ends the
+  compositor, but the compositor accepts no new client until the Warden
+  stops that compartment. No issue holds this yet.
 - **A flip the display never reports.** An output would then wait and draw no
   more. The TTY backend ends the wait when a paused session resumes, and
   nothing else does.
