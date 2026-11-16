@@ -206,6 +206,15 @@ struct MountAttr {
     userns_fd: u64,
 }
 
+/// The argument of `openat2`.
+#[repr(C)]
+struct OpenHow {
+    flags: u64,
+    mode: u64,
+    resolve: u64,
+}
+
+const RESOLVE_NO_SYMLINKS: u64 = 0x04;
 const OPEN_TREE_CLONE: libc::c_uint = 1;
 const MOUNT_ATTR_RDONLY: u64 = 0x1;
 const MOUNT_ATTR_NOSUID: u64 = 0x2;
@@ -217,14 +226,35 @@ const MOVE_MOUNT_F_EMPTY_PATH: libc::c_uint = 0x4;
 /// without whatever else is mounted inside it. It never honours a setuid
 /// bit or a device file, and it is ID-mapped.
 fn view_mount(source: &Path, access: Access, mapping: &OwnedFd) -> io::Result<OwnedFd> {
+    // The source is the place its path names, and never where a symbolic
+    // link leads: a principal that could once write near it could have left
+    // one. So no part of the path may be a link.
     let path = cstring(source)?;
-    // SAFETY: `path` is a C string, and the call returns a new descriptor.
+    let exactly = OpenHow {
+        flags: (libc::O_PATH | libc::O_CLOEXEC) as u64,
+        mode: 0,
+        resolve: RESOLVE_NO_SYMLINKS,
+    };
+    // SAFETY: `path` is a C string, `exactly` is an `open_how` of the size
+    // given, and the call returns a new descriptor.
+    let place = checked(unsafe {
+        libc::syscall(
+            libc::SYS_openat2,
+            libc::AT_FDCWD,
+            path.as_ptr(),
+            &exactly as *const OpenHow,
+            size_of::<OpenHow>(),
+        )
+    })?;
+    // SAFETY: the call succeeded, so `place` is a new descriptor.
+    let place = unsafe { OwnedFd::from_raw_fd(place as RawFd) };
+    // SAFETY: `place` is open, and the call returns a new descriptor.
     let tree = checked(unsafe {
         libc::syscall(
             libc::SYS_open_tree,
-            libc::AT_FDCWD,
-            path.as_ptr(),
-            OPEN_TREE_CLONE | libc::O_CLOEXEC as libc::c_uint,
+            place.as_raw_fd(),
+            c"".as_ptr(),
+            OPEN_TREE_CLONE | libc::O_CLOEXEC as libc::c_uint | libc::AT_EMPTY_PATH as libc::c_uint,
         )
     })?;
     // SAFETY: the call succeeded, so `tree` is a new descriptor.
@@ -465,6 +495,16 @@ fn run(order: &InitOrder) -> io::Error {
             .chain([std::ptr::null()])
             .collect::<Vec<_>>()
     };
+    // The program starts with no signal blocked and with the usual end on a
+    // broken pipe, which this stage, like every Rust program, ignores.
+    // SAFETY: plain calls on this process's own signals, and an all-zero
+    // signal set is valid to empty.
+    unsafe {
+        let mut none: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut none);
+        libc::sigprocmask(libc::SIG_SETMASK, &none, std::ptr::null_mut());
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     // SAFETY: both arrays hold C strings that outlive the call and end in a
     // null pointer.
     unsafe {

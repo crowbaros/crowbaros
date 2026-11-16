@@ -14,6 +14,25 @@ use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::{SocketAddr, UnixListener, UnixStream};
 use std::time::Duration;
 
+/// What the probe was started to do on a broken pipe. Rust's own start-up
+/// code changes it before `main`, so it is read before that code runs.
+static mut BROKEN_PIPE_AT_START: libc::sighandler_t = usize::MAX;
+
+#[used]
+#[unsafe(link_section = ".init_array")]
+static BEFORE_MAIN: extern "C" fn() = {
+    extern "C" fn before_main() {
+        // SAFETY: an all-zero `sigaction` is valid, the call only reads the
+        // current one, and nothing else runs this early.
+        unsafe {
+            let mut now: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(libc::SIGPIPE, std::ptr::null(), &mut now);
+            BROKEN_PIPE_AT_START = now.sa_sigaction;
+        }
+    }
+    before_main
+};
+
 fn main() {
     // SAFETY: the Warden starts every program with its first broker
     // connection as descriptor 3, and nothing else here owns it.
@@ -96,6 +115,21 @@ fn main() {
                 Ok(entries.join(" "))
             }
             "status" => status(),
+            "signals" => fs::read_to_string("/proc/self/status").map(|status| {
+                let blocked = status
+                    .lines()
+                    .find_map(|line| line.strip_prefix("SigBlk:"))
+                    .unwrap_or("missing");
+                let blocked =
+                    u64::from_str_radix(blocked.trim(), 16).map_or(blocked.to_string(), |mask| mask.to_string());
+                // SAFETY: written once, before `main`, and only read here.
+                let pipe = match unsafe { BROKEN_PIPE_AT_START } {
+                    libc::SIG_DFL => "default",
+                    libc::SIG_IGN => "ignored",
+                    _ => "handled",
+                };
+                format!("pipe={pipe} blocked={blocked}")
+            }),
             "keyring" => {
                 const GET_KEYRING_ID: i32 = 0;
                 const SESSION_KEYRING: i32 = -3;

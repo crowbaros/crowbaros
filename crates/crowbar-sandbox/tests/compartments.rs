@@ -450,8 +450,9 @@ fn a_program_that_takes_all_the_memory_is_stopped_at_the_memory_budget() {
     assert_eq!(modest.did("eat 8"), "ok ate=8");
     assert!(!modest.compartment.wait().unwrap().out_of_memory);
 
-    // At the budget the whole compartment is stopped, and it says so.
-    let mut greedy = Probe::start_as("task-1", &["eat 4096", "hold"], small);
+    // At the budget the whole compartment is stopped, and it says so. The
+    // machine has this much memory to spare, so the budget is what stops it.
+    let mut greedy = Probe::start_as("task-1", &["eat 64", "hold"], small);
     assert_eq!(greedy.line(), None);
     let ended = greedy.compartment.wait().unwrap();
     assert_eq!(
@@ -652,4 +653,37 @@ fn a_start_that_is_refused_leaves_nothing_behind() {
         other => panic!("{:?}", other.err()),
     }
     assert!(live.answers());
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_view_entry_is_the_place_it_names_and_never_where_a_link_leads() {
+    // An earlier task could write to this folder, and left links in it.
+    // An order that names one of them would show another place.
+    let files = scratch("links");
+    fs::create_dir(files.join("photos")).unwrap();
+    std::os::unix::fs::symlink("/etc", files.join("shortcut")).unwrap();
+    std::os::unix::fs::symlink(files.join("photos"), files.join("album")).unwrap();
+    fs::create_dir(files.join("photos/2026")).unwrap();
+
+    for (source, named) in [("shortcut", "shortcut"), ("album/2026", "album")] {
+        let (mut order, _broker) = probe_order("task-1", &["ls /seen"]);
+        order.view.push(read_only(&files.join(source), "/seen"));
+        match warden().start(order) {
+            Err(StartError::Setup(step)) => assert!(step.contains(named), "{step}"),
+            other => panic!("{source}: {:?}", other.err()),
+        }
+    }
+    // The same place by its own name is shown.
+    let mut probe = Probe::start(vec![read_only(&files.join("photos/2026"), "/seen")], &["ls /seen"]);
+    assert_eq!(probe.did("ls /seen"), "ok");
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_program_starts_with_the_signals_every_program_expects() {
+    // The Warden's own programs ignore a broken pipe. A program that
+    // inherited that would write for ever to a reader that has gone.
+    let mut probe = Probe::start(Vec::new(), &["signals"]);
+    assert_eq!(probe.did("signals"), "ok pipe=default blocked=0");
 }
