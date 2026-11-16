@@ -302,10 +302,10 @@ def main():
             guest.run = logged_run
             with contextlib.redirect_stdout(log):
                 guest.rootfs()
-                guest.build()
+                guest.build(desktop=True)
                 guest.image(desktop=True)
             guest.run = original_run
-        built = {name: guest.void_lab.sha256(guest.TARGET / 'release' / name) for name in guest.BINARIES}
+        built = {name: guest.void_lab.sha256(path) for name, path in guest.binaries(desktop=True).items()}
         guest.start()
         guest.wait_ssh()
         check.checks(built)

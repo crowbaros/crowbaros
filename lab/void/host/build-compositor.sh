@@ -1,8 +1,10 @@
 #!/bin/sh
-# Build the compositor and GPUI apps against Void's own libraries, inside the Void build
+# Build a compositor and the GPUI apps against Void's own libraries, inside the Void build
 # root. Runs as fake root in a user and mount namespace (`unshare -r -m`), so
 # nothing here needs sudo and no mount outlives the script.
 # Inputs: B (build root), SRC (repository root), TARGET (cargo target dir),
+# PROJECTS (what to build: `path:subdir` for each, where `subdir` is the part
+# of TARGET that project builds in, or nothing for TARGET itself),
 # CARGO_REGISTRY and CARGO_GIT (the host's downloaded crates; the build is
 # offline and takes exactly what Cargo.lock names).
 set -eu
@@ -15,10 +17,12 @@ mount --bind "$TARGET" "$B/target"
 mount --bind "$CARGO_REGISTRY" "$B/cargo/registry"
 mount --bind "$CARGO_GIT" "$B/cargo/git"
 chroot "$B" /usr/bin/env -i HOME=/root PATH=/usr/bin:/usr/sbin \
-  CARGO_HOME=/cargo CARGO_TARGET_DIR=/target CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-3}" \
+  CARGO_HOME=/cargo CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-3}" PROJECTS="$PROJECTS" \
   sh -ec '
     rustc --version
-    for project in compositor apps/shell apps/studio-settings; do
+    for entry in $PROJECTS; do
+      project=${entry%%:*}
+      export CARGO_TARGET_DIR="/target/${entry#*:}"
       cargo build --release --locked --offline --manifest-path "/src/$project/Cargo.toml"
       cargo test --release --locked --offline --manifest-path "/src/$project/Cargo.toml"
     done

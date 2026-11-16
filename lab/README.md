@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | [void/](void/README.md) | Base generations and integrated Alpha desktop checks on Void/runit/seatd | Active |
 | [adversarial/](adversarial/README.md) | M2 fixture services and security tests | Fixture services and the smoke check built. Harness and runs not started |
+| [compositor-spike/](compositor-spike/README.md) | The spike that tested ADR 0015. The Alpha desktop check runs it until the [compositor](../compositor/README.md) passes that check | Kept, not developed. Deleted then |
 
 The [Fedora workflow](../docs/archive/fedora-workflow/README.md) is archived.
 Current app build/run instructions are in the

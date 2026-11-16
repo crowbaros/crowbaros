@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The Void lab's graphical guest: the compositor, shell, and Studio Settings.
+"""The Void lab's graphical guest: a compositor, and for the desktop the shell and Studio Settings.
 
 Stdlib only, no sudo. It shares the static xbps and the package cache with
 void_lab.py. Its own files live in <repo>/.lab/void-graphical (outside git).
@@ -8,15 +8,21 @@ The guest is a plain Void root on Btrfs, booted straight from its kernel. It
 is not built through the apply engine and has no generations. Its desktop
 runs on a TTY under runit, without systemd or a host compositor.
 
+There are two images. The plain one holds the compositor in `compositor/` and
+its probe, for `check`. The desktop one holds the Alpha desktop: the shell,
+Studio Settings, and the compositor spike in `lab/compositor-spike/`, which
+the Alpha desktop runs until the compositor passes `desktop-check` (ADR 0020).
+
     compositor_guest.py rootfs     install the guest root and the build root (rootless)
-    compositor_guest.py build      build and test the compositor and apps in Void
-    compositor_guest.py image      make the guest disk (--desktop enables autostart)
+    compositor_guest.py build      build and test in Void what an image holds (--desktop for the desktop image)
+    compositor_guest.py image      make the guest disk (--desktop for the desktop image)
     compositor_guest.py start      boot the guest
     compositor_guest.py view       open its graphical console
     compositor_guest.py desktop    build a desktop image, boot it, and open its console
     compositor_guest.py ssh CMD    run a command in the guest as root
     compositor_guest.py stop       power the guest off
-    compositor_guest.py check      build, make the disk, boot, run every check, and write an evidence log
+    compositor_guest.py check      build, make the disk, boot, run every compositor check, and write an evidence log
+    compositor_guest.py desktop-check   the Alpha desktop smoke check, in a fresh guest
 
 QEMU needs the virtio-gpu device. Where the distribution splits it into its
 own package (Arch: qemu-hw-display-virtio-gpu-pci), install that, or point
@@ -49,8 +55,14 @@ PIDFILE = WORK / "qemu.pid"
 QMP_SOCK = WORK / "qmp.sock"
 SERIAL_LOG = WORK / "serial.log"
 VNC = [WORK / "vnc0.sock", WORK / "vnc1.sock"]
-BINARIES = ["crowbar-compositor", "crowbar-probe", "crowbaros-shell", "crowbaros-studio-settings"]
-GUEST_USER = "crowbar"
+# Both compositors build a `crowbar-compositor` and a `crowbar-probe`, so the
+# compositor builds in a part of the target directory of its own. The spike
+# and the apps stay where the desktop image has always built them.
+COMPOSITOR = ("compositor", "compositor")
+SPIKE = ("lab/compositor-spike", "")
+APPS = [("apps/shell", ""), ("apps/studio-settings", "")]
+COMPOSITOR_BINARIES = ["crowbar-compositor", "crowbar-probe"]
+APP_BINARIES = ["crowbaros-shell", "crowbaros-studio-settings"]
 
 run = void_lab.run
 
@@ -78,25 +90,41 @@ def rootfs(force=False):
         install_root(target, packages, log_name)
 
 
-def build():
-    """Builds the compositor and apps against Void's libraries, inside the build root.
+def projects(desktop):
+    """What an image is built from: each project and its part of the target directory."""
+    return [SPIKE, *APPS] if desktop else [COMPOSITOR]
+
+
+def binaries(desktop):
+    """The programs an image holds, and where the build leaves each."""
+    compositor = SPIKE if desktop else COMPOSITOR
+    built = {name: TARGET / compositor[1] / "release" / name for name in COMPOSITOR_BINARIES}
+    if desktop:
+        built.update({name: TARGET / "release" / name for name in APP_BINARIES})
+    return built
+
+
+def build(desktop=False):
+    """Builds and tests what an image holds against Void's libraries, inside the build root.
 
     The host's Cargo registry and git checkouts are bound in read-write so the
     build runs offline from the crates the lockfile already names.
     """
     if not BUILD_ROOT.exists():
         rootfs()
-    run(sys.executable, ROOT / "apps/shell/packaging/prepare-gpui.py")
-    for project in ("compositor", "apps/shell", "apps/studio-settings"):
+    if desktop:
+        run(sys.executable, ROOT / "apps/shell/packaging/prepare-gpui.py")
+    for project, _ in projects(desktop):
         run("cargo", "fetch", "--locked", "--target", "x86_64-unknown-linux-gnu",
             "--manifest-path", ROOT / project / "Cargo.toml")
     TARGET.mkdir(parents=True, exist_ok=True)
     cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
     env = dict(os.environ, B=str(BUILD_ROOT), SRC=str(ROOT), TARGET=str(TARGET),
+               PROJECTS=" ".join(f"{project}:{part}" for project, part in projects(desktop)),
                CARGO_REGISTRY=str(cargo_home / "registry"), CARGO_GIT=str(cargo_home / "git"))
     run("unshare", "-r", "-m", "sh", LAB / "host/build-compositor.sh", env=env)
-    for name in BINARIES:
-        print(f"{TARGET / 'release' / name}: sha256 {void_lab.sha256(TARGET / 'release' / name)}")
+    for name, path in binaries(desktop).items():
+        print(f"{path}: sha256 {void_lab.sha256(path)}")
 
 
 def image(desktop=False):
@@ -104,10 +132,8 @@ def image(desktop=False):
         raise SystemExit("Stop the graphical guest before rebuilding its disk")
     if not GUEST_ROOT.exists():
         rootfs()
-    for name in BINARIES:
-        if not (TARGET / "release" / name).exists():
-            build()
-            break
+    if not all(path.exists() for path in binaries(desktop).values()):
+        build(desktop)
     if not KEY.exists():
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "crowbar-void-graphical", "-f", KEY)
     if DISK.exists():
@@ -115,8 +141,8 @@ def image(desktop=False):
         run("cp", "--reflink=auto", "--sparse=always", DISK, backup)
         print(f"Preserved the previous guest disk at {backup}")
     env = dict(os.environ, ROOTFS=str(GUEST_ROOT), WORK=str(WORK), OUT=str(DISK),
-               BIN=str(TARGET / "release"), BINARIES=" ".join(BINARIES), PUBKEY=str(KEY) + ".pub",
-               ROOT_LABEL=CFG["root_label"], ROOT_GIB=str(CFG["root_gib"]), GUEST_USER=GUEST_USER,
+               BINARIES=" ".join(str(path) for path in binaries(desktop).values()),
+               PUBKEY=str(KEY) + ".pub", ROOT_LABEL=CFG["root_label"], ROOT_GIB=str(CFG["root_gib"]),
                REPO_ROOT=str(ROOT), DESKTOP="1" if desktop else "0")
     run("unshare", "-r", "sh", LAB / "host/build-graphical-image.sh", env=env)
 
@@ -318,7 +344,7 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("rootfs").add_argument("--force", action="store_true")
-    sub.add_parser("build")
+    sub.add_parser("build").add_argument("--desktop", action="store_true")
     sub.add_parser("image").add_argument("--desktop", action="store_true")
     sub.add_parser("start")
     sub.add_parser("view")
@@ -331,7 +357,7 @@ def main():
     if args.command == "rootfs":
         rootfs(args.force)
     elif args.command == "build":
-        build()
+        build(args.desktop)
     elif args.command == "image":
         image(args.desktop)
     elif args.command == "start":
@@ -345,7 +371,7 @@ def main():
         if running():
             raise SystemExit("The graphical guest is running; stop it before rebuilding the desktop")
         rootfs()
-        build()
+        build(desktop=True)
         image(desktop=True)
         start()
         wait_ssh()

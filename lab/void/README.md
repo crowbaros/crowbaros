@@ -7,7 +7,7 @@ continues (Milestone 1b in the [roadmap](../../docs/VISION.md#roadmap)).
 | Path | Contents |
 | --- | --- |
 | `void_lab.py` | The lab command: fetch, rootfs, image, start, ssh, stop, milestone |
-| `compositor_guest.py`, `compositor_check.py` | Void builds and the earlier compositor-only TTY check |
+| `compositor_guest.py`, `compositor_check.py` | Void builds, and the check of the [compositor](../../compositor/README.md) on a TTY |
 | `desktop_check.py` | Fresh, isolated full-desktop smoke checks, with retained diagnostics |
 | `warden_check.py` | Runs the Warden's root-only tests as root in the guest |
 | `guest/` | Alpha runit services and the temporary app-launch stand-in |
@@ -45,22 +45,39 @@ from Base.
 
 ## The graphical guest
 
-The graphical guest runs the CrowbarOS compositor
-([ADR 0015](../../docs/adr/0015-our-own-compositor-on-smithay.md)) on a virtual
-terminal, with seatd as the seat manager and no systemd.
+The graphical guest runs the CrowbarOS [compositor](../../compositor/README.md)
+on a virtual terminal, with seatd as the seat manager and no systemd.
 
 ```sh
 lab/void/compositor_guest.py check   # build, boot, run every check, record evidence
 lab/void/compositor_guest.py --help
 ```
 
-`check` builds the compositor inside a Void build root, so the binary links
-Void's own libraries. It then boots the guest and drives it from outside: keys
-and the pointer through QEMU, and a second monitor plugged into QEMU's second
-virtio-gpu connector. The first run of the [spike](https://github.com/crowbaros/crowbaros/issues/3)
-is in the [spike record](../../docs/research/compositor-spike-2026-11-15.md).
+`check` builds and tests the compositor inside a Void build root, so the binary
+links Void's own libraries. It then boots the guest and drives it from outside:
+keys and the pointer through QEMU, and a second monitor plugged into QEMU's
+second virtio-gpu connector. Every pull request that touches the compositor
+runs it ([ADR 0022](../../docs/adr/0022-the-compositor-is-built-beside-milestone-2.md)).
 
-Three things to know:
+The compositor has no public socket, so the check connects the two ways it
+allows ([ADR 0016](../../docs/adr/0016-the-warden-starts-every-compartment.md)):
+
+- The compositor runs as `crowbar-compositor`, the only member of `_seatd`.
+- `crowbar-shell` connects to the shell's socket.
+- A stand-in for the Warden runs as root, and registers a listener for one
+  compartment. `crowbar-app` is a client of that listener.
+
+It checks what each of the three is offered, the attacks that the decision
+records give slice 1, that a new window does not take the keyboard, that a
+still desktop draws no frames, and a monitor plugged in while it runs. The
+[slice 1 record](../../docs/research/compositor-slice-1-2026-11-15.md) holds a
+run. The run of the [spike](../compositor-spike/README.md) is in the
+[spike record](../../docs/research/compositor-spike-2026-11-15.md).
+
+Four things to know:
+
+- `check` replaces the disk at `.lab/void-graphical/disk.raw`, and keeps the
+  one it replaces beside it.
 
 - The guest is a plain Void root booted straight from its kernel. It is not
   built by the apply engine and has no generations.
@@ -77,8 +94,11 @@ From the repository root:
 python3 lab/void/compositor_guest.py desktop-check
 ```
 
-This builds and tests the compositor, shell, and Settings in Void, creates a
-fresh guest image, exercises the desktop, and powers off the test guest. Every
+This builds and tests the [compositor spike](../compositor-spike/README.md),
+the shell, and Settings in Void, creates a fresh guest image, exercises the
+desktop, and powers off the test guest. The Alpha desktop runs the spike until
+the compositor passes this check
+([ADR 0020](../../docs/adr/0020-the-first-compositor-is-small-on-purpose.md)). Every
 run gets a new directory in `.lab/void-desktop-checks/`, its own SSH port, key,
 and Unix VNC sockets. It never stops or replaces `.lab/void-graphical/disk.raw`.
 Do not use the older `check` or `desktop` command against a preserved preview.
@@ -122,8 +142,9 @@ The compositor currently has no animations; Settings saves the motion preference
 for compatible sessions and says so without claiming an effect here.
 
 This is not the production Warden or principal isolation. Apps still share one
-user and can reach one another. The spike retains its public ordinary Wayland
-socket and security-context behavior until #49; it has no per-compartment
+user and can reach one another. The spike keeps its public ordinary Wayland
+socket and security-context behavior. The compositor built with #49 has
+neither, and the Alpha desktop does not run it yet. The spike has no per-compartment
 namespaces, cgroups, broker authorization, or production resource enforcement.
 The fixed lab UIDs are not production compartment IDs. The separate Base
 milestone still verifies apply/generation/rollback behavior.
