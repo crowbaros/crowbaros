@@ -8,5 +8,8 @@ publish.workspace = true
 
 [dependencies]
 crowbar-capability.workspace = true
+crowbar-gate.workspace = true
 crowbar-labels.workspace = true
-serde.workspace = true
+
+[dev-dependencies]
+crowbar-authority.workspace = true

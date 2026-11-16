@@ -116,6 +116,9 @@ fn checks(
                 return Err(Refuse::by(GateRule::Right));
             }
             limits.within(&handle.limits).map_err(Refuse::from)?;
+            if let Some(until) = limits.ended_by(now) {
+                return Err(Refuse::with(GateRule::Expired, Limit::Until(until)));
+            }
             Ok(Verdict::Allow(Vec::new()))
         }
         Act::Use { handle, using } => use_of(authority, usage, caller, *handle, using, None, now),

@@ -386,3 +386,24 @@ fn a_copy_that_would_widen_its_original_is_refused_naming_the_originals_limit() 
         refused(GateRule::Limits, Limit::Until(at(20_000)))
     );
 }
+
+#[test]
+fn a_copy_whose_time_has_already_run_out_is_refused() {
+    let mut bench = Bench::new();
+    let holder = task("sort-photos");
+    let mut held = handle(1, holder.clone());
+    held.delegable = true;
+    held.limits = EffectLimits::new().until(at(20_000));
+
+    assert_eq!(
+        pass(
+            &mut bench,
+            &holder,
+            &held,
+            &tool("photo-sorter"),
+            Rights::from([Right::Read]),
+            EffectLimits::new().until(NOW)
+        ),
+        refused(GateRule::Expired, Limit::Until(NOW))
+    );
+}

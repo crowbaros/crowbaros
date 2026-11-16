@@ -4,8 +4,10 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crowbar_capability::{
-    EffectLimits, HandleId, Issue, Principal, Resource, ResourceKind, Right, Rights, TaskId, Time, Widening,
+    EffectLimits, GateRule, HandleId, Issue, Limit, Principal, Refuse, Resource, ResourceKind, Right, Rights, TaskId,
+    Time, Widening,
 };
+use crowbar_gate::{Allowed, Ending as Ended, Original, Presented};
 use crowbar_labels::{Compartment, LabelMark};
 
 /// A holder passing a handle on.
@@ -134,6 +136,8 @@ pub enum Refusal {
     DelegableToAgent,
     /// A delegated copy would allow more than the original in this dimension.
     Widens(Widening),
+    /// The table was given no allowance from the gate that covers this.
+    NotAllowed,
 }
 
 impl fmt::Display for Refusal {
@@ -150,11 +154,31 @@ impl fmt::Display for Refusal {
             Refusal::ToAgent => f.write_str("no handle passes to the Agent"),
             Refusal::DelegableToAgent => f.write_str("the Agent is never issued a handle it could pass on"),
             Refusal::Widens(widening) => write!(f, "a copy may only narrow the original: {widening}"),
+            Refusal::NotAllowed => f.write_str("the gate did not allow this"),
         }
     }
 }
 
 impl std::error::Error for Refusal {}
+
+/// Each of the table's refusals is a reason on the gate's closed list, so
+/// the ledger and the harness name it the same way.
+impl From<Refusal> for Refuse {
+    fn from(refusal: Refusal) -> Self {
+        match refusal {
+            Refusal::Unknown => Refuse::by(GateRule::Unknown),
+            Refusal::NotHolder => Refuse::by(GateRule::Holder),
+            Refusal::Revoked => Refuse::by(GateRule::Revoked),
+            Refusal::HolderEnded | Refusal::OriginalEnded => Refuse::by(GateRule::Ended),
+            Refusal::Expired(until) => Refuse::with(GateRule::Expired, Limit::Until(until)),
+            Refusal::RightNotHeld(right) => Refuse::with(GateRule::Right, Limit::Right(right)),
+            Refusal::NotDelegable => Refuse::by(GateRule::NotDelegable),
+            Refusal::ToAgent | Refusal::DelegableToAgent => Refuse::by(GateRule::ToAgent),
+            Refusal::Widens(widening) => Refuse::from(widening),
+            Refusal::NotAllowed => Refuse::by(GateRule::NotAllowed),
+        }
+    }
+}
 
 /// A handle the table let its holder use, with what the broker needs to
 /// carry out the operation.
@@ -223,9 +247,9 @@ impl View<'_> {
 /// - **Issuance** makes a handle for one holder. A task that has ended gets
 ///   none, and nor does a handle whose time has already run out. The Agent
 ///   may hold a handle, such as a value in a plan, but never one it could
-///   pass on: it holds none of its tasks' authority (ADR 0011). The broker
-///   issues only for an action the gate has signed; checking that signature
-///   comes with the gate.
+///   pass on: it holds none of its tasks' authority (ADR 0011). The table
+///   issues only what an [`Allowed`] from the gate covers, and the
+///   allowance is spent.
 /// - **Exercise** takes the handle itself, the caller the broker knows from
 ///   the connection, a right, and the time. It refuses a handle this table
 ///   did not issue, a caller that is not the holder, a handle that has ended
@@ -236,7 +260,31 @@ impl View<'_> {
 ///   at once, with every copy passed on from it.
 /// - **The end of a holder** ends every handle it holds, with their copies.
 /// - **Delegation** passes on a narrowed copy, under the rules on
-///   [`HandleTable::delegate`].
+///   [`HandleTable::delegate`], and only with an allowance that covers it.
+/// - **State** tells the gate what the table knows about a handle a caller
+///   presents, for the gate to check before it decides.
+///
+/// The table's own checks on issuing and passing on are a second line of
+/// defence behind the gate's, and run first, so the table refuses on its own
+/// whatever allowance it is given.
+///
+/// Nothing is issued without an allowance:
+///
+/// ```compile_fail,E0308
+/// use crowbar_broker::{HandleTable, Issue, Time};
+/// fn issue(table: &mut HandleTable, issue: Issue) {
+///     table.issue(issue, Time::from_secs(0));
+/// }
+/// ```
+///
+/// and nothing is passed on without one:
+///
+/// ```compile_fail,E0061
+/// use crowbar_broker::{Delegation, Handle, HandleTable, Time};
+/// fn pass(table: &mut HandleTable, handle: &Handle, delegation: Delegation<'_>) {
+///     table.delegate(handle, delegation, Time::from_secs(0));
+/// }
+/// ```
 ///
 /// Records of ended handles stay, so a refusal can name why.
 #[derive(Debug, Default)]
@@ -251,8 +299,10 @@ impl HandleTable {
         HandleTable::default()
     }
 
-    /// Issues a handle to `issue.holder`.
-    pub fn issue(&mut self, issue: Issue, now: Time) -> Result<Handle, Refusal> {
+    /// Issues the handle `allowed` covers to its holder. An allowance for
+    /// anything other than an issue is refused, and comes back unspent.
+    pub fn issue(&mut self, allowed: Allowed, now: Time) -> Result<Handle, Refusal> {
+        let issue = allowed.into_issue().map_err(|_| Refusal::NotAllowed)?;
         self.admit(issue, None, now)
     }
 
@@ -269,8 +319,16 @@ impl HandleTable {
     ///   compartment emits, so a marked holder cannot pass on an unmarked
     ///   copy;
     /// - the copy is never passed on again, and it ends when the original
-    ///   ends: revoked, its holder ended, or its time run out.
-    pub fn delegate(&mut self, handle: &Handle, delegation: Delegation<'_>, now: Time) -> Result<Handle, Refusal> {
+    ///   ends: revoked, its holder ended, or its time run out;
+    /// - `allowed` covers passing this handle to this principal with exactly
+    ///   these rights and limits.
+    pub fn delegate(
+        &mut self,
+        handle: &Handle,
+        delegation: Delegation<'_>,
+        allowed: Allowed,
+        now: Time,
+    ) -> Result<Handle, Refusal> {
         let original = self.held_by(handle, delegation.from, now)?;
         if !original.issue.delegable {
             return Err(Refusal::NotDelegable);
@@ -285,6 +343,7 @@ impl HandleTable {
             .limits
             .within(&original.issue.limits)
             .map_err(Refusal::Widens)?;
+        let covered = allowed.covers_delegation(original.id, &delegation.to, &delegation.rights, &delegation.limits);
         let copy = Issue {
             holder: delegation.to,
             resource: original.issue.resource.clone(),
@@ -294,6 +353,10 @@ impl HandleTable {
             delegable: false,
             reason: original.issue.reason.clone(),
         };
+        self.admissible(&copy, now)?;
+        if !covered {
+            return Err(Refusal::NotAllowed);
+        }
         self.admit(copy, Some(handle.key), now)
     }
 
@@ -314,6 +377,42 @@ impl HandleTable {
             .and_then(|key| self.entries.get(&key))
             .map(|original| original.id);
         Ok(Exercised { entry, original })
+    }
+
+    /// What the table knows about `handle`, for the gate to check: who holds
+    /// it, what it names, its rights, limits, label and mark, whether it has
+    /// ended, and for a copy, its original. `None` when this table did not
+    /// issue it. Nothing here checks the caller: the gate does.
+    pub fn state(&self, handle: &Handle) -> Option<Presented> {
+        let entry = self.entries.get(&handle.key)?;
+        // Records of ended handles stay, so a copy's original is always
+        // found. Were it not, the table would state nothing, and the gate
+        // would refuse the handle as unknown.
+        let original = match entry.original {
+            Some(key) => {
+                let original = self.entries.get(&key)?;
+                Some(Original {
+                    id: original.id,
+                    limits: original.issue.limits.clone(),
+                    ended: original.ended.is_some(),
+                })
+            }
+            None => None,
+        };
+        Some(Presented {
+            id: entry.id,
+            holder: entry.issue.holder.clone(),
+            resource: entry.issue.resource.clone(),
+            rights: entry.issue.rights.clone(),
+            limits: entry.issue.limits.clone(),
+            label_mark: entry.issue.label_mark.clone(),
+            delegable: entry.issue.delegable,
+            ended: entry.ended.map(|ending| match ending {
+                Ending::Revoked => Ended::Revoked,
+                Ending::HolderEnded => Ended::HolderEnded,
+            }),
+            original,
+        })
     }
 
     /// What the table states about the handle with this id, if it issued one.
@@ -347,7 +446,7 @@ impl HandleTable {
     }
 
     /// The checks every new handle passes, issued or delegated.
-    fn admit(&mut self, issue: Issue, original: Option<Key>, now: Time) -> Result<Handle, Refusal> {
+    fn admissible(&self, issue: &Issue, now: Time) -> Result<(), Refusal> {
         if matches!(&issue.holder, Principal::Task(task) if self.ended_tasks.contains(task)) {
             return Err(Refusal::HolderEnded);
         }
@@ -357,6 +456,12 @@ impl HandleTable {
         if let Some(until) = issue.limits.ended_by(now) {
             return Err(Refusal::Expired(until));
         }
+        Ok(())
+    }
+
+    /// Records a new handle that has passed [`HandleTable::admissible`].
+    fn admit(&mut self, issue: Issue, original: Option<Key>, now: Time) -> Result<Handle, Refusal> {
+        self.admissible(&issue, now)?;
         let key = Key(random_128());
         let id = HandleId::from_bits(random_128());
         self.entries.insert(

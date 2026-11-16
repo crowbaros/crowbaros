@@ -58,9 +58,10 @@ dependencies = [
 name = "crowbar-broker"
 version = "0.1.0"
 dependencies = [
+ "crowbar-authority",
  "crowbar-capability",
+ "crowbar-gate",
  "crowbar-labels",
- "serde",
 ]
 
 [[package]]
