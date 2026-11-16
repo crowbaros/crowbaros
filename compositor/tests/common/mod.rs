@@ -103,7 +103,7 @@ impl Backend for Headless {
             .entry(output.name())
             .or_insert_with(|| OutputDamageTracker::from_output(output));
         match damage.render_output(&mut self.renderer, &mut DummyFramebuffer, 1, &elements, BACKGROUND) {
-            Ok(result) if result.damage.is_some() => Drawn::Shown,
+            Ok(result) if result.damage.is_some() => Drawn::Sent,
             _ => Drawn::Nothing,
         }
     }
@@ -280,7 +280,7 @@ impl Compositor {
     pub fn compartment_with_gpu(&self, compartment: &str) -> (Client, CompartmentListener) {
         let listener = self.register("test.principal", compartment);
         let id = compartment.to_owned();
-        self.with(move |state| state.compartment(&id).unwrap().grant_gpu());
+        self.with(move |state| state.compartment(&id).unwrap().record_gpu_need());
         (connect(&listener.path).unwrap(), listener)
     }
 }

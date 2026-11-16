@@ -124,6 +124,12 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+      # The backend for a window on a host session is left out of the
+      # compositor by default, so nothing above builds it.
+      - name: Lint the nested backend
+        if: matrix.project == 'compositor'
+        run: cargo clippy --all-targets --locked --features nested -- -D warnings
+
   shell:
     name: Interface (${{ matrix.project }})
     strategy:

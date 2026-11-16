@@ -101,7 +101,8 @@ the compositor passes this check
 ([ADR 0020](../../docs/adr/0020-the-first-compositor-is-small-on-purpose.md)). Every
 run gets a new directory in `.lab/void-desktop-checks/`, its own SSH port, key,
 and Unix VNC sockets. It never stops or replaces `.lab/void-graphical/disk.raw`.
-Do not use the older `check` or `desktop` command against a preserved preview.
+Do not use the `check` or `desktop` command against a preserved preview:
+each replaces the disk at `.lab/void-graphical/`.
 
 To reuse an already provisioned Void build root and Cargo target directory:
 

@@ -98,6 +98,22 @@ fn a_window_that_closes_is_drawn_away_and_then_nothing_more() {
     assert_eq!(compositor.drawing(), after);
 }
 
+/// A menu that closes, or any other part of a window that goes away, has to
+/// be drawn away. The window itself commits nothing when that happens.
+#[test]
+fn a_part_of_a_window_that_is_destroyed_is_drawn_away() {
+    let compositor = Compositor::start();
+    let (mut client, _listener) = compositor.compartment("c1");
+    let window = client.open_toplevel("parts", "test.parts", (300, 200), WHITE).unwrap();
+    let part = client.open_subsurface(&window, (100, 50), RED).unwrap();
+    let (frames, _) = compositor.wait_until_still();
+
+    part.destroy();
+    client.roundtrip().unwrap();
+
+    assert_eq!(compositor.wait_until_still().0, frames + 1);
+}
+
 /// The pointer is not drawn by the test backend, so moving it changes
 /// nothing on screen. The compositor looks, finds nothing, and stops.
 #[test]

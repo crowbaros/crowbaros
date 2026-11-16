@@ -190,6 +190,17 @@ def run_checks(ev, built):
              and re.search(rf"^_seatd:[^:]*:\d+:{COMPOSITOR}$", who, re.M))
     children = ev.run("pgrep -P $(pgrep -x crowbar-compositor) || echo 'no child process'")
     ev.check("the compositor started no process", "no child process" in children)
+    # The seat, the DRM device, and the input devices are open by now. A
+    # descriptor is close-on-exec when the 02000000 bit of its flags is set.
+    inherited = ev.run("cd /proc/$(pgrep -x crowbar-compositor) && for fd in fd/*; do "
+                       "flags=$(awk '/^flags:/ {print $2}' fdinfo/${fd#fd/}); "
+                       "[ $(( 0$flags & 02000000 )) -ne 0 ] || echo INHERITABLE ${fd#fd/} $(readlink $fd); "
+                       "done; echo looked at $(ls fd | wc -l) descriptors")
+    # 0, 1, and 2 are the terminal and the log, which a child is meant to have.
+    kept = [line for line in inherited.splitlines()
+            if line.startswith("INHERITABLE") and line.split()[1] not in ("0", "1", "2")]
+    ev.check("every descriptor the compositor opened on the TTY is close-on-exec",
+             not kept and re.search(r"looked at [1-9]\d+ descriptors", inherited), "; ".join(kept))
 
     ev.log()
     ev.log("== routes around the compositor that ADR 0014 names: input devices and tracing")
@@ -271,7 +282,7 @@ def run_checks(ev, built):
     guessed = ev.run(f"{AS_CLIENT} crowbar-probe guess " + " ".join(forbidden) + " 2>&1; echo exit $?", check=False)
     ev.check(f"each of the {len(forbidden)} is refused at every global number it could guess",
              "exit 0" in guessed and "BOUND" not in guessed
-             and len(re.findall(r": refused at each of \d+ numbers", guessed)) == len(forbidden))
+             and guessed.count(": refused at every number it could guess") == len(forbidden))
     layer = ev.run(f"{AS_CLIENT} crowbar-probe layer 2>&1 || true")
     ev.check("it cannot create a layer surface", "not offered" in layer)
     nested = ev.run(f"{AS_CLIENT} crowbar-probe warden nested nested-1 /tmp/nested-listener true 2>&1 || true")

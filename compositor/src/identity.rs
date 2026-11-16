@@ -69,7 +69,7 @@ impl Compartment {
     /// The Warden says who a compartment is and nothing more (ADR 0016), so
     /// this does not come from the Warden. No part of Base says it yet: the
     /// tests call this in its place.
-    pub fn grant_gpu(&self) {
+    pub fn record_gpu_need(&self) {
         self.gpu.store(true, Ordering::Relaxed);
     }
 }

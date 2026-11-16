@@ -34,6 +34,8 @@ use wayland_client::{
         wl_seat::{self, WlSeat},
         wl_shm::{self, WlShm},
         wl_shm_pool::WlShmPool,
+        wl_subcompositor::WlSubcompositor,
+        wl_subsurface::WlSubsurface,
         wl_surface::{self, WlSurface},
     },
 };
@@ -244,6 +246,26 @@ impl Client {
     }
 }
 
+/// Asks for an interface at every global number that a client was not told
+/// about, up to `past` numbers beyond the last one it was. Each guess is a
+/// new connection from `connect`, because a refusal ends one. Returns the
+/// numbers at which the compositor made the object.
+pub fn guess_everywhere(
+    connect: &dyn Fn() -> Result<Client, Error>,
+    interface: &str,
+    past: u32,
+) -> Result<Vec<u32>, Error> {
+    let seen = connect()?;
+    let last = seen.state.globals.iter().map(|global| global.name).max().unwrap_or(0) + past;
+    let mut bound = Vec::new();
+    for name in seen.unadvertised(last) {
+        if connect()?.guess(name, interface, 1)? == Guess::Bound {
+            bound.push(name);
+        }
+    }
+    Ok(bound)
+}
+
 /// Whether an error is the compositor's own refusal of a request: the
 /// `invalid_object` error on `wl_display`. Anything else is not a refusal,
 /// such as an event this client could not read from an object the compositor
@@ -276,9 +298,7 @@ impl Client {
         principal: Option<&str>,
         compartment: Option<&str>,
     ) -> Result<CompartmentListener, Error> {
-        let manager: WpSecurityContextManagerV1 = self
-            .bind(1)
-            .ok_or("wp_security_context_manager_v1 is not offered to this client")?;
+        let manager: WpSecurityContextManagerV1 = self.required(1)?;
         let _ = std::fs::remove_file(path);
         let listener = UnixListener::bind(path)?;
         let (close_ours, close_theirs) = rustix::pipe::pipe_with(rustix::pipe::PipeFlags::CLOEXEC)?;
@@ -363,6 +383,23 @@ impl Client {
         window.surface.damage_buffer(0, 0, size.0, size.1);
         window.surface.commit();
         self.roundtrip()
+    }
+
+    /// Adds a part to a window: a subsurface in one colour, at the window's
+    /// top left corner. Destroying the returned surface takes the part away.
+    pub fn open_subsurface(&mut self, window: &Toplevel, size: (i32, i32), argb: u32) -> Result<WlSurface, Error> {
+        let qh = self.queue.handle();
+        let compositor: WlCompositor = self.required(6)?;
+        let subcompositor: WlSubcompositor = self.required(1)?;
+        let surface = compositor.create_surface(&qh, ());
+        let subsurface = subcompositor.get_subsurface(&surface, &window.surface, &qh, ());
+        subsurface.set_desync();
+        surface.attach(Some(&self.buffer(size, argb)?), 0, 0);
+        surface.damage_buffer(0, 0, size.0, size.1);
+        surface.commit();
+        window.surface.commit();
+        self.roundtrip()?;
+        Ok(surface)
     }
 
     /// Asks to be told when the next frame is shown, and commits without
@@ -555,6 +592,8 @@ impl Dispatch<WlSurface, ()> for ClientState {
 }
 delegate_noop!(ClientState: ignore WlShm);
 delegate_noop!(ClientState: WlShmPool);
+delegate_noop!(ClientState: WlSubcompositor);
+delegate_noop!(ClientState: WlSubsurface);
 delegate_noop!(ClientState: ignore WlBuffer);
 delegate_noop!(ClientState: ZwlrLayerShellV1);
 delegate_noop!(ClientState: WpSecurityContextManagerV1);

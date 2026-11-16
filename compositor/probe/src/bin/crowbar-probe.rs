@@ -2,9 +2,7 @@
 
 use std::{io::Write, path::Path, process::Command, time::Instant};
 
-use crowbar_probe::{
-    self as probe, Anchor, Client, Error, Guess, KeyEvent, KeyboardInteractivity, Layer, LayerRequest,
-};
+use crowbar_probe::{self as probe, Anchor, Client, Error, KeyEvent, KeyboardInteractivity, Layer, LayerRequest};
 
 const USAGE: &str = "\
 crowbar-probe: Wayland clients for testing a compositor. Never part of Base.
@@ -113,21 +111,11 @@ fn layer() -> Result<(), Error> {
 const GUESS_PAST: u32 = 16;
 
 fn guess(interfaces: &[String]) -> Result<(), Error> {
-    let seen = client()?;
-    let last = seen.state.globals.iter().map(|g| g.name).max().unwrap_or(0) + GUESS_PAST;
-    let hidden = seen.unadvertised(last);
-    drop(seen);
     let mut bound = 0;
     for interface in interfaces {
-        let mut accepted = Vec::new();
-        for &name in &hidden {
-            // A refusal ends the connection, so each guess is a new one.
-            if client()?.guess(name, interface, 1)? == Guess::Bound {
-                accepted.push(name);
-            }
-        }
+        let accepted = probe::guess_everywhere(&client, interface, GUESS_PAST)?;
         if accepted.is_empty() {
-            println!("{interface}: refused at each of {} numbers", hidden.len());
+            println!("{interface}: refused at every number it could guess");
         } else {
             println!("{interface}: BOUND at {accepted:?}");
             bound += 1;

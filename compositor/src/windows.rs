@@ -16,7 +16,7 @@ use smithay::{
     },
 };
 
-use crate::{State, identity, identity::Identity};
+use crate::{State, identity, identity::Identity, state::NEW_WINDOW_OFFSET};
 
 /// The surface at the top of a subsurface tree.
 pub(crate) fn root_surface(surface: &WlSurface) -> WlSurface {
@@ -57,11 +57,7 @@ impl State {
     /// Shows a new window on the output the pointer is on. It does not take
     /// the keyboard.
     pub(crate) fn add_window(&mut self, toplevel: ToplevelSurface) {
-        let pointer = self
-            .seat
-            .get_pointer()
-            .expect("the seat has a pointer")
-            .current_location();
+        let pointer = self.pointer().current_location();
         let Some(output) = self
             .space
             .output_under(pointer)
@@ -73,7 +69,7 @@ impl State {
         };
         let area = self.usable_area(&output);
         let step = 32 * (self.space.elements().count() as i32 % 8);
-        let location = Point::from((area.loc.x + 48 + step, area.loc.y + 48 + step));
+        let location = area.loc + NEW_WINDOW_OFFSET + Point::from((step, step));
         self.space
             .map_element(Window::new_wayland_window(toplevel), location, false);
         self.queue_redraw(&output);
@@ -91,7 +87,7 @@ impl State {
     /// Takes the keyboard from a surface that is going away. Nothing else
     /// takes it: the next click decides.
     pub(crate) fn drop_focus_from(&mut self, surface: &WlSurface) {
-        let keyboard = self.seat.get_keyboard().expect("the seat has a keyboard");
+        let keyboard = self.keyboard();
         if keyboard.current_focus().as_ref() == Some(surface) {
             keyboard.set_focus(self, None, SERIAL_COUNTER.next_serial());
         }
@@ -101,11 +97,7 @@ impl State {
     /// a layer surface of the shell's that takes keys. A click on anything
     /// else leaves the keyboard where it is.
     pub(crate) fn focus_under_pointer(&mut self) {
-        let position = self
-            .seat
-            .get_pointer()
-            .expect("the seat has a pointer")
-            .current_location();
+        let position = self.pointer().current_location();
         let Some((surface, _)) = self.surface_under(position) else {
             return;
         };
@@ -129,7 +121,7 @@ impl State {
             }),
         };
         if takes_keys {
-            let keyboard = self.seat.get_keyboard().expect("the seat has a keyboard");
+            let keyboard = self.keyboard();
             keyboard.set_focus(self, Some(root), SERIAL_COUNTER.next_serial());
         }
     }

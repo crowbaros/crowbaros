@@ -104,6 +104,13 @@ impl CompositorHandler for State {
         self.layer_commit(surface);
         self.queue_redraw_for(surface);
     }
+
+    /// A surface that goes away commits nothing, and what it showed has to
+    /// be drawn away. By now it has left its window, so the compositor
+    /// cannot say which outputs showed it.
+    fn destroyed(&mut self, _surface: &WlSurface) {
+        self.queue_redraw_all();
+    }
 }
 
 impl BufferHandler for State {

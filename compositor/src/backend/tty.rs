@@ -98,9 +98,6 @@ struct Tty {
     pointer_at: Point<i32, Physical>,
 }
 
-/// The compositor's handle on the TTY. The event sources hold the same one.
-struct Shared(Rc<RefCell<Tty>>);
-
 pub fn init(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
     let (mut session, session_notifier) = LibSeatSession::new()?;
     let seat = session.seat();
@@ -159,7 +156,8 @@ pub fn init(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Re
         pointer_commit: CommitCounter::default(),
         pointer_at: Point::default(),
     }));
-    state.set_backend(Shared(tty.clone()));
+    // The compositor and the event sources below hold the same TTY.
+    state.set_backend(tty.clone());
 
     let on_drm = tty.clone();
     event_loop
@@ -330,11 +328,7 @@ impl Tty {
         let scale = Scale::from(output.current_scale().fractional_scale());
 
         let mut elements: Vec<OutputElement> = Vec::new();
-        let pointer = state
-            .seat
-            .get_pointer()
-            .expect("the seat has a pointer")
-            .current_location();
+        let pointer = state.pointer().current_location();
         if geometry.to_f64().contains(pointer) {
             let at: Point<i32, Physical> = (pointer - geometry.loc.to_f64()).to_physical(scale).to_i32_round();
             if at != self.pointer_at {
@@ -398,12 +392,12 @@ impl Tty {
     }
 }
 
-impl Backend for Shared {
+impl Backend for Rc<RefCell<Tty>> {
     fn draw(&mut self, state: &State, output: &Output) -> Drawn {
-        self.0.borrow_mut().draw(state, output)
+        self.borrow_mut().draw(state, output)
     }
 
     fn import_dmabuf(&mut self, dmabuf: &Dmabuf) -> bool {
-        self.0.borrow_mut().renderer.import_dmabuf(dmabuf, None).is_ok()
+        self.borrow_mut().renderer.import_dmabuf(dmabuf, None).is_ok()
     }
 }

@@ -120,7 +120,7 @@ mod tests {
 
     fn compartment_with_gpu() -> Identity {
         let compartment = Compartment::new("principal".into(), "compartment".into());
-        compartment.grant_gpu();
+        compartment.record_gpu_need();
         Identity::Compartment(Arc::new(compartment))
     }
 

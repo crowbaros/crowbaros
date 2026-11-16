@@ -35,6 +35,16 @@ pub(crate) enum Redraw {
     Waiting { again: bool },
 }
 
+/// What ends the wait after a draw.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WaitEnd {
+    /// The backend says the display showed the frame.
+    Display,
+    /// The timer set after the draw with this number ran out. A timer whose
+    /// draw is no longer the latest ends nothing.
+    Timer(u64),
+}
+
 impl State {
     fn screen_mut(&mut self, output: &Output) -> Option<&mut Screen> {
         self.screens.iter_mut().find(|screen| &screen.output == output)
@@ -113,15 +123,18 @@ impl State {
             self.frames_drawn += 1;
             tracing::debug!(output = %output.name(), frames = self.frames_drawn, "frame drawn");
         }
-        if let Some(screen) = self.screen_mut(output) {
-            screen.redraw = Redraw::Waiting { again: false };
-        }
+        let Some(screen) = self.screen_mut(output) else {
+            return;
+        };
+        screen.redraw = Redraw::Waiting { again: false };
+        screen.draws += 1;
+        let draw = screen.draws;
         if drawn != Drawn::Flip {
             // No display will say when this wait is over.
             let output = output.clone();
             let timer = Timer::from_duration(Self::frame_time(&output));
             let inserted = self.loop_handle.insert_source(timer, move |_, _, state| {
-                state.frame_shown(&output);
+                state.wait_over(&output, WaitEnd::Timer(draw));
                 TimeoutAction::Drop
             });
             if let Err(error) = inserted {
@@ -132,12 +145,21 @@ impl State {
         let _ = self.display_handle.flush_clients();
     }
 
-    /// The wait after a draw is over: the display showed the frame, or one
-    /// frame time passed. Draws again if something changed meanwhile.
+    /// A backend says the display showed the frame it was sent, or that it
+    /// never will, as after the session was paused.
     pub fn frame_shown(&mut self, output: &Output) {
+        self.wait_over(output, WaitEnd::Display);
+    }
+
+    /// The wait after a draw is over. Draws again if something changed
+    /// meanwhile.
+    fn wait_over(&mut self, output: &Output, end: WaitEnd) {
         let Some(screen) = self.screen_mut(output) else {
             return;
         };
+        if matches!(end, WaitEnd::Timer(draw) if draw != screen.draws) {
+            return;
+        }
         match screen.redraw {
             Redraw::Waiting { again: true } => {
                 screen.redraw = Redraw::Queued;

@@ -73,8 +73,18 @@ listeners (`crowbar-probe warden`).
 place that decides it. Every global passes through it, so a global with no row
 is offered to nobody. That includes one a later Smithay adds.
 
-Some rows name a global that the compositor does not create yet. Today a
-client sees these:
+The table decides who is offered a global. It does not create one. Slice 1
+creates the globals a client needs to show a window. Each of the others in
+the table's rows is created with the slice that builds what it does:
+
+| Global | Waits for |
+| --- | --- |
+| The data device | Slice 4, with the clipboard rules it is offered under |
+| Cursor shape | Slice 3, which draws cursors |
+| Fractional scale, presentation time, explicit sync | Slice 5 |
+| Idle inhibit | Slice 6, which decides when it is honoured |
+
+Today a client sees these:
 
 | Client | Globals |
 | --- | --- |
@@ -92,7 +102,7 @@ Two things here are readings of ADR 0020, which does not spell them out:
   GPU.** The Warden says who a compartment is and nothing more (ADR 0016).
   Until a part of Base says it, no compartment is offered `zwp_linux_dmabuf_v1`
   outside the tests, which say it in that part's place
-  (`Compartment::grant_gpu`).
+  (`Compartment::record_gpu_need`).
 
 ## Drawing
 
@@ -116,7 +126,7 @@ libinput, libseat, udev).
 | `src/redraw.rs` | Drawing only when something changed |
 | `src/input.rs` | Where every key and pointer event enters |
 | `src/windows.rs` | Where a new window goes, and which window has the keyboard |
-| `src/backend/` | Where frames go: a TTY (`tty.rs`), or a window on a host session (`winit.rs`) |
+| `src/backend/` | Where frames go: a TTY (`tty.rs`). A build with `--features nested` can also draw into a window on a host session (`winit.rs`) |
 | `probe/` | `crowbar-probe`: Wayland clients for looking at the compositor from outside, and the stand-in for the Warden. A crate of its own, and never part of Base |
 | `tests/` | Tests that run the compositor in-process, without a display, against real Wayland clients |
 | `checks/` | The check that needs a display on this host |
@@ -124,6 +134,11 @@ libinput, libseat, udev).
 `tests/attacks.rs` holds the attacks that the decision records give this
 slice: attack 1 of ADR 0020, and attacks 11 and 12 of ADR 0016.
 `tests/linked.rs` is the guard on what is linked.
+
+Two things were carried over from the spike's display check and belong to
+slice 5: an output that is attached or removed while the compositor runs, and
+the move of a window off an output that went away. They are as the spike had
+them.
 
 The TTY backend is adapted from Smithay's `anvil` example, and the handlers
 began from its `smallvil` example. Both are MIT; see
@@ -138,8 +153,16 @@ Smithay's default features are off. That leaves out `backend_libei` (input
 emulation), `xwayland`, `backend_x11`, and `backend_vulkan`. The `reis` crate
 is still built, because Smithay depends on it without a feature gate, so the
 list of crates does not show what is left out. `tests/linked.rs` reads the
-symbols of the built binary, and fails if it holds libei, XWayland, or
-X11-backend code, or code that opens a public socket.
+symbols of the built binary, and fails if it holds any of these:
+
+- libei, XWayland, or X11-backend code;
+- X11 client code;
+- code that opens a public socket.
+
+The backend that draws into a window on a host session can make that window
+on an X11 session, which takes X11 client code. So it is left out unless the
+compositor is built with `--features nested`. Base never builds it. It is for
+development and for `checks/nested.sh`, and it opens no other way in.
 
 ```sh
 cd compositor
@@ -150,7 +173,8 @@ cargo fmt --all --check
 
 ## Run
 
-All four of these are required. There is no default for any of them.
+All four of these are required. There is no default for any of them. The
+compositor takes a TTY, with a seat from seatd.
 
 ```sh
 crowbar-compositor \
@@ -162,7 +186,7 @@ The checks that need a display:
 
 ```sh
 # Nested, in a window on a Wayland session. The log goes to .lab/compositor/.
-cargo build
+cargo build --features nested
 checks/nested.sh /usr/bin/wayland-info
 
 # On a TTY in the Void guest, with a seat from seatd and no systemd. Every

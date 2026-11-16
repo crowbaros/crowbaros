@@ -8,7 +8,11 @@
 # our own probe. Then the client of the listener asks for what it is not
 # offered.
 #
+#   cargo build --features nested
 #   checks/nested.sh /path/to/wayland-info
+#
+# The backend that draws into a window is left out of the compositor unless
+# it is built with that feature.
 #
 # Every process here runs as one user, so this check cannot show a peer
 # refused on its user ID. The tests and the Void guest check do.
@@ -72,7 +76,7 @@ for _ in $(seq 100); do
   sleep 0.1
 done
 if ! grep -q "compositor is up" "$work/compositor.log"; then
-  say "compositor did not start:"
+  say "compositor did not start (was it built with --features nested?):"
   tee -a "$log" <"$work/compositor.log"
   exit 1
 fi
@@ -116,7 +120,7 @@ forbidden=("${nobody[@]}" zwlr_layer_shell_v1 wp_security_context_manager_v1 zwp
 in_compartment compartment-2 "$bin/crowbar-probe" guess "${forbidden[@]}" >"$work/guess.txt" 2>&1 && guessed=0 || guessed=$?
 sed 's/^/   /' "$work/guess.txt" | grep -v "^   listening at" | tee -a "$log"
 check "each of the ${#forbidden[@]} is refused at every global number it could guess" \
-  [ "$guessed" = 0 -a "$(grep -c ": refused at each of" "$work/guess.txt")" = "${#forbidden[@]}" ]
+  [ "$guessed" = 0 -a "$(grep -c ": refused at every number" "$work/guess.txt")" = "${#forbidden[@]}" ]
 in_compartment compartment-3 "$bin/crowbar-probe" layer >"$work/layer-compartment.txt" 2>&1 || true
 check "a client of a listener cannot create a layer surface" grep -q "not offered" "$work/layer-compartment.txt"
 in_compartment compartment-4 "$bin/crowbar-probe" warden nested nested-1 "$work/nested" true >"$work/nested.txt" 2>&1 || true

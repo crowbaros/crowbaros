@@ -1,6 +1,6 @@
 use smithay::{
     desktop::{PopupKind, find_popup_root_surface, get_popup_toplevel_coords},
-    reexports::wayland_server::protocol::{wl_seat::WlSeat, wl_surface::WlSurface},
+    reexports::wayland_server::protocol::{wl_output::WlOutput, wl_seat::WlSeat, wl_surface::WlSurface},
     utils::Serial,
     wayland::shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState},
 };
@@ -27,6 +27,10 @@ impl XdgShellHandler for State {
         }
     }
 
+    fn popup_destroyed(&mut self, _surface: PopupSurface) {
+        self.queue_redraw_all();
+    }
+
     fn reposition_request(&mut self, surface: PopupSurface, positioner: PositionerState, token: u32) {
         surface.with_pending_state(|state| {
             state.geometry = positioner.get_geometry();
@@ -41,20 +45,18 @@ impl XdgShellHandler for State {
     fn grab(&mut self, _surface: PopupSurface, _seat: WlSeat, _serial: Serial) {}
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
-        // The protocol wants an answer even when nothing changes.
-        if surface.is_initial_configure_sent() {
-            surface.send_configure();
-        }
+        answer_unchanged(&surface);
     }
 
-    fn fullscreen_request(
-        &mut self,
-        surface: ToplevelSurface,
-        _output: Option<smithay::reexports::wayland_server::protocol::wl_output::WlOutput>,
-    ) {
-        if surface.is_initial_configure_sent() {
-            surface.send_configure();
-        }
+    fn fullscreen_request(&mut self, surface: ToplevelSurface, _output: Option<WlOutput>) {
+        answer_unchanged(&surface);
+    }
+}
+
+/// Answers a request that changes nothing. The protocol wants an answer.
+fn answer_unchanged(surface: &ToplevelSurface) {
+    if surface.is_initial_configure_sent() {
+        surface.send_configure();
     }
 }
 

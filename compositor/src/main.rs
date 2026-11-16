@@ -19,27 +19,45 @@ Warden registers for one compartment. All four of these are required:
   --warden-socket PATH   Where the Warden connects.
   --warden-uid UID       The user ID the Warden runs as.
 
-Base makes the directory of each socket, and decides who can enter it.
+Base makes the directory of each socket, and decides who can enter it. The
+compositor takes a TTY, with a seat from seatd.
 
-  --backend tty|winit    Take a TTY, or draw into a window on a host session.
-                         Default: winit when WAYLAND_DISPLAY or DISPLAY is
-                         set, and tty otherwise.
+A build with `--features nested` also takes:
+
+  --backend winit        Draw into a window on a host session, for development,
+                         in place of taking a TTY.
 ";
 
+/// Where frames go.
+#[derive(Debug, PartialEq, Eq)]
+enum BackendChoice {
+    /// A TTY, as in Base. This is what the compositor does unless told.
+    Tty,
+    #[cfg(feature = "nested")]
+    Winit,
+}
+
 struct Args {
-    backend: String,
+    backend: BackendChoice,
     parts: TrustedParts,
 }
 
-fn parse_args(args: impl Iterator<Item = String>, nested: bool) -> Result<Args, String> {
-    let mut backend = if nested { "winit" } else { "tty" }.to_owned();
+fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
+    let mut backend = BackendChoice::Tty;
     let (mut shell_socket, mut shell_uid, mut warden_socket, mut warden_uid) = (None, None, None, None);
     let mut rest = args;
     while let Some(flag) = rest.next() {
         let mut value = || rest.next().ok_or(format!("{flag} needs a value"));
         let uid = |text: String| text.parse::<u32>().map_err(|_| format!("{text} is not a user ID"));
         match flag.as_str() {
-            "--backend" => backend = value()?,
+            "--backend" => {
+                backend = match value()?.as_str() {
+                    "tty" => BackendChoice::Tty,
+                    #[cfg(feature = "nested")]
+                    "winit" => BackendChoice::Winit,
+                    other => return Err(format!("this build has no backend {other}\n\n{USAGE}")),
+                }
+            }
             "--shell-socket" => shell_socket = Some(PathBuf::from(value()?)),
             "--shell-uid" => shell_uid = Some(uid(value()?)?),
             "--warden-socket" => warden_socket = Some(PathBuf::from(value()?)),
@@ -62,8 +80,7 @@ fn parse_args(args: impl Iterator<Item = String>, nested: bool) -> Result<Args, 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let nested = std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
-    let args = match parse_args(std::env::args().skip(1), nested) {
+    let args = match parse_args(std::env::args().skip(1)) {
         Ok(args) => args,
         Err(message) => {
             eprintln!("{message}");
@@ -76,14 +93,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let display: Display<State> = Display::new()?;
     let mut state = State::new(&mut event_loop, display);
 
-    match args.backend.as_str() {
-        "winit" => backend::winit::init(&mut event_loop, &mut state)?,
-        "tty" => backend::tty::init(&mut event_loop, &mut state)?,
-        other => return Err(format!("unknown backend {other}").into()),
+    match args.backend {
+        BackendChoice::Tty => backend::tty::init(&mut event_loop, &mut state)?,
+        #[cfg(feature = "nested")]
+        BackendChoice::Winit => backend::winit::init(&mut event_loop, &mut state)?,
     }
     // Clients are accepted only once there is something to show them on.
     state.listen(&args.parts)?;
-    tracing::info!(backend = %args.backend, "compositor is up");
+    tracing::info!(backend = ?args.backend, "compositor is up");
 
     event_loop.run(None, &mut state, |state| {
         let _ = state.display_handle.flush_clients();
@@ -107,7 +124,7 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> Result<Args, String> {
-        parse_args(args.iter().map(|arg| arg.to_string()), false)
+        parse_args(args.iter().map(|arg| arg.to_string()))
     }
 
     const PARTS: [&str; 8] = [
@@ -129,7 +146,19 @@ mod tests {
         assert_eq!(args.parts.shell.uid, 901);
         assert_eq!(args.parts.warden.socket, PathBuf::from("/run/crowbar/warden/wayland"));
         assert_eq!(args.parts.warden.uid, 0);
-        assert_eq!(args.backend, "tty");
+        assert_eq!(args.backend, BackendChoice::Tty);
+    }
+
+    /// What is in the environment does not change what the compositor does.
+    /// Only a build for development has a second backend to ask for.
+    #[cfg(not(feature = "nested"))]
+    #[test]
+    fn the_only_backend_is_a_tty() {
+        for backend in ["winit", "x11", "headless"] {
+            let mut args = PARTS.to_vec();
+            args.extend(["--backend", backend]);
+            assert!(parse(&args).is_err(), "--backend {backend} was accepted");
+        }
     }
 
     #[test]

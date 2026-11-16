@@ -129,13 +129,10 @@ struct EveryClient<'a> {
 
 impl<'a> EveryClient<'a> {
     fn of(compositor: &'a Compositor) -> Self {
-        let plain = compositor.register("test.principal", "plain");
-        let with_gpu = compositor.register("test.principal", "with-gpu");
-        compositor.with(|state| state.compartment("with-gpu").unwrap().grant_gpu());
         EveryClient {
             compositor,
-            plain,
-            with_gpu,
+            plain: compositor.compartment("plain").1,
+            with_gpu: compositor.compartment_with_gpu("with-gpu").1,
         }
     }
 
@@ -155,12 +152,7 @@ impl<'a> EveryClient<'a> {
 /// Asks for an interface at every global number the client was not told
 /// about. Returns the numbers at which the compositor made the object.
 fn guess_everywhere(connect: &dyn Fn() -> Client, interface: &str) -> Vec<u32> {
-    let seen = connect();
-    let last = seen.state.globals.iter().map(|global| global.name).max().unwrap_or(0) + 8;
-    seen.unadvertised(last)
-        .into_iter()
-        .filter(|&name| connect().guess(name, interface, 1).unwrap() == Guess::Bound)
-        .collect()
+    crowbar_probe::guess_everywhere(&|| Ok(connect()), interface, 8).unwrap()
 }
 
 /// ADR 0020, attack 1: a client asks for every global in the "Nobody" row,

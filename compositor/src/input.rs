@@ -25,14 +25,14 @@ impl State {
     /// Smithay's keyboard sees them, when issues 71 and 78 build them.
     pub fn handle_key(&mut self, keycode: Keycode, state: KeyState, time: InputTime) {
         let serial = SERIAL_COUNTER.next_serial();
-        let keyboard = self.seat.get_keyboard().expect("the seat has a keyboard");
+        let keyboard = self.keyboard();
         keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| FilterResult::Forward);
     }
 
     /// The pointer is now at this place on the desktop.
     pub fn pointer_moved(&mut self, position: Point<f64, Logical>, time: InputTime) {
         let position = self.clamp_to_outputs(position);
-        let pointer = self.seat.get_pointer().expect("the seat has a pointer");
+        let pointer = self.pointer();
         let under = self.surface_under(position);
         pointer.motion(
             self,
@@ -51,7 +51,7 @@ impl State {
     /// A pointer button went down or up. `button` is the evdev code. A press
     /// gives the keyboard to what is under the pointer.
     pub fn pointer_button(&mut self, button: u32, state: ButtonState, time: InputTime) {
-        let pointer = self.seat.get_pointer().expect("the seat has a pointer");
+        let pointer = self.pointer();
         if state == ButtonState::Pressed && !pointer.is_grabbed() {
             self.focus_under_pointer();
         }
@@ -109,7 +109,7 @@ impl State {
                 self.handle_key(event.key_code(), event.state(), Event::time(&event));
             }
             InputEvent::PointerMotion { event, .. } => {
-                let pointer = self.seat.get_pointer().expect("the seat has a pointer");
+                let pointer = self.pointer();
                 self.pointer_moved(pointer.current_location() + event.delta(), event.time());
             }
             InputEvent::PointerMotionAbsolute { event, .. } => {
@@ -145,7 +145,7 @@ impl State {
                 frame = frame.stop(axis);
             }
         }
-        let pointer = self.seat.get_pointer().expect("the seat has a pointer");
+        let pointer = self.pointer();
         pointer.axis(self, frame);
         pointer.frame(self);
     }

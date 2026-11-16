@@ -9,6 +9,7 @@ use smithay::{backend::allocator::dmabuf::Dmabuf, output::Output};
 use crate::State;
 
 pub mod tty;
+#[cfg(feature = "nested")]
 pub mod winit;
 
 /// The colour behind everything, until the shell's wallpaper covers it.
@@ -22,7 +23,7 @@ pub enum Drawn {
     Flip,
     /// A frame went to the display, and the backend will not hear when it is
     /// shown.
-    Shown,
+    Sent,
     /// Nothing on the output had changed, or it could not be drawn. No frame
     /// went anywhere.
     Nothing,

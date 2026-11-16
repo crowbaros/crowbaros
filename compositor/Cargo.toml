@@ -24,6 +24,13 @@ name = "crowbar_compositor"
 name = "crowbar-compositor"
 path = "src/main.rs"
 
+[features]
+# The backend that draws into a window on a host session, for development and
+# for `checks/nested.sh`. It is off by default, and Base never builds it: on
+# an X11 session it makes its window with X11 client code, and the compositor
+# holds no X11 code (ADR 0020). It opens no socket and no other way in.
+nested = ["smithay/backend_winit"]
+
 [dependencies]
 rustix = { version = "1", features = ["net"] }
 tracing = "0.1"
@@ -32,13 +39,12 @@ tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 # Smithay has no usable release. Pin a commit of master and bump it on purpose
 # (ADR 0020). `default-features = false` leaves out `backend_libei` (input
 # emulation), `xwayland`, `backend_x11`, and `backend_vulkan`. `tests/linked.rs`
-# fails if the binary gains any of the first three.
+# fails if the binary gains any of the first three, or any X11 client code.
 [dependencies.smithay]
 git = "https://github.com/Smithay/smithay.git"
 rev = "fd8e3f50f9556aa6c0485989d1d49ff2c5eefae1"
 default-features = false
 features = [
-    "backend_winit",
     "backend_udev",
     "backend_drm",
     "backend_gbm",

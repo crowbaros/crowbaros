@@ -6,7 +6,7 @@ use std::{
 use smithay::{
     backend::allocator::dmabuf::Dmabuf,
     desktop::{PopupManager, Space, Window, layer_map_for_output},
-    input::{Seat, SeatState},
+    input::{Seat, SeatState, keyboard::KeyboardHandle, pointer::PointerHandle},
     output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::{
         calloop::{EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, generic::Generic},
@@ -24,6 +24,9 @@ use smithay::{
 };
 
 use crate::{backend::Backend, identity::Compartment, policy, redraw::Redraw};
+
+/// How far inside the usable area of an output a window is put.
+pub(crate) const NEW_WINDOW_OFFSET: Point<i32, Logical> = Point::new(48, 48);
 
 /// The compositor: one seat, its outputs, and what is shown on them.
 pub struct State {
@@ -65,6 +68,8 @@ pub(crate) struct Screen {
     pub output: Output,
     pub global: GlobalId,
     pub redraw: Redraw,
+    /// How many times this output was drawn, or looked at for drawing.
+    pub draws: u64,
 }
 
 impl State {
@@ -151,6 +156,16 @@ impl State {
             .is_some_and(|backend| backend.import_dmabuf(dmabuf))
     }
 
+    /// The seat's pointer. `State::new` adds it, and nothing removes it.
+    pub(crate) fn pointer(&self) -> PointerHandle<Self> {
+        self.seat.get_pointer().expect("the seat has a pointer")
+    }
+
+    /// The seat's keyboard. `State::new` adds it, and nothing removes it.
+    pub(crate) fn keyboard(&self) -> KeyboardHandle<Self> {
+        self.seat.get_keyboard().expect("the seat has a keyboard")
+    }
+
     pub fn outputs(&self) -> impl Iterator<Item = &Output> {
         self.screens.iter().map(|screen| &screen.output)
     }
@@ -181,6 +196,7 @@ impl State {
             output: output.clone(),
             global,
             redraw: Redraw::default(),
+            draws: 0,
         });
         self.queue_redraw(&output);
         output
@@ -207,7 +223,7 @@ impl State {
                 .cloned()
                 .collect();
             for window in stranded {
-                self.space.map_element(window, area.loc + Point::from((48, 48)), false);
+                self.space.map_element(window, area.loc + NEW_WINDOW_OFFSET, false);
             }
         }
         self.queue_redraw_all();

@@ -54,7 +54,11 @@ fn assert_not_linked(module: &str) {
 /// would pass for the wrong reason.
 #[test]
 fn the_guard_sees_what_the_binary_does_hold() {
-    for module in ["crowbar_compositor", "smithay::backend::drm", "smithay::backend::winit"] {
+    for module in [
+        "crowbar_compositor",
+        "smithay::backend::drm",
+        "smithay::backend::libinput",
+    ] {
         assert!(!linked_from(module).is_empty(), "no symbol from {module} was found");
     }
 }
@@ -76,6 +80,20 @@ fn the_binary_holds_no_xwayland_code() {
 #[test]
 fn the_binary_holds_no_x11_backend_code() {
     assert_not_linked("smithay::backend::x11");
+}
+
+/// "The compositor never holds X11 code" (ADR 0020). The backend that draws
+/// into a window on a host session can make that window on an X11 session,
+/// so it is left out of the binary unless it is built with `--features
+/// nested`, and Base never is.
+#[cfg(not(feature = "nested"))]
+#[test]
+fn the_binary_holds_no_x11_client_code() {
+    assert_not_linked("x11rb");
+    assert_not_linked("x11rb_protocol");
+    assert_not_linked("x11_dl");
+    assert_not_linked("winit");
+    assert_not_linked("smithay::backend::winit");
 }
 
 /// The compositor has no public socket, and no flag or build option that

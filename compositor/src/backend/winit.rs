@@ -1,6 +1,7 @@
 //! The nested backend: the compositor draws into one window on a host
-//! Wayland or X11 session. It is for development and for the checks that
-//! need a display. Base runs the compositor on a TTY.
+//! Wayland or X11 session. It is for development and for the check that
+//! needs a display on the host, and it is built only with `--features
+//! nested`. Base runs the compositor on a TTY.
 
 use std::{cell::RefCell, rc::Rc};
 
@@ -108,7 +109,7 @@ impl Backend for Nested {
             return Drawn::Nothing;
         };
         match window.submit(Some(&damage)) {
-            Ok(()) => Drawn::Shown,
+            Ok(()) => Drawn::Sent,
             Err(error) => {
                 tracing::warn!(%error, "winit: could not show the frame");
                 Drawn::Nothing
