@@ -174,8 +174,11 @@ def run_checks(ev, built):
            f"install -d -o {COMPOSITOR} -g {SHELL} -m 2750 {SHELL_SOCKET.rsplit('/', 1)[0]}; "
            f"install -d -o {COMPOSITOR} -g root -m 750 {WARDEN_SOCKET.rsplit('/', 1)[0]}; "
            f"install -d -o {APP} -g {APP} -m 700 {LISTENER.rsplit('/', 1)[0]}")
+    # The shell that becomes the compositor first lists the descriptors it was
+    # started with, so that a later check can tell them from the ones the
+    # compositor opened.
     ev.run(f"openvt -c 2 -s -f -- {AS_COMPOSITOR} sh -c "
-           f"'exec crowbar-compositor --backend tty --shell-socket {SHELL_SOCKET} --shell-uid {SHELL_UID} "
+           f"'echo /proc/$$/fd/* >/tmp/started-with; exec crowbar-compositor --backend tty --shell-socket {SHELL_SOCKET} --shell-uid {SHELL_UID} "
            f"--warden-socket {WARDEN_SOCKET} --warden-uid 0 >/tmp/compositor.log 2>&1'")
     up = wait_for(ev, "the compositor", lambda: "compositor is up" in compositor_log())
     log = compositor_log()
@@ -188,19 +191,27 @@ def run_checks(ev, built):
     ev.check("the compositor runs as its own user, the only member of _seatd",
              re.search(r"^\s*1000\s+tty2\s+crowbar-compositor ", who, re.M) and re.search(r"^1000$", who, re.M)
              and re.search(rf"^_seatd:[^:]*:\d+:{COMPOSITOR}$", who, re.M))
-    children = ev.run("pgrep -P $(pgrep -x crowbar-compositor) || echo 'no child process'")
+    # By its whole name: `pgrep -x` matches the kernel's name for a process,
+    # which holds 15 characters, and so never matches this one.
+    pid = ev.run("pidof crowbar-compositor").strip()
+    if not pid.isdigit():
+        raise RuntimeError(f"expected one compositor process, found: {pid!r}")
+    children = ev.run(f"pgrep -P {pid} || echo 'no child process'")
     ev.check("the compositor started no process", "no child process" in children)
     # The seat, the DRM device, and the input devices are open by now. A
     # descriptor is close-on-exec when the 02000000 bit of its flags is set.
-    inherited = ev.run("cd /proc/$(pgrep -x crowbar-compositor) && for fd in fd/*; do "
+    inherited = ev.run(f"cd /proc/{pid} && for fd in fd/*; do "
                        "flags=$(awk '/^flags:/ {print $2}' fdinfo/${fd#fd/}); "
                        "[ $(( 0$flags & 02000000 )) -ne 0 ] || echo INHERITABLE ${fd#fd/} $(readlink $fd); "
                        "done; echo looked at $(ls fd | wc -l) descriptors")
-    # 0, 1, and 2 are the terminal and the log, which a child is meant to have.
+    # What it was started with is not its own: the terminal, the log, and a
+    # second descriptor for the terminal that openvt leaves open.
+    started_with = {path.rsplit("/", 1)[1] for path in ev.run("cat /tmp/started-with").split()}
     kept = [line for line in inherited.splitlines()
-            if line.startswith("INHERITABLE") and line.split()[1] not in ("0", "1", "2")]
+            if line.startswith("INHERITABLE") and line.split()[1] not in started_with]
     ev.check("every descriptor the compositor opened on the TTY is close-on-exec",
-             not kept and re.search(r"looked at [1-9]\d+ descriptors", inherited), "; ".join(kept))
+             not kept and len(started_with) < 8 and re.search(r"looked at [1-9]\d+ descriptors", inherited),
+             "; ".join(kept))
 
     ev.log()
     ev.log("== routes around the compositor that ADR 0014 names: input devices and tracing")
@@ -312,11 +323,13 @@ def run_checks(ev, built):
     ev.log("== a still desktop draws no frames (ADR 0020)")
 
     def drawing():
-        text = guest.ssh("grep -c 'frame drawn' /tmp/compositor.log; "
-                         "grep ctxt_switches /proc/$(pgrep -x crowbar-compositor)/status",
+        text = guest.ssh(f"grep -c 'frame drawn' /tmp/compositor.log; grep ctxt_switches /proc/{pid}/status",
                          check=False).stdout
         frames = int(text.split()[0])
-        return frames, sum(int(number) for number in re.findall(r"ctxt_switches:\s+(\d+)", text))
+        switches = re.findall(r"ctxt_switches:\s+(\d+)", text)
+        if len(switches) != 2:
+            raise RuntimeError(f"could not read how often the compositor ran: {text!r}")
+        return frames, sum(int(number) for number in switches)
 
     time.sleep(3)
     before = drawing()
@@ -327,7 +340,7 @@ def run_checks(ev, built):
     ev.check("ten seconds with a window on screen and nothing changing draw no frame", after[0] == before[0])
     # A compositor that redraws on a timer runs about 600 times in ten seconds.
     ev.check("the compositor's process barely ran in those ten seconds", after[1] - before[1] <= 20,
-             f"it ran {after[1] - before[1]} times")
+             f"it ran {after[1] - before[1]} times, of {after[1]} since it started")
     for step in range(10):
         qmp.pointer((300 + 20 * step) / 1280, 300 / 960)
     time.sleep(1)

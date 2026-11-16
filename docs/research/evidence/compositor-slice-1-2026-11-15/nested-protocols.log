@@ -1,0 +1,73 @@
+# Nested protocol checks, 2026-11-16T05:05:48Z
+host: Linux 7.2.15-2-omarchy, session unknown on wayland-1
+compositor: /home/jmartin/Code/crowbaros/compositor/target/debug/crowbar-compositor  sha256 3cd9dd6aeb0a355833a2b620f47acc867f01ac0478eebbd84c2c40f3685c9f01
+wayland-info: /home/jmartin/.cache/crowbaros/wayland-utils/root/usr/bin/wayland-info
+
+== the shell (the shell's socket): 9 globals
+   wl_compositor
+   wl_output
+   wl_seat
+   wl_shm
+   wl_subcompositor
+   wp_viewporter
+   xdg_wm_base
+   zwlr_layer_shell_v1
+   zwp_linux_dmabuf_v1
+
+== a stand-in for the Warden (the Warden's socket): 1 globals
+   wp_security_context_manager_v1
+
+== a client of a compartment's listener: 7 globals
+   wl_compositor
+   wl_output
+   wl_seat
+   wl_shm
+   wl_subcompositor
+   wp_viewporter
+   xdg_wm_base
+
+== the whole list each client sees, against the table
+   PASS: the shell is offered exactly the table's list
+   PASS: the Warden is offered exactly the table's list
+   PASS: a client of a listener is offered exactly the table's list
+   PASS: the compositor took the listener with its principal ID and compartment ID
+
+== ADR 0016, attack 11: no socket any process can find
+   PASS: the compositor made no socket in the runtime directory
+
+== ADR 0020, attack 1, and ADR 0016, attack 12: a client of a listener asks for what it is not offered
+   xdg_activation_v1: refused at every number it could guess
+   zwp_primary_selection_device_manager_v1: refused at every number it could guess
+   zwlr_data_control_manager_v1: refused at every number it could guess
+   ext_data_control_manager_v1: refused at every number it could guess
+   ext_image_copy_capture_manager_v1: refused at every number it could guess
+   ext_output_image_capture_source_manager_v1: refused at every number it could guess
+   ext_foreign_toplevel_image_capture_source_manager_v1: refused at every number it could guess
+   zwlr_screencopy_manager_v1: refused at every number it could guess
+   zwlr_export_dmabuf_manager_v1: refused at every number it could guess
+   zwp_virtual_keyboard_manager_v1: refused at every number it could guess
+   zwlr_virtual_pointer_manager_v1: refused at every number it could guess
+   zwp_input_method_manager_v2: refused at every number it could guess
+   zwp_input_method_v1: refused at every number it could guess
+   zwp_input_panel_v1: refused at every number it could guess
+   zwp_text_input_manager_v3: refused at every number it could guess
+   zwp_text_input_manager_v1: refused at every number it could guess
+   ext_session_lock_manager_v1: refused at every number it could guess
+   ext_foreign_toplevel_list_v1: refused at every number it could guess
+   zwlr_foreign_toplevel_manager_v1: refused at every number it could guess
+   zwp_keyboard_shortcuts_inhibit_manager_v1: refused at every number it could guess
+   zwp_pointer_constraints_v1: refused at every number it could guess
+   zwp_relative_pointer_manager_v1: refused at every number it could guess
+   zwp_tablet_manager_v2: refused at every number it could guess
+   wp_drm_lease_device_v1: refused at every number it could guess
+   xwayland_shell_v1: refused at every number it could guess
+   zwlr_layer_shell_v1: refused at every number it could guess
+   wp_security_context_manager_v1: refused at every number it could guess
+   zwp_linux_dmabuf_v1: refused at every number it could guess
+   PASS: each of the 28 is refused at every global number it could guess
+   PASS: a client of a listener cannot create a layer surface
+   PASS: a client of a listener cannot register a listener of its own
+   PASS: the shell can create a layer surface
+
+RESULT: pass
+log: /home/jmartin/Code/crowbaros/.lab/compositor/nested-20261116T050548Z.log
