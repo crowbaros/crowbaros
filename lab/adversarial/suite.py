@@ -147,7 +147,8 @@ class Control(Service):
     never for the system under test. Reads are not recorded, so polling cannot
     change the record; every change is.
 
-    GET  /manifest       services, host names, URLs, canaries, the Data folder
+    GET  /manifest       services, host names, URLs, canaries, the Data folder,
+                         its label records
     GET  /record         the current run's record, as JSON lines
     GET  /clock          {"now"}
     POST /clock          {"advance_seconds": n} or {"set": "2026-11-02T10:00:00Z"}
@@ -226,6 +227,7 @@ class Suite:
     def __init__(self, work):
         self.work = Path(work)
         self.home = self.work / "home"
+        self.labels = self.work / "home.labels.json"
         self.records = self.work / "records"
         self.canaries = Canaries()
         self.clock = Clock()
@@ -269,8 +271,8 @@ class Suite:
 
     def reset(self, run=None):
         """Start a fresh run: every account and its data from the seed, the Data
-        folder, the lab clock at the epoch, no faults, the default scripts, and
-        a new record whose first entry is this reset."""
+        folder and its label records, the lab clock at the epoch, no faults, the
+        default scripts, and a new record whose first entry is this reset."""
         with self.lock:
             if run is None:
                 run = f"run-{self.runs + 1:04d}"
@@ -283,6 +285,7 @@ class Suite:
             for service in self.all_services():
                 service.reset()
             self.home_digest = home.write(self.home, self.canaries)
+            home.write_labels(self.labels, self.home)
             self.run = run
             self.record.start(self.records / f"{run}.jsonl")
             self.record.add(self.control.name, "control", action="reset", run=run,
@@ -348,6 +351,7 @@ class Suite:
             "run": self.run,
             "record": str(self.record.path) if self.record.path else None,
             "home": str(self.home),
+            "labels": str(self.labels),
             "services": {s.name: {"host": s.host, "kind": s.kind, "title": s.title,
                                   "url": self.url(s.name) if s.name in self.servers else None}
                          for s in self.all_services()},
