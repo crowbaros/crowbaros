@@ -1,307 +1,308 @@
-[05:45:57] # The CrowbarOS compositor on a TTY in the Void guest
-[05:46:45] binary crowbar-compositor: sha256 fb904402b0abc6bb293fd56ea5694e43141a87f9800452f06607cfb38a747c22 (built and tested in the Void build root)
-[05:46:45] binary crowbar-probe: sha256 0396f0a160f609414443921b68b281551d08c96506bee952430b80d74c03bc16 (built and tested in the Void build root)
-[05:47:00] 
-[05:47:00] == the binaries in the guest are the ones that were built
-[05:47:00] guest$ sha256sum /usr/local/bin/crowbar-compositor /usr/local/bin/crowbar-probe
-[05:47:00]     fb904402b0abc6bb293fd56ea5694e43141a87f9800452f06607cfb38a747c22  /usr/local/bin/crowbar-compositor
-[05:47:00]     0396f0a160f609414443921b68b281551d08c96506bee952430b80d74c03bc16  /usr/local/bin/crowbar-probe
-[05:47:00] PASS: the guest runs the binaries built above
-[05:47:00] 
-[05:47:00] == the guest: Void Linux, runit, seatd, no systemd
-[05:47:00] guest$ uname -sr; cat /etc/os-release | head -2
-[05:47:00]     Linux 6.18.63_1
-[05:47:00]     NAME="Void"
-[05:47:00]     ID="void"
-[05:47:00] guest$ ps -o pid,user,args -p 1
-[05:47:00]       PID USER     COMMAND
-[05:47:00]         1 root     runit
-[05:47:00] guest$ ls /run/systemd 2>&1; pgrep -l 'systemd|elogind' || echo 'no systemd or elogind process'
-[05:47:00]     ls: cannot access '/run/systemd': No such file or directory
-[05:47:00]     no systemd or elogind process
-[05:47:00] PASS: no systemd and no elogind in the guest
-[05:47:00] guest$ sv status seatd
-[05:47:00]     run: seatd: (pid 552) 13s; run: log: (pid 551) 13s
-[05:47:00] PASS: seatd runs under runit
-[05:47:00] 
-[05:47:00] == what the binary links, and the Void package each library comes from
-[05:47:00] guest$ ldd /usr/local/bin/crowbar-compositor
-[05:47:00]     	linux-vdso.so.1 (0x00007fda6860c000)
-[05:47:00]     	libgbm.so.1 => /usr/lib64/libgbm.so.1 (0x00007fda685fe000)
-[05:47:00]     	libseat.so.1 => /usr/lib64/libseat.so.1 (0x00007fda685f3000)
-[05:47:00]     	libudev.so.1 => /usr/lib64/libudev.so.1 (0x00007fda685cb000)
-[05:47:00]     	libinput.so.10 => /usr/lib64/libinput.so.10 (0x00007fda68560000)
-[05:47:00]     	libxkbcommon.so.0 => /usr/lib64/libxkbcommon.so.0 (0x00007fda684f9000)
-[05:47:00]     	libgcc_s.so.1 => /usr/lib64/libgcc_s.so.1 (0x00007fda684cc000)
-[05:47:00]     	libm.so.6 => /usr/lib64/libm.so.6 (0x00007fda67f12000)
-[05:47:00]     	libc.so.6 => /usr/lib64/libc.so.6 (0x00007fda67d28000)
-[05:47:00]     	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007fda6860e000)
-[05:47:00]     	libdrm.so.2 => /usr/lib64/libdrm.so.2 (0x00007fda684b3000)
-[05:47:00]     	libexpat.so.1 => /usr/lib64/libexpat.so.1 (0x00007fda67cf9000)
-[05:47:00]     	libelogind.so.0 => /usr/lib64/libelogind.so.0 (0x00007fda67c76000)
-[05:47:00]     	libmtdev.so.1 => /usr/lib64/libmtdev.so.1 (0x00007fda684ac000)
-[05:47:00]     	libevdev.so.2 => /usr/lib64/libevdev.so.2 (0x00007fda67c58000)
-[05:47:00]     	libwacom.so.9 => /usr/lib64/libwacom.so.9 (0x00007fda67c47000)
-[05:47:00]     	liblua5.4.so.5.4 => /usr/lib64/liblua5.4.so.5.4 (0x00007fda67c00000)
-[05:47:00]     	libcap.so.2 => /usr/lib64/libcap.so.2 (0x00007fda67bf4000)
-[05:47:00]     	libgudev-1.0.so.0 => /usr/lib64/libgudev-1.0.so.0 (0x00007fda67be7000)
-[05:47:00]     	libgobject-2.0.so.0 => /usr/lib64/libgobject-2.0.so.0 (0x00007fda67b83000)
-[05:47:00]     	libglib-2.0.so.0 => /usr/lib64/libglib-2.0.so.0 (0x00007fda67a2d000)
-[05:47:00]     	libffi.so.7 => /usr/lib64/libffi.so.7 (0x00007fda67a21000)
-[05:47:00]     	libpcre2-8.so.0 => /usr/lib64/libpcre2-8.so.0 (0x00007fda67970000)
-[05:47:00] guest$ for lib in $(ldd /usr/local/bin/crowbar-compositor | awk '$3 ~ /^\// {print $3}'); do xbps-query -o "$(readlink -f $lib)" | cut -d: -f1; done | sort -u
-[05:47:01]     eudev-libudev-3.2.14_2
-[05:47:01]     expat-2.10.0_1
-[05:47:01]     glib-2.88.3_1
-[05:47:01]     glibc-2.41_1
-[05:47:01]     libcap-2.78_1
-[05:47:01]     libdrm-2.4.134_1
-[05:47:01]     libelogind-252.39_1
-[05:47:01]     libevdev-1.14.0_1
-[05:47:01]     libffi-3.3_2
-[05:47:01]     libgbm-26.2.7_1
-[05:47:01]     libgcc-14.2.1+20250405_4
-[05:47:01]     libgudev-238_1
-[05:47:01]     libinput-1.31.3_2
-[05:47:01]     libpcre2-10.49_1
-[05:47:01]     libseat-0.9.3_1
-[05:47:01]     libwacom-2.20.0_1
-[05:47:01]     libxkbcommon-1.13.2_1
-[05:47:01]     lua54-5.4.9_1
-[05:47:01]     mtdev-1.1.7_1
-[05:47:01] PASS: the binary's libraries all resolve
-[05:47:01] 
-[05:47:01] == start the compositor on virtual terminal 2 as its own user
-[05:47:01] guest$ for user in crowbar-compositor crowbar-shell crowbar-app; do chown $user:$user /home/$user; done; install -d -o crowbar-compositor -g crowbar-compositor -m 700 /run/user/1000; install -d -m 755 /run/crowbar; install -d -o crowbar-compositor -g crowbar-shell -m 2750 /run/crowbar/compositor-shell; install -d -o crowbar-compositor -g root -m 750 /run/crowbar/compositor-warden; install -d -o crowbar-app -g crowbar-app -m 700 /run/crowbar/compartment-1
-[05:47:01] guest$ openvt -c 2 -s -f -- chpst -u crowbar-compositor:crowbar-compositor:_seatd env HOME=/home/crowbar-compositor XDG_RUNTIME_DIR=/run/user/1000 LIBSEAT_BACKEND=seatd RUST_LOG=warn,crowbar_compositor=debug sh -c 'echo /proc/$$/fd/* >/tmp/started-with; exec crowbar-compositor --backend tty --shell-socket /run/crowbar/compositor-shell/wayland --shell-uid 1001 --warden-socket /run/crowbar/compositor-warden/wayland --warden-uid 0 >/tmp/compositor.log 2>&1'
-[05:47:02] PASS: the compositor starts on a TTY
-[05:47:02] PASS: the seat comes from libseat
-[05:47:02] PASS: the display is a DRM device
-[05:47:02] PASS: the first output is up
-[05:47:02] guest$ cat /sys/class/tty/tty0/active; ls -l /run/seatd.sock; ps -o uid=,tty=,args= -C crowbar-compositor; id -u crowbar-compositor; getent group _seatd
-[05:47:02]     tty2
-[05:47:02]     srwxrwx--- 1 root _seatd 0 Nov 16 05:46 /run/seatd.sock
-[05:47:02]      1000 tty2     crowbar-compositor --backend tty --shell-socket /run/crowbar/compositor-shell/wayland --shell-uid 1001 --warden-socket /run/crowbar/compositor-warden/wayland --warden-uid 0
-[05:47:02]     1000
-[05:47:02]     _seatd:x:997:crowbar-compositor
-[05:47:02] PASS: the compositor runs as its own user, the only member of _seatd
-[05:47:02] guest$ pidof crowbar-compositor
-[05:47:03]     730
-[05:47:03] guest$ pgrep -P 730 || echo 'no child process'
-[05:47:03]     no child process
-[05:47:03] PASS: the compositor started no process
-[05:47:03] guest$ cd /proc/730 && for fd in fd/*; do flags=$(awk '/^flags:/ {print $2}' fdinfo/${fd#fd/}); [ $(( 0$flags & 02000000 )) -ne 0 ] || echo INHERITABLE ${fd#fd/} $(readlink $fd); done; echo looked at $(ls fd | wc -l) descriptors
-[05:47:03]     INHERITABLE 0 /dev/tty2
-[05:47:03]     INHERITABLE 1 /tmp/compositor.log
-[05:47:03]     INHERITABLE 2 /tmp/compositor.log
-[05:47:03]     INHERITABLE 4 /dev/tty2
-[05:47:03]     looked at 33 descriptors
-[05:47:03] guest$ cat /tmp/started-with
-[05:47:03]     /proc/730/fd/0 /proc/730/fd/1 /proc/730/fd/2 /proc/730/fd/3 /proc/730/fd/4
-[05:47:03] PASS: every descriptor the compositor opened on the TTY is close-on-exec
-[05:47:03] 
-[05:47:03] == routes around the compositor that ADR 0014 names: input devices and tracing
-[05:47:03] guest$ modprobe uinput 2>&1; ls -l /dev/uinput /dev/input/ 2>&1
-[05:47:03]     crw------- 1 root root 10, 223 Nov 16 05:46 /dev/uinput
-[05:47:03]     
-[05:47:03]     /dev/input/:
-[05:47:03]     total 0
-[05:47:03]     drwxr-xr-x 2 root root     200 Nov 16 05:46 by-path
-[05:47:03]     crw-rw---- 1 root input 13, 64 Nov 16 05:46 event0
-[05:47:03]     crw-rw---- 1 root input 13, 65 Nov 16 05:46 event1
-[05:47:03]     crw-rw---- 1 root input 13, 66 Nov 16 05:46 event2
-[05:47:03]     crw-rw---- 1 root input 13, 67 Nov 16 05:46 event3
-[05:47:03]     crw-rw---- 1 root input 13, 68 Nov 16 05:46 event4
-[05:47:03]     crw-rw---- 1 root input 13, 69 Nov 16 05:46 event5
-[05:47:03]     crw-rw---- 1 root input 13, 70 Nov 16 05:46 event6
-[05:47:03]     crw-rw---- 1 root input 13, 63 Nov 16 05:46 mice
-[05:47:03]     crw-rw---- 1 root input 13, 32 Nov 16 05:46 mouse0
-[05:47:03]     crw-rw---- 1 root input 13, 33 Nov 16 05:46 mouse1
-[05:47:03]     crw-rw---- 1 root input 13, 34 Nov 16 05:46 mouse2
-[05:47:03] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app id
-[05:47:03]     uid=1002(crowbar-app) gid=1002(crowbar-app) groups=1002(crowbar-app)
-[05:47:03] PASS: the client's account has no group but its own
-[05:47:03] guest$ sh -c 'test -c /dev/uinput && exec 3<>/dev/uinput && echo OPENED' 2>&1
-[05:47:03]     OPENED
-[05:47:03] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app sh -c 'test -c /dev/uinput && exec 3<>/dev/uinput && echo OPENED' 2>&1
-[05:47:03]     sh: 1: cannot create /dev/uinput: Permission denied
-[05:47:03] PASS: root can open /dev/uinput and the client's account is refused
-[05:47:03] guest$ sh -c 'for d in /dev/input/event*; do out=$( (exec 3<$d) 2>&1 ) && echo OPENED $d || echo FAILED $d: $out; done'
-[05:47:04]     OPENED /dev/input/event0
-[05:47:04]     OPENED /dev/input/event1
-[05:47:04]     OPENED /dev/input/event2
-[05:47:04]     OPENED /dev/input/event3
-[05:47:04]     OPENED /dev/input/event4
-[05:47:04]     OPENED /dev/input/event5
-[05:47:04]     OPENED /dev/input/event6
-[05:47:04] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app sh -c 'for d in /dev/input/event*; do out=$( (exec 3<$d) 2>&1 ) && echo OPENED $d || echo FAILED $d: $out; done'
-[05:47:04]     FAILED /dev/input/event0: sh: 1: cannot open /dev/input/event0: Permission denied
-[05:47:04]     FAILED /dev/input/event1: sh: 1: cannot open /dev/input/event1: Permission denied
-[05:47:04]     FAILED /dev/input/event2: sh: 1: cannot open /dev/input/event2: Permission denied
-[05:47:04]     FAILED /dev/input/event3: sh: 1: cannot open /dev/input/event3: Permission denied
-[05:47:04]     FAILED /dev/input/event4: sh: 1: cannot open /dev/input/event4: Permission denied
-[05:47:04]     FAILED /dev/input/event5: sh: 1: cannot open /dev/input/event5: Permission denied
-[05:47:04]     FAILED /dev/input/event6: sh: 1: cannot open /dev/input/event6: Permission denied
-[05:47:04] PASS: root can read every input device and the client's account is refused each one
-[05:47:04] guest$ cat /proc/sys/kernel/yama/ptrace_scope 2>&1 || echo 'no Yama ptrace_scope'
-[05:47:04]     1
-[05:47:04] 
-[05:47:04] == ADR 0016, attack 11: a compartment with no listener looks for any Wayland socket
-[05:47:04] guest$ find / -xdev -type s 2>/dev/null; find /run /tmp /dev -type s 2>/dev/null
-[05:47:04]     /run/crowbar/compositor-warden/wayland
-[05:47:04]     /run/crowbar/compositor-shell/wayland
-[05:47:04]     /run/seatd.sock
-[05:47:04]     /run/dhcpcd/sock
-[05:47:04]     /run/udev/control
-[05:47:04] guest$ ls -A /run/user/1000
-[05:47:04] PASS: the compositor made its two sockets and no other
-[05:47:04] guest$ for s in /run/crowbar/compositor-shell/wayland /run/crowbar/compositor-warden/wayland /run/dhcpcd/sock /run/seatd.sock /run/udev/control; do chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=$s timeout 3 crowbar-probe globals >/dev/null 2>&1 && echo ANSWERED $s; done; echo asked
-[05:47:04]     asked
-[05:47:04] PASS: none of the 5 sockets on the machine answers the client's account as a compositor
-[05:47:04] guest$ chmod o+rx /run/crowbar/compositor-shell /run/crowbar/compositor-warden; chmod o+rw /run/crowbar/compositor-shell/wayland /run/crowbar/compositor-warden/wayland
-[05:47:04] guest$ for s in /run/crowbar/compositor-shell/wayland /run/crowbar/compositor-warden/wayland; do chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=$s timeout 3 crowbar-probe globals 2>&1 && echo ANSWERED $s; done; echo asked
-[05:47:05]     crowbar-probe: Backend error: Io error: Connection reset by peer (os error 104)
-[05:47:05]     crowbar-probe: Backend error: Io error: Connection reset by peer (os error 104)
-[05:47:05]     asked
-[05:47:05] guest$ chmod 2750 /run/crowbar/compositor-shell; chmod 750 /run/crowbar/compositor-warden; chmod 660 /run/crowbar/compositor-shell/wayland /run/crowbar/compositor-warden/wayland
-[05:47:05] PASS: given both trusted sockets on purpose, the client's account is refused on its user ID
-[05:47:05] 
-[05:47:05] == what the shell and the Warden are offered (wayland-info inside the guest)
-[05:47:05] guest$ chpst -u crowbar-shell:crowbar-shell env HOME=/home/crowbar-shell WAYLAND_DISPLAY=/run/crowbar/compositor-shell/wayland wayland-info | grep -E "^interface|name:"
-[05:47:05]     interface: 'wl_compositor',                              version:  6, name:  1
-[05:47:05]     interface: 'wl_subcompositor',                           version:  1, name:  2
-[05:47:05]     interface: 'xdg_wm_base',                                version:  7, name:  3
-[05:47:05]     interface: 'wl_shm',                                     version:  2, name:  4
-[05:47:05]     interface: 'zwlr_layer_shell_v1',                        version:  5, name:  5
-[05:47:05]     interface: 'wp_viewporter',                              version:  1, name:  6
-[05:47:05]     interface: 'wl_seat',                                    version:  9, name:  8
-[05:47:05]     	name: seat0
-[05:47:05]     interface: 'zwp_linux_dmabuf_v1',                        version:  6, name:  9
-[05:47:05]     interface: 'wl_output',                                  version:  4, name: 10
-[05:47:05]     	name: Virtual-1
-[05:47:05] guest$ env WAYLAND_DISPLAY=/run/crowbar/compositor-warden/wayland wayland-info | grep ^interface
-[05:47:05]     interface: 'wp_security_context_manager_v1',             version:  1, name:  7
-[05:47:05] PASS: the shell is offered exactly the table's list
-[05:47:05] PASS: the Warden is offered exactly the table's list
-[05:47:05] guest$ chpst -u crowbar-shell:crowbar-shell env HOME=/home/crowbar-shell WAYLAND_DISPLAY=/run/crowbar/compositor-shell/wayland crowbar-probe layer 2>&1 || true
-[05:47:05]     layer surface created, size (1280, 60)
-[05:47:05] PASS: the shell can create a layer surface
-[05:47:05] 
-[05:47:05] == a stand-in for the Warden registers one compartment's listener, as root
-[05:47:05] guest$ (env WAYLAND_DISPLAY=/run/crowbar/compositor-warden/wayland crowbar-probe warden org.crowbaros.Probe compartment-1 /run/crowbar/compartment-1/wayland >/tmp/warden.out 2>&1 &); sleep 1; cat /tmp/warden.out
-[05:47:06]     listening at /run/crowbar/compartment-1/wayland
-[05:47:06] PASS: the compositor took the listener with its principal ID and compartment ID
-[05:47:06] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland wayland-info | grep ^interface
-[05:47:07]     interface: 'wl_compositor',                              version:  6, name:  1
-[05:47:07]     interface: 'wl_subcompositor',                           version:  1, name:  2
-[05:47:07]     interface: 'xdg_wm_base',                                version:  7, name:  3
-[05:47:07]     interface: 'wl_shm',                                     version:  2, name:  4
-[05:47:07]     interface: 'wp_viewporter',                              version:  1, name:  6
-[05:47:07]     interface: 'wl_seat',                                    version:  9, name:  8
-[05:47:07]     interface: 'wl_output',                                  version:  4, name: 10
-[05:47:07] PASS: a client of the compartment's listener is offered exactly the table's list
-[05:47:07] 
-[05:47:07] == ADR 0020, attack 1, and ADR 0016, attack 12: a client on a listener asks for what it is not offered
-[05:47:07] PASS: none of them is offered to it
-[05:47:07] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland crowbar-probe guess xdg_activation_v1 zwp_primary_selection_device_manager_v1 zwlr_data_control_manager_v1 ext_data_control_manager_v1 ext_image_copy_capture_manager_v1 ext_output_image_capture_source_manager_v1 ext_foreign_toplevel_image_capture_source_manager_v1 zwlr_screencopy_manager_v1 zwlr_export_dmabuf_manager_v1 zwp_virtual_keyboard_manager_v1 zwlr_virtual_pointer_manager_v1 zwp_input_method_manager_v2 zwp_input_method_v1 zwp_input_panel_v1 zwp_text_input_manager_v3 zwp_text_input_manager_v1 ext_session_lock_manager_v1 ext_foreign_toplevel_list_v1 zwlr_foreign_toplevel_manager_v1 zwp_keyboard_shortcuts_inhibit_manager_v1 zwp_pointer_constraints_v1 zwp_relative_pointer_manager_v1 zwp_tablet_manager_v2 wp_drm_lease_device_v1 xwayland_shell_v1 wp_security_context_manager_v1 zwlr_layer_shell_v1 zwp_linux_dmabuf_v1 2>&1; echo exit $?
-[05:47:07]     xdg_activation_v1: refused at every number it could guess
-[05:47:07]     zwp_primary_selection_device_manager_v1: refused at every number it could guess
-[05:47:07]     zwlr_data_control_manager_v1: refused at every number it could guess
-[05:47:07]     ext_data_control_manager_v1: refused at every number it could guess
-[05:47:07]     ext_image_copy_capture_manager_v1: refused at every number it could guess
-[05:47:07]     ext_output_image_capture_source_manager_v1: refused at every number it could guess
-[05:47:07]     ext_foreign_toplevel_image_capture_source_manager_v1: refused at every number it could guess
-[05:47:07]     zwlr_screencopy_manager_v1: refused at every number it could guess
-[05:47:07]     zwlr_export_dmabuf_manager_v1: refused at every number it could guess
-[05:47:07]     zwp_virtual_keyboard_manager_v1: refused at every number it could guess
-[05:47:07]     zwlr_virtual_pointer_manager_v1: refused at every number it could guess
-[05:47:07]     zwp_input_method_manager_v2: refused at every number it could guess
-[05:47:07]     zwp_input_method_v1: refused at every number it could guess
-[05:47:07]     zwp_input_panel_v1: refused at every number it could guess
-[05:47:07]     zwp_text_input_manager_v3: refused at every number it could guess
-[05:47:07]     zwp_text_input_manager_v1: refused at every number it could guess
-[05:47:07]     ext_session_lock_manager_v1: refused at every number it could guess
-[05:47:07]     ext_foreign_toplevel_list_v1: refused at every number it could guess
-[05:47:07]     zwlr_foreign_toplevel_manager_v1: refused at every number it could guess
-[05:47:07]     zwp_keyboard_shortcuts_inhibit_manager_v1: refused at every number it could guess
-[05:47:07]     zwp_pointer_constraints_v1: refused at every number it could guess
-[05:47:07]     zwp_relative_pointer_manager_v1: refused at every number it could guess
-[05:47:07]     zwp_tablet_manager_v2: refused at every number it could guess
-[05:47:07]     wp_drm_lease_device_v1: refused at every number it could guess
-[05:47:07]     xwayland_shell_v1: refused at every number it could guess
-[05:47:07]     wp_security_context_manager_v1: refused at every number it could guess
-[05:47:07]     zwlr_layer_shell_v1: refused at every number it could guess
-[05:47:07]     zwp_linux_dmabuf_v1: refused at every number it could guess
-[05:47:07]     exit 0
-[05:47:07] PASS: each of the 28 is refused at every global number it could guess
-[05:47:07] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland crowbar-probe layer 2>&1 || true
-[05:47:07]     crowbar-probe: zwlr_layer_shell_v1 is not offered to this client
-[05:47:07] PASS: it cannot create a layer surface
-[05:47:07] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland crowbar-probe warden nested nested-1 /tmp/nested-listener true 2>&1 || true
-[05:47:07]     crowbar-probe: wp_security_context_manager_v1 is not offered to this client
-[05:47:07] PASS: it cannot register a listener of its own
-[05:47:07] 
-[05:47:07] == keys from the virtual keyboard, through the kernel and libinput
-[05:47:07] guest$ (chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland crowbar-probe keylog first >/tmp/keylog-1.out 2>&1 &); true
-[05:47:08] guest$ cat /tmp/keylog-1.out
-[05:47:09]        0.002 window mapped
-[05:47:09] PASS: a new window does not take the keyboard
-[05:47:11] guest$ cat /tmp/keylog-1.out
-[05:47:11]        0.002 window mapped
-[05:47:11]        1.862 enter held=[]
-[05:47:11]        1.862 modifiers depressed=0x0
-[05:47:11]        2.163 key 48 pressed
-[05:47:11]        2.314 key 48 released
-[05:47:11] PASS: a click gives the window the keyboard, and a plain key then reaches it
-[05:47:11] 
-[05:47:11] == a still desktop draws no frames (ADR 0020)
-[05:47:24]     frames drawn: 8 then 8; times the compositor's process ran: 1399 then 1399
-[05:47:24] PASS: ten seconds with a window on screen and nothing changing draw no frame
-[05:47:24] PASS: the compositor's process barely ran in those ten seconds - it ran 0 times, of 1399 since it started
-[05:47:28]     frames drawn after the pointer moved: 18
-[05:47:28] PASS: moving the pointer, which the compositor draws, draws frames again
-[05:47:36] PASS: and the desktop is still again afterwards
-[05:47:36] 
-[05:47:36] == plug a second monitor in
-[05:47:37] PASS: the hotplug reaches the compositor through udev
-[05:47:37] PASS: the second output comes up
-[05:47:37] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland wayland-info | grep -A12 "interface: 'wl_output'" | grep -E "name:|width:"
-[05:47:38]     interface: 'wl_output',                                  version:  4, name: 10
-[05:47:38]     	name: Virtual-1
-[05:47:38]     	physical_width: 0 mm, physical_height: 0 mm,
-[05:47:38]     		width: 1280 px, height: 960 px, refresh: 74.998 Hz,
-[05:47:38]     interface: 'wl_output',                                  version:  4, name: 11
-[05:47:38]     	name: Virtual-2
-[05:47:38]     	physical_width: 0 mm, physical_height: 0 mm,
-[05:47:38]     		width: 1024 px, height: 768 px, refresh: 74.993 Hz,
-[05:47:38] PASS: a client is told of both outputs
-[05:47:39] screens: /home/jmartin/Code/crowbaros/.lab/void-graphical/compositor-20261116T054557Z-*.png
-[05:47:39] 
-[05:47:39] == the Warden stops the compartment and lets go of its listener
-[05:47:39] guest$ pkill -x crowbar-probe; sleep 1; true
-[05:47:40] guest$ test -S /run/crowbar/compartment-1/wayland && echo the socket is still there; chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland timeout 3 crowbar-probe globals 2>&1; echo exit $?
-[05:47:40]     the socket is still there
-[05:47:40]     crowbar-probe: Could not find wayland compositor
-[05:47:40]     exit 1
-[05:47:40] PASS: the listener of a stopped compartment accepts nothing
-[05:47:40] 
-[05:47:40] == compositor log, without the line for each frame
-[05:47:40]     2026-11-16T05:47:01.118952Z  INFO crowbar_compositor::backend::tty: tty: session opened through libseat seat=seat0
-[05:47:40]     2026-11-16T05:47:01.119389Z  WARN smithay::backend::drm::device::fd: Unable to become drm master, assuming unprivileged mode
-[05:47:40]     2026-11-16T05:47:01.325948Z  INFO crowbar_compositor::backend::tty: tty: DRM device opened gpu=/dev/dri/card0 driver=virtio_gpu software=true
-[05:47:40]     2026-11-16T05:47:01.344234Z  WARN smithay::backend::drm::compositor: Preferred format AB24 not available: NoSupportedPlaneFormat
-[05:47:40]     2026-11-16T05:47:01.367274Z  WARN smithay::backend::drm::surface::atomic: Failed to destroy old mode property blob: No such file or directory (os error 2)
-[05:47:40]     2026-11-16T05:47:01.370232Z  INFO crowbar_compositor::backend::tty: output connected name=Virtual-1 width=1280 height=960
-[05:47:40]     2026-11-16T05:47:01.370288Z  INFO crowbar_compositor: compositor is up backend=Tty
-[05:47:40]     2026-11-16T05:47:01.372276Z  INFO crowbar_compositor::backend::tty: tty: whether a flip waits for its drawing (Smithay's needs_sync) output=Virtual-1 needs_sync=true
-[05:47:40]     2026-11-16T05:47:04.177849Z  WARN crowbar_compositor::connections: refused a peer with the wrong user ID peer=1002 identity=Shell
-[05:47:40]     2026-11-16T05:47:04.179972Z  WARN crowbar_compositor::connections: refused a peer with the wrong user ID peer=1002 identity=Warden
-[05:47:40]     2026-11-16T05:47:04.914224Z  INFO crowbar_compositor::connections: compartment listener registered principal=org.crowbaros.Probe compartment=compartment-1
-[05:47:40]     2026-11-16T05:47:35.829789Z  INFO crowbar_compositor::backend::tty: tty: udev says the DRM device changed; scanning connectors
-[05:47:40]     2026-11-16T05:47:35.830469Z  WARN smithay::backend::drm::compositor: Preferred format AB24 not available: NoSupportedPlaneFormat
-[05:47:40]     2026-11-16T05:47:35.832938Z  WARN smithay::backend::drm::surface::atomic: Failed to destroy old mode property blob: No such file or directory (os error 2)
-[05:47:40]     2026-11-16T05:47:35.832982Z  INFO crowbar_compositor::backend::tty: output connected name=Virtual-2 width=1024 height=768
-[05:47:40]     2026-11-16T05:47:35.834861Z  INFO crowbar_compositor::backend::tty: tty: whether a flip waits for its drawing (Smithay's needs_sync) output=Virtual-2 needs_sync=true
-[05:47:44] 
-[05:47:44] RESULT: 36 passed, 0 failed
-[05:47:44] log: /home/jmartin/Code/crowbaros/.lab/void-graphical/compositor-20261116T054557Z.log
+[05:59:18] # The CrowbarOS compositor on a TTY in the Void guest
+[05:59:18] commit 06646ae497423eda4ac899b0e00908e9e22de8f2, with changes that are not committed
+[06:00:06] binary crowbar-compositor: sha256 5d6aa9a455c643c467354f980a1694b25a780f638c97ab46aa982a195362dd89 (built and tested in the Void build root)
+[06:00:06] binary crowbar-probe: sha256 0396f0a160f609414443921b68b281551d08c96506bee952430b80d74c03bc16 (built and tested in the Void build root)
+[06:00:20] 
+[06:00:20] == the binaries in the guest are the ones that were built
+[06:00:20] guest$ sha256sum /usr/local/bin/crowbar-compositor /usr/local/bin/crowbar-probe
+[06:00:20]     5d6aa9a455c643c467354f980a1694b25a780f638c97ab46aa982a195362dd89  /usr/local/bin/crowbar-compositor
+[06:00:20]     0396f0a160f609414443921b68b281551d08c96506bee952430b80d74c03bc16  /usr/local/bin/crowbar-probe
+[06:00:20] PASS: the guest runs the binaries built above
+[06:00:20] 
+[06:00:20] == the guest: Void Linux, runit, seatd, no systemd
+[06:00:20] guest$ uname -sr; cat /etc/os-release | head -2
+[06:00:20]     Linux 6.18.63_1
+[06:00:20]     NAME="Void"
+[06:00:20]     ID="void"
+[06:00:20] guest$ ps -o pid,user,args -p 1
+[06:00:20]       PID USER     COMMAND
+[06:00:20]         1 root     runit
+[06:00:20] guest$ ls /run/systemd 2>&1; pgrep -l 'systemd|elogind' || echo 'no systemd or elogind process'
+[06:00:21]     ls: cannot access '/run/systemd': No such file or directory
+[06:00:21]     no systemd or elogind process
+[06:00:21] PASS: no systemd and no elogind in the guest
+[06:00:21] guest$ sv status seatd
+[06:00:21]     run: seatd: (pid 552) 12s; run: log: (pid 551) 12s
+[06:00:21] PASS: seatd runs under runit
+[06:00:21] 
+[06:00:21] == what the binary links, and the Void package each library comes from
+[06:00:21] guest$ ldd /usr/local/bin/crowbar-compositor
+[06:00:21]     	linux-vdso.so.1 (0x00007fa7db280000)
+[06:00:21]     	libgbm.so.1 => /usr/lib64/libgbm.so.1 (0x00007fa7db272000)
+[06:00:21]     	libseat.so.1 => /usr/lib64/libseat.so.1 (0x00007fa7db267000)
+[06:00:21]     	libudev.so.1 => /usr/lib64/libudev.so.1 (0x00007fa7db23f000)
+[06:00:21]     	libinput.so.10 => /usr/lib64/libinput.so.10 (0x00007fa7db1d4000)
+[06:00:21]     	libxkbcommon.so.0 => /usr/lib64/libxkbcommon.so.0 (0x00007fa7db16d000)
+[06:00:21]     	libgcc_s.so.1 => /usr/lib64/libgcc_s.so.1 (0x00007fa7db140000)
+[06:00:21]     	libm.so.6 => /usr/lib64/libm.so.6 (0x00007fa7dab12000)
+[06:00:21]     	libc.so.6 => /usr/lib64/libc.so.6 (0x00007fa7da928000)
+[06:00:21]     	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007fa7db282000)
+[06:00:21]     	libdrm.so.2 => /usr/lib64/libdrm.so.2 (0x00007fa7db127000)
+[06:00:21]     	libexpat.so.1 => /usr/lib64/libexpat.so.1 (0x00007fa7db0f8000)
+[06:00:21]     	libelogind.so.0 => /usr/lib64/libelogind.so.0 (0x00007fa7da8a5000)
+[06:00:21]     	libmtdev.so.1 => /usr/lib64/libmtdev.so.1 (0x00007fa7db0f1000)
+[06:00:21]     	libevdev.so.2 => /usr/lib64/libevdev.so.2 (0x00007fa7db0d1000)
+[06:00:21]     	libwacom.so.9 => /usr/lib64/libwacom.so.9 (0x00007fa7db0c0000)
+[06:00:21]     	liblua5.4.so.5.4 => /usr/lib64/liblua5.4.so.5.4 (0x00007fa7da85e000)
+[06:00:21]     	libcap.so.2 => /usr/lib64/libcap.so.2 (0x00007fa7db0b4000)
+[06:00:21]     	libgudev-1.0.so.0 => /usr/lib64/libgudev-1.0.so.0 (0x00007fa7db0a7000)
+[06:00:21]     	libgobject-2.0.so.0 => /usr/lib64/libgobject-2.0.so.0 (0x00007fa7da7fa000)
+[06:00:21]     	libglib-2.0.so.0 => /usr/lib64/libglib-2.0.so.0 (0x00007fa7da6a4000)
+[06:00:21]     	libffi.so.7 => /usr/lib64/libffi.so.7 (0x00007fa7da698000)
+[06:00:21]     	libpcre2-8.so.0 => /usr/lib64/libpcre2-8.so.0 (0x00007fa7da5e7000)
+[06:00:21] guest$ for lib in $(ldd /usr/local/bin/crowbar-compositor | awk '$3 ~ /^\// {print $3}'); do xbps-query -o "$(readlink -f $lib)" | cut -d: -f1; done | sort -u
+[06:00:22]     eudev-libudev-3.2.14_2
+[06:00:22]     expat-2.10.0_1
+[06:00:22]     glib-2.88.3_1
+[06:00:22]     glibc-2.41_1
+[06:00:22]     libcap-2.78_1
+[06:00:22]     libdrm-2.4.134_1
+[06:00:22]     libelogind-252.39_1
+[06:00:22]     libevdev-1.14.0_1
+[06:00:22]     libffi-3.3_2
+[06:00:22]     libgbm-26.2.7_1
+[06:00:22]     libgcc-14.2.1+20250405_4
+[06:00:22]     libgudev-238_1
+[06:00:22]     libinput-1.31.3_2
+[06:00:22]     libpcre2-10.49_1
+[06:00:22]     libseat-0.9.3_1
+[06:00:22]     libwacom-2.20.0_1
+[06:00:22]     libxkbcommon-1.13.2_1
+[06:00:22]     lua54-5.4.9_1
+[06:00:22]     mtdev-1.1.7_1
+[06:00:22] PASS: the binary's libraries all resolve
+[06:00:22] 
+[06:00:22] == start the compositor on virtual terminal 2 as its own user
+[06:00:22] guest$ for user in crowbar-compositor crowbar-shell crowbar-app; do chown $user:$user /home/$user; done; install -d -o crowbar-compositor -g crowbar-compositor -m 700 /run/user/1000; install -d -m 755 /run/crowbar; install -d -o crowbar-compositor -g crowbar-shell -m 2750 /run/crowbar/compositor-shell; install -d -o crowbar-compositor -g root -m 750 /run/crowbar/compositor-warden; install -d -o crowbar-app -g crowbar-app -m 700 /run/crowbar/compartment-1
+[06:00:22] guest$ openvt -c 2 -s -f -- chpst -u crowbar-compositor:crowbar-compositor:_seatd env HOME=/home/crowbar-compositor XDG_RUNTIME_DIR=/run/user/1000 LIBSEAT_BACKEND=seatd RUST_LOG=warn,crowbar_compositor=debug sh -c 'echo /proc/$$/fd/* >/tmp/started-with; exec crowbar-compositor --backend tty --shell-socket /run/crowbar/compositor-shell/wayland --shell-uid 1001 --warden-socket /run/crowbar/compositor-warden/wayland --warden-uid 0 >/tmp/compositor.log 2>&1'
+[06:00:23] PASS: the compositor starts on a TTY
+[06:00:23] PASS: the seat comes from libseat
+[06:00:23] PASS: the display is a DRM device
+[06:00:23] PASS: the first output is up
+[06:00:23] guest$ cat /sys/class/tty/tty0/active; ls -l /run/seatd.sock; ps -o uid=,tty=,args= -C crowbar-compositor; id -u crowbar-compositor; getent group _seatd
+[06:00:23]     tty2
+[06:00:23]     srwxrwx--- 1 root _seatd 0 Nov 16 06:00 /run/seatd.sock
+[06:00:23]      1000 tty2     crowbar-compositor --backend tty --shell-socket /run/crowbar/compositor-shell/wayland --shell-uid 1001 --warden-socket /run/crowbar/compositor-warden/wayland --warden-uid 0
+[06:00:23]     1000
+[06:00:23]     _seatd:x:997:crowbar-compositor
+[06:00:23] PASS: the compositor runs as its own user, the only member of _seatd
+[06:00:23] guest$ pidof crowbar-compositor
+[06:00:23]     729
+[06:00:23] guest$ pgrep -P 729 || echo 'no child process'
+[06:00:23]     no child process
+[06:00:23] PASS: the compositor started no process
+[06:00:23] guest$ cd /proc/729 && for fd in fd/*; do flags=$(awk '/^flags:/ {print $2}' fdinfo/${fd#fd/}); [ $(( 0$flags & 02000000 )) -ne 0 ] || echo INHERITABLE ${fd#fd/} $(readlink $fd); done; echo looked at $(ls fd | wc -l) descriptors
+[06:00:23]     INHERITABLE 0 /dev/tty2
+[06:00:23]     INHERITABLE 1 /tmp/compositor.log
+[06:00:23]     INHERITABLE 2 /tmp/compositor.log
+[06:00:23]     INHERITABLE 4 /dev/tty2
+[06:00:23]     looked at 33 descriptors
+[06:00:23] guest$ cat /tmp/started-with
+[06:00:23]     /proc/729/fd/0 /proc/729/fd/1 /proc/729/fd/2 /proc/729/fd/3 /proc/729/fd/4
+[06:00:23] PASS: every descriptor the compositor opened on the TTY is close-on-exec
+[06:00:23] 
+[06:00:23] == routes around the compositor that ADR 0014 names: input devices and tracing
+[06:00:23] guest$ modprobe uinput 2>&1; ls -l /dev/uinput /dev/input/ 2>&1
+[06:00:24]     crw------- 1 root root 10, 223 Nov 16 06:00 /dev/uinput
+[06:00:24]     
+[06:00:24]     /dev/input/:
+[06:00:24]     total 0
+[06:00:24]     drwxr-xr-x 2 root root     200 Nov 16 06:00 by-path
+[06:00:24]     crw-rw---- 1 root input 13, 64 Nov 16 06:00 event0
+[06:00:24]     crw-rw---- 1 root input 13, 65 Nov 16 06:00 event1
+[06:00:24]     crw-rw---- 1 root input 13, 66 Nov 16 06:00 event2
+[06:00:24]     crw-rw---- 1 root input 13, 67 Nov 16 06:00 event3
+[06:00:24]     crw-rw---- 1 root input 13, 68 Nov 16 06:00 event4
+[06:00:24]     crw-rw---- 1 root input 13, 69 Nov 16 06:00 event5
+[06:00:24]     crw-rw---- 1 root input 13, 70 Nov 16 06:00 event6
+[06:00:24]     crw-rw---- 1 root input 13, 63 Nov 16 06:00 mice
+[06:00:24]     crw-rw---- 1 root input 13, 32 Nov 16 06:00 mouse0
+[06:00:24]     crw-rw---- 1 root input 13, 33 Nov 16 06:00 mouse1
+[06:00:24]     crw-rw---- 1 root input 13, 34 Nov 16 06:00 mouse2
+[06:00:24] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app id
+[06:00:24]     uid=1002(crowbar-app) gid=1002(crowbar-app) groups=1002(crowbar-app)
+[06:00:24] PASS: the client's account has no group but its own
+[06:00:24] guest$ sh -c 'test -c /dev/uinput && exec 3<>/dev/uinput && echo OPENED' 2>&1
+[06:00:24]     OPENED
+[06:00:24] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app sh -c 'test -c /dev/uinput && exec 3<>/dev/uinput && echo OPENED' 2>&1
+[06:00:24]     sh: 1: cannot create /dev/uinput: Permission denied
+[06:00:24] PASS: root can open /dev/uinput and the client's account is refused
+[06:00:24] guest$ sh -c 'for d in /dev/input/event*; do out=$( (exec 3<$d) 2>&1 ) && echo OPENED $d || echo FAILED $d: $out; done'
+[06:00:24]     OPENED /dev/input/event0
+[06:00:24]     OPENED /dev/input/event1
+[06:00:24]     OPENED /dev/input/event2
+[06:00:24]     OPENED /dev/input/event3
+[06:00:24]     OPENED /dev/input/event4
+[06:00:24]     OPENED /dev/input/event5
+[06:00:24]     OPENED /dev/input/event6
+[06:00:24] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app sh -c 'for d in /dev/input/event*; do out=$( (exec 3<$d) 2>&1 ) && echo OPENED $d || echo FAILED $d: $out; done'
+[06:00:24]     FAILED /dev/input/event0: sh: 1: cannot open /dev/input/event0: Permission denied
+[06:00:24]     FAILED /dev/input/event1: sh: 1: cannot open /dev/input/event1: Permission denied
+[06:00:24]     FAILED /dev/input/event2: sh: 1: cannot open /dev/input/event2: Permission denied
+[06:00:24]     FAILED /dev/input/event3: sh: 1: cannot open /dev/input/event3: Permission denied
+[06:00:24]     FAILED /dev/input/event4: sh: 1: cannot open /dev/input/event4: Permission denied
+[06:00:24]     FAILED /dev/input/event5: sh: 1: cannot open /dev/input/event5: Permission denied
+[06:00:24]     FAILED /dev/input/event6: sh: 1: cannot open /dev/input/event6: Permission denied
+[06:00:24] PASS: root can read every input device and the client's account is refused each one
+[06:00:24] guest$ cat /proc/sys/kernel/yama/ptrace_scope 2>&1 || echo 'no Yama ptrace_scope'
+[06:00:24]     1
+[06:00:24] 
+[06:00:24] == ADR 0016, attack 11: a compartment with no listener looks for any Wayland socket
+[06:00:24] guest$ find / -xdev -type s 2>/dev/null; find /run /tmp /dev -type s 2>/dev/null
+[06:00:25]     /run/crowbar/compositor-warden/wayland
+[06:00:25]     /run/crowbar/compositor-shell/wayland
+[06:00:25]     /run/dhcpcd/sock
+[06:00:25]     /run/seatd.sock
+[06:00:25]     /run/udev/control
+[06:00:25] guest$ ls -A /run/user/1000
+[06:00:25] PASS: the compositor made its two sockets and no other
+[06:00:25] guest$ for s in /run/crowbar/compositor-shell/wayland /run/crowbar/compositor-warden/wayland /run/dhcpcd/sock /run/seatd.sock /run/udev/control; do chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=$s timeout 3 crowbar-probe globals >/dev/null 2>&1 && echo ANSWERED $s; done; echo asked
+[06:00:25]     asked
+[06:00:25] PASS: none of the 5 sockets on the machine answers the client's account as a compositor
+[06:00:25] guest$ chmod o+rx /run/crowbar/compositor-shell /run/crowbar/compositor-warden; chmod o+rw /run/crowbar/compositor-shell/wayland /run/crowbar/compositor-warden/wayland
+[06:00:25] guest$ for s in /run/crowbar/compositor-shell/wayland /run/crowbar/compositor-warden/wayland; do chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=$s timeout 3 crowbar-probe globals 2>&1 && echo ANSWERED $s; done; echo asked
+[06:00:25]     crowbar-probe: Backend error: Io error: Connection reset by peer (os error 104)
+[06:00:25]     crowbar-probe: Backend error: Io error: Connection reset by peer (os error 104)
+[06:00:25]     asked
+[06:00:25] guest$ chmod 2750 /run/crowbar/compositor-shell; chmod 750 /run/crowbar/compositor-warden; chmod 660 /run/crowbar/compositor-shell/wayland /run/crowbar/compositor-warden/wayland
+[06:00:25] PASS: given both trusted sockets on purpose, the client's account is refused on its user ID
+[06:00:25] 
+[06:00:25] == what the shell and the Warden are offered (wayland-info inside the guest)
+[06:00:25] guest$ chpst -u crowbar-shell:crowbar-shell env HOME=/home/crowbar-shell WAYLAND_DISPLAY=/run/crowbar/compositor-shell/wayland wayland-info | grep -E "^interface|name:"
+[06:00:25]     interface: 'wl_compositor',                              version:  6, name:  1
+[06:00:25]     interface: 'wl_subcompositor',                           version:  1, name:  2
+[06:00:25]     interface: 'xdg_wm_base',                                version:  7, name:  3
+[06:00:25]     interface: 'wl_shm',                                     version:  2, name:  4
+[06:00:25]     interface: 'zwlr_layer_shell_v1',                        version:  5, name:  5
+[06:00:25]     interface: 'wp_viewporter',                              version:  1, name:  6
+[06:00:25]     interface: 'wl_seat',                                    version:  9, name:  8
+[06:00:25]     	name: seat0
+[06:00:25]     interface: 'zwp_linux_dmabuf_v1',                        version:  6, name:  9
+[06:00:25]     interface: 'wl_output',                                  version:  4, name: 10
+[06:00:25]     	name: Virtual-1
+[06:00:25] guest$ env WAYLAND_DISPLAY=/run/crowbar/compositor-warden/wayland wayland-info | grep ^interface
+[06:00:25]     interface: 'wp_security_context_manager_v1',             version:  1, name:  7
+[06:00:25] PASS: the shell is offered exactly the table's list
+[06:00:25] PASS: the Warden is offered exactly the table's list
+[06:00:25] guest$ chpst -u crowbar-shell:crowbar-shell env HOME=/home/crowbar-shell WAYLAND_DISPLAY=/run/crowbar/compositor-shell/wayland crowbar-probe layer 2>&1 || true
+[06:00:26]     layer surface created, size (1280, 60)
+[06:00:26] PASS: the shell can create a layer surface
+[06:00:26] 
+[06:00:26] == a stand-in for the Warden registers one compartment's listener, as root
+[06:00:26] guest$ (env WAYLAND_DISPLAY=/run/crowbar/compositor-warden/wayland crowbar-probe warden org.crowbaros.Probe compartment-1 /run/crowbar/compartment-1/wayland >/tmp/warden.out 2>&1 &); sleep 1; cat /tmp/warden.out
+[06:00:27]     listening at /run/crowbar/compartment-1/wayland
+[06:00:27] PASS: the compositor took the listener with its principal ID and compartment ID
+[06:00:27] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland wayland-info | grep ^interface
+[06:00:27]     interface: 'wl_compositor',                              version:  6, name:  1
+[06:00:27]     interface: 'wl_subcompositor',                           version:  1, name:  2
+[06:00:27]     interface: 'xdg_wm_base',                                version:  7, name:  3
+[06:00:27]     interface: 'wl_shm',                                     version:  2, name:  4
+[06:00:27]     interface: 'wp_viewporter',                              version:  1, name:  6
+[06:00:27]     interface: 'wl_seat',                                    version:  9, name:  8
+[06:00:27]     interface: 'wl_output',                                  version:  4, name: 10
+[06:00:27] PASS: a client of the compartment's listener is offered exactly the table's list
+[06:00:27] 
+[06:00:27] == ADR 0020, attack 1, and ADR 0016, attack 12: a client on a listener asks for what it is not offered
+[06:00:27] PASS: none of them is offered to it
+[06:00:27] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland crowbar-probe guess xdg_activation_v1 zwp_primary_selection_device_manager_v1 zwlr_data_control_manager_v1 ext_data_control_manager_v1 ext_image_copy_capture_manager_v1 ext_output_image_capture_source_manager_v1 ext_foreign_toplevel_image_capture_source_manager_v1 zwlr_screencopy_manager_v1 zwlr_export_dmabuf_manager_v1 zwp_virtual_keyboard_manager_v1 zwlr_virtual_pointer_manager_v1 zwp_input_method_manager_v2 zwp_input_method_v1 zwp_input_panel_v1 zwp_text_input_manager_v3 zwp_text_input_manager_v1 ext_session_lock_manager_v1 ext_foreign_toplevel_list_v1 zwlr_foreign_toplevel_manager_v1 zwp_keyboard_shortcuts_inhibit_manager_v1 zwp_pointer_constraints_v1 zwp_relative_pointer_manager_v1 zwp_tablet_manager_v2 wp_drm_lease_device_v1 xwayland_shell_v1 wp_security_context_manager_v1 zwlr_layer_shell_v1 zwp_linux_dmabuf_v1 2>&1; echo exit $?
+[06:00:27]     xdg_activation_v1: refused at every number it could guess
+[06:00:27]     zwp_primary_selection_device_manager_v1: refused at every number it could guess
+[06:00:27]     zwlr_data_control_manager_v1: refused at every number it could guess
+[06:00:27]     ext_data_control_manager_v1: refused at every number it could guess
+[06:00:27]     ext_image_copy_capture_manager_v1: refused at every number it could guess
+[06:00:27]     ext_output_image_capture_source_manager_v1: refused at every number it could guess
+[06:00:27]     ext_foreign_toplevel_image_capture_source_manager_v1: refused at every number it could guess
+[06:00:27]     zwlr_screencopy_manager_v1: refused at every number it could guess
+[06:00:27]     zwlr_export_dmabuf_manager_v1: refused at every number it could guess
+[06:00:27]     zwp_virtual_keyboard_manager_v1: refused at every number it could guess
+[06:00:27]     zwlr_virtual_pointer_manager_v1: refused at every number it could guess
+[06:00:27]     zwp_input_method_manager_v2: refused at every number it could guess
+[06:00:27]     zwp_input_method_v1: refused at every number it could guess
+[06:00:27]     zwp_input_panel_v1: refused at every number it could guess
+[06:00:27]     zwp_text_input_manager_v3: refused at every number it could guess
+[06:00:27]     zwp_text_input_manager_v1: refused at every number it could guess
+[06:00:27]     ext_session_lock_manager_v1: refused at every number it could guess
+[06:00:27]     ext_foreign_toplevel_list_v1: refused at every number it could guess
+[06:00:27]     zwlr_foreign_toplevel_manager_v1: refused at every number it could guess
+[06:00:27]     zwp_keyboard_shortcuts_inhibit_manager_v1: refused at every number it could guess
+[06:00:27]     zwp_pointer_constraints_v1: refused at every number it could guess
+[06:00:27]     zwp_relative_pointer_manager_v1: refused at every number it could guess
+[06:00:27]     zwp_tablet_manager_v2: refused at every number it could guess
+[06:00:27]     wp_drm_lease_device_v1: refused at every number it could guess
+[06:00:27]     xwayland_shell_v1: refused at every number it could guess
+[06:00:27]     wp_security_context_manager_v1: refused at every number it could guess
+[06:00:27]     zwlr_layer_shell_v1: refused at every number it could guess
+[06:00:27]     zwp_linux_dmabuf_v1: refused at every number it could guess
+[06:00:27]     exit 0
+[06:00:27] PASS: each of the 28 is refused at every global number it could guess
+[06:00:27] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland crowbar-probe layer 2>&1 || true
+[06:00:27]     crowbar-probe: zwlr_layer_shell_v1 is not offered to this client
+[06:00:27] PASS: it cannot create a layer surface
+[06:00:27] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland crowbar-probe warden nested nested-1 /tmp/nested-listener true 2>&1 || true
+[06:00:27]     crowbar-probe: wp_security_context_manager_v1 is not offered to this client
+[06:00:27] PASS: it cannot register a listener of its own
+[06:00:27] 
+[06:00:27] == keys from the virtual keyboard, through the kernel and libinput
+[06:00:27] guest$ (chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland crowbar-probe keylog first >/tmp/keylog-1.out 2>&1 &); true
+[06:00:29] guest$ cat /tmp/keylog-1.out
+[06:00:29]        0.002 window mapped
+[06:00:29] PASS: a new window does not take the keyboard
+[06:00:31] guest$ cat /tmp/keylog-1.out
+[06:00:31]        0.002 window mapped
+[06:00:31]        1.859 enter held=[]
+[06:00:31]        1.859 modifiers depressed=0x0
+[06:00:31]        2.161 key 48 pressed
+[06:00:31]        2.311 key 48 released
+[06:00:31] PASS: a click gives the window the keyboard, and a plain key then reaches it
+[06:00:31] 
+[06:00:31] == a still desktop draws no frames (ADR 0020)
+[06:00:44]     frames drawn: 8 then 8; times the compositor's process ran: 1399 then 1399
+[06:00:44] PASS: ten seconds with a window on screen and nothing changing draw no frame
+[06:00:44] PASS: the compositor's process barely ran in those ten seconds - it ran 0 times, of 1399 since it started
+[06:00:48]     frames drawn after the pointer moved: 18
+[06:00:48] PASS: moving the pointer, which the compositor draws, draws frames again
+[06:00:57] PASS: and the desktop is still again afterwards
+[06:00:57] 
+[06:00:57] == plug a second monitor in
+[06:00:58] PASS: the hotplug reaches the compositor through udev
+[06:00:58] PASS: the second output comes up
+[06:00:58] guest$ chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland wayland-info | grep -A12 "interface: 'wl_output'" | grep -E "name:|width:"
+[06:00:58]     interface: 'wl_output',                                  version:  4, name: 10
+[06:00:58]     	name: Virtual-1
+[06:00:58]     	physical_width: 0 mm, physical_height: 0 mm,
+[06:00:58]     		width: 1280 px, height: 960 px, refresh: 74.998 Hz,
+[06:00:58]     interface: 'wl_output',                                  version:  4, name: 11
+[06:00:58]     	name: Virtual-2
+[06:00:58]     	physical_width: 0 mm, physical_height: 0 mm,
+[06:00:58]     		width: 1024 px, height: 768 px, refresh: 74.993 Hz,
+[06:00:58] PASS: a client is told of both outputs
+[06:00:59] screens: /home/jmartin/Code/crowbaros/.lab/void-graphical/compositor-20261116T055918Z-*.png
+[06:00:59] 
+[06:00:59] == the Warden stops the compartment and lets go of its listener
+[06:00:59] guest$ pkill -x crowbar-probe; sleep 1; true
+[06:01:00] guest$ test -S /run/crowbar/compartment-1/wayland && echo the socket is still there; chpst -u crowbar-app:crowbar-app env HOME=/home/crowbar-app WAYLAND_DISPLAY=/run/crowbar/compartment-1/wayland timeout 3 crowbar-probe globals 2>&1; echo exit $?
+[06:01:00]     the socket is still there
+[06:01:00]     crowbar-probe: Could not find wayland compositor
+[06:01:00]     exit 1
+[06:01:00] PASS: the listener of a stopped compartment accepts nothing
+[06:01:00] 
+[06:01:00] == compositor log, without the line for each frame
+[06:01:00]     2026-11-16T06:00:22.082468Z  INFO crowbar_compositor::backend::tty: tty: session opened through libseat seat=seat0
+[06:01:00]     2026-11-16T06:00:22.082903Z  WARN smithay::backend::drm::device::fd: Unable to become drm master, assuming unprivileged mode
+[06:01:00]     2026-11-16T06:00:22.296223Z  INFO crowbar_compositor::backend::tty: tty: DRM device opened gpu=/dev/dri/card0 driver=virtio_gpu software=true
+[06:01:00]     2026-11-16T06:00:22.317858Z  WARN smithay::backend::drm::compositor: Preferred format AB24 not available: NoSupportedPlaneFormat
+[06:01:00]     2026-11-16T06:00:22.341268Z  WARN smithay::backend::drm::surface::atomic: Failed to destroy old mode property blob: No such file or directory (os error 2)
+[06:01:00]     2026-11-16T06:00:22.341326Z  INFO crowbar_compositor::backend::tty: output connected name=Virtual-1 width=1280 height=960
+[06:01:00]     2026-11-16T06:00:22.341372Z  INFO crowbar_compositor: compositor is up backend=Tty
+[06:01:00]     2026-11-16T06:00:22.344309Z  INFO crowbar_compositor::backend::tty: tty: whether a flip waits for its drawing (Smithay's needs_sync) output=Virtual-1 needs_sync=true
+[06:01:00]     2026-11-16T06:00:25.086964Z  WARN crowbar_compositor::connections: refused a peer with the wrong user ID peer=1002 identity=Shell
+[06:01:00]     2026-11-16T06:00:25.088926Z  WARN crowbar_compositor::connections: refused a peer with the wrong user ID peer=1002 identity=Warden
+[06:01:00]     2026-11-16T06:00:25.815844Z  INFO crowbar_compositor::connections: compartment listener registered principal=org.crowbaros.Probe compartment=compartment-1
+[06:01:00]     2026-11-16T06:00:56.707551Z  INFO crowbar_compositor::backend::tty: tty: udev says the DRM device changed; scanning connectors
+[06:01:00]     2026-11-16T06:00:56.708453Z  WARN smithay::backend::drm::compositor: Preferred format AB24 not available: NoSupportedPlaneFormat
+[06:01:00]     2026-11-16T06:00:56.711247Z  WARN smithay::backend::drm::surface::atomic: Failed to destroy old mode property blob: No such file or directory (os error 2)
+[06:01:00]     2026-11-16T06:00:56.711309Z  INFO crowbar_compositor::backend::tty: output connected name=Virtual-2 width=1024 height=768
+[06:01:00]     2026-11-16T06:00:56.713274Z  INFO crowbar_compositor::backend::tty: tty: whether a flip waits for its drawing (Smithay's needs_sync) output=Virtual-2 needs_sync=true
+[06:01:04] 
+[06:01:04] RESULT: 36 passed, 0 failed
+[06:01:04] log: /home/jmartin/Code/crowbaros/.lab/void-graphical/compositor-20261116T055918Z.log

@@ -29,10 +29,11 @@ logs are UTC, so they read November 16.
 ## What was run
 
 The tests, the nested check, and the Void guest check ran on commit
-`fa881a2`, which holds the fixes from the review below. The Alpha desktop
-check and the milestone ran before those fixes, on `096e352` and `ac3478f`.
-Neither runs this compositor: the first runs the spike, and the second is
-Base alone.
+`06646ae`, which holds the fixes from the review below. The guest log names
+that commit "with changes that are not committed": the one change was to
+this record. The Alpha desktop check and the milestone ran before those
+fixes, on `096e352` and `ac3478f`. Neither runs this compositor: the first
+runs the spike, and the second is Base alone.
 
 | Check | Where | Result |
 | --- | --- | --- |
@@ -44,7 +45,7 @@ Base alone.
 | `lab/void/void_lab.py milestone` | The Void Base guest | 22 of 22 |
 
 The Void guest check's binaries: `crowbar-compositor` is sha256
-`fb904402b0abc6bb293fd56ea5694e43141a87f9800452f06607cfb38a747c22`, and
+`5d6aa9a455c643c467354f980a1694b25a780f638c97ab46aa982a195362dd89`, and
 `crowbar-probe` is `0396f0a160f609414443921b68b281551d08c96506bee952430b80d74c03bc16`.
 Both were built in the Void build root.
 
@@ -143,7 +144,9 @@ The guard was checked against a build that calls into `reis`: it fails.
 
 Three reviewers read the branch at `6206ff0`: Claude Opus 5.5, Claude Fable
 5.2, and GPT-6.1 Sol. Each finding below was fixed in `fa881a2`, and the
-first three have a test that failed first.
+first three have a test that failed first. The three read the branch again
+at `ba9e79d` and found nothing more to fix in the compositor. `06646ae`
+holds what they found in the tests and the checks.
 
 | Finding | What was done |
 | --- | --- |
@@ -179,8 +182,9 @@ lists which slice creates each remaining global of the table.
 - **A limit on what one compartment can make the compositor hold.** Nothing
   caps a compartment's connections or buffers, and each costs the compositor
   a descriptor. A compartment that uses them all up no longer ends the
-  compositor, but the compositor accepts no new client until the Warden
-  stops that compartment. No issue holds this yet.
+  compositor. But until the Warden stops that compartment, the compositor
+  accepts no new client, and a client that sends it a descriptor, as for a
+  buffer, can lose its connection. No issue holds this yet.
 - **A flip the display never reports.** An output would then wait and draw no
   more. The TTY backend ends the wait when a paused session resumes, and
   nothing else does.
