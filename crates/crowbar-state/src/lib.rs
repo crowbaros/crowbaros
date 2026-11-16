@@ -306,6 +306,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_state_that_carries_authority_or_a_secret_is_refused() {
+        const MINIMAL: &str = "version = 1\n[system]\nhostname = \"crowbar-lab\"\n";
+        State::from_toml_str(MINIMAL).expect("the State without the section");
+
+        // The State says what each Tool needs. What the person granted, and
+        // every secret, is kept elsewhere (ADR 0012), so a State that someone
+        // shares cannot carry any of it. `[capabilities]` and `[autonomy]`
+        // are where the earlier design kept grants and rules.
+        for section in [
+            "[capabilities]\nmorning-pages = [\"read:Writing\"]\n",
+            "[autonomy]\nallowance = 200\n",
+            "[[grant]]\nholder = \"morning-pages\"\nresource = \"Writing\"\n",
+            "[[rule]]\nholder = \"morning-pages\"\noperation = \"nextcloud.sync\"\n",
+            "[clearances]\nclaude = \"private\"\n",
+            "[ceiling]\ncount = 500\n",
+            "[vault]\nnextcloud-token = \"hunter2\"\n",
+            "[secrets]\nnextcloud-token = \"hunter2\"\n",
+        ] {
+            let refused = State::from_toml_str(&format!("{MINIMAL}{section}"));
+            assert!(matches!(refused, Err(StateError::Parse(_))), "{section}: {refused:?}");
+        }
+    }
+
+    #[test]
     fn a_managed_path_cannot_hold_a_line_break_or_control_character() {
         for bad in [
             "/etc/x\n  ~ write file /etc/motd (mode 0644)",

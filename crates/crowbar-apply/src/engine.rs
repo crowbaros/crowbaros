@@ -524,6 +524,7 @@ mod tests {
     use crate::testutil::scratch;
     use std::cell::RefCell;
     use std::collections::BTreeSet;
+    use std::path::PathBuf;
 
     struct FakePkgs {
         installed: RefCell<BTreeSet<String>>,
@@ -699,6 +700,119 @@ fstype = "ext4"
             .map(|l| l.action)
             .collect();
         assert_eq!(actions, vec!["init", "apply", "apply", "rollback"]);
+    }
+
+    /// "Morning Pages may read and write your writing."
+    fn writing_grant() -> crowbar_authority::Grant {
+        use crowbar_broker::{EffectLimits, Resource, Right, Rights};
+        crowbar_authority::Grant {
+            holder: crowbar_authority::Holder::Tool("morning-pages".into()),
+            resource: Resource::Path("Writing".into()),
+            rights: Rights::from([Right::Read, Right::Write]),
+            limits: EffectLimits::new(),
+            reason: "Keeps your morning pages.".into(),
+        }
+    }
+
+    /// Every regular file under `dir`, with its contents.
+    fn files_under(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut files = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let meta = std::fs::symlink_metadata(&path).unwrap();
+            if meta.is_dir() {
+                files.extend(files_under(&path));
+            } else if meta.is_file() {
+                let contents = std::fs::read(&path).unwrap();
+                files.push((path, contents));
+            }
+        }
+        files
+    }
+
+    fn holds(contents: &[u8], needle: &str) -> bool {
+        contents.windows(needle.len()).any(|window| window == needle.as_bytes())
+    }
+
+    #[test]
+    fn rolling_back_does_not_bring_back_a_revoked_grant() {
+        use crowbar_authority::{Authority, AuthorityStore, Status};
+        use crowbar_broker::Time;
+        let dir = scratch();
+        let top = &dir.0;
+        base_root(top);
+        let (pkgs, snap) = (pkgs(), CopySnapshot);
+        let e = engine(top, &pkgs, &snap);
+        e.init(BASE).unwrap();
+        let holder = writing_grant().holder;
+
+        // The person grants, and generation 2 is built while the grant holds.
+        let mut store = AuthorityStore::create(&e.layout.authority_dir()).unwrap();
+        let id = store.grant(writing_grant(), Time::from_secs(1_000)).unwrap();
+        let good = State::from_toml_str(GOOD).unwrap();
+        assert_eq!(e.apply(&good, GOOD, 1).unwrap().to, Some(2));
+
+        // They revoke it, and generation 3 is built without it.
+        store.revoke(id, Time::from_secs(2_000)).unwrap();
+        drop(store);
+        let broken = State::from_toml_str(BROKEN).unwrap();
+        assert_eq!(e.apply(&broken, BROKEN, 2).unwrap().to, Some(3));
+
+        // Back to generation 2, whose Tools had the grant when it was built.
+        e.rollback(2, Some(3)).unwrap();
+        assert_eq!(e.layout.read_default().unwrap(), Some(2));
+
+        let authority = Authority::load(&e.layout.authority_dir()).unwrap();
+        assert_eq!(authority.grants(&holder).count(), 0);
+        assert_eq!(authority.status(id), Some(Status::Revoked(Time::from_secs(2_000))));
+
+        // And generation 2 took no copy of the record from the time the
+        // grant held, for a boot into it to read instead.
+        for (path, contents) in files_under(&e.layout.gen_root(2)) {
+            assert!(!holds(&contents, "morning-pages"), "{} holds the grant", path.display());
+        }
+    }
+
+    #[test]
+    fn no_generation_record_or_state_holds_any_authority() {
+        use crowbar_authority::AuthorityStore;
+        use crowbar_broker::Time;
+        let dir = scratch();
+        let top = &dir.0;
+        base_root(top);
+        let (pkgs, snap) = (pkgs(), CopySnapshot);
+        let e = engine(top, &pkgs, &snap);
+        e.init(BASE).unwrap();
+
+        // Authority is recorded before and between the applies, so a
+        // snapshot that took it along would hold it.
+        let mut store = AuthorityStore::create(&e.layout.authority_dir()).unwrap();
+        store.grant(writing_grant(), Time::from_secs(1_000)).unwrap();
+        let good = State::from_toml_str(GOOD).unwrap();
+        e.apply(&good, GOOD, 1).unwrap();
+        store.grant(writing_grant(), Time::from_secs(2_000)).unwrap();
+        let broken = State::from_toml_str(BROKEN).unwrap();
+        e.apply(&broken, BROKEN, 2).unwrap();
+        drop(store);
+
+        // What rolls back, and what is shared: the generations, their
+        // records, and the State each was built from. The grant names its
+        // holder and its reason, and neither is anywhere in them.
+        let mut carried = files_under(&e.layout.gens_dir());
+        carried.extend(files_under(&e.layout.meta_dir()));
+        assert!(carried.len() > 10, "{}", carried.len());
+        for id in 1..=3 {
+            let state = load_state(&e.layout.gen_root(id)).unwrap().unwrap();
+            carried.push((
+                format!("the State of generation {id}").into(),
+                state.to_toml_string().into_bytes(),
+            ));
+        }
+        for (path, contents) in carried {
+            for needle in ["morning-pages", "Keeps your morning pages."] {
+                assert!(!holds(&contents, needle), "{} holds {needle:?}", path.display());
+            }
+        }
     }
 
     #[test]

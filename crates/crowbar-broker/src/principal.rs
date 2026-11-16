@@ -2,8 +2,11 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 /// The id of one task, as the broker named it when the task started.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct TaskId(String);
 
 impl TaskId {
@@ -20,7 +23,8 @@ impl TaskId {
 ///
 /// The broker knows which principal is calling from the connection the Warden
 /// gave it (ADR 0016), never from what the caller says.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Principal {
     /// The person's own principal. It coordinates tasks and holds none of
     /// their authority (ADR 0011).

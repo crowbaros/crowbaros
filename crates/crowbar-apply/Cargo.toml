@@ -14,3 +14,7 @@ path = "src/main.rs"
 crowbar-state.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+crowbar-authority.workspace = true
+crowbar-broker.workspace = true

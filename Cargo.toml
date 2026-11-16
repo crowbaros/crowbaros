@@ -15,8 +15,11 @@ publish = false
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.9"
+sha2 = "0.11"
 crowbar-state = { path = "crates/crowbar-state" }
 crowbar-labels = { path = "crates/crowbar-labels" }
+crowbar-broker = { path = "crates/crowbar-broker" }
+crowbar-authority = { path = "crates/crowbar-authority" }
 
 [profile.release]
 opt-level = "s"

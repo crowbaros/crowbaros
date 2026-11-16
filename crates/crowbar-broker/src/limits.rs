@@ -4,10 +4,12 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use crowbar_labels::ObjectId;
+use serde::{Deserialize, Serialize};
 
 /// A moment, in whole seconds, on the broker's clock. The broker passes the
 /// time in, so a rehearsal can run on a simulated clock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Time(u64);
 
 impl Time {
@@ -21,7 +23,8 @@ impl Time {
 }
 
 /// An amount of money, in hundredths of the person's currency.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Cost(u64);
 
 impl Cost {
@@ -35,7 +38,8 @@ impl Cost {
 }
 
 /// How often: at most `count` in any window of `window_secs` seconds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Rate {
     count: u64,
     window_secs: u64,
@@ -72,12 +76,21 @@ impl Rate {
 /// else bounded by these limits can narrow them and never widen them.
 ///
 /// This holds the limits. The gate checks each operation against them.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// Stored, a dimension that is not set is left out, and a field the limits
+/// do not have is refused when they are loaded.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EffectLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     objects: Option<BTreeSet<ObjectId>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     until: Option<Time>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     cost: Option<Cost>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     rate: Option<Rate>,
 }
 
