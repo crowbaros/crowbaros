@@ -177,3 +177,18 @@ fn when_a_tool_exits_its_handles_end_and_its_next_start_gets_new_ones() {
         .exercise(&next, &tool, Right::Read, NOW)
         .expect("the new start's handle works");
 }
+
+#[test]
+fn the_agent_is_never_issued_a_handle_it_could_pass_on() {
+    let mut table = HandleTable::new();
+    let mut delegable = photos_for(Principal::Agent);
+    delegable.delegable = true;
+
+    assert_eq!(table.issue(delegable, NOW).unwrap_err(), Refusal::DelegableToAgent);
+
+    // A handle the Agent cannot pass on, such as a value in a plan, is issued.
+    let handle = table.issue(photos_for(Principal::Agent), NOW).expect("issued");
+    table
+        .exercise(&handle, &Principal::Agent, Right::Read, NOW)
+        .expect("the Agent reads");
+}

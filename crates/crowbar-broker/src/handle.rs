@@ -266,6 +266,8 @@ pub enum Refusal {
     NotDelegable,
     /// A handle never passes to the Agent (ADR 0011).
     ToAgent,
+    /// The Agent is never issued a handle it could pass on (ADR 0011).
+    DelegableToAgent,
     /// A delegated copy would allow more than the original in this dimension.
     Widens(Widening),
 }
@@ -282,6 +284,7 @@ impl fmt::Display for Refusal {
             Refusal::RightNotHeld(right) => write!(f, "the handle does not carry the right to {right}"),
             Refusal::NotDelegable => f.write_str("the handle may not be passed on"),
             Refusal::ToAgent => f.write_str("no handle passes to the Agent"),
+            Refusal::DelegableToAgent => f.write_str("the Agent is never issued a handle it could pass on"),
             Refusal::Widens(widening) => write!(f, "a copy may only narrow the original: {widening}"),
         }
     }
@@ -366,7 +369,9 @@ impl View<'_> {
 /// principal holds.
 ///
 /// - **Issuance** makes a handle for one holder. A task that has ended gets
-///   none, and nor does a handle whose time has already run out. The broker
+///   none, and nor does a handle whose time has already run out. The Agent
+///   may hold a handle, such as a value in a plan, but never one it could
+///   pass on: it holds none of its tasks' authority (ADR 0011). The broker
 ///   issues only for an action the gate has signed; checking that signature
 ///   comes with the gate.
 /// - **Exercise** takes the handle itself, the caller the broker knows from
@@ -493,6 +498,9 @@ impl HandleTable {
     fn admit(&mut self, issue: Issue, original: Option<Key>, now: Time) -> Result<Handle, Refusal> {
         if matches!(&issue.holder, Principal::Task(task) if self.ended_tasks.contains(task)) {
             return Err(Refusal::HolderEnded);
+        }
+        if issue.holder == Principal::Agent && issue.delegable {
+            return Err(Refusal::DelegableToAgent);
         }
         if let Some(until) = issue.limits.ended_by(now) {
             return Err(Refusal::Expired(until));
