@@ -8,3 +8,4 @@ publish.workspace = true
 
 [dependencies]
 crowbar-labels.workspace = true
+serde.workspace = true

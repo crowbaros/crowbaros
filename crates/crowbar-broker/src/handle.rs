@@ -6,13 +6,15 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use crowbar_labels::{Compartment, LabelMark, ObjectId, Site};
+use serde::{Deserialize, Serialize};
 
 use crate::limits::{EffectLimits, Time, Widening};
 use crate::principal::{Principal, TaskId};
 
 /// The one thing a handle names. "Network" is never a resource: a handle
 /// names one host and port.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Resource {
     /// A Data object, or a set of them, such as "this person's photos".
     Data(BTreeSet<ObjectId>),
@@ -58,7 +60,8 @@ impl Resource {
 }
 
 /// One operation a handle allows on its resource.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Right {
     Read,
     Write,
@@ -68,7 +71,8 @@ pub enum Right {
 }
 
 /// The rights a handle carries.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Rights(BTreeSet<Right>);
 
 impl Rights {
