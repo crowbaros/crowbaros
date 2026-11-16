@@ -49,7 +49,8 @@ are not built, and each waits for its slice:
   caps them. A compartment that uses them all up does not end the compositor.
   But until the Warden stops that compartment, the compositor can accept no
   new client, and a client that sends it a descriptor, as for a buffer, can
-  lose its connection.
+  lose its connection
+  ([issue 174](https://github.com/crowbaros/crowbaros/issues/174)).
 
 ## How a client connects
 

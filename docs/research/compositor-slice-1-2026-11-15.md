@@ -184,7 +184,8 @@ lists which slice creates each remaining global of the table.
   a descriptor. A compartment that uses them all up no longer ends the
   compositor. But until the Warden stops that compartment, the compositor
   accepts no new client, and a client that sends it a descriptor, as for a
-  buffer, can lose its connection. No issue holds this yet.
+  buffer, can lose its connection.
+  [Issue 174](https://github.com/crowbaros/crowbaros/issues/174) holds this.
 - **A flip the display never reports.** An output would then wait and draw no
   more. The TTY backend ends the wait when a paused session resumes, and
   nothing else does.
