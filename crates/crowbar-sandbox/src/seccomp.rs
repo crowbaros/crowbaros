@@ -17,6 +17,18 @@
 //! A refused call fails with `EPERM`. `clone3` fails with `ENOSYS`,
 //! because a filter cannot read its flags, and the C library then uses
 //! `clone`, whose flags it can.
+//!
+//! Sockets are the one place where the filter lists what is allowed. A
+//! network namespace keeps Unix, IPv4, and IPv6 sockets apart, and the
+//! routing kind of netlink socket. It does not keep apart the sockets that
+//! virtual machines use, which have one set of ports for the whole machine
+//! and reach the hypervisor, nor the netlink socket that reports the
+//! machine's devices. So a compartment can make the first four kinds, and
+//! any other fails with `EAFNOSUPPORT`, as on a kernel built without it.
+//!
+//! What the filter does not do: a process can still open the memory file
+//! of its own child under `/proc`, as the kernel lets a parent of the same
+//! user. That crosses no compartment.
 
 use std::io;
 
@@ -35,6 +47,7 @@ const ARCH: u32 = 0xc000_00b7;
 const NUMBER: u32 = 0;
 const ARCHITECTURE: u32 = 4;
 const FIRST_ARGUMENT: u32 = 16;
+const THIRD_ARGUMENT: u32 = 32;
 
 const LOAD: u16 = (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16;
 const IF_EQUAL: u16 = (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16;
@@ -71,6 +84,13 @@ const MOUNTS: [c_long; 12] = [
     libc::SYS_mount_setattr,
     libc::SYS_setns,
 ];
+
+/// The calls that make a socket, by the family in their first argument and
+/// the protocol in their third.
+const SOCKETS: [c_long; 2] = [libc::SYS_socket, libc::SYS_socketpair];
+
+/// The socket families a network namespace keeps apart.
+const FAMILIES: [i32; 3] = [libc::AF_UNIX, libc::AF_INET, libc::AF_INET6];
 
 /// The calls that make a process, by flags in their first argument.
 const WITH_FLAGS: [c_long; 2] = [libc::SYS_clone, libc::SYS_unshare];
@@ -163,6 +183,36 @@ fn filter(needs: &Needs) -> Vec<sock_filter> {
                 statement(LOAD, NUMBER),
             ]);
         }
+    }
+    for number in SOCKETS {
+        // The instructions after the test on the call's number, up to and
+        // including the two that return.
+        let rest = FAMILIES.len() as u8 + 6;
+        program.push(unless(IF_EQUAL, number as u32, rest));
+        program.push(statement(LOAD, FIRST_ARGUMENT));
+        for (index, family) in FAMILIES.iter().enumerate() {
+            // To the last instruction of this block, which allows.
+            let to_allow = rest - 3 - index as u8;
+            program.push(sock_filter {
+                code: IF_EQUAL,
+                jt: to_allow,
+                jf: 0,
+                k: *family as u32,
+            });
+        }
+        program.extend([
+            // Netlink, and of netlink only routing.
+            unless(IF_EQUAL, libc::AF_NETLINK as u32, 2),
+            statement(LOAD, THIRD_ARGUMENT),
+            sock_filter {
+                code: IF_EQUAL,
+                jt: 1,
+                jf: 0,
+                k: libc::NETLINK_ROUTE as u32,
+            },
+            statement(RETURN, refuse(libc::EAFNOSUPPORT)),
+            statement(RETURN, ALLOW),
+        ]);
     }
     program.push(statement(RETURN, ALLOW));
     program

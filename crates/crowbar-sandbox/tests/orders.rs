@@ -181,3 +181,22 @@ fn every_part_of_the_budget_is_set() {
         assert_eq!(unset.check(), Err(OrderError::Budget(part)), "{part}");
     }
 }
+
+#[test]
+fn one_start_carries_a_bounded_number_of_connections() {
+    let connections = |count: usize| -> Vec<std::os::fd::OwnedFd> {
+        (0..count)
+            .map(|_| std::os::unix::net::UnixStream::pair().unwrap().0.into())
+            .collect()
+    };
+    let most = StartOrder {
+        connections: connections(32),
+        ..order()
+    };
+    assert_eq!(most.check(), Ok(()));
+    let more = StartOrder {
+        connections: connections(33),
+        ..order()
+    };
+    assert_eq!(more.check(), Err(OrderError::Connections(33)));
+}

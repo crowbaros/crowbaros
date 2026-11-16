@@ -187,6 +187,37 @@ fn main() {
                 }
             }),
             "listen" => std::net::TcpListener::bind("127.0.0.1:0").map(|_| String::new()),
+            "socket" => {
+                const UEVENTS: i32 = libc::NETLINK_KOBJECT_UEVENT;
+                let (family, kind, protocol) = match argument().as_str() {
+                    "unix" => (libc::AF_UNIX, libc::SOCK_STREAM, 0),
+                    "inet" => (libc::AF_INET, libc::SOCK_DGRAM, 0),
+                    "inet6" => (libc::AF_INET6, libc::SOCK_DGRAM, 0),
+                    "netlink-route" => (libc::AF_NETLINK, libc::SOCK_RAW, libc::NETLINK_ROUTE),
+                    "netlink-uevent" => (libc::AF_NETLINK, libc::SOCK_RAW, UEVENTS),
+                    "vsock" => (libc::AF_VSOCK, libc::SOCK_STREAM, 0),
+                    "alg" => (libc::AF_ALG, libc::SOCK_SEQPACKET, 0),
+                    other => panic!("the probe knows no socket family {other}"),
+                };
+                // SAFETY: plain call. The socket is left open and unused.
+                done(unsafe { libc::socket(family, kind, protocol) })
+            }
+            "vsock-listen" => vsock(libc::VMADDR_CID_ANY, number(&argument()) as u32, true),
+            "vsock-connect" => vsock(libc::VMADDR_CID_LOCAL, number(&argument()) as u32, false),
+            "mounts" => fs::read_to_string("/proc/self/mountinfo").map(|mounts| {
+                // The fifth field of a line is where the mount is, and the
+                // sixth is its flags.
+                let mut said: Vec<String> = mounts
+                    .lines()
+                    .filter_map(|line| {
+                        let mut fields = line.split(' ').skip(4);
+                        Some(format!("{}={}", fields.next()?, fields.next()?))
+                    })
+                    .collect();
+                said.sort();
+                said.join(" ")
+            }),
+            "crash" => std::process::abort(),
             "hold" => {
                 writeln!(broker, "hold: ok").expect("the broker connection");
                 hold(&broker);
@@ -220,6 +251,7 @@ fn name(error: &io::Error) -> String {
         (libc::EOPNOTSUPP, "EOPNOTSUPP"),
         (libc::ECONNRESET, "ECONNRESET"),
         (libc::EPIPE, "EPIPE"),
+        (libc::EAFNOSUPPORT, "EAFNOSUPPORT"),
     ];
     match error.raw_os_error() {
         Some(number) => match names.iter().find(|(known, _)| *known == number) {
@@ -385,6 +417,31 @@ fn interface() -> io::Result<String> {
         match i32::from_ne_bytes(answer[16..20].try_into().expect("four bytes")) {
             0 => Ok(String::new()),
             error => Err(io::Error::from_raw_os_error(-error)),
+        }
+    }
+}
+
+/// Listens on a port of the sockets that virtual machines use, or
+/// connects to that port on this machine. The kernel keeps one set of these
+/// ports for the whole machine, whatever network namespace a process is in.
+fn vsock(cid: u32, port: u32, listen: bool) -> io::Result<String> {
+    // SAFETY: an all-zero `sockaddr_vm` is valid, the address is of the
+    // size given, and the socket is left open for as long as the probe runs.
+    unsafe {
+        let socket = libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM, 0);
+        if socket == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut address: libc::sockaddr_vm = std::mem::zeroed();
+        address.svm_family = libc::AF_VSOCK as libc::sa_family_t;
+        address.svm_cid = cid;
+        address.svm_port = port;
+        let (address, length) = ((&raw const address).cast(), size_of::<libc::sockaddr_vm>() as u32);
+        if listen {
+            done(libc::bind(socket, address, length))?;
+            done(libc::listen(socket, 1))
+        } else {
+            done(libc::connect(socket, address, length))
         }
     }
 }

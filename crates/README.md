@@ -41,6 +41,8 @@ CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' \
 
 They make a cgroup at `/sys/fs/cgroup/crowbar-warden-test`, keep their record of
 user IDs in `/run/crowbar-warden-test`, and use user IDs from 1,900,000,000 up.
+One test sets the machine's `kernel.core_pattern` for as long as it runs, and
+puts it back.
 The test that measures disk I/O needs its files on a disk: where `/tmp` is in
 memory, set `CROWBAR_SANDBOX_TEST_DIR` to a directory that is not.
 

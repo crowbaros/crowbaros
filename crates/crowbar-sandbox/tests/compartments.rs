@@ -21,6 +21,10 @@ use common::{
     read_only, read_write, root_of, scratch, stored, user_of, warden,
 };
 
+/// What the kernel says of a process in a compartment: no capability, none
+/// to be had from a program it runs, and a filter on its system calls.
+const NO_PRIVILEGE: &str = "ok CapInh=0 CapPrm=0 CapEff=0 CapBnd=0 CapAmb=0 NoNewPrivs=1 Seccomp=2";
+
 #[test]
 #[ignore = "needs root"]
 fn a_compartment_sees_the_view_it_was_given_and_nothing_else() {
@@ -144,10 +148,11 @@ fn a_compartment_cannot_trace_or_read_another_or_the_broker() {
             format!("mem {target}"),
         ];
         let mut attacker = Probe::start(Vec::new(), &actions.each_ref().map(String::as_str));
-        for action in &actions {
-            let happened = attacker.did(action);
-            assert!(happened.starts_with("refused "), "{action}: {happened}");
-        }
+        // The two calls are taken away before the kernel looks for the
+        // process, and the process is in no namespace the attacker sees.
+        assert_eq!(attacker.did(&actions[0]), "refused EPERM", "{}", actions[0]);
+        assert_eq!(attacker.did(&actions[1]), "refused EPERM", "{}", actions[1]);
+        assert_eq!(attacker.did(&actions[2]), "refused ENOENT", "{}", actions[2]);
     }
     assert!(victim.answers());
 }
@@ -260,8 +265,8 @@ fn a_compartment_starts_with_its_broker_connections_and_no_other_descriptor() {
         assert_eq!(libc::pipe([0; 2].as_mut_ptr()), 0);
     }
 
-    let (mut order, broker) = probe_order("task-1", &["fds", "say 4 proxied"]);
-    let (mut proxy, compartment_end) = UnixStream::pair().unwrap();
+    let (mut order, broker) = probe_order("task-1", &["fds", "say 4 second"]);
+    let (mut second, compartment_end) = UnixStream::pair().unwrap();
     order.connections.push(OwnedFd::from(compartment_end));
     let mut probe = Probe::run(order, broker);
 
@@ -271,10 +276,10 @@ fn a_compartment_starts_with_its_broker_connections_and_no_other_descriptor() {
         probe.did("fds"),
         "ok 0=/dev/null 1=/dev/null 2=/dev/null 3=socket 4=socket"
     );
-    assert_eq!(probe.did("say 4 proxied"), "ok");
-    let mut said = [0; 8];
-    proxy.read_exact(&mut said).unwrap();
-    assert_eq!(&said, b"proxied\n");
+    assert_eq!(probe.did("say 4 second"), "ok");
+    let mut said = [0; 7];
+    second.read_exact(&mut said).unwrap();
+    assert_eq!(&said, b"second\n");
 }
 
 #[test]
@@ -289,10 +294,7 @@ fn a_compartment_has_none_of_the_credentials_around_it() {
     assert_eq!(probe.did("env"), "ok LANG=C.UTF-8");
     // No capability, none to be had from a program it runs, and a filter
     // on its system calls.
-    assert_eq!(
-        probe.did("status"),
-        "ok CapInh=0 CapPrm=0 CapEff=0 CapBnd=0 CapAmb=0 NoNewPrivs=1 Seccomp=2"
-    );
+    assert_eq!(probe.did("status"), NO_PRIVILEGE);
     assert_eq!(probe.did("keyring"), "refused EPERM");
 }
 
@@ -310,10 +312,7 @@ fn a_setuid_program_in_the_view_gains_nothing() {
     let mut probe = Probe::start(vec![read_only(&files, "/planted")], &actions);
     let before = probe.did("ids");
     assert_eq!(probe.did("ids"), before);
-    assert_eq!(
-        probe.did("status"),
-        "ok CapInh=0 CapPrm=0 CapEff=0 CapBnd=0 CapAmb=0 NoNewPrivs=1 Seccomp=2"
-    );
+    assert_eq!(probe.did("status"), NO_PRIVILEGE);
 }
 
 #[test]
@@ -333,9 +332,9 @@ fn a_compartment_has_no_input_device_and_can_neither_make_nor_open_one() {
     // The device numbers of `/dev/uinput` and of the first input device.
     // Both are planted in the view on purpose, where anyone may open them.
     let files = scratch("devices");
-    for (name, minor_of) in [("uinput", (10, 223)), ("event0", (13, 64))] {
+    for (name, (major, minor)) in [("uinput", (10, 223)), ("event0", (13, 64))] {
         let path = std::ffi::CString::new(files.join(name).to_str().unwrap()).unwrap();
-        let device = libc::makedev(minor_of.0, minor_of.1);
+        let device = libc::makedev(major, minor);
         // SAFETY: `path` is a C string.
         assert_eq!(unsafe { libc::mknod(path.as_ptr(), libc::S_IFCHR | 0o666, device) }, 0);
         fs::set_permissions(files.join(name), fs::Permissions::from_mode(0o666)).unwrap();
@@ -707,4 +706,108 @@ fn a_start_is_not_taken_for_done_when_the_init_stage_says_nothing() {
         other => panic!("{:?}", other.err()),
     }
     assert_eq!(broker.read(&mut [0; 16]).unwrap(), 0);
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_compartment_gets_no_socket_that_ignores_its_network_namespace() {
+    // Attack 9 again, and the way out. The kernel has sockets that are not
+    // kept apart by network namespaces: the ones virtual machines use, which
+    // have one set of ports for the whole machine and reach the hypervisor,
+    // and the one that reports the machine's devices. The first compartment
+    // waits on such a port.
+    let mut first = Probe::start(Vec::new(), &["vsock-listen 5151", "hold"]);
+    assert_eq!(first.did("vsock-listen 5151"), "refused EAFNOSUPPORT");
+    assert_eq!(first.did("hold"), "ok");
+
+    let refused = [
+        "vsock-connect 5151",
+        "socket vsock",
+        "socket netlink-uevent",
+        "socket alg",
+    ];
+    let given = ["socket unix", "socket inet", "socket inet6", "socket netlink-route"];
+    let actions: Vec<&str> = refused.iter().chain(&given).copied().collect();
+    let mut second = Probe::start(Vec::new(), &actions);
+    for action in refused {
+        assert_eq!(second.did(action), "refused EAFNOSUPPORT", "{action}");
+    }
+    // The kinds a network namespace does keep apart are left to it.
+    for action in given {
+        assert_eq!(second.did(action), "ok", "{action}");
+    }
+}
+
+#[test]
+#[ignore = "needs root"]
+fn nothing_mounted_in_a_sandbox_honours_a_setuid_bit_or_a_device_file() {
+    let files = scratch("mounts");
+    let view = vec![read_only(&files, "/read"), read_write(&files, "/written")];
+    let mut probe = Probe::start(view, &["mounts"]);
+    let mounts = probe.did("mounts");
+    let flags = |place: &str| -> Vec<String> { field(&mounts, place).split(',').map(str::to_string).collect() };
+    let has = |place: &str, flag: &str| flags(place).iter().any(|held| held == flag);
+
+    for mount in mounts.strip_prefix("ok ").unwrap().split(' ') {
+        let place = mount.split_once('=').unwrap().0;
+        assert!(has(place, "nosuid"), "{mount}");
+        // The sandbox's own `/dev` holds its five devices, and is fixed.
+        assert!(has(place, "nodev") || place == "/dev", "{mount}");
+    }
+    for place in ["/", "/dev", "/read", "/probe"] {
+        assert!(has(place, "ro"), "{place}: {mounts}");
+    }
+    for place in ["/written", "/tmp", "/dev/shm"] {
+        assert!(has(place, "rw"), "{place}: {mounts}");
+    }
+    for place in ["/", "/proc", "/dev", "/dev/shm"] {
+        assert!(has(place, "noexec"), "{place}: {mounts}");
+    }
+    // Every view entry shows the storage user's files as the compartment's.
+    for place in ["/read", "/written", "/probe"] {
+        assert!(has(place, "idmapped"), "{place}: {mounts}");
+    }
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_crash_in_a_compartment_runs_no_program_of_the_machines() {
+    // Many machines hand the memory of a program that crashed to a program
+    // of their own, which the kernel runs as root outside every sandbox.
+    // This test makes the machine one of them until it ends.
+    struct Restore(String);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = fs::write(CORE_PATTERN, &self.0);
+        }
+    }
+    const CORE_PATTERN: &str = "/proc/sys/kernel/core_pattern";
+    let files = scratch("core");
+    let handler = files.join("handler");
+    fs::write(&handler, "#!/bin/sh\ncat >/dev/null\n: >\"$(dirname \"$0\")/ran-$1\"\n").unwrap();
+    fs::set_permissions(&handler, fs::Permissions::from_mode(0o755)).unwrap();
+    let _restore = Restore(fs::read_to_string(CORE_PATTERN).unwrap());
+    // `%u` is the user of the program that crashed.
+    fs::write(CORE_PATTERN, format!("|{} %u", handler.display())).unwrap();
+
+    // A crash outside every compartment reaches the handler.
+    let unlimited = libc::rlimit {
+        rlim_cur: libc::RLIM_INFINITY,
+        rlim_max: libc::RLIM_INFINITY,
+    };
+    // SAFETY: plain call on this process's own limit.
+    assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_CORE, &unlimited) }, 0);
+    let crashed = std::process::Command::new(program("crowbar-sandbox-probe"))
+        .arg("crash")
+        .status()
+        .unwrap();
+    assert!(!crashed.success());
+    eventually("the handler runs for a crash outside", || files.join("ran-0").exists());
+
+    // The same crash inside one does not.
+    let mut probe = Probe::start(Vec::new(), &["ids", "crash"]);
+    let uid = user_of(&mut probe);
+    assert_eq!(probe.compartment.wait().unwrap().code, Some(128 + libc::SIGABRT));
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(!files.join(format!("ran-{uid}")).exists());
 }

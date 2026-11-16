@@ -40,8 +40,8 @@ pub struct Warden {
     config: WardenConfig,
     user_ids: UserIds,
     subtree: Subtree,
-    /// Held for as long as this Warden lives, so there is one Warden.
-    _only: File,
+    /// Locked for as long as this Warden lives, so there is one Warden.
+    _lock: File,
 }
 
 /// Why a compartment was not started. Nothing of it is left.
@@ -85,9 +85,9 @@ impl Warden {
                 config.runtime_dir.display()
             )));
         }
-        let only = File::create(config.runtime_dir.join("lock"))?;
-        // SAFETY: `only` is an open descriptor for the whole call.
-        if unsafe { libc::flock(only.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        let lock = File::create(config.runtime_dir.join("lock"))?;
+        // SAFETY: `lock` is an open descriptor for the whole call.
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             return Err(io::Error::other(format!(
                 "another Warden holds {}",
                 config.runtime_dir.display()
@@ -101,16 +101,13 @@ impl Warden {
             user_ids: UserIds::open(&config.runtime_dir, config.user_ids.clone())?,
             subtree: Subtree::open(&config.cgroup)?,
             config,
-            _only: only,
+            _lock: lock,
         })
     }
 
     /// Starts one compartment, and returns when its program is running.
     pub fn start(&self, order: StartOrder) -> Result<Compartment, StartError> {
         order.check().map_err(StartError::Order)?;
-        if order.connections.len() > sys::MAX_PASSED {
-            return Err(StartError::Order(OrderError::Connections(order.connections.len())));
-        }
         let uid = self.user_ids.take().map_err(|none| match none {
             NoUserId::Spent => StartError::UserIdsSpent,
             NoUserId::Record(why) => StartError::Setup(why),

@@ -92,7 +92,7 @@ pub enum OrderError {
     Text(String),
     /// A part of the budget that is zero.
     Budget(&'static str),
-    /// More broker connections than one start carries.
+    /// More than 32 broker connections, which is what one start carries.
     Connections(usize),
 }
 
@@ -104,6 +104,9 @@ impl StartOrder {
             if !is_id(id) {
                 return Err(OrderError::Id(id.clone()));
             }
+        }
+        if self.connections.len() > crate::sys::MAX_PASSED {
+            return Err(OrderError::Connections(self.connections.len()));
         }
         exact(&self.program)?;
         for arg in &self.args {

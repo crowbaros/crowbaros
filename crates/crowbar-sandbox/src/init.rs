@@ -26,8 +26,8 @@ use crate::{landlock, seccomp};
 type Step<T> = Result<T, String>;
 
 /// Names the step an error came from.
-fn at<T>(step: impl std::fmt::Display, result: io::Result<T>) -> Step<T> {
-    result.map_err(|e| format!("{step}: {e}"))
+fn step<T>(name: impl std::fmt::Display, result: io::Result<T>) -> Step<T> {
+    result.map_err(|e| format!("{name}: {e}"))
 }
 
 /// The exit code of an init stage that could not start the program.
@@ -66,7 +66,7 @@ fn build(status: &mut RawFd) -> Step<Infallible> {
         .view
         .iter()
         .map(|entry| {
-            at(
+            step(
                 format_args!("the view entry {}", entry.source.display()),
                 view_mount(&entry.source, entry.access, &mapping),
             )
@@ -84,37 +84,37 @@ fn build(status: &mut RawFd) -> Step<Infallible> {
         | libc::CLONE_NEWUTS
         | libc::CLONE_NEWCGROUP;
     // SAFETY: the call changes only which namespaces this process is in.
-    at("new namespaces", checked(unsafe { libc::unshare(namespaces) }))?;
+    step("new namespaces", checked(unsafe { libc::unshare(namespaces) }))?;
     // The process namespace begins with the next child, which is its first
     // process. This process stays outside and passes on how that one ends.
     // SAFETY: this process has one thread, so the child may run any code.
-    let first = at("the sandbox's first process", checked(unsafe { libc::fork() }))?;
+    let first = step("the sandbox's first process", checked(unsafe { libc::fork() }))?;
     if first != 0 {
         pass_on(first, 0);
     }
     // SAFETY: plain calls on this process alone. A session of its own has
     // no terminal, and the host name says nothing about the machine.
-    at("a new session", checked(unsafe { libc::setsid() }))?;
-    at(
+    step("a new session", checked(unsafe { libc::setsid() }))?;
+    step(
         "the host name",
         checked(unsafe { libc::sethostname(HOST_NAME.as_ptr().cast(), HOST_NAME.len()) }),
     )?;
-    at("the sandbox's root", root(&order, view))?;
-    *status = at("the compartment's descriptors", descriptors(connections, *status))?;
-    at("the compartment's user", become_user(&order))?;
-    at("the second check on files", landlock::confine(&order))?;
-    at("the filter on system calls", seccomp::confine(&order.needs))?;
+    step("the sandbox's root", root(&order, view))?;
+    *status = step("the compartment's descriptors", descriptors(connections, *status))?;
+    step("the compartment's user", become_user(&order))?;
+    step("the second check on files", landlock::confine(&order))?;
+    step("the filter on system calls", seccomp::confine(&order.needs))?;
 
     // The program is the second process. The first stays as its parent,
     // takes in whatever the program leaves behind, and ends when the
     // program does. Then the kernel ends every process still in here.
     // SAFETY: as above.
-    let program = at("the program's process", checked(unsafe { libc::fork() }))?;
+    let program = step("the program's process", checked(unsafe { libc::fork() }))?;
     if program != 0 {
-        pass_on(program, 3);
+        pass_on(program, FIRST_CONNECTION);
     }
     // SAFETY: `status` is the open status socket, and the byte is readable.
-    at(
+    step(
         "the Warden",
         checked(unsafe { libc::write(*status, [BUILT].as_ptr().cast(), 1) }),
     )?;
@@ -152,7 +152,7 @@ fn pass_on(child: libc::pid_t, keep: RawFd) -> ! {
 /// Reads the order and the broker connections from the Warden.
 fn receive(socket: BorrowedFd<'_>) -> Step<(InitOrder, Vec<OwnedFd>)> {
     let mut length = [0u8; 8];
-    let (read, connections) = at("the order", sys::receive_with_fds(socket, &mut length))?;
+    let (read, connections) = step("the order", sys::receive_with_fds(socket, &mut length))?;
     if read != length.len() {
         return Err("the order: cut short".to_string());
     }
@@ -160,7 +160,7 @@ fn receive(socket: BorrowedFd<'_>) -> Step<(InitOrder, Vec<OwnedFd>)> {
     // SAFETY: the socket stays open, and `ManuallyDrop` keeps this second
     // owner from closing it.
     let mut stream = std::mem::ManuallyDrop::new(unsafe { File::from_raw_fd(socket.as_raw_fd()) });
-    at("the order", stream.read_exact(&mut body))?;
+    step("the order", stream.read_exact(&mut body))?;
     let order = InitOrder::decode(&body).ok_or("the order: not in the Warden's format")?;
     Ok((order, connections))
 }
@@ -173,7 +173,7 @@ fn receive(socket: BorrowedFd<'_>) -> Step<(InitOrder, Vec<OwnedFd>)> {
 fn id_mapping(order: &InitOrder) -> Step<OwnedFd> {
     // SAFETY: this process has one thread, so the child may run any code.
     // It makes the namespace, stops, and is never continued.
-    let child = at("a process for the ID mapping", checked(unsafe { libc::fork() }))?;
+    let child = step("a process for the ID mapping", checked(unsafe { libc::fork() }))?;
     if child == 0 {
         // SAFETY: plain calls on this process alone.
         unsafe {
@@ -200,7 +200,7 @@ fn id_mapping(order: &InitOrder) -> Step<OwnedFd> {
         libc::kill(child, libc::SIGKILL);
         libc::waitpid(child, std::ptr::null_mut(), 0);
     }
-    at("the ID mapping", made)
+    step("the ID mapping", made)
 }
 
 /// The argument of `mount_setattr`.
@@ -309,7 +309,13 @@ fn mount(source: &str, target: &Path, kind: Option<&str>, flags: libc::c_ulong, 
     .map_err(|e| io::Error::new(e.kind(), format!("mount at {}: {e}", target.display())))
 }
 
-const CLOSED: libc::c_ulong = libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC;
+/// The flags of a mount that honours no setuid bit and no device file, and
+/// runs no program.
+const INERT: libc::c_ulong = libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC;
+
+/// The first descriptor after standard input and both outputs, where the
+/// broker connections begin.
+const FIRST_CONNECTION: RawFd = 3;
 
 /// The device files every sandbox has, with their device numbers. None of
 /// them reaches hardware.
@@ -327,12 +333,12 @@ fn root(order: &InitOrder, view: Vec<OwnedFd>) -> io::Result<()> {
     let root = order.root.as_path();
     // Nothing mounted here reaches the machine's own mounts.
     mount("none", Path::new("/"), None, libc::MS_REC | libc::MS_PRIVATE, "")?;
-    mount("crowbar", root, Some("tmpfs"), CLOSED, "mode=0755,size=1m")?;
+    mount("crowbar", root, Some("tmpfs"), INERT, "mode=0755,size=1m")?;
     let directory = |path: &Path| fs::DirBuilder::new().recursive(true).mode(0o755).create(path);
 
     // Only the processes of this sandbox, and nothing else of the kernel.
     directory(&root.join("proc"))?;
-    mount("proc", &root.join("proc"), Some("proc"), CLOSED, "subset=pid")?;
+    mount("proc", &root.join("proc"), Some("proc"), INERT, "subset=pid")?;
 
     let dev = root.join("dev");
     directory(&dev)?;
@@ -359,9 +365,9 @@ fn root(order: &InitOrder, view: Vec<OwnedFd>) -> io::Result<()> {
         std::os::unix::fs::symlink(target, dev.join(name))?;
     }
     directory(&dev.join("shm"))?;
-    mount("crowbar", &dev.join("shm"), Some("tmpfs"), CLOSED, "mode=1777")?;
-    let fixed = libc::MS_REMOUNT | libc::MS_BIND | libc::MS_RDONLY;
-    mount("none", &dev, None, fixed | libc::MS_NOSUID | libc::MS_NOEXEC, "")?;
+    mount("crowbar", &dev.join("shm"), Some("tmpfs"), INERT, "mode=1777")?;
+    let read_only = libc::MS_REMOUNT | libc::MS_BIND | libc::MS_RDONLY;
+    mount("none", &dev, None, read_only | libc::MS_NOSUID | libc::MS_NOEXEC, "")?;
 
     directory(&root.join("tmp"))?;
     mount(
@@ -394,7 +400,7 @@ fn root(order: &InitOrder, view: Vec<OwnedFd>) -> io::Result<()> {
         })
         .map_err(|e| io::Error::new(e.kind(), format!("the view entry at {}: {e}", entry.at.display())))?;
     }
-    mount("none", root, None, fixed | CLOSED, "")?;
+    mount("none", root, None, read_only | INERT, "")?;
 
     // The new root goes over the old one, and the old one is let go.
     std::env::set_current_dir(root)?;
@@ -410,7 +416,7 @@ fn root(order: &InitOrder, view: Vec<OwnedFd>) -> io::Result<()> {
 /// socket. Returns where the status socket is now.
 fn descriptors(connections: Vec<OwnedFd>, status: RawFd) -> io::Result<RawFd> {
     let count = connections.len() as RawFd;
-    let above = 3 + count + 1;
+    let above = FIRST_CONNECTION + count + 1;
     // Everything moves out of the way first, so that no descriptor is
     // overwritten before it has been placed.
     let lifted = |fd: RawFd| checked(unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, above) });
@@ -424,16 +430,16 @@ fn descriptors(connections: Vec<OwnedFd>, status: RawFd) -> io::Result<RawFd> {
     if !null.metadata()?.file_type().is_char_device() {
         return Err(io::Error::other("/dev/null is not the null device"));
     }
-    for fd in 0..3 {
+    for fd in 0..FIRST_CONNECTION {
         // SAFETY: `null` is open, and the target is replaced whole.
         checked(unsafe { libc::dup2(null.as_raw_fd(), fd) })?;
     }
     drop(null);
     for (index, fd) in held.into_iter().enumerate() {
         // SAFETY: `fd` is open, and the target is replaced whole.
-        checked(unsafe { libc::dup2(fd, 3 + index as RawFd) })?;
+        checked(unsafe { libc::dup2(fd, FIRST_CONNECTION + index as RawFd) })?;
     }
-    let placed = 3 + count;
+    let placed = FIRST_CONNECTION + count;
     // SAFETY: `lifted_status` is open, and the target is replaced whole.
     checked(unsafe { libc::dup3(lifted_status, placed, libc::O_CLOEXEC) })?;
     // Whatever else is open is closed: a descriptor the Warden did not mean
@@ -471,11 +477,14 @@ fn become_user(order: &InitOrder) -> io::Result<()> {
         if joined == -1 && io::Error::last_os_error().raw_os_error() != Some(libc::ENOSYS) {
             return Err(io::Error::last_os_error());
         }
-        // No core file: the machine's handler for one runs as root, outside
-        // every sandbox, on memory the compartment chose.
+        // No core file. Many machines pipe one to a handler of their own,
+        // which the kernel runs as root, outside every sandbox, on memory
+        // the compartment chose. A limit of 0 does not stop that. A limit
+        // of 1 does: the kernel takes it to mean a handler that crashed,
+        // and runs nothing. It also leaves no room for a core file.
         let none = libc::rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
+            rlim_cur: 1,
+            rlim_max: 1,
         };
         checked(libc::setrlimit(libc::RLIMIT_CORE, &none))?;
     }
