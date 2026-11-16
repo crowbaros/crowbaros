@@ -1,13 +1,13 @@
-//! Task principals as compartments in Linux sandboxes.
-//!
-//! **Skeleton: no code yet.** Milestone 2, part one.
-//!
-//! Each task is its own principal and runs in its own compartment: a Linux
-//! sandbox that holds only a broker connection, with a label fixed when it
-//! starts and a view of the Data it was given. The broker decides; namespaces,
-//! Landlock, and seccomp enforce. Native code is promised only what Linux can
-//! enforce.
-//!
-//! Decisions: ADR 0004 and ADR 0011 in `docs/adr/`.
-//! Design: `docs/architecture/capability-model.md`, "Enforcement on Linux" and
-//! "Where isolation lives". Scope: `docs/milestones/milestone-2.md`.
+//! The Warden: every compartment in its own Linux sandbox.
+
+mod cgroup;
+mod init;
+mod order;
+mod sys;
+mod uids;
+mod warden;
+mod wire;
+
+pub use init::init_stage;
+pub use order::{Access, Budget, Needs, OrderError, StartOrder, ViewEntry};
+pub use warden::{Compartment, Ended, StartError, Warden, WardenConfig};

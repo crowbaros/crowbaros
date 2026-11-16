@@ -16,6 +16,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.9"
 sha2 = "0.11"
+libc = "0.2"
 crowbar-state = { path = "crates/crowbar-state" }
 crowbar-labels = { path = "crates/crowbar-labels" }
 crowbar-broker = { path = "crates/crowbar-broker" }
