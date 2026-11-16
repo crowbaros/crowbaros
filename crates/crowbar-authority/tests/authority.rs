@@ -3,7 +3,7 @@
 //! changes it.
 
 use crowbar_authority::{Authority, AuthorityStore, Change, Error, Holder, Party, Rule, Status};
-use crowbar_broker::EffectLimits;
+use crowbar_capability::EffectLimits;
 use crowbar_labels::{Category, Label, Site};
 
 mod common;

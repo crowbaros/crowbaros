@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crowbar_broker::{EffectLimits, Resource, Rights, Time};
+use crowbar_capability::{EffectLimits, Resource, Rights, Time};
 use crowbar_labels::{Label, MarkSource, Site};
 use serde::{Deserialize, Serialize};
 

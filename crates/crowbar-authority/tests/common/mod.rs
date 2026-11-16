@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crowbar_authority::{Grant, Holder, Rule};
-use crowbar_broker::{EffectLimits, Rate, Resource, Right, Rights, Time};
+use crowbar_capability::{EffectLimits, Rate, Resource, Right, Rights, Time};
 use crowbar_labels::ObjectId;
 
 /// The time every test starts at.

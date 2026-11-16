@@ -104,12 +104,12 @@ fn a_copy_never_carries_more_rights_or_wider_limits_than_the_original() {
     // More objects than the original allows.
     assert_eq!(
         copy(read(), EffectLimits::new().count(11).until(until)).unwrap_err(),
-        Refusal::Widens(Widening::Count)
+        Refusal::Widens(Widening::Count(10))
     );
     // No end, where the original has one.
     assert_eq!(
         copy(read(), EffectLimits::new().count(10)).unwrap_err(),
-        Refusal::Widens(Widening::Until)
+        Refusal::Widens(Widening::Until(until))
     );
     // Narrow, but its time has already run out.
     assert_eq!(

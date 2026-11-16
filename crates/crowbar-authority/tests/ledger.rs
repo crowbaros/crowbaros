@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use crowbar_authority::{Damage, Decision, Event, Ledger, LedgerEntry, Outcome};
-use crowbar_broker::{Principal, TaskId};
+use crowbar_capability::{Principal, TaskId};
 
 mod common;
 use common::{LATER, NOW, Scratch};

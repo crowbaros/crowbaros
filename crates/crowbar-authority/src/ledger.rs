@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crowbar_broker::{Principal, Time};
+use crowbar_capability::{Principal, Time};
 use serde::{Deserialize, Serialize};
 
 use crate::authority::StandingId;

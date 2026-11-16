@@ -20,6 +20,8 @@ libc = "0.2"
 crowbar-state = { path = "crates/crowbar-state" }
 crowbar-labels = { path = "crates/crowbar-labels" }
 crowbar-broker = { path = "crates/crowbar-broker" }
+crowbar-capability = { path = "crates/crowbar-capability" }
+crowbar-gate = { path = "crates/crowbar-gate" }
 crowbar-authority = { path = "crates/crowbar-authority" }
 
 [profile.release]

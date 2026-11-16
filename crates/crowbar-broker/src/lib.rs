@@ -33,12 +33,9 @@
 //! handle, effect limits, principal.
 
 mod handle;
-mod limits;
-mod principal;
 
-pub use handle::{
-    Delegation, Exercised, Handle, HandleId, HandleTable, Issue, NotAnId, Refusal, Resource, ResourceKind, Right,
-    Rights, View,
+pub use crowbar_capability::{
+    Cost, EffectLimits, HandleId, Issue, NotAnId, Principal, Rate, Resource, ResourceKind, Right, Rights, TaskId, Time,
+    Widening,
 };
-pub use limits::{Cost, EffectLimits, Rate, Time, Widening};
-pub use principal::{Principal, TaskId};
+pub use handle::{Delegation, Exercised, Handle, HandleTable, Refusal, View};

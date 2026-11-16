@@ -1,117 +1,12 @@
 //! Handles and the broker's table of them.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::path::PathBuf;
-use std::str::FromStr;
 
-use crowbar_labels::{Compartment, LabelMark, ObjectId, Site};
-use serde::{Deserialize, Serialize};
-
-use crate::limits::{EffectLimits, Time, Widening};
-use crate::principal::{Principal, TaskId};
-
-/// The one thing a handle names. "Network" is never a resource: a handle
-/// names one host and port.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Resource {
-    /// A Data object, or a set of them, such as "this person's photos".
-    Data(BTreeSet<ObjectId>),
-    /// A path in a sandbox's view.
-    Path(PathBuf),
-    /// A device, by the name Base gives it.
-    Device(String),
-    /// One host and port the broker connects to.
-    Endpoint { host: Site, port: u16 },
-    /// A portal session, such as a file chosen in the powerbox.
-    Portal(String),
-    /// An operation of one service, carried out by its adapter.
-    Service(String),
-    /// A value the plan interpreter holds, named without being revealed.
-    Value(String),
-}
-
-/// The kind of resource a handle names. The table states it without naming
-/// the resource itself, which may carry a name a stranger chose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResourceKind {
-    Data,
-    Path,
-    Device,
-    Endpoint,
-    Portal,
-    Service,
-    Value,
-}
-
-impl Resource {
-    pub fn kind(&self) -> ResourceKind {
-        match self {
-            Resource::Data(_) => ResourceKind::Data,
-            Resource::Path(_) => ResourceKind::Path,
-            Resource::Device(_) => ResourceKind::Device,
-            Resource::Endpoint { .. } => ResourceKind::Endpoint,
-            Resource::Portal(_) => ResourceKind::Portal,
-            Resource::Service(_) => ResourceKind::Service,
-            Resource::Value(_) => ResourceKind::Value,
-        }
-    }
-}
-
-/// One operation a handle allows on its resource.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Right {
-    Read,
-    Write,
-    Create,
-    Exec,
-    Connect,
-}
-
-/// The rights a handle carries.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Rights(BTreeSet<Right>);
-
-impl Rights {
-    pub fn contains(&self, right: Right) -> bool {
-        self.0.contains(&right)
-    }
-
-    /// Whether every right here is in `other`.
-    pub fn is_subset(&self, other: &Rights) -> bool {
-        self.0.is_subset(&other.0)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = Right> + '_ {
-        self.0.iter().copied()
-    }
-}
-
-impl<const N: usize> From<[Right; N]> for Rights {
-    fn from(rights: [Right; N]) -> Self {
-        Rights(rights.into())
-    }
-}
-
-/// What the broker asks the table to issue.
-#[derive(Debug, Clone)]
-pub struct Issue {
-    /// The one principal that may use the handle.
-    pub holder: Principal,
-    pub resource: Resource,
-    pub rights: Rights,
-    pub limits: EffectLimits,
-    /// The label and mark of what the handle names. Reading through the
-    /// handle gives the reader both.
-    pub label_mark: LabelMark,
-    /// Whether the holder may pass a narrowed copy on.
-    pub delegable: bool,
-    /// Plain-language text from the manifest, for the person.
-    pub reason: String,
-}
+use crowbar_capability::{
+    EffectLimits, HandleId, Issue, Principal, Resource, ResourceKind, Right, Rights, TaskId, Time, Widening,
+};
+use crowbar_labels::{Compartment, LabelMark};
 
 /// A holder passing a handle on.
 #[derive(Debug)]
@@ -180,41 +75,6 @@ impl Handle {
 impl fmt::Debug for Handle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Handle").field(&self.id).finish()
-    }
-}
-
-/// The id of a handle, as the ledger and the Agent see it: 128 random bits,
-/// written as 32 hexadecimal digits. It names a handle for inspection and
-/// revocation, and nothing takes it to exercise one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HandleId(u128);
-
-impl fmt::Display for HandleId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:032x}", self.0)
-    }
-}
-
-/// The text is not an id: it is not 32 hexadecimal digits.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NotAnId;
-
-impl fmt::Display for NotAnId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("a handle id is 32 hexadecimal digits")
-    }
-}
-
-impl std::error::Error for NotAnId {}
-
-impl FromStr for HandleId {
-    type Err = NotAnId;
-
-    fn from_str(text: &str) -> Result<Self, NotAnId> {
-        if text.len() != 32 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(NotAnId);
-        }
-        u128::from_str_radix(text, 16).map(HandleId).map_err(|_| NotAnId)
     }
 }
 
@@ -295,18 +155,6 @@ impl fmt::Display for Refusal {
 }
 
 impl std::error::Error for Refusal {}
-
-impl fmt::Display for Right {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Right::Read => "read",
-            Right::Write => "write",
-            Right::Create => "create",
-            Right::Exec => "execute",
-            Right::Connect => "connect",
-        })
-    }
-}
 
 /// A handle the table let its holder use, with what the broker needs to
 /// carry out the operation.
@@ -510,7 +358,7 @@ impl HandleTable {
             return Err(Refusal::Expired(until));
         }
         let key = Key(random_128());
-        let id = HandleId(random_128());
+        let id = HandleId::from_bits(random_128());
         self.entries.insert(
             key,
             Entry {
