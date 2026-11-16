@@ -24,7 +24,7 @@
   6. The undo boundary, with the standing grant and standing rule a crossing needs, the rule for every source that marked the act.
   7. If the result is an ask: the ask rate.
 - **The undo boundary is a fixed table.** Each adapter operation declares whether it stays inside. An operation the table does not list crosses, and an egress always does.
-- **A use declares** which objects it affects, and its cost: a fixed amount, or "depends on a value", which asks. The gate checks the objects against every "which objects" limit that applies, and counts them against "how many". A use that affects no object counts as one operation.
+- **A use declares** which objects it affects, and its cost: a fixed amount, or "depends on a value", which asks. The gate checks the objects against the objects a Data handle names and against every "which objects" limit that applies, and counts them against "how many". A use that affects no object counts as one operation.
 - **A standing grant on a set of Data objects covers a handle on some of them.** Any other resource must be the same.
 - **Ask rate limits are constants for now.** A principal may have 1 ask open at a time and 10 an hour. The Agent and all its tasks together may have 30 an hour, and the asks that start tasks count. Over a limit, the gate refuses and names the limit and when its window resets. Nothing is queued.
 

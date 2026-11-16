@@ -3,6 +3,8 @@
 // Each test file is its own crate and uses only some of these.
 #![allow(dead_code)]
 
+use std::collections::BTreeSet;
+
 use crowbar_authority::{Authority, Change};
 use crowbar_capability::{Cost, EffectLimits, HandleId, Principal, Resource, Right, Rights, TaskId, Time};
 use crowbar_gate::{
@@ -40,13 +42,16 @@ pub fn personal() -> LabelMark {
     Origin::Typed.label_mark()
 }
 
-/// A live handle, number `n`, held by `holder`: read and write on two
-/// photos, personal, with no limits.
+/// The photos the handles in these tests name.
+pub const ALBUM: [&str; 5] = ["cat.jpg", "dog.jpg", "fox.jpg", "owl.jpg", "yak.jpg"];
+
+/// A live handle, number `n`, held by `holder`: read and write on the
+/// [`ALBUM`], personal, with no limits.
 pub fn handle(n: u128, holder: Principal) -> Presented {
     Presented {
         id: HandleId::from_bits(n),
         holder,
-        resource: Resource::Data([photo("cat.jpg"), photo("dog.jpg")].into()),
+        resource: Resource::Data(ALBUM.iter().map(|name| photo(name)).collect()),
         rights: Rights::from([Right::Read, Right::Write]),
         limits: EffectLimits::new(),
         label_mark: personal(),
@@ -56,21 +61,22 @@ pub fn handle(n: u128, holder: Principal) -> Presented {
     }
 }
 
-/// A use of the adapter operation `operation`, needing `right`, on the cat
-/// photo, at no cost.
+/// A use of the adapter operation `operation`, needing `right`, that
+/// affects no object, at no cost.
 pub fn using(operation: &str, right: Right) -> Use {
     Use {
         operation: operation.to_string(),
         right,
-        objects: [photo("cat.jpg")].into(),
+        objects: BTreeSet::new(),
         cost: UseCost::Fixed(Cost::cents(0)),
     }
 }
 
-/// Reading `objects` photos: inside the undo boundary.
-pub fn reading(objects: u64) -> Use {
+/// Reading the first `objects` photos of the [`ALBUM`]: inside the undo
+/// boundary.
+pub fn reading(objects: usize) -> Use {
     Use {
-        objects: (0..objects).map(|n| photo(&format!("{n}.jpg"))).collect(),
+        objects: ALBUM[..objects].iter().map(|name| photo(name)).collect(),
         ..using("data.read", Right::Read)
     }
 }

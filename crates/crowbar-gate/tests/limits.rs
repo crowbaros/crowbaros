@@ -191,6 +191,16 @@ fn reading_photo(name: &str) -> Use {
 }
 
 #[test]
+fn a_use_affects_only_the_objects_its_handle_names() {
+    let mut bench = Bench::new();
+    let held = handle(1, task("sort-photos"));
+    assert_eq!(
+        use_at(&mut bench, &held, &reading_photo("bird.jpg"), NOW),
+        refused(GateRule::Limits, Limit::Objects)
+    );
+}
+
+#[test]
 fn a_use_affects_only_the_objects_its_handle_and_its_original_allow() {
     let mut bench = Bench::new();
     let original = handle(1, task("sort-photos"));

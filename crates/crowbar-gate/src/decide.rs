@@ -217,6 +217,11 @@ fn use_of(
         cost,
         at: now,
     };
+    if let Resource::Data(named) = &handle.resource
+        && !using.objects.is_subset(named)
+    {
+        return Err(Refuse::with(GateRule::Limits, Limit::Objects));
+    }
     if !affects_only_allowed(&handle.limits, using) {
         return Err(Refuse::with(GateRule::Limits, Limit::Objects));
     }
