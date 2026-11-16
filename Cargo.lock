@@ -47,7 +47,7 @@ dependencies = [
 name = "crowbar-authority"
 version = "0.1.0"
 dependencies = [
- "crowbar-broker",
+ "crowbar-capability",
  "crowbar-labels",
  "serde",
  "serde_json",
@@ -58,13 +58,32 @@ dependencies = [
 name = "crowbar-broker"
 version = "0.1.0"
 dependencies = [
+ "crowbar-authority",
+ "crowbar-capability",
+ "crowbar-gate",
+ "crowbar-labels",
+]
+
+[[package]]
+name = "crowbar-capability"
+version = "0.1.0"
+dependencies = [
  "crowbar-labels",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "crowbar-gate"
 version = "0.1.0"
+dependencies = [
+ "crowbar-authority",
+ "crowbar-capability",
+ "crowbar-labels",
+ "serde",
+ "serde_json",
+ "sha2",
+]
 
 [[package]]
 name = "crowbar-labels"

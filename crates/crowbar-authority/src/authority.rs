@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crowbar_broker::{EffectLimits, Resource, Rights, Time};
+use crowbar_capability::{EffectLimits, Resource, Rights, Time};
 use crowbar_labels::{Label, MarkSource, Site};
 use serde::{Deserialize, Serialize};
 
@@ -184,6 +184,18 @@ impl Authority {
             Some(contents) => Authority::replay(contents, &path),
             None => Err(Error::Missing { path }),
         }
+    }
+
+    /// The authority that `changes` add up to, held in memory and kept
+    /// nowhere: for a rehearsal on a simulated clock, and for tests. Each
+    /// change is admitted as it would be when read from a record, so one the
+    /// changes before it do not admit is refused.
+    pub fn from_changes(changes: impl IntoIterator<Item = (Time, Change)>) -> Result<Authority, Error> {
+        let mut authority = Authority::default();
+        for (seq, (time, entry)) in (1..).zip(changes) {
+            authority.record(Recorded { seq, time, entry })?;
+        }
+        Ok(authority)
     }
 
     /// The authority that the changes in `contents` add up to.

@@ -3,8 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
-use crowbar_authority::{Damage, Decision, Event, Ledger, LedgerEntry, Outcome};
-use crowbar_broker::{Principal, TaskId};
+use crowbar_authority::{Damage, Decision, Event, Keyed, Ledger, LedgerEntry, Outcome};
+use crowbar_capability::{Ask, AskWhy, Cost, GateRule, HandleId, IdempotencyKey, Limit, Principal, Refuse, TaskId};
 
 mod common;
 use common::{LATER, NOW, Scratch};
@@ -18,24 +18,24 @@ fn task() -> Principal {
 }
 
 fn entry(operation: &str, event: Event) -> LedgerEntry {
-    LedgerEntry {
-        principal: task(),
-        operation: operation.to_string(),
-        event,
-    }
+    LedgerEntry::new(task(), operation, event)
 }
 
 fn refused() -> LedgerEntry {
     entry(
         "http.get",
-        Event::Decided(Decision::Refused {
-            rule: "clearance".to_string(),
-        }),
+        Event::Decided(Decision::Refused(Refuse::with(
+            GateRule::Clearance,
+            Limit::Clearance(crowbar_labels::Label::Public),
+        ))),
     )
 }
 
 fn asked() -> LedgerEntry {
-    entry("mail.send", Event::Decided(Decision::Asked))
+    entry(
+        "mail.send",
+        Event::Decided(Decision::Asked(Ask { why: AskWhy::Crosses })),
+    )
 }
 
 fn sent() -> LedgerEntry {
@@ -67,6 +67,33 @@ fn decisions_and_effects_are_read_back_in_the_order_they_happened() {
     );
     assert_eq!(history.damaged, vec![]);
     assert_eq!(history.unfinished_write, None);
+}
+
+#[test]
+fn a_use_is_read_back_with_its_handle_original_task_objects_cost_and_key() {
+    let dir = Scratch::new();
+    let used = LedgerEntry {
+        handle: Some("0123456789abcdef0123456789abcdef".parse::<HandleId>().expect("an id")),
+        original: Some("fedcba9876543210fedcba9876543210".parse::<HandleId>().expect("an id")),
+        task: Some(TaskId::new("reply-to-landlord")),
+        objects: Some(3),
+        cost: Some(Cost::cents(25)),
+        key: Some(Keyed {
+            key: IdempotencyKey::new("send-1"),
+            digest: "ab".repeat(32),
+        }),
+        ..entry("mail.send", Event::Decided(Decision::Allowed { under: vec![] }))
+    };
+    let mut ledger = Ledger::open(dir.path()).expect("opened");
+    ledger.append(&used, NOW).expect("recorded");
+    ledger
+        .append(&entry("mail.send", Event::AskClosed), LATER)
+        .expect("recorded");
+    drop(ledger);
+
+    let history = Ledger::read(dir.path()).expect("read");
+    let read: Vec<_> = history.entries.iter().map(|recorded| &recorded.entry).collect();
+    assert_eq!(read, vec![&used, &entry("mail.send", Event::AskClosed)]);
 }
 
 #[test]

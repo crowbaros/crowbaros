@@ -380,6 +380,14 @@ flowchart LR
   changes them.
 - **It is in the trusted base**, so it must stay small enough to test completely.
 
+Built so far, in [`crates/crowbar-gate`](../../crates/crowbar-gate/src/lib.rs): the
+decision on each issue, delegation, use, and egress, as a pure function of
+authority, the use count, the operation, and the time; dry runs; one closed list
+of reasons; the use count and idempotency keys, rebuilt from the ledger; and the
+`Allowed` that stands in for a signature until the gate has a process of its own.
+[ADR 0021](../adr/0021-the-gate-decides-from-metadata-and-counts-from-the-ledger.md)
+records the order of the checks and what the gate decides from.
+
 ### The monitor
 
 1. **Separate principal.** It has its own identity, it holds almost no authority,
@@ -725,8 +733,12 @@ generation.
 Built so far, as the `Ledger` in
 [`crates/crowbar-authority`](../../crates/crowbar-authority/src/lib.rs): an entry
 for a gate decision or an effect, with the principal, the operation, and the
-grant or rule it crossed under. Entries are chained by hash and only ever added.
-A line that goes bad is reported by number, and the rest is still read.
+grant or rule it crossed under. An entry for a decision also names the handle,
+its original, the task, how many objects it affected, its cost, and its
+idempotency key, so the gate rebuilds its count of uses from the ledger when it
+starts. A refusal names its rule and the limit that applied. Entries are chained
+by hash and only ever added. A line that goes bad is reported by number, and the
+rest is still read.
 
 ```mermaid
 sequenceDiagram
@@ -868,9 +880,11 @@ recovery action.
    ones), and how small can it be?
 2. **Monitor with no model in the fleet.** Is there simply no monitor, or may a
    cloud model review actions with the private values removed?
-3. **Deriving the boundary.** How does the gate know that an effect has a tested
-   undo and what its window is? Does each broker interface declare it, and who
-   tests the declaration?
+3. **Deriving the boundary.** Each adapter operation declares in a fixed table
+   whether it stays inside, and one the table does not list crosses
+   ([ADR 0021](../adr/0021-the-gate-decides-from-metadata-and-counts-from-the-ledger.md)).
+   Still open: how the gate learns an undo's window, and how the checks and
+   rehearsal work tests each declaration.
 4. **Showing effect limits.** When an ad hoc task is authorized at its start,
    how does the person see its limits at a glance in fixed words, and what are
    the units for "how many" across different kinds of objects?

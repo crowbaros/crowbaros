@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use crowbar_authority::{Authority, AuthorityStore, Damage, Error, Grant, Party, Status};
-use crowbar_broker::EffectLimits;
+use crowbar_capability::EffectLimits;
 use crowbar_labels::{Label, Site};
 
 mod common;

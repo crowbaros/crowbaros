@@ -21,7 +21,11 @@
 //! - A [`Party`] with no recorded clearance has the default for its kind. A
 //!   clearance the person lowered is a record, so it stays lowered.
 //! - The [`Ledger`] is the history of gate decisions and of effects. It is
-//!   only ever added to.
+//!   only ever added to. An entry for a decision names enough for the gate
+//!   to rebuild its count of uses from it: the handle, its original, the
+//!   task, the objects, the cost, and the idempotency key.
+//! - [`Authority::from_changes`] makes authority in memory, for a rehearsal
+//!   on a simulated clock and for tests. It is admitted as a record is.
 //!
 //! Both are kept the same way, in a file that is only appended to. Each
 //! entry carries a hash of itself and of the entry before it, and is on disk
@@ -53,7 +57,7 @@
 //! - the apply engine's history of applies and rollbacks, which stays in its
 //!   Milestone 1 file.
 //!
-//! Decisions: ADR 0003, ADR 0011, and ADR 0012 in `docs/adr/`. Design:
+//! Decisions: ADR 0003, ADR 0011, ADR 0012, and ADR 0021 in `docs/adr/`. Design:
 //! `docs/architecture/gate-monitor-and-autonomy.md`, "Standing rules and
 //! standing grants" and "The ledger". Scope: `docs/milestones/milestone-2.md`.
 //! Glossary: authority, standing grant, standing rule, clearance, ledger.
@@ -66,4 +70,4 @@ mod ledger;
 pub use authority::{Authority, AuthorityStore, Change, Grant, Holder, Party, Rule, StandingId, Status};
 pub use chain::Recorded;
 pub use error::{Damage, Error};
-pub use ledger::{Decision, Event, Ledger, LedgerEntry, LedgerHistory, Outcome};
+pub use ledger::{Decision, Event, Keyed, Ledger, LedgerEntry, LedgerHistory, Outcome};

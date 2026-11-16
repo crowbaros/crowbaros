@@ -10,7 +10,7 @@ use crowbar_broker::{
 use crowbar_labels::{Category, Compartment, Label, MailAccount, MarkSource, Origin};
 
 mod common;
-use common::{NOW, personal, photos_for, task};
+use common::{NOW, allow, delegate, personal, photos_for, task};
 
 fn tool() -> Principal {
     Principal::Tool("photo-sorter".to_string())
@@ -21,14 +21,15 @@ fn table_with(delegable: bool) -> (HandleTable, Handle) {
     let mut table = HandleTable::new();
     let mut issue = photos_for(task("sort-photos"));
     issue.delegable = delegable;
-    let original = table.issue(issue, NOW).expect("issued");
+    let original = table.issue(allow(&issue), NOW).expect("issued");
     (table, original)
 }
 
 /// `from`, in a compartment that has read nothing, passes `handle` to `to` with read only and no
 /// limits.
 fn pass(table: &mut HandleTable, handle: &Handle, from: &Principal, to: Principal) -> Result<Handle, Refusal> {
-    table.delegate(
+    delegate(
+        table,
         handle,
         Delegation {
             from,
@@ -75,10 +76,11 @@ fn a_copy_never_carries_more_rights_or_wider_limits_than_the_original() {
     let mut issue = photos_for(task("sort-photos"));
     issue.delegable = true;
     issue.limits = EffectLimits::new().count(10).until(until);
-    let original = table.issue(issue, NOW).expect("issued");
+    let original = table.issue(allow(&issue), NOW).expect("issued");
 
     let mut copy = |rights: Rights, limits: EffectLimits| {
-        table.delegate(
+        delegate(
+            &mut table,
             &original,
             Delegation {
                 from: &task("sort-photos"),
@@ -104,12 +106,12 @@ fn a_copy_never_carries_more_rights_or_wider_limits_than_the_original() {
     // More objects than the original allows.
     assert_eq!(
         copy(read(), EffectLimits::new().count(11).until(until)).unwrap_err(),
-        Refusal::Widens(Widening::Count)
+        Refusal::Widens(Widening::Count(10))
     );
     // No end, where the original has one.
     assert_eq!(
         copy(read(), EffectLimits::new().count(10)).unwrap_err(),
-        Refusal::Widens(Widening::Until)
+        Refusal::Widens(Widening::Until(until))
     );
     // Narrow, but its time has already run out.
     assert_eq!(
@@ -138,19 +140,19 @@ fn a_copy_carries_the_label_and_mark_of_the_compartment_that_passed_it() {
     let mut held = Compartment::fresh();
     held.read(&mail.label_mark()).expect("a task reads its mail");
 
-    let copy = table
-        .delegate(
-            &original,
-            Delegation {
-                from: &task("sort-photos"),
-                compartment: &held,
-                to: tool(),
-                rights: Rights::from([Right::Read]),
-                limits: EffectLimits::new(),
-            },
-            NOW,
-        )
-        .expect("delegated");
+    let copy = delegate(
+        &mut table,
+        &original,
+        Delegation {
+            from: &task("sort-photos"),
+            compartment: &held,
+            to: tool(),
+            rights: Rights::from([Right::Read]),
+            limits: EffectLimits::new(),
+        },
+        NOW,
+    )
+    .expect("delegated");
 
     let shown = table.inspect(&copy.id()).expect("the table knows the copy");
     // Personal photos joined with private mail is private, in messages.

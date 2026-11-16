@@ -176,6 +176,14 @@ _Avoid_: Quota, envelope, scope (on its own)
 The deterministic rules engine that checks each broker operation, and each commit of staged writes, against handles, effect limits, standing grants, and standing rules. It is the only thing that allows an action.
 _Avoid_: Approver, policy engine
 
+**Dry run**:
+Asking the gate what it would decide for an operation without carrying it out. The answer is the decision the real operation would get, and it changes nothing.
+_Avoid_: Preflight, simulation, what-if
+
+**Idempotency key**:
+A key a task attaches to an operation so that the operation is decided and carried out once. A repeat with the same key gets the first decision again. The same key on a different operation is refused.
+_Avoid_: Request ID, nonce
+
 **Monitor**:
 A model, isolated from the Agent, that reviews actions against the person's intents and the task. It can pause a task and raise a surprise; it can never allow.
 _Avoid_: Approver, reviewer, guard

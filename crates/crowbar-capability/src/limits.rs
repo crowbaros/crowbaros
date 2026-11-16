@@ -23,7 +23,7 @@ impl Time {
 }
 
 /// An amount of money, in hundredths of the person's currency.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Cost(u64);
 
@@ -165,28 +165,36 @@ impl EffectLimits {
         self.rate
     }
 
-    /// Whether these limits allow nothing `bound` does not.
+    /// Whether these limits allow nothing `bound` does not. Where they do,
+    /// the error names the dimension and the bound's limit in it.
     pub fn within(&self, bound: &EffectLimits) -> Result<(), Widening> {
         if !fits(&self.objects, &bound.objects, |limit, bound| limit.is_subset(bound)) {
             return Err(Widening::Objects);
         }
-        if !fits(&self.count, &bound.count, |limit, bound| limit <= bound) {
-            return Err(Widening::Count);
+        if let (false, Some(count)) = (
+            fits(&self.count, &bound.count, |limit, bound| limit <= bound),
+            bound.count,
+        ) {
+            return Err(Widening::Count(count));
         }
-        if !fits(&self.until, &bound.until, |limit, bound| limit <= bound) {
-            return Err(Widening::Until);
+        if let (false, Some(until)) = (
+            fits(&self.until, &bound.until, |limit, bound| limit <= bound),
+            bound.until,
+        ) {
+            return Err(Widening::Until(until));
         }
-        if !fits(&self.cost, &bound.cost, |limit, bound| limit <= bound) {
-            return Err(Widening::Cost);
+        if let (false, Some(cost)) = (fits(&self.cost, &bound.cost, |limit, bound| limit <= bound), bound.cost) {
+            return Err(Widening::Cost(cost));
         }
-        if !fits(&self.rate, &bound.rate, Rate::is_within) {
-            return Err(Widening::Rate);
+        if let (false, Some(rate)) = (fits(&self.rate, &bound.rate, Rate::is_within), bound.rate) {
+            return Err(Widening::Rate(rate));
         }
         Ok(())
     }
 
-    /// The end of the time limit, if it has come by `now`.
-    pub(crate) fn ended_by(&self, now: Time) -> Option<Time> {
+    /// The end of the time limit, if it has come by `now`: nothing is
+    /// affected at or after it.
+    pub fn ended_by(&self, now: Time) -> Option<Time> {
         self.until.filter(|until| now >= *until)
     }
 }
@@ -201,29 +209,35 @@ fn fits<T>(limit: &Option<T>, bound: &Option<T>, narrower: impl Fn(&T, &T) -> bo
     }
 }
 
-/// The dimension in which a limit set allows more than its bound.
+/// The dimension in which a limit set allows more than its bound, with the
+/// bound's limit in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Widening {
     /// A right the bound does not carry. Rights belong to a handle, not to
     /// effect limits, and widen the same way.
     Rights,
     Objects,
-    Count,
-    Until,
-    Cost,
-    Rate,
+    Count(u64),
+    Until(Time),
+    Cost(Cost),
+    Rate(Rate),
 }
 
 impl fmt::Display for Widening {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Widening::Rights => "a right the original does not carry",
-            Widening::Objects => "objects beyond the original's",
-            Widening::Count => "more than the original's count",
-            Widening::Until => "a later end than the original's",
-            Widening::Cost => "more than the original's cost",
-            Widening::Rate => "a rate the original does not allow",
-        })
+        match self {
+            Widening::Rights => f.write_str("a right the original does not carry"),
+            Widening::Objects => f.write_str("objects beyond the original's"),
+            Widening::Count(count) => write!(f, "more than the original's count of {count}"),
+            Widening::Until(until) => write!(f, "a later end than the original's, at {}", until.as_secs()),
+            Widening::Cost(cost) => write!(f, "more than the original's cost of {} cents", cost.as_cents()),
+            Widening::Rate(rate) => write!(
+                f,
+                "a rate the original's {} in {} seconds does not allow",
+                rate.count(),
+                rate.window_secs()
+            ),
+        }
     }
 }
 

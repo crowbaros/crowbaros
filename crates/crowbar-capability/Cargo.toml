@@ -1,0 +1,14 @@
+[package]
+name = "crowbar-capability"
+description = "The terms the broker, the gate, and the ledger share: principals, resources, rights, effect limits, handle ids, and the gate's reasons"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+crowbar-labels.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
