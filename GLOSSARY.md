@@ -160,6 +160,14 @@ _Avoid_: Root, sudo, admin mode
 An unforgeable, scoped, expiring right for one principal to use one resource or one value. It names the thing without revealing it.
 _Avoid_: Permission, token, capability (when the specific object is meant)
 
+**Delegable**:
+Said of a handle its holder may pass on as a copy. The broker decides it at issuance. A copy is never delegable, and nor is a handle the Agent holds.
+_Avoid_: Transferable, shareable
+
+**Copy**:
+A handle a holder passed on from a delegable handle, its **original**. It is narrowed to the original's rights and effect limits or fewer, its uses count against the original's limits, it carries the label and mark of the compartment that passed it on, and it ends when the original ends.
+_Avoid_: Sub-handle, child handle, delegated token
+
 **Effect limits**:
 What a task or a grant may affect: which objects, how many, for how long, at what cost, and how often.
 _Avoid_: Quota, envelope, scope (on its own)
