@@ -237,6 +237,11 @@ impl Client {
         }
     }
 
+    /// The highest global number this client was told about.
+    pub fn last_global(&self) -> u32 {
+        self.state.globals.iter().map(|global| global.name).max().unwrap_or(0)
+    }
+
     /// The global numbers up to `last` that this client was not told about.
     /// Each is either unused or a global hidden from this client.
     pub fn unadvertised(&self, last: u32) -> Vec<u32> {
@@ -247,18 +252,29 @@ impl Client {
 }
 
 /// Asks for an interface at every global number that a client was not told
-/// about, up to `past` numbers beyond the last one it was. Each guess is a
-/// new connection from `connect`, because a refusal ends one. Returns the
+/// about, up to `past` numbers beyond the last one it was. Returns the
 /// numbers at which the compositor made the object.
+///
+/// A global hidden from this client can have a number beyond that range, so
+/// this finds only what is hidden among, or just after, the globals the
+/// client can see. A caller that knows how far the numbers go uses
+/// [`guess_up_to`].
 pub fn guess_everywhere(
     connect: &dyn Fn() -> Result<Client, Error>,
     interface: &str,
     past: u32,
 ) -> Result<Vec<u32>, Error> {
-    let seen = connect()?;
-    let last = seen.state.globals.iter().map(|global| global.name).max().unwrap_or(0) + past;
+    let last = connect()?.last_global() + past;
+    guess_up_to(connect, interface, last)
+}
+
+/// Asks for an interface at every global number up to `last` that a client
+/// was not told about. Each guess is a new connection from `connect`, because
+/// a refusal ends one. Returns the numbers at which the compositor made the
+/// object.
+pub fn guess_up_to(connect: &dyn Fn() -> Result<Client, Error>, interface: &str, last: u32) -> Result<Vec<u32>, Error> {
     let mut bound = Vec::new();
-    for name in seen.unadvertised(last) {
+    for name in connect()?.unadvertised(last) {
         if connect()?.guess(name, interface, 1)? == Guess::Bound {
             bound.push(name);
         }

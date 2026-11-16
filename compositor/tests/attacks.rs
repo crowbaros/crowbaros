@@ -54,6 +54,7 @@ use smithay::{
             data_control::v1::server::zwlr_data_control_manager_v1::ZwlrDataControlManagerV1,
             export_dmabuf::v1::server::zwlr_export_dmabuf_manager_v1::ZwlrExportDmabufManagerV1,
             foreign_toplevel::v1::server::zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1,
+            layer_shell::v1::server::zwlr_layer_shell_v1::ZwlrLayerShellV1,
             screencopy::v1::server::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
             virtual_pointer::v1::server::zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1,
         },
@@ -149,10 +150,19 @@ impl<'a> EveryClient<'a> {
     }
 }
 
-/// Asks for an interface at every global number the client was not told
-/// about. Returns the numbers at which the compositor made the object.
-fn guess_everywhere(connect: &dyn Fn() -> Client, interface: &str) -> Vec<u32> {
-    crowbar_probe::guess_everywhere(&|| Ok(connect()), interface, 8).unwrap()
+/// Asks for an interface at every global number up to `last` that the client
+/// was not told about. Returns the numbers at which the compositor made the
+/// object.
+fn guess_up_to(connect: &dyn Fn() -> Client, interface: &str, last: u32) -> Vec<u32> {
+    crowbar_probe::guess_up_to(&|| Ok(connect()), interface, last).unwrap()
+}
+
+/// Adds one more global, which the shell is offered, and returns its number.
+/// Global numbers go up, so every global made before it has a lower one, and
+/// a guess at each number up to this one reaches them all.
+fn last_number(compositor: &Compositor, binds: &Arc<AtomicUsize>) -> u32 {
+    plant!(compositor, binds, [ZwlrLayerShellV1]);
+    compositor.shell().last_global()
 }
 
 /// ADR 0020, attack 1: a client asks for every global in the "Nobody" row,
@@ -164,6 +174,7 @@ fn guess_everywhere(connect: &dyn Fn() -> Client, interface: &str) -> Vec<u32> {
 fn adr_0020_attack_1_no_client_gets_a_global_from_the_nobody_row_or_one_with_no_row() {
     let compositor = Compositor::start();
     let binds = Arc::new(AtomicUsize::new(0));
+    let before = compositor.shell().last_global();
     let nobody = plant!(
         compositor,
         binds,
@@ -200,6 +211,13 @@ fn adr_0020_attack_1_no_client_gets_a_global_from_the_nobody_row_or_one_with_no_
     assert_eq!(nobody, policy::NOBODY);
     // The spike offered the first of these. The table has no row for either.
     let no_row = plant!(compositor, binds, [ZxdgOutputManagerV1, WpSinglePixelBufferManagerV1]);
+    let last = last_number(&compositor, &binds);
+    // The guesses below reach the number of every planted global.
+    let planted = u32::try_from(nobody.len() + no_row.len()).unwrap();
+    assert!(
+        last > before + planted,
+        "the planted globals have numbers past {last}, where the guesses stop"
+    );
 
     let clients = EveryClient::of(&compositor);
     for (who, connect) in clients.each() {
@@ -210,7 +228,7 @@ fn adr_0020_attack_1_no_client_gets_a_global_from_the_nobody_row_or_one_with_no_
                 "{who} was offered {interface}"
             );
             assert_eq!(
-                guess_everywhere(&*connect, interface),
+                guess_up_to(&*connect, interface, last),
                 [0; 0],
                 "{who} bound {interface} by guessing its number"
             );
@@ -236,7 +254,7 @@ fn a_planted_global_with_a_row_is_bound_by_the_client_the_row_names() {
     let warden = || compositor.warden();
     // A client that connected first was not told about the new global, so
     // for that client its number is one to guess.
-    let last = before.state.globals.iter().map(|global| global.name).max().unwrap() + 8;
+    let last = last_number(&compositor, &binds);
     let numbers = before.unadvertised(last);
 
     let bound: Vec<u32> = numbers
@@ -248,7 +266,7 @@ fn a_planted_global_with_a_row_is_bound_by_the_client_the_row_names() {
     assert_eq!(bound.len(), 1, "the compartment did not bind the global its row offers");
     assert_eq!(binds.load(Ordering::SeqCst), 1);
     assert_eq!(
-        guess_everywhere(&warden, cursor_shape),
+        guess_up_to(&warden, cursor_shape, last),
         [0; 0],
         "the Warden bound a compartment's global"
     );

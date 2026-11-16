@@ -372,8 +372,13 @@ def run_checks(ev, built):
     ev.log("== the Warden stops the compartment and lets go of its listener")
     # Every process of the compartment ends, and with the stand-in the listener.
     ev.run("pkill -x crowbar-probe; sleep 1; true")
-    stopped = ev.run(f"{AS_CLIENT} timeout 3 crowbar-probe globals 2>&1 || echo REFUSED")
-    ev.check("the listener of a stopped compartment accepts nothing", "REFUSED" in stopped)
+    # The socket is still there, so it is the compositor that accepts nothing.
+    # The probe has to say so itself: a probe that timed out says nothing.
+    stopped = ev.run(f"test -S {LISTENER} && echo the socket is still there; "
+                     f"{AS_CLIENT} timeout 3 crowbar-probe globals 2>&1; echo exit $?", check=False)
+    ev.check("the listener of a stopped compartment accepts nothing",
+             "the socket is still there" in stopped
+             and "Could not find wayland compositor" in stopped and "exit 1" in stopped)
 
 
 if __name__ == "__main__":

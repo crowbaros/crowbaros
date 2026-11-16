@@ -83,7 +83,19 @@ impl State {
             root = parent;
         }
         let mut outputs = match self.window_for(&root) {
-            Some(window) => self.space.outputs_for_element(&window),
+            Some(window) => {
+                // The outputs that showed the window before this change, and
+                // the ones that show it now. A window can grow onto an output
+                // or shrink off one, and the space only learns of it here.
+                let mut outputs = self.space.outputs_for_element(&window);
+                self.space.refresh();
+                for output in self.space.outputs_for_element(&window) {
+                    if !outputs.contains(&output) {
+                        outputs.push(output);
+                    }
+                }
+                outputs
+            }
             None => self
                 .outputs()
                 .filter(|output| {

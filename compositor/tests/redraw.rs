@@ -5,7 +5,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{Compositor, FRAME};
+use common::{Compositor, FRAME, OUTPUT_SIZE};
 
 const WHITE: u32 = 0xffff_ffff;
 const RED: u32 = 0xffff_0000;
@@ -112,6 +112,27 @@ fn a_part_of_a_window_that_is_destroyed_is_drawn_away() {
     client.roundtrip().unwrap();
 
     assert_eq!(compositor.wait_until_still().0, frames + 1);
+}
+
+/// A window that grows across the edge of its output has to be drawn on the
+/// output it grew onto, and drawn away there when it shrinks back.
+#[test]
+fn a_window_that_grows_onto_another_output_is_drawn_on_both() {
+    let compositor = Compositor::start();
+    compositor.with(|state| {
+        state.add_output("TEST-2", OUTPUT_SIZE, 60_000);
+    });
+    let (mut client, _listener) = compositor.compartment("c1");
+    let window = client.open_toplevel("grows", "test.grows", (300, 200), WHITE).unwrap();
+    let (frames, _) = compositor.wait_until_still();
+
+    // The first output is 1280 wide, and the second is to its right.
+    client.redraw(&window, (1400, 200), RED).unwrap();
+    let grown = compositor.wait_until_still().0;
+    assert_eq!(grown, frames + 2, "one frame on each output");
+
+    client.redraw(&window, (300, 200), WHITE).unwrap();
+    assert_eq!(compositor.wait_until_still().0, grown + 2, "one frame on each output");
 }
 
 /// The pointer is not drawn by the test backend, so moving it changes

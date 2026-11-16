@@ -12,19 +12,30 @@
 //!
 //! Nothing here reads a flag or an environment variable, and there is no
 //! third way.
+//!
+//! A listener that cannot accept, as when the compositor has no descriptor
+//! left, is left alone for [`ACCEPT_RETRY`] and then tried again. It does not
+//! end the compositor.
 
 use std::{
+    cell::Cell,
     fs, io,
     os::unix::{
         fs::PermissionsExt,
         net::{UnixListener, UnixStream},
     },
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
+    time::Duration,
 };
 
 use smithay::{
-    reexports::calloop::{Interest, Mode, PostAction, generic::Generic},
+    reexports::calloop::{
+        EventSource, Interest, Mode, Poll, PostAction, Readiness, RegistrationToken, Token, TokenFactory,
+        generic::Generic,
+        timer::{TimeoutAction, Timer},
+    },
     wayland::security_context::{SecurityContext, SecurityContextHandler, SecurityContextListenerSource},
 };
 
@@ -41,6 +52,15 @@ pub struct TrustedPart {
     /// The only user ID the compositor accepts on that socket.
     pub uid: u32,
 }
+
+/// How long a listener is left alone after it could not accept. The
+/// connection it could not take stays ready, so without the wait the
+/// compositor would try again at once, for as long as the cause lasts.
+const ACCEPT_RETRY: Duration = Duration::from_secs(1);
+
+/// Where a listener's place in the event loop is kept, for the listener's
+/// own callback to name it. It is set once the listener is in the loop.
+type OwnToken = Rc<Cell<Option<RegistrationToken>>>;
 
 /// The two trusted parts that are Wayland clients.
 #[derive(Clone, Debug)]
@@ -68,7 +88,10 @@ impl State {
         fs::set_permissions(&part.socket, fs::Permissions::from_mode(0o660))?;
         listener.set_nonblocking(true)?;
         let uid = part.uid;
-        self.loop_handle
+        let own = OwnToken::default();
+        let token = own.clone();
+        let registered = self
+            .loop_handle
             .insert_source(
                 Generic::new(listener, Interest::READ, Mode::Level),
                 move |_, listener, state| {
@@ -78,7 +101,7 @@ impl State {
                             Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
                             Err(error) => {
                                 tracing::warn!(%error, ?identity, "could not accept a connection");
-                                break;
+                                return Ok(state.accept_again_later(&token));
                             }
                         }
                     }
@@ -86,7 +109,31 @@ impl State {
                 },
             )
             .map_err(|error| io::Error::other(error.to_string()))?;
+        own.set(Some(registered));
         Ok(())
+    }
+
+    /// Leaves a listener that could not accept alone for [`ACCEPT_RETRY`].
+    /// Returns what the listener's callback tells the event loop.
+    fn accept_again_later(&mut self, listener: &OwnToken) -> PostAction {
+        let Some(token) = listener.get() else {
+            return PostAction::Continue;
+        };
+        let timer = Timer::from_duration(ACCEPT_RETRY);
+        let waiting = self.loop_handle.insert_source(timer, move |_, _, state| {
+            if let Err(error) = state.loop_handle.enable(&token) {
+                tracing::warn!(%error, "could not listen again");
+            }
+            TimeoutAction::Drop
+        });
+        match waiting {
+            Ok(_) => PostAction::Disable,
+            // With no timer to end the wait, the listener goes on at once.
+            Err(error) => {
+                tracing::warn!(%error, "could not wait before accepting again");
+                PostAction::Continue
+            }
+        }
     }
 
     fn accept_trusted(&mut self, stream: UnixStream, uid: u32, identity: &Identity) {
@@ -126,8 +173,10 @@ impl SecurityContextHandler for State {
     /// The Warden registered a listener for one compartment. Returning
     /// without keeping `source` closes the listener, so it accepts nothing.
     fn context_created(&mut self, source: SecurityContextListenerSource, context: SecurityContext) {
-        // The table offers the security context manager to the Warden alone.
-        // This is the same check again, where the listener is taken.
+        // The table offers the security context manager to the Warden alone,
+        // so no other client can reach this while the table holds. This is
+        // the same check again, where the listener is taken, and no test can
+        // reach its refusal from outside.
         let from_warden = self
             .display_handle
             .backend_handle()
@@ -150,11 +199,70 @@ impl SecurityContextHandler for State {
         self.compartments.retain(|known| known.strong_count() > 0);
         self.compartments.push(Arc::downgrade(&compartment));
         tracing::info!(principal = %compartment.principal(), compartment = %compartment.id(), "compartment listener registered");
-        let inserted = self.loop_handle.insert_source(source, move |stream, _, state| {
-            state.accept(stream, Identity::Compartment(compartment.clone()));
-        });
-        if let Err(error) = inserted {
-            tracing::warn!(%error, "could not listen for a compartment");
+        let own = OwnToken::default();
+        let token = own.clone();
+        let inserted = self
+            .loop_handle
+            .insert_source(CompartmentListener(source), move |accepted, _, state| match accepted {
+                Ok(stream) => {
+                    state.accept(stream, Identity::Compartment(compartment.clone()));
+                    PostAction::Continue
+                }
+                Err(error) => {
+                    tracing::warn!(%error, compartment = %compartment.id(), "could not accept a connection");
+                    state.accept_again_later(&token)
+                }
+            });
+        match inserted {
+            Ok(registered) => own.set(Some(registered)),
+            Err(error) => tracing::warn!(%error, "could not listen for a compartment"),
         }
+    }
+}
+
+/// A compartment's listener. Smithay's source ends the event loop, and with
+/// it the compositor, when it cannot accept. This one hands the error to its
+/// callback, which says what the loop does with the listener.
+struct CompartmentListener(SecurityContextListenerSource);
+
+impl EventSource for CompartmentListener {
+    type Event = io::Result<UnixStream>;
+    type Metadata = ();
+    type Ret = PostAction;
+    type Error = io::Error;
+
+    fn process_events<F: FnMut(Self::Event, &mut ()) -> PostAction>(
+        &mut self,
+        readiness: Readiness,
+        token: Token,
+        mut callback: F,
+    ) -> io::Result<PostAction> {
+        let processed = self.0.process_events(readiness, token, |stream, _| {
+            callback(Ok(stream), &mut ());
+        });
+        match processed {
+            Ok(action) => Ok(action),
+            Err(error) => Ok(callback(Err(error), &mut ())),
+        }
+    }
+
+    fn register(
+        &mut self,
+        poll: &mut Poll,
+        token_factory: &mut TokenFactory,
+    ) -> smithay::reexports::calloop::Result<()> {
+        self.0.register(poll, token_factory)
+    }
+
+    fn reregister(
+        &mut self,
+        poll: &mut Poll,
+        token_factory: &mut TokenFactory,
+    ) -> smithay::reexports::calloop::Result<()> {
+        self.0.reregister(poll, token_factory)
+    }
+
+    fn unregister(&mut self, poll: &mut Poll) -> smithay::reexports::calloop::Result<()> {
+        self.0.unregister(poll)
     }
 }

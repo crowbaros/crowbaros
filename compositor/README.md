@@ -44,6 +44,11 @@ are not built, and each waits for its slice:
 - **Display settings.** Every output runs in the mode its monitor prefers, at
   scale 1.
 - **Clients' cursor images.** On a TTY the pointer is a white square.
+- **A limit on what one compartment can make the compositor hold.** Every
+  connection and every buffer costs the compositor a descriptor, and nothing
+  caps them. A compartment that uses them all up does not end the compositor,
+  but until the Warden stops that compartment the compositor can accept no
+  new client.
 
 ## How a client connects
 
@@ -63,6 +68,8 @@ flag or build option that opens one.
   ID. A listener with either one missing accepts nothing.
 - Nothing a client says about itself changes who it is.
 - The compositor starts no process, and opens every descriptor close-on-exec.
+- A listener that cannot accept a connection is left alone for a second and
+  then tried again. It does not end the compositor.
 
 The Warden is a library so far, and not yet a service. The tests and the
 checks use a stand-in: a client of the Warden's socket that registers
@@ -131,7 +138,8 @@ libinput, libseat, udev).
 
 `tests/attacks.rs` holds the attacks that the decision records give this
 slice: attack 1 of ADR 0020, and attacks 11 and 12 of ADR 0016.
-`tests/linked.rs` is the guard on what is linked.
+`tests/linked.rs` is the guard on what is linked. `tests/exhaustion.rs` uses
+up the compositor's descriptors.
 
 Two things were carried over from the spike's display check and belong to
 slice 5: an output that is attached or removed while the compositor runs, and

@@ -10,7 +10,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{
-        Once,
+        Mutex, Once,
         atomic::{AtomicU32, Ordering},
         mpsc,
     },
@@ -74,16 +74,20 @@ pub fn runtime_dir() -> PathBuf {
     static SET: Once = Once::new();
     let dir = base_dir().join("runtime");
     SET.call_once(|| {
-        std::fs::create_dir_all(&dir).unwrap();
         // Safety: set once, before any compositor thread starts.
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
     });
+    std::fs::create_dir_all(&dir).unwrap();
     dir
 }
 
 fn base_dir() -> PathBuf {
     std::env::temp_dir().join(format!("crowbar-compositor-test-{}", std::process::id()))
 }
+
+/// How many compositors of this process are running. The last one to stop
+/// removes the process's directory.
+static RUNNING: Mutex<u32> = Mutex::new(0);
 
 /// Draws with Smithay's renderer that needs no display. It tracks damage as
 /// the real backends do, so it draws a frame only when something changed.
@@ -118,9 +122,13 @@ impl Compositor {
     /// A compositor that takes these user IDs for the shell and the Warden.
     pub fn start_trusting(shell_uid: u32, warden_uid: u32) -> Self {
         static NEXT: AtomicU32 = AtomicU32::new(0);
-        runtime_dir();
         let dir = base_dir().join(format!("compositor-{}", NEXT.fetch_add(1, Ordering::Relaxed)));
-        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let mut running = RUNNING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            *running += 1;
+            runtime_dir();
+            std::fs::create_dir_all(&dir).unwrap();
+        }
         let parts = TrustedParts {
             shell: TrustedPart {
                 socket: dir.join("shell"),
@@ -297,5 +305,12 @@ impl Drop for Compositor {
             let _ = thread.join();
         }
         let _ = std::fs::remove_dir_all(&self.dir);
+        // A test that failed while it held this lock leaves it poisoned, and
+        // the count is still right.
+        let mut running = RUNNING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        *running -= 1;
+        if *running == 0 {
+            let _ = std::fs::remove_dir_all(base_dir());
+        }
     }
 }
