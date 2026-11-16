@@ -1,20 +1,23 @@
-//! Spike for issue 3: the CrowbarOS compositor on Smithay.
+//! The CrowbarOS Wayland compositor, on Smithay. It is part of Base and part
+//! of what CrowbarOS trusts.
 //!
-//! Started from Smithay's `smallvil` example (MIT, see `LICENSE-smithay.txt`).
-//! Throwaway code: it exists to test ADR 0015, not to ship.
-#![allow(irrefutable_let_patterns)]
+//! - [`identity`] says who a client is. The compositor decides it when the
+//!   connection is made and never takes it from the client (ADR 0016).
+//! - [`policy`] is the one table that says which client is offered which
+//!   Wayland global (ADR 0020).
+//! - [`connections`] is every way a client can connect. There is no public
+//!   socket.
+//! - [`backend`] is where frames go. The compositor draws only when something
+//!   changed.
 
-pub mod control;
-pub mod grabs;
-pub mod handlers;
-pub mod input;
+pub mod backend;
+pub mod connections;
+mod handlers;
+pub mod identity;
+mod input;
 pub mod policy;
-pub mod probe;
-pub mod state;
-pub mod tty;
-pub mod windows;
-pub mod winit;
+mod redraw;
+mod state;
+mod windows;
 
 pub use state::State;
-
-pub mod session;

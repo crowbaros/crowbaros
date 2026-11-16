@@ -2,15 +2,25 @@
 # Protocol checks against the compositor running nested on this host.
 #
 # It starts the compositor in a window on the current Wayland session and asks
-# three kinds of client what they are offered: the shell, an ordinary client,
-# and a client started through security-context. `wayland-info` does the
-# asking, so the answer does not depend on our own probe.
+# each kind of client what it is offered: the shell, a stand-in for the
+# Warden, and a client of a compartment's listener that the stand-in
+# registers. `wayland-info` does the asking, so the answer does not depend on
+# our own probe. Then the client of the listener asks for what it is not
+# offered.
 #
+#   cargo build --features nested
 #   checks/nested.sh /path/to/wayland-info
+#
+# The backend that draws into a window is left out of the compositor unless
+# it is built with that feature.
+#
+# Every process here runs as one user, so this check cannot show a peer
+# refused on its user ID. The tests and the Void guest check do.
 #
 # The log goes to .lab/compositor/ in the repository root, outside git.
 set -euo pipefail
 : "${WAYLAND_DISPLAY:?set WAYLAND_DISPLAY to the Wayland session to nest in}"
+: "${XDG_RUNTIME_DIR:?set XDG_RUNTIME_DIR to the runtime directory of that session}"
 
 here=$(cd "$(dirname "$0")/.." && pwd)
 root=$(cd "$here/.." && pwd)
@@ -22,133 +32,101 @@ log=$out/nested-$(date -u +%Y%m%dT%H%M%SZ).log
 work=$(mktemp -d)
 trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$work"' EXIT
 
-# Globals that ADR 0014 says no Tool or app may reach.
-forbidden=(
-  zwp_virtual_keyboard_manager_v1
-  zwlr_virtual_pointer_manager_v1
-  zwp_input_method_manager_v2
-  zwp_input_method_v1
-  zwlr_data_control_manager_v1
-  ext_data_control_manager_v1
-  ext_image_copy_capture_manager_v1
-  ext_output_image_capture_source_manager_v1
-  ext_foreign_toplevel_image_capture_source_manager_v1
-  zwlr_screencopy_manager_v1
-  zwlr_export_dmabuf_manager_v1
-  zwlr_layer_shell_v1
-)
-
 say() { printf '%s\n' "$*" | tee -a "$log"; }
-
-# start_compositor SHELL_COMMAND...: starts it and sets $socket.
-start_compositor() {
-  : >"$work/compositor.log"
-  "$bin/crowbar-compositor" --backend winit --shell "$*" 2>"$work/compositor.log" &
-  compositor=$!
-  for _ in $(seq 100); do
-    socket=$(sed -n 's/.*compositor is up socket="\([^"]*\)".*/\1/p' "$work/compositor.log")
-    [ -n "$socket" ] && return 0
-    sleep 0.1
-  done
-  say "compositor did not start:"; cat "$work/compositor.log" | tee -a "$log"; exit 1
+fail=0
+check() { # check NAME COMMAND...: the command's success is the result
+  local name=$1
+  shift
+  if "$@"; then say "   PASS: $name"; else say "   FAIL: $name"; fail=1; fi
 }
 
-stop_compositor() { kill "$compositor" 2>/dev/null || true; wait "$compositor" 2>/dev/null || true; }
-
-interfaces() { sed -n "s/^interface: '\([^']*\)',.*version: *\([0-9]*\),.*/\1 \2/p" "$1" | sort; }
-
+interfaces() { sed -n "s/^interface: '\([^']*\)',.*/\1/p" "$1" | sort -u; }
+exactly() { # exactly FILE NAME...: the file lists these interfaces and no other
+  local file=$1
+  shift
+  [ -s "$file" ] && [ "$(interfaces "$file" | tr '\n' ' ')" = "$(printf '%s\n' "$@" | sort -u | tr '\n' ' ')" ]
+}
 report() { # report NAME FILE
   say ""
   say "== $1: $(interfaces "$2" | wc -l) globals"
   interfaces "$2" | sed 's/^/   /' | tee -a "$log"
 }
 
+# What each client is offered: the rows of ADR 0020's table, less the globals
+# the compositor does not create yet. tests/table.rs holds the same lists.
+compartment=(wl_compositor wl_output wl_seat wl_shm wl_subcompositor wp_viewporter xdg_wm_base)
+shell=("${compartment[@]}" zwlr_layer_shell_v1)
+warden=(wp_security_context_manager_v1)
+# The "Nobody" row of the table, read from the compositor's source.
+mapfile -t nobody < <(sed -n '/^pub const NOBODY/,/^];/p' "$here/src/policy.rs" | grep -o '"[a-z0-9_]*"' | tr -d '"')
+[ "${#nobody[@]}" -ge 20 ] || { say "could not read the Nobody row from src/policy.rs"; exit 1; }
+
 say "# Nested protocol checks, $(date -u +%FT%TZ)"
-say "host: $(uname -sr), session ${XDG_SESSION_TYPE:-unknown}${WAYLAND_DISPLAY:+ on $WAYLAND_DISPLAY}"
+say "host: $(uname -sr), session ${XDG_SESSION_TYPE:-unknown} on $WAYLAND_DISPLAY"
 say "compositor: $bin/crowbar-compositor  sha256 $(sha256sum "$bin/crowbar-compositor" | cut -d" " -f1)"
 say "wayland-info: $($info --version 2>/dev/null || echo "$info")"
 
-# The shell's view. The compositor hands the "shell" its connected socket, so
-# wayland-info run as the shell sees what the shell sees.
-cat >"$work/shell-info.sh" <<SH
-#!/bin/sh
-exec "$info" >"$work/shell.txt" 2>&1
-SH
-chmod +x "$work/shell-info.sh"
-start_compositor "$work/shell-info.sh"
-for _ in $(seq 50); do [ -s "$work/shell.txt" ] && break; sleep 0.1; done
-
-WAYLAND_DISPLAY=$socket "$info" >"$work/ordinary.txt" 2>&1
-WAYLAND_DISPLAY=$socket "$bin/crowbar-probe" security-context "$info" >"$work/confined.txt" 2>&1
-
-report "the shell (socket handed over by the compositor)" "$work/shell.txt"
-report "an ordinary client (public socket $socket)" "$work/ordinary.txt"
-report "a client started through security-context" "$work/confined.txt"
-
-say ""
-say "== forbidden globals"
-printf '   %-56s %-9s %-9s %-16s\n' global shell ordinary security-context | tee -a "$log"
-fail=0
-for name in "${forbidden[@]}"; do
-  row=()
-  for who in shell ordinary confined; do
-    if interfaces "$work/$who.txt" | grep -q "^$name "; then row+=(OFFERED); else row+=(absent); fi
-  done
-  printf '   %-56s %-9s %-9s %-9s\n' "$name" "${row[@]}" | tee -a "$log"
-  # Layer-shell is for the shell alone. Nothing else on the list is for anyone.
-  if [ "$name" = zwlr_layer_shell_v1 ]; then
-    [ "${row[*]}" = "OFFERED absent absent" ] || fail=1
-  else
-    [ "${row[*]}" = "absent absent absent" ] || fail=1
-  fi
+sockets_before=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s | sort)
+uid=$(id -u)
+"$bin/crowbar-compositor" --backend winit \
+  --shell-socket "$work/shell" --shell-uid "$uid" \
+  --warden-socket "$work/warden" --warden-uid "$uid" 2>"$work/compositor.log" &
+for _ in $(seq 100); do
+  grep -q "compositor is up" "$work/compositor.log" && break
+  sleep 0.1
 done
+if ! grep -q "compositor is up" "$work/compositor.log"; then
+  say "compositor did not start (was it built with --features nested?):"
+  tee -a "$log" <"$work/compositor.log"
+  exit 1
+fi
+# The nested backend offers linux-dmabuf only when the host names a render node.
+grep -q "linux-dmabuf is not offered" "$work/compositor.log" || shell+=(zwp_linux_dmabuf_v1)
 
-# The forbidden list names what must be absent. This compares the whole list
-# each client sees with the table in src/policy.rs, so a global that reached
-# a client without passing the table shows up here.
+as_shell() { WAYLAND_DISPLAY=$work/shell "$@"; }
+as_warden() { WAYLAND_DISPLAY=$work/warden "$@"; }
+# in_compartment ID COMMAND...: the stand-in registers a listener for a new
+# compartment and runs the command as a client of it.
+in_compartment() {
+  local id=$1
+  shift
+  as_warden "$bin/crowbar-probe" warden org.crowbaros.Probe "$id" "$work/$id" "$@"
+}
+
+as_shell "$info" >"$work/shell.txt" 2>&1 || true
+as_warden "$info" >"$work/warden.txt" 2>&1 || true
+in_compartment compartment-1 "$info" >"$work/compartment.txt" 2>&1 || true
+
+report "the shell (the shell's socket)" "$work/shell.txt"
+report "a stand-in for the Warden (the Warden's socket)" "$work/warden.txt"
+report "a client of a compartment's listener" "$work/compartment.txt"
+
 say ""
 say "== the whole list each client sees, against the table"
-confined_set=(wl_compositor wl_output wl_seat wl_shm wl_subcompositor
-  wp_fractional_scale_manager_v1 wp_viewporter xdg_wm_base zwp_linux_dmabuf_v1
-  zxdg_output_manager_v1)
-ordinary_set=("${confined_set[@]}" wl_data_device_manager wp_security_context_manager_v1)
-shell_set=("${ordinary_set[@]}" zwlr_layer_shell_v1)
-exactly() { # exactly WHO FILE NAME...
-  local who=$1 file=$2 seen wanted
-  shift 2
-  seen=$(interfaces "$file" | cut -d" " -f1 | sort -u | tr "\n" " ")
-  wanted=$(printf "%s\n" "$@" | sort -u | tr "\n" " ")
-  if [ -n "$seen" ] && [ "$seen" = "$wanted" ]; then
-    say "   $who: exactly the table's list"
-  else
-    say "   $who: NOT the table's list. Saw: $seen"
-    fail=1
-  fi
-}
-exactly "the shell" "$work/shell.txt" "${shell_set[@]}"
-exactly "an ordinary client" "$work/ordinary.txt" "${ordinary_set[@]}"
-exactly "a security-context client" "$work/confined.txt" "${confined_set[@]}"
+check "the shell is offered exactly the table's list" exactly "$work/shell.txt" "${shell[@]}"
+check "the Warden is offered exactly the table's list" exactly "$work/warden.txt" "${warden[@]}"
+check "a client of a listener is offered exactly the table's list" exactly "$work/compartment.txt" "${compartment[@]}"
+check "the compositor took the listener with its principal ID and compartment ID" \
+  grep -q "compartment listener registered principal=org.crowbaros.Probe compartment=compartment-1" "$work/compositor.log"
 
 say ""
-say "== an ordinary client asks for a layer surface"
-if WAYLAND_DISPLAY=$socket "$bin/crowbar-probe" layer >"$work/layer-ordinary.txt" 2>&1; then
-  fail=1
-fi
-sed 's/^/   /' "$work/layer-ordinary.txt" | tee -a "$log"
-stop_compositor
+say "== ADR 0016, attack 11: no socket any process can find"
+check "the compositor made no socket in the runtime directory" \
+  [ "$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s | sort)" = "$sockets_before" ]
 
 say ""
-say "== the shell asks for a layer surface"
-cat >"$work/shell-layer.sh" <<SH
-#!/bin/sh
-exec "$bin/crowbar-probe" layer >"$work/layer-shell.txt" 2>&1
-SH
-chmod +x "$work/shell-layer.sh"
-start_compositor "$work/shell-layer.sh"
-for _ in $(seq 50); do [ -s "$work/layer-shell.txt" ] && break; sleep 0.1; done
-sed 's/^/   /' "$work/layer-shell.txt" | tee -a "$log"
-grep -q "layer surface created" "$work/layer-shell.txt" || fail=1
-stop_compositor
+say "== ADR 0020, attack 1, and ADR 0016, attack 12: a client of a listener asks for what it is not offered"
+forbidden=("${nobody[@]}" zwlr_layer_shell_v1 wp_security_context_manager_v1 zwp_linux_dmabuf_v1)
+in_compartment compartment-2 "$bin/crowbar-probe" guess "${forbidden[@]}" >"$work/guess.txt" 2>&1 && guessed=0 || guessed=$?
+sed 's/^/   /' "$work/guess.txt" | grep -v "^   listening at" | tee -a "$log"
+check "each of the ${#forbidden[@]} is refused at every global number it could guess" \
+  [ "$guessed" = 0 -a "$(grep -c ": refused at every number" "$work/guess.txt")" = "${#forbidden[@]}" ]
+in_compartment compartment-3 "$bin/crowbar-probe" layer >"$work/layer-compartment.txt" 2>&1 || true
+check "a client of a listener cannot create a layer surface" grep -q "not offered" "$work/layer-compartment.txt"
+in_compartment compartment-4 "$bin/crowbar-probe" warden nested nested-1 "$work/nested" true >"$work/nested.txt" 2>&1 || true
+check "a client of a listener cannot register a listener of its own" grep -q "not offered" "$work/nested.txt"
+as_shell "$bin/crowbar-probe" layer >"$work/layer-shell.txt" 2>&1 || true
+check "the shell can create a layer surface" grep -q "layer surface created" "$work/layer-shell.txt"
 
 say ""
 if [ "$fail" = 0 ]; then say "RESULT: pass"; else say "RESULT: FAIL"; fi

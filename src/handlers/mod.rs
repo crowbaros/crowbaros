@@ -1,171 +1,37 @@
-mod compositor;
-pub mod layer_shell;
+//! Smithay's protocol handlers, and the dispatch that puts every global
+//! through the table.
+
+mod layer_shell;
 mod xdg_shell;
 
-use std::sync::Arc;
-
-use crate::{
-    State,
-    policy::{self, ClientKind},
-    state::ClientState,
-};
-use smithay::backend::allocator::dmabuf::Dmabuf;
-use smithay::reexports::wayland_server::{
-    self, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, backend::ClientId,
-};
-use smithay::wayland::compositor::with_states;
-use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
-use smithay::wayland::fractional_scale::{FractionalScaleHandler, with_fractional_scale};
-use smithay::wayland::security_context::{SecurityContext, SecurityContextHandler, SecurityContextListenerSource};
-use smithay::wayland::{Dispatch2, GlobalDispatch2};
-
-//
-// Wl Seat
-//
-
-use smithay::input::dnd::{DnDGrab, DndGrabHandler, GrabType, Source};
-use smithay::input::pointer::Focus;
-use smithay::input::{Seat, SeatHandler, SeatState};
-use smithay::reexports::wayland_server::Resource;
-use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::utils::Serial;
-use smithay::wayland::output::OutputHandler;
-use smithay::wayland::pointer_constraints::PointerConstraintsHandler;
-use smithay::wayland::selection::SelectionHandler;
-use smithay::wayland::selection::data_device::{
-    DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, set_data_device_focus,
+use smithay::{
+    backend::{allocator::dmabuf::Dmabuf, renderer::utils::on_commit_buffer_handler},
+    input::{Seat, SeatHandler, SeatState, pointer::CursorImageStatus},
+    reexports::wayland_server::{
+        self, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
+        backend::ClientId,
+        protocol::{wl_buffer::WlBuffer, wl_surface::WlSurface},
+    },
+    wayland::{
+        Dispatch2, GlobalDispatch2,
+        buffer::BufferHandler,
+        compositor::{CompositorClientState, CompositorHandler, CompositorState, is_sync_subsurface},
+        dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
+        output::OutputHandler,
+        pointer_constraints::PointerConstraintsHandler,
+        shm::{ShmHandler, ShmState},
+    },
 };
 
-impl SeatHandler for State {
-    type KeyboardFocus = WlSurface;
-    type PointerFocus = WlSurface;
-    type TouchFocus = WlSurface;
-
-    fn seat_state(&mut self) -> &mut SeatState<State> {
-        &mut self.seat_state
-    }
-
-    fn cursor_image(&mut self, _seat: &Seat<Self>, _image: smithay::input::pointer::CursorImageStatus) {}
-
-    fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
-        let dh = &self.display_handle;
-        let client = focused.and_then(|s| dh.get_client(s.id()).ok());
-        set_data_device_focus(dh, seat, client);
-    }
-}
-
-impl PointerConstraintsHandler for State {}
-
-//
-// Wl Data Device
-//
-
-impl SelectionHandler for State {
-    type SelectionUserData = ();
-}
-
-impl DataDeviceHandler for State {
-    fn data_device_state(&mut self) -> &mut DataDeviceState {
-        &mut self.data_device_state
-    }
-}
-
-impl DndGrabHandler for State {}
-impl WaylandDndGrabHandler for State {
-    fn dnd_requested<S: Source>(
-        &mut self,
-        source: S,
-        _icon: Option<WlSurface>,
-        seat: Seat<Self>,
-        serial: Serial,
-        type_: GrabType,
-    ) {
-        match type_ {
-            GrabType::Pointer => {
-                let ptr = seat.get_pointer().unwrap();
-                let start_data = ptr.grab_start_data().unwrap();
-
-                // create a dnd grab to start the operation
-                let grab = DnDGrab::new_pointer(&self.display_handle, start_data, source, seat);
-                ptr.set_grab(self, grab, serial, Focus::Keep);
-            }
-            GrabType::Touch => {
-                // crowbar-compositor lacks touch handling
-                source.cancel();
-            }
-        }
-    }
-}
-
-//
-// Wl Output & Xdg Output
-//
-
-impl OutputHandler for State {}
-
-//
-// Fractional scale
-//
-
-impl FractionalScaleHandler for State {
-    fn new_fractional_scale(&mut self, surface: WlSurface) {
-        // The surface's output is not known yet. Start from the first output;
-        // `State::update_surface_scales` corrects it once the surface is placed.
-        let scale = self
-            .outputs
-            .first()
-            .map(|o| o.current_scale().fractional_scale())
-            .unwrap_or(1.0);
-        with_states(&surface, |states| {
-            with_fractional_scale(states, |fractional| fractional.set_preferred_scale(scale));
-        });
-    }
-}
-
-//
-// Dmabuf
-//
-
-impl DmabufHandler for State {
-    fn dmabuf_state(&mut self) -> &mut DmabufState {
-        &mut self.dmabuf_state
-    }
-
-    fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
-        let imported = self
-            .tty_import_dmabuf(&dmabuf)
-            .unwrap_or_else(|| self.dmabuf_import.as_mut().is_some_and(|import| import(&dmabuf)));
-        if imported {
-            let _ = notifier.successful::<State>();
-        } else {
-            notifier.failed();
-        }
-    }
-}
-
-//
-// Security context
-//
-
-impl SecurityContextHandler for State {
-    fn context_created(&mut self, source: SecurityContextListenerSource, _context: SecurityContext) {
-        self.loop_handle
-            .insert_source(source, move |client_stream, _, state| {
-                let _ = state
-                    .display_handle
-                    .insert_client(client_stream, Arc::new(ClientState::new(ClientKind::SecurityContext)));
-            })
-            .expect("security context listener");
-    }
-}
+use crate::{State, identity::ClientState, policy, windows::root_surface};
 
 //
 // Dispatch
 //
 // These two impls are what `smithay::delegate_dispatch2!` expands to, with one
-// change: `can_view` asks `policy` first. Every global is therefore filtered
-// by the one table in `policy.rs`, including globals whose Smithay
-// constructor takes no filter.
+// change: `can_view` asks the table first. They cover every interface, so no
+// global reaches a client without passing the table, including a global whose
+// Smithay constructor takes no filter.
 
 impl<I, UserData> Dispatch<I, UserData> for State
 where
@@ -206,6 +72,90 @@ where
     }
 
     fn can_view(client: Client, data: &UserData) -> bool {
-        policy::client_may_see(&client, I::interface().name) && data.can_view(&client)
+        policy::offered_to(&client, I::interface().name) && data.can_view(&client)
     }
 }
+
+//
+// Surfaces and buffers
+//
+
+impl CompositorHandler for State {
+    fn compositor_state(&mut self) -> &mut CompositorState {
+        &mut self.compositor_state
+    }
+
+    fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
+        // Every client is added by `connections.rs`, with a `ClientState`.
+        &client
+            .get_data::<ClientState>()
+            .expect("every client has an identity")
+            .compositor
+    }
+
+    fn commit(&mut self, surface: &WlSurface) {
+        on_commit_buffer_handler::<Self>(surface);
+        if !is_sync_subsurface(surface)
+            && let Some(window) = self.window_for(&root_surface(surface))
+        {
+            window.on_commit();
+        }
+        self.xdg_commit(surface);
+        self.layer_commit(surface);
+        self.queue_redraw_for(surface);
+    }
+
+    /// A surface that goes away commits nothing, and what it showed has to
+    /// be drawn away. By now it has left its window, so the compositor
+    /// cannot say which outputs showed it.
+    fn destroyed(&mut self, _surface: &WlSurface) {
+        self.queue_redraw_all();
+    }
+}
+
+impl BufferHandler for State {
+    fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
+}
+
+impl ShmHandler for State {
+    fn shm_state(&self) -> &ShmState {
+        &self.shm_state
+    }
+}
+
+impl DmabufHandler for State {
+    fn dmabuf_state(&mut self) -> &mut DmabufState {
+        &mut self.dmabuf_state
+    }
+
+    fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
+        if self.import_dmabuf(&dmabuf) {
+            let _ = notifier.successful::<State>();
+        } else {
+            notifier.failed();
+        }
+    }
+}
+
+//
+// The seat and the outputs
+//
+
+impl SeatHandler for State {
+    type KeyboardFocus = WlSurface;
+    type PointerFocus = WlSurface;
+    type TouchFocus = WlSurface;
+
+    fn seat_state(&mut self) -> &mut SeatState<State> {
+        &mut self.seat_state
+    }
+
+    // A client's cursor image is not drawn yet (issue 78).
+    fn cursor_image(&mut self, _seat: &Seat<Self>, _image: CursorImageStatus) {}
+}
+
+// Smithay needs this to deliver pointer events to a surface. The global is
+// never created: pointer constraints are offered to nobody.
+impl PointerConstraintsHandler for State {}
+
+impl OutputHandler for State {}

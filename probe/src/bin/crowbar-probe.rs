@@ -1,18 +1,23 @@
-//! A small Wayland client for looking at a compositor from outside.
+//! Wayland clients for looking at a compositor from outside.
 
-use std::{io::Write, process::Command, time::Instant};
+use std::{io::Write, path::Path, process::Command, time::Instant};
 
-use crowbar_compositor::probe::{self, Anchor, Client, Error, KeyEvent, KeyboardInteractivity, Layer, LayerRequest};
+use crowbar_probe::{self as probe, Anchor, Client, Error, KeyEvent, KeyboardInteractivity, Layer, LayerRequest};
 
 const USAGE: &str = "\
-crowbar-probe: an ordinary Wayland client for testing a compositor.
+crowbar-probe: Wayland clients for testing a compositor. Never part of Base.
+
+Each connects as any client does: WAYLAND_DISPLAY names the socket, by path.
 
   globals            List the globals this client is offered.
   keylog [TITLE]     Open a window and print every keyboard event it gets.
   layer              Try to create a layer surface and say what happened.
-  toplevels          List other clients' windows, if the compositor tells.
-  security-context CMD ARGS
-                     Register a security context and run CMD inside it.
+  guess INTERFACE... Ask for each interface by guessing its global number,
+                     without being offered it. Fails if any bind is accepted.
+  warden PRINCIPAL COMPARTMENT SOCKET [CMD ARGS]
+                     Stand in for the Warden: on the Warden's connection,
+                     register SOCKET as that compartment's listener. Then run
+                     CMD as a client of it, or keep it open until killed.
 ";
 
 fn main() {
@@ -21,8 +26,8 @@ fn main() {
         Some("globals") => globals(),
         Some("keylog") => keylog(args.get(1).map(String::as_str).unwrap_or("crowbar-probe keylog")),
         Some("layer") => layer(),
-        Some("toplevels") => toplevels(),
-        Some("security-context") if args.len() > 1 => security_context(&args[1..]),
+        Some("guess") if args.len() > 1 => guess(&args[1..]),
+        Some("warden") if args.len() > 3 => warden(&args[1], &args[2], Path::new(&args[3]), &args[4..]),
         _ => {
             eprint!("{USAGE}");
             std::process::exit(2);
@@ -59,7 +64,7 @@ fn keylog(title: &str) -> Result<(), Error> {
     let mut first = true;
     while !client.state.closed {
         if !first {
-            client.queue.blocking_dispatch(&mut client.state)?;
+            client.wait()?;
         }
         first = false;
         for scale in client.state.buffer_scales.drain(..) {
@@ -85,13 +90,6 @@ fn keylog(title: &str) -> Result<(), Error> {
     Ok(())
 }
 
-fn toplevels() -> Result<(), Error> {
-    for toplevel in client()?.foreign_toplevels()? {
-        println!("{}\t{}\t{}", toplevel.identifier, toplevel.app_id, toplevel.title);
-    }
-    Ok(())
-}
-
 fn layer() -> Result<(), Error> {
     let mut client = client()?;
     let window = client.open_layer(
@@ -109,11 +107,40 @@ fn layer() -> Result<(), Error> {
     Ok(())
 }
 
-fn security_context(command: &[String]) -> Result<(), Error> {
+/// How far past the last global this client was told about the guesses go.
+const GUESS_PAST: u32 = 16;
+
+fn guess(interfaces: &[String]) -> Result<(), Error> {
+    let mut bound = 0;
+    for interface in interfaces {
+        let accepted = probe::guess_everywhere(&client, interface, GUESS_PAST)?;
+        if accepted.is_empty() {
+            println!("{interface}: refused at every number it could guess");
+        } else {
+            println!("{interface}: BOUND at {accepted:?}");
+            bound += 1;
+        }
+    }
+    if bound > 0 {
+        return Err(format!("{bound} interfaces were bound without being offered").into());
+    }
+    Ok(())
+}
+
+fn warden(principal: &str, compartment: &str, socket: &Path, command: &[String]) -> Result<(), Error> {
+    use std::os::unix::fs::PermissionsExt;
     let mut client = client()?;
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR").ok_or("XDG_RUNTIME_DIR is not set")?;
-    let path = std::path::PathBuf::from(runtime).join(format!("crowbar-security-context-{}", std::process::id()));
-    let listener = client.security_context(&path)?;
+    let listener = client.register_compartment(socket, Some(principal), Some(compartment))?;
+    // The directory the socket is in decides who reaches it, as the sandbox
+    // does for a real compartment.
+    std::fs::set_permissions(&listener.path, std::fs::Permissions::from_mode(0o666))?;
+    println!("listening at {}", listener.path.display());
+    std::io::stdout().flush()?;
+    if command.is_empty() {
+        loop {
+            client.wait()?;
+        }
+    }
     let status = Command::new(&command[0])
         .args(&command[1..])
         .env("WAYLAND_DISPLAY", &listener.path)

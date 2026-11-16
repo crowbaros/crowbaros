@@ -1,104 +1,106 @@
+//! Input from every backend enters the compositor here.
+
 use smithay::{
     backend::input::{
         AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent, InputTime, KeyState,
         KeyboardKeyEvent, Keycode, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
     },
+    desktop::{WindowSurfaceType, layer_map_for_output},
     input::{
-        keyboard::{FilterResult, Keysym},
+        keyboard::FilterResult,
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, SERIAL_COUNTER},
+    wayland::shell::wlr_layer::Layer,
 };
 
-use crate::{state::State, windows::root_surface};
+use crate::State;
 
 impl State {
     /// Every key from every backend enters here. `keycode` is the XKB
     /// keycode, which is the evdev code plus 8.
     ///
-    /// The confirm chord's key is taken here and never given to Smithay's
-    /// keyboard. Intercepting it in Smithay's filter is not enough: Smithay
-    /// still records the key as pressed, and tells a keyboard object that a
-    /// client creates while it is held.
+    /// The confirm chord and the compositor's own keys are taken here, before
+    /// Smithay's keyboard sees them, when issues 71 and 78 build them.
     pub fn handle_key(&mut self, keycode: Keycode, state: KeyState, time: InputTime) {
-        if state == KeyState::Pressed {
-            // A key that goes down again was released, whether or not its
-            // release arrived. It is no longer withheld.
-            self.withheld_keys.remove(&keycode);
-        }
-        match state {
-            KeyState::Pressed if self.completes_confirm_chord(keycode) => {
-                self.withheld_keys.insert(keycode);
-                self.confirms_taken += 1;
-                self.send_event(crate::control::Event::Confirm);
-                tracing::info!("confirm chord taken by the compositor");
-                return;
-            }
-            // A withheld press withholds its release, even if the modifiers
-            // went up first.
-            KeyState::Released if self.withheld_keys.remove(&keycode) => return,
-            _ => {}
-        }
         let serial = SERIAL_COUNTER.next_serial();
-        self.seat
-            .get_keyboard()
-            .unwrap()
-            .input::<(), _>(self, keycode, state, serial, time, |_, _, _| FilterResult::Forward);
+        let keyboard = self.keyboard();
+        keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| FilterResult::Forward);
     }
 
-    /// Whether pressing this key now makes the confirm chord: Enter while
-    /// Ctrl and Alt are down.
-    fn completes_confirm_chord(&mut self, keycode: Keycode) -> bool {
-        let keyboard = self.seat.get_keyboard().unwrap();
-        let modifiers = keyboard.modifier_state();
-        if !(modifiers.ctrl && modifiers.alt) {
-            return false;
-        }
-        keyboard.with_xkb_state(self, |context| {
-            let xkb = context.xkb().lock().unwrap();
-            // Safety: the state is read here and not kept past the lock.
-            unsafe { xkb.state() }.key_get_one_sym(keycode) == Keysym::Return
-        })
-    }
-
-    fn clamp_to_outputs(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
-        let Some(bounds) = self.desktop_bounds() else {
-            return pos;
-        };
-        Point::from((
-            pos.x
-                .clamp(bounds.loc.x as f64, (bounds.loc.x + bounds.size.w - 1) as f64),
-            pos.y
-                .clamp(bounds.loc.y as f64, (bounds.loc.y + bounds.size.h - 1) as f64),
-        ))
-    }
-
-    fn move_pointer(&mut self, pos: Point<f64, Logical>, time: InputTime) {
-        let serial = SERIAL_COUNTER.next_serial();
-        let pointer = self.seat.get_pointer().unwrap();
-        let under = self.surface_under(pos);
+    /// The pointer is now at this place on the desktop.
+    pub fn pointer_moved(&mut self, position: Point<f64, Logical>, time: InputTime) {
+        let position = self.clamp_to_outputs(position);
+        let pointer = self.pointer();
+        let under = self.surface_under(position);
         pointer.motion(
             self,
             under,
             &MotionEvent {
-                location: pos,
-                serial,
+                location: position,
+                serial: SERIAL_COUNTER.next_serial(),
+                time,
+            },
+        );
+        pointer.frame(self);
+        // A backend that draws the pointer has something new to draw.
+        self.queue_redraw_all();
+    }
+
+    /// A pointer button went down or up. `button` is the evdev code. A press
+    /// gives the keyboard to what is under the pointer.
+    pub fn pointer_button(&mut self, button: u32, state: ButtonState, time: InputTime) {
+        let pointer = self.pointer();
+        if state == ButtonState::Pressed && !pointer.is_grabbed() {
+            self.focus_under_pointer();
+        }
+        pointer.button(
+            self,
+            &ButtonEvent {
+                button,
+                state,
+                serial: SERIAL_COUNTER.next_serial(),
                 time,
             },
         );
         pointer.frame(self);
     }
 
-    /// A click gives the keyboard to the window under the pointer.
-    fn focus_under_pointer(&mut self) {
-        let pos = self.seat.get_pointer().unwrap().current_location();
-        let Some((surface, _)) = self.surface_under(pos) else {
-            return;
+    fn clamp_to_outputs(&self, position: Point<f64, Logical>) -> Point<f64, Logical> {
+        let Some(bounds) = self.desktop_bounds() else {
+            return position;
         };
-        let root = root_surface(&surface);
-        if let Some(window) = self.managed(&root).map(|m| m.window.clone()) {
-            self.focus_window(Some(&window));
-        }
+        let (left, top) = (f64::from(bounds.loc.x), f64::from(bounds.loc.y));
+        Point::from((
+            position.x.clamp(left, left + f64::from(bounds.size.w - 1)),
+            position.y.clamp(top, top + f64::from(bounds.size.h - 1)),
+        ))
+    }
+
+    /// The surface under a point: the shell's overlay and top layers, then
+    /// windows, then its bottom and background layers.
+    pub(crate) fn surface_under(&self, position: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+        let output = self.space.output_under(position).next()?;
+        let output_origin = self.space.output_geometry(output)?.loc;
+        let layers = layer_map_for_output(output);
+        let on_layers = |kinds: [Layer; 2]| {
+            kinds.into_iter().find_map(|kind| {
+                let layer = layers.layer_under(kind, position - output_origin.to_f64())?;
+                let layer_origin = layers.layer_geometry(layer)?.loc + output_origin;
+                layer
+                    .surface_under(position - layer_origin.to_f64(), WindowSurfaceType::ALL)
+                    .map(|(surface, at)| (surface, (at + layer_origin).to_f64()))
+            })
+        };
+        on_layers([Layer::Overlay, Layer::Top])
+            .or_else(|| {
+                let (window, origin) = self.space.element_under(position)?;
+                window
+                    .surface_under(position - origin.to_f64(), WindowSurfaceType::ALL)
+                    .map(|(surface, at)| (surface, (at + origin).to_f64()))
+            })
+            .or_else(|| on_layers([Layer::Bottom, Layer::Background]))
     }
 
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
@@ -107,78 +109,44 @@ impl State {
                 self.handle_key(event.key_code(), event.state(), Event::time(&event));
             }
             InputEvent::PointerMotion { event, .. } => {
-                let pointer = self.seat.get_pointer().unwrap();
-                let pos = self.clamp_to_outputs(pointer.current_location() + event.delta());
-                self.move_pointer(pos, event.time());
+                let pointer = self.pointer();
+                self.pointer_moved(pointer.current_location() + event.delta(), event.time());
             }
             InputEvent::PointerMotionAbsolute { event, .. } => {
                 // An absolute device covers the whole desktop.
                 let Some(bounds) = self.desktop_bounds() else {
                     return;
                 };
-                let pos = event.position_transformed(bounds.size) + bounds.loc.to_f64();
-                self.move_pointer(pos, event.time());
+                let position = event.position_transformed(bounds.size) + bounds.loc.to_f64();
+                self.pointer_moved(position, event.time());
             }
             InputEvent::PointerButton { event, .. } => {
-                let pointer = self.seat.get_pointer().unwrap();
-                let serial = SERIAL_COUNTER.next_serial();
-                let button_state = event.state();
-
-                if ButtonState::Pressed == button_state && !pointer.is_grabbed() {
-                    self.focus_under_pointer();
-                }
-
-                pointer.button(
-                    self,
-                    &ButtonEvent {
-                        button: event.button_code(),
-                        state: button_state,
-                        serial,
-                        time: event.time(),
-                    },
-                );
-                pointer.frame(self);
+                self.pointer_button(event.button_code(), event.state(), event.time());
             }
-            InputEvent::PointerAxis { event, .. } => {
-                let source = event.source();
-
-                let horizontal_amount = event
-                    .amount(Axis::Horizontal)
-                    .unwrap_or_else(|| event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.);
-                let vertical_amount = event
-                    .amount(Axis::Vertical)
-                    .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.);
-                let horizontal_amount_discrete = event.amount_v120(Axis::Horizontal);
-                let vertical_amount_discrete = event.amount_v120(Axis::Vertical);
-
-                let mut frame = AxisFrame::new(event.time()).source(source);
-                if horizontal_amount != 0.0 {
-                    frame = frame.value(Axis::Horizontal, horizontal_amount);
-                    if let Some(discrete) = horizontal_amount_discrete {
-                        frame = frame.v120(Axis::Horizontal, discrete as i32);
-                    }
-                }
-                if vertical_amount != 0.0 {
-                    frame = frame.value(Axis::Vertical, vertical_amount);
-                    if let Some(discrete) = vertical_amount_discrete {
-                        frame = frame.v120(Axis::Vertical, discrete as i32);
-                    }
-                }
-
-                if source == AxisSource::Finger {
-                    if event.amount(Axis::Horizontal) == Some(0.0) {
-                        frame = frame.stop(Axis::Horizontal);
-                    }
-                    if event.amount(Axis::Vertical) == Some(0.0) {
-                        frame = frame.stop(Axis::Vertical);
-                    }
-                }
-
-                let pointer = self.seat.get_pointer().unwrap();
-                pointer.axis(self, frame);
-                pointer.frame(self);
-            }
+            InputEvent::PointerAxis { event, .. } => self.pointer_axis::<I>(event),
             _ => {}
         }
+    }
+
+    fn pointer_axis<I: InputBackend>(&mut self, event: I::PointerAxisEvent) {
+        let mut frame = AxisFrame::new(event.time()).source(event.source());
+        for axis in [Axis::Horizontal, Axis::Vertical] {
+            let steps = event.amount_v120(axis);
+            let amount = event
+                .amount(axis)
+                .unwrap_or_else(|| steps.unwrap_or(0.0) * 15.0 / 120.0);
+            if amount != 0.0 {
+                frame = frame.value(axis, amount);
+                if let Some(steps) = steps {
+                    frame = frame.v120(axis, steps as i32);
+                }
+            }
+            if event.source() == AxisSource::Finger && event.amount(axis) == Some(0.0) {
+                frame = frame.stop(axis);
+            }
+        }
+        let pointer = self.pointer();
+        pointer.axis(self, frame);
+        pointer.frame(self);
     }
 }
