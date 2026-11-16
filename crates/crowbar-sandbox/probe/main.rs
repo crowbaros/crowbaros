@@ -7,9 +7,12 @@
 //! kernel's error.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, BufRead, BufReader, Write};
+use std::net::{TcpStream, UdpSocket};
 use std::os::fd::FromRawFd;
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::net::{SocketAddr, UnixListener, UnixStream};
+use std::time::Duration;
 
 fn main() {
     // SAFETY: the Warden starts every program with its first broker
@@ -35,6 +38,52 @@ fn main() {
                 fs::write(path, argument()).map(|()| String::new())
             }
             "owner" => fs::metadata(argument()).map(|file| file.uid().to_string()),
+            "pids" => list("/proc").map(|names| {
+                let pids: Vec<&str> = names.split(' ').filter(|name| name.parse::<u32>().is_ok()).collect();
+                pids.join(" ")
+            }),
+            "trace" => {
+                let pid = number(&argument());
+                // SAFETY: plain call. A refusal leaves nothing attached.
+                done(unsafe { libc::ptrace(libc::PTRACE_ATTACH, pid, 0, 0) })
+            }
+            "peek" => peek(number(&argument())),
+            "mem" => fs::File::open(format!("/proc/{}/mem", argument())).map(|_| String::new()),
+            "kill" => {
+                let pid = number(&argument());
+                // SAFETY: plain call.
+                done(unsafe { libc::kill(pid, number(&argument())) })
+            }
+            "abstract-listen" => abstract_address(&argument()).and_then(|address| {
+                // The socket stays open for as long as the probe runs.
+                std::mem::forget(UnixListener::bind_addr(&address)?);
+                Ok(String::new())
+            }),
+            "abstract-connect" => abstract_address(&argument())
+                .and_then(|address| UnixStream::connect_addr(&address))
+                .map(|_| String::new()),
+            "shm-make" => {
+                // SAFETY: plain call.
+                done(unsafe { libc::shmget(number(&argument()), 4096, libc::IPC_CREAT | 0o666) })
+            }
+            "shm-find" => {
+                // SAFETY: plain call.
+                done(unsafe { libc::shmget(number(&argument()), 0, 0) })
+            }
+            "connect" => {
+                let address = argument().parse().expect("an address");
+                TcpStream::connect_timeout(&address, Duration::from_secs(2)).map(|_| String::new())
+            }
+            "send" => UdpSocket::bind("0.0.0.0:0")
+                .and_then(|socket| socket.send_to(b"out", argument()))
+                .map(|_| String::new()),
+            "interfaces" => interfaces(),
+            "daemon" => daemon(&argument()),
+            "hold" => {
+                writeln!(broker, "hold: ok").expect("the broker connection");
+                hold(&broker);
+                return;
+            }
             "exit" => std::process::exit(argument().parse().expect("an exit code")),
             _ => panic!("the probe has no action {action}"),
         };
@@ -67,6 +116,92 @@ fn name(error: &io::Error) -> String {
             None => format!("E{number}"),
         },
         None => error.to_string(),
+    }
+}
+
+fn number(text: &str) -> i32 {
+    text.parse().unwrap_or_else(|_| panic!("{text} is not a number"))
+}
+
+/// The result of a call that returns -1 and sets `errno` when it fails.
+fn done(returned: impl Into<i64>) -> io::Result<String> {
+    if returned.into() == -1 { Err(io::Error::last_os_error()) } else { Ok(String::new()) }
+}
+
+/// Reads a word of another process's memory. The address is the probe's
+/// own `main`, which another copy of the probe has too.
+fn peek(pid: i32) -> io::Result<String> {
+    let mut word = [0u8; 8];
+    let local = libc::iovec {
+        iov_base: word.as_mut_ptr().cast(),
+        iov_len: word.len(),
+    };
+    let remote = libc::iovec {
+        iov_base: main as *mut libc::c_void,
+        iov_len: word.len(),
+    };
+    // SAFETY: `local` names `word`, which is writable for its length.
+    done(unsafe { libc::process_vm_readv(pid, &local, 1, &remote, 1, 0) } as i64)
+}
+
+fn abstract_address(name: &str) -> io::Result<SocketAddr> {
+    use std::os::linux::net::SocketAddrExt;
+    SocketAddr::from_abstract_name(name)
+}
+
+/// The names of the network interfaces.
+fn interfaces() -> io::Result<String> {
+    // SAFETY: the list ends with an entry whose index is 0, each name is a
+    // C string, and the list is freed once.
+    unsafe {
+        let list = libc::if_nameindex();
+        if list.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let mut names = Vec::new();
+        let mut entry = list;
+        while (*entry).if_index != 0 {
+            names.push(std::ffi::CStr::from_ptr((*entry).if_name).to_string_lossy().into_owned());
+            entry = entry.add(1);
+        }
+        libc::if_freenameindex(list);
+        Ok(names.join(" "))
+    }
+}
+
+/// Leaves a process behind that tries to get away: it forks twice, starts a
+/// session of its own, and then writes to `path` for as long as it lives.
+fn daemon(path: &str) -> io::Result<String> {
+    // SAFETY: the probe has one thread, so each child may run any code.
+    unsafe {
+        let child = libc::fork();
+        if child == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        if child == 0 {
+            libc::setsid();
+            if libc::fork() != 0 {
+                libc::_exit(0);
+            }
+            let mut file = fs::File::options().append(true).create(true).open(path).expect("the file");
+            loop {
+                let _ = file.write_all(b".");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+        libc::waitpid(child, std::ptr::null_mut(), 0);
+    }
+    Ok(String::new())
+}
+
+/// Answers `ping` with `pong` until the broker closes the connection.
+fn hold(broker: &fs::File) {
+    let mut answers = broker.try_clone().expect("the broker connection");
+    for line in BufReader::new(broker).lines() {
+        match line {
+            Ok(line) if line == "ping" => writeln!(answers, "pong").expect("the broker connection"),
+            _ => break,
+        }
     }
 }
 

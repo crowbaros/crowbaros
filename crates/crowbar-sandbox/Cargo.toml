@@ -9,6 +9,9 @@ publish.workspace = true
 [dependencies]
 libc.workspace = true
 
+[dev-dependencies]
+libc.workspace = true
+
 # The program the tests run inside a compartment. It is built for them and
 # is no part of the Warden.
 [[bin]]

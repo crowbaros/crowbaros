@@ -72,12 +72,72 @@ fn build(status: &mut RawFd) -> Step<Infallible> {
         .collect::<Step<_>>()?;
     drop(mapping);
 
+    // Namespaces of its own for mounts, processes, System V and POSIX IPC,
+    // the network, the host name, and cgroups. The new network namespace
+    // has a loopback interface that is down, and no other.
+    let namespaces = libc::CLONE_NEWNS
+        | libc::CLONE_NEWPID
+        | libc::CLONE_NEWIPC
+        | libc::CLONE_NEWNET
+        | libc::CLONE_NEWUTS
+        | libc::CLONE_NEWCGROUP;
     // SAFETY: the call changes only which namespaces this process is in.
-    at("new namespaces", checked(unsafe { libc::unshare(libc::CLONE_NEWNS) }))?;
+    at("new namespaces", checked(unsafe { libc::unshare(namespaces) }))?;
+    // The process namespace begins with the next child, which is its first
+    // process. This process stays outside and passes on how that one ends.
+    // SAFETY: this process has one thread, so the child may run any code.
+    let first = at("the sandbox's first process", checked(unsafe { libc::fork() }))?;
+    if first != 0 {
+        pass_on(first, 0);
+    }
+    // SAFETY: plain calls on this process alone. A session of its own has
+    // no terminal, and the host name says nothing about the machine.
+    at("a new session", checked(unsafe { libc::setsid() }))?;
+    at(
+        "the host name",
+        checked(unsafe { libc::sethostname(HOST_NAME.as_ptr().cast(), HOST_NAME.len()) }),
+    )?;
     at("the sandbox's root", root(&order, view))?;
     *status = at("the compartment's descriptors", descriptors(connections, *status))?;
     at("the compartment's user", become_user(&order))?;
+
+    // The program is the second process. The first stays as its parent,
+    // takes in whatever the program leaves behind, and ends when the
+    // program does. Then the kernel ends every process still in here.
+    // SAFETY: as above.
+    let program = at("the program's process", checked(unsafe { libc::fork() }))?;
+    if program != 0 {
+        pass_on(program, 3);
+    }
     Err(format!("{}: {}", order.program.display(), run(&order)))
+}
+
+/// The host name every sandbox has.
+const HOST_NAME: &str = "compartment";
+
+/// Closes every descriptor from `keep` up, waits for `child` to end, and
+/// ends the same way: with its exit code, or 128 plus the number of the
+/// signal that ended it.
+fn pass_on(child: libc::pid_t, keep: RawFd) -> ! {
+    // SAFETY: plain calls. Nothing after this uses a descriptor from `keep`
+    // up, and `state` is writable. Children that are not `child` are ones
+    // the program left behind, and waiting takes them in too.
+    unsafe {
+        libc::syscall(libc::SYS_close_range, keep, u32::MAX, 0);
+        loop {
+            let mut state = 0;
+            let ended = libc::waitpid(-1, &mut state, 0);
+            if ended == child {
+                libc::_exit(match libc::WIFEXITED(state) {
+                    true => libc::WEXITSTATUS(state),
+                    false => 128 + libc::WTERMSIG(state),
+                });
+            }
+            if ended == -1 && *libc::__errno_location() != libc::EINTR {
+                libc::_exit(NOT_STARTED);
+            }
+        }
+    }
 }
 
 /// Reads the order and the broker connections from the Warden.
@@ -223,13 +283,17 @@ const DEVICES: [(&str, u32, u32); 5] = [
 ];
 
 /// Builds the sandbox's root and moves into it: an empty filesystem with
-/// the sandbox's own `/dev` and `/tmp`, and the view.
+/// the sandbox's own `/proc`, `/dev`, and `/tmp`, and the view.
 fn root(order: &InitOrder, view: Vec<OwnedFd>) -> io::Result<()> {
     let root = order.root.as_path();
     // Nothing mounted here reaches the machine's own mounts.
     mount("none", Path::new("/"), None, libc::MS_REC | libc::MS_PRIVATE, "")?;
     mount("crowbar", root, Some("tmpfs"), CLOSED, "mode=0755,size=1m")?;
     let directory = |path: &Path| fs::DirBuilder::new().recursive(true).mode(0o755).create(path);
+
+    // Only the processes of this sandbox, and nothing else of the kernel.
+    directory(&root.join("proc"))?;
+    mount("proc", &root.join("proc"), Some("proc"), CLOSED, "subset=pid")?;
 
     let dev = root.join("dev");
     directory(&dev)?;

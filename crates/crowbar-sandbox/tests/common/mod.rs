@@ -132,7 +132,7 @@ pub fn probe_order(principal: &str, actions: &[&str]) -> (StartOrder, UnixStream
 /// The names in the sandbox's root for this order: what the sandbox itself
 /// provides, and the top of each view entry.
 pub fn root_of(order: &StartOrder) -> String {
-    let mut names = BTreeSet::from(["dev".to_string(), "tmp".to_string()]);
+    let mut names = BTreeSet::from(["dev", "proc", "tmp"].map(str::to_string));
     for entry in &order.view {
         let top = entry.at.components().nth(1).unwrap();
         names.insert(top.as_os_str().to_string_lossy().into_owned());
@@ -189,9 +189,15 @@ impl Probe {
         }
     }
 
-    /// The broker's end of the connection.
-    pub fn broker(&mut self) -> &mut UnixStream {
-        self.broker.get_mut()
+    /// Whether the probe, which is holding, still answers.
+    pub fn answers(&mut self) -> bool {
+        use std::io::Write;
+        self.broker.get_mut().write_all(b"ping\n").is_ok() && self.line().as_deref() == Some("pong")
+    }
+
+    /// The compartment, and the broker's end of its connection.
+    pub fn into_parts(self) -> (Compartment, UnixStream) {
+        (self.compartment, self.broker.into_inner())
     }
 }
 
@@ -201,4 +207,33 @@ pub fn field(line: &str, key: &str) -> String {
         .find_map(|word| word.strip_prefix(key)?.strip_prefix('='))
         .unwrap_or_else(|| panic!("no {key} in {line:?}"))
         .to_string()
+}
+
+/// The processes on the machine that run as `uid`.
+pub fn processes_of(uid: u32) -> Vec<u32> {
+    let mut found = Vec::new();
+    for entry in fs::read_dir("/proc").unwrap().flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else { continue };
+        // A process that ends while this reads has no status any more.
+        let Ok(status) = fs::read_to_string(entry.path().join("status")) else { continue };
+        let ids = status.lines().find_map(|line| line.strip_prefix("Uid:")).unwrap_or_default();
+        if ids.split_whitespace().any(|id| id == uid.to_string()) {
+            found.push(pid);
+        }
+    }
+    found
+}
+
+/// The user a probe runs as, from the `ids` it reported.
+pub fn user_of(probe: &mut Probe) -> u32 {
+    field(&probe.did("ids"), "uid").parse().unwrap()
+}
+
+/// Waits until `met` holds, for a few seconds at most.
+pub fn eventually(what: &str, met: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !met() {
+        assert!(std::time::Instant::now() < deadline, "{what} did not happen");
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
