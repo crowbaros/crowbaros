@@ -213,10 +213,17 @@ pub fn field(line: &str, key: &str) -> String {
 pub fn processes_of(uid: u32) -> Vec<u32> {
     let mut found = Vec::new();
     for entry in fs::read_dir("/proc").unwrap().flatten() {
-        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else { continue };
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
         // A process that ends while this reads has no status any more.
-        let Ok(status) = fs::read_to_string(entry.path().join("status")) else { continue };
-        let ids = status.lines().find_map(|line| line.strip_prefix("Uid:")).unwrap_or_default();
+        let Ok(status) = fs::read_to_string(entry.path().join("status")) else {
+            continue;
+        };
+        let ids = status
+            .lines()
+            .find_map(|line| line.strip_prefix("Uid:"))
+            .unwrap_or_default();
         if ids.split_whitespace().any(|id| id == uid.to_string()) {
             found.push(pid);
         }

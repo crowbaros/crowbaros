@@ -8,13 +8,17 @@
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::net::TcpListener;
-use std::os::unix::fs::MetadataExt;
+use std::os::fd::OwnedFd;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::net::UnixStream;
 use std::time::Duration;
+
+use crowbar_sandbox::Needs;
 
 mod common;
 use common::{
-    Probe, STORAGE, USER_IDS, data, eventually, field, probe_order, processes_of, read_only, read_write, root_of,
-    scratch, user_of,
+    Probe, STORAGE, USER_IDS, data, eventually, field, probe_order, processes_of, program, read_only, read_write,
+    root_of, scratch, stored, user_of,
 };
 
 #[test]
@@ -134,7 +138,11 @@ fn a_compartment_cannot_trace_or_read_another_or_the_broker() {
     assert!(targets.len() >= 2, "{targets:?}");
 
     for target in targets {
-        let actions = [format!("trace {target}"), format!("peek {target}"), format!("mem {target}")];
+        let actions = [
+            format!("trace {target}"),
+            format!("peek {target}"),
+            format!("mem {target}"),
+        ];
         let mut attacker = Probe::start(Vec::new(), &actions.each_ref().map(String::as_str));
         for action in &actions {
             let happened = attacker.did(action);
@@ -153,7 +161,10 @@ fn a_preview_cannot_signal_the_live_compartment_of_the_same_tool() {
     assert_eq!(live.did("hold"), "ok");
 
     let kill = libc::SIGKILL;
-    let mut actions: Vec<String> = processes_of(uid).iter().map(|pid| format!("kill {pid} {kill}")).collect();
+    let mut actions: Vec<String> = processes_of(uid)
+        .iter()
+        .map(|pid| format!("kill {pid} {kill}"))
+        .collect();
     assert!(!actions.is_empty());
     // Every process it is allowed to signal, which is none outside itself.
     actions.push(format!("kill -1 {kill}"));
@@ -182,7 +193,12 @@ fn two_compartments_cannot_meet() {
             "hold",
         ],
     );
-    for made in ["abstract-listen crowbar-meet", "shm-make 49374", "write /tmp/meet here", "write /dev/shm/meet here"] {
+    for made in [
+        "abstract-listen crowbar-meet",
+        "shm-make 49374",
+        "write /tmp/meet here",
+        "write /dev/shm/meet here",
+    ] {
         assert_eq!(first.did(made), "ok", "{made}");
     }
     assert_eq!(first.did("hold"), "ok");
@@ -230,4 +246,167 @@ fn a_compartment_has_no_way_out_but_its_broker_connection() {
     }
     probe.compartment.wait().unwrap();
     assert_eq!(listener.accept().unwrap_err().kind(), ErrorKind::WouldBlock);
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_compartment_starts_with_its_broker_connections_and_no_other_descriptor() {
+    // Attack 5. A careless trusted part: descriptors that are open in the
+    // Warden's process and are not closed when it runs a program.
+    // SAFETY: plain calls that open descriptors for the rest of the run.
+    unsafe {
+        assert!(libc::open(c"/etc/hostname".as_ptr(), libc::O_RDONLY) > 0);
+        assert!(libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) > 0);
+        assert_eq!(libc::pipe([0; 2].as_mut_ptr()), 0);
+    }
+
+    let (mut order, broker) = probe_order("task-1", &["fds", "say 4 proxied"]);
+    let (mut proxy, compartment_end) = UnixStream::pair().unwrap();
+    order.connections.push(OwnedFd::from(compartment_end));
+    let mut probe = Probe::run(order, broker);
+
+    // The sandbox's own `/dev/null` three times, and the two connections
+    // in the order they were given.
+    assert_eq!(
+        probe.did("fds"),
+        "ok 0=/dev/null 1=/dev/null 2=/dev/null 3=socket 4=socket"
+    );
+    assert_eq!(probe.did("say 4 proxied"), "ok");
+    let mut said = [0; 8];
+    proxy.read_exact(&mut said).unwrap();
+    assert_eq!(&said, b"proxied\n");
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_compartment_has_none_of_the_credentials_around_it() {
+    // This process has an environment, root's groups, every capability,
+    // and a session keyring. The compartment has what its order says.
+    assert!(std::env::var_os("PATH").is_some());
+    let mut probe = Probe::start_as("task-1", &["env", "status", "keyring"], |order| {
+        order.env = vec![("LANG".to_string(), "C.UTF-8".to_string())];
+    });
+    assert_eq!(probe.did("env"), "ok LANG=C.UTF-8");
+    // No capability, none to be had from a program it runs, and a filter
+    // on its system calls.
+    assert_eq!(
+        probe.did("status"),
+        "ok CapInh=0 CapPrm=0 CapEff=0 CapBnd=0 CapAmb=0 NoNewPrivs=1 Seccomp=2"
+    );
+    assert_eq!(probe.did("keyring"), "refused EPERM");
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_setuid_program_in_the_view_gains_nothing() {
+    // Attack 4: a copy of the probe that root owns, with the setuid and
+    // setgid bits.
+    let files = scratch("setuid");
+    let planted = files.join("escalate");
+    fs::copy(program("crowbar-sandbox-probe"), &planted).unwrap();
+    fs::set_permissions(&planted, fs::Permissions::from_mode(0o6755)).unwrap();
+
+    let actions = ["ids", "exec /planted/escalate ids status"];
+    let mut probe = Probe::start(vec![read_only(&files, "/planted")], &actions);
+    let before = probe.did("ids");
+    assert_eq!(probe.did("ids"), before);
+    assert_eq!(
+        probe.did("status"),
+        "ok CapInh=0 CapPrm=0 CapEff=0 CapBnd=0 CapAmb=0 NoNewPrivs=1 Seccomp=2"
+    );
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_compartment_cannot_make_a_user_namespace_a_mount_or_a_network_interface() {
+    // Attack 8.
+    let actions = ["userns", "mount /tmp", "interface"];
+    let mut probe = Probe::start(Vec::new(), &actions);
+    for action in actions {
+        assert_eq!(probe.did(action), "refused EPERM", "{action}");
+    }
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_compartment_has_no_input_device_and_can_neither_make_nor_open_one() {
+    // The device numbers of `/dev/uinput` and of the first input device.
+    // Both are planted in the view on purpose, where anyone may open them.
+    let files = scratch("devices");
+    for (name, minor_of) in [("uinput", (10, 223)), ("event0", (13, 64))] {
+        let path = std::ffi::CString::new(files.join(name).to_str().unwrap()).unwrap();
+        let device = libc::makedev(minor_of.0, minor_of.1);
+        // SAFETY: `path` is a C string.
+        assert_eq!(unsafe { libc::mknod(path.as_ptr(), libc::S_IFCHR | 0o666, device) }, 0);
+        fs::set_permissions(files.join(name), fs::Permissions::from_mode(0o666)).unwrap();
+        stored(&files.join(name));
+    }
+
+    let actions = [
+        "ls /dev",
+        "open /dev/uinput",
+        "open /dev/input/event0",
+        "mknod /tmp/uinput 10 223",
+        "mknod /planted/own 10 223",
+        "open /planted/uinput",
+        "open /planted/event0",
+        "open /dev/null",
+    ];
+    let mut probe = Probe::start(vec![read_write(&files, "/planted")], &actions);
+    assert_eq!(
+        probe.did("ls /dev"),
+        "ok fd full null random shm stderr stdin stdout urandom zero"
+    );
+    assert_eq!(probe.did("open /dev/uinput"), "refused ENOENT");
+    assert_eq!(probe.did("open /dev/input/event0"), "refused ENOENT");
+    assert_eq!(probe.did("mknod /tmp/uinput 10 223"), "refused EPERM");
+    assert_eq!(probe.did("mknod /planted/own 10 223"), "refused EPERM");
+    assert_eq!(probe.did("open /planted/uinput"), "refused EACCES");
+    assert_eq!(probe.did("open /planted/event0"), "refused EACCES");
+    assert_eq!(probe.did("open /dev/null"), "ok");
+}
+
+#[test]
+#[ignore = "needs root"]
+fn tracing_is_refused_even_inside_a_compartment_unless_it_is_a_stated_need() {
+    let mut plain = Probe::start(Vec::new(), &["trace-child"]);
+    assert_eq!(plain.did("trace-child"), "refused EPERM");
+
+    // With the need, a debugger works on the compartment's own processes
+    // and on nothing else.
+    let broker = format!("trace {}", std::process::id());
+    let mut debugger = Probe::start_as("task-1", &["trace-child", &broker], |order| {
+        order.needs = Needs {
+            tracing: true,
+            ..Needs::default()
+        };
+    });
+    assert_eq!(debugger.did("trace-child"), "ok");
+    assert_eq!(debugger.did(&broker), "refused ESRCH");
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_user_namespace_as_a_stated_need_still_changes_no_view() {
+    // Inside a user namespace of its own a process has every capability
+    // over the mounts it sees. The second filesystem check still holds.
+    let actions = ["userns", "mount /tmp", "write /intruder x"];
+    let mut probe = Probe::start_as("task-1", &actions, |order| {
+        order.needs = Needs {
+            user_namespaces: true,
+            ..Needs::default()
+        };
+    });
+    assert_eq!(probe.did("userns"), "ok");
+    assert_eq!(probe.did("mount /tmp"), "refused EPERM");
+    assert_eq!(probe.did("write /intruder x"), "refused EROFS");
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_compartment_cannot_open_a_port_even_inside_its_own_network() {
+    // Nothing could reach the port. The second check refuses it anyway, so
+    // a mistake in the network setup does not become a listening service.
+    let mut probe = Probe::start(Vec::new(), &["listen"]);
+    assert_eq!(probe.did("listen"), "refused EACCES");
 }

@@ -19,6 +19,7 @@ use std::path::Path;
 use crate::order::Access;
 use crate::sys::{self, checked, cstring};
 use crate::wire::InitOrder;
+use crate::{landlock, seccomp};
 
 /// A step of the start, or the text that says which one failed.
 type Step<T> = Result<T, String>;
@@ -100,6 +101,8 @@ fn build(status: &mut RawFd) -> Step<Infallible> {
     at("the sandbox's root", root(&order, view))?;
     *status = at("the compartment's descriptors", descriptors(connections, *status))?;
     at("the compartment's user", become_user(&order))?;
+    at("the second check on files", landlock::confine(&order))?;
+    at("the filter on system calls", seccomp::confine(&order.needs))?;
 
     // The program is the second process. The first stays as its parent,
     // takes in whatever the program leaves behind, and ends when the
@@ -404,13 +407,41 @@ fn descriptors(connections: Vec<OwnedFd>, status: RawFd) -> io::Result<RawFd> {
     Ok(placed)
 }
 
-/// Gives up root for the compartment's own user, for good.
+/// Gives up root for the compartment's own user, for good: no group but
+/// its own, no capability, none to be had from any program it runs, and
+/// none of the Warden's keys.
 fn become_user(order: &InitOrder) -> io::Result<()> {
-    // SAFETY: plain calls on this process's own credentials.
+    const JOIN_SESSION_KEYRING: libc::c_int = 1;
+    // SAFETY: plain calls on this process's own credentials and limits.
     unsafe {
+        // The bounding set is what a program could ever be given. The
+        // kernel names its capabilities from 0 up and refuses the first
+        // number it does not have.
+        let mut capability = 0;
+        while libc::prctl(libc::PR_CAPBSET_DROP, capability, 0, 0, 0) == 0 {
+            capability += 1;
+        }
+        if capability == 0 || io::Error::last_os_error().raw_os_error() != Some(libc::EINVAL) {
+            return Err(io::Error::last_os_error());
+        }
         checked(libc::setgroups(0, std::ptr::null()))?;
         checked(libc::setresgid(order.gid, order.gid, order.gid))?;
+        // Leaving user 0 clears the capabilities this process holds.
         checked(libc::setresuid(order.uid, order.uid, order.uid))?;
+        checked(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))?;
+        // A session keyring of its own, in place of the one it was born
+        // with. A kernel with no keyrings has nothing to replace.
+        let joined = libc::syscall(libc::SYS_keyctl, JOIN_SESSION_KEYRING, std::ptr::null::<libc::c_char>());
+        if joined == -1 && io::Error::last_os_error().raw_os_error() != Some(libc::ENOSYS) {
+            return Err(io::Error::last_os_error());
+        }
+        // No core file: the machine's handler for one runs as root, outside
+        // every sandbox, on memory the compartment chose.
+        let none = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        checked(libc::setrlimit(libc::RLIMIT_CORE, &none))?;
     }
     Ok(())
 }

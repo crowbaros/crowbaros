@@ -2,7 +2,9 @@
 
 mod cgroup;
 mod init;
+mod landlock;
 mod order;
+mod seccomp;
 mod sys;
 mod uids;
 mod warden;
