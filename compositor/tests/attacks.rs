@@ -158,8 +158,8 @@ fn guess_up_to(connect: &dyn Fn() -> Client, interface: &str, last: u32) -> Vec<
 }
 
 /// Adds one more global, which the shell is offered, and returns its number.
-/// Global numbers go up, so every global made before it has a lower one, and
-/// a guess at each number up to this one reaches them all.
+/// No test here removes a global, so every global made before it has a lower
+/// number, and a guess at each number up to this one reaches them all.
 fn last_number(compositor: &Compositor, binds: &Arc<AtomicUsize>) -> u32 {
     plant!(compositor, binds, [ZwlrLayerShellV1]);
     compositor.shell().last_global()

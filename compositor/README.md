@@ -46,9 +46,10 @@ are not built, and each waits for its slice:
 - **Clients' cursor images.** On a TTY the pointer is a white square.
 - **A limit on what one compartment can make the compositor hold.** Every
   connection and every buffer costs the compositor a descriptor, and nothing
-  caps them. A compartment that uses them all up does not end the compositor,
-  but until the Warden stops that compartment the compositor can accept no
-  new client.
+  caps them. A compartment that uses them all up does not end the compositor.
+  But until the Warden stops that compartment, the compositor can accept no
+  new client, and a client that sends it a descriptor, as for a buffer, can
+  lose its connection.
 
 ## How a client connects
 

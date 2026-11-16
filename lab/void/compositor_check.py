@@ -11,6 +11,7 @@ asked by `wayland-info` and the probe inside the guest. Everything it runs and
 sees goes to an evidence log in .lab/void-graphical/.
 """
 import re
+import subprocess
 import time
 
 import compositor_guest as guest
@@ -111,6 +112,9 @@ def exactly(ev, who, seen, wanted):
 def main():
     ev = Evidence()
     ev.log("# The CrowbarOS compositor on a TTY in the Void guest")
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=guest.ROOT, text=True).strip()
+    changed = subprocess.check_output(["git", "status", "--porcelain"], cwd=guest.ROOT, text=True).strip()
+    ev.log(f"commit {commit}" + (", with changes that are not committed" if changed else ""))
     if guest.running():
         guest.stop()
     guest.build()
@@ -378,7 +382,7 @@ def run_checks(ev, built):
                      f"{AS_CLIENT} timeout 3 crowbar-probe globals 2>&1; echo exit $?", check=False)
     ev.check("the listener of a stopped compartment accepts nothing",
              "the socket is still there" in stopped
-             and "Could not find wayland compositor" in stopped and "exit 1" in stopped)
+             and "Could not find wayland compositor" in stopped and stopped.rstrip().endswith("exit 1"))
 
 
 if __name__ == "__main__":

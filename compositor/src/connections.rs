@@ -15,7 +15,8 @@
 //!
 //! A listener that cannot accept, as when the compositor has no descriptor
 //! left, is left alone for [`ACCEPT_RETRY`] and then tried again. It does not
-//! end the compositor.
+//! end the compositor. A compartment's listener that the Warden lets go of
+//! during that wait is closed when the wait ends.
 
 use std::{
     cell::Cell,

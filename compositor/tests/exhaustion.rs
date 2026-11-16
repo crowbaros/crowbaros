@@ -11,7 +11,7 @@ use std::{
     fs::File,
     os::unix::net::UnixStream,
     path::Path,
-    sync::{Mutex, Once, mpsc},
+    sync::{Mutex, Once, PoisonError, mpsc},
     time::{Duration, Instant},
 };
 
@@ -97,9 +97,15 @@ fn connect_when_the_compositor_cannot_accept(socket: &Path) -> UnixStream {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
-    // Long enough to try many more times, if it does not wait.
+    // The connection it could not take stays ready. A compositor that does
+    // not wait tries again thousands of times in this long.
     std::thread::sleep(Duration::from_millis(200));
+    let tries = failed_accepts() - before;
     drop(all_but_one);
+    assert!(
+        tries <= 3,
+        "the compositor tried {tries} times to accept, and did not wait"
+    );
     pending
 }
 
@@ -115,16 +121,27 @@ fn answers(socket: &Path) -> bool {
 
 #[test]
 fn a_compartment_that_uses_up_the_descriptors_does_not_end_the_compositor() {
-    let _turn = ONE_AT_A_TIME.lock().unwrap();
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let compositor = Compositor::start();
-    let (mut other, other_listener) = compositor.compartment("other");
-    let greedy = compositor.register("test.principal", "greedy");
-    let before = failed_accepts();
+    // One connection for the Warden, kept for the whole test. One that is
+    // dropped gives the compositor a descriptor back, at a time of its own.
+    let mut warden = compositor.warden();
+    let mut register = |compartment: &str| {
+        warden
+            .register_compartment(
+                &compositor.listener_path(compartment),
+                Some("test.principal"),
+                Some(compartment),
+            )
+            .unwrap()
+    };
+    let other_listener = register("other");
+    let greedy = register("greedy");
+    let mut other = connect(&other_listener.path).unwrap();
 
     let _pending = connect_when_the_compositor_cannot_accept(&greedy.path);
 
     compositor.with(|_| ());
-    assert_eq!(failed_accepts(), before + 1);
     other
         .roundtrip()
         .expect("a client of another compartment lost its connection");
@@ -137,16 +154,12 @@ fn a_compartment_that_uses_up_the_descriptors_does_not_end_the_compositor() {
 
 #[test]
 fn a_trusted_socket_that_cannot_accept_does_so_again_later() {
-    let _turn = ONE_AT_A_TIME.lock().unwrap();
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let compositor = Compositor::start();
-    let before = failed_accepts();
 
     let _pending = connect_when_the_compositor_cannot_accept(&compositor.parts.shell.socket);
 
     compositor.with(|_| ());
-    // The connection it could not take stays ready. It waits, and does not
-    // try again and again.
-    assert_eq!(failed_accepts(), before + 1);
     assert!(
         answers(&compositor.parts.shell.socket),
         "the shell's socket never accepted again after the descriptors came back"
