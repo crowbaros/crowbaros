@@ -1,7 +1,18 @@
 [package]
 name = "crowbar-sandbox"
-description = "Task principals as compartments in Linux sandboxes"
+description = "The Warden: every compartment in its own Linux sandbox"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[dependencies]
+libc.workspace = true
+
+# The program the tests run inside a compartment. It is built for them and
+# is no part of the Warden.
+[[bin]]
+name = "crowbar-sandbox-probe"
+path = "probe/main.rs"
+test = false
+doc = false

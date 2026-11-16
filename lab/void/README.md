@@ -9,6 +9,7 @@ continues (Milestone 1b in the [roadmap](../../docs/VISION.md#roadmap)).
 | `void_lab.py` | The lab command: fetch, rootfs, image, start, ssh, stop, milestone |
 | `compositor_guest.py`, `compositor_check.py` | Void builds and the earlier compositor-only TTY check |
 | `desktop_check.py` | Fresh, isolated full-desktop smoke checks, with retained diagnostics |
+| `warden_check.py` | Runs the Warden's root-only tests as root in the guest |
 | `guest/` | Alpha runit services and the temporary app-launch stand-in |
 | `config.json` | The pinned xbps build, the package lists, and the VM sizes |
 | `host/` | Rootless rootfs, build, and disk-image scripts (run inside `unshare -r`) |
@@ -23,6 +24,24 @@ The scripts use only the Python standard library and need no sudo. Downloads go
 to `~/.cache/crowbaros/void`. Images, VM runtime files, and evidence logs go to
 `.lab/void/` and `.lab/void-graphical/` in the repository root. All are outside
 git.
+
+## The Warden's tests
+
+The Warden runs as root, and nobody needs root on their own desktop
+([ADR 0016](../../docs/adr/0016-the-warden-starts-every-compartment.md)). So
+the tests of [`crowbar-sandbox`](../../crates/README.md) that start real
+compartments run here:
+
+```sh
+lab/void/warden_check.py           # fresh guest, every test, evidence log
+lab/void/warden_check.py --keep    # reuse the running guest, for a quick loop
+lab/void/warden_check.py --keep trusted   # only the tests whose name holds "trusted"
+```
+
+It builds the tests and their two programs as static files, copies them into
+the guest, runs them as root, and writes what they print to
+`.lab/void/warden-<time>.log`. This is stock Void: Milestone 2 needs nothing
+from Base.
 
 ## The graphical guest
 

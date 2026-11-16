@@ -850,6 +850,10 @@ available in October 2026 as composable sandboxes for agents. MXC might be a
 backend for the native sandbox. Check its real specification and license before
 relying on it. Also compare existing Linux tools, such as bubblewrap.
 
+The first Warden ([`crates/crowbar-sandbox`](../../crates/README.md)) makes
+these kernel calls itself and depends on no sandbox tool, so the code that runs
+as root is small enough to read in one sitting. Both backends stay open.
+
 ## Where isolation lives
 
 **The broker decides, and the kernel sandbox enforces.** Linux is part of the
