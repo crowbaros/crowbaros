@@ -8,8 +8,8 @@ use crowbar_broker::{EffectLimits, Resource, Rights, Time};
 use crowbar_labels::{Label, MarkSource, Site};
 use serde::{Deserialize, Serialize};
 
-use crate::error::Error;
-use crate::log::{self, Recorded};
+use crate::error::{Damage, Error};
+use crate::log::{self, Contents, OnDamage, Recorded};
 
 /// The file the authority domain is kept in, inside its directory.
 pub(crate) const FILE: &str = "authority.log";
@@ -110,7 +110,10 @@ pub enum Change {
     /// back: granting the same thing again is a new grant, with a new id.
     Revoked(StandingId),
     /// The person set a party's clearance, higher or lower.
-    ClearanceSet { party: Party, clearance: Label },
+    ClearanceSet {
+        party: Party,
+        clearance: Label,
+    },
     /// The person set the ceiling on the limits of tasks that do not cross
     /// the undo boundary.
     CeilingSet(EffectLimits),
@@ -126,6 +129,7 @@ pub struct Authority {
     rules: BTreeMap<StandingId, Standing<Rule>>,
     clearances: BTreeMap<Party, Label>,
     ceiling: Option<EffectLimits>,
+    unfinished_write: Option<usize>,
 }
 
 /// A standing grant or rule, kept after it is revoked so the record can say
@@ -139,10 +143,29 @@ struct Standing<T> {
 impl Authority {
     /// Reads the authority domain kept in `dir`. A directory that holds none
     /// yet grants nothing.
+    ///
+    /// A record with a line that cannot be trusted is refused whole, and the
+    /// error names the line. Reading around it could leave out a revocation,
+    /// so nothing is read and the gate has no authority to allow under.
     pub fn load(dir: &Path) -> Result<Authority, Error> {
-        let mut authority = Authority::default();
-        for recorded in log::read(&dir.join(FILE))?.entries {
-            authority.record(recorded)?;
+        let path = dir.join(FILE);
+        Authority::replay(log::read(&path)?, &path)
+    }
+
+    /// The authority that the changes in `contents` add up to.
+    fn replay(contents: Contents<Change>, path: &Path) -> Result<Authority, Error> {
+        contents.first_damage(path)?;
+        let mut authority = Authority {
+            unfinished_write: contents.unfinished_write,
+            ..Authority::default()
+        };
+        for recorded in contents.entries {
+            let line = recorded.seq as usize;
+            authority.record(recorded).map_err(|_| Error::Damaged {
+                path: path.to_path_buf(),
+                line,
+                damage: Damage::NotAdmitted,
+            })?;
         }
         Ok(authority)
     }
@@ -181,6 +204,12 @@ impl Authority {
     /// lets a task start unasked.
     pub fn ceiling(&self) -> Option<&EffectLimits> {
         self.ceiling.as_ref()
+    }
+
+    /// The size in bytes of a write a crash cut short, if the reader found
+    /// one after the last entry and left it out.
+    pub fn unfinished_write(&self) -> Option<usize> {
+        self.unfinished_write
     }
 
     /// When the standing grant or rule with this id was revoked, if it was.
@@ -253,11 +282,9 @@ impl AuthorityStore {
     /// Opens the authority domain kept in `dir`, and makes it if it is not
     /// there.
     pub fn open(dir: &Path) -> Result<AuthorityStore, Error> {
-        let (log, contents) = log::Log::open(&dir.join(FILE))?;
-        let mut authority = Authority::default();
-        for recorded in contents.entries {
-            authority.record(recorded)?;
-        }
+        let path = dir.join(FILE);
+        let (log, contents) = log::Log::open(&path, OnDamage::Refuse)?;
+        let authority = Authority::replay(contents, &path)?;
         Ok(AuthorityStore { log, authority })
     }
 

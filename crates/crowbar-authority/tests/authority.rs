@@ -46,7 +46,10 @@ fn granting_again_after_a_revocation_is_a_new_grant_and_the_old_one_stays_revoke
     assert_ne!(first, second);
 
     let authority = store.authority();
-    assert_eq!(authority.grants(&morning_pages()).collect::<Vec<_>>(), vec![(second, &writing_grant())]);
+    assert_eq!(
+        authority.grants(&morning_pages()).collect::<Vec<_>>(),
+        vec![(second, &writing_grant())]
+    );
     assert_eq!(authority.revoked_at(first), Some(NOW));
     assert_eq!(authority.revoked_at(second), None);
 }
@@ -66,12 +69,18 @@ fn revoking_an_id_that_names_nothing_is_refused_and_records_nothing() {
 
     let mut store = AuthorityStore::open(dir.path()).expect("opened");
     let refused = store.revoke(unknown, NOW).unwrap_err();
-    assert!(matches!(refused, Error::NotStanding(named) if named == unknown), "{refused}");
+    assert!(
+        matches!(refused, Error::NotStanding(named) if named == unknown),
+        "{refused}"
+    );
     assert_eq!(store.authority().history().len(), 1);
     drop(store);
 
     let authority = Authority::load(dir.path()).expect("the refused change left the record whole");
-    assert_eq!(authority.grants(&morning_pages()).collect::<Vec<_>>(), vec![(id, &writing_grant())]);
+    assert_eq!(
+        authority.grants(&morning_pages()).collect::<Vec<_>>(),
+        vec![(id, &writing_grant())]
+    );
 }
 
 #[test]
@@ -92,7 +101,10 @@ fn a_standing_rule_is_held_until_it_is_revoked() {
     let mut store = AuthorityStore::open(dir.path()).expect("opened");
     let grant = store.grant(writing_grant(), NOW).expect("recorded");
     let rule = store.rule(sync_rule(), NOW).expect("recorded");
-    assert_eq!(store.authority().rules(&morning_pages()).collect::<Vec<_>>(), vec![(rule, &sync_rule())]);
+    assert_eq!(
+        store.authority().rules(&morning_pages()).collect::<Vec<_>>(),
+        vec![(rule, &sync_rule())]
+    );
 
     store.revoke(rule, LATER).expect("revoked");
     drop(store);
@@ -101,7 +113,10 @@ fn a_standing_rule_is_held_until_it_is_revoked() {
     let authority = Authority::load(dir.path()).expect("loaded");
     assert_eq!(authority.rules(&morning_pages()).count(), 0);
     assert_eq!(authority.revoked_at(rule), Some(LATER));
-    assert_eq!(authority.grants(&morning_pages()).collect::<Vec<_>>(), vec![(grant, &writing_grant())]);
+    assert_eq!(
+        authority.grants(&morning_pages()).collect::<Vec<_>>(),
+        vec![(grant, &writing_grant())]
+    );
 }
 
 #[test]
@@ -175,8 +190,14 @@ fn the_clearance_the_person_set_last_is_the_one_that_stands() {
     assert_eq!(authority.clearance(&provider()), Label::Public);
     assert_eq!(authority.clearance(&bank()), Label::private(Category::Finance));
     // Another site, and another provider, are still at their defaults.
-    assert_eq!(authority.clearance(&Party::Site(Site::new("hostile.example"))), Label::Public);
-    assert_eq!(authority.clearance(&Party::ModelProvider("other".to_string())), Label::Personal);
+    assert_eq!(
+        authority.clearance(&Party::Site(Site::new("hostile.example"))),
+        Label::Public
+    );
+    assert_eq!(
+        authority.clearance(&Party::ModelProvider("other".to_string())),
+        Label::Personal
+    );
 }
 
 #[test]
@@ -186,7 +207,9 @@ fn there_is_no_ceiling_until_the_person_sets_one_and_then_the_last_one_stands() 
     assert_eq!(store.authority().ceiling(), None);
 
     store.set_ceiling(EffectLimits::new().count(500), NOW).expect("set");
-    store.set_ceiling(EffectLimits::new().count(50), LATER).expect("lowered");
+    store
+        .set_ceiling(EffectLimits::new().count(50), LATER)
+        .expect("lowered");
     drop(store);
 
     let authority = Authority::load(dir.path()).expect("loaded");

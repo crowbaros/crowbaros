@@ -7,11 +7,24 @@
 //! <hash of the JSON> {"seq":2,"prev":"<hash of line 1>","time":1000,"entry":{…}}
 //! ```
 //!
-//! `seq` counts from 1 and is the line's number. `prev` is the SHA-256 of the
-//! whole line before it, and 64 zeros on the first line.
+//! `seq` counts from 1, one more on each line. `prev` is the SHA-256 of the
+//! whole line before it, and 64 zeros on the first line. So a line that was
+//! changed does not match its own hash, and a line that was removed, added,
+//! or moved leaves a line that does not follow the one before it.
+//!
+//! An entry is one write, flushed before the append returns. A crash can
+//! leave a part of the last one, and that part is not a line that checks
+//! out, so a reader leaves it out and the next writer removes it. A last
+//! entry that checks out and lacks only its line break is kept.
+//!
+//! What this does not catch: the file replaced by an earlier whole copy of
+//! itself, or cut back to the end of an earlier entry. That needs a count
+//! kept outside the file, and it comes with signatures and hardware-bound
+//! keys.
 
-use std::fs::{File, OpenOptions};
+use std::fs::{DirBuilder, File, OpenOptions, TryLockError};
 use std::io::Write;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use crowbar_broker::Time;
@@ -19,12 +32,12 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::error::Error;
+use crate::error::{Damage, Error};
 
 /// One entry as it was recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recorded<T> {
-    /// The entry's place in the file, from 1.
+    /// The entry's number, from 1: its place among everything recorded.
     pub seq: u64,
     pub time: Time,
     pub entry: T,
@@ -33,7 +46,38 @@ pub struct Recorded<T> {
 /// What a file holds.
 #[derive(Debug)]
 pub(crate) struct Contents<T> {
+    /// The entries that are what was written, in order. One that is out of
+    /// place is here too, and in `damage`.
     pub entries: Vec<Recorded<T>>,
+    /// The lines that do not check out, by number from 1.
+    pub damage: Vec<(usize, Damage)>,
+    /// The size in bytes of a write a crash cut short, found after the last
+    /// line and left out.
+    pub unfinished_write: Option<usize>,
+}
+
+impl<T> Contents<T> {
+    /// The first line that does not check out, as the error that refuses the
+    /// whole file.
+    pub fn first_damage(&self, path: &Path) -> Result<(), Error> {
+        match self.damage.first() {
+            Some((line, damage)) => Err(Error::Damaged {
+                path: path.to_path_buf(),
+                line: *line,
+                damage: *damage,
+            }),
+            None => Ok(()),
+        }
+    }
+}
+
+/// What a writer does with a file that holds a damaged line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OnDamage {
+    /// Refuse the file and leave it as it was found.
+    Refuse,
+    /// Go on appending after it. Reading reports the damaged lines.
+    Continue,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -45,22 +89,30 @@ struct Envelope<T> {
     entry: T,
 }
 
-/// The file, open for appending.
+/// The file, open for appending by its one writer.
 #[derive(Debug)]
 pub(crate) struct Log {
     file: File,
     path: PathBuf,
-    /// How many entries the file holds.
-    seq: u64,
+    /// The number the next entry takes.
+    next: u64,
     /// The hash of the last line, which the next entry names.
     last: String,
+    /// Whether a write failed. How much of it reached the disk is not known,
+    /// so nothing more is written until the file is opened again, which
+    /// finds out.
+    broken: bool,
 }
 
+/// What `prev` names on the first line.
 const NO_LINE: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// The length of a hash as text, and of the space after it.
+const HASH_LEN: usize = 64;
 
 fn hash(bytes: &[u8]) -> String {
     use std::fmt::Write;
-    let mut text = String::with_capacity(64);
+    let mut text = String::with_capacity(HASH_LEN);
     for byte in Sha256::digest(bytes) {
         write!(text, "{byte:02x}").expect("writing to a string");
     }
@@ -76,58 +128,152 @@ fn io(path: &Path) -> impl Fn(std::io::Error) -> Error + '_ {
 
 /// Reads the file at `path`. A file that is not there holds nothing.
 pub(crate) fn read<T: DeserializeOwned>(path: &Path) -> Result<Contents<T>, Error> {
-    Ok(scan(path)?.0)
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(scan(&bytes).contents),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(scan(&[]).contents),
+        Err(error) => Err(io(path)(error)),
+    }
 }
 
-/// The file's contents, with the hash of its last line.
-fn scan<T: DeserializeOwned>(path: &Path) -> Result<(Contents<T>, String), Error> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => return Err(io(path)(error)),
+/// A file's contents, with what a writer needs to go on from them.
+struct Scan<T> {
+    contents: Contents<T>,
+    /// The number the next entry takes.
+    next: u64,
+    /// The hash of the last line.
+    last: String,
+    /// Whether the last line is a whole entry with no line break after it.
+    unterminated: bool,
+}
+
+fn scan<T: DeserializeOwned>(bytes: &[u8]) -> Scan<T> {
+    let mut scan = Scan {
+        contents: Contents {
+            entries: Vec::new(),
+            damage: Vec::new(),
+            unfinished_write: None,
+        },
+        next: 1,
+        last: NO_LINE.to_string(),
+        unterminated: false,
     };
-    let mut entries = Vec::new();
-    let mut last = NO_LINE.to_string();
-    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
-        let line = line.strip_suffix(b"\n").unwrap_or(line);
-        let envelope: Envelope<T> = serde_json::from_slice(&line[65..]).expect("an entry");
-        entries.push(Recorded {
-            seq: envelope.seq,
-            time: envelope.time,
-            entry: envelope.entry,
-        });
-        last = hash(line);
+    // An unreadable line has already been reported, so the line after it is
+    // not reported again for not naming it.
+    let mut follows_unreadable = false;
+    for (index, chunk) in bytes.split_inclusive(|byte| *byte == b'\n').enumerate() {
+        let (line, ended) = match chunk.strip_suffix(b"\n") {
+            Some(line) => (line, true),
+            None => (chunk, false),
+        };
+        let envelope = read_line::<T>(line);
+        if !ended && envelope.is_none() {
+            // Only the last chunk has no line break. It is not an entry, so
+            // it is what a crash left of a write.
+            scan.contents.unfinished_write = Some(line.len());
+            break;
+        }
+        match envelope {
+            Some(envelope) => {
+                let follows = follows_unreadable || envelope.prev == scan.last;
+                if envelope.seq != scan.next || !follows {
+                    scan.contents.damage.push((index + 1, Damage::OutOfPlace));
+                }
+                // The count goes on from this entry, so a gap is reported
+                // once, where it is.
+                scan.next = envelope.seq.saturating_add(1);
+                scan.contents.entries.push(Recorded {
+                    seq: envelope.seq,
+                    time: envelope.time,
+                    entry: envelope.entry,
+                });
+                follows_unreadable = false;
+            }
+            None => {
+                scan.contents.damage.push((index + 1, Damage::Unreadable));
+                scan.next = scan.next.saturating_add(1);
+                follows_unreadable = true;
+            }
+        }
+        scan.last = hash(line);
+        scan.unterminated = !ended;
     }
-    Ok((Contents { entries }, last))
+    scan
+}
+
+/// Reads one line, without its line break, if it is the entry that was
+/// written: its hash matches what it holds.
+fn read_line<T: DeserializeOwned>(line: &[u8]) -> Option<Envelope<T>> {
+    let (stated, json) = line.split_at_checked(HASH_LEN)?;
+    let json = json.strip_prefix(b" ")?;
+    if stated != hash(json).as_bytes() {
+        return None;
+    }
+    serde_json::from_slice(json).ok()
 }
 
 impl Log {
     /// Opens the file at `path` for appending, and makes it and its directory
-    /// if they are not there.
-    pub fn open<T: DeserializeOwned>(path: &Path) -> Result<(Log, Contents<T>), Error> {
+    /// if they are not there. One writer has it open at a time.
+    ///
+    /// What a crash left of a write is removed, and a last entry with no
+    /// line break gets one, so the next entry starts on a line of its own.
+    pub fn open<T: DeserializeOwned>(path: &Path, on_damage: OnDamage) -> Result<(Log, Contents<T>), Error> {
         let dir = path.parent().expect("a log has a directory");
-        std::fs::create_dir_all(dir).map_err(io(dir))?;
-        let file = OpenOptions::new()
+        // The directory and the file are made for their owner alone.
+        DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(io(dir))?;
+        let mut file = OpenOptions::new()
             .create(true)
             .append(true)
+            .mode(0o600)
             .open(path)
             .map_err(io(path))?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => {
+                return Err(Error::Locked {
+                    path: path.to_path_buf(),
+                });
+            }
+            Err(TryLockError::Error(error)) => return Err(io(path)(error)),
+        }
         // A new file is only durable once its directory entry is on disk.
         File::open(dir).and_then(|dir| dir.sync_all()).map_err(io(dir))?;
-        let (contents, last) = scan(path)?;
+
+        let bytes = std::fs::read(path).map_err(io(path))?;
+        let scan = scan::<T>(&bytes);
+        if on_damage == OnDamage::Refuse {
+            scan.contents.first_damage(path)?;
+        }
+        if let Some(unfinished) = scan.contents.unfinished_write {
+            file.set_len((bytes.len() - unfinished) as u64).map_err(io(path))?;
+            file.sync_all().map_err(io(path))?;
+        } else if scan.unterminated {
+            file.write_all(b"\n").map_err(io(path))?;
+            file.sync_all().map_err(io(path))?;
+        }
         let log = Log {
             file,
             path: path.to_path_buf(),
-            seq: contents.entries.len() as u64,
-            last,
+            next: scan.next,
+            last: scan.last,
+            broken: false,
         };
-        Ok((log, contents))
+        Ok((log, scan.contents))
     }
 
     /// Appends one entry and returns its place in the file. The entry is on
     /// disk when this returns.
     pub fn append<T: Serialize>(&mut self, time: Time, entry: &T) -> Result<u64, Error> {
-        let seq = self.seq + 1;
+        if self.broken {
+            return Err(Error::Broken {
+                path: self.path.clone(),
+            });
+        }
+        let seq = self.next;
         let json = serde_json::to_string(&Envelope {
             seq,
             prev: self.last.clone(),
@@ -137,11 +283,15 @@ impl Log {
         .map_err(|error| Error::NotStorable(error.to_string()))?;
         let line = format!("{} {json}", hash(json.as_bytes()));
         // One write, so a crash tears at most this entry.
-        self.file
+        let written = self
+            .file
             .write_all(format!("{line}\n").as_bytes())
-            .and_then(|()| self.file.sync_all())
-            .map_err(io(&self.path))?;
-        self.seq = seq;
+            .and_then(|()| self.file.sync_all());
+        if let Err(error) = written {
+            self.broken = true;
+            return Err(io(&self.path)(error));
+        }
+        self.next = seq + 1;
         self.last = hash(line.as_bytes());
         Ok(seq)
     }
