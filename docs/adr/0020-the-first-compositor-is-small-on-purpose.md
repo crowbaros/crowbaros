@@ -174,7 +174,7 @@ A [measurement](../research/compositor-smithay-bump-2026-11-15.md) ported the co
 
 ## Where the work sits, and its order
 
-- **The production compositor is Beta work.** It starts after the security rules are proven ([issue 17](https://github.com/crowbaros/crowbaros/issues/17)), because Milestone 2 can still change what the compositor must enforce, and two people cannot do both at once. In the vision's terms it runs beside Milestones 1b and 3, and it is done before Milestone 4's shell work, which waits on it.
+- **The production compositor is Beta work.** It starts after the security rules are proven ([issue 17](https://github.com/crowbaros/crowbaros/issues/17)), because Milestone 2 can still change what the compositor must enforce, and two people cannot do both at once. In the vision's terms it runs beside Milestones 1b and 3, and it is done before Milestone 4's shell work, which waits on it. [ADR 0022](0022-the-compositor-is-built-beside-milestone-2.md) changes when it starts: it is built beside Milestone 2, and the parts Milestone 2 can change may be reworked.
 - **It starts clean in `compositor/`.** The first slice moves the spike to `lab/compositor-spike/`. The Alpha desktop check runs the spike until the production compositor passes the same check, and then the spike is deleted. The spike's tests, probe client, and display checks move to the production compositor.
 
 The slices, in order. Each lands with the attacks below that test it.
@@ -234,7 +234,7 @@ Each of these is a test, and each must be refused. They add to the attacks in AD
 - **A VT switch to a text console.** Rejected: there is no login account to protect it.
 - **Follow Smithay's `master` with no pin, or wait for a release.** Rejected: an unpinned build cannot be repeated, and the last release is from June 2025 and lacks the dispatch traits the protocol table rests on.
 - **Build on the spike's code.** Rejected: it was written to answer questions, and the reviewers said to keep it as a reference.
-- **Start the compositor before Milestone 2 is done.** Rejected: see above.
+- **Start the compositor before Milestone 2 is done.** Rejected: see above. [ADR 0022](0022-the-compositor-is-built-beside-milestone-2.md) later chose this.
 
 ## Consequences
 
