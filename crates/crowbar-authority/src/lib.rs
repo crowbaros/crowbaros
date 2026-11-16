@@ -66,4 +66,4 @@ mod ledger;
 pub use authority::{Authority, AuthorityStore, Change, Grant, Holder, Party, Rule, StandingId, Status};
 pub use chain::Recorded;
 pub use error::{Damage, Error};
-pub use ledger::{Decision, Event, Ledger, LedgerEntry, LedgerHistory, Outcome};
+pub use ledger::{Decision, Event, Keyed, Ledger, LedgerEntry, LedgerHistory, Outcome};

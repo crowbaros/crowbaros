@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crowbar_capability::{Principal, Time};
+use crowbar_capability::{Ask, Cost, HandleId, IdempotencyKey, Principal, Refuse, TaskId, Time};
 use serde::{Deserialize, Serialize};
 
 use crate::authority::StandingId;
@@ -17,7 +17,12 @@ const FILE: &str = "entries";
 ///
 /// An entry names things and never holds one. No field takes a value, a
 /// secret, or content: the operation is the name the broker knows it by,
-/// and a refusal names its rule.
+/// and a refusal names its rule and the limit that applied.
+///
+/// The gate rebuilds its count of uses from these entries when it starts,
+/// so an entry for a use names the handle, its original, how many objects
+/// it affected, and its cost. A field that does not apply is left out when
+/// the entry is stored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LedgerEntry {
@@ -26,6 +31,54 @@ pub struct LedgerEntry {
     /// The operation, as the broker names it.
     pub operation: String,
     pub event: Event,
+    /// The handle the operation used, or passed on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<HandleId>,
+    /// For a copy, the handle it was passed on from. Its uses count
+    /// against that original too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<HandleId>,
+    /// The task the operation served.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskId>,
+    /// How many objects the operation affected. One that affects no object
+    /// counts as one operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objects: Option<u64>,
+    /// What the operation cost, where that was a fixed amount.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<Cost>,
+    /// The idempotency key the task attached, with the digest of the
+    /// operation it was attached to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<Keyed>,
+}
+
+impl LedgerEntry {
+    /// An entry that names only who asked, the operation, and what happened.
+    pub fn new(principal: Principal, operation: &str, event: Event) -> Self {
+        LedgerEntry {
+            principal,
+            operation: operation.to_string(),
+            event,
+            handle: None,
+            original: None,
+            task: None,
+            objects: None,
+            cost: None,
+            key: None,
+        }
+    }
+}
+
+/// An idempotency key as the ledger records it: the key, and the SHA-256 of
+/// the operation it was first attached to, as 64 hexadecimal digits. The
+/// same key on a different operation has a different digest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Keyed {
+    pub key: IdempotencyKey,
+    pub digest: String,
 }
 
 /// What a ledger entry records.
@@ -36,6 +89,9 @@ pub enum Event {
     Decided(Decision),
     /// What carrying out an allowed operation did.
     Effect(Outcome),
+    /// The principal's open ask closed: answered, withdrawn, or ended with
+    /// its task. A principal has one ask open at a time, so this names it.
+    AskClosed,
 }
 
 /// What the gate decided.
@@ -46,9 +102,9 @@ pub enum Decision {
     /// standing grant and the standing rule it crossed under.
     Allowed { under: Vec<StandingId> },
     /// Put to the person as an ask.
-    Asked,
-    /// Refused, under the rule with this name.
-    Refused { rule: String },
+    Asked(Ask),
+    /// Refused: the rule, and the limit that applied.
+    Refused(Refuse),
 }
 
 /// What carrying out an operation did.

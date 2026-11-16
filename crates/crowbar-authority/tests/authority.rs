@@ -312,3 +312,39 @@ fn an_id_that_names_nothing_is_not_read_as_a_grant_that_is_held() {
     assert_eq!(authority.status(id), Some(Status::Held));
     assert_eq!(authority.status(unknown), None);
 }
+
+#[test]
+fn authority_made_in_memory_holds_what_the_same_changes_hold_when_recorded() {
+    let dir = Scratch::new();
+    let mut store = AuthorityStore::create(dir.path()).expect("made");
+    let grant = store.grant(writing_grant(), NOW).expect("recorded");
+    let rule = store.add_rule(sync_rule(), NOW).expect("recorded");
+    store.revoke(grant, LATER).expect("revoked");
+    let recorded = store.authority().expect("readable");
+
+    let in_memory = Authority::from_changes([
+        (NOW, Change::Granted(writing_grant())),
+        (NOW, Change::RuleAdded(sync_rule())),
+        (LATER, Change::Revoked(grant)),
+    ])
+    .expect("admitted");
+
+    assert_eq!(in_memory.history(), recorded.history());
+    assert_eq!(in_memory.status(grant), Some(Status::Revoked(LATER)));
+    assert_eq!(
+        in_memory.rules(&morning_pages()).collect::<Vec<_>>(),
+        vec![(rule, &sync_rule())]
+    );
+}
+
+#[test]
+fn authority_made_in_memory_refuses_a_change_a_record_would_refuse() {
+    let unrated = Rule {
+        limits: EffectLimits::new(),
+        ..sync_rule()
+    };
+    assert!(matches!(
+        Authority::from_changes([(NOW, Change::RuleAdded(unrated))]),
+        Err(Error::RuleWithoutRate)
+    ));
+}
