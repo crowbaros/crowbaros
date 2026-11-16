@@ -2,8 +2,8 @@
 //! (ADR 0016, "Attacks the tests must refuse", 1 to 10).
 //!
 //! These start real compartments, so they need root, cgroup v2, and a
-//! kernel with Landlock. `cargo test` lists them as ignored. The crate's
-//! README says how to run them.
+//! kernel with Landlock. `cargo test` lists them as ignored.
+//! `crates/README.md` says how to run them.
 
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
@@ -13,7 +13,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-use crowbar_sandbox::{Budget, Ended, Needs, OrderError, StartError, Stranger, TrustedListener, Warden};
+use crowbar_sandbox::{Budget, Ended, Needs, OrderError, StartError, StartOrder, Stranger, TrustedListener, Warden};
 
 mod common;
 use common::{
@@ -438,7 +438,7 @@ fn a_program_that_takes_all_the_memory_is_stopped_at_the_memory_budget() {
     // Attack 7, second half.
     let mut bystander = Probe::start(Vec::new(), &["hold"]);
     assert_eq!(bystander.did("hold"), "ok");
-    let small = |order: &mut crowbar_sandbox::StartOrder| {
+    let small = |order: &mut StartOrder| {
         order.budget = Budget {
             memory_bytes: 32 << 20,
             ..ROOMY
@@ -622,12 +622,13 @@ fn a_start_that_is_refused_leaves_nothing_behind() {
 
     // A program that is not in the view, and a view entry that is not on
     // the machine.
-    let missing_program = |order: &mut crowbar_sandbox::StartOrder| order.program = "/nowhere".into();
-    let missing_entry = |order: &mut crowbar_sandbox::StartOrder| {
-        order.view.push(read_only(&scratch("gone").join("never-made"), "/gone"));
-    };
-    let changes: [(&str, &dyn Fn(&mut crowbar_sandbox::StartOrder)); 2] =
-        [("/nowhere", &missing_program), ("never-made", &missing_entry)];
+    type Change = fn(&mut StartOrder);
+    let changes: [(&str, Change); 2] = [
+        ("/nowhere", |order| order.program = "/nowhere".into()),
+        ("never-made", |order| {
+            order.view.push(read_only(&scratch("gone").join("never-made"), "/gone"));
+        }),
+    ];
     for (named, change) in changes {
         let (mut order, mut broker) = probe_order("task-1", &["hold"]);
         change(&mut order);

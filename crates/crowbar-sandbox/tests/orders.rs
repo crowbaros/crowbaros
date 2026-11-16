@@ -168,7 +168,8 @@ fn arguments_and_the_environment_are_plain_text() {
 #[test]
 fn every_part_of_the_budget_is_set() {
     // A zero is not "no limit". A compartment always has a budget.
-    let cases: [(&str, fn(&mut Budget)); 4] = [
+    type Unset = fn(&mut Budget);
+    let cases: [(&str, Unset); 4] = [
         ("memory", |budget| budget.memory_bytes = 0),
         ("processes", |budget| budget.processes = 0),
         ("CPU", |budget| budget.cpu_millicores = 0),

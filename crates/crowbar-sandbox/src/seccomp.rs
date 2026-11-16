@@ -38,6 +38,7 @@ const FIRST_ARGUMENT: u32 = 16;
 
 const LOAD: u16 = (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16;
 const IF_EQUAL: u16 = (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16;
+#[cfg(target_arch = "x86_64")]
 const IF_AT_LEAST: u16 = (libc::BPF_JMP | libc::BPF_JGE | libc::BPF_K) as u16;
 const IF_ANY_BIT: u16 = (libc::BPF_JMP | libc::BPF_JSET | libc::BPF_K) as u16;
 const RETURN: u16 = (libc::BPF_RET | libc::BPF_K) as u16;
