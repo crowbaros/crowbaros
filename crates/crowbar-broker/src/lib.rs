@@ -18,9 +18,14 @@
 //! - [`EffectLimits`] say which objects, how many, for how long, at what cost,
 //!   and how often. They narrow and never widen.
 //!
-//! Not here yet: checking the gate's signature at issuance, and checking each
-//! operation against the limits (the gate), the ledger entry for each issue,
-//! revocation, and copy, and handles across a process boundary.
+//! Not here yet:
+//!
+//! - the gate: checking its signature at issuance, and checking each
+//!   operation against the limits, including a copy's uses against its
+//!   original's;
+//! - a ledger entry for each issue, copy, and revocation;
+//! - handles across a process boundary, and the broker's record of which
+//!   compartment each connection belongs to.
 //!
 //! Decisions: ADR 0004, ADR 0006, ADR 0008, and ADR 0011 in `docs/adr/`.
 //! Design: `docs/architecture/capability-model.md`, "Handles", "Tools", and

@@ -25,14 +25,14 @@ fn table_with(delegable: bool) -> (HandleTable, Handle) {
     (table, original)
 }
 
-/// `from`, holding nothing, passes `handle` to `to` with read only and no
+/// `from`, in a compartment that has read nothing, passes `handle` to `to` with read only and no
 /// limits.
 fn pass(table: &mut HandleTable, handle: &Handle, from: &Principal, to: Principal) -> Result<Handle, Refusal> {
     table.delegate(
         handle,
         Delegation {
             from,
-            held: &Compartment::fresh(),
+            compartment: &Compartment::fresh(),
             to,
             rights: Rights::from([Right::Read]),
             limits: EffectLimits::new(),
@@ -43,24 +43,8 @@ fn pass(table: &mut HandleTable, handle: &Handle, from: &Principal, to: Principa
 
 #[test]
 fn a_delegable_handle_passes_narrowed_and_both_work() {
-    let mut table = HandleTable::new();
-    let mut issue = photos_for(task("sort-photos"));
-    issue.delegable = true;
-    let original = table.issue(issue, NOW).expect("issued");
-
-    let copy = table
-        .delegate(
-            &original,
-            Delegation {
-                from: &task("sort-photos"),
-                held: &Compartment::fresh(),
-                to: tool(),
-                rights: Rights::from([Right::Read]),
-                limits: EffectLimits::new(),
-            },
-            NOW,
-        )
-        .expect("delegated");
+    let (mut table, original) = table_with(true);
+    let copy = pass(&mut table, &original, &task("sort-photos"), tool()).expect("delegated");
 
     let used = table
         .exercise(&copy, &tool(), Right::Read, NOW)
@@ -98,7 +82,7 @@ fn a_copy_never_carries_more_rights_or_wider_limits_than_the_original() {
             &original,
             Delegation {
                 from: &task("sort-photos"),
-                held: &Compartment::fresh(),
+                compartment: &Compartment::fresh(),
                 to: tool(),
                 rights,
                 limits,
@@ -159,7 +143,7 @@ fn a_copy_carries_the_label_and_mark_of_the_compartment_that_passed_it() {
             &original,
             Delegation {
                 from: &task("sort-photos"),
-                held: &held,
+                compartment: &held,
                 to: tool(),
                 rights: Rights::from([Right::Read]),
                 limits: EffectLimits::new(),

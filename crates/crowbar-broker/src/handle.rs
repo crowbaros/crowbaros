@@ -114,9 +114,12 @@ pub struct Issue {
 pub struct Delegation<'a> {
     /// Who passes it on. Only the holder may.
     pub from: &'a Principal,
-    /// The delegator's compartment. The copy is something it emits, so the
-    /// copy carries this compartment's label and mark too.
-    pub held: &'a Compartment,
+    /// The delegator's compartment, as the broker recorded it when the
+    /// Warden started it: never one the caller supplies. The copy is
+    /// something this compartment emits, so it carries the compartment's
+    /// label and mark too. A caller that could choose the compartment could
+    /// pass on an unmarked copy from a marked one.
+    pub compartment: &'a Compartment,
     /// Who receives it. Never the Agent.
     pub to: Principal,
     /// The copy's rights: the original's, or fewer.
@@ -430,7 +433,7 @@ impl HandleTable {
             resource: original.issue.resource.clone(),
             rights: delegation.rights,
             limits: delegation.limits,
-            label_mark: original.issue.label_mark.join(delegation.held.label_mark()),
+            label_mark: original.issue.label_mark.join(delegation.compartment.label_mark()),
             delegable: false,
             reason: original.issue.reason.clone(),
         };
