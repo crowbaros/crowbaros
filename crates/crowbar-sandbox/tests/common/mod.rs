@@ -161,8 +161,12 @@ impl Probe {
     }
 
     pub fn run(order: StartOrder, broker: UnixStream) -> Probe {
+        Probe::run_under(warden(), order, broker)
+    }
+
+    pub fn run_under(warden: &Warden, order: StartOrder, broker: UnixStream) -> Probe {
         broker.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
-        let compartment = warden().start(order).expect("the compartment starts");
+        let compartment = warden.start(order).expect("the compartment starts");
         Probe {
             compartment,
             broker: BufReader::new(broker),
@@ -243,4 +247,22 @@ pub fn eventually(what: &str, met: impl Fn() -> bool) {
         assert!(std::time::Instant::now() < deadline, "{what} did not happen");
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+/// A directory for a test that measures the disk: on a disk, where
+/// `scratch` may be in memory.
+pub fn on_disk(name: &str) -> PathBuf {
+    const TMPFS: i64 = 0x0102_1994;
+    let directory = scratch(name);
+    let path = std::ffi::CString::new(directory.to_str().unwrap()).unwrap();
+    // SAFETY: an all-zero `statfs` is valid, and the call fills it.
+    let mut filesystem: libc::statfs = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { libc::statfs(path.as_ptr(), &mut filesystem) }, 0);
+    assert_ne!(
+        filesystem.f_type as i64,
+        TMPFS,
+        "{} is in memory: set CROWBAR_SANDBOX_TEST_DIR to a directory on a disk",
+        directory.display()
+    );
+    directory
 }

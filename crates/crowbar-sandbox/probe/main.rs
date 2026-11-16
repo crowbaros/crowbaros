@@ -137,6 +137,21 @@ fn main() {
                 .open(argument())
                 .map(|_| String::new()),
             "trace-child" => trace_child(),
+            "forks" => Ok(forks(number(&argument()))),
+            "eat" => Ok(eat(number(&argument()) as usize)),
+            "spin" => Ok(spin(Duration::from_millis(number(&argument()) as u64))),
+            "write-direct" => {
+                let path = argument();
+                write_direct(&path, number(&argument()) as usize)
+            }
+            "unix-talk" => UnixStream::connect(argument()).and_then(|mut socket| {
+                socket.write_all(b"hello\n")?;
+                let mut answer = String::new();
+                match BufReader::new(socket).read_line(&mut answer)? {
+                    0 => Err(io::Error::other("closed")),
+                    _ => Ok(answer),
+                }
+            }),
             "listen" => std::net::TcpListener::bind("127.0.0.1:0").map(|_| String::new()),
             "hold" => {
                 writeln!(broker, "hold: ok").expect("the broker connection");
@@ -169,6 +184,8 @@ fn name(error: &io::Error) -> String {
         (libc::ENETUNREACH, "ENETUNREACH"),
         (libc::ECONNREFUSED, "ECONNREFUSED"),
         (libc::EOPNOTSUPP, "EOPNOTSUPP"),
+        (libc::ECONNRESET, "ECONNRESET"),
+        (libc::EPIPE, "EPIPE"),
     ];
     match error.raw_os_error() {
         Some(number) => match names.iter().find(|(known, _)| *known == number) {
@@ -355,6 +372,75 @@ fn trace_child() -> io::Result<String> {
         libc::waitpid(child, std::ptr::null_mut(), 0);
         traced
     }
+}
+
+/// Makes up to `wanted` processes that wait, and says how many the kernel
+/// allowed and how it refused the next.
+fn forks(wanted: i32) -> String {
+    for made in 0..wanted {
+        // SAFETY: the probe has one thread. Each child only waits.
+        match unsafe { libc::fork() } {
+            -1 => return format!("made={made} then={}", name(&io::Error::last_os_error())),
+            0 => loop {
+                // SAFETY: plain call.
+                unsafe { libc::pause() };
+            },
+            _ => {}
+        }
+    }
+    format!("made={wanted}")
+}
+
+/// Takes memory, a megabyte at a time, and uses every page of it.
+fn eat(megabytes: usize) -> String {
+    let mut eaten = Vec::new();
+    for _ in 0..megabytes {
+        eaten.push(vec![0xa5u8; 1 << 20]);
+    }
+    format!("ate={}", std::hint::black_box(&eaten).len())
+}
+
+/// Computes for `long` by the clock on the wall, and says how much CPU
+/// time that took, in milliseconds.
+fn spin(long: Duration) -> String {
+    let cpu_time = || {
+        // SAFETY: an all-zero `timespec` is valid, and the call fills it.
+        let mut time: libc::timespec = unsafe { std::mem::zeroed() };
+        unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut time) };
+        Duration::new(time.tv_sec as u64, time.tv_nsec as u32)
+    };
+    let (began, began_cpu) = (std::time::Instant::now(), cpu_time());
+    while began.elapsed() < long {
+        std::hint::black_box(began.elapsed());
+    }
+    format!("cpu={}", (cpu_time() - began_cpu).as_millis())
+}
+
+/// Writes `kibibytes` to a new file, straight to the disk, and says how
+/// long that took in milliseconds.
+fn write_direct(path: &str, kibibytes: usize) -> io::Result<String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    const BLOCK: usize = 64 << 10;
+    let mut file = fs::File::options()
+        .write(true)
+        .create_new(true)
+        .custom_flags(libc::O_DIRECT | libc::O_SYNC)
+        .open(path)?;
+    // Writing straight to the disk takes memory that is aligned to its
+    // blocks.
+    let layout = std::alloc::Layout::from_size_align(BLOCK, 4096).expect("a layout");
+    // SAFETY: the layout has a size, and the block is used only if it was
+    // given, as initialized bytes, and freed once with the same layout.
+    let block = unsafe {
+        let block = std::alloc::alloc_zeroed(layout);
+        assert!(!block.is_null());
+        std::slice::from_raw_parts(block, BLOCK)
+    };
+    let began = std::time::Instant::now();
+    let written = (0..kibibytes / 64).try_for_each(|_| file.write_all(block));
+    // SAFETY: as above.
+    unsafe { std::alloc::dealloc(block.as_ptr().cast_mut(), layout) };
+    written.map(|()| format!("ms={}", began.elapsed().as_millis()))
 }
 
 /// Leaves a process behind that tries to get away: it forks twice, starts a

@@ -6,10 +6,12 @@ mod landlock;
 mod order;
 mod seccomp;
 mod sys;
+mod trusted;
 mod uids;
 mod warden;
 mod wire;
 
 pub use init::init_stage;
 pub use order::{Access, Budget, Needs, OrderError, StartOrder, ViewEntry};
+pub use trusted::{Stranger, TrustedListener};
 pub use warden::{Compartment, Ended, StartError, Warden, WardenConfig};

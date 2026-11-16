@@ -13,12 +13,12 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-use crowbar_sandbox::Needs;
+use crowbar_sandbox::{Budget, Ended, Needs, OrderError, StartError, Stranger, TrustedListener, Warden};
 
 mod common;
 use common::{
-    Probe, STORAGE, USER_IDS, data, eventually, field, probe_order, processes_of, program, read_only, read_write,
-    root_of, scratch, stored, user_of,
+    Probe, ROOMY, STORAGE, USER_IDS, config, data, eventually, field, on_disk, probe_order, processes_of, program,
+    read_only, read_write, root_of, scratch, stored, user_of, warden,
 };
 
 #[test]
@@ -409,4 +409,247 @@ fn a_compartment_cannot_open_a_port_even_inside_its_own_network() {
     // a mistake in the network setup does not become a listening service.
     let mut probe = Probe::start(Vec::new(), &["listen"]);
     assert_eq!(probe.did("listen"), "refused EACCES");
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_fork_bomb_stops_at_the_process_budget() {
+    // Attack 7, first half.
+    let mut bystander = Probe::start(Vec::new(), &["hold"]);
+    assert_eq!(bystander.did("hold"), "ok");
+
+    let mut bomb = Probe::start_as("task-1", &["forks 500", "hold"], |order| {
+        order.budget = Budget { processes: 8, ..ROOMY };
+    });
+    // The probe is one process of the eight.
+    assert_eq!(bomb.did("forks 500"), "ok made=7 then=EAGAIN");
+    assert_eq!(bomb.did("hold"), "ok");
+
+    // The broker, which is this process, and the other compartment go on.
+    assert!(bystander.answers());
+    let ended = bomb.compartment.stop().unwrap();
+    assert!(ended.processes_refused);
+    assert!(!bystander.compartment.stop().unwrap().processes_refused);
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_program_that_takes_all_the_memory_is_stopped_at_the_memory_budget() {
+    // Attack 7, second half.
+    let mut bystander = Probe::start(Vec::new(), &["hold"]);
+    assert_eq!(bystander.did("hold"), "ok");
+    let small = |order: &mut crowbar_sandbox::StartOrder| {
+        order.budget = Budget {
+            memory_bytes: 32 << 20,
+            ..ROOMY
+        }
+    };
+
+    // Inside the budget, it runs.
+    let mut modest = Probe::start_as("task-1", &["eat 8"], small);
+    assert_eq!(modest.did("eat 8"), "ok ate=8");
+    assert!(!modest.compartment.wait().unwrap().out_of_memory);
+
+    // At the budget the whole compartment is stopped, and it says so.
+    let mut greedy = Probe::start_as("task-1", &["eat 4096", "hold"], small);
+    assert_eq!(greedy.line(), None);
+    let ended = greedy.compartment.wait().unwrap();
+    assert_eq!(
+        ended,
+        Ended {
+            code: None,
+            out_of_memory: true,
+            processes_refused: false
+        }
+    );
+    assert!(bystander.answers());
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_busy_program_gets_its_share_of_a_cpu_and_no_more() {
+    let mut probe = Probe::start_as("task-1", &["spin 1000"], |order| {
+        // A tenth of one CPU.
+        order.budget = Budget {
+            cpu_millicores: 100,
+            ..ROOMY
+        };
+    });
+    let cpu: u64 = field(&probe.did("spin 1000"), "cpu").parse().unwrap();
+    // A second of computing got about 100 ms of CPU time. Without the
+    // budget it gets the whole second.
+    assert!((1..300).contains(&cpu), "{cpu} ms");
+}
+
+#[test]
+#[ignore = "needs root"]
+fn writes_to_a_disk_are_held_to_the_io_budget() {
+    let files = on_disk("io");
+    let mut probe = Probe::start_as("task-1", &["write-direct /out/big 3072"], |order| {
+        order.view.push(read_write(&files, "/out"));
+        // One mebibyte a second.
+        order.budget = Budget {
+            io_bytes_per_second: 1 << 20,
+            ..ROOMY
+        };
+    });
+    let ms: u64 = field(&probe.did("write-direct /out/big 3072"), "ms").parse().unwrap();
+    // Three mebibytes take about three seconds. Without the budget they
+    // take a few milliseconds.
+    assert!(ms >= 1500, "{ms} ms");
+    assert_eq!(fs::metadata(files.join("big")).unwrap().len(), 3 << 20);
+}
+
+#[test]
+#[ignore = "needs root"]
+fn what_a_compartment_leaves_behind_is_out_of_reach_of_the_next() {
+    // Attack 10. The program ends and leaves files, and a process that
+    // forked twice.
+    let files = scratch("left");
+    let left = [
+        "ids",
+        "write /tmp/left x",
+        "write /dev/shm/left x",
+        "write /out/left x",
+        "daemon /out/alive",
+        "exit 0",
+    ];
+    let mut first = Probe::start(vec![read_write(&files, "/out")], &left);
+    let first_user = user_of(&mut first);
+    for action in &left[1..5] {
+        assert_eq!(first.did(action), "ok", "{action}");
+    }
+    assert_eq!(first.compartment.wait().unwrap().code, Some(0));
+
+    // The process ended with the program, and the user owns no file.
+    assert_eq!(processes_of(first_user), Vec::<u32>::new());
+    for file in ["left", "alive"] {
+        assert_eq!(fs::metadata(files.join(file)).unwrap().uid(), STORAGE, "{file}");
+    }
+
+    // The next compartment is another user, with places of its own.
+    let next = ["ids", "ls /tmp", "ls /dev/shm", "read /out/left", "pids"];
+    let mut second = Probe::start(Vec::new(), &next);
+    assert_ne!(user_of(&mut second), first_user);
+    assert_eq!(second.did("ls /tmp"), "ok");
+    assert_eq!(second.did("ls /dev/shm"), "ok");
+    assert_eq!(second.did("read /out/left"), "refused ENOENT");
+    assert_eq!(second.did("pids"), "ok 1 2");
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_trusted_parts_socket_refuses_a_compartment_by_its_user_id() {
+    // Attack 6. The socket of a trusted part that serves root alone. Its
+    // directory is put in the view, and the socket is given to the storage
+    // user so that the compartment sees it as its own. Both are on purpose:
+    // the only check left is the one on the user ID.
+    let files = scratch("trusted");
+    let path = files.join("broker.sock");
+    let listener = TrustedListener::bind(&path, 0).unwrap();
+    stored(&path);
+
+    // The user it serves gets in.
+    let mut root = UnixStream::connect(&path).unwrap();
+    let mut served = listener.accept().unwrap().expect("root is served");
+    root.write_all(b"hi").unwrap();
+    let mut heard = [0; 2];
+    served.read_exact(&mut heard).unwrap();
+    assert_eq!(&heard, b"hi");
+
+    let actions = ["ids", "unix-talk /trusted/broker.sock"];
+    let mut probe = Probe::start(vec![read_write(&files, "/trusted")], &actions);
+    let uid = user_of(&mut probe);
+    // The kernel says who is calling, and the listener hangs up. A listener
+    // that nobody calls would wait for ever, so it waits on a thread.
+    let (tell, called) = std::sync::mpsc::channel();
+    std::thread::spawn(move || tell.send(listener.accept()));
+    match called.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(Err(Stranger { uid: seen }))) => assert_eq!(seen, uid),
+        Ok(served) => panic!("the compartment was served: {served:?}"),
+        Err(_) => panic!("nobody called: {}", probe.did("unix-talk /trusted/broker.sock")),
+    }
+    // The compartment gets no answer. How the hang-up looks from its end
+    // depends on whether it had already written.
+    let happened = probe.did("unix-talk /trusted/broker.sock");
+    assert!(happened.starts_with("refused "), "{happened}");
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_new_warden_stops_what_the_last_one_left_running() {
+    let own = || config("crowbar-warden-test-restart", 1_900_200_000..1_900_201_000);
+    let first = Warden::new(own()).unwrap();
+    let (order, broker) = probe_order("task-1", &["ids", "hold"]);
+    let mut left = Probe::run_under(&first, order, broker);
+    let uid = user_of(&mut left);
+    assert_eq!(left.did("hold"), "ok");
+
+    // There is one Warden at a time.
+    assert!(Warden::new(own()).is_err());
+
+    // The first Warden goes away without stopping its compartment.
+    let (compartment, mut broker) = left.into_parts();
+    std::mem::forget(compartment);
+    drop(first);
+    assert!(!processes_of(uid).is_empty());
+
+    let second = Warden::new(own()).unwrap();
+    assert_eq!(processes_of(uid), Vec::<u32>::new());
+    assert_eq!(broker.read(&mut [0; 16]).unwrap(), 0);
+
+    // It gives no user ID the first one gave.
+    let (order, broker) = probe_order("task-1", &["ids"]);
+    let mut next = Probe::run_under(&second, order, broker);
+    assert!(user_of(&mut next) > uid);
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_start_that_is_refused_leaves_nothing_behind() {
+    let cgroup = |id: &str| config("crowbar-warden-test", USER_IDS).cgroup.join(id);
+
+    // An order the Warden does not carry out.
+    let (mut order, _broker) = probe_order("task-1", &[]);
+    order.view.push(read_only(&scratch("covers"), "/proc"));
+    let id = order.compartment.clone();
+    match warden().start(order) {
+        Err(StartError::Order(OrderError::Reserved(at))) => assert_eq!(at.to_str(), Some("/proc")),
+        other => panic!("{:?}", other.err()),
+    }
+    assert!(!cgroup(&id).exists());
+
+    // A program that is not in the view, and a view entry that is not on
+    // the machine.
+    let missing_program = |order: &mut crowbar_sandbox::StartOrder| order.program = "/nowhere".into();
+    let missing_entry = |order: &mut crowbar_sandbox::StartOrder| {
+        order.view.push(read_only(&scratch("gone").join("never-made"), "/gone"));
+    };
+    let changes: [(&str, &dyn Fn(&mut crowbar_sandbox::StartOrder)); 2] =
+        [("/nowhere", &missing_program), ("never-made", &missing_entry)];
+    for (named, change) in changes {
+        let (mut order, mut broker) = probe_order("task-1", &["hold"]);
+        change(&mut order);
+        let id = order.compartment.clone();
+        match warden().start(order) {
+            Err(StartError::Setup(step)) => assert!(step.contains(named), "{step}"),
+            other => panic!("{named}: {:?}", other.err()),
+        }
+        assert!(!cgroup(&id).exists(), "{named}");
+        // Nothing holds the compartment's end of the connection.
+        assert_eq!(broker.read(&mut [0; 16]).unwrap(), 0, "{named}");
+    }
+
+    // A compartment ID that is live.
+    let (order, broker) = probe_order("task-1", &["hold"]);
+    let id = order.compartment.clone();
+    let mut live = Probe::run(order, broker);
+    assert_eq!(live.did("hold"), "ok");
+    let (mut again, _broker) = probe_order("task-1", &["hold"]);
+    again.compartment = id.clone();
+    match warden().start(again) {
+        Err(StartError::Live(refused)) => assert_eq!(refused, id),
+        other => panic!("{:?}", other.err()),
+    }
+    assert!(live.answers());
 }
