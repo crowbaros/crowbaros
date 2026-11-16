@@ -132,18 +132,18 @@ The guard was checked against a build that calls into `reis`: it fails.
 | `pgrep -x crowbar-compositor` never matches: the kernel keeps 15 characters of a process's name. Two checks in the guest script passed without testing anything | The script finds the process by its whole name, and stops if it finds none |
 | `openvt` hands the program it starts a second descriptor for the terminal, which is not close-on-exec | Recorded. The compositor did not open it. A Base service that starts the compositor through `openvt` passes it the same one |
 
-## Read from the records, and not decided in them
+## What the records did not say, and what Jim decided
 
-1. **What the shell is offered.** The table gives layer shell to "the shell
-   alone". The shell also has to draw windows, so it is offered what a
-   compartment with the GPU is offered, and layer shell.
-2. **How the compositor learns that a compartment's needs include the GPU.**
-   The Warden says who a compartment is and nothing more. No part of Base says
-   it yet, so outside the tests no compartment is offered `zwp_linux_dmabuf_v1`.
-3. **Which slice creates each remaining global of the table.** The
-   [compositor's README](../../compositor/README.md#what-each-client-is-offered)
-   lists them. The data device waits for the clipboard rules in slice 4. The
-   ADR names no slice for presentation time or cursor shape.
+Slice 1 met three gaps in the records. Jim decided each on the same day.
+
+| Gap | Decision |
+| --- | --- |
+| ADR 0020's table gives layer shell to "the shell alone", and names nothing else for the shell | The shell is offered what a compartment with the GPU is offered, and layer shell: [ADR 0023](../adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) |
+| The Warden says who a compartment is and nothing more, so nothing tells the compositor that a compartment's needs include the GPU | The broker says it. [Issue 71](https://github.com/crowbaros/crowbaros/issues/71) decides how. Until then, outside the tests no compartment is offered `zwp_linux_dmabuf_v1` |
+| ADR 0020 names no slice for presentation time or cursor shape | Presentation time is built with slice 5 ([issue 79](https://github.com/crowbaros/crowbaros/issues/79)), and cursor shape with slice 3 ([issue 78](https://github.com/crowbaros/crowbaros/issues/78)) |
+
+The [compositor's README](../../compositor/README.md#what-each-client-is-offered)
+lists which slice creates each remaining global of the table.
 
 ## Not run, and not built
 

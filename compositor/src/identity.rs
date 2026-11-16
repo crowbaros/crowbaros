@@ -67,8 +67,9 @@ impl Compartment {
     /// before the compartment's program starts.
     ///
     /// The Warden says who a compartment is and nothing more (ADR 0016), so
-    /// this does not come from the Warden. No part of Base says it yet: the
-    /// tests call this in its place.
+    /// this does not come from the Warden. The broker knows a principal's
+    /// needs, and issue 71 decides how it tells the compositor. Until then
+    /// only the tests call this, in the broker's place.
     pub fn record_gpu_need(&self) {
         self.gpu.store(true, Ordering::Relaxed);
     }

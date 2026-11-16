@@ -1,7 +1,7 @@
 //! What each client is offered.
 //!
-//! This is the table "What each client is offered" of ADR 0020, and the one
-//! place that decides it. Every global the compositor creates passes through
+//! This is the table "What each client is offered" of ADR 0020, with what
+//! ADR 0023 adds for the shell, and the one place that decides it. Every global the compositor creates passes through
 //! [`offered_to`] (see the `GlobalDispatch` impl in `handlers/mod.rs`), so a
 //! global with no row here is offered to nobody. That includes one a later
 //! Smithay adds.
@@ -87,10 +87,9 @@ pub const NOBODY: &[&str] = &[
 /// Whether a client with this identity is offered the global with this
 /// interface name.
 ///
-/// The shell is not a compartment. It draws with the GPU, so it is offered
-/// what a compartment with the GPU is offered, and layer shell. The Warden
-/// draws nothing, and is offered the security context manager and nothing
-/// else.
+/// The shell is not a compartment. It is offered what a compartment with the
+/// GPU is offered, and layer shell. The Warden draws nothing, and is offered
+/// the security context manager and nothing else (ADR 0023).
 pub fn offers(identity: &Identity, interface: &str) -> bool {
     let rows: &[&[&str]] = match identity {
         Identity::Shell => &[EVERY_COMPARTMENT, GPU, SHELL_ALONE],
@@ -168,9 +167,13 @@ mod tests {
         }
     }
 
+    /// ADR 0023.
     #[test]
-    fn the_shell_can_draw_windows_with_the_gpu() {
-        for interface in ADR_EVERY_COMPARTMENT.into_iter().chain(["zwp_linux_dmabuf_v1"]) {
+    fn the_shell_is_offered_what_a_compartment_with_the_gpu_is_offered() {
+        for interface in ADR_EVERY_COMPARTMENT
+            .into_iter()
+            .chain(["zwp_linux_dmabuf_v1", "wp_linux_drm_syncobj_manager_v1"])
+        {
             assert!(offers(&Identity::Shell, interface), "{interface}");
         }
     }

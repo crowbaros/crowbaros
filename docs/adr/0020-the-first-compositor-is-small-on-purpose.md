@@ -126,6 +126,8 @@ One default-deny table decides every global for every client, as in the spike. A
 | The Warden alone | The security context manager |
 | Nobody | Activation, primary selection, data control, every capture protocol, virtual keyboard, virtual pointer, input method, text input, session lock, foreign toplevel lists, shortcut inhibit, pointer constraints, relative pointer, tablets, DRM leasing, the XWayland shell |
 
+[ADR 0023](0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) says which of these rows the shell and the Warden are offered.
+
 **Idle inhibit is honoured only for a fullscreen window that has the keyboard.** A film does not lock halfway through, and an app in the background cannot keep the session unlocked.
 
 ## Left out on purpose

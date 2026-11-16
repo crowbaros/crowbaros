@@ -9,6 +9,7 @@ what CrowbarOS trusts.
 | CrowbarOS owns its compositor | [ADR 0015](../docs/adr/0015-our-own-compositor-on-smithay.md) |
 | Who its clients are, and how each connects | [ADR 0016](../docs/adr/0016-the-warden-starts-every-compartment.md) |
 | What desktop it is, what each client is offered, and its slices | [ADR 0020](../docs/adr/0020-the-first-compositor-is-small-on-purpose.md) |
+| Which rows of that table the shell and the Warden are offered | [ADR 0023](../docs/adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) |
 | It is built beside Milestone 2 | [ADR 0022](../docs/adr/0022-the-compositor-is-built-beside-milestone-2.md) |
 
 The [spike](../lab/compositor-spike/README.md) that tested ADR 0015 is not this
@@ -69,8 +70,8 @@ listeners (`crowbar-probe warden`).
 
 ## What each client is offered
 
-`src/policy.rs` is ADR 0020's table "What each client is offered", and the one
-place that decides it. Every global passes through it, so a global with no row
+`src/policy.rs` is ADR 0020's table "What each client is offered", with what
+ADR 0023 adds for the shell, and the one place that decides it. Every global passes through it, so a global with no row
 is offered to nobody. That includes one a later Smithay adds.
 
 The table decides who is offered a global. It does not create one. Slice 1
@@ -93,16 +94,13 @@ Today a client sees these:
 | The shell | Those, `zwp_linux_dmabuf_v1`, and `zwlr_layer_shell_v1` |
 | The Warden | `wp_security_context_manager_v1` and nothing else |
 
-Two things here are readings of ADR 0020, which does not spell them out:
-
-- **The shell is offered what a compartment with the GPU is offered, and layer
-  shell.** The table lists layer shell for "the shell alone". The shell also
-  has to draw.
-- **Nothing tells the compositor yet that a compartment's needs include the
-  GPU.** The Warden says who a compartment is and nothing more (ADR 0016).
-  Until a part of Base says it, no compartment is offered `zwp_linux_dmabuf_v1`
-  outside the tests, which say it in that part's place
-  (`Compartment::record_gpu_need`).
+**Nothing tells the compositor yet that a compartment's needs include the
+GPU.** The Warden says who a compartment is and nothing more (ADR 0016). The
+broker knows each principal's needs, and
+[issue 71](https://github.com/crowbaros/crowbaros/issues/71) decides how it
+tells the compositor. Until then no compartment is offered
+`zwp_linux_dmabuf_v1` outside the tests, which say it in the broker's place
+(`Compartment::record_gpu_need`).
 
 ## Drawing
 
