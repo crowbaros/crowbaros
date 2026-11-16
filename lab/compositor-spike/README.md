@@ -1,20 +1,24 @@
-# Compositor
+# Compositor spike
 
-The CrowbarOS Wayland compositor, written in Rust on
-[Smithay](https://github.com/Smithay/smithay). It is part of Base and part of
-what we trust. The decision and its reasons are in
-[ADR 0015](../docs/adr/0015-our-own-compositor-on-smithay.md), and the evidence
-is in the [compositor research](../docs/research/compositor-smithay.md).
+**This is the [spike](https://github.com/crowbaros/crowbaros/issues/3), not the
+compositor.** It was written to test
+[ADR 0015](../../docs/adr/0015-our-own-compositor-on-smithay.md), and its code is
+throwaway. The compositor is in [`compositor/`](../../compositor/README.md).
 
-**What is here is the [spike](https://github.com/crowbaros/crowbaros/issues/3),
-not the compositor.** It was written to test ADR 0015 and its code is throwaway.
-The [spike record](../docs/research/compositor-spike-2026-11-15.md) says what it
-proved and what it did not. The
-[design brief](../docs/research/compositor-design-brief.md) lists the decisions
-the real compositor needs first.
+The spike is kept here for one reason: the Alpha desktop check still runs it
+([ADR 0020](../../docs/adr/0020-the-first-compositor-is-small-on-purpose.md)).
+When the compositor passes that check, this directory is deleted. Change
+nothing here except to keep it building.
+
+The [spike record](../../docs/research/compositor-spike-2026-11-15.md) says what it
+proved and what it did not. The compositor's test harness, probe client,
+protocol check, and Void guest check were made from this one's. The checks that run the
+real shell (`checks/nested-apps.sh`, `checks/tty-apps.sh`) stay here until the
+compositor has the shell's protocol
+([issue 71](https://github.com/crowbaros/crowbaros/issues/71)).
 
 What the compositor does that a borrowed one would not
-([ADR 0014](../docs/adr/0014-a-yes-comes-from-the-person.md)):
+([ADR 0014](../../docs/adr/0014-a-yes-comes-from-the-person.md)):
 
 - It delivers input only as the shell directs. It offers no Tool or app a
   virtual keyboard, virtual pointer, input-method, or input-emulation interface.
@@ -29,10 +33,10 @@ not draw any marking of its own, and it does not gate the clipboard.
 ## Layout
 
 This is its own Cargo project with a pinned `Cargo.lock`, like the apps in
-[`apps/`](../apps/README.md). It is not a member of the root workspace, because
+[`apps/`](../../apps/README.md). It is not a member of the root workspace, because
 it pins Smithay to a git commit and needs system libraries (DRM, libinput,
 libseat, udev) that CI does not install. It can depend on crates in
-[`crates/`](../crates/README.md) by path.
+[`crates/`](../../crates/README.md) by path.
 
 | Path | Contents |
 | --- | --- |
@@ -59,10 +63,10 @@ Smithay's default features are off. That leaves out `backend_libei` (input
 emulation), `xwayland`, `backend_x11`, and `backend_vulkan`.
 The `reis` crate is still built, because Smithay depends on it without a
 feature gate. None of its code is linked into the compositor; see the
-[bump measurement](../docs/research/compositor-smithay-bump-2026-11-15.md).
+[bump measurement](../../docs/research/compositor-smithay-bump-2026-11-15.md).
 
 ```sh
-cd compositor
+cd lab/compositor-spike
 cargo test                              # 22 tests, no display needed
 cargo clippy --all-targets -- -D warnings
 ```
@@ -84,17 +88,17 @@ checks/nested-apps.sh /path/to/crowbaros-shell /path/to/crowbaros-studio-setting
 `--shell` starts the shell and hands it two connected sockets. `--spawn`
 starts an ordinary client. `crowbar-compositor --help` lists the rest.
 
-On a TTY the compositor needs a seat from seatd. The
-[Void lab](../lab/void/README.md) builds it against Void's libraries and runs
-it that way:
+On a TTY the spike needs a seat from seatd. The
+[Void lab](../void/README.md) builds it against Void's libraries and runs
+it that way, with the shell and Studio Settings:
 
 ```sh
-lab/void/compositor_guest.py check
+lab/void/compositor_guest.py desktop-check
 ```
 
 On a real machine with no desktop session, `checks/tty-apps.sh` runs the
 shell and Studio Settings on a TTY through DRM, over SSH, and counts their
 commits; `--suspend` also suspends and resumes the machine. `--mode NAME=WxH`
 picks an output's mode in place of the one its monitor prefers. The
-[NVIDIA record](../docs/research/compositor-nvidia-2026-11-15.md) says how they
+[NVIDIA record](../../docs/research/compositor-nvidia-2026-11-15.md) says how they
 were run.

@@ -13,7 +13,7 @@ set -euo pipefail
 : "${WAYLAND_DISPLAY:?set WAYLAND_DISPLAY to the Wayland session to nest in}"
 
 here=$(cd "$(dirname "$0")/.." && pwd)
-root=$(cd "$here/.." && pwd)
+root=$(cd "$here/../.." && pwd)
 info=${1:?usage: checks/nested.sh /path/to/wayland-info}
 bin=${CROWBAR_BIN:-$here/target/debug}
 out=$root/.lab/compositor

@@ -10,8 +10,7 @@
 #
 # Run it over SSH as the user who owns the seat, with passwordless sudo: it
 # needs root for openvt, chvt, the runtime directory, and zzz. The compositor
-# itself runs as that user with the _seatd group, as lab/void/compositor_check.py
-# does.
+# itself runs as that user with the _seatd group.
 #
 # COMPOSITOR_ARGS adds to the compositor's command line, for example
 # COMPOSITOR_ARGS="--mode HDMI-A-1=6144x2560". WATCH_SECONDS sets how long a
@@ -22,7 +21,7 @@ set -euo pipefail
 suspend=0
 if [ "${1:-}" = --suspend ]; then suspend=1; shift; fi
 here=$(cd "$(dirname "$0")/.." && pwd)
-root=$(cd "$here/.." && pwd)
+root=$(cd "$here/../.." && pwd)
 shell=$(realpath "${1:?usage: checks/tty-apps.sh [--suspend] SHELL_BINARY STUDIO_BINARY}")
 studio=$(realpath "${2:?usage: checks/tty-apps.sh [--suspend] SHELL_BINARY STUDIO_BINARY}")
 bin=${CROWBAR_BIN:-$here/target/debug}

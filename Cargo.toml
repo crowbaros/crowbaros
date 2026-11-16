@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-# The GPUI apps and the compositor pin their own dependency graphs and are built
-# on their own.
-exclude = ["apps", "compositor"]
+# The GPUI apps, the compositor, and the compositor spike pin their own
+# dependency graphs and are built on their own.
+exclude = ["apps", "compositor", "lab/compositor-spike"]
 
 [workspace.package]
 version = "0.1.0"
