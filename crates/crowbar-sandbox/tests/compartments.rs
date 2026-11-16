@@ -11,6 +11,7 @@ use std::net::TcpListener;
 use std::os::fd::OwnedFd;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use crowbar_sandbox::{Budget, Ended, Needs, OrderError, StartError, StartOrder, Stranger, TrustedListener, Warden};
@@ -769,6 +770,40 @@ fn nothing_mounted_in_a_sandbox_honours_a_setuid_bit_or_a_device_file() {
     }
 }
 
+/// Held while a test depends on this process's core file limit, which every
+/// compartment the tests start is born with.
+static CORE_LIMIT: Mutex<()> = Mutex::new(());
+
+/// Sets this process's core file limit, and gives back the one it had.
+fn core_limit(limit: libc::rlimit) -> libc::rlimit {
+    let mut before = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: plain calls on this process's own limit.
+    unsafe {
+        assert_eq!(libc::getrlimit(libc::RLIMIT_CORE, &mut before), 0);
+        assert_eq!(libc::setrlimit(libc::RLIMIT_CORE, &limit), 0);
+    }
+    before
+}
+
+#[test]
+#[ignore = "needs root"]
+fn a_warden_that_may_write_no_core_file_still_starts_a_compartment() {
+    // Some machines start a service, or a command under `sudo`, with a core
+    // file limit of 0 that nothing but root can raise.
+    let _held = CORE_LIMIT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let before = core_limit(libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    });
+    let mut probe = Probe::start(Vec::new(), &["ids", "crash"]);
+    core_limit(before);
+    user_of(&mut probe);
+    assert_eq!(probe.compartment.wait().unwrap().code, Some(128 + libc::SIGABRT));
+}
+
 #[test]
 #[ignore = "needs root"]
 fn a_crash_in_a_compartment_runs_no_program_of_the_machines() {
@@ -791,12 +826,11 @@ fn a_crash_in_a_compartment_runs_no_program_of_the_machines() {
     fs::write(CORE_PATTERN, format!("|{} %u", handler.display())).unwrap();
 
     // A crash outside every compartment reaches the handler.
-    let unlimited = libc::rlimit {
+    let _held = CORE_LIMIT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    core_limit(libc::rlimit {
         rlim_cur: libc::RLIM_INFINITY,
         rlim_max: libc::RLIM_INFINITY,
-    };
-    // SAFETY: plain call on this process's own limit.
-    assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_CORE, &unlimited) }, 0);
+    });
     let crashed = std::process::Command::new(program("crowbar-sandbox-probe"))
         .arg("crash")
         .status()

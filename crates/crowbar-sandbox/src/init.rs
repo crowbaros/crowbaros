@@ -456,6 +456,18 @@ fn become_user(order: &InitOrder) -> io::Result<()> {
     const JOIN_SESSION_KEYRING: libc::c_int = 1;
     // SAFETY: plain calls on this process's own credentials and limits.
     unsafe {
+        // No core file. Many machines pipe one to a handler of their own,
+        // which the kernel runs as root, outside every sandbox, on memory
+        // the compartment chose. A limit of 0 does not stop that. A limit
+        // of 1 does: the kernel takes it to mean a handler that crashed,
+        // and runs nothing. It also leaves no room for a core file. Root sets
+        // it, because the Warden's own limit may be 0, which no other user
+        // can raise.
+        let none = libc::rlimit {
+            rlim_cur: 1,
+            rlim_max: 1,
+        };
+        checked(libc::setrlimit(libc::RLIMIT_CORE, &none))?;
         // The bounding set is what a program could ever be given. The
         // kernel names its capabilities from 0 up and refuses the first
         // number it does not have.
@@ -477,16 +489,6 @@ fn become_user(order: &InitOrder) -> io::Result<()> {
         if joined == -1 && io::Error::last_os_error().raw_os_error() != Some(libc::ENOSYS) {
             return Err(io::Error::last_os_error());
         }
-        // No core file. Many machines pipe one to a handler of their own,
-        // which the kernel runs as root, outside every sandbox, on memory
-        // the compartment chose. A limit of 0 does not stop that. A limit
-        // of 1 does: the kernel takes it to mean a handler that crashed,
-        // and runs nothing. It also leaves no room for a core file.
-        let none = libc::rlimit {
-            rlim_cur: 1,
-            rlim_max: 1,
-        };
-        checked(libc::setrlimit(libc::RLIMIT_CORE, &none))?;
     }
     Ok(())
 }
