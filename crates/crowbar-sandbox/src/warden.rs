@@ -13,7 +13,7 @@ use crate::cgroup::{Cgroup, Subtree};
 use crate::order::{OrderError, StartOrder};
 use crate::sys;
 use crate::uids::{NoUserId, UserIds};
-use crate::wire::InitOrder;
+use crate::wire::{BUILT, InitOrder};
 
 /// What the Warden is given by the machine it runs on.
 #[derive(Debug, Clone)]
@@ -168,14 +168,17 @@ impl Warden {
         let mut ours = File::from(ours);
         ours.write_all(&body).map_err(setup)?;
 
-        // The init stage says what failed, or closes the socket by starting
-        // the program.
-        let mut failure = String::new();
-        ours.read_to_string(&mut failure).map_err(setup)?;
-        if !failure.is_empty() {
-            return Err(StartError::Setup(failure));
-        }
-        Ok(compartment)
+        // The init stage says what failed, or says that the sandbox is
+        // built and then closes the socket by becoming the program.
+        let mut said = Vec::new();
+        ours.read_to_end(&mut said).map_err(setup)?;
+        let failure = match said.split_first() {
+            Some((&BUILT, [])) => return Ok(compartment),
+            Some((&BUILT, failure)) => String::from_utf8_lossy(failure).into_owned(),
+            Some(_) => String::from_utf8_lossy(&said).into_owned(),
+            None => "the init stage ended before the sandbox was built".to_string(),
+        };
+        Err(StartError::Setup(failure))
     }
 }
 

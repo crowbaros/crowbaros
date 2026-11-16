@@ -5,8 +5,9 @@
 //! that it has one thread and nothing of the Warden's but the order. It
 //! starts as root, inside the compartment's cgroup, and reads its order
 //! from its standard input, a socket. On that socket it reports the step
-//! that failed. When the program starts, the socket closes with nothing
-//! said, and that is how the Warden knows the start worked.
+//! that failed. When the sandbox is built it writes one byte, and then
+//! becomes the program, which closes the socket. That is how the Warden
+//! knows the start worked.
 
 use std::convert::Infallible;
 use std::ffi::CString;
@@ -18,7 +19,7 @@ use std::path::Path;
 
 use crate::order::Access;
 use crate::sys::{self, checked, cstring};
-use crate::wire::InitOrder;
+use crate::wire::{BUILT, InitOrder};
 use crate::{landlock, seccomp};
 
 /// A step of the start, or the text that says which one failed.
@@ -112,6 +113,11 @@ fn build(status: &mut RawFd) -> Step<Infallible> {
     if program != 0 {
         pass_on(program, 3);
     }
+    // SAFETY: `status` is the open status socket, and the byte is readable.
+    at(
+        "the Warden",
+        checked(unsafe { libc::write(*status, [BUILT].as_ptr().cast(), 1) }),
+    )?;
     Err(format!("{}: {}", order.program.display(), run(&order)))
 }
 

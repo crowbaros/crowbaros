@@ -688,3 +688,23 @@ fn a_program_starts_with_the_signals_every_program_expects() {
     let mut probe = Probe::start(Vec::new(), &["signals"]);
     assert_eq!(probe.did("signals"), "ok pipe=default blocked=0");
 }
+
+#[test]
+#[ignore = "needs root"]
+fn a_start_is_not_taken_for_done_when_the_init_stage_says_nothing() {
+    // An init stage that takes its order and ends without a word, as one
+    // would that was ended for memory while it built the sandbox. This
+    // stand-in reads the whole order, and then ends.
+    let stand_in = scratch("silent").join("init");
+    fs::write(&stand_in, "#!/bin/sh\ntimeout 0.3 cat >/dev/null\n").unwrap();
+    fs::set_permissions(&stand_in, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut silent = config("crowbar-warden-test-silent", 1_900_300_000..1_900_301_000);
+    silent.init = stand_in;
+    let warden = Warden::new(silent).unwrap();
+    let (order, mut broker) = probe_order("task-1", &["hold"]);
+    match warden.start(order) {
+        Err(StartError::Setup(_)) => {}
+        other => panic!("{:?}", other.err()),
+    }
+    assert_eq!(broker.read(&mut [0; 16]).unwrap(), 0);
+}

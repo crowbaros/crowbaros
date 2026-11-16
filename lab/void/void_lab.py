@@ -258,9 +258,9 @@ class Serial:
 
 
 class Evidence:
-    def __init__(self):
+    def __init__(self, name="milestone"):
         stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-        self.path = WORK / f"milestone-{stamp}.log"
+        self.path = WORK / f"{name}-{stamp}.log"
         self.stream = self.path.open("w")
         self.results = []
 

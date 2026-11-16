@@ -7,6 +7,12 @@ use std::path::PathBuf;
 
 use crate::order::{Access, Needs, ViewEntry};
 
+/// What the init stage writes back when the sandbox is built, as the last
+/// thing before it becomes the program. The socket then closes with
+/// nothing more, or with the reason the program could not be run. An init
+/// stage that ends before this has started nothing.
+pub(crate) const BUILT: u8 = 0;
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct InitOrder {
     /// The compartment's user and group ID.

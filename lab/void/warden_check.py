@@ -8,12 +8,13 @@ records what they print.
 
     warden_check.py              boot a fresh guest, run every test, power it off
     warden_check.py --keep       use the guest that is running, and leave it running
-    warden_check.py -- FILTER    pass arguments on to the test program
+    warden_check.py FILTER       run only the tests whose name holds FILTER
 
 Stdlib only, no sudo. The evidence log goes to <repo>/.lab/void/.
 """
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -64,9 +65,7 @@ def main():
         if not lab.BASE_DISK.exists():
             lab.image()
         lab.start(fresh=True)
-    ev = lab.Evidence()
-    ev.path.rename(ev.path.with_name(ev.path.name.replace("milestone-", "warden-")))
-    ev.path = ev.path.with_name(ev.path.name.replace("milestone-", "warden-"))
+    ev = lab.Evidence("warden")
     ev.log(f"Evidence log: {ev.path}")
     code = 1
     try:
@@ -77,7 +76,7 @@ def main():
         ev.guest(f"sha256sum {GUEST_DIR}/*")
         # Only the tests that need root are ignored by default, so
         # `--ignored` runs exactly those.
-        tests = " ".join(["--ignored"] + [f"'{arg}'" for arg in args.test_args])
+        tests = shlex.join(["--ignored"] + args.test_args)
         started = time.time()
         result = ev.guest(f"cd {GUEST_DIR} && CROWBAR_SANDBOX_BIN_DIR={GUEST_DIR} "
                           f"CROWBAR_SANDBOX_TEST_DIR=/var/tmp ./compartments {tests} 2>&1",
