@@ -8,7 +8,7 @@
 use crowbar_authority::{Authority, Change, Grant, Holder, Party, Rule, StandingId};
 use crowbar_capability::{EffectLimits, Principal, Rate, Resource, Right, Rights};
 use crowbar_gate::{Act, Answer, Ask, AskWhy, Caller, Decision, GateRule, Limit, Operation, Presented};
-use crowbar_labels::{Compartment, Fetch, Label, LabelMark, ObjectId, Origin, Site};
+use crowbar_labels::{Category, Compartment, Fetch, Label, LabelMark, Labeled, ObjectId, Origin, Site};
 
 mod common;
 use common::{Bench, NOW, allowed, asked, by, handle, personal, refused, task, using};
@@ -373,6 +373,45 @@ fn an_approval_clears_a_host_for_what_it_approves_and_for_nothing_else() {
             "{other:?}"
         );
     }
+}
+
+/// A health summary: the person's own words, made private.
+fn a_health_summary() -> LabelMark {
+    Labeled::from_origin((), &Origin::Typed)
+        .raise(&Label::private(Category::Health))
+        .label_mark()
+        .clone()
+}
+
+#[test]
+fn installed_software_that_holds_more_than_its_approval_showed_is_refused_at_any_host() {
+    // The approval showed personal documents. A task has since written a
+    // private health summary into them, so the editor's view now holds it.
+    let mut bench = Bench::with(the_editors_approval());
+    let compartment = Compartment::fixed([&personal(), &a_health_summary()]);
+    for host in [sync_host(), news()] {
+        assert_eq!(
+            connect(&mut bench, &editor(), &compartment, Login::None, host),
+            refused(GateRule::Clearance, Limit::Clearance(Label::Personal))
+        );
+    }
+}
+
+#[test]
+fn installed_software_holding_the_persons_files_asks_for_a_signature_at_a_host_its_approval_did_not_show() {
+    // Attack A32, as it will usually be met: the editor holds what its
+    // approval showed, and the host is not one the approval lists. It is
+    // asked, and not refused: a yes would add the host to the approval.
+    let mut bench = Bench::with(the_editors_approval());
+    let compartment = Compartment::fixed([&personal()]);
+    assert_eq!(
+        connect(&mut bench, &editor(), &compartment, Login::None, news()),
+        Decision::Asked(Ask {
+            why: AskWhy::Crosses,
+            answer: Answer::Signature,
+            held: None
+        })
+    );
 }
 
 #[test]
