@@ -4,6 +4,10 @@
 //! a compartment that holds only public data and no login reaching a host
 //! on the open internet. Every other crossing still needs a standing grant
 //! and a standing rule, or it asks.
+//!
+//! An approval also clears a site for the installed software or the
+//! workbench it approves, up to the label it showed, and for nothing else
+//! (ADR 0021).
 
 use crowbar_authority::{Authority, Change, Grant, Holder, Party, Rule, StandingId};
 use crowbar_capability::{EffectLimits, Principal, Rate, Resource, Right, Rights};

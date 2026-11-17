@@ -20,6 +20,9 @@
 //!   granting the same thing again is a new grant with a new [`StandingId`].
 //! - A [`Party`] with no recorded clearance has the default for its kind. A
 //!   clearance the person lowered is a record, so it stays lowered.
+//! - A [`Grant`] can record the label of what it gives, as the approval
+//!   showed it. The gate reads it when installed software or a workbench
+//!   reaches a site (ADR 0021).
 //! - The [`Ledger`] is the history of gate decisions and of effects. It is
 //!   only ever added to. An entry for a decision names enough for the gate
 //!   to rebuild its count of uses from it: the handle, its original, the

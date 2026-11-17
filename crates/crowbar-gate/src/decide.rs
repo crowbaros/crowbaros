@@ -60,8 +60,11 @@ const HOUR: u64 = 3_600;
 ///    are at or above the join of its objects' origins. An object with no
 ///    record is the unknown row.
 /// 5. **The clearance, on egress**: the caller's compartment's whole label
-///    is at or below the party's clearance. With no authority to read, no
-///    party is cleared above public.
+///    is at or below the party's clearance. For installed software or a
+///    workbench reaching a site, the most its approval showed it holding
+///    counts as well: an approval clears a site for what it approves, and
+///    for nothing else. With no authority to read, no party is cleared
+///    above public.
 /// 6. **The undo boundary**: an egress, and a use the boundary table does
 ///    not list as inside, crosses. A crossing needs a standing grant and a
 ///    standing rule the caller holds, within their limits, with the rule
