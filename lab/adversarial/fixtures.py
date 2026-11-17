@@ -313,10 +313,11 @@ class ScriptRules:
     exact value for each other key. "times" limits how often a rule answers.
     The stand-in for the trusted ask and the model provider both use these."""
 
-    def __init__(self, rules, match_keys, outcome_key, check_outcome):
+    def __init__(self, rules, match_keys, outcome_key, check_outcome, also=()):
+        """`also` names the other fields a rule may carry, for its caller."""
         require(isinstance(rules, list), 400, "rules must be a list")
         for rule in rules:
-            check_fields(rule, (outcome_key,), ("match", "times"), "a rule")
+            check_fields(rule, (outcome_key,), ("match", "times", *also), "a rule")
             match = check_fields(rule.get("match", {}), (), ("contains", *match_keys), "match")
             require(all(isinstance(value, str) for value in match.values()), 400,
                     "match values must be strings")
