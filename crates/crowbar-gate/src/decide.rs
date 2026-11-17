@@ -64,11 +64,15 @@ const HOUR: u64 = 3_600;
 /// 6. **The undo boundary**: an egress, and a use the boundary table does
 ///    not list as inside, crosses. A crossing needs a standing grant and a
 ///    standing rule the caller holds, within their limits, with the rule
-///    for every source that marked the act. Without them it asks. With no
-///    authority to read, every crossing asks.
+///    for every source that marked the act. Without them it asks. Two kinds
+///    of egress need neither, because the clearance check was the whole
+///    decision (ADR 0011): a model request, and a connection to a host on
+///    the open internet by a task or a workbench that holds only public
+///    data and no login. With no authority to read, every crossing asks.
 /// 7. **The ask**, if the result is an ask: the answer it takes, and whether
 ///    it is held (ADR 0026). A use inside the undo boundary takes a plain
-///    answer, and a crossing takes the confirm gesture. An ask past a limit
+///    answer, and a crossing takes the confirm gesture. Installed software
+///    that reaches past its approval asks for a signature. An ask past a limit
 ///    is still an ask, marked as held with the limit it passed:
 ///    [`AGENT_ASKS_AN_HOUR`] for the Agent and its tasks together, then
 ///    [`OPEN_ASKS`] waiting at a time and [`ASKS_AN_HOUR`] for one
@@ -253,7 +257,7 @@ fn use_of(
 
     let crosses = party.is_some() || boundary::crosses(&using.operation);
     let mut under = Vec::new();
-    if crosses {
+    if crosses && !already_authorized(authority, caller, handle, party) {
         match covered(authority, usage, caller, handle, using, more) {
             Ok(standing) => under = standing,
             Err(why) => {
@@ -262,14 +266,50 @@ fn use_of(
         }
     }
     // A plain answer is accepted only for what can be undone (ADR 0026).
-    let answer = match crosses {
-        true => Answer::ConfirmGesture,
-        false => Answer::Plain,
+    // Installed software reaches only what its approval showed, so letting
+    // it past that changes the approval: authority that lasts (ADR 0017).
+    let answer = match (crosses, caller.principal, ask) {
+        (false, _, _) => Answer::Plain,
+        (true, Principal::Installed(_), Some(AskWhy::Crosses)) => Answer::Signature,
+        (true, _, _) => Answer::ConfirmGesture,
     };
     Ok(match ask {
         Some(why) => Verdict::Ask(why, answer),
         None => Verdict::Allow(under),
     })
+}
+
+/// Whether an egress to `party` crosses on authority the person already
+/// gave, so it needs no standing grant or rule and does not ask (ADR 0011).
+/// The clearance check has passed by the time this is asked. With no
+/// authority to read, every crossing asks.
+fn already_authorized(
+    authority: Option<&Authority>,
+    caller: &Caller<'_>,
+    handle: &Presented,
+    party: Option<&Party>,
+) -> bool {
+    if authority.is_none() {
+        return false;
+    }
+    match party {
+        // A model request: the provider's clearance is the standing
+        // authority for it, and it was the person's signature.
+        Some(Party::ModelProvider(_)) => true,
+        // A compartment that holds only public data and no login, reaching
+        // a host on the open internet on a connection handle for that host.
+        // Every outside party is cleared for public data, so the clearance
+        // check was the whole decision. This is for a task and a workbench.
+        // A Tool and installed software reach what the person approved for
+        // them, and the Agent makes no connection of its own.
+        Some(Party::Site(site)) => {
+            matches!(caller.principal, Principal::Task(_) | Principal::Workbench(_))
+                && *caller.compartment.label_mark().label() == Label::Public
+                && !caller.holds_login
+                && matches!(&handle.resource, Resource::Endpoint { host, .. } if host == site)
+        }
+        None => false,
+    }
 }
 
 /// Whether every object `using` affects is one `limits` allows.
@@ -341,13 +381,14 @@ fn covered(
     Ok(vec![grant, rule])
 }
 
-/// What holds standing authority for `caller`: a Tool, a workbench, or a
-/// run of a standing task. The Agent, an ad hoc task, and installed
-/// software hold none (ADR 0011).
+/// What holds standing authority for `caller`: a Tool, a workbench,
+/// installed software, or a run of a standing task. The Agent and an ad hoc
+/// task hold none (ADR 0011).
 fn standing_holder(caller: &Caller<'_>) -> Option<Holder> {
     match (caller.principal, caller.standing_task) {
         (Principal::Tool(name), _) => Some(Holder::Tool(name.clone())),
         (Principal::Workbench(name), _) => Some(Holder::Workbench(name.clone())),
+        (Principal::Installed(name), _) => Some(Holder::Installed(name.clone())),
         (Principal::Task(_), Some(name)) => Some(Holder::StandingTask(name.to_string())),
         _ => None,
     }

@@ -27,8 +27,10 @@
 - **Three kinds of egress cross on authority the person already gave, and do not ask** (ADR 0011):
   - a model request, when the provider is cleared for everything the compartment holds and the model budget is not spent;
   - installed software or a workbench reaching what its approval showed: the approval is its standing grant and standing rule;
-  - a compartment that holds only public data and no login reaching any host on the open internet. Every outside party is cleared for public data, so the clearance check is the whole decision. A machine in the fleet or an address on the home network is not such a host.
-- **An ask names the answer it takes** (ADR 0026): a plain answer when the effect stays inside the undo boundary, the confirm gesture when it crosses or the authority lasts only for this run, and a signature when the authority lasts for good.
+  - a compartment that holds only public data and no login reaching any host on the open internet. Every outside party is cleared for public data, so the clearance check is the whole decision. A machine in the fleet or an address on the home network is not such a host. The rule is for a task and a workbench: a Tool and installed software reach what the person approved for them, and the Agent makes no connection of its own. It covers a connection on a handle that names that host, and not an adapter operation, which may act on the person's account.
+
+  With no authority record to read, none of the three applies, and the egress asks.
+- **An ask names the answer it takes** (ADR 0026): a plain answer when the effect stays inside the undo boundary, the confirm gesture when it crosses or the authority lasts only for this run, and a signature when the authority lasts for good. Installed software that reaches past what its approval showed asks for a signature, because a yes changes its approval ([ADR 0017](0017-a-pinned-catalog-and-workbenches.md)).
 - **A use declares** which objects it affects, and its cost: a fixed amount, or "depends on a value". A cost that depends on a value asks, unless a standing rule with a cap covers the act.
 - **A standing rule with a cap fires without an ask when the amount is under the cap.** The gate still never reads the amount. It answers "allowed if within the cap", and the adapter checks the amount against the cap when it carries the act out. Over the cap, the adapter carries nothing out, and the act asks, with the amount shown. A dry run says only "allowed if within the cap". The gate checks the objects against the objects a Data handle names and against every "which objects" limit that applies, and counts them against "how many". A use that affects no object counts as one operation.
 - **A standing grant on a set of Data objects covers a handle on some of them.** Any other resource must be the same.
@@ -60,7 +62,8 @@
 - Each adapter has to add its operations to the boundary table, and the checks and rehearsal work has to test that each row is true.
 - Ask limits apply to every principal, not only to tasks. A Tool that floods the person is the same problem.
 - **Whether a capped act went through is something the task can observe.** That is one bit about the amount for each attempt, and the rule's rate limit bounds the attempts.
-- `standing_holder` in `crates/crowbar-gate` names a Tool, a workbench, and a standing task. Installed software is added, and a model request and a public compartment's egress stop asking.
+- `standing_holder` in `crates/crowbar-gate` names a Tool, a workbench, a standing task, and installed software. The broker states whether a compartment holds a login, and names a party as a site only when it is a host on the open internet.
+- The model budget is not in the authority record yet. Until it is, a model request is bounded by the limits on its handle, and one past them is refused. Asking when the budget is spent comes with budgets across tasks ([issue 103](https://github.com/crowbaros/crowbaros/issues/103)).
 - The ledger's format changed before anything was deployed: a refusal records a rule and a limit, not a string.
 - The gate's proof is called `Allowed`, never an allowance: an Allowance is money the person sets aside.
 - Machine clearances wait for Milestone 6.

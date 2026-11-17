@@ -347,6 +347,7 @@ fn a_run_of_a_standing_task_crosses_under_the_standing_tasks_grant_and_rule() {
         caller: Caller {
             principal: &run,
             standing_task: Some("nightly-sync"),
+            holds_login: false,
             compartment: &compartment,
         },
         key: None,

@@ -30,6 +30,10 @@ pub struct Caller<'a> {
     /// gave it, as the broker recorded when the task started. An ad hoc task
     /// has none.
     pub standing_task: Option<&'a str>,
+    /// Whether the compartment holds a login: a session or a credential the
+    /// broker would use for it on some site. With one, a request can act on
+    /// the person's account. This is the broker's record, like the rest.
+    pub holds_login: bool,
     /// The caller's compartment, as the broker holds it from the Warden's
     /// start: never one the caller supplies.
     pub compartment: &'a Compartment,

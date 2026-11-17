@@ -14,9 +14,10 @@ use crate::error::{Damage, Error};
 /// The file the authority domain is kept in, inside its directory.
 const FILE: &str = "changes";
 
-/// What can hold standing authority: a Tool, a standing task, or a
-/// workbench. The Agent is not here, and nor is an ad hoc task, so neither
-/// can be recorded as holding a standing grant or a standing rule (ADR 0011).
+/// What can hold standing authority: a Tool, a standing task, a workbench,
+/// or installed software. The Agent is not here, and nor is an ad hoc task,
+/// so neither can be recorded as holding a standing grant or a standing rule
+/// (ADR 0011).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Holder {
@@ -26,6 +27,9 @@ pub enum Holder {
     StandingTask(String),
     /// A per-project workbench (ADR 0017).
     Workbench(String),
+    /// Installed software. Its approval screen is its standing grant, and
+    /// its standing rule for what that screen showed (ADR 0017).
+    Installed(String),
 }
 
 impl fmt::Display for Holder {
@@ -34,6 +38,7 @@ impl fmt::Display for Holder {
             Holder::Tool(name) => write!(f, "Tool {name}"),
             Holder::StandingTask(name) => write!(f, "standing task {name}"),
             Holder::Workbench(name) => write!(f, "workbench {name}"),
+            Holder::Installed(name) => write!(f, "installed software {name}"),
         }
     }
 }
@@ -73,7 +78,9 @@ pub struct Rule {
 pub enum Party {
     /// A model provider, by the name the broker knows it by.
     ModelProvider(String),
-    /// A web site.
+    /// A web site: a host on the open internet. A machine in the fleet and
+    /// an address on the home network are not sites, and the broker never
+    /// names one as a site (ADR 0011).
     Site(Site),
 }
 

@@ -187,6 +187,7 @@ fn idempotency_keys_survive_a_restart() {
         caller: Caller {
             principal: &caller,
             standing_task: None,
+            holds_login: false,
             compartment: &compartment,
         },
         key: Some(&key),
@@ -283,6 +284,7 @@ fn each_decision_is_recorded_with_the_handle_its_original_the_task_the_objects_t
         caller: Caller {
             principal: &caller,
             standing_task: None,
+            holds_login: false,
             compartment: &compartment,
         },
         key: Some(&key),

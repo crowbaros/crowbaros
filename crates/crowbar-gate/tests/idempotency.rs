@@ -21,6 +21,7 @@ fn keyed<'a>(
         caller: Caller {
             principal: caller,
             standing_task: None,
+            holds_login: false,
             compartment,
         },
         key: Some(key),

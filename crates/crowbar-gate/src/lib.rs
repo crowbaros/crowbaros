@@ -40,7 +40,8 @@
 //! Not here yet:
 //!
 //! - what happens after an ask, authorization at a task's start, releases,
-//!   the ceiling, and budgets across tasks (issue 103);
+//!   the ceiling, and budgets across tasks, the model budget among them
+//!   (issue 103);
 //! - the check on a commit of staged writes (issue 90);
 //! - the label check on a handle that is not a Data handle (issue 91);
 //! - a signature, and a process of its own;

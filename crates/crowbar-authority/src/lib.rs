@@ -13,8 +13,8 @@
 //!   [`Authority`] is what the changes add up to. The gate is given an
 //!   `Authority`, which reads and has nothing that writes.
 //! - A standing grant or rule is held by a [`Holder`]: a Tool, a standing
-//!   task, or a workbench. The Agent is not one, so it cannot be recorded as
-//!   holding either (ADR 0011).
+//!   task, a workbench, or installed software. The Agent is not one, so it
+//!   cannot be recorded as holding either (ADR 0011).
 //! - **Revoking** adds a change and takes nothing away. A revoked grant or
 //!   rule stays in the record as revoked, and no change brings it back:
 //!   granting the same thing again is a new grant with a new [`StandingId`].

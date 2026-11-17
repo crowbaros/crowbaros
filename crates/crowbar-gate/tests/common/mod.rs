@@ -88,6 +88,7 @@ pub fn by<'a>(principal: &'a Principal, compartment: &'a Compartment, act: Act<'
         caller: Caller {
             principal,
             standing_task: None,
+            holds_login: false,
             compartment,
         },
         key: None,
