@@ -6,7 +6,7 @@
 
 use crowbar_authority::{Authority, Change, Grant, Holder, Rule, StandingId};
 use crowbar_capability::{Cost, EffectLimits, Principal, Rate, Resource, Right, Rights};
-use crowbar_gate::{Act, AskWhy, Caller, Decision, Operation, Presented, Use, UseCost};
+use crowbar_gate::{Act, Allowed, AskWhy, Caller, Decision, Operation, Presented, Ruling, Use, UseCost};
 use crowbar_labels::{Compartment, Fetch, MarkSource, Origin, Site};
 
 mod common;
@@ -161,4 +161,49 @@ fn a_cap_fires_for_a_marked_act_only_under_a_rule_for_every_source_that_marked_i
         bench.decide(&paying(&run, &marked, &held, &pay()), NOW),
         Decision::AllowedWithinCap { under, cap: CAP }
     );
+}
+
+/// What the gate gives the broker for `operation`, which it allows.
+fn allowed_for(bench: &mut Bench, operation: &Operation<'_>) -> Allowed {
+    match bench.gate.decide(bench.authority.as_ref(), operation, NOW) {
+        Ruling::Allowed(allowed) => allowed,
+        other => panic!("not allowed: {other:?}"),
+    }
+}
+
+#[test]
+fn what_the_gate_gives_the_broker_carries_the_cap_and_covers_only_an_amount_within_it() {
+    let mut bench = Bench::with(vec![Change::Granted(grant()), Change::RuleAdded(rule())]);
+    let run = task("run-41");
+    let held = on_the_account(&run);
+
+    let allowed = allowed_for(&mut bench, &paying(&run, &Compartment::fresh(), &held, &pay()));
+
+    assert_eq!(allowed.cap(), Some(CAP));
+    // The adapter reads the amount when it carries the act out.
+    assert!(allowed.covers_use_costing(held.id, "bills.pay", Cost::cents(14_999)));
+    assert!(allowed.covers_use_costing(held.id, "bills.pay", CAP));
+    assert!(!allowed.covers_use_costing(held.id, "bills.pay", Cost::cents(15_001)));
+    assert!(!allowed.covers_use_costing(held.id, "bills.refund", Cost::cents(1)));
+    // Without an amount it covers nothing: an adapter that does not check
+    // the amount carries nothing out.
+    assert!(!allowed.covers_use(held.id, "bills.pay"));
+}
+
+#[test]
+fn what_the_gate_gives_for_a_use_under_no_cap_covers_it_whatever_it_costs() {
+    let mut bench = Bench::with(vec![Change::Granted(grant()), Change::RuleAdded(rule())]);
+    let run = task("run-41");
+    let held = on_the_account(&run);
+    // The adapter states this cost before the use, so the gate checked it.
+    let fixed = Use {
+        cost: UseCost::Fixed(Cost::cents(9_000)),
+        ..pay()
+    };
+
+    let allowed = allowed_for(&mut bench, &paying(&run, &Compartment::fresh(), &held, &fixed));
+
+    assert_eq!(allowed.cap(), None);
+    assert!(allowed.covers_use(held.id, "bills.pay"));
+    assert!(allowed.covers_use_costing(held.id, "bills.pay", Cost::cents(9_000)));
 }

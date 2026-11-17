@@ -133,8 +133,29 @@ impl Allowed {
         )
     }
 
-    /// Whether this allows the adapter operation `operation` on `handle`.
+    /// The cap, when the gate allowed the use only if its amount is within
+    /// the cap of a standing rule. The gate decided without the amount.
+    pub fn cap(&self) -> Option<Cost> {
+        self.cap
+    }
+
+    /// Whether this allows the adapter operation `operation` on `handle`,
+    /// whatever it costs. One that carries a cap does not: it allows only
+    /// an amount within the cap ([`Allowed::covers_use_costing`]), so an
+    /// adapter that does not check the amount carries nothing out.
     pub fn covers_use(&self, handle: HandleId, operation: &str) -> bool {
+        self.cap.is_none() && self.names_use(handle, operation)
+    }
+
+    /// Whether this allows the adapter operation `operation` on `handle`
+    /// when it costs `amount`. This is the adapter's check when it carries
+    /// the act out, once it has read the amount. Over the cap it carries
+    /// nothing out, and gives this back to the gate ([`Gate::over_cap`]).
+    pub fn covers_use_costing(&self, handle: HandleId, operation: &str, amount: Cost) -> bool {
+        self.cap.is_none_or(|cap| amount <= cap) && self.names_use(handle, operation)
+    }
+
+    fn names_use(&self, handle: HandleId, operation: &str) -> bool {
         matches!(&*self.covers, Covers::Use { handle: allowed, operation: name } if *allowed == handle && name == operation)
     }
 }
