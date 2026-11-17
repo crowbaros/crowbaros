@@ -62,7 +62,7 @@ For a whole day, for a developer and for a person who is not one:
 ## Consequences
 
 - The vision's thesis and its third principle change. "Security comes first" becomes "security and low friction both have to pass".
-- Council round 5 found the rules that miss the bar. Each is redesigned in the record that owns it: [ADR 0025](0025-what-the-person-does-by-hand-is-the-answer.md) for what the person does by hand, [ADR 0026](0026-asks-wait-and-take-one-of-three-answers.md) for asks, and ADRs 0001, 0003, 0007, 0008, 0011, 0013, 0014, 0017, 0018, 0019, 0020, and 0021 in place. Each says what it gives up, the threat model lists it under what remains, and Milestone 2 gains an attack for it.
+- Council round 5 found the rules that miss the bar. Each is redesigned in the record that owns it: [ADR 0025](0025-what-the-person-does-by-hand-is-the-answer.md) for what the person does by hand, [ADR 0026](0026-asks-wait-and-take-one-of-three-answers.md) for asks, and ADRs 0001, 0003, 0004, 0007, 0008, 0011, 0013, 0014, 0017, 0018, 0019, 0020, and 0021 in place. Each says what it gives up, the threat model lists it under what remains, and Milestone 2 gains an attack for it.
 - Some work is handed back to the person on purpose: an errand on a site that is on the adapter-only list and has no adapter, and a site that breaks without a host that is not on the shared list ([ADR 0013](0013-agents-never-drive-the-persons-browser.md)). The Agent says so, and says why.
 - Milestone 2's report is read against a pass mark. Its scope page carries the bar before the run.
 - The gate, the labels crate, and the compositor were built to the earlier rules. Each change to them follows this record through its own issue.

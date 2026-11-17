@@ -13,7 +13,7 @@ gaps in the same ADRs. Jim Martin made the decisions in the council rounds.
 Revised November 15, 2026: the compositor is decided (ADR 0015 added).
 Revised November 16, 2026, after [council round 5](reviews/council-round-5.md):
 the friction bar ranks with the attack list (ADRs 0024, 0025, and 0026 added;
-ADRs 0001, 0003, 0007, 0008, 0011, 0013, 0014, and 0017 to 0022 revised).
+ADRs 0001, 0003, 0004, 0007, 0008, 0011, 0013, 0014, and 0017 to 0022 revised).
 Decisions are in [`docs/adr/`](adr/). Terms are defined in the
 [glossary](../GLOSSARY.md). What the design defends against, and what it does
 not, is in the [threat model](threat-model.md).
