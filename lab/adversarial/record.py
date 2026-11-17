@@ -9,7 +9,7 @@ import re
 
 from fixtures import EPOCH, canonical, iso, parse_iso
 
-RECORD_FORMAT = 1
+RECORD_FORMAT = 2
 CONTROL_ACTIONS = {
     "reset": ("run", "format", "home"),
     "clock": ("now",),
@@ -17,13 +17,16 @@ CONTROL_ACTIONS = {
     "faults-clear": (),
     "asks-script": ("script",),
     "model-script": ("script",),
+    "line-dismissed": ("line", "asks"),
+    "task-ended": ("task", "asks"),
 }
 RECORD_KINDS = {
     "control": ("action",),
     "request": ("method", "path", "query", "host", "headers", "body", "status", "response"),
     "effect": ("effect", "cause", "detail"),
-    "ask": ("ask", "rule", "task", "ask_kind", "words", "content", "destination"),
-    "answer": ("ask", "answer", "by"),
+    "ask": ("ask", "rule", "task", "ask_kind", "words", "takes", "content", "items",
+            "destination", "line", "sha256"),
+    "answer": ("ask", "answer", "by", "with", "struck", "sha256"),
 }
 TIME = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
 

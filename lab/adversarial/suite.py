@@ -9,9 +9,8 @@ record.
     suite.stop()
 
 Every request is handled under one lock, so the record is one total order. A
-held ask waits outside the lock, so the control service can answer it.
+waiting ask waits outside the lock, so the control service can answer it.
 """
-from datetime import timedelta
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 import re
@@ -27,29 +26,53 @@ from record import RECORD_FORMAT, Record
 from services import PARTIES
 
 RUN_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}\Z")
-ANSWERS = ("yes", "no", "hold")
+# What a script can say to an ask: yes, no, or leave it waiting.
+ANSWERS = ("yes", "no", "wait")
+# The answer an ask takes, and the answer a yes was given with (ADR 0026).
+KINDS = ("plain", "confirm-gesture", "signature")
+
+
+def digest(shown):
+    """The digest of what an ask shows, or of what an answer covers."""
+    return sha256(canonical(shown).encode())
 
 
 class Asks(Service):
     """The stand-in for the trusted ask. The system under test posts each ask
-    with the fixed words it shows and the exact content, and gets the scripted
-    answer. The real shell and confirm gesture are Milestone 4.
+    with the fixed words it shows, the exact content, and the answer it takes,
+    and gets the scripted answer. The real shell and confirm gesture are
+    Milestone 4.
 
-    POST /asks {"task", "kind", "words", "content", "destination"?}
-      -> {"ask": "ask-0001", "answer": "yes" | "no"}
+    POST /asks {"task", "kind", "words", "takes", "content" or "items",
+                "destination"?, "line"?}
+      -> {"ask": "ask-0001", "answer": "yes" | "no", "with", "struck", "sha256"}
 
-    The script's rules (see fixtures.ScriptRules) match on task, kind, and text
-    the ask contains. With no match the default answers, and the default is
-    "no". The answer "hold" makes the ask wait until the control service
-    answers it, so a test can look for effects while the ask is open. A held
-    ask is answered "no" once the lab clock passes hold_timeout_seconds after
-    it was asked, or when the suite resets or stops. Real time plays no part.
+    - "takes" is the answer the ask takes: plain, confirm-gesture, or
+      signature. "with" is the answer a yes was given with. The stand-in gives
+      the one the ask takes unless the script names another, so a run can give
+      the wrong one. It is the system under test that must not accept it.
+    - An ask holds one act, in "content", or a list of acts of one kind, in
+      "items". An answer may strike items of a list. "struck" lists their
+      places, from 0, and "sha256" is the digest of what the answer covers:
+      the content, or the items that are left.
+    - "line" marks an ask the gate held, with the line it waits in: one line
+      for each principal, and one for the Agent and all its tasks. A held ask
+      waits whatever the script says, until the control service answers it or
+      dismisses its line.
+
+    The script's rules (see fixtures.ScriptRules) match on task, kind, takes,
+    and text the ask contains. With no match the default answers, and the
+    default is "no". The answer "wait" leaves the ask waiting until the
+    control service answers it, so a test can look for effects while the ask
+    is open. No ask ends on a timer. One that nobody answers ends with its
+    task, when the control service ends the task, or when the suite resets
+    or stops.
     """
 
     name = "asks"
     kind = "stand-in for the trusted ask"
     title = "Trusted ask stand-in"
-    FIELDS = ("task", "kind", "words", "content")
+    FIELDS = ("task", "kind", "words", "takes")
 
     def reset(self):
         self.pending = {}
@@ -57,31 +80,49 @@ class Asks(Service):
         self.set_script(load_seed("asks", self.canaries))
 
     def set_script(self, spec):
-        check_fields(spec, (), ("default", "rules", "hold_timeout_seconds", "note"), "a script")
+        check_fields(spec, (), ("default", "rules", "note"), "a script")
         default = spec.get("default", "no")
-        require(default in ANSWERS, 400, "default must be yes, no, or hold")
-        timeout = whole(spec.get("hold_timeout_seconds", 30), 1, "hold_timeout_seconds")
-        rules = ScriptRules(spec.get("rules", []), ("task", "kind"), "answer",
+        require(default in ANSWERS, 400, "default must be yes, no, or wait")
+        rules = ScriptRules(spec.get("rules", []), ("task", "kind", "takes"), "answer",
                             lambda answer: require(answer in ANSWERS, 400,
-                                                   "a rule's answer must be yes, no, or hold"))
+                                                   "a rule's answer must be yes, no, or wait"),
+                            also=("with", "strike"))
+        for rule in rules.rules:
+            require(rule.get("with") is None or rule["with"] in KINDS, 400,
+                    f"with must be one of {list(KINDS)}")
+            self.places(rule.get("strike", []))
         self.rules = rules
-        self.script = {"default": default, "rules": rules.rules, "hold_timeout_seconds": timeout}
+        self.script = {"default": default, "rules": rules.rules}
         return self.script
 
-    def held(self):
-        return [{key: held[key] for key in ("ask", "task", "kind")}
+    @staticmethod
+    def places(strike):
+        """The places a strike names, sorted, each once."""
+        require(isinstance(strike, list), 400, "strike must be a list of places, from 0")
+        return sorted({whole(place, 0, "a place in strike") for place in strike})
+
+    def waiting(self):
+        return [{key: held[key] for key in ("ask", "task", "kind", "takes", "line")}
                 for _, held in sorted(self.pending.items())]
 
     def parse(self, request):
-        ask = check_fields(request.json(), self.FIELDS, ("destination",), "an ask")
+        ask = check_fields(request.json(), self.FIELDS,
+                           ("content", "items", "destination", "line"), "an ask")
         for name in ("task", "kind", "words"):
             require(isinstance(ask[name], str) and ask[name], 400,
                     f"{name} must be a non-empty string")
+        require(ask["takes"] in KINDS, 400, f"takes must be one of {list(KINDS)}")
+        require(("content" in ask) != ("items" in ask), 400,
+                "an ask holds one act in content, or a list of acts in items")
+        require("items" not in ask or (isinstance(ask["items"], list) and ask["items"]), 400,
+                "items must be a list of at least one act")
         require(isinstance(ask.get("destination", ""), str), 400, "destination must be a string")
+        require("line" not in ask or (isinstance(ask["line"], str) and ask["line"]), 400,
+                "line must be a non-empty string")
         return ask
 
     def serve(self, request):
-        """Takes the suite's lock itself: a held ask waits outside it."""
+        """Takes the suite's lock itself: a waiting ask waits outside it."""
         suite = self.suite
         with suite.lock:
             if (request.method, request.path) != ("POST", "/asks"):
@@ -103,27 +144,48 @@ class Asks(Service):
         """Record an ask and its scripted answer. The caller holds the lock."""
         self.counter += 1
         ask_id = f"ask-{self.counter:04d}"
-        rule, answer = self.rules.first(canonical(ask), ask) or ("default", self.script["default"])
-        self.suite.record.add(self.name, "ask", ask=ask_id, rule=rule, task=ask["task"],
-                              ask_kind=ask["kind"], words=ask["words"], content=ask["content"],
-                              destination=ask.get("destination"))
-        held = {"ask": ask_id, "task": ask["task"], "kind": ask["kind"],
-                "event": threading.Event(), "answer": None, "sent": None,
-                "request": request, "fault": fault,
-                "deadline": self.clock.now + timedelta(seconds=self.script["hold_timeout_seconds"])}
+        shown = ask["items"] if "items" in ask else ask["content"]
+        line = ask.get("line")
+        index, answer = self.rules.first(canonical(ask), ask) or ("default", self.script["default"])
+        rule = self.rules.rules[index] if index != "default" else {}
+        self.suite.record.add(self.name, "ask", ask=ask_id, rule=index, task=ask["task"],
+                              ask_kind=ask["kind"], words=ask["words"], takes=ask["takes"],
+                              content=ask.get("content"), items=ask.get("items"),
+                              destination=ask.get("destination"), line=line,
+                              sha256=digest(shown))
+        held = {"ask": ask_id, "task": ask["task"], "kind": ask["kind"], "takes": ask["takes"],
+                "line": line, "shown": shown, "is_list": "items" in ask,
+                "event": threading.Event(), "sent": None, "request": request, "fault": fault}
         self.pending[ask_id] = held
-        if answer != "hold":
-            self.answer(ask_id, answer, "script")
+        # A held ask is not put to the person, so no rule answers it.
+        if line is None and answer != "wait":
+            try:
+                self.answer(ask_id, answer, "script", rule.get("with"), rule.get("strike", []))
+            except Refuse:
+                pass  # The rule's strike does not fit this ask: it waits.
         return held
 
-    def answer(self, ask_id, answer, by):
-        """Answer an open ask. The caller holds the suite's lock."""
+    def answer(self, ask_id, answer, by, given_with=None, strike=()):
+        """Answer a waiting ask. The caller holds the suite's lock."""
         require(answer in ("yes", "no"), 400, "answer must be yes or no")
-        held = self.pending.pop(ask_id, None)
-        require(held is not None, 404, f"no held ask {ask_id}")
-        held["answer"] = answer
-        self.suite.record.add(self.name, "answer", ask=ask_id, answer=answer, by=by)
-        held["sent"] = json_response({"ask": ask_id, "answer": answer})
+        require(given_with is None or given_with in KINDS, 400,
+                f"with must be one of {list(KINDS)}")
+        held = self.pending.get(ask_id)
+        require(held is not None, 404, f"no waiting ask {ask_id}")
+        struck = self.places(list(strike)) if answer == "yes" else []
+        covers = held["shown"]
+        if struck:
+            require(held["is_list"], 400, "only a list ask can have an item struck")
+            require(struck[-1] < len(covers), 400, "strike names a place the list does not hold")
+            require(len(struck) < len(covers), 400,
+                    "striking every item is a decline: answer no instead")
+            covers = [item for place, item in enumerate(covers) if place not in struck]
+        del self.pending[ask_id]
+        given = (given_with or held["takes"]) if answer == "yes" else None
+        result = {"ask": ask_id, "answer": answer, "with": given, "struck": struck,
+                  "sha256": digest(covers)}
+        self.suite.record.add(self.name, "answer", by=by, **result)
+        held["sent"] = json_response(result)
         if held["fault"]:
             # Recorded now, under the lock, so a reset that releases the ask
             # cannot move its request into the next run's record.
@@ -131,15 +193,14 @@ class Asks(Service):
                                                      held["fault"])
         held["event"].set()
 
-    def expire(self):
-        """Answer "no" to every held ask whose deadline the lab clock has passed."""
-        for ask_id, held in sorted(self.pending.items()):
-            if held["deadline"] <= self.clock.now:
-                self.answer(ask_id, "no", "timeout")
+    def decline(self, by, chosen):
+        """Answer "no" to every waiting ask that `chosen` picks, in order. The
+        caller holds the suite's lock."""
+        for ask_id in [ask for ask, held in sorted(self.pending.items()) if chosen(held)]:
+            self.answer(ask_id, "no", by)
 
     def release_all(self, by):
-        for ask_id in sorted(self.pending):
-            self.answer(ask_id, "no", by)
+        self.decline(by, lambda held: True)
 
 
 class Control(Service):
@@ -157,8 +218,12 @@ class Control(Service):
     POST /faults         arm one (see faults.py)
     POST /faults/clear   disarm all
     POST /asks/script    replace the ask script
-    GET  /asks/pending   held asks
-    POST /asks/answer    {"ask", "answer": "yes" | "no"}: answer a held ask
+    GET  /asks/pending   waiting asks, each with its line if the gate held it
+    POST /asks/answer    {"ask", "answer": "yes" | "no", "with"?, "strike"?}:
+                         answer a waiting ask
+    POST /asks/dismiss   {"line"}: decline every ask held in a line
+    POST /tasks/end      {"task"}: end a task, which declines the asks it left
+                         waiting
     POST /model/script   replace the model provider's script
     """
 
@@ -182,7 +247,7 @@ class Control(Service):
                 "/record": lambda: Response(200, suite.record.text(), "application/x-ndjson"),
                 "/clock": lambda: json_response({"now": iso(suite.clock.now)}),
                 "/faults": lambda: json_response(suite.faults.listing()),
-                "/asks/pending": lambda: json_response(suite.asks.held()),
+                "/asks/pending": lambda: json_response(suite.asks.waiting()),
             }
             require(path in reads, 404, f"no route GET {path}")
             return reads[path]()
@@ -199,7 +264,6 @@ class Control(Service):
             else:
                 suite.clock.advance(body["advance_seconds"])
             suite.record.add(self.name, "control", action="clock", now=iso(suite.clock.now))
-            suite.asks.expire()
             return json_response({"now": iso(suite.clock.now)})
         if path == "/faults":
             fault = suite.faults.arm(body).public()
@@ -217,9 +281,26 @@ class Control(Service):
             suite.record.add(self.name, "control", action=action, script=script)
             return json_response(script)
         if path == "/asks/answer":
-            check_fields(body, ("ask", "answer"))
-            suite.asks.answer(body["ask"], body["answer"], "control")
+            check_fields(body, ("ask", "answer"), ("with", "strike"))
+            suite.asks.answer(body["ask"], body["answer"], "control", body.get("with"),
+                              body.get("strike", []))
             return json_response(body)
+        if path == "/asks/dismiss":
+            line = check_fields(body, ("line",))["line"]
+            in_line = lambda held: held["line"] == line
+            asks = sorted(ask for ask, held in suite.asks.pending.items() if in_line(held))
+            require(asks, 404, f"no ask is held in the line {line!r}")
+            suite.record.add(self.name, "control", action="line-dismissed", line=line, asks=asks)
+            suite.asks.decline("dismiss", in_line)
+            return json_response({"line": line, "asks": asks})
+        if path == "/tasks/end":
+            task = check_fields(body, ("task",))["task"]
+            require(isinstance(task, str) and task, 400, "task must be a non-empty string")
+            of_task = lambda held: held["task"] == task
+            asks = sorted(ask for ask, held in suite.asks.pending.items() if of_task(held))
+            suite.record.add(self.name, "control", action="task-ended", task=task, asks=asks)
+            suite.asks.decline("task-ended", of_task)
+            return json_response({"task": task, "asks": asks})
         raise Refuse(404, f"no route POST {path}")
 
 

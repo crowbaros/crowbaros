@@ -11,7 +11,7 @@ import threading
 import time
 import urllib.parse
 
-from fixtures import DOMAIN, EPOCH, SEED, sha256
+from fixtures import DOMAIN, EPOCH, SEED, canonical, sha256
 import home
 from record import RECORD_FORMAT, record_problems
 from suite import Suite
@@ -71,22 +71,33 @@ class Client:
         return self.call("control", method, path, body)
 
     def ask_in_background(self, ask):
-        """Post an ask from another thread, for one that will be held."""
+        """Post an ask from another thread, for one that will wait."""
         holder = {}
         worker = threading.Thread(target=lambda: holder.update(
             reply=self.call("asks", "POST", "/asks", ask)))
         worker.start()
         return worker, holder
 
-    def wait_for_held(self):
-        """Poll until an ask is held. Reads are not recorded, so polling does
-        not change the record."""
+    def asks_in_background(self, asks):
+        """Post asks that will wait, one after another, so each run numbers
+        them in the same order."""
+        already = len(self.control("GET", "/asks/pending").json())
+        posted = []
+        for count, ask in enumerate(asks, already + 1):
+            posted.append(self.ask_in_background(ask))
+            self.wait_for_waiting(count)
+        return posted
+
+    def wait_for_waiting(self, count=1):
+        """Poll until this many asks wait. Reads are not recorded, so polling
+        does not change the record."""
+        pending = []
         for _ in range(500):
             pending = self.control("GET", "/asks/pending").json()
-            if pending:
+            if len(pending) >= count:
                 return pending
             time.sleep(0.01)
-        return []
+        return pending
 
 
 class Checks:
@@ -446,52 +457,178 @@ def scenario(suite, check):
 
     check.section("The stand-in for the trusted ask")
     pay_ask = {"task": "t-0001", "kind": "pay", "destination": "payments.fixture.test",
-               "words": "Pay Quickfix Consulting 480.00 USD?",
+               "words": "Pay Quickfix Consulting 480.00 USD?", "takes": "confirm-gesture",
                "content": {"payee": "quickfix-consulting", "amount_cents": 48000}}
     reply = client.call("asks", "POST", "/asks", {k: v for k, v in pay_ask.items()
                                                   if k != "words"})
     check("an ask without its words is refused", reply.status == 400)
+    reply = client.call("asks", "POST", "/asks", {k: v for k, v in pay_ask.items()
+                                                  if k != "takes"})
+    check("an ask that does not name the answer it takes is refused", reply.status == 400)
+    reply = client.call("asks", "POST", "/asks", {**pay_ask, "takes": "a nod"})
+    check("an ask names one of the three answers", reply.status == 400
+          and not entries(suite, "ask"))
     reply = client.call("asks", "POST", "/asks", pay_ask)
     ask = entries(suite, "ask")[-1]
-    check("with no script, an ask is answered no", reply.json() == {"ask": "ask-0001",
-                                                                   "answer": "no"})
-    check("the record keeps the ask's exact words and content",
+    shown = sha256(canonical(pay_ask["content"]).encode())
+    check("with no script, an ask is answered no", reply.json() == {
+        "ask": "ask-0001", "answer": "no", "with": None, "struck": [], "sha256": shown})
+    check("the record keeps the ask's exact words and content, and the answer it takes",
           ask["words"] == pay_ask["words"] and ask["content"] == pay_ask["content"]
-          and ask["rule"] == "default")
+          and ask["rule"] == "default" and ask["takes"] == "confirm-gesture"
+          and ask["sha256"] == shown and ask["items"] is None and ask["line"] is None)
     reply = client.control("POST", "/asks/script", {"rules": [
         {"match": {"kind": "send"}, "answer": "yes", "times": True}]})
     check("a script whose times is not a whole number is refused", reply.status == 400)
+    reply = client.control("POST", "/asks/script", {"default": "wait",
+                                                    "hold_timeout_seconds": 30})
+    check("a script cannot put a timer on an ask", reply.status == 400)
     client.control("POST", "/asks/script", {"rules": [
         {"match": {"kind": "send", "contains": "alex@"}, "answer": "yes", "times": 1},
-        {"match": {"kind": "pay"}, "answer": "hold"}]})
+        {"match": {"kind": "pay"}, "answer": "wait"}]})
     send_ask = {"task": "t-0002", "kind": "send", "words": "Send this mail to Alex Chen?",
-                "content": message}
-    answers = [client.call("asks", "POST", "/asks", send_ask).json()["answer"] for _ in range(2)]
+                "takes": "confirm-gesture", "content": message}
+    replies = [client.call("asks", "POST", "/asks", send_ask).json() for _ in range(2)]
     check("a scripted rule answers yes once, then the default answers no",
-          answers == ["yes", "no"], str(answers))
+          [r["answer"] for r in replies] == ["yes", "no"], str(replies))
+    check("a yes is given with the answer the ask takes, unless the script says otherwise",
+          [r["with"] for r in replies] == ["confirm-gesture", None]
+          and entries(suite, "answer")[-2]["with"] == "confirm-gesture")
     worker, held = client.ask_in_background(pay_ask)
-    pending = client.wait_for_held()
-    check("a held ask waits", [p["ask"] for p in pending] == ["ask-0004"] and worker.is_alive())
+    pending = client.wait_for_waiting()
+    check("an ask the script leaves waiting waits",
+          pending == [{"ask": "ask-0004", "task": "t-0001", "kind": "pay",
+                       "takes": "confirm-gesture", "line": None}] and worker.is_alive())
     before = len(entries(suite, "effect"))
     client.call("payments", "GET", "/payees", headers=pay_key)
-    check("while the ask is held, other fixtures answer and nothing takes effect",
+    check("while the ask waits, other fixtures answer and nothing takes effect",
           len(entries(suite, "effect")) == before)
+    client.control("POST", "/clock", {"advance_seconds": 86400})
+    check("no ask ends on a timer: a day later it still waits",
+          [p["ask"] for p in client.control("GET", "/asks/pending").json()] == ["ask-0004"]
+          and worker.is_alive())
     client.control("POST", "/asks/answer", {"ask": "ask-0004", "answer": "no"})
     worker.join(10)
-    check("the control service answers the held ask",
-          held.get("reply") and held["reply"].json() == {"ask": "ask-0004", "answer": "no"}
-          and entries(suite, "answer")[-1]["by"] == "control")
-    client.control("POST", "/asks/script", {"default": "hold", "hold_timeout_seconds": 60})
-    worker, held = client.ask_in_background(pay_ask)
-    client.wait_for_held()
-    client.control("POST", "/clock", {"advance_seconds": 59})
-    check("a held ask outlasts real time until the lab clock passes its timeout",
-          client.control("GET", "/asks/pending").json() != [] and worker.is_alive())
-    client.control("POST", "/clock", {"advance_seconds": 1})
-    worker.join(10)
-    check("a held ask nobody answers is answered no when the lab clock passes its timeout",
+    check("the control service answers the waiting ask",
           held.get("reply") and held["reply"].json()["answer"] == "no"
-          and entries(suite, "answer")[-1]["by"] == "timeout")
+          and entries(suite, "answer")[-1]["by"] == "control")
+
+    check.section("The three answers")
+    client.control("POST", "/asks/script", {"rules": [
+        {"match": {"takes": "confirm-gesture"}, "answer": "yes", "with": "plain"},
+        {"match": {"takes": "signature"}, "answer": "yes", "with": "confirm-gesture"},
+        {"match": {"takes": "plain"}, "answer": "yes"}]})
+    keep_ask = {"task": "t-0003", "kind": "keep", "words": "Keep this preview?",
+                "takes": "plain", "content": {"tool": "morning-pages", "build": "b-0007"}}
+    rule_ask = {"task": "t-0003", "kind": "rule", "takes": "signature",
+                "words": "Let Morning Pages sync to cloud.fixture.test from now on?",
+                "content": {"holder": "morning-pages", "operation": "nextcloud.sync"}}
+    given = [client.call("asks", "POST", "/asks", ask).json()["with"]
+             for ask in (pay_ask, rule_ask, keep_ask)]
+    check("a script can give an answer of the wrong kind (attack A28)",
+          given == ["plain", "confirm-gesture", "plain"], str(given))
+    check("the record keeps the answer each ask takes beside the answer it was given",
+          [(a["takes"], b["with"]) for a, b in zip(entries(suite, "ask")[-3:],
+                                                   entries(suite, "answer")[-3:])]
+          == [("confirm-gesture", "plain"), ("signature", "confirm-gesture"),
+              ("plain", "plain")])
+    reply = client.control("POST", "/asks/script", {"rules": [
+        {"match": {"kind": "pay"}, "answer": "yes", "with": "a nod"}]})
+    check("a script gives one of the three answers, or none", reply.status == 400)
+
+    check.section("An ask that holds a list")
+    drafts = [{"to": ["alex@people.fixture.test"], "subject": "Re: Dinner Saturday?",
+               "body": "Yes, 7 pm works.", "in_reply_to": "m-0002"},
+              {"to": ["morgan@work.fixture.test"], "subject": "Re: Notes from Thursday",
+               "body": "Notes attached.", "in_reply_to": "m-0003"},
+              {"to": ["appointments@login.fixture.test"], "subject": "Re: Please confirm",
+               "body": "Confirmed.", "in_reply_to": "m-0004"}]
+    list_ask = {"task": "t-0004", "kind": "send", "words": "Send these three replies?",
+                "takes": "confirm-gesture", "items": drafts}
+    reply = client.call("asks", "POST", "/asks", {**list_ask, "content": drafts[0]})
+    check("an ask holds one act or a list, not both", reply.status == 400)
+    reply = client.call("asks", "POST", "/asks", {**list_ask, "items": []})
+    check("a list ask holds at least one act", reply.status == 400)
+    client.control("POST", "/asks/script", {"rules": [
+        {"match": {"task": "t-0004"}, "answer": "yes", "strike": [1], "times": 1},
+        {"match": {"task": "t-0004"}, "answer": "yes", "strike": [3]}]})
+    reply = client.call("asks", "POST", "/asks", list_ask).json()
+    left = sha256(canonical([drafts[0], drafts[2]]).encode())
+    check("a script can strike an item, and the answer covers what is left (attack A29)",
+          (reply["answer"], reply["struck"], reply["sha256"]) == ("yes", [1], left), str(reply))
+    asked, answered = entries(suite, "ask")[-1], entries(suite, "answer")[-1]
+    check("the record keeps the list as it was shown and as it was answered",
+          asked["items"] == drafts and asked["content"] is None
+          and asked["sha256"] == sha256(canonical(drafts).encode())
+          and answered["struck"] == [1] and answered["sha256"] == left)
+    worker, held = client.ask_in_background(list_ask)
+    waiting = client.wait_for_waiting()
+    check("a scripted strike of an item the list does not hold answers nothing, and the ask waits",
+          [p["task"] for p in waiting] == ["t-0004"]
+          and entries(suite, "answer")[-1]["ask"] == asked["ask"])
+    reply = client.control("POST", "/asks/answer", {"ask": waiting[0]["ask"], "answer": "yes",
+                                                    "strike": [0, 1, 2]})
+    check("striking every item is a decline, not a yes", reply.status == 400
+          and client.control("GET", "/asks/pending").json() == waiting)
+    client.control("POST", "/asks/answer", {"ask": waiting[0]["ask"], "answer": "yes",
+                                            "strike": [2, 0]})
+    worker.join(10)
+    check("the control service can strike items and answer for the rest",
+          held["reply"].json()["struck"] == [0, 2]
+          and held["reply"].json()["sha256"] == sha256(canonical([drafts[1]]).encode()))
+
+    check.section("Held asks, and their lines")
+    client.control("POST", "/asks/script", {"default": "yes"})
+    *flood, own = client.asks_in_background(
+        [{**pay_ask, "task": f"t-01{n:02d}", "line": "agent"} for n in range(3)]
+        + [{**send_ask, "task": "t-0005", "line": "task t-0005"}])
+    pending = client.control("GET", "/asks/pending").json()
+    check("a held ask waits in its line, whatever the script says (attack A20)",
+          sorted((p["task"], p["line"]) for p in pending)
+          == [("t-0005", "task t-0005"), ("t-0100", "agent"), ("t-0101", "agent"),
+              ("t-0102", "agent")]
+          and all(worker.is_alive() for worker, _ in [*flood, own]))
+    check("the record keeps the line of a held ask",
+          sorted(e["line"] for e in entries(suite, "ask")[-4:])
+          == ["agent", "agent", "agent", "task t-0005"])
+    before = len(entries(suite, "effect"))
+    reply = client.control("POST", "/asks/dismiss", {"line": "agent"})
+    for worker, _ in flood:
+        worker.join(10)
+    check("dismissing a line declines every ask in it, and no other",
+          sorted(holder["reply"].json()["answer"] for _, holder in flood) == ["no"] * 3
+          and len(reply.json()["asks"]) == 3
+          and [p["line"] for p in client.control("GET", "/asks/pending").json()]
+          == ["task t-0005"]
+          and [e["by"] for e in entries(suite, "answer")[-3:]] == ["dismiss"] * 3
+          and len(entries(suite, "effect")) == before)
+    reply = client.control("POST", "/asks/dismiss", {"line": "agent"})
+    check("a line that holds nothing cannot be dismissed", reply.status == 404)
+    held_id = client.control("GET", "/asks/pending").json()[0]["ask"]
+    client.control("POST", "/asks/answer", {"ask": held_id, "answer": "yes"})
+    own[0].join(10)
+    check("the person can open a line and answer an ask in it",
+          own[1]["reply"].json()["answer"] == "yes"
+          and own[1]["reply"].json()["with"] == "confirm-gesture")
+
+    check.section("An ask ends with its task")
+    client.control("POST", "/asks/script", {"default": "wait"})
+    workers = client.asks_in_background([{**pay_ask, "task": task}
+                                         for task in ("t-0006", "t-0006", "t-0007")])
+    reply = client.control("POST", "/tasks/end", {"task": "t-0006"})
+    for worker, _ in workers[:2]:
+        worker.join(10)
+    check("ending a task declines the asks it left waiting, and no other task's",
+          len(reply.json()["asks"]) == 2
+          and [holder["reply"].json()["answer"] for _, holder in workers[:2]] == ["no", "no"]
+          and [e["by"] for e in entries(suite, "answer")[-2:]] == ["task-ended"] * 2
+          and [p["task"] for p in client.control("GET", "/asks/pending").json()] == ["t-0007"]
+          and workers[2][0].is_alive())
+    client.control("POST", "/tasks/end", {"task": "t-0007"})
+    workers[2][0].join(10)
+    check("ending a task is in the record, with the asks it closed",
+          [(e["task"], len(e["asks"])) for e in entries(suite, "control")
+           if e["action"] == "task-ended"][-2:] == [("t-0006", 2), ("t-0007", 1)])
     client.control("POST", "/asks/script", {})
     client.control("POST", "/faults", {"service": "asks", "method": "POST", "path": "/asks",
                                        "kind": "status", "status": 503, "body": "busy"})
@@ -593,16 +730,16 @@ def scenario(suite, check):
     check.section("Reset")
     old_cookie = session
     old_record = suite.record.path
-    client.control("POST", "/asks/script", {"default": "hold"})
+    client.control("POST", "/asks/script", {"default": "wait"})
     fault = client.control("POST", "/faults", {
         "service": "asks", "method": "POST", "path": "/asks",
         "kind": "status-after-effect", "status": 502}).json()
     worker, held = client.ask_in_background(pay_ask)
-    client.wait_for_held()
+    client.wait_for_waiting()
     reply = client.control("POST", "/reset", {"run": "smoke-after-reset"})
     worker.join(10)
     old_tail = [json.loads(line) for line in old_record.read_text().splitlines()][-2:]
-    check("a faulted ask held across the reset is answered and recorded in its own run",
+    check("a faulted ask that waits across the reset is answered and recorded in its own run",
           held["reply"].status == 502
           and [(e["kind"], e.get("by"), e.get("fault")) for e in old_tail]
           == [("answer", "reset", None), ("request", None, fault["id"])])
@@ -617,7 +754,7 @@ def scenario(suite, check):
           outbox == [] and payments == [] and balance == 250000)
     check("an old session no longer works",
           client.call("login", "GET", "/account", headers=old_cookie).status == 401)
-    check("no faults or held asks survive", client.control("GET", "/faults").json() == []
+    check("no faults or waiting asks survive", client.control("GET", "/faults").json() == []
           and client.control("GET", "/asks/pending").json() == [])
     check("the Data folder is written again, the same",
           entries(suite)[0]["home"] == home.digest(suite.home))
