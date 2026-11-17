@@ -8,7 +8,7 @@
 use crowbar_authority::{Authority, Change, Grant, Holder, Party, Rule, StandingId};
 use crowbar_capability::{EffectLimits, Principal, Rate, Resource, Right, Rights};
 use crowbar_gate::{Act, Answer, Ask, AskWhy, Caller, Decision, GateRule, Limit, Operation, Presented};
-use crowbar_labels::{Compartment, Fetch, Label, LabelMark, Origin, Site};
+use crowbar_labels::{Compartment, Fetch, Label, LabelMark, ObjectId, Origin, Site};
 
 mod common;
 use common::{Bench, NOW, allowed, asked, by, handle, personal, refused, task, using};
@@ -293,15 +293,20 @@ fn sync_host() -> Site {
 }
 
 /// What the editor's approval screen showed, as the authority record keeps
-/// it: it may connect to its sync host, which is cleared for the personal
-/// files in its view.
+/// it: it opens and saves the person's documents, which the screen showed
+/// as personal, and it may connect to its sync host. The approval sets no
+/// clearance: a site stays cleared for public data.
 fn the_editors_approval() -> Vec<Change> {
     let holder = Holder::Installed("editor".to_string());
     vec![
-        Change::ClearanceSet {
-            party: Party::Site(sync_host()),
-            clearance: Label::Personal,
-        },
+        Change::Granted(Grant {
+            holder: holder.clone(),
+            resource: Resource::Data([ObjectId::new("documents/essay.txt")].into()),
+            rights: Rights::from([Right::Read, Right::Write]),
+            limits: EffectLimits::new(),
+            reason: "Opens and saves your documents.".to_string(),
+            shows: Some(Label::Personal),
+        }),
         Change::Granted(Grant {
             holder: holder.clone(),
             resource: Resource::Endpoint {
@@ -323,21 +328,25 @@ fn the_editors_approval() -> Vec<Change> {
     ]
 }
 
-/// The ids of the grant and the rule `holder` holds, in that order.
-fn standing(authority: &Authority, holder: &Holder) -> Vec<StandingId> {
-    let grants = authority.grants(holder).map(|(id, _)| id);
+/// The ids of the grant on `host` and the rule that `holder` holds, in that
+/// order: what a connection to a host its approval lists goes under.
+fn standing(authority: &Authority, holder: &Holder, host: &Site) -> Vec<StandingId> {
+    let grants = authority
+        .grants(holder)
+        .filter(|(_, grant)| matches!(&grant.resource, Resource::Endpoint { host: named, .. } if named == host))
+        .map(|(id, _)| id);
     grants.chain(authority.rules(holder).map(|(id, _)| id)).collect()
 }
 
 #[test]
 fn installed_software_reaches_what_its_approval_showed_without_asking() {
     let mut bench = Bench::with(the_editors_approval());
-    // Its view holds the person's files, so its compartment is personal.
+    // Its view holds the person's files, so its compartment is personal,
+    // and the person has cleared its sync host for nothing.
     let compartment = Compartment::fixed([&personal()]);
-    let under = standing(
-        bench.authority.as_ref().expect("read"),
-        &Holder::Installed("editor".to_string()),
-    );
+    let authority = bench.authority.as_ref().expect("read");
+    assert_eq!(authority.clearance(&Party::Site(sync_host())), Label::Public);
+    let under = standing(authority, &Holder::Installed("editor".to_string()), &sync_host());
     assert_eq!(under.len(), 2);
     assert_eq!(
         connect(&mut bench, &editor(), &compartment, Login::None, sync_host()),

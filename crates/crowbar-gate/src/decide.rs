@@ -262,7 +262,7 @@ fn use_of(
     }
 
     if let Some(party) = party {
-        let clearance = authority.map_or(Label::Public, |authority| authority.clearance(party));
+        let clearance = clearance_for(authority, caller, party);
         if !caller.compartment.label_mark().label().is_at_most(&clearance) {
             return Err(Refuse::with(GateRule::Clearance, Limit::Clearance(clearance)));
         }
@@ -313,6 +313,28 @@ pub(crate) fn over_cap(usage: &Usage, operation: &Operation<'_>, now: Time) -> A
         },
         held: held_under(usage, operation.caller.principal, now),
     }
+}
+
+/// Check 5: the highest label `caller`'s compartment may hold when it
+/// reaches `party`. That is the party's clearance. For installed software
+/// reaching a site, it is joined with the most its approval showed it
+/// holding: the approval was the person's signature on that, and it clears
+/// a site for the software it approves and for nothing else (ADR 0017).
+/// Whether it may reach this site with no ask is check 6. With no authority
+/// to read, no party is cleared above public.
+fn clearance_for(authority: Option<&Authority>, caller: &Caller<'_>, party: &Party) -> Label {
+    let Some(authority) = authority else {
+        return Label::Public;
+    };
+    let clearance = authority.clearance(party);
+    let holder = match (caller.principal, party) {
+        (Principal::Installed(name), Party::Site(_)) => Holder::Installed(name.clone()),
+        _ => return clearance,
+    };
+    authority
+        .grants(&holder)
+        .filter_map(|(_, grant)| grant.shows.as_ref())
+        .fold(clearance, |cleared, shown| cleared.join(shown))
 }
 
 /// Whether an egress to `party` crosses on authority the person already
