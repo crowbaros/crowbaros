@@ -8,7 +8,7 @@
 use crowbar_authority::{Authority, Change, Grant, Holder, Party, Rule, StandingId};
 use crowbar_capability::{EffectLimits, Principal, Rate, Resource, Right, Rights};
 use crowbar_gate::{Act, Answer, Ask, AskWhy, Caller, Decision, GateRule, Limit, Operation, Presented};
-use crowbar_labels::{Category, Compartment, Fetch, Label, LabelMark, Labeled, ObjectId, Origin, Site};
+use crowbar_labels::{Category, Compartment, Fetch, Label, LabelMark, Labeled, MarkSource, ObjectId, Origin, Site};
 
 mod common;
 use common::{Bench, NOW, allowed, asked, by, handle, personal, refused, task, using};
@@ -446,6 +446,73 @@ fn a_tool_and_the_agent_holding_only_public_data_still_ask_before_reaching_a_hos
             asked(AskWhy::Crosses)
         );
     }
+}
+
+fn ledger_workbench() -> Principal {
+    Principal::Workbench("ledger".to_string())
+}
+
+fn registry() -> Site {
+    Site::new("registry.example")
+}
+
+/// A file of the ledger project: the person's own words, made private.
+fn a_ledger_file() -> LabelMark {
+    Labeled::from_origin((), &Origin::Typed)
+        .raise(&Label::private(Category::Finance))
+        .label_mark()
+        .clone()
+}
+
+/// The profile of the workbench for a private project, as the authority
+/// record keeps it: it works on the project's files, which the profile
+/// showed as private finance data, and it may connect to the package
+/// registry. Its rule is for the mark a workbench always carries.
+fn the_ledger_profile() -> Vec<Change> {
+    let holder = Holder::Workbench("ledger".to_string());
+    vec![
+        Change::Granted(Grant {
+            holder: holder.clone(),
+            resource: Resource::Data([ObjectId::new("projects/ledger/ledger.txt")].into()),
+            rights: Rights::from([Right::Read, Right::Write]),
+            limits: EffectLimits::new(),
+            reason: "Works on the files of your ledger project.".to_string(),
+            shows: Some(Label::private(Category::Finance)),
+        }),
+        Change::Granted(Grant {
+            holder: holder.clone(),
+            resource: Resource::Endpoint {
+                host: registry(),
+                port: 443,
+            },
+            rights: Rights::from([Right::Connect]),
+            limits: EffectLimits::new(),
+            reason: "Fetches packages from the registry.".to_string(),
+            shows: None,
+        }),
+        Change::RuleAdded(Rule {
+            holder,
+            operation: "http.get".to_string(),
+            limits: EffectLimits::new().rate(Rate::per(600, 3_600)),
+            sources: [MarkSource::Workbench].into(),
+            cap: None,
+        }),
+    ]
+}
+
+#[test]
+fn a_workbench_for_a_private_project_reaches_a_site_on_its_profile_without_asking() {
+    let mut bench = Bench::with(the_ledger_profile());
+    let compartment = Compartment::workbench([&a_ledger_file()]);
+    assert_eq!(compartment.label_mark().label(), &Label::private(Category::Finance));
+    let authority = bench.authority.as_ref().expect("read");
+    assert_eq!(authority.clearance(&Party::Site(registry())), Label::Public);
+    let under = standing(authority, &Holder::Workbench("ledger".to_string()), &registry());
+    assert_eq!(under.len(), 2);
+    assert_eq!(
+        connect(&mut bench, &ledger_workbench(), &compartment, Login::None, registry()),
+        Decision::Allowed { under }
+    );
 }
 
 #[test]

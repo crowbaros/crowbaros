@@ -317,9 +317,9 @@ pub(crate) fn over_cap(usage: &Usage, operation: &Operation<'_>, now: Time) -> A
 
 /// Check 5: the highest label `caller`'s compartment may hold when it
 /// reaches `party`. That is the party's clearance. For installed software
-/// reaching a site, it is joined with the most its approval showed it
-/// holding: the approval was the person's signature on that, and it clears
-/// a site for the software it approves and for nothing else (ADR 0017).
+/// or a workbench reaching a site, it is joined with the most its approval
+/// showed it holding: the approval was the person's signature on that, and
+/// it clears a site for what it approves and for nothing else (ADR 0017).
 /// Whether it may reach this site with no ask is check 6. With no authority
 /// to read, no party is cleared above public.
 fn clearance_for(authority: Option<&Authority>, caller: &Caller<'_>, party: &Party) -> Label {
@@ -329,6 +329,7 @@ fn clearance_for(authority: Option<&Authority>, caller: &Caller<'_>, party: &Par
     let clearance = authority.clearance(party);
     let holder = match (caller.principal, party) {
         (Principal::Installed(name), Party::Site(_)) => Holder::Installed(name.clone()),
+        (Principal::Workbench(name), Party::Site(_)) => Holder::Workbench(name.clone()),
         _ => return clearance,
     };
     authority
