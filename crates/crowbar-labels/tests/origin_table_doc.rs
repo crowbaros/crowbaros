@@ -40,6 +40,7 @@ fn origin_for(row: &str) -> Option<Origin> {
         "A page from bank.example, under a login" => Origin::WebPage(Fetch::UnderLogin(bank)),
         "A file downloaded from news.example" => Origin::File(FileOrigin::Downloaded(Fetch::WithoutLogin(news))),
         "A file saved from an attachment in me@mail.example" => Origin::File(FileOrigin::Attachment { account: me }),
+        "A file the person brought in by hand" => Origin::File(FileOrigin::BroughtInByHand),
         "A file from outside the fleet, by any other way" => Origin::File(FileOrigin::FromOutside),
         "The Base package snapshot" => Origin::Admitted(AdmittedSet::BasePackages),
         "The dependency set for build tasks" => Origin::Admitted(AdmittedSet::BuildDependencies),
@@ -59,7 +60,7 @@ fn origin_for(row: &str) -> Option<Origin> {
 #[test]
 fn the_documented_table_matches_the_code() {
     let rows = documented_rows();
-    assert_eq!(rows.len(), 15, "the table changed size; add the new rows here");
+    assert_eq!(rows.len(), 16, "the table changed size; add the new rows here");
     for [row, label, mark] in rows {
         match origin_for(&row) {
             Some(origin) => {

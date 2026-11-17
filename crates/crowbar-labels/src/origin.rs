@@ -20,6 +20,7 @@ use crate::mark::{LabelMark, MailAccount, Mark, MarkSource};
 /// | A page from `bank.example`, under a login | `private: site bank.example` | `marked: site bank.example` |
 /// | A file downloaded from `news.example` | `public` | `marked: site news.example` |
 /// | A file saved from an attachment in `me@mail.example` | `private: messages` | `marked: mail me@mail.example` |
+/// | A file the person brought in by hand | `personal` | `marked: outside` |
 /// | A file from outside the fleet, by any other way | `private: unknown` | `marked: outside` |
 /// | The Base package snapshot | `public` | `none` |
 /// | The dependency set for build tasks | `public` | `none` |
@@ -42,6 +43,11 @@ use crate::mark::{LabelMark, MailAccount, Mark, MarkSource};
 ///   private to that site (ADR 0008). A web site's default is public.
 /// - **A file takes the row of where its content came from.** A file written
 ///   inside the fleet is a stored result.
+/// - **A file the person brings in by hand is personal and marked as from
+///   outside** (ADR 0019, ADR 0025), such as photos imported from a camera
+///   card. The person chose it, so the label is theirs to decide. A stranger
+///   may have written it, so the mark is kept. A file from outside with no
+///   act of the person's behind it fails closed.
 /// - **A paste carries its source's label and mark** (ADR 0008), and nothing
 ///   more. A paste whose source was not recorded fails closed, marked as a
 ///   paste.
@@ -79,7 +85,12 @@ pub enum FileOrigin {
     Downloaded(Fetch),
     /// Saved from an attachment in one of the person's mail accounts.
     Attachment { account: MailAccount },
-    /// From outside the fleet by any other way, such as removable media.
+    /// Brought in by the person's own hand, such as photos they import from
+    /// a camera card. The broker states this only when the shell or the
+    /// compositor saw the person's act (ADR 0025).
+    BroughtInByHand,
+    /// From outside the fleet by any other way, with no act of the person's
+    /// behind it.
     FromOutside,
 }
 
@@ -124,6 +135,9 @@ impl Origin {
                     Fetch::UnderLogin(site) => Label::private(Category::Site(site.clone())),
                 };
                 LabelMark::new(label, Mark::from_source(MarkSource::Site(fetch.site().clone())))
+            }
+            Origin::File(FileOrigin::BroughtInByHand) => {
+                LabelMark::new(Label::Personal, Mark::from_source(MarkSource::Outside))
             }
             Origin::File(FileOrigin::FromOutside) => fail_closed(MarkSource::Outside),
             Origin::Pasted {

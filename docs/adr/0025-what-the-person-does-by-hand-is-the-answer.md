@@ -67,6 +67,6 @@ Four cases:
 - [ADR 0019](0019-the-origin-table-fails-closed.md) and [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) are revised. A paste is never refused, and the compositor's fourth slice ([issue 166](https://github.com/crowbaros/crowbaros/issues/166)) gains the primary selection and drag and drop between compartments.
 - Those two are built before the Alpha bar is measured ([ADR 0024](0024-the-friction-bar-ranks-with-the-attack-list.md)), because the bar allows no refusal of what the person did by hand.
 - The compositor tells the broker which of the four acts each transfer followed, as well as its source and destination. The attacks of the fourth slice change with it, and are run again.
-- `crates/crowbar-labels` refuses a value above a fixed compartment today. It changes through its own issue.
+- `crates/crowbar-labels` refused a value above a fixed compartment. It changed through [issue 180](https://github.com/crowbaros/crowbaros/issues/180): a compartment takes a value moved in by hand through an operation of its own, and every other value is read as before.
 - Milestone 2 gains attacks: a clipboard read with no hand behind it, a marked paste into a file an app already had open, and a link shown by a conversation that is no longer clean.
 - A mark now spreads by hand as well as by tasks. Milestone 2's measurement of how far marks spread counts it.
