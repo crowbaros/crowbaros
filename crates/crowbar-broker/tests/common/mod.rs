@@ -62,6 +62,7 @@ pub fn gate_on_issue(issue: &Issue, now: Time) -> Ruling {
         caller: Caller {
             principal: &issue.holder,
             standing_task: None,
+            holds_login: false,
             compartment: &compartment,
         },
         key: None,
@@ -123,6 +124,7 @@ pub fn gate_on_delegation(table: &HandleTable, handle: &Handle, delegation: &Del
         caller: Caller {
             principal: delegation.from,
             standing_task: None,
+            holds_login: false,
             compartment: delegation.compartment,
         },
         key: None,

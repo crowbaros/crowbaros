@@ -9,7 +9,7 @@ use crowbar_gate::{Act, AskWhy, GateRule, Limit, Presented};
 use crowbar_labels::{Category, Compartment, Fetch, Label, LabelMark, Origin, Site};
 
 mod common;
-use common::{Bench, NOW, asked, by, handle, personal, refused, task, using};
+use common::{Bench, NOW, allowed, asked, by, handle, personal, refused, task, using};
 
 fn provider() -> Party {
     Party::ModelProvider("provider.example".to_string())
@@ -63,15 +63,13 @@ fn egress(bench: &mut Bench, compartment: &Compartment, party: &Party) -> crowba
 
 #[test]
 fn a_compartment_at_or_below_the_partys_clearance_passes_the_clearance_check() {
-    // An egress crosses, and an ad hoc task holds no standing rule, so it
-    // asks: the clearance did not refuse it.
-    assert_eq!(
-        egress(&mut Bench::new(), &Compartment::fresh(), &site()),
-        asked(AskWhy::Crosses)
-    );
+    // The clearance did not refuse it. For a compartment that holds only
+    // public data and no login, and for a model request, the clearance is
+    // the whole decision (ADR 0011).
+    assert_eq!(egress(&mut Bench::new(), &Compartment::fresh(), &site()), allowed());
     assert_eq!(
         egress(&mut Bench::new(), &having_read(&personal()), &provider()),
-        asked(AskWhy::Crosses)
+        allowed()
     );
 }
 
@@ -95,10 +93,7 @@ fn a_clearance_the_person_set_replaces_the_default() {
         party: provider(),
         clearance: cleared,
     }]);
-    assert_eq!(
-        egress(&mut bench, &having_read(&bank()), &provider()),
-        asked(AskWhy::Crosses)
-    );
+    assert_eq!(egress(&mut bench, &having_read(&bank()), &provider()), allowed());
 
     let mut lowered = Bench::with(vec![Change::ClearanceSet {
         party: provider(),
@@ -129,10 +124,7 @@ fn no_party_is_cleared_for_unknown_unless_the_person_names_it() {
         party: provider(),
         clearance: Label::private(Category::Unknown),
     }]);
-    assert_eq!(
-        egress(&mut named, &having_read(&unknown), &provider()),
-        asked(AskWhy::Crosses)
-    );
+    assert_eq!(egress(&mut named, &having_read(&unknown), &provider()), allowed());
 }
 
 #[test]

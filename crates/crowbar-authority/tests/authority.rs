@@ -148,11 +148,13 @@ fn authority_is_held_only_by_the_holder_it_was_recorded_for() {
     store.grant(writing_grant(), NOW).expect("recorded");
     store.add_rule(sync_rule(), NOW).expect("recorded");
 
-    // A standing task and a workbench with the Tool's name are not the Tool.
+    // A standing task, a workbench, and installed software with the Tool's
+    // name are not the Tool.
     for other in [
         Holder::Tool("evening-pages".to_string()),
         Holder::StandingTask("morning-pages".to_string()),
         Holder::Workbench("morning-pages".to_string()),
+        Holder::Installed("morning-pages".to_string()),
     ] {
         assert_eq!(
             store.authority().expect("readable").grants(&other).count(),

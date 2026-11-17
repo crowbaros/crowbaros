@@ -82,6 +82,7 @@ fn a_dry_run_records_no_idempotency_key() {
         caller: Caller {
             principal: &caller,
             standing_task: None,
+            holds_login: false,
             compartment: &compartment,
         },
         key: Some(&key),
