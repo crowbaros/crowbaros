@@ -311,6 +311,7 @@ fn the_editors_approval() -> Vec<Change> {
             rights: Rights::from([Right::Connect]),
             limits: EffectLimits::new(),
             reason: "Syncs your settings.".to_string(),
+            shows: None,
         }),
         Change::RuleAdded(Rule {
             holder,

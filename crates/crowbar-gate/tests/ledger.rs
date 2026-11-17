@@ -127,6 +127,7 @@ fn a_restart_keeps_a_standing_rules_rate() {
                 rights: Rights::from([Right::Read]),
                 limits: EffectLimits::new(),
                 reason: "Keeps your morning pages.".to_string(),
+                shows: None,
             }),
         ),
         (
@@ -389,6 +390,7 @@ fn an_attempt_under_a_cap_and_the_ask_over_it_survive_a_restart() {
                 rights: Rights::from([Right::Write]),
                 limits: EffectLimits::new(),
                 reason: "Pays your electric bill.".to_string(),
+                shows: None,
             }),
         ),
         (

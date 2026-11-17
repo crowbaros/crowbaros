@@ -55,6 +55,7 @@ pub fn writing_grant() -> Grant {
         rights: Rights::from([Right::Read, Right::Write]),
         limits: EffectLimits::new(),
         reason: "Keeps your morning pages.".to_string(),
+        shows: None,
     }
 }
 

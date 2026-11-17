@@ -53,6 +53,12 @@ pub struct Grant {
     pub limits: EffectLimits,
     /// Plain-language text from the manifest, as the person saw it.
     pub reason: String,
+    /// The label of what this grant gives, as the approval showed it. The
+    /// join over a holder's grants is the most its approval showed it
+    /// holding, and the gate checks its compartment against that when it
+    /// reaches a site (ADR 0021). A grant with none is stored without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shows: Option<Label>,
 }
 
 /// A standing rule: the person's pre-approval for a narrow kind of act that
