@@ -36,6 +36,9 @@ enum Growth {
     /// A native sandbox: the gate cannot see a read inside its view, so its
     /// label and mark are fixed at start from the whole view.
     Fixed,
+    /// A workbench: a native sandbox that is always marked, because it
+    /// reads the open web all the time (ADR 0017).
+    Workbench,
 }
 
 impl Compartment {
@@ -75,6 +78,7 @@ impl Compartment {
         let mut workbench = Compartment::fixed(view);
         let marked = LabelMark::new(Label::Public, Mark::from_source(MarkSource::Workbench));
         workbench.label_mark = workbench.label_mark.join(&marked);
+        workbench.growth = Growth::Workbench;
         workbench
     }
 
@@ -91,8 +95,8 @@ impl Compartment {
                 self.label_mark = self.label_mark.join(value);
                 Ok(())
             }
-            Growth::Fixed if value.is_at_most(&self.label_mark) => Ok(()),
-            Growth::Fixed => Err(ReadRefused {
+            Growth::Fixed | Growth::Workbench if value.is_at_most(&self.label_mark) => Ok(()),
+            Growth::Fixed | Growth::Workbench => Err(ReadRefused {
                 held: self.label_mark.clone(),
                 offered: value.clone(),
             }),
@@ -111,7 +115,14 @@ impl Compartment {
     /// the value's mark, and everything it emits afterwards carries it.
     /// That holds for a compartment whose label and mark were fixed at
     /// start too. Nothing is refused.
+    ///
+    /// A workbench already carries the mark, so nothing about it changes
+    /// (ADR 0017), and the standing rules written for its mark still cover
+    /// its acts.
     pub fn moved_in_by_hand(&mut self, value: &LabelMark) {
+        if self.growth == Growth::Workbench {
+            return;
+        }
         let mark = self.label_mark.mark().join(value.mark());
         self.label_mark = LabelMark::new(self.label_mark.label().clone(), mark);
     }

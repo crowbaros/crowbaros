@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use crowbar_labels::{Compartment, Fetch, Label, MarkSource, Origin};
 
 mod common;
-use common::{news, sources};
+use common::{me, news, sources};
 
 #[test]
 fn text_pasted_from_a_web_page_into_notes_lands_and_what_the_notes_app_saves_carries_the_mark() {
@@ -32,4 +32,41 @@ fn text_pasted_from_a_web_page_into_notes_lands_and_what_the_notes_app_saves_car
     let mut task = Compartment::fresh();
     task.read(saved.label_mark()).expect("a task's compartment grows");
     assert!(task.label_mark().mark().is_marked());
+}
+
+#[test]
+fn a_one_time_code_pasted_from_mail_into_the_browser_does_not_raise_the_browsers_label() {
+    // The browser's view holds pages from the open web.
+    let page = Origin::WebPage(Fetch::WithoutLogin(news())).label_mark();
+    let mut browser = Compartment::fixed([&page]);
+    let code = Origin::Mail { account: me() }.label_mark();
+    assert_ne!(code.label(), &Label::Public);
+
+    browser.moved_in_by_hand(&code);
+
+    // The browser is still public, so its next request to any other site is
+    // not refused for what it holds.
+    assert_eq!(browser.label_mark().label(), &Label::Public);
+    // A stranger wrote the mail, and moving it does not make it the
+    // person's, so the mark is kept.
+    assert_eq!(
+        sources(browser.label_mark()),
+        BTreeSet::from([MarkSource::Site(news()), MarkSource::Mail(me())])
+    );
+}
+
+#[test]
+fn a_stack_trace_pasted_from_a_web_page_into_a_workbench_changes_nothing() {
+    // ADR 0017: a workbench reads the open web all the time, so it already
+    // carries the mark. Its standing rules were written for that mark, and
+    // they still cover its acts after the paste.
+    let source = Origin::Typed.label_mark();
+    let mut workbench = Compartment::workbench([&source]);
+    let before = workbench.label_mark().clone();
+    let trace = Origin::WebPage(Fetch::WithoutLogin(news())).label_mark();
+
+    workbench.moved_in_by_hand(&trace);
+
+    assert_eq!(workbench.label_mark(), &before);
+    assert_eq!(workbench.emit("a commit").label_mark(), &before);
 }
