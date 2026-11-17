@@ -355,6 +355,27 @@ fn installed_software_reaches_what_its_approval_showed_without_asking() {
 }
 
 #[test]
+fn an_approval_clears_a_host_for_what_it_approves_and_for_nothing_else() {
+    let mut bench = Bench::with(the_editors_approval());
+    // Each holds what the editor holds, and connects to the editor's host.
+    let compartment = Compartment::fixed([&personal()]);
+    let others = [
+        task("backup"),
+        Principal::Tool("editor".to_string()),
+        Principal::Agent,
+        Principal::Workbench("editor".to_string()),
+        Principal::Installed("notes".to_string()),
+    ];
+    for other in others {
+        assert_eq!(
+            connect(&mut bench, &other, &compartment, Login::None, sync_host()),
+            refused(GateRule::Clearance, Limit::Clearance(Label::Public)),
+            "{other:?}"
+        );
+    }
+}
+
+#[test]
 fn installed_software_reaching_a_host_its_approval_did_not_show_asks_for_a_signature() {
     // Attack A32. Saying yes would add a need to its approval, which is
     // authority that lasts.
