@@ -52,6 +52,27 @@ def sha256(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+# What the host needs, as (command or file, the Arch package that provides it).
+NEEDS = [
+    ("unshare", "util-linux"), ("newuidmap", "shadow"), ("curl", "curl"),
+    ("mkfs.btrfs", "btrfs-progs"), ("mkfs.vfat", "dosfstools"), ("sfdisk", "util-linux"),
+    ("qemu-system-x86_64", "qemu-base or qemu-desktop"), ("ssh", "openssh"),
+    ("ssh-keygen", "openssh"),
+]
+
+
+def preflight(vm=False):
+    missing = [f"{tool} (package {pkg})" for tool, pkg in NEEDS if not shutil.which(tool)]
+    if vm:
+        missing += [f"{path} (package edk2-ovmf)"
+                    for path in (CFG["firmware_code"], CFG["firmware_vars"])
+                    if not Path(path).exists()]
+        if not os.access("/dev/kvm", os.R_OK | os.W_OK):
+            missing.append("read and write access to /dev/kvm (is KVM on, and are you in the kvm group?)")
+    if missing:
+        raise SystemExit("This host is missing:\n  " + "\n  ".join(missing))
+
+
 def subordinate(path):
     """The first range of IDs /etc/subuid or /etc/subgid gives the current user."""
     names = {str(os.getuid()), os.environ.get("USER", "")}
@@ -98,11 +119,20 @@ def fetch():
 
 
 def rootfs(force):
-    if ROOTFS.exists() and not force:
+    # The root counts as installed only once an install of these packages from
+    # this repository finished. A root left by a failed or interrupted install,
+    # or one built from other packages, is installed again.
+    wanted = json.dumps({"repository": CFG["void_repository"], "packages": CFG["packages"]})
+    done = WORK / "rootfs.done"
+    if not force and ROOTFS.exists() and done.exists() and done.read_text() == wanted:
         print(f"Using the Void root at {ROOTFS} (pass --force to install it again)")
         return
+    if ROOTFS.exists() and not force:
+        print(f"The Void root at {ROOTFS} is not a finished install of these packages; "
+              "installing it again")
     xbps = fetch()
     WORK.mkdir(parents=True, exist_ok=True)
+    done.unlink(missing_ok=True)
     env = dict(os.environ, XBPS=str(xbps / "usr/bin"), ROOTFS=str(ROOTFS),
                REPO=CFG["void_repository"], KEYS=str(xbps / "var/db/xbps/keys"),
                PKGCACHE=str(CACHE / "packages"), PACKAGES=" ".join(CFG["packages"]))
@@ -113,10 +143,14 @@ def rootfs(force):
                 stderr=subprocess.STDOUT)
         except subprocess.CalledProcessError:
             raise SystemExit(f"Installing the Void root failed; see {log}")
+    if not any((ROOTFS / "boot").glob("vmlinuz-*")):
+        raise SystemExit(f"The Void root has no kernel in /boot after the install; see {log}")
+    done.write_text(wanted)
     print(f"Installed the Void root at {ROOTFS} (log: {log})")
 
 
 def build(force=False):
+    preflight()
     rootfs(force)
     if not KEY.exists():
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "crowbaros-base", "-f", KEY)
@@ -137,6 +171,7 @@ def running():
 
 def launch(window):
     """Start QEMU on a fresh copy of the base disk, with UEFI firmware."""
+    preflight(vm=True)
     if running():
         raise SystemExit("The guest is already running; `void_base.py stop` first")
     if not BASE_DISK.exists():
@@ -305,6 +340,8 @@ def main():
     elif args.cmd == "ssh":
         os.execvp("ssh", ssh_args() + ([" ".join(args.command)] if args.command else []))
     elif args.cmd == "console":
+        if not shutil.which("socat"):
+            raise SystemExit("The console needs socat (package socat)")
         os.execvp("socat", ["socat", "-,raw,echo=0,escape=0x1d", f"UNIX-CONNECT:{SERIAL_SOCK}"])
     elif args.cmd == "stop":
         stop()

@@ -47,9 +47,22 @@ other than yours. Remove it with `base/void_base.py build --force`, which
 deletes it inside the namespace, or with
 `unshare --map-root-user --map-users=1:<start>:<count> --map-groups=1:<start>:<count> rm -rf .lab/base/rootfs`.
 
-The host needs Python 3.11 or later, QEMU with KVM, OVMF at the paths in
-`config.json`, `unshare` from util-linux with `newuidmap` and `newgidmap`,
-`mkfs.btrfs`, `mkfs.vfat`, `sfdisk`, `curl`, `ssh`, and `socat` for the console.
+## What the host needs
+
+Python 3.11 or later, and on Arch or Omarchy:
+
+```sh
+sudo pacman -S --needed qemu-desktop edk2-ovmf btrfs-progs dosfstools socat
+```
+
+`util-linux`, `shadow`, `curl`, and `openssh` are already there. `qemu-base`
+also works, but `boot --window` needs the GTK display that `qemu-desktop` has.
+You also need read and write access to `/dev/kvm`, and a range of subordinate
+IDs in `/etc/subuid` and `/etc/subgid` (Arch gives every new user one). `build`
+and `boot` check for all of this first, and name what is missing.
+
+If a build stops partway, the next `build` installs the root again: it uses a
+root only after an install of the configured packages finished.
 
 ## What it checks
 

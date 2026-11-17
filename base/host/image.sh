@@ -15,6 +15,10 @@ rm -rf "$R/var/cache/xbps"
 mkdir -p "$R/var/cache/xbps"
 
 # The kernel and the initramfs that xbps built for it.
+ls "$R"/boot/vmlinuz-* >/dev/null 2>&1 || {
+  echo "no kernel in $ROOTFS/boot; install the root again with: base/void_base.py build --force" >&2
+  exit 1
+}
 KERNEL=$(cd "$R/boot" && ls vmlinuz-* | sort -V | tail -n 1)
 KVER=${KERNEL#vmlinuz-}
 test -f "$R/boot/initramfs-$KVER.img" || { echo "no initramfs for kernel $KVER" >&2; exit 1; }
