@@ -24,7 +24,7 @@ For one task. The numbers in brackets are [Milestone 2](../milestones/milestone-
 | Task | Most asks |
 | --- | --- |
 | Local and read-only work (1–4, 7–10, 15, 19, 20) | 0 |
-| An act under a standing rule with a cap (13) | 0 |
+| An act under a standing rule with a cap (13) | 0, when the amount is under the cap |
 | One act that leaves (5, 6, 11) | 1: the act, with its exact content |
 | A logged-in site (12, 14) | 2 |
 | Build a Tool (16) | 2 |
@@ -41,6 +41,8 @@ For a whole day, for a developer and for a person who is not one:
 | A day that adds no standing authority | No signature |
 | The first day on a new machine | At most 5 signatures |
 | Any day | No refusal of what the person did by hand |
+
+A grant that is asked again, because a Tool's needs changed or its build is not clean ([ADR 0011](0011-task-principals.md)), counts as adding standing authority.
 
 **A kind of ask the person answers yes more than 95 times in 100 is a defect.** It teaches the person to answer without reading, so it is redesigned.
 

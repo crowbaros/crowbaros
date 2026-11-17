@@ -43,7 +43,7 @@ What the design defends against, and what it does not, is in the
   **compartment** that reads a value is at that value's label and carries its
   mark from then on. Nothing a model does removes either, nothing crosses
   freely, and marks persist in storage. Each **conversation** is a compartment
-  of its own, and it rises only by the person's act. In a clean conversation, the Agent works by **plan over handles**, so private values stay
+  of its own, and it changes only by the person's act. In a clean conversation, the Agent works by **plan over handles**, so private values stay
   out of it. See
   [ADR 0008](../adr/0008-private-values-stay-out-of-the-agent-context.md).
 - **Open untrusted input costs a task its standing authority.** The task keeps
@@ -278,9 +278,11 @@ Native code is promised only what Linux can enforce.
   the mark at that moment.
 - **A value the person moves in by hand is the one exception.** It is not
   refused. The compartment keeps its label and takes the value's mark. The
-  broker records the mark on the compartment before it delivers the value, so
-  every write it records afterwards carries the mark, and a write it recorded
-  earlier keeps what it had. See
+  broker records the mark on the compartment before it delivers the value, and
+  takes a snapshot of every folder the compartment can write. From then on, an
+  object in those folders that differs from the snapshot carries the mark when
+  another compartment is given it, whether or not the broker saw the write. An
+  object that did not change keeps what it had. See
   [ADR 0025](../adr/0025-what-the-person-does-by-hand-is-the-answer.md).
 - **The view is a snapshot taken at start.** A file that arrives later in a
   shared directory, such as a download, is not in it.
@@ -465,7 +467,9 @@ The powerbox's rule is the general one. See
   place and takes a signature (see [Conversations](#conversations)).
 - **What remains.** A person tricked into pasting or typing something harmful.
   An app the person clicks in can read what they last copied. A private value
-  the person pastes into an app can go wherever that app can send it.
+  the person pastes into an app can go wherever that app can send it. An app
+  can put what it holds into the address of a link, and it leaves when the
+  person clicks.
 
 ### A "yes" comes from the person
 
@@ -657,9 +661,10 @@ software, never to the Agent.**
   [ADR 0021](../adr/0021-the-gate-decides-from-metadata-and-counts-from-the-ledger.md).
 - **An Allowance is standing authority like any other.** A marked task spends
   from it only by the person's answer or through an adapter rule.
-- The Agent proposes the limits of every task. Those limits bound a task's
+- The Agent proposes the limits of every task but a lookup, whose limits are a
+  fixed default. Those limits bound a task's
   mistakes. They do not bound a steered Agent. What bounds the Agent is that it
-  holds no standing authority itself, that a conversation rises only by the
+  holds no standing authority itself, that a conversation changes only by the
   person's act, and the ceiling above.
 
 Someone else's words are open untrusted input. A shared Tool arrives as its
@@ -707,19 +712,23 @@ compartment of its own. See
 
 - **It starts personal and unmarked,** with the entries of Agent memory that are
   at most personal and unmarked.
-- **It rises only by the person's act.** There are two:
-  - *The person puts a value in:* a paste, a drop, or a pick. That is one exact
-    value moved by hand, so it is released. The conversation stays at its label
-    and takes the value's mark.
-  - *The person points it at a source:* their mail, a folder, a Tool. They pick
+- **It changes only by the person's act.** There are two:
+  - *The person puts a value in:* a paste, a drop, or a pick of one object.
+    That is one exact value moved by hand, so it is released. The conversation
+    stays at its label and takes the value's mark. A value with no mark leaves
+    it clean.
+  - *The person points it at a source:* something that holds more than one
+    object, such as their mail, a folder, or a Tool's Data. They pick
     it in the powerbox, point at it, or name it in the words they type. The
     shell turns each of these into a reference to the source, by fixed rules and
     never by a model, and the broker opens only what a reference names. The
     conversation rises to the source's label and takes its mark.
-- **The Agent cannot raise its own conversation.** A read it asks for with no
-  reference from the person behind it is refused. It uses a lookup or a plan
-  instead. Words that name no source the shell knows change nothing, and the
-  Agent asks the person to pick one.
+- **The Agent cannot mark or raise its own conversation.** A read it asks for
+  with no reference from the person behind it is refused. It uses a lookup or a
+  plan instead.
+- **Only typed words name a source.** Words that were pasted, spoken, or
+  written by the Agent make no reference. Words that name no source the shell
+  knows change nothing, and the Agent asks the person to pick one.
 - **A conversation that is no longer clean stays that way for as long as it
   lives,** with its history and any summary of it. A conversation is clean
   while it is personal and unmarked. Its frame shows its label and mark. It can
@@ -728,8 +737,8 @@ compartment of its own. See
   asks,** with the exact content shown. A link it shows is one of those acts,
   and so is anything it composes for a lookup. A standing task started from it
   runs marked.
-- **One thing leaves it with no ask: the turn the person typed last, as a
-  lookup.** The turn goes whole and unchanged, once, and the lookup's
+- **One thing goes from it to the open web with no ask: the turn the person
+  typed last, as a lookup.** The turn goes whole and unchanged, once, and the lookup's
   compartment holds nothing else that the conversation holds.
 - **What it writes keeps its label and mark:** an entry in Agent memory, which
   a new conversation does not load, and an intent or a check. A build from such
@@ -855,11 +864,15 @@ machine or an outside party may hold. For private data it names the categories.
 - **A lookup holds only what the person typed and what it found.** A **lookup**
   is a task that answers a question from the open web. It runs in a compartment
   of its own, which holds the words the person typed, exactly as typed, and the
-  pages it reads. It cannot see Agent memory or the person's Data. So it is
+  pages it reads. It cannot see Agent memory or the person's Data. Typing the
+  turn as a question for the web is the person's own act, so the turn is
+  released to the lookup, and the ledger records it. So it is
   public, and it starts, keeps searching, and takes the person's follow-ups with
   no ask. The broker checks its objective against what the shell recorded: it is
-  the turn the person typed last, whole and unchanged. One turn starts one
-  lookup, and a second from the same turn asks. Any text the Agent adds to those
+  the turn the person typed last in that conversation, whole and unchanged. A
+  turn leaves once: it starts one lookup, or it is one follow-up to one running
+  lookup, and a second use asks. A lookup runs on one fixed default for its
+  limits, its budget, and its expiry, and the Agent sets none of them. Any text the Agent adds to those
   words is shown to the person before it leaves, as a release in full: the exact
   text, and where it may go. A lookup started from a conversation that is no
   longer clean follows the same rule: it holds the turn the person typed last
@@ -870,7 +883,9 @@ machine or an outside party may hold. For private data it names the categories.
   on the open internet without asking.** Machines in the fleet and addresses on
   the home network are not among them. That covers a lookup, a task browser context that is not
   logged in, and a workbench for a project the person declared public when they
-  made it. Nothing private is inside to leak. Secrets stay in the vault, and the
+  made it. Declaring a project public is a signed declassify of its folders,
+  and a write into them from a compartment above public is refused unless the
+  person's hand moves the value in. Nothing private is inside to leak. Secrets stay in the vault, and the
   broker fills them in only for the hosts they are tied to.
 - **The phone is an approval device.** It answers asks through trusted UI.
 
@@ -932,8 +947,10 @@ cookies. See
   operation, under a standing rule for that operation ("pay this bill, up to this
   amount").
 - **What remains.** While the task runs, an injected page on that site can make
-  other changes on that one account: a second booking, a changed address. What a
-  task holds for one site can reach a host on the shared list.
+  other changes on that one account: a second booking, a changed address. That
+  includes spending with a payment method the site already stores, which the
+  Allowance does not cap. What a task holds for one site can reach a host on
+  the shared list.
 
 Inside the person's own browser, keeping one site's content from another is the
 browser's job, and we rely on it.

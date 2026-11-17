@@ -243,8 +243,9 @@ numbers.
   objects, how many, for how long, at what cost, and how often. "Sort my photos" is
   a task on the photos, not on the disk. Limits are a ceiling: the gate refuses
   anything outside them, and a task cannot widen its own. The Agent proposes each
-  task's limits, so they bound a task's mistakes, not a steered Agent. What bounds
-  the Agent is that it holds no standing authority, that a conversation rises
+  task's limits (a lookup's are a fixed default), so they bound a task's
+  mistakes, not a steered Agent. What bounds
+  the Agent is that it holds no standing authority, that a conversation changes
   only by the person's act, and that there is a ceiling on tasks that do not
   cross: a task proposed above it is authorized at its start.
 - **The gate.** A deterministic rules engine checks each operation against handles,
@@ -307,8 +308,8 @@ ends in the person's answer, so nothing else may be able to produce one:
   such as keeping a preview, takes a **plain answer**: any ordinary input in
   trusted UI. Anything that crosses, and authority that lasts only for this run,
   takes the **confirm gesture**: a secure key press the compositor takes and
-  never delivers to a Tool. An ask ignores the gesture for a moment after it
-  appears.
+  never delivers to a Tool. An ask ignores input for a moment after it
+  appears, whichever answer it takes.
 - Authority that lasts (a new grant, rule, or standing task, wider
   limits on one, a higher ceiling, a higher clearance, a
   declassify, a refilled Allowance, owner authority) needs a passkey, a security
@@ -371,10 +372,12 @@ in batches. An act the person answered leaves at once.
   unmarked. It changes only by the person's act: they put a value in, which is
   released and brings its mark with it, or they point it at a source such as
   their mail, and it rises to that source's label and mark. Then it may read
-  and discuss what it was given. It is no longer clean for as long as it lives,
+  and discuss what it was given. A value with no mark, such as the person's
+  own note, leaves it clean. Once it is marked or above personal, it is no
+  longer clean for as long as it lives,
   and every act of its that crosses asks with the exact content, a link it
-  shows included. The one thing it sends with no ask is the turn the person
-  just typed, as a lookup. The Agent cannot mark or raise its own conversation, the frame
+  shows included. The one thing it sends to the open web with no ask is the
+  turn the person just typed, as a lookup. The Agent cannot mark or raise its own conversation, the frame
   shows the label and mark, and a clean conversation is one action away. The
   first time a conversation is pointed at a category of private data, one
   signature clears the model provider for that category.
@@ -387,10 +390,11 @@ in batches. An act the person answered leaves at once.
   stays at zero. The shell can always show the person a result directly. A value
   put into a conversation goes to its model provider too.
 - **Lookups.** A **lookup** answers a question from the open web. It holds only
-  the words the person typed, exactly as typed, and what it found. Nothing
-  private is in it, so it starts and takes follow-ups with no ask. That holds
-  from a conversation that is no longer clean too: the lookup gets the turn the
-  person typed last, and nothing that conversation read. A compartment
+  the words the person typed, exactly as typed, and what it found. It holds
+  nothing the Agent remembers and nothing a conversation read, so it starts and
+  takes follow-ups with no ask. That holds from a conversation that is no
+  longer clean too, where a turn the person typed about private data may itself
+  say something private. A turn leaves once. A compartment
   that holds only public data and no login may reach any host on the open
   internet.
 - **Only the person's own words are theirs.** What the person types reaches the

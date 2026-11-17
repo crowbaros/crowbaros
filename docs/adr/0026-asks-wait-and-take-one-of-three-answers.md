@@ -39,7 +39,7 @@ What answers an ask follows from two facts the gate already has: whether the eff
 
 ## Standing authority is asked for at first use
 
-- **Nothing is asked up front on a new machine.** The first time something needs standing authority, one ask opens in place, at the moment the person can see what it is for.
+- **Nothing is asked up front on a new machine.** The first time something needs standing authority, one ask is made, at the moment the person can see what it is for. It opens in place where the rule above allows, and waits otherwise.
 - **The first day is held to five signatures** ([ADR 0024](0024-the-friction-bar-ranks-with-the-attack-list.md)).
 
 ## What this gives up

@@ -97,6 +97,7 @@ A wide compartment reaches the network the same way, with every destination gran
 ## Consequences
 
 - **A real key the person typed or pasted into a file in a public project can be sent anywhere by an injected coding agent.** The vault is where a key belongs, and the broker fills it in only for its host.
+- **A task started from a conversation is at least personal, so it cannot write into a public project's folders.** Work in a public project is done inside its workbench, or the person moves the value in by hand. Whether that refuses something the person asked for is a question for the livability review.
 - The catalog carries two lists for task browser contexts, shared hosts and adapter-only sites ([ADR 0013](0013-agents-never-drive-the-persons-browser.md)).
 - **[ADR 0006](0006-broker-owns-all-egress.md)** gains the declared exception for an app that holds its own login.
 - **[ADR 0007](0007-fork-verify-promote.md)** names two kinds of writer, and the standing rule that promotes updates which ask for nothing new.

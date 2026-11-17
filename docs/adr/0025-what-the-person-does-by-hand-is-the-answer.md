@@ -41,7 +41,7 @@ Four cases:
   4. a drop: a drag that starts in one compartment and is released over a window of another.
 - **A read with none of these behind it gets nothing:** when a window gains the keyboard, on a timer, or from a window that does not hold the keyboard.
 - **A pick** in the powerbox, as before.
-- **A link the person clicks in an app's window** opens in their browser. The address is a value moved by hand. The same holds for a link in a clean conversation and in a lookup's answer.
+- **A link the person clicks in an app's window** opens in their browser. The address is a value moved by hand. The same holds for a link in a clean conversation and in a lookup's answer. The shell shows a lookup's answer from the lookup's compartment, so a link in it opens whichever conversation started the lookup.
 - **A link shown by a Tool, or by a conversation that is no longer clean, is that compartment's act.** Whatever may be steering it composed the address. A click on it asks, with the full address shown, unless a standing rule covers it ([ADR 0008](0008-private-values-stay-out-of-the-agent-context.md)).
 - **A request the person types.** A lookup started from the turn they just typed leaves with those words, exactly as typed, and with no ask, whether or not the conversation is clean ([ADR 0011](0011-task-principals.md)). A conversation they point at a source may read it (ADR 0008).
 
@@ -50,6 +50,7 @@ Four cases:
 - **A person tricked into pasting or typing something harmful.** The threat model already lists a person persuaded to release something as not defended.
 - **An app the person clicks in can read what they last copied.** A window that does not hold the keyboard still cannot, and a window that holds it cannot without a click or a key. Other Linux desktops let a window read the clipboard as soon as it has the keyboard.
 - **A private value the person pastes into an app is at that app's label from then on.** It can go wherever that app can send it.
+- **A turn the person types can leave as a lookup, though they meant it for the conversation.** [ADR 0011](0011-task-principals.md) names what that costs, in a clean conversation and in one that is not.
 - **An app can put what it holds into the address of a link, and it leaves when the person clicks.** The person sees the link's words, not its address. A clean conversation can do the same with what it holds, which is at most personal.
 
 ## Considered Options

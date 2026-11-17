@@ -28,6 +28,8 @@ Revised after council round 5 by [ADR 0026](0026-asks-wait-and-take-one-of-three
 3. **Armed.** The compositor **arms** the ask when that surface is mapped, fully visible, on top, holds the keyboard, and has drawn no new frame for one second. Any new frame starts the second again, so the content cannot change under the person's finger. Ask surfaces do not animate. The compositor tells the broker each time the ask is armed or disarmed.
 4. **Answered.** The gesture on an armed ask sends `confirmed {ask_id, content_hash}` to the broker. The broker checks the hash against the ask it made and uses each ask ID once. The gesture on an ask that is not armed does nothing.
 
+Steps 1 to 4 are for an ask that takes the confirm gesture or a signature. An ask that takes a plain answer is never armed: the shell shows it and tells the broker the answer (ADR 0026).
+
 - **One ask at a time.** The compositor shows and arms at most one ask, on the output that has focus. The rest wait, and the shell shows how many.
 - **A list.** An ask may hold several acts of one kind. The person can strike any of them. The shell carries a strike to the broker, which makes the content hash again over what is left, and the compositor arms the ask again (ADR 0026).
 - **Declining.** Escape on the ask, or a click on Decline, declines it, whether the shell or the compositor sees it. The broker records the decline. A shell that declines wrongly costs a new ask, never a false yes.
@@ -40,7 +42,7 @@ While an ask that takes the confirm gesture or a signature is showing, the compo
 
 ## The gesture
 
-- **The confirm gesture is Ctrl+Alt+Enter, and the keyboard alone can say yes.** The pointer can decline or dismiss an ask, never confirm one. A click can be arranged under a moving cursor; a chord is felt. Which keys make the chord can change later. That nothing in the Environment can rebind it cannot (ADR 0014, rule 5).
+- **The confirm gesture is Ctrl+Alt+Enter, and on an ask that takes it the keyboard alone can say yes.** The pointer can decline or dismiss such an ask, never confirm it. A click can be arranged under a moving cursor; a chord is felt. A click does answer an ask that takes a plain answer, which is accepted only for what can be undone (ADR 0026). Which keys make the chord can change later. That nothing in the Environment can rebind it cannot (ADR 0014, rule 5).
 - **The compositor always takes the chord.** It reaches no client, whether or not an ask is showing. With no armed ask it does nothing. [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) changes one case: with no ask showing and the session unlocked, the chord locks the session.
 - **One keyboard makes the chord.** The modifiers and Enter must be pressed on the same keyboard. The compositor tracks withheld keys for each keyboard, so a release with no press never reaches a client.
 - **A keyboard attached after an ask opened cannot confirm it.** A USB device can pretend to be a keyboard and type the chord.
@@ -103,7 +105,7 @@ Added by ADR 0026:
 - **The shell reports a hash of what it drew.** Rejected: nothing proves the pixels match the hash, so it adds a check that checks nothing.
 - **A private Wayland protocol between shell and compositor.** Rejected: GPUI 0.2.2 gives the shell no way to bind a global of its own.
 - **A schema format such as Cap'n Proto or protobuf.** Rejected for now: tighter, but it brings a toolchain, and its messages cannot be read in a log.
-- **A button the pointer can click to say yes.** Rejected: it is the usual target of clickjacking.
+- **A button the pointer can click to say yes.** Rejected: it is the usual target of clickjacking. ADR 0026 allows one only on an ask that takes a plain answer, for what can be undone.
 - **Several asks on screen at once.** Rejected: one gesture would have to choose between them.
 - **Apps keep the keyboard while the shell restarts.** Rejected: an app could put a window where the ask was.
 - **A scrolling everyday ask.** Rejected: it teaches the person to scroll past without reading. A list is paged, and armed only after its last page.

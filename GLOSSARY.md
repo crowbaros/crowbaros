@@ -125,7 +125,7 @@ A task that writes or changes a Tool's code. It reads only the intent, the check
 _Avoid_: Coding agent, compile
 
 **Lookup**:
-A task that answers a question from the open web. It holds only the turn the person typed and what it found, so it is public and marked.
+A task that answers a question from the open web. It holds only the turn the person typed, which that act releases to it, and what it found, so it is public and marked.
 _Avoid_: Research task, search, web task
 
 **Plan**:

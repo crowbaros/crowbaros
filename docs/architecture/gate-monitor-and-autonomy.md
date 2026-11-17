@@ -41,7 +41,7 @@ against is in the [threat model](../threat-model.md).
   task is marked too.
 - **Labels and marks survive every handoff and storage, and nothing crosses
   freely.** Each **conversation** between the person and the Agent is a
-  compartment of its own, and it rises only by the person's act. In a clean
+  compartment of its own, and it changes only by the person's act. In a clean
   conversation, and in a standing task, the Agent works by
   **plan** over handles, and the interpreter keeps the label and mark on every
   result, and on what can be observed about a result. Such a conversation does
@@ -171,9 +171,10 @@ A task's authority comes only from what the person has granted.
   ceiling is authorized at its start, with its objective and limits shown in
   fixed words, by the confirm gesture. Without it, "rewrite every file" would
   ask no one.
-- **The Agent proposes the limits of every task.** Those limits bound a task's
+- **The Agent proposes the limits of every task but a lookup**, whose limits
+  are a fixed default. Those limits bound a task's
   mistakes. They do not bound a steered Agent. What bounds the Agent is that it
-  holds no standing authority itself, that a conversation rises only by the
+  holds no standing authority itself, that a conversation changes only by the
   person's act, and the ceiling. A steered Agent can start any standing task,
   which is bounded by that task's fixed limits, and can propose any ad hoc
   task, which is bounded by the ceiling or the person's answer.
@@ -232,12 +233,16 @@ a connection to a party not cleared for that data. The gate refuses the third.
 **A lookup holds only what the person typed and what it found.** A **lookup** is
 a task that answers a question from the open web. It runs in a compartment of
 its own, which holds the words the person typed, exactly as typed, and the pages
-it reads. It cannot see Agent memory or the person's Data. So it is public, and
+it reads. It cannot see Agent memory or the person's Data. Typing the turn as a
+question for the web is the person's own act, so the turn is released to the
+lookup, and the ledger records it. So it is public, and
 it starts, keeps searching, and takes the person's follow-ups with no ask
 ([ADR 0025](../adr/0025-what-the-person-does-by-hand-is-the-answer.md)). The
 broker checks its objective against what the shell recorded: it is the turn the
-person typed last, whole and unchanged. One turn starts one lookup, and a second
-from the same turn asks. Any text the Agent adds to those words is
+person typed last in that conversation, whole and unchanged. A turn leaves once:
+it starts one lookup, or it is one follow-up to one running lookup, and a second
+use asks. A lookup runs on one fixed default for its limits, its budget, and its
+expiry, and the Agent sets none of them. Any text the Agent adds to those words is
 shown to the person before it leaves, as a release in full: the exact text, and
 where it may go. A lookup started from a conversation that is no longer clean
 follows the same rule: it holds the turn the person typed last and nothing else
@@ -249,7 +254,10 @@ has a fixed objective.
 the open internet without asking.** Machines in the fleet and addresses on the
 home network are not among them. That covers a lookup, a task browser context that is not
 logged in, and a workbench for a project the person declared public when they
-made it ([ADR 0017](../adr/0017-a-pinned-catalog-and-workbenches.md)). Nothing
+made it ([ADR 0017](../adr/0017-a-pinned-catalog-and-workbenches.md)).
+Declaring a project public is a signed declassify of its folders, and a write
+into them from a compartment above public is refused unless the person's hand
+moves the value in. Nothing
 private is inside to leak. Secrets stay in the vault, and the broker fills them
 in only for the hosts they are tied to.
 
@@ -289,19 +297,23 @@ exchange between the person and the Agent.
 
 - **It starts personal and unmarked**, with the entries of Agent memory that are
   at most personal and unmarked.
-- **It rises only by the person's act.** There are two:
-  - *The person puts a value in:* a paste, a drop, or a pick. That is one exact
-    value moved by hand, so it is released. The conversation stays at its label
-    and takes the value's mark.
-  - *The person points it at a source:* their mail, a folder, a Tool. They pick
+- **It changes only by the person's act.** There are two:
+  - *The person puts a value in:* a paste, a drop, or a pick of one object.
+    That is one exact value moved by hand, so it is released. The conversation
+    stays at its label and takes the value's mark. A value with no mark leaves
+    it clean.
+  - *The person points it at a source:* something that holds more than one
+    object, such as their mail, a folder, or a Tool's Data. They pick
     it in the powerbox, point at it, or name it in the words they type. The
     shell turns each of these into a reference to the source, by fixed rules
     and never by a model, and the broker opens only what a reference names. The
     conversation rises to the source's label and takes its mark.
-- **The Agent cannot raise its own conversation.** A read it asks for with no
-  reference from the person behind it is refused. It uses a lookup or a plan
-  instead. Words that name no source the shell knows change nothing, and the
-  Agent asks the person to pick one.
+- **The Agent cannot mark or raise its own conversation.** A read it asks for
+  with no reference from the person behind it is refused. It uses a lookup or a
+  plan instead.
+- **Only typed words name a source.** Words that were pasted, spoken, or
+  written by the Agent make no reference. Words that name no source the shell
+  knows change nothing, and the Agent asks the person to pick one.
 - **A conversation that is no longer clean stays that way for as long as it
   lives**, with its history and any summary of it. A conversation is clean
   while it is personal and unmarked. Its frame shows its label and mark. It can
@@ -310,8 +322,8 @@ exchange between the person and the Agent.
   asks**, with the exact content shown. A link it shows is one of those acts: a
   click on the link asks, with the full address shown. So is anything it
   composes for a lookup.
-- **One thing leaves it with no ask: the turn the person typed last, as a
-  lookup.** The turn goes whole and unchanged, once, and the lookup's
+- **One thing goes from it to the open web with no ask: the turn the person
+  typed last, as a lookup.** The turn goes whole and unchanged, once, and the lookup's
   compartment holds nothing else that the conversation holds.
 - **What it writes keeps its label and mark:** an entry in Agent memory, which
   a new conversation does not load, and an intent or a check. A build from such
@@ -741,8 +753,9 @@ answer is only worth something if nothing else can produce it
 - **One ask can hold a list.** Several acts of one kind, such as three drafted
   replies, arrive as one ask. Each is shown in full, the person can strike any
   of them, and one answer covers the rest.
-- **An ask cannot be swapped or flooded.** An ask ignores the gesture for a
-  moment after it appears, so one ask cannot be swapped under a key press. Asks
+- **An ask cannot be swapped or flooded.** An ask ignores input for a
+  moment after it appears, whichever answer it takes, so one ask cannot be
+  swapped under a key press. Asks
   are counted per task and across all the Agent's tasks together, and the ask
   that starts a task counts. Past one principal's limit, its further asks are
   held in one line. Past the Agent's limit, the further asks of the Agent and
@@ -875,8 +888,11 @@ separately funded account whose limit the card issuer or wallet enforces. It is
 standing authority like any other. A Tool, a standing task, or a task the
 person authorized can spend inside it without asking. A marked task spends from
 it only by the person's answer or through an adapter rule, and most purchases
-read a seller's page first. A task on a logged-in site moves money only from
-the Allowance. Refilling it always asks.
+read a seller's page first. A task on a logged-in site can supply no payment
+credential but the Allowance. A payment method the site already stores is not
+capped by it
+([ADR 0013](../adr/0013-agents-never-drive-the-persons-browser.md)). Refilling
+the Allowance always asks.
 For example: "Here is $200. Use it for what you need."
 
 This is not the same as `allowance` in OpenAI and Stripe's Agentic Commerce
@@ -1019,18 +1035,23 @@ recovery action.
   holds only the words the person typed, and the broker checks its objective
   against what the shell recorded. Text the Agent adds is shown in an ask before
   it leaves. The same holds in a conversation that is no longer clean: the
-  lookup holds nothing that conversation read. What remains: a wrong Agent, or
-  a steered conversation, sends out a turn the person typed for another
-  purpose. It leaves exactly as typed, once, and nothing else leaves with it. A
-  steered conversation can signal by whether it sends the turn.
+  lookup holds nothing that conversation read. A turn leaves once, and a
+  lookup's limits are a fixed default the Agent does not set. What remains: a
+  wrong Agent, or a steered conversation, sends out a turn the person typed for
+  another purpose, and a steered one can ask the person to type it. It leaves
+  exactly as typed, once, and no other content leaves with it. A steered
+  conversation can signal by whether it sends the turn, when, and whether it
+  starts a new lookup or follows up a running one.
 - **A build searches a real input through replay verdicts.** A replay reaches a
   build only as pass or fail, capped per re-derive.
 - **An injection in a file name, a mail subject, an error message, or a paste.**
   Every string the person did not type and a template did not produce is data
   with a mark. A conversation changes only by the person's act, and the Agent
   cannot mark or raise its own. One that is no longer clean stays that way for
-  as long as it lives, shows it in its frame, holds no standing authority, and
-  asks for every act that crosses, a link it shows included. What remains: a conversation the person pointed at hostile text
+  as long as it lives, shows it in its frame, holds no standing grant or rule, and
+  asks for every act that crosses, a link it shows included. The one thing it
+  sends to the open web with no ask is the turn the person just typed, as a
+  lookup. What remains: a conversation the person pointed at hostile text
   may be steered, so what it tells the person, and what it proposes, can be the
   stranger's. Also what the person types themselves after reading something
   hostile, and a paste of text they did not read.
@@ -1067,7 +1088,7 @@ recovery action.
   ask waits and never opens by itself, except the one for what the person just
   asked for in the conversation they are in. Past the limits, further asks are
   held in one line for a principal, and in one line for the Agent and all its
-  tasks, which the person can dismiss whole. An ask ignores the gesture for a moment after it appears. What
+  tasks, which the person can dismiss whole. An ask ignores input for a moment after it appears. What
   remains: a person trained to say yes by honest asks, which the friction bar
   caps, and a kind of ask answered yes more than 95 times in 100 is redesigned.
   A person who does not look at waiting asks: the task waits.

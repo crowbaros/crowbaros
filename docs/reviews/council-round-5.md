@@ -36,8 +36,9 @@ looked only at security.
 
 The findings were then settled in a design session of thirty questions with Jim.
 The three reviewers then read the edits that record the answers, in a
-[second pass](#the-second-pass). No reviewer has read the fixes that followed
-it.
+[second pass](#the-second-pass), and the fixes and Jim's decisions that followed
+it in a [third pass](#the-third-pass). No reviewer has read the fixes that
+followed the third.
 
 ## Findings and how each was closed
 
@@ -190,8 +191,9 @@ Each is in the [threat model](../threat-model.md) under what remains.
   arranged under a moving cursor, for what can be undone.
 - The person no longer sees an ask the moment it is raised.
 - A steered conversation can send the turn the person just typed out as a
-  lookup, and can signal by whether it does. Added by Jim's decision after the
-  second pass.
+  lookup, and can signal by whether it does, when, and whether it starts a new
+  lookup or follows up a running one. Added by Jim's decision after the second
+  pass, and widened in the third.
 
 ## Not done in this round
 
@@ -278,6 +280,79 @@ three choices that were not put to Jim:
   conversation read is in the lookup. Row A23 loses the case decision 3
   reversed, and gains a second lookup started from one turn.
 
+## The third pass
+
+The same three models read the result at commit `a99eebf`, read-only: the fixes
+made after the second pass, and Jim's decisions.
+
+| Delegate | The record, as ready to merge | Friction as now designed |
+| --- | --- | --- |
+| Claude Opus | 8 / 10 | 8 / 10 |
+| Claude Fable | 8 / 10 | 7 / 10 |
+| GPT Sol | 8 / 10 | 8 / 10 |
+
+Their estimates of a day, from reading:
+
+| Day | Opus | Fable | Sol |
+| --- | --- | --- | --- |
+| A developer | 2 to 5 asks | 2 to 6 asks | 3 to 6 asks |
+| A person who is not a developer | 3 to 7 asks, 1 to 3 errands handed back | 4 to 9 asks, 1 to 3 handed back | 4 to 7 asks, 1 or 2 handed back |
+
+None found a refusal of what the person did by hand in the rules. Fable named
+the nearest case: a paste by an app's own key from another compartment gets
+nothing and a hint
+([ADR 0020](../adr/0020-the-first-compositor-is-small-on-purpose.md)). The
+developer's day is at or near the bar. The other day is under the bar at the low
+end of each estimate and over it at the high end. What is left there is a
+logged-in site at two asks each, a question that needs a detail from the mail,
+and a link clicked in a conversation that is no longer clean.
+
+**Were they satisfied?** Each said yes, once the items below are fixed. The
+fixes are made. No reviewer has read them.
+
+| Finding | Raised by | Closed in |
+| --- | --- | --- |
+| "One thing leaves it with no ask" was false: a conversation's requests to its model provider do not ask either. | Opus | Every file says "goes to the open web". |
+| The signal that decision 3 gives up was understated. A turn could also go as a follow-up to every running lookup, the conversation chose when it went, and the conversation set the lookup's limits. | Opus, Fable | ADR 0011: a turn leaves once, as one lookup or one follow-up, and a lookup's limits are a fixed default. What is left is named: whether, when, and as which. Rows A23 and A35. |
+| The vision said nothing private is in a lookup. | Opus | The vision says what a lookup does not hold, and that a typed turn may itself say something private. |
+| Task 13's number assumed its standing rule already existed. | Opus, Fable | Milestone 2: the rule is in place before the run, and the number holds when the amount is under the cap. ADR 0024 carries the cap too. |
+| The gate design still said a logged-in task moves money only from the Allowance. | Sol | It now says what ADR 0013 says. |
+| The capability model lacked the snapshot rule for a mark that arrives by hand. | Sol | It now says what ADR 0025 says. |
+| The vision said any value put into a conversation ends its being clean. | Sol | A value with no mark leaves it clean. |
+| ADR 0018 still said the pointer never confirms and every ask is armed. | Sol | Both are scoped to an ask that takes the confirm gesture or a signature. |
+| No file said which rule governs a link in the answer of a lookup started from a conversation that is no longer clean. | Fable | ADR 0025: the shell shows the answer from the lookup's compartment, so the link opens. Row A35. |
+
+Notes that were also acted on:
+
+- ADR 0008 and the threat model said a conversation that is no longer clean
+  "holds no standing authority". Its model requests run on a clearance and a
+  budget, so both now say "no standing grant or rule".
+- The vision, the threat model, and the gate design said an ask ignores "the
+  gesture" for a moment. They now say input, which covers a plain answer.
+- The two architecture notes now carry ADR 0008's wording for a conversation,
+  the release of the typed turn, and the public project's rule. The capability
+  model gains the two entries it lacked under what remains.
+- ADR 0026 no longer says the ask for first use always opens in place.
+  Milestone 2's "held" names the Agent's line. ADR 0024 says a grant asked
+  again counts as adding standing authority.
+- ADR 0025's list of what it gives up points at the cost of a typed turn that
+  leaves as a lookup.
+- ADR 0011 called the removed ask "most of the distance" to the bar. It now
+  says that was two reviewers' estimate.
+
+Three choices made while writing these fixes, not put to Jim:
+
+- **A turn leaves once**, as one lookup or as one follow-up to one running
+  lookup. This replaces "one turn starts one lookup". (ADR 0011)
+- **A lookup's limits, budget, and expiry are one fixed default**, and the Agent
+  sets none of them. (ADR 0011)
+- **A link in a lookup's answer opens**, whichever conversation started the
+  lookup. (ADR 0025)
+
+One consequence is named and not settled. A task started from a conversation is
+at least personal, so it cannot write into a public project's folders. ADR 0017
+now says so, and the question is in the list below.
+
 ## For Milestone 2 and the livability review to answer
 
 - Are five asks on an ordinary day, and eight on a day that makes a Tool, the
@@ -291,6 +366,10 @@ three choices that were not put to Jim:
 - What does a steered conversation cost a person who pointed it at hostile mail?
 - With asks waiting and none open, should the confirm chord open the first one
   instead of locking the session?
+- A task started from a conversation is at least personal, so it cannot write
+  into a public project
+  ([ADR 0017](../adr/0017-a-pinned-catalog-and-workbenches.md)). Does that
+  refuse something the person asked for?
 - Do the ask, the paste message, or the chord's table change again
   ([ADR 0022](../adr/0022-the-compositor-is-built-beside-milestone-2.md))?
 
