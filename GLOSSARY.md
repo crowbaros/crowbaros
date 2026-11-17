@@ -124,6 +124,10 @@ _Avoid_: Automation, cron job, routine
 A task that writes or changes a Tool's code. It reads only the intent, the checks, the Tool's source, and admitted input, and has no web access.
 _Avoid_: Coding agent, compile
 
+**Lookup**:
+A task that answers a question from the open web. It holds only the words the person typed and what it found, so it is public and marked.
+_Avoid_: Research task, search, web task
+
 **Plan**:
 A small program the Agent writes whose variables are handles. A deterministic interpreter runs it, moves the actual values, and tracks the label and mark of every result. The Agent reads a value only where its label and mark allow.
 _Avoid_: Script, workflow, prompt chain
@@ -217,11 +221,11 @@ Where acts sent under a standing rule wait for a visible delay before they leave
 _Avoid_: Queue, drafts
 
 **Standing grant**:
-Long-lived access to a thing, held by a Tool, a standing task, or a workbench, never by the Agent, and recorded in the authority domain. For a Tool it binds to the Tool's identity, the needs the person saw, and a clean build. For a workbench it binds to its identity and the needs of its profile.
+Long-lived access to a thing, held by a Tool, a standing task, a workbench, or installed software, never by the Agent, and recorded in the authority domain. For a Tool it binds to the Tool's identity, the needs the person saw, and a clean build. For a workbench it binds to its identity and the needs of its profile, and for installed software to its identity and the needs its approval showed.
 _Avoid_: Standing rule, permanent permission
 
 **Standing rule**:
-A person's pre-approval, with a rate limit, for a narrow kind of act that crosses the undo boundary, so that act doesn't ask again. It is held by a Tool, a standing task, or a workbench, never by the Agent. An act that crosses needs both the grant (access) and the rule (no ask).
+A person's pre-approval, with a rate limit, for a narrow kind of act that crosses the undo boundary, so that act doesn't ask again. It is held by a Tool, a standing task, a workbench, or installed software, never by the Agent. An act that crosses needs both the grant (access) and the rule (no ask).
 _Avoid_: Standing grant, allowlist
 
 **Refusal**:
@@ -229,15 +233,27 @@ The gate's no to an operation. It names the rule and the limit that applied, nev
 _Avoid_: Denial, permission denied, block, error
 
 **Ask**:
-A question the broker puts to the person in trusted UI, with an ID and exact content. It waits for the person, never takes the keyboard from their work, and lasts as long as its task. The shell draws it, and one confirm gesture or one signature answers it.
+A question the broker puts to the person in trusted UI, with an ID and exact content. It waits for the person, never takes the keyboard from their work, and lasts as long as its task. The shell draws it, and a plain answer, the confirm gesture, or a signature answers it, by what is at stake.
 _Avoid_: Prompt, dialog, popup, permission request
+
+**Plain answer**:
+Any ordinary input in trusted UI. It answers an ask about something that stays inside the undo boundary, such as keeping a preview.
+_Avoid_: Click, OK button, tap
+
+**Signature**:
+An answer made with a passkey, a security key, or the phone, over the exact content shown. It answers an ask for authority that lasts.
+_Avoid_: Approval, password, 2FA
+
+**Friction bar**:
+The most asks and refusals a person may meet in one task and in one day. A rule that makes ordinary work miss it is redesigned.
+_Avoid_: Livability threshold, prompt budget
 
 **Armed**:
 The state of an ask that is visible, on top, holding the keyboard, and steady for long enough that the confirm gesture can answer it.
 _Avoid_: Active, ready
 
 **Confirm gesture**:
-The secure key press, taken by the compositor and never delivered to any client, with which the person answers an everyday ask. With no ask showing it locks the session, and on the lock screen it begins unlock. An ask that changes authority is answered by a passkey, a security key, or the phone instead.
+The secure key press, taken by the compositor and never delivered to any client, with which the person answers an ask for something that crosses the undo boundary, or for authority that lasts only for this run. With no ask showing it locks the session, and on the lock screen it begins unlock.
 _Avoid_: Click, OK button, voice confirmation
 
 **Compositor**:
