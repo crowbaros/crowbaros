@@ -294,8 +294,8 @@ came from and the label and mark that gives:
 
 | Files | Where they came from | `origin` | Label | Mark |
 | --- | --- | --- | --- | --- |
-| `Photos/*` (12) | The person's own camera, copied from its card | `{"file": "from_outside"}` | `private: unknown` | `marked: outside` |
-| `Documents/Scans/*` (6) | Scanned by the person on their own scanner | `{"file": "from_outside"}` | `private: unknown` | `marked: outside` |
+| `Photos/*` (12) | The person's own camera, brought in by hand from its card | `{"file": "brought_in_by_hand"}` | `personal` | `marked: outside` |
+| `Documents/Scans/*` (6) | Scanned by the person on their own scanner, and brought in by hand | `{"file": "brought_in_by_hand"}` | `personal` | `marked: outside` |
 | `Documents/essay-draft.txt` | Typed by the person | `"typed"` | `personal` | `none` |
 | `Contacts/contacts.json` | Typed by the person | `"typed"` | `personal` | `none` |
 | `Templates/appointment-reminder.txt` | Typed by the person | `"typed"` | `personal` | `none` |
@@ -316,7 +316,8 @@ in the seed has these fields:
 - `from`: where the files came from, in words;
 - `origin`: the same, as a row of the origin table in
   [`crates/crowbar-labels`](../../crates/crowbar-labels/src/origin.rs), written
-  after the crate's names for it: `"typed"`, `{"file": "from_outside"}`,
+  after the crate's names for it: `"typed"`, `{"file": "brought_in_by_hand"}`,
+  `{"file": "from_outside"}`,
   `{"file": {"downloaded": {"under_login": host}}}`, or
   `{"file": {"downloaded": {"without_login": host}}}`. These are the rows the
   seed uses. A group that needs another row adds it to the test below;
@@ -334,7 +335,10 @@ private, or one that holds a planted string is not marked.
 `cargo test --workspace` runs it.
 
 The table above follows these decisions, which Jim Martin made for issue 164 on
-November 15, 2026. None adds a row to the origin table.
+November 15, 2026. He changed the one on photos and scans on November 16, 2026,
+after the origin table gained its row for a file brought in by hand
+([issue 180](https://github.com/crowbaros/crowbaros/issues/180)). None of them
+adds a row to the origin table.
 
 - **A download under a login is private to its site, and nothing else**, as
   [ADR 0019](../../docs/adr/0019-the-origin-table-fails-closed.md) says. The
@@ -345,9 +349,14 @@ November 15, 2026. None adds a row to the origin table.
 - **No fixture runs at `bank.fixture.test`.** The host names where the export
   came from. Fixture Pay is a payment service behind an adapter, not a site the
   person logs in to.
-- **A camera and a scanner are ways into the fleet the table does not know**, so
-  photos and scans are files from outside. Tasks 1 and 2 start on files that are
-  private and marked, and their runs report what that costs.
+- **Photos and scans are files the person brought in by hand**, so they are
+  personal and marked as from outside
+  ([ADR 0025](../../docs/adr/0025-what-the-person-does-by-hand-is-the-answer.md)).
+  The origin table names photos from a camera card. Scans the person made on
+  their own scanner are treated the same way, by Jim's decision on November 16,
+  2026. Before the table had that row, both were files from outside, private in
+  the `unknown` category. Tasks 1 and 2 start on files that are marked, and
+  their runs report what that costs.
 - **The person made two of their own notes private**, so that task 9 has a
   private note and task 7 has a name and a date the Agent may not read. With no
   raise, both would be personal, and a model provider at its default clearance
@@ -411,8 +420,8 @@ planted string in a real file gives it no label. Files already on disk are
   private file here has one category, so one raised clearance covers it:
   `finance` for the note of task 9, `health` for the appointments of task 7,
   and `site bank.fixture.test` for the export of task 15. The photos and scans
-  of tasks 1 and 2 are `unknown`, which no party is cleared for unless the
-  person names it. A task is marked from the step where it reads a marked
+  of tasks 1 and 2 are personal, which a model provider at its default
+  clearance may hold. A task is marked from the step where it reads a marked
   file, and tasks 1, 2, and 15 read one. The first measurement of how far
   marks spread uses real files and real mail, and waits for issue 161.
 
