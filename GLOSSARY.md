@@ -321,7 +321,7 @@ Making the label on stored data less strict. Only the person can do it.
 _Avoid_: Release, unlabel, relabel
 
 **Task browser context**:
-A fresh browser context for one task and the sites named in it, holding none of the person's sessions. The person's own browser profile is never driven by an agent.
+A fresh browser context for one task, holding none of the person's sessions. On a logged-in site it reaches only that site, after one answer from the person. The person's own browser profile is never driven by an agent.
 _Avoid_: Agent browser, headless browser
 
 **Allowance**:
