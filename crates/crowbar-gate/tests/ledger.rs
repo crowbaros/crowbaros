@@ -10,7 +10,8 @@ use crowbar_capability::{
     Cost, EffectLimits, HandleId, IdempotencyKey, Principal, Rate, Resource, Right, Rights, TaskId, Time,
 };
 use crowbar_gate::{
-    Act, AskWhy, Caller, Gate, GateRule, Limit, Operation, Original, Presented, Record, Refuse, Ruling, Use, UseCost,
+    Act, Answer, AskWhy, Caller, Gate, GateRule, Held, Limit, Operation, Original, Presented, Record, Refuse, Ruling,
+    Use, UseCost,
 };
 use crowbar_labels::{Compartment, ObjectId};
 
@@ -165,7 +166,11 @@ fn a_restart_keeps_a_standing_rules_rate() {
     let mut gate = start(dir.path());
     assert!(matches!(
         gate.decide(Some(&authority), &operation, later(60)),
-        Ruling::Asked(crowbar_gate::Ask { why: AskWhy::Crosses })
+        Ruling::Asked(crowbar_gate::Ask {
+            why: AskWhy::Crosses,
+            answer: Answer::ConfirmGesture,
+            held: None
+        })
     ));
 }
 
@@ -216,27 +221,46 @@ fn idempotency_keys_survive_a_restart() {
 }
 
 #[test]
-fn an_open_ask_and_its_closing_survive_a_restart() {
+fn waiting_asks_held_or_not_and_their_closing_survive_a_restart() {
     let dir = Scratch::new();
     let caller = task("reply-to-landlord");
     let held = handle(1, caller.clone());
     let send = using("mail.send", Right::Read);
-    let open = Refuse::with(GateRule::AskRate, Limit::OpenAsks(1));
-
-    let mut gate = start(dir.path());
-    assert!(matches!(use_of(&mut gate, &held, &send, NOW), Ruling::Asked(_)));
-    drop(gate);
+    let in_its_line = common::asked_but_held(AskWhy::Crosses, Held::Waiting(1));
 
     let mut gate = start(dir.path());
     assert_eq!(
-        decision(use_of(&mut gate, &held, &send, later(1))),
-        Decision::Refused(open)
+        decision(use_of(&mut gate, &held, &send, NOW)),
+        common::asked(AskWhy::Crosses)
     );
-    gate.ask_closed(&caller, later(2)).expect("recorded");
     drop(gate);
 
+    // The ask from before the restart is still waiting, so the next is held.
+    // A held ask is still an ask: it carries no `Allowed`.
     let mut gate = start(dir.path());
-    assert!(matches!(use_of(&mut gate, &held, &send, later(3)), Ruling::Asked(_)));
+    let ruling = use_of(&mut gate, &held, &send, later(1));
+    assert!(matches!(ruling, Ruling::Asked(_)));
+    assert_eq!(decision(ruling), in_its_line);
+    gate.ask_closed(&caller, later(2)).expect("recorded");
+    drop(gate);
+    // The ledger keeps the mark: the second entry is the held ask.
+    let recorded = Ledger::read(dir.path()).expect("read");
+    assert_eq!(recorded.entries[1].entry.event, Event::Decided(in_its_line.clone()));
+
+    // One closed and the held one still waits, so the next is held too.
+    let mut gate = start(dir.path());
+    assert_eq!(decision(use_of(&mut gate, &held, &send, later(3))), in_its_line);
+    gate.ask_closed(&caller, later(4)).expect("recorded");
+    gate.ask_closed(&caller, later(4)).expect("recorded");
+    drop(gate);
+
+    // The held asks were not counted in the hour: with none waiting, the
+    // next is put to the person as usual.
+    let mut gate = start(dir.path());
+    assert_eq!(
+        decision(use_of(&mut gate, &held, &send, later(5))),
+        common::asked(AskWhy::Crosses)
+    );
 }
 
 #[test]

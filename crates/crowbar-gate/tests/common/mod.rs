@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 use crowbar_authority::{Authority, Change};
 use crowbar_capability::{Cost, EffectLimits, HandleId, Principal, Resource, Right, Rights, TaskId, Time};
 use crowbar_gate::{
-    Act, Ask, AskWhy, Caller, Decision, Gate, GateRule, InMemory, Limit, Operation, Presented, Refuse, Use, UseCost,
-    decide,
+    Act, Answer, Ask, AskWhy, Caller, Decision, Gate, GateRule, Held, InMemory, Limit, Operation, Presented, Refuse,
+    Use, UseCost, decide,
 };
 use crowbar_labels::{Compartment, LabelMark, ObjectId, Origin};
 
@@ -103,8 +103,33 @@ pub fn refused(rule: GateRule, limit: Limit) -> Decision {
     Decision::Refused(Refuse { rule, limit })
 }
 
+/// An ask for an act that crosses, so it takes the confirm gesture. It is
+/// not held.
 pub fn asked(why: AskWhy) -> Decision {
-    Decision::Asked(Ask { why })
+    Decision::Asked(Ask {
+        why,
+        answer: Answer::ConfirmGesture,
+        held: None,
+    })
+}
+
+/// An ask for an act inside the undo boundary, so it takes a plain answer.
+/// It is not held.
+pub fn asked_plainly(why: AskWhy) -> Decision {
+    Decision::Asked(Ask {
+        why,
+        answer: Answer::Plain,
+        held: None,
+    })
+}
+
+/// An ask for an act that crosses, held, with the limit it passed.
+pub fn asked_but_held(why: AskWhy, held: Held) -> Decision {
+    Decision::Asked(Ask {
+        why,
+        answer: Answer::ConfirmGesture,
+        held: Some(held),
+    })
 }
 
 /// A gate that records in memory, with the authority it reads.

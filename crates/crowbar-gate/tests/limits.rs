@@ -7,7 +7,7 @@ use crowbar_gate::{Act, AskWhy, GateRule, Limit, Original, Presented, Use, UseCo
 use crowbar_labels::Compartment;
 
 mod common;
-use common::{Bench, NOW, allowed, asked, by, handle, later, photo, reading, refused, task, using};
+use common::{Bench, NOW, allowed, asked_plainly, by, handle, later, photo, reading, refused, task, using};
 
 fn use_at(bench: &mut Bench, held: &Presented, what: &Use, now: crowbar_capability::Time) -> crowbar_gate::Decision {
     let compartment = Compartment::fresh();
@@ -231,7 +231,10 @@ fn a_cost_that_depends_on_a_value_asks() {
         ..using("data.write", Right::Write)
     };
 
-    assert_eq!(use_at(&mut bench, &held, &pay, NOW), asked(AskWhy::DependsOnValue));
+    assert_eq!(
+        use_at(&mut bench, &held, &pay, NOW),
+        asked_plainly(AskWhy::DependsOnValue)
+    );
 }
 
 #[test]

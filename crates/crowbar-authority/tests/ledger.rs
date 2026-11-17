@@ -4,7 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use crowbar_authority::{Damage, Decision, Event, Keyed, Ledger, LedgerEntry, Outcome};
-use crowbar_capability::{Ask, AskWhy, Cost, GateRule, HandleId, IdempotencyKey, Limit, Principal, Refuse, TaskId};
+use crowbar_capability::{
+    Answer, Ask, AskWhy, Cost, GateRule, HandleId, IdempotencyKey, Limit, Principal, Refuse, TaskId,
+};
 
 mod common;
 use common::{LATER, NOW, Scratch};
@@ -34,7 +36,11 @@ fn refused() -> LedgerEntry {
 fn asked() -> LedgerEntry {
     entry(
         "mail.send",
-        Event::Decided(Decision::Asked(Ask { why: AskWhy::Crosses })),
+        Event::Decided(Decision::Asked(Ask {
+            why: AskWhy::Crosses,
+            answer: Answer::ConfirmGesture,
+            held: None,
+        })),
     )
 }
 

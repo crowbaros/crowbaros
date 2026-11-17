@@ -129,9 +129,13 @@ impl Usage {
     ///
     /// - An allowed use counts against its handle, the handle's original,
     ///   and each standing grant and rule it crossed under.
-    /// - An ask counts against the principal's open asks and its asks in the
-    ///   hour, and, for the Agent and its tasks, against theirs together.
-    /// - A closed ask is no longer open.
+    /// - An ask counts against the principal's waiting asks, held or not.
+    /// - An ask that is not held also counts against the principal's asks
+    ///   in the hour, and, for the Agent and its tasks, against theirs
+    ///   together. The hour counts the asks that were put to the person one
+    ///   at a time, so one principal's flood cannot use up a limit that
+    ///   others share.
+    /// - A closed ask is no longer waiting.
     /// - The first decision for an idempotency key is kept. A later entry
     ///   with the same key changes nothing.
     pub fn record(&mut self, entry: &LedgerEntry, time: Time) {
@@ -168,9 +172,12 @@ impl Usage {
                     self.standing.entry(*id).or_default().add(more);
                 }
             }
-            Decision::Asked(_) => {
+            Decision::Asked(ask) => {
                 let asks = self.asks.entry(entry.principal.clone()).or_default();
                 asks.open = asks.open.saturating_add(1);
+                if ask.held.is_some() {
+                    return;
+                }
                 asks.times.push(time);
                 if counts_for_the_agent(&entry.principal) {
                     self.agent_asks.push(time);
