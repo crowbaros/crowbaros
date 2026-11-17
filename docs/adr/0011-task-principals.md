@@ -37,7 +37,7 @@ Each piece of agent work is a **task**: a fresh principal with a stated objectiv
 
 **An Allowance is standing authority like any other.** A marked task spends from it only by the person's answer or through an adapter rule.
 
-**The Agent proposes the limits of every task.** Those limits bound a task's mistakes. They do not bound a steered Agent: what bounds the Agent is that it holds no standing authority itself, that its context is kept clean (ADR 0008), and the ceiling above.
+**The Agent proposes the limits of every task.** Those limits bound a task's mistakes. They do not bound a steered Agent: what bounds the Agent is that it holds no standing authority itself, that a conversation rises only by the person's act (ADR 0008), and the ceiling above.
 
 We chose task principals because a single long-lived Agent collects every grant it was ever given, and a durable intent such as "help me manage my finances" is too broad to judge one action against. A task gives the gate and the monitor something narrow to check: this objective, these objects, until this time.
 
