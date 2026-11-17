@@ -51,6 +51,7 @@ enum StatedOrigin {
 #[serde(rename_all = "snake_case")]
 enum StatedFile {
     Downloaded(StatedFetch),
+    BroughtInByHand,
     FromOutside,
 }
 
@@ -72,6 +73,7 @@ impl StatedOrigin {
                 StatedFile::Downloaded(StatedFetch::WithoutLogin(site)) => {
                     FileOrigin::Downloaded(Fetch::WithoutLogin(site.clone()))
                 }
+                StatedFile::BroughtInByHand => FileOrigin::BroughtInByHand,
                 StatedFile::FromOutside => FileOrigin::FromOutside,
             }),
         }
@@ -135,9 +137,10 @@ fn seed_groups() -> Vec<Group> {
 /// What was decided for each group, in the wording of the origin table. The
 /// decisions are in the lab's README, under "The person's Data".
 const DECIDED: [(&str, &str, &str); 14] = [
-    // A camera and a scanner are ways into the fleet the table does not know.
-    ("Photos/*", "private: unknown", "marked: outside"),
-    ("Documents/Scans/*", "private: unknown", "marked: outside"),
+    // Brought in by the person's own hand, from a camera's card and from
+    // their scanner: theirs to label, and a stranger may have written them.
+    ("Photos/*", "personal", "marked: outside"),
+    ("Documents/Scans/*", "personal", "marked: outside"),
     // The person's own words.
     ("Documents/essay-draft.txt", "personal", "none"),
     ("Contacts/contacts.json", "personal", "none"),
@@ -241,6 +244,14 @@ fn a_group_that_states_less_than_its_origin_gives_is_caught() {
             json!({"origin": {"file": "from_outside"}, "label": {"private": ["unknown"]}, "mark": []}),
         ),
         (
+            "a file brought in by hand as public",
+            json!({"origin": {"file": "brought_in_by_hand"}, "label": "public", "mark": ["outside"]}),
+        ),
+        (
+            "a file brought in by hand with no mark",
+            json!({"origin": {"file": "brought_in_by_hand"}, "label": "personal", "mark": []}),
+        ),
+        (
             "a logged-in download as public",
             json!({"origin": clinic, "label": "public", "mark": [{"site": "login.fixture.test"}]}),
         ),
@@ -306,6 +317,10 @@ fn a_stated_origin_is_a_row_of_the_origin_table() {
     let cases = [
         (json!("typed"), Origin::Typed),
         (json!({"file": "from_outside"}), Origin::File(FileOrigin::FromOutside)),
+        (
+            json!({"file": "brought_in_by_hand"}),
+            Origin::File(FileOrigin::BroughtInByHand),
+        ),
         (
             json!({"file": {"downloaded": {"under_login": "login.fixture.test"}}}),
             Origin::File(FileOrigin::Downloaded(Fetch::UnderLogin(clinic))),

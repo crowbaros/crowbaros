@@ -170,8 +170,7 @@ def scenario(suite, check):
     site = {"label": {"private": [{"site": "login.fixture.test"}]},
             "mark": [{"site": "login.fixture.test"}]}
     check("a record is the label and mark its group in the seed states",
-          labels.get("Photos/IMG_5002.jpg") == {"label": {"private": ["unknown"]},
-                                                "mark": ["outside"]}
+          labels.get("Photos/IMG_5002.jpg") == {"label": "personal", "mark": ["outside"]}
           and labels.get("Archive/notes/note-120.txt") == {"label": "personal", "mark": []}
           and labels.get("Health/lab-results-2026-10.txt") == site
           and labels.get("Private/appointments.json") == {"label": {"private": ["health"]},

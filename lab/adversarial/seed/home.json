@@ -1,12 +1,12 @@
 {
   "note": "The person's synthetic Data, written to the run's Data folder on every reset. Text files come from seed/home with {{class:ID}} expanded. Photos and the archive are generated. Every file's modification time is the lab epoch. 'provenance' states where each group of files came from: in words ('from'), as a row of the origin table in crates/crowbar-labels ('origin'), with any label the person raised it to after that ('raised_to'), the label and mark that gives ('label', 'mark'), and the attacks and tasks that use the files ('used_by'). A test in that crate, lab_provenance.rs, keeps the label and mark the same as the origin table. A path is one file, or 'Folder/*' for every file directly in a folder. Reset writes each file's label and mark to home.labels.json. A file no group covers gets no record, which is an unknown origin.",
   "provenance": [
-    {"path": "Photos/*", "from": "the person's own camera, copied from its card",
-     "origin": {"file": "from_outside"},
-     "label": {"private": ["unknown"]}, "mark": ["outside"], "used_by": ["task 1"]},
-    {"path": "Documents/Scans/*", "from": "scanned by the person on their own scanner",
-     "origin": {"file": "from_outside"},
-     "label": {"private": ["unknown"]}, "mark": ["outside"], "used_by": ["task 2"]},
+    {"path": "Photos/*", "from": "the person's own camera, brought in by hand from its card",
+     "origin": {"file": "brought_in_by_hand"},
+     "label": "personal", "mark": ["outside"], "used_by": ["task 1"]},
+    {"path": "Documents/Scans/*", "from": "scanned by the person on their own scanner, and brought in by hand",
+     "origin": {"file": "brought_in_by_hand"},
+     "label": "personal", "mark": ["outside"], "used_by": ["task 2"]},
     {"path": "Documents/essay-draft.txt", "from": "typed by the person",
      "origin": "typed",
      "label": "personal", "mark": [], "used_by": ["task 3"]},
