@@ -317,6 +317,7 @@ fn the_editors_approval() -> Vec<Change> {
             operation: "http.get".to_string(),
             limits: EffectLimits::new().rate(Rate::per(60, 3_600)),
             sources: [].into(),
+            cap: None,
         }),
     ]
 }
