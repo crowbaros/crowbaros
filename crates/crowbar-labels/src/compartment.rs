@@ -99,6 +99,23 @@ impl Compartment {
         }
     }
 
+    /// Takes in a value the person moved into this compartment with their
+    /// own hand: a paste, a drop, a pick, or a link they clicked (ADR 0025).
+    /// This is only for that. The broker calls it when the compositor or
+    /// the shell saw the person's act, and never on the word of the
+    /// compartment or of a model. Every other value goes through
+    /// [`Compartment::read`].
+    ///
+    /// The move is a release, so the compartment's label stays as it was,
+    /// whatever the value's label. The mark is kept: the compartment takes
+    /// the value's mark, and everything it emits afterwards carries it.
+    /// That holds for a compartment whose label and mark were fixed at
+    /// start too. Nothing is refused.
+    pub fn moved_in_by_hand(&mut self, value: &LabelMark) {
+        let mark = self.label_mark.mark().join(value.mark());
+        self.label_mark = LabelMark::new(self.label_mark.label().clone(), mark);
+    }
+
     /// Something this compartment emits: a file, a message, a log line, or a
     /// model request. It carries the compartment's label and mark.
     pub fn emit<T>(&self, value: T) -> Labeled<T> {
