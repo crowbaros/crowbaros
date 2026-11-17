@@ -144,8 +144,9 @@ pub enum Ruling {
     /// Allowed: carry it out, spending this `Allowed`.
     Allowed(Allowed),
     Refused(Refuse),
-    /// Put to the person. What the ask shows, and what happens after it, is
-    /// not the gate's.
+    /// Put to the person, to wait for an answer. An ask that is held is one
+    /// of these. What the ask shows, and what happens after it, is not the
+    /// gate's.
     Asked(Ask),
     /// The idempotency key was decided before, with this decision. Nothing is
     /// carried out again and nothing is counted again, so an allowed repeat
@@ -233,8 +234,9 @@ impl<L: Record> Gate<L> {
         decide(authority, &self.usage, operation, now)
     }
 
-    /// Records that `principal`'s open ask closed: answered, withdrawn, or
-    /// ended with its task.
+    /// Records that one of `principal`'s waiting asks closed, held or not:
+    /// answered, declined, withdrawn, or ended with its task. Dismissing a
+    /// line of held asks closes each ask in it.
     pub fn ask_closed(&mut self, principal: &Principal, now: Time) -> Result<u64, Refuse> {
         let entry = LedgerEntry::new(principal.clone(), ASK_CLOSE, Event::AskClosed);
         let seq = self

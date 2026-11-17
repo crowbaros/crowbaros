@@ -9,7 +9,8 @@
 //!   confers nothing.
 //! - [`Issue`]: what the broker asks to issue.
 //! - The gate's reasons: a [`Refuse`] names a [`GateRule`] and the [`Limit`]
-//!   that applied, and an [`Ask`] says why it asks. The list is closed.
+//!   that applied. An [`Ask`] says why it asks, the [`Answer`] it takes, and
+//!   whether it is [`Held`]. The list is closed.
 //! - [`IdempotencyKey`]: what a task attaches so an operation is decided and
 //!   carried out once.
 //!
@@ -17,8 +18,8 @@
 //! gate, the gate on authority, and authority on none of them.
 //! `crowbar-broker` re-exports the ones it used to define.
 //!
-//! Decisions: ADR 0004, ADR 0011, and ADR 0021 in `docs/adr/`. Glossary:
-//! principal, handle, effect limits, idempotency key.
+//! Decisions: ADR 0004, ADR 0011, ADR 0021, and ADR 0026 in `docs/adr/`.
+//! Glossary: principal, handle, effect limits, idempotency key.
 
 mod handle_id;
 mod issue;
@@ -33,5 +34,5 @@ pub use issue::Issue;
 pub use key::IdempotencyKey;
 pub use limits::{Cost, EffectLimits, Rate, Time, Widening};
 pub use principal::{Principal, TaskId};
-pub use reason::{Ask, AskWhy, GateRule, Limit, Refuse};
+pub use reason::{Answer, Ask, AskWhy, GateRule, Held, Limit, Refuse};
 pub use resource::{Resource, ResourceKind, Right, Rights};

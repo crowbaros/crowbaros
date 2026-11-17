@@ -89,8 +89,9 @@ pub enum Event {
     Decided(Decision),
     /// What carrying out an allowed operation did.
     Effect(Outcome),
-    /// The principal's open ask closed: answered, withdrawn, or ended with
-    /// its task. A principal has one ask open at a time, so this names it.
+    /// One of the principal's waiting asks closed: answered, declined,
+    /// withdrawn, or ended with its task. It does not say which. The gate
+    /// keeps a count, and a principal can have held asks waiting too.
     AskClosed,
 }
 

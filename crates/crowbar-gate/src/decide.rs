@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use crowbar_authority::{Authority, Decision, Holder, Party, StandingId};
 use crowbar_capability::{
-    Ask, AskWhy, Cost, EffectLimits, GateRule, Issue, Limit, Principal, Rate, Refuse, Resource, Time,
+    Answer, Ask, AskWhy, Cost, EffectLimits, GateRule, Held, Issue, Limit, Principal, Rate, Refuse, Resource, Time,
 };
 use crowbar_labels::{Label, LabelStore};
 
@@ -12,14 +12,15 @@ use crate::boundary;
 use crate::operation::{Act, Caller, Ending, Operation, Presented, Use, UseCost};
 use crate::usage::{More, Past, Usage, counts_for_the_agent};
 
-/// How many asks one principal may have open at a time.
+/// How many asks one principal may have waiting before its next is held.
 pub const OPEN_ASKS: u64 = 1;
 
-/// How many asks one principal may raise in an hour.
+/// How many asks one principal may put to the person in an hour before its
+/// next is held.
 pub const ASKS_AN_HOUR: Rate = Rate::per(10, HOUR);
 
-/// How many asks the Agent and all its tasks together may raise in an hour.
-/// The asks that start tasks count.
+/// How many asks the Agent and all its tasks together may put to the person
+/// in an hour before their next is held. The asks that start tasks count.
 pub const AGENT_ASKS_AN_HOUR: Rate = Rate::per(30, HOUR);
 
 const HOUR: u64 = 3_600;
@@ -65,11 +66,13 @@ const HOUR: u64 = 3_600;
 ///    standing rule the caller holds, within their limits, with the rule
 ///    for every source that marked the act. Without them it asks. With no
 ///    authority to read, every crossing asks.
-/// 7. **The ask rate**, if the result is an ask: [`OPEN_ASKS`] open at a
-///    time and [`ASKS_AN_HOUR`] for one principal, and
-///    [`AGENT_ASKS_AN_HOUR`] for the Agent and its tasks together. Over a
-///    limit, the gate refuses and names when the window lets one more
-///    through. Nothing is queued.
+/// 7. **The ask**, if the result is an ask: the answer it takes, and whether
+///    it is held (ADR 0026). A use inside the undo boundary takes a plain
+///    answer, and a crossing takes the confirm gesture. An ask past a limit
+///    is still an ask, marked as held with the limit it passed:
+///    [`AGENT_ASKS_AN_HOUR`] for the Agent and its tasks together, then
+///    [`OPEN_ASKS`] waiting at a time and [`ASKS_AN_HOUR`] for one
+///    principal. Nothing is refused for asking too often.
 pub fn decide(authority: Option<&Authority>, usage: &Usage, operation: &Operation<'_>, now: Time) -> Decision {
     let principal = operation.caller.principal;
     if let Some(first) = operation.key.and_then(|key| usage.first(principal, key)) {
@@ -78,17 +81,21 @@ pub fn decide(authority: Option<&Authority>, usage: &Usage, operation: &Operatio
             false => Decision::Refused(Refuse::by(GateRule::Idempotency)),
         };
     }
-    let outcome = checks(authority, usage, operation, now).and_then(|verdict| match verdict {
-        Verdict::Allow(under) => Ok(Decision::Allowed { under }),
-        Verdict::Ask(why) => ask_rate(usage, principal, now).map(|()| Decision::Asked(Ask { why })),
-    });
-    outcome.unwrap_or_else(Decision::Refused)
+    match checks(authority, usage, operation, now) {
+        Ok(Verdict::Allow(under)) => Decision::Allowed { under },
+        Ok(Verdict::Ask(why, answer)) => Decision::Asked(Ask {
+            why,
+            answer,
+            held: held_under(usage, principal, now),
+        }),
+        Err(refuse) => Decision::Refused(refuse),
+    }
 }
 
-/// What the checks before the ask rate give.
+/// What the checks before the last give. An ask names the answer it takes.
 enum Verdict {
     Allow(Vec<StandingId>),
-    Ask(AskWhy),
+    Ask(AskWhy, Answer),
 }
 
 fn checks(
@@ -244,8 +251,9 @@ fn use_of(
         }
     }
 
+    let crosses = party.is_some() || boundary::crosses(&using.operation);
     let mut under = Vec::new();
-    if party.is_some() || boundary::crosses(&using.operation) {
+    if crosses {
         match covered(authority, usage, caller, handle, using, more) {
             Ok(standing) => under = standing,
             Err(why) => {
@@ -253,8 +261,13 @@ fn use_of(
             }
         }
     }
+    // A plain answer is accepted only for what can be undone (ADR 0026).
+    let answer = match crosses {
+        true => Answer::ConfirmGesture,
+        false => Answer::Plain,
+    };
     Ok(match ask {
-        Some(why) => Verdict::Ask(why),
+        Some(why) => Verdict::Ask(why, answer),
         None => Verdict::Allow(under),
     })
 }
@@ -340,25 +353,35 @@ fn standing_holder(caller: &Caller<'_>) -> Option<Holder> {
     }
 }
 
-/// Check 7: whether `principal` may raise one more ask at `now`.
-fn ask_rate(usage: &Usage, principal: &Principal, now: Time) -> Result<(), Refuse> {
+/// Check 7: whether one more ask from `principal` at `now` is held, and under
+/// which limit. The limit on the Agent and all its tasks together is checked
+/// first: an ask past it goes in their one line, whatever its own
+/// principal's count, so many tasks cannot make many lines.
+fn held_under(usage: &Usage, principal: &Principal, now: Time) -> Option<Held> {
+    if counts_for_the_agent(principal)
+        && let Some(resets_at) = resets_at(&usage.agent_asks_in_window(HOUR, now), AGENT_ASKS_AN_HOUR)
+    {
+        return Some(Held::AgentRate {
+            rate: AGENT_ASKS_AN_HOUR,
+            resets_at,
+        });
+    }
     if usage.open_asks(principal) >= OPEN_ASKS {
-        return Err(Refuse::with(GateRule::AskRate, Limit::OpenAsks(OPEN_ASKS)));
+        return Some(Held::Waiting(OPEN_ASKS));
     }
-    within_rate(&usage.asks_in_window(principal, HOUR, now), ASKS_AN_HOUR)?;
-    if counts_for_the_agent(principal) {
-        within_rate(&usage.agent_asks_in_window(HOUR, now), AGENT_ASKS_AN_HOUR)?;
-    }
-    Ok(())
+    let resets_at = resets_at(&usage.asks_in_window(principal, HOUR, now), ASKS_AN_HOUR)?;
+    Some(Held::Rate {
+        rate: ASKS_AN_HOUR,
+        resets_at,
+    })
 }
 
-/// Whether one more ask fits `rate`, given the asks already in its window.
-/// When it does not, the refusal names when the oldest leaves the window.
-fn within_rate(in_window: &[Time], rate: Rate) -> Result<(), Refuse> {
+/// When `rate`'s window lets one more ask through, if the asks already in
+/// it leave no room for one: when the oldest leaves the window.
+fn resets_at(in_window: &[Time], rate: Rate) -> Option<Time> {
     if (in_window.len() as u64) < rate.count() {
-        return Ok(());
+        return None;
     }
     let oldest = in_window.iter().min().map_or(0, |time| time.as_secs());
-    let resets_at = Time::from_secs(oldest.saturating_add(rate.window_secs()));
-    Err(Refuse::with(GateRule::AskRate, Limit::AskRate { rate, resets_at }))
+    Some(Time::from_secs(oldest.saturating_add(rate.window_secs())))
 }

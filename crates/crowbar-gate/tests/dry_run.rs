@@ -5,11 +5,11 @@
 //! must not do, one thing at a time.
 
 use crowbar_capability::{EffectLimits, IdempotencyKey, Right};
-use crowbar_gate::{Act, AskWhy, Caller, Decision, Operation, Ruling, Use, UseCost};
+use crowbar_gate::{Act, AskWhy, Caller, Operation, Ruling, Use, UseCost};
 use crowbar_labels::Compartment;
 
 mod common;
-use common::{Bench, NOW, allowed, asked, by, handle, reading, task, using};
+use common::{Bench, NOW, allowed, asked, asked_plainly, by, handle, reading, task, using};
 
 #[test]
 fn a_dry_run_counts_no_use() {
@@ -120,10 +120,5 @@ fn a_dry_run_of_an_act_that_depends_on_a_value_says_only_that_it_asks() {
         },
     );
 
-    assert_eq!(
-        bench.decide(&operation, NOW),
-        Decision::Asked(crowbar_gate::Ask {
-            why: AskWhy::DependsOnValue
-        })
-    );
+    assert_eq!(bench.decide(&operation, NOW), asked_plainly(AskWhy::DependsOnValue));
 }

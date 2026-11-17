@@ -15,8 +15,10 @@
 //! - A **dry run** ([`Gate::dry_run`]) is the same decision, with nothing
 //!   counted, no ask opened, nothing issued, and nothing added to the ledger.
 //! - A **refusal** names a rule and the limit that applied, from one closed
-//!   list ([`GateRule`], [`Limit`]) that the ledger and the harness share. An
-//!   **ask** says why it asks ([`AskWhy`]).
+//!   list ([`GateRule`], [`Limit`]) that the ledger and the harness share.
+//! - An **ask** says why it asks ([`AskWhy`]) and which answer it takes
+//!   ([`Answer`]). Past a limit it is still an ask, marked as held
+//!   ([`Held`]): nothing is refused for asking too often.
 //! - The [`Gate`] records each decision in the ledger and counts uses from
 //!   it. It rebuilds the count from the ledger's history when it starts, so a
 //!   restart resets no limit, and it keeps the first decision for each
@@ -44,7 +46,7 @@
 //! - a signature, and a process of its own;
 //! - machine clearances (Milestone 6).
 //!
-//! Decisions: ADR 0003, ADR 0011, and ADR 0021 in `docs/adr/`.
+//! Decisions: ADR 0003, ADR 0011, ADR 0021, and ADR 0026 in `docs/adr/`.
 //! Design: `docs/architecture/gate-monitor-and-autonomy.md`, "The gate".
 //! Scope: `docs/milestones/milestone-2.md`. Glossary: gate, dry run,
 //! idempotency key.
@@ -57,7 +59,7 @@ mod usage;
 
 pub use boundary::{INSIDE, crosses};
 pub use crowbar_authority::Decision;
-pub use crowbar_capability::{Ask, AskWhy, GateRule, Limit, Refuse};
+pub use crowbar_capability::{Answer, Ask, AskWhy, GateRule, Held, Limit, Refuse};
 pub use decide::{AGENT_ASKS_AN_HOUR, ASKS_AN_HOUR, OPEN_ASKS, decide};
 pub use gate::{Allowed, Gate, InMemory, Record, Ruling};
 pub use operation::{Act, Caller, Ending, Operation, Original, Presented, Use, UseCost};

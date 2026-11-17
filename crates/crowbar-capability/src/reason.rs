@@ -40,8 +40,6 @@ pub enum GateRule {
     Label,
     /// The party is not cleared for everything the compartment holds.
     Clearance,
-    /// The principal has too many asks open, or has asked too often.
-    AskRate,
     /// The idempotency key was used before on a different operation.
     Idempotency,
     /// The ledger could not be added to, so nothing is allowed.
@@ -64,7 +62,6 @@ impl fmt::Display for GateRule {
             GateRule::Limits => "limits",
             GateRule::Label => "label",
             GateRule::Clearance => "clearance",
-            GateRule::AskRate => "ask-rate",
             GateRule::Idempotency => "idempotency",
             GateRule::Ledger => "ledger",
             GateRule::NotAllowed => "not-allowed",
@@ -96,10 +93,6 @@ pub enum Limit {
     Origin { label: Label, mark: BTreeSet<MarkSource> },
     /// The party's clearance.
     Clearance(Label),
-    /// How many asks one principal may have open at a time.
-    OpenAsks(u64),
-    /// How many asks in a window, and when the window lets one more through.
-    AskRate { rate: Rate, resets_at: Time },
 }
 
 impl Limit {
@@ -153,14 +146,6 @@ impl fmt::Display for Refuse {
                 Ok(())
             }
             Limit::Clearance(label) => write!(f, ": cleared for {label}"),
-            Limit::OpenAsks(count) => write!(f, ": {count} open at a time"),
-            Limit::AskRate { rate, resets_at } => write!(
-                f,
-                ": at most {} in {} seconds, until {}",
-                rate.count(),
-                rate.window_secs(),
-                resets_at.as_secs()
-            ),
         }
     }
 }
@@ -201,9 +186,53 @@ pub enum AskWhy {
     NoAuthority,
 }
 
-/// An ask: the operation goes to the person.
+/// An ask: the operation goes to the person, and waits for an answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Ask {
     pub why: AskWhy,
+    /// The answer the ask takes.
+    pub answer: Answer,
+    /// The limit the ask passed, when it is held. Nothing is refused for
+    /// asking too often (ADR 0026). A field that does not apply is left out
+    /// when the ask is stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<Held>,
+}
+
+/// The answer an ask takes (ADR 0026). It follows from two facts: whether
+/// the effect crosses the undo boundary, and whether the authority lasts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Answer {
+    /// Any ordinary input in trusted UI: a click or a key. It answers only
+    /// what stays inside the undo boundary.
+    Plain,
+    /// The secure key press (ADR 0018). It answers a crossing, and authority
+    /// that lasts only for this run.
+    ConfirmGesture,
+    /// A passkey, a security key, or the phone, over the exact content
+    /// shown. It answers authority that lasts for good. No operation the
+    /// gate decides asks for one yet (issue 88).
+    Signature,
+}
+
+/// The limit an ask passed, so that it is held. A held ask waits in a line
+/// with others: one line for each principal, and one for the Agent and all
+/// its tasks together. The person can open a line or dismiss it whole
+/// (ADR 0026).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Held {
+    /// The principal already has this many asks waiting. The ask is held in
+    /// the principal's line.
+    Waiting(u64),
+    /// The principal has put this many asks to the person in the window.
+    /// The ask is held in the principal's line. `resets_at` is when the
+    /// window lets one more through.
+    Rate { rate: Rate, resets_at: Time },
+    /// The Agent and all its tasks together have put this many asks to the
+    /// person in the window. The ask is held in the one line for the Agent
+    /// and all its tasks, however many tasks raised them.
+    AgentRate { rate: Rate, resets_at: Time },
 }
