@@ -87,6 +87,7 @@ pub fn decide(authority: Option<&Authority>, usage: &Usage, operation: &Operatio
     }
     match checks(authority, usage, operation, now) {
         Ok(Verdict::Allow(under)) => Decision::Allowed { under },
+        Ok(Verdict::AllowWithinCap(under, cap)) => Decision::AllowedWithinCap { under, cap },
         Ok(Verdict::Ask(why, answer)) => Decision::Asked(Ask {
             why,
             answer,
@@ -99,6 +100,9 @@ pub fn decide(authority: Option<&Authority>, usage: &Usage, operation: &Operatio
 /// What the checks before the last give. An ask names the answer it takes.
 enum Verdict {
     Allow(Vec<StandingId>),
+    /// Allowed if the amount is within the cap of the standing rule the act
+    /// goes under.
+    AllowWithinCap(Vec<StandingId>, Cost),
     Ask(AskWhy, Answer),
 }
 
@@ -215,13 +219,12 @@ fn use_of(
         return Err(Refuse::with(GateRule::Right, Limit::Right(using.right)));
     }
 
-    let mut ask = None;
+    // A cost that depends on a value is not known here, so it counts as
+    // nothing against the handle's limits.
+    let depends_on_value = matches!(using.cost, UseCost::DependsOnValue);
     let cost = match using.cost {
         UseCost::Fixed(cost) => cost,
-        UseCost::DependsOnValue => {
-            ask.get_or_insert(AskWhy::DependsOnValue);
-            Cost::cents(0)
-        }
+        UseCost::DependsOnValue => Cost::cents(0),
     };
     let more = More {
         units: using.units(),
@@ -256,13 +259,17 @@ fn use_of(
     }
 
     let crosses = party.is_some() || boundary::crosses(&using.operation);
-    let mut under = Vec::new();
-    if crosses && !already_authorized(authority, caller, handle, party) {
-        match covered(authority, usage, caller, handle, using, more) {
-            Ok(standing) => under = standing,
-            Err(why) => {
-                ask.get_or_insert(why);
-            }
+    let mut standing = Standing::default();
+    let mut ask = None;
+    // A crossing needs standing authority, unless the person already gave
+    // it. So does an act whose cost depends on a value: only a standing
+    // rule with a cap lets it go ahead, and otherwise the person sees the
+    // value.
+    if depends_on_value || (crosses && !already_authorized(authority, caller, handle, party)) {
+        match covered(authority, usage, caller, handle, using, now) {
+            Ok(found) => standing = found,
+            Err(_) if depends_on_value => ask = Some(AskWhy::DependsOnValue),
+            Err(why) => ask = Some(why),
         }
     }
     // A plain answer is accepted only for what can be undone (ADR 0026).
@@ -273,9 +280,10 @@ fn use_of(
         (true, Principal::Installed(_), Some(AskWhy::Crosses)) => Answer::Signature,
         (true, _, _) => Answer::ConfirmGesture,
     };
-    Ok(match ask {
-        Some(why) => Verdict::Ask(why, answer),
-        None => Verdict::Allow(under),
+    Ok(match (ask, standing.cap) {
+        (Some(why), _) => Verdict::Ask(why, answer),
+        (None, Some(cap)) => Verdict::AllowWithinCap(standing.under, cap),
+        (None, None) => Verdict::Allow(standing.under),
     })
 }
 
@@ -339,33 +347,33 @@ fn beyond(past: Past) -> Refuse {
     Refuse::with(GateRule::Limits, limit)
 }
 
-/// The standing grant and standing rule a crossing goes under, or why it
-/// asks.
+/// The standing authority a use goes under.
+#[derive(Default)]
+struct Standing {
+    /// The standing grant and the standing rule, in that order.
+    under: Vec<StandingId>,
+    /// The rule's cap, when the cost depends on a value: the use is allowed
+    /// only if the amount is within it.
+    cap: Option<Cost>,
+}
+
+/// The standing grant and standing rule a use goes under, or why it asks.
+///
+/// A rule covers the use when it is for the operation, the use is within
+/// the rule's limits and within those of a grant that covers the handle,
+/// and the rule is for every source that marked the act. A use whose cost
+/// depends on a value is covered only by a rule with a cap, and counts as
+/// the whole cap, because the gate cannot read the amount.
 fn covered(
     authority: Option<&Authority>,
     usage: &Usage,
     caller: &Caller<'_>,
     handle: &Presented,
     using: &Use,
-    more: More,
-) -> Result<Vec<StandingId>, AskWhy> {
+    now: Time,
+) -> Result<Standing, AskWhy> {
     let authority = authority.ok_or(AskWhy::NoAuthority)?;
     let holder = standing_holder(caller).ok_or(AskWhy::Crosses)?;
-    let within =
-        |id: StandingId, limits| affects_only_allowed(limits, using) && usage.standing(id).past(limits, more).is_none();
-    let (grant, _) = authority
-        .grants(&holder)
-        .find(|(id, grant)| {
-            grant_covers(&grant.resource, &handle.resource)
-                && grant.rights.contains(using.right)
-                && within(*id, &grant.limits)
-        })
-        .ok_or(AskWhy::Crosses)?;
-    let mut rules = authority
-        .rules(&holder)
-        .filter(|(id, rule)| rule.operation == using.operation && within(*id, &rule.limits))
-        .peekable();
-    rules.peek().ok_or(AskWhy::Crosses)?;
     // The act depends on everything the compartment read and on what the
     // handle names, so it carries both marks.
     let marks: BTreeSet<_> = caller
@@ -375,10 +383,43 @@ fn covered(
         .sources()
         .chain(handle.label_mark.mark().sources())
         .collect();
-    let (rule, _) = rules
-        .find(|(_, rule)| marks.iter().all(|source| rule.sources.contains(source)))
-        .ok_or(AskWhy::Marked)?;
-    Ok(vec![grant, rule])
+    let mut why = AskWhy::Crosses;
+    for (rule_id, rule) in authority.rules(&holder) {
+        if rule.operation != using.operation {
+            continue;
+        }
+        let (cost, cap) = match (using.cost, rule.cap) {
+            (UseCost::Fixed(cost), _) => (cost, None),
+            (UseCost::DependsOnValue, Some(cap)) => (cap, Some(cap)),
+            (UseCost::DependsOnValue, None) => continue,
+        };
+        let more = More {
+            units: using.units(),
+            cost,
+            at: now,
+        };
+        let within = |id: StandingId, limits| {
+            affects_only_allowed(limits, using) && usage.standing(id).past(limits, more).is_none()
+        };
+        if !within(rule_id, &rule.limits) {
+            continue;
+        }
+        let grant = authority.grants(&holder).find(|(id, grant)| {
+            grant_covers(&grant.resource, &handle.resource)
+                && grant.rights.contains(using.right)
+                && within(*id, &grant.limits)
+        });
+        let Some((grant_id, _)) = grant else { continue };
+        if !marks.iter().all(|source| rule.sources.contains(source)) {
+            why = AskWhy::Marked;
+            continue;
+        }
+        return Ok(Standing {
+            under: vec![grant_id, rule_id],
+            cap,
+        });
+    }
+    Err(why)
 }
 
 /// What holds standing authority for `caller`: a Tool, a workbench,

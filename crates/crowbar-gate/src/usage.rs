@@ -157,7 +157,7 @@ impl Usage {
                 });
         }
         match decision {
-            Decision::Allowed { under } => {
+            Decision::Allowed { under } | Decision::AllowedWithinCap { under, .. } => {
                 let Some(handle) = entry.handle else { return };
                 let more = More {
                     units: entry.objects.unwrap_or(1).max(1),

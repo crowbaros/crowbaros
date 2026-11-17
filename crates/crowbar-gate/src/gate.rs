@@ -2,7 +2,7 @@
 //! counted.
 
 use crowbar_authority::{Authority, Decision, Error, Event, Keyed, Ledger, LedgerEntry, Recorded, StandingId};
-use crowbar_capability::{Ask, EffectLimits, GateRule, HandleId, Issue, Principal, Refuse, Rights, Time};
+use crowbar_capability::{Ask, Cost, EffectLimits, GateRule, HandleId, Issue, Principal, Refuse, Rights, Time};
 
 use crate::decide::decide;
 use crate::operation::{Act, Operation, UseCost};
@@ -59,7 +59,7 @@ impl Record for InMemory {
 ///
 /// ```compile_fail,E0451
 /// fn forge() -> crowbar_gate::Allowed {
-///     crowbar_gate::Allowed { entry: 1, under: Vec::new(), covers: unreachable!() }
+///     crowbar_gate::Allowed { entry: 1, under: Vec::new(), cap: None, covers: unreachable!() }
 /// }
 /// ```
 ///
@@ -74,6 +74,7 @@ impl Record for InMemory {
 pub struct Allowed {
     entry: u64,
     under: Vec<StandingId>,
+    cap: Option<Cost>,
     covers: Box<Covers>,
 }
 
@@ -158,8 +159,14 @@ impl Ruling {
     /// The decision, as a dry run would give it.
     pub fn decision(&self) -> Decision {
         match self {
-            Ruling::Allowed(allowed) => Decision::Allowed {
-                under: allowed.under.clone(),
+            Ruling::Allowed(allowed) => match allowed.cap {
+                Some(cap) => Decision::AllowedWithinCap {
+                    under: allowed.under.clone(),
+                    cap,
+                },
+                None => Decision::Allowed {
+                    under: allowed.under.clone(),
+                },
             },
             Ruling::Refused(refuse) => Decision::Refused(refuse.clone()),
             Ruling::Asked(ask) => Decision::Asked(*ask),
@@ -218,9 +225,18 @@ impl<L: Record> Gate<L> {
             (Decision::Allowed { under }, Some(covers)) => Ruling::Allowed(Allowed {
                 entry: seq,
                 under,
+                cap: None,
                 covers: Box::new(covers),
             }),
-            (Decision::Allowed { .. }, None) => Ruling::Refused(Refuse::by(GateRule::Unknown)),
+            (Decision::AllowedWithinCap { under, cap }, Some(covers)) => Ruling::Allowed(Allowed {
+                entry: seq,
+                under,
+                cap: Some(cap),
+                covers: Box::new(covers),
+            }),
+            (Decision::Allowed { .. } | Decision::AllowedWithinCap { .. }, None) => {
+                Ruling::Refused(Refuse::by(GateRule::Unknown))
+            }
             (Decision::Asked(ask), _) => Ruling::Asked(ask),
             (Decision::Refused(refuse), _) => Ruling::Refused(refuse),
         }
