@@ -108,6 +108,10 @@ Anything that can hold authority: a person, an agent, a task, a Tool, installed 
 The person's own principal that does Shaping, edits intents with them, and starts tasks. It is a role the OS defines, whatever harness fills it.
 _Avoid_: Assistant, bot, AI
 
+**Conversation**:
+One exchange between the person and the Agent, run as a compartment of its own. Its label and mark change only when the person points it at something or puts something into it.
+_Avoid_: Session, thread, chat, context
+
 **Task**:
 One piece of agent work run as its own principal, with a stated objective, effect limits, a budget, and an expiry.
 _Avoid_: Job, session, run
@@ -209,7 +213,7 @@ The default line for what the agent does without asking. An effect within the ta
 _Avoid_: Risk tier, safety boundary
 
 **Outbox**:
-Where acts on the person's behalf wait for a visible delay before they leave the fleet. They can be cancelled until they leave.
+Where acts sent under a standing rule wait for a visible delay before they leave the fleet. They can be cancelled until they leave. An act the person answered leaves at once.
 _Avoid_: Queue, drafts
 
 **Standing grant**:
@@ -225,7 +229,7 @@ The gate's no to an operation. It names the rule and the limit that applied, nev
 _Avoid_: Denial, permission denied, block, error
 
 **Ask**:
-A question the broker puts to the person in trusted UI, with an ID, exact content, and an expiry. The shell draws it, and one confirm gesture or one signature answers it.
+A question the broker puts to the person in trusted UI, with an ID and exact content. It waits for the person, never takes the keyboard from their work, and lasts as long as its task. The shell draws it, and one confirm gesture or one signature answers it.
 _Avoid_: Prompt, dialog, popup, permission request
 
 **Armed**:
@@ -269,7 +273,7 @@ The deterministic rules that give every object its label and mark from where it 
 _Avoid_: Classifier, labeling policy
 
 **Compartment**:
-One execution context: a task's model context and workspace, or one running copy of a Tool or of installed software. Each start makes a new compartment, so one principal can have several at once, such as a live Tool and its Preview. Once it reads a value it is at that value's label and carries its mark, and so is everything it emits.
+One execution context: a conversation, a task's model context and workspace, or one running copy of a Tool or of installed software. Each start makes a new compartment, so one principal can have several at once, such as a live Tool and its Preview. Once it reads a value it is at that value's label and carries its mark, and so is everything it emits.
 _Avoid_: Session, quarantine, instance
 
 **Sandbox**:
@@ -285,7 +289,7 @@ The part of Base that starts and stops every compartment, on the broker's orders
 _Avoid_: Launcher, spawner, supervisor
 
 **Untrusted input**:
-Content written by someone other than the person or their OS. It is _admitted_ when it comes from a pinned set the person admitted in advance (the Base package snapshot, the dependency set for build tasks), and _open_ otherwise (web pages, mail, shared intents, files from outside). What the person pastes carries the label and mark of where it was copied from. It includes short strings: a file name, a mail subject, error text from a server.
+Content written by someone other than the person or their OS. It is _admitted_ when it comes from a pinned set the person admitted in advance (the Base package snapshot, the dependency set for build tasks), and _open_ otherwise (web pages, mail, shared intents, files from outside). What the person pastes keeps the mark of where it was copied from. It includes short strings: a file name, a mail subject, error text from a server.
 _Avoid_: External data, tainted input
 
 **Mark**:
@@ -293,7 +297,7 @@ The record that a value was produced by a context that had read open untrusted i
 _Avoid_: Taint, flag
 
 **Release**:
-The person letting one exact value, shown in trusted UI, pass to one named destination despite its label or mark.
+The person letting one exact value pass to one named destination despite its label, by answering an ask that shows it or by moving it there with their own hand. The value keeps its mark.
 _Avoid_: Declassify, approve, share
 
 **Declassify**:
