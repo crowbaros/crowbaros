@@ -128,7 +128,9 @@ impl Usage {
     /// Adds one ledger entry, written at `time`.
     ///
     /// - An allowed use counts against its handle, the handle's original,
-    ///   and each standing grant and rule it crossed under.
+    ///   and each standing grant and rule it crossed under. One allowed
+    ///   within a cap counts as the whole cap, whatever the amount was and
+    ///   whether or not the adapter then found it over the cap.
     /// - An ask counts against the principal's waiting asks, held or not.
     /// - An ask that is not held also counts against the principal's asks
     ///   in the hour, and, for the Agent and its tasks, against theirs
@@ -159,9 +161,15 @@ impl Usage {
         match decision {
             Decision::Allowed { under } | Decision::AllowedWithinCap { under, .. } => {
                 let Some(handle) = entry.handle else { return };
+                // The ledger does not hold the amount of an act allowed
+                // within a cap, so it counts as the whole cap.
+                let cost = match decision {
+                    Decision::AllowedWithinCap { cap, .. } => *cap,
+                    _ => entry.cost.unwrap_or(Cost::cents(0)),
+                };
                 let more = More {
                     units: entry.objects.unwrap_or(1).max(1),
-                    cost: entry.cost.unwrap_or(Cost::cents(0)),
+                    cost,
                     at: time,
                 };
                 self.handles.entry(handle).or_default().add(more);

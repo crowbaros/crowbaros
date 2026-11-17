@@ -407,6 +407,8 @@ fn covered(
             continue;
         }
         let (cost, cap) = match (using.cost, rule.cap) {
+            // The gate can check a fixed cost against the cap itself.
+            (UseCost::Fixed(cost), Some(cap)) if cost > cap => continue,
             (UseCost::Fixed(cost), _) => (cost, None),
             (UseCost::DependsOnValue, Some(cap)) => (cap, Some(cap)),
             (UseCost::DependsOnValue, None) => continue,
@@ -428,6 +430,12 @@ fn covered(
                 && within(*id, &grant.limits)
         });
         let Some((grant_id, _)) = grant else { continue };
+        // The handle's limits were checked with no cost, because the amount
+        // is not known. Counted as the whole cap, the use must be within
+        // them too.
+        if cap.is_some() && !handle_within(usage, handle, more) {
+            continue;
+        }
         if !marks.iter().all(|source| rule.sources.contains(source)) {
             why = AskWhy::Marked;
             continue;
@@ -438,6 +446,17 @@ fn covered(
         });
     }
     Err(why)
+}
+
+/// Whether one more use is within the limits of `handle`, and of the handle
+/// it was passed on from.
+fn handle_within(usage: &Usage, handle: &Presented, more: More) -> bool {
+    let within = |id, limits| usage.handle(id).past(limits, more).is_none();
+    within(handle.id, &handle.limits)
+        && handle
+            .original
+            .as_ref()
+            .is_none_or(|original| within(original.id, &original.limits))
 }
 
 /// What holds standing authority for `caller`: a Tool, a workbench,

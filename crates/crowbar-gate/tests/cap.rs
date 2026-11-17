@@ -13,7 +13,7 @@ use crowbar_gate::{
 use crowbar_labels::{Compartment, Fetch, MarkSource, Origin, Site};
 
 mod common;
-use common::{Bench, NOW, asked, asked_but_held, by, handle, task, using};
+use common::{Bench, NOW, asked, asked_but_held, by, handle, later, task, using};
 
 /// Thirty days, in seconds.
 const MONTH: u64 = 2_592_000;
@@ -288,4 +288,139 @@ fn only_what_the_gate_gave_for_that_operation_with_a_cap_can_be_given_back_as_ov
     );
     // Nothing was recorded but the two decisions.
     assert_eq!(bench.gate.ledger().entries().len(), 2);
+}
+
+#[test]
+fn each_attempt_counts_against_the_rules_rate_whether_or_not_it_was_under_the_cap() {
+    let twice_a_month = Rule {
+        limits: EffectLimits::new().rate(Rate::per(2, MONTH)),
+        ..rule()
+    };
+    let mut bench = Bench::with(vec![Change::Granted(grant()), Change::RuleAdded(twice_a_month)]);
+    let under = standing(bench.authority.as_ref().expect("read"));
+    let run = task("run-41");
+    let held = on_the_account(&run);
+    let (compartment, pay) = (Compartment::fresh(), pay());
+    let operation = paying(&run, &compartment, &held, &pay);
+
+    // The first attempt is over the cap. Nothing is carried out, and the
+    // person declines the ask.
+    let allowed = allowed_for(&mut bench, &operation);
+    bench.gate.over_cap(allowed, &operation, NOW).expect("recorded");
+    bench.gate.ask_closed(&run, NOW).expect("recorded");
+    // The second is the rule's second this month.
+    assert_eq!(
+        bench.decide(&operation, later(1)),
+        Decision::AllowedWithinCap { under, cap: CAP }
+    );
+    // The rule covers no third, so the rate bounds the attempts.
+    assert_eq!(bench.decide(&operation, later(2)), asked(AskWhy::DependsOnValue));
+}
+
+#[test]
+fn a_dry_run_says_only_allowed_if_within_the_cap_and_counts_no_attempt() {
+    // Attack A30: a task uses the dry run to search for a private amount.
+    // Nothing the gate is given states the amount, so a dry run cannot
+    // depend on it, and a hundred of them use up none of the rule's rate.
+    let mut bench = Bench::with(vec![Change::Granted(grant()), Change::RuleAdded(rule())]);
+    let under = standing(bench.authority.as_ref().expect("read"));
+    let run = task("run-41");
+    let held = on_the_account(&run);
+    let (compartment, pay) = (Compartment::fresh(), pay());
+    let operation = paying(&run, &compartment, &held, &pay);
+    let within_the_cap = Decision::AllowedWithinCap { under, cap: CAP };
+
+    let counted = bench.gate.usage().clone();
+    for _ in 0..100 {
+        assert_eq!(
+            bench.gate.dry_run(bench.authority.as_ref(), &operation, NOW),
+            within_the_cap
+        );
+    }
+    assert!(bench.gate.ledger().entries().is_empty());
+    assert_eq!(bench.gate.usage(), &counted);
+
+    // The one attempt a month the rule allows is still there.
+    assert_eq!(bench.decide(&operation, NOW), within_the_cap);
+    assert_eq!(
+        bench.gate.dry_run(bench.authority.as_ref(), &operation, later(1)),
+        asked(AskWhy::DependsOnValue)
+    );
+}
+
+#[test]
+fn an_act_allowed_within_a_cap_counts_as_the_whole_cap_against_the_rules_limit_on_total_cost() {
+    // "Up to $150 a bill, and $300 in all."
+    let in_all = Rule {
+        limits: EffectLimits::new().rate(Rate::per(10, MONTH)).cost(Cost::cents(30_000)),
+        ..rule()
+    };
+    let mut bench = Bench::with(vec![Change::Granted(grant()), Change::RuleAdded(in_all)]);
+    let under = standing(bench.authority.as_ref().expect("read"));
+    let run = task("run-41");
+    let held = on_the_account(&run);
+    let (compartment, pay) = (Compartment::fresh(), pay());
+    let operation = paying(&run, &compartment, &held, &pay);
+    let within_the_cap = Decision::AllowedWithinCap { under, cap: CAP };
+
+    // The gate cannot read what each bill came to, so each counts as $150.
+    assert_eq!(bench.decide(&operation, NOW), within_the_cap);
+    assert_eq!(bench.decide(&operation, later(1)), within_the_cap);
+    assert_eq!(bench.decide(&operation, later(2)), asked(AskWhy::DependsOnValue));
+}
+
+#[test]
+fn a_cap_does_not_fire_where_the_whole_cap_would_pass_the_handles_limit_on_cost() {
+    let often = Rule {
+        limits: EffectLimits::new().rate(Rate::per(10, MONTH)),
+        ..rule()
+    };
+    let mut bench = Bench::with(vec![Change::Granted(grant()), Change::RuleAdded(often)]);
+    let under = standing(bench.authority.as_ref().expect("read"));
+    let run = task("run-41");
+    // This run may spend $200.
+    let held = Presented {
+        limits: EffectLimits::new().cost(Cost::cents(20_000)),
+        ..on_the_account(&run)
+    };
+    let (compartment, pay) = (Compartment::fresh(), pay());
+    let operation = paying(&run, &compartment, &held, &pay);
+
+    assert_eq!(
+        bench.decide(&operation, NOW),
+        Decision::AllowedWithinCap { under, cap: CAP }
+    );
+    // A second $150 could pass $200. The gate does not know that it would,
+    // so it does not refuse: the person sees the amount.
+    assert_eq!(bench.decide(&operation, later(1)), asked(AskWhy::DependsOnValue));
+}
+
+#[test]
+fn a_fixed_cost_is_checked_against_the_cap_by_the_gate_itself() {
+    let often = Rule {
+        limits: EffectLimits::new().rate(Rate::per(10, MONTH)),
+        ..rule()
+    };
+    let mut bench = Bench::with(vec![Change::Granted(grant()), Change::RuleAdded(often)]);
+    let under = standing(bench.authority.as_ref().expect("read"));
+    let run = task("run-41");
+    let held = on_the_account(&run);
+    let compartment = Compartment::fresh();
+    let costing = |cents| Use {
+        cost: UseCost::Fixed(Cost::cents(cents)),
+        ..pay()
+    };
+
+    // At the cap the rule covers the act, with nothing left for the adapter
+    // to check.
+    assert_eq!(
+        bench.decide(&paying(&run, &compartment, &held, &costing(15_000)), NOW),
+        Decision::Allowed { under }
+    );
+    // Over it, the rule does not cover the act, and it asks as any crossing
+    // with no rule does.
+    assert_eq!(
+        bench.decide(&paying(&run, &compartment, &held, &costing(15_001)), later(1)),
+        asked(AskWhy::Crosses)
+    );
 }
