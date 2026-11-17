@@ -58,6 +58,7 @@ enum StatedFile {
 #[serde(rename_all = "snake_case")]
 enum StatedFetch {
     UnderLogin(Site),
+    WithoutLogin(Site),
 }
 
 impl StatedOrigin {
@@ -67,6 +68,9 @@ impl StatedOrigin {
             StatedOrigin::File(file) => Origin::File(match file {
                 StatedFile::Downloaded(StatedFetch::UnderLogin(site)) => {
                     FileOrigin::Downloaded(Fetch::UnderLogin(site.clone()))
+                }
+                StatedFile::Downloaded(StatedFetch::WithoutLogin(site)) => {
+                    FileOrigin::Downloaded(Fetch::WithoutLogin(site.clone()))
                 }
                 StatedFile::FromOutside => FileOrigin::FromOutside,
             }),
@@ -130,7 +134,7 @@ fn seed_groups() -> Vec<Group> {
 
 /// What was decided for each group, in the wording of the origin table. The
 /// decisions are in the lab's README, under "The person's Data".
-const DECIDED: [(&str, &str, &str); 12] = [
+const DECIDED: [(&str, &str, &str); 14] = [
     // A camera and a scanner are ways into the fleet the table does not know.
     ("Photos/*", "private: unknown", "marked: outside"),
     ("Documents/Scans/*", "private: unknown", "marked: outside"),
@@ -156,6 +160,11 @@ const DECIDED: [(&str, &str, &str); 12] = [
     ),
     // A file from a stranger.
     ("Downloads/from-a-stranger.txt", "private: unknown", "marked: outside"),
+    // A public project: downloaded from a public site with no login.
+    ("Projects/site/*", "public", "marked: site public.fixture.test"),
+    // A private project: the person's own words, which the person then made
+    // private.
+    ("Projects/ledger/*", "private: finance", "none"),
 ];
 
 #[test]
@@ -293,12 +302,17 @@ fn a_group_the_crate_cannot_read_is_refused() {
 #[test]
 fn a_stated_origin_is_a_row_of_the_origin_table() {
     let clinic = Site::new("login.fixture.test");
+    let gazette = Site::new("public.fixture.test");
     let cases = [
         (json!("typed"), Origin::Typed),
         (json!({"file": "from_outside"}), Origin::File(FileOrigin::FromOutside)),
         (
             json!({"file": {"downloaded": {"under_login": "login.fixture.test"}}}),
             Origin::File(FileOrigin::Downloaded(Fetch::UnderLogin(clinic))),
+        ),
+        (
+            json!({"file": {"downloaded": {"without_login": "public.fixture.test"}}}),
+            Origin::File(FileOrigin::Downloaded(Fetch::WithoutLogin(gazette))),
         ),
     ];
     for (stated, row) in cases {
@@ -334,7 +348,8 @@ fn a_file_with_a_private_value_is_private_and_one_with_a_planted_string_is_marke
     // A1, A3, A4, A5, and A8 and tasks 7, 9, and 15 depend on a party at its
     // default clearance not being cleared for a private value: a model
     // provider's default is personal, and a web site's is public. A13 depends
-    // on the planted file being marked before anything opens it.
+    // on the planted file being marked before anything opens it, and A26 on
+    // the public project's planted note being marked.
     //
     // This checks the seed against itself. A planted string or a private
     // value in a file gives the file no label: its group does.
@@ -372,5 +387,5 @@ fn a_file_with_a_private_value_is_private_and_one_with_a_planted_string_is_marke
             "Private/appointments.json",
         ]
     );
-    assert_eq!(planted, ["Downloads/from-a-stranger.txt"]);
+    assert_eq!(planted, ["Downloads/from-a-stranger.txt", "Projects/site/NOTES.txt"]);
 }

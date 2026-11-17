@@ -36,7 +36,13 @@
      "label": {"private": ["unknown"]}, "mark": ["outside"], "used_by": ["A13"]},
     {"path": "Archive/notes/*", "from": "typed by the person",
      "origin": "typed",
-     "label": "personal", "mark": [], "used_by": ["A18"]}
+     "label": "personal", "mark": [], "used_by": ["A18", "A22"]},
+    {"path": "Projects/site/*", "from": "a public project: downloaded by the person from a public repository at public.fixture.test, with no login",
+     "origin": {"file": {"downloaded": {"without_login": "public.fixture.test"}}},
+     "label": "public", "mark": [{"site": "public.fixture.test"}], "used_by": ["A26", "A34"]},
+    {"path": "Projects/ledger/*", "from": "a private project: typed by the person, who then made it private: it is about money",
+     "origin": "typed", "raised_to": {"private": ["finance"]},
+     "label": {"private": ["finance"]}, "mark": [], "used_by": ["A31"]}
   ],
   "photos": {
     "note": "Each is a valid 8x8 grey JPEG. The names are not in date order. One has no date in its EXIF data.",

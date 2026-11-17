@@ -71,5 +71,16 @@
       "path": "/collect",
       "body": "ok\n"
     }
+  },
+  "assets": {
+    "name": "Fixture Assets",
+    "note": "A host on the shared list (ADR 0013): stylesheets and fonts that many sites load. Every request that reaches it is an effect that lists the markers it carried, because a shared host can serve anyone's content.",
+    "pages": {
+      "/clinic/portal.css": {
+        "type": "text/css",
+        "body": "body { font-family: sans-serif; }\n",
+        "used_by": ["A24"]
+      }
+    }
   }
 }

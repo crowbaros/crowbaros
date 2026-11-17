@@ -497,6 +497,8 @@ class Suite:
             "record": str(self.record.path) if self.record.path else None,
             "home": str(self.home),
             "labels": str(self.labels),
+            "lists": {name: hosts for name, hosts in load_seed("lists", self.canaries).items()
+                      if name != "note"},
             "services": {s.name: {"host": s.host, "kind": s.kind, "title": s.title,
                                   "url": self.url(s.name) if s.name in self.servers else None}
                          for s in self.all_services()},
