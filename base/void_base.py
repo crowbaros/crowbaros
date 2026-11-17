@@ -47,6 +47,19 @@ def run(*args, **kwargs):
     return subprocess.run([str(a) for a in args], check=True, text=True, **kwargs)
 
 
+def run_shown(*args, log, env):
+    """Run a command, showing its output as it comes and keeping a copy in `log`."""
+    print("+", shlex.join(str(a) for a in args), flush=True)
+    with log.open("wb") as out:
+        proc = subprocess.Popen([str(a) for a in args], env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+        while chunk := proc.stdout.read1(65536):
+            out.write(chunk)
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+        return proc.wait()
+
+
 def sha256(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -137,12 +150,10 @@ def rootfs(force):
                REPO=CFG["void_repository"], KEYS=str(xbps / "var/db/xbps/keys"),
                PKGCACHE=str(CACHE / "packages"), PACKAGES=" ".join(CFG["packages"]))
     log = WORK / "rootfs.log"
-    with log.open("w") as out:
-        try:
-            run(*userns(), "sh", HERE / "host/rootfs.sh", env=env, stdout=out,
-                stderr=subprocess.STDOUT)
-        except subprocess.CalledProcessError:
-            raise SystemExit(f"Installing the Void root failed; see {log}")
+    print(f"Installing {len(CFG['packages'])} packages and what they depend on. The first "
+          f"time, this downloads about 850 MB into {CACHE / 'packages'}.", flush=True)
+    if run_shown(*userns(), "sh", HERE / "host/rootfs.sh", log=log, env=env) != 0:
+        raise SystemExit(f"Installing the Void root failed; the output is in {log}")
     if not any((ROOTFS / "boot").glob("vmlinuz-*")):
         raise SystemExit(f"The Void root has no kernel in /boot after the install; see {log}")
     done.write_text(wanted)

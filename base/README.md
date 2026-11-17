@@ -61,8 +61,11 @@ You also need read and write access to `/dev/kvm`, and a range of subordinate
 IDs in `/etc/subuid` and `/etc/subgid` (Arch gives every new user one). `build`
 and `boot` check for all of this first, and name what is missing.
 
-If a build stops partway, the next `build` installs the root again: it uses a
-root only after an install of the configured packages finished.
+The first `build` on a machine downloads about 850 MB of packages, which took
+under two minutes on a fast connection. It shows the install as it goes, and
+keeps a copy in `.lab/base/rootfs.log`. If a build stops partway, the next
+`build` installs the root again: it uses a root only after an install of the
+configured packages finished.
 
 ## What it checks
 
