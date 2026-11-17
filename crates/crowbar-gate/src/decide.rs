@@ -287,6 +287,24 @@ fn use_of(
     })
 }
 
+/// The ask for `operation` when its adapter found the amount over the cap
+/// it was allowed within, and carried nothing out. It takes the answer the
+/// act itself would: the confirm gesture for a crossing.
+pub(crate) fn over_cap(usage: &Usage, operation: &Operation<'_>, now: Time) -> Ask {
+    let crosses = match &operation.act {
+        Act::Use { using, .. } => boundary::crosses(&using.operation),
+        Act::Issue { .. } | Act::Delegate { .. } | Act::Egress { .. } => true,
+    };
+    Ask {
+        why: AskWhy::OverCap,
+        answer: match crosses {
+            true => Answer::ConfirmGesture,
+            false => Answer::Plain,
+        },
+        held: held_under(usage, operation.caller.principal, now),
+    }
+}
+
 /// Whether an egress to `party` crosses on authority the person already
 /// gave, so it needs no standing grant or rule and does not ask (ADR 0011).
 /// The clearance check has passed by the time this is asked. With no

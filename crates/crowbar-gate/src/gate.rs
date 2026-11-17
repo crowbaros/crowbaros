@@ -4,7 +4,7 @@
 use crowbar_authority::{Authority, Decision, Error, Event, Keyed, Ledger, LedgerEntry, Recorded, StandingId};
 use crowbar_capability::{Ask, Cost, EffectLimits, GateRule, HandleId, Issue, Principal, Refuse, Rights, Time};
 
-use crate::decide::decide;
+use crate::decide::{self, decide};
 use crate::operation::{Act, Operation, UseCost};
 use crate::usage::Usage;
 
@@ -269,6 +269,33 @@ impl<L: Record> Gate<L> {
     /// not: the answer is the same decision.
     pub fn dry_run(&self, authority: Option<&Authority>, operation: &Operation<'_>, now: Time) -> Decision {
         decide(authority, &self.usage, operation, now)
+    }
+
+    /// Records that the adapter found the amount over the cap `allowed`
+    /// carries, and carried nothing out. The act asks: the ask is recorded
+    /// and counted like any other, and it is the person who sees the
+    /// amount. The attempt stays counted against the standing rule, so the
+    /// rule's rate bounds how many times a task can try (attack A30).
+    ///
+    /// `operation` is the one `allowed` was given for. An `Allowed` that
+    /// carries no cap, or that was given for another operation, is refused
+    /// under [`GateRule::Unknown`], and nothing is recorded.
+    pub fn over_cap(&mut self, allowed: Allowed, operation: &Operation<'_>, now: Time) -> Result<Ask, Refuse> {
+        let handle = match &operation.act {
+            Act::Use { handle, .. } | Act::Egress { handle, .. } => handle.map(|handle| handle.id),
+            Act::Issue { .. } | Act::Delegate { .. } => None,
+        };
+        let given_for = handle.is_some_and(|handle| allowed.names_use(handle, operation.name()));
+        if allowed.cap.is_none() || !given_for {
+            return Err(Refuse::by(GateRule::Unknown));
+        }
+        let ask = decide::over_cap(&self.usage, operation, now);
+        let entry = entry_for(operation, &Decision::Asked(ask));
+        self.ledger
+            .append(&entry, now)
+            .map_err(|_| Refuse::by(GateRule::Ledger))?;
+        self.usage.record(&entry, now);
+        Ok(ask)
     }
 
     /// Records that one of `principal`'s waiting asks closed, held or not:

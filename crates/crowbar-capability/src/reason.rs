@@ -184,6 +184,10 @@ pub enum AskWhy {
     DependsOnValue,
     /// The authority record cannot be read, so nothing crosses unasked.
     NoAuthority,
+    /// The amount is over the cap of the standing rule the act went under.
+    /// Its adapter found that when it read the amount, and carried nothing
+    /// out. The person sees the amount.
+    OverCap,
 }
 
 /// An ask: the operation goes to the person, and waits for an answer.
