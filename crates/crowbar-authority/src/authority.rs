@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crowbar_capability::{EffectLimits, Resource, Rights, Time};
+use crowbar_capability::{Cost, EffectLimits, Resource, Rights, Time};
 use crowbar_labels::{Label, MarkSource, Site};
 use serde::{Deserialize, Serialize};
 
@@ -70,6 +70,13 @@ pub struct Rule {
     /// source that marked it (ADR 0011). A rule for no source is for
     /// unmarked work alone.
     pub sources: BTreeSet<MarkSource>,
+    /// The cap: the most one act under the rule may cost, such as "pay the
+    /// electric bill, up to $150". With a cap, an act whose cost depends on
+    /// a value the task cannot read crosses under the rule without an ask,
+    /// and its adapter checks the amount against the cap when it carries
+    /// the act out (ADR 0021). A rule with none is stored without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cap: Option<Cost>,
 }
 
 /// An outside party that has a clearance: the highest label it may hold.

@@ -66,5 +66,6 @@ pub fn sync_rule() -> Rule {
         operation: "nextcloud.sync".to_string(),
         limits: EffectLimits::new().rate(Rate::per(1, 600)),
         sources: [].into(),
+        cap: None,
     }
 }

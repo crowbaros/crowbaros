@@ -45,7 +45,9 @@ pub struct LedgerEntry {
     /// counts as one operation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub objects: Option<u64>,
-    /// What the operation cost, where that was a fixed amount.
+    /// What the operation cost, where that was a fixed amount. An amount
+    /// the task cannot read is never recorded: a use allowed within a cap
+    /// names the cap in its decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost: Option<Cost>,
     /// The idempotency key the task attached, with the digest of the
@@ -102,6 +104,11 @@ pub enum Decision {
     /// Allowed. An operation that crossed the undo boundary names the
     /// standing grant and the standing rule it crossed under.
     Allowed { under: Vec<StandingId> },
+    /// Allowed if the amount is within the cap of the standing rule it went
+    /// under. The gate decided without the amount, which the task cannot
+    /// read. The adapter checks it against the cap when it carries the act
+    /// out, and over the cap it carries nothing out (ADR 0021).
+    AllowedWithinCap { under: Vec<StandingId>, cap: Cost },
     /// Put to the person as an ask.
     Asked(Ask),
     /// Refused: the rule, and the limit that applied.

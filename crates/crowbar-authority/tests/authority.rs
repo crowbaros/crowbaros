@@ -3,7 +3,7 @@
 //! changes it.
 
 use crowbar_authority::{Authority, AuthorityStore, Change, Error, Holder, Party, Rule, Status};
-use crowbar_capability::EffectLimits;
+use crowbar_capability::{Cost, EffectLimits};
 use crowbar_labels::{Category, Label, Site};
 
 mod common;
@@ -139,6 +139,41 @@ fn a_standing_rule_with_no_rate_limit_is_refused_and_records_nothing() {
     assert!(matches!(refused, Error::RuleWithoutRate), "{refused}");
     assert_eq!(store.authority().expect("readable").rules(&morning_pages()).count(), 0);
     assert!(store.authority().expect("readable").history().is_empty());
+}
+
+#[test]
+fn a_standing_rules_cap_is_kept_after_the_store_is_opened_again() {
+    let dir = Scratch::new();
+    let mut store = AuthorityStore::create(dir.path()).expect("made");
+    // "Pay the electric bill, up to $150."
+    let capped = Rule {
+        cap: Some(Cost::cents(15_000)),
+        ..sync_rule()
+    };
+    let id = store.add_rule(capped.clone(), NOW).expect("recorded");
+    drop(store);
+
+    let authority = Authority::load(dir.path()).expect("loaded");
+    assert_eq!(
+        authority.rules(&morning_pages()).collect::<Vec<_>>(),
+        vec![(id, &capped)]
+    );
+}
+
+#[test]
+fn a_rule_stored_with_no_cap_has_none_and_is_stored_the_same_way_again() {
+    // A rule as it was stored before a rule could carry a cap.
+    let stored = serde_json::json!({
+        "holder": {"tool": "morning-pages"},
+        "operation": "nextcloud.sync",
+        "limits": {"rate": {"count": 1, "window_secs": 600}},
+        "sources": [],
+    });
+
+    let rule: Rule = serde_json::from_value(stored.clone()).expect("read");
+    assert_eq!(rule, sync_rule());
+    assert_eq!(rule.cap, None);
+    assert_eq!(serde_json::to_value(&rule).expect("written"), stored);
 }
 
 #[test]

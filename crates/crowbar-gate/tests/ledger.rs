@@ -136,6 +136,7 @@ fn a_restart_keeps_a_standing_rules_rate() {
                 operation: "nextcloud.sync".to_string(),
                 limits: EffectLimits::new().rate(Rate::per(1, 600)),
                 sources: [].into(),
+                cap: None,
             }),
         ),
     ])
@@ -370,4 +371,100 @@ fn a_ledger_that_cannot_be_added_to_refuses_every_operation_and_dry_runs_still_a
         })
     ));
     assert!(gate.ask_closed(&Principal::Agent, NOW).is_err());
+}
+
+#[test]
+fn an_attempt_under_a_cap_and_the_ask_over_it_survive_a_restart() {
+    let dir = Scratch::new();
+    let holder = Holder::StandingTask("pay-the-electric-bill".to_string());
+    let utility = Resource::Service("utility".to_string());
+    let cap = Cost::cents(15_000);
+    // "Pay the electric bill, up to $150, at most once a month."
+    let authority = Authority::from_changes([
+        (
+            NOW,
+            Change::Granted(Grant {
+                holder: holder.clone(),
+                resource: utility.clone(),
+                rights: Rights::from([Right::Write]),
+                limits: EffectLimits::new(),
+                reason: "Pays your electric bill.".to_string(),
+            }),
+        ),
+        (
+            NOW,
+            Change::RuleAdded(Rule {
+                holder,
+                operation: "bills.pay".to_string(),
+                limits: EffectLimits::new().rate(Rate::per(1, 2_592_000)),
+                sources: [].into(),
+                cap: Some(cap),
+            }),
+        ),
+    ])
+    .expect("admitted");
+    let run = task("run-41");
+    let held = Presented {
+        resource: utility,
+        ..handle(1, run.clone())
+    };
+    let pay = Use {
+        cost: UseCost::DependsOnValue,
+        ..using("bills.pay", Right::Write)
+    };
+    let compartment = Compartment::fresh();
+    let operation = Operation {
+        caller: Caller {
+            principal: &run,
+            standing_task: Some("pay-the-electric-bill"),
+            holds_login: false,
+            compartment: &compartment,
+        },
+        key: None,
+        act: Act::Use {
+            handle: Some(&held),
+            using: &pay,
+        },
+    };
+
+    let mut gate = start(dir.path());
+    let Ruling::Allowed(allowed) = gate.decide(Some(&authority), &operation, NOW) else {
+        panic!("the rule covers the act");
+    };
+    assert_eq!(allowed.cap(), Some(cap));
+    // The adapter found the bill over the cap.
+    gate.over_cap(allowed, &operation, NOW).expect("recorded");
+    let counted = gate.usage().clone();
+    drop(gate);
+
+    let mut gate = start(dir.path());
+    assert_eq!(gate.usage(), &counted);
+    // The rule's one attempt this month is used, and the ask over the cap
+    // still waits, so the next ask is held behind it.
+    assert_eq!(
+        decision(gate.decide(Some(&authority), &operation, later(60))),
+        Decision::Asked(crowbar_gate::Ask {
+            why: AskWhy::DependsOnValue,
+            answer: Answer::ConfirmGesture,
+            held: Some(Held::Waiting(1))
+        })
+    );
+    // The ledger names the cap, which the person set, and never the amount.
+    let entries = Ledger::read(dir.path()).expect("read").entries;
+    assert_eq!(
+        entries[0].entry.event,
+        Event::Decided(Decision::AllowedWithinCap {
+            under: authority
+                .grants(&Holder::StandingTask("pay-the-electric-bill".to_string()))
+                .map(|(id, _)| id)
+                .chain(
+                    authority
+                        .rules(&Holder::StandingTask("pay-the-electric-bill".to_string()))
+                        .map(|(id, _)| id)
+                )
+                .collect(),
+            cap
+        })
+    );
+    assert_eq!(entries[0].entry.cost, None);
 }

@@ -2,9 +2,9 @@
 //! counted.
 
 use crowbar_authority::{Authority, Decision, Error, Event, Keyed, Ledger, LedgerEntry, Recorded, StandingId};
-use crowbar_capability::{Ask, EffectLimits, GateRule, HandleId, Issue, Principal, Refuse, Rights, Time};
+use crowbar_capability::{Ask, Cost, EffectLimits, GateRule, HandleId, Issue, Principal, Refuse, Rights, Time};
 
-use crate::decide::decide;
+use crate::decide::{self, decide};
 use crate::operation::{Act, Operation, UseCost};
 use crate::usage::Usage;
 
@@ -59,7 +59,7 @@ impl Record for InMemory {
 ///
 /// ```compile_fail,E0451
 /// fn forge() -> crowbar_gate::Allowed {
-///     crowbar_gate::Allowed { entry: 1, under: Vec::new(), covers: unreachable!() }
+///     crowbar_gate::Allowed { entry: 1, under: Vec::new(), cap: None, covers: unreachable!() }
 /// }
 /// ```
 ///
@@ -74,6 +74,7 @@ impl Record for InMemory {
 pub struct Allowed {
     entry: u64,
     under: Vec<StandingId>,
+    cap: Option<Cost>,
     covers: Box<Covers>,
 }
 
@@ -132,8 +133,29 @@ impl Allowed {
         )
     }
 
-    /// Whether this allows the adapter operation `operation` on `handle`.
+    /// The cap, when the gate allowed the use only if its amount is within
+    /// the cap of a standing rule. The gate decided without the amount.
+    pub fn cap(&self) -> Option<Cost> {
+        self.cap
+    }
+
+    /// Whether this allows the adapter operation `operation` on `handle`,
+    /// whatever it costs. One that carries a cap does not: it allows only
+    /// an amount within the cap ([`Allowed::covers_use_costing`]), so an
+    /// adapter that does not check the amount carries nothing out.
     pub fn covers_use(&self, handle: HandleId, operation: &str) -> bool {
+        self.cap.is_none() && self.names_use(handle, operation)
+    }
+
+    /// Whether this allows the adapter operation `operation` on `handle`
+    /// when it costs `amount`. This is the adapter's check when it carries
+    /// the act out, once it has read the amount. Over the cap it carries
+    /// nothing out, and gives this back to the gate ([`Gate::over_cap`]).
+    pub fn covers_use_costing(&self, handle: HandleId, operation: &str, amount: Cost) -> bool {
+        self.cap.is_none_or(|cap| amount <= cap) && self.names_use(handle, operation)
+    }
+
+    fn names_use(&self, handle: HandleId, operation: &str) -> bool {
         matches!(&*self.covers, Covers::Use { handle: allowed, operation: name } if *allowed == handle && name == operation)
     }
 }
@@ -141,7 +163,9 @@ impl Allowed {
 /// What the gate ruled on an operation it was asked to carry out.
 #[derive(Debug)]
 pub enum Ruling {
-    /// Allowed: carry it out, spending this `Allowed`.
+    /// Allowed: carry it out, spending this `Allowed`. One given under a
+    /// standing rule with a cap carries the cap, and covers the act only
+    /// for an amount within it ([`Allowed::covers_use_costing`]).
     Allowed(Allowed),
     Refused(Refuse),
     /// Put to the person, to wait for an answer. An ask that is held is one
@@ -158,8 +182,14 @@ impl Ruling {
     /// The decision, as a dry run would give it.
     pub fn decision(&self) -> Decision {
         match self {
-            Ruling::Allowed(allowed) => Decision::Allowed {
-                under: allowed.under.clone(),
+            Ruling::Allowed(allowed) => match allowed.cap {
+                Some(cap) => Decision::AllowedWithinCap {
+                    under: allowed.under.clone(),
+                    cap,
+                },
+                None => Decision::Allowed {
+                    under: allowed.under.clone(),
+                },
             },
             Ruling::Refused(refuse) => Decision::Refused(refuse.clone()),
             Ruling::Asked(ask) => Decision::Asked(*ask),
@@ -218,9 +248,18 @@ impl<L: Record> Gate<L> {
             (Decision::Allowed { under }, Some(covers)) => Ruling::Allowed(Allowed {
                 entry: seq,
                 under,
+                cap: None,
                 covers: Box::new(covers),
             }),
-            (Decision::Allowed { .. }, None) => Ruling::Refused(Refuse::by(GateRule::Unknown)),
+            (Decision::AllowedWithinCap { under, cap }, Some(covers)) => Ruling::Allowed(Allowed {
+                entry: seq,
+                under,
+                cap: Some(cap),
+                covers: Box::new(covers),
+            }),
+            (Decision::Allowed { .. } | Decision::AllowedWithinCap { .. }, None) => {
+                Ruling::Refused(Refuse::by(GateRule::Unknown))
+            }
             (Decision::Asked(ask), _) => Ruling::Asked(ask),
             (Decision::Refused(refuse), _) => Ruling::Refused(refuse),
         }
@@ -232,6 +271,33 @@ impl<L: Record> Gate<L> {
     /// not: the answer is the same decision.
     pub fn dry_run(&self, authority: Option<&Authority>, operation: &Operation<'_>, now: Time) -> Decision {
         decide(authority, &self.usage, operation, now)
+    }
+
+    /// Records that the adapter found the amount over the cap `allowed`
+    /// carries, and carried nothing out. The act asks: the ask is recorded
+    /// and counted like any other, and it is the person who sees the
+    /// amount. The attempt stays counted against the standing rule, so the
+    /// rule's rate bounds how many times a task can try (attack A30).
+    ///
+    /// `operation` is the one `allowed` was given for. An `Allowed` that
+    /// carries no cap, or that was given for another operation, is refused
+    /// under [`GateRule::Unknown`], and nothing is recorded.
+    pub fn over_cap(&mut self, allowed: Allowed, operation: &Operation<'_>, now: Time) -> Result<Ask, Refuse> {
+        let handle = match &operation.act {
+            Act::Use { handle, .. } | Act::Egress { handle, .. } => handle.map(|handle| handle.id),
+            Act::Issue { .. } | Act::Delegate { .. } => None,
+        };
+        let given_for = handle.is_some_and(|handle| allowed.names_use(handle, operation.name()));
+        if allowed.cap.is_none() || !given_for {
+            return Err(Refuse::by(GateRule::Unknown));
+        }
+        let ask = decide::over_cap(&self.usage, operation, now);
+        let entry = entry_for(operation, &Decision::Asked(ask));
+        self.ledger
+            .append(&entry, now)
+            .map_err(|_| Refuse::by(GateRule::Ledger))?;
+        self.usage.record(&entry, now);
+        Ok(ask)
     }
 
     /// Records that one of `principal`'s waiting asks closed, held or not:
