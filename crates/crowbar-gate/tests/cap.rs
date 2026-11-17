@@ -6,11 +6,11 @@
 
 use crowbar_authority::{Authority, Change, Grant, Holder, Rule, StandingId};
 use crowbar_capability::{Cost, EffectLimits, Principal, Rate, Resource, Right, Rights};
-use crowbar_gate::{Act, Caller, Decision, Operation, Presented, Use, UseCost};
-use crowbar_labels::Compartment;
+use crowbar_gate::{Act, AskWhy, Caller, Decision, Operation, Presented, Use, UseCost};
+use crowbar_labels::{Compartment, Fetch, MarkSource, Origin, Site};
 
 mod common;
-use common::{Bench, NOW, handle, task, using};
+use common::{Bench, NOW, asked, by, handle, task, using};
 
 /// Thirty days, in seconds.
 const MONTH: u64 = 2_592_000;
@@ -102,6 +102,63 @@ fn under_a_rule_with_a_cap_an_act_whose_cost_depends_on_a_value_is_allowed_if_wi
 
     assert_eq!(
         bench.decide(&paying(&run, &Compartment::fresh(), &held, &pay()), NOW),
+        Decision::AllowedWithinCap { under, cap: CAP }
+    );
+}
+
+#[test]
+fn under_a_rule_with_no_cap_the_same_act_still_asks() {
+    let uncapped = Rule { cap: None, ..rule() };
+    let mut bench = Bench::with(vec![Change::Granted(grant()), Change::RuleAdded(uncapped)]);
+    let run = task("run-41");
+    let held = on_the_account(&run);
+
+    assert_eq!(
+        bench.decide(&paying(&run, &Compartment::fresh(), &held, &pay()), NOW),
+        asked(AskWhy::DependsOnValue)
+    );
+}
+
+#[test]
+fn a_cap_fires_only_for_the_holder_of_the_rule() {
+    // An ad hoc task holds no standing authority, whatever it is named.
+    let mut bench = Bench::with(vec![Change::Granted(grant()), Change::RuleAdded(rule())]);
+    let ad_hoc = task(STANDING_TASK);
+    let held = on_the_account(&ad_hoc);
+    let pay = pay();
+    let act = Act::Use {
+        handle: Some(&held),
+        using: &pay,
+    };
+
+    assert_eq!(
+        bench.decide(&by(&ad_hoc, &Compartment::fresh(), act), NOW),
+        asked(AskWhy::DependsOnValue)
+    );
+}
+
+#[test]
+fn a_cap_fires_for_a_marked_act_only_under_a_rule_for_every_source_that_marked_it() {
+    let news = Origin::WebPage(Fetch::WithoutLogin(Site::new("news.example"))).label_mark();
+    let mut marked = Compartment::fresh();
+    marked.read(&news).expect("a task's compartment grows");
+    let run = task("run-41");
+    let held = on_the_account(&run);
+
+    let mut for_unmarked_work = Bench::with(vec![Change::Granted(grant()), Change::RuleAdded(rule())]);
+    assert_eq!(
+        for_unmarked_work.decide(&paying(&run, &marked, &held, &pay()), NOW),
+        asked(AskWhy::DependsOnValue)
+    );
+
+    let for_news = Rule {
+        sources: [MarkSource::Site(Site::new("news.example"))].into(),
+        ..rule()
+    };
+    let mut bench = Bench::with(vec![Change::Granted(grant()), Change::RuleAdded(for_news)]);
+    let under = standing(bench.authority.as_ref().expect("read"));
+    assert_eq!(
+        bench.decide(&paying(&run, &marked, &held, &pay()), NOW),
         Decision::AllowedWithinCap { under, cap: CAP }
     );
 }
