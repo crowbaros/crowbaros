@@ -11,7 +11,7 @@ use crowbar_gate::{Act, Answer, Ask, AskWhy, Caller, Decision, GateRule, Limit, 
 use crowbar_labels::{Category, Compartment, Fetch, Label, LabelMark, Labeled, MarkSource, ObjectId, Origin, Site};
 
 mod common;
-use common::{Bench, NOW, allowed, asked, by, handle, later, personal, refused, task, using};
+use common::{Bench, NOW, allowed, asked, at, by, handle, later, personal, refused, task, using};
 
 fn provider() -> Party {
     Party::ModelProvider("provider.example".to_string())
@@ -569,6 +569,36 @@ fn revoking_what_an_approval_showed_takes_back_what_it_cleared() {
     assert_eq!(
         connect(&mut bench, &editor(), &compartment, Login::None, sync_host()),
         refused(GateRule::Clearance, Limit::Clearance(Label::Public))
+    );
+}
+
+#[test]
+fn a_grant_that_has_ended_shows_nothing() {
+    // The documents were approved until a time that has passed.
+    let mut changes = the_editors_approval();
+    let Change::Granted(documents) = &mut changes[0] else {
+        panic!("the approval starts with the grant on the documents");
+    };
+    assert!(documents.shows.is_some());
+    documents.limits = EffectLimits::new().until(at(9_000));
+    let mut bench = Bench::with(changes);
+    let compartment = Compartment::fixed([&personal()]);
+    assert_eq!(
+        connect(&mut bench, &editor(), &compartment, Login::None, sync_host()),
+        refused(GateRule::Clearance, Limit::Clearance(Label::Public))
+    );
+}
+
+#[test]
+fn an_approval_does_not_raise_a_model_providers_clearance() {
+    // A model provider is cleared by the person for each category (ADR
+    // 0008). The ledger project's profile showed finance data, and the
+    // provider is cleared for personal.
+    let mut bench = Bench::with(the_ledger_profile());
+    let compartment = Compartment::workbench([&a_ledger_file()]);
+    assert_eq!(
+        model_request(&mut bench, &ledger_workbench(), &compartment),
+        refused(GateRule::Clearance, Limit::Clearance(Label::Personal))
     );
 }
 

@@ -262,7 +262,7 @@ fn use_of(
     }
 
     if let Some(party) = party {
-        let clearance = clearance_for(authority, caller, party);
+        let clearance = clearance_for(authority, caller, party, now);
         if !caller.compartment.label_mark().label().is_at_most(&clearance) {
             return Err(Refuse::with(GateRule::Clearance, Limit::Clearance(clearance)));
         }
@@ -320,9 +320,10 @@ pub(crate) fn over_cap(usage: &Usage, operation: &Operation<'_>, now: Time) -> A
 /// or a workbench reaching a site, it is joined with the most its approval
 /// showed it holding: the approval was the person's signature on that, and
 /// it clears a site for what it approves and for nothing else (ADR 0017).
-/// Whether it may reach this site with no ask is check 6. With no authority
-/// to read, no party is cleared above public.
-fn clearance_for(authority: Option<&Authority>, caller: &Caller<'_>, party: &Party) -> Label {
+/// Whether it may reach this site with no ask is check 6. A grant that was
+/// revoked or has ended shows nothing. With no authority to read, no party
+/// is cleared above public.
+fn clearance_for(authority: Option<&Authority>, caller: &Caller<'_>, party: &Party, now: Time) -> Label {
     let Some(authority) = authority else {
         return Label::Public;
     };
@@ -334,6 +335,7 @@ fn clearance_for(authority: Option<&Authority>, caller: &Caller<'_>, party: &Par
     };
     authority
         .grants(&holder)
+        .filter(|(_, grant)| grant.limits.ended_by(now).is_none())
         .filter_map(|(_, grant)| grant.shows.as_ref())
         .fold(clearance, |cleared, shown| cleared.join(shown))
 }
