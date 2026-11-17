@@ -11,7 +11,7 @@ use crowbar_gate::{Act, Answer, Ask, AskWhy, Caller, Decision, GateRule, Limit, 
 use crowbar_labels::{Category, Compartment, Fetch, Label, LabelMark, Labeled, MarkSource, ObjectId, Origin, Site};
 
 mod common;
-use common::{Bench, NOW, allowed, asked, by, handle, personal, refused, task, using};
+use common::{Bench, NOW, allowed, asked, by, handle, later, personal, refused, task, using};
 
 fn provider() -> Party {
     Party::ModelProvider("provider.example".to_string())
@@ -512,6 +512,74 @@ fn a_workbench_for_a_private_project_reaches_a_site_on_its_profile_without_askin
     assert_eq!(
         connect(&mut bench, &ledger_workbench(), &compartment, Login::None, registry()),
         Decision::Allowed { under }
+    );
+}
+
+#[test]
+fn a_workbench_for_a_private_project_asks_each_time_it_connects_to_a_host_not_on_its_profile() {
+    // Attack A31, at the gate. The workbench holds what its profile
+    // showed, so it is asked, and not refused. A yes adds the host for
+    // that run only (ADR 0017), and the gate keeps nothing of it: after
+    // the workbench stops and starts again, the same connection asks.
+    let mut bench = Bench::with(the_ledger_profile());
+    let first_run = Compartment::workbench([&a_ledger_file()]);
+    assert_eq!(
+        connect(&mut bench, &ledger_workbench(), &first_run, Login::None, news()),
+        asked(AskWhy::Crosses)
+    );
+    bench.gate.ask_closed(&ledger_workbench(), later(60)).expect("recorded");
+
+    let second_run = Compartment::workbench([&a_ledger_file()]);
+    assert_eq!(
+        connect(&mut bench, &ledger_workbench(), &second_run, Login::None, news()),
+        asked(AskWhy::Crosses)
+    );
+}
+
+#[test]
+fn a_workbench_that_holds_more_than_its_profile_showed_is_refused_at_any_host() {
+    // The profile showed finance data. The workbench's view also holds a
+    // health summary, which no one approved it to hold.
+    let mut bench = Bench::with(the_ledger_profile());
+    let compartment = Compartment::workbench([&a_ledger_file(), &a_health_summary()]);
+    for host in [registry(), news()] {
+        assert_eq!(
+            connect(&mut bench, &ledger_workbench(), &compartment, Login::None, host),
+            refused(GateRule::Clearance, Limit::Clearance(Label::private(Category::Finance)))
+        );
+    }
+}
+
+#[test]
+fn revoking_what_an_approval_showed_takes_back_what_it_cleared() {
+    let holder = Holder::Installed("editor".to_string());
+    let approved = Bench::with(the_editors_approval());
+    let (documents, _) = approved
+        .authority
+        .as_ref()
+        .expect("read")
+        .grants(&holder)
+        .find(|(_, grant)| grant.shows.is_some())
+        .expect("the approval showed the documents");
+
+    let mut changes = the_editors_approval();
+    changes.push(Change::Revoked(documents));
+    let mut bench = Bench::with(changes);
+    let compartment = Compartment::fixed([&personal()]);
+    assert_eq!(
+        connect(&mut bench, &editor(), &compartment, Login::None, sync_host()),
+        refused(GateRule::Clearance, Limit::Clearance(Label::Public))
+    );
+}
+
+#[test]
+fn with_no_authority_to_read_an_approval_clears_nothing() {
+    // The person may have revoked the approval, so nothing is read from it.
+    let mut bench = Bench::without_authority();
+    let compartment = Compartment::fixed([&personal()]);
+    assert_eq!(
+        connect(&mut bench, &editor(), &compartment, Login::None, sync_host()),
+        refused(GateRule::Clearance, Limit::Clearance(Label::Public))
     );
 }
 
