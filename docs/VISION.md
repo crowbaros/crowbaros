@@ -373,7 +373,8 @@ in batches. An act the person answered leaves at once.
   their mail, and it rises to that source's label and mark. Then it may read
   and discuss what it was given. It is no longer clean for as long as it lives,
   and every act of its that crosses asks with the exact content, a link it
-  shows included. The Agent cannot mark or raise its own conversation, the frame
+  shows included. The one thing it sends with no ask is the turn the person
+  just typed, as a lookup. The Agent cannot mark or raise its own conversation, the frame
   shows the label and mark, and a clean conversation is one action away. The
   first time a conversation is pointed at a category of private data, one
   signature clears the model provider for that category.
@@ -387,7 +388,9 @@ in batches. An act the person answered leaves at once.
   put into a conversation goes to its model provider too.
 - **Lookups.** A **lookup** answers a question from the open web. It holds only
   the words the person typed, exactly as typed, and what it found. Nothing
-  private is in it, so it starts and takes follow-ups with no ask. A compartment
+  private is in it, so it starts and takes follow-ups with no ask. That holds
+  from a conversation that is no longer clean too: the lookup gets the turn the
+  person typed last, and nothing that conversation read. A compartment
   that holds only public data and no login may reach any host on the open
   internet.
 - **Only the person's own words are theirs.** What the person types reaches the

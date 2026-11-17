@@ -43,7 +43,7 @@ Four cases:
 - **A pick** in the powerbox, as before.
 - **A link the person clicks in an app's window** opens in their browser. The address is a value moved by hand. The same holds for a link in a clean conversation and in a lookup's answer.
 - **A link shown by a Tool, or by a conversation that is no longer clean, is that compartment's act.** Whatever may be steering it composed the address. A click on it asks, with the full address shown, unless a standing rule covers it ([ADR 0008](0008-private-values-stay-out-of-the-agent-context.md)).
-- **A request the person types.** A lookup started from the turn they just typed leaves with those words, exactly as typed, and with no ask ([ADR 0011](0011-task-principals.md)). A conversation they point at a source may read it (ADR 0008).
+- **A request the person types.** A lookup started from the turn they just typed leaves with those words, exactly as typed, and with no ask, whether or not the conversation is clean ([ADR 0011](0011-task-principals.md)). A conversation they point at a source may read it (ADR 0008).
 
 ## What this gives up
 

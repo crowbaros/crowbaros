@@ -725,8 +725,12 @@ compartment of its own. See
   while it is personal and unmarked. Its frame shows its label and mark. It can
   read and discuss what it was given.
 - **Every act that crosses, from a conversation that is no longer clean,
-  asks,** with the exact content shown. A lookup it starts is one of those
-  acts, and so is a link it shows. A standing task started from it runs marked.
+  asks,** with the exact content shown. A link it shows is one of those acts,
+  and so is anything it composes for a lookup. A standing task started from it
+  runs marked.
+- **One thing leaves it with no ask: the turn the person typed last, as a
+  lookup.** The turn goes whole and unchanged, once, and the lookup's
+  compartment holds nothing else that the conversation holds.
 - **What it writes keeps its label and mark:** an entry in Agent memory, which
   a new conversation does not load, and an intent or a check. A build from such
   an intent or check is not clean, so the grant asks again, with a signature.
@@ -854,10 +858,13 @@ machine or an outside party may hold. For private data it names the categories.
   pages it reads. It cannot see Agent memory or the person's Data. So it is
   public, and it starts, keeps searching, and takes the person's follow-ups with
   no ask. The broker checks its objective against what the shell recorded: it is
-  one whole turn the person typed, unchanged. Any text the Agent adds to those
+  the turn the person typed last, whole and unchanged. One turn starts one
+  lookup, and a second from the same turn asks. Any text the Agent adds to those
   words is shown to the person before it leaves, as a release in full: the exact
-  text, and where it may go. A lookup started from a conversation that is no longer clean
-  is one of that conversation's acts that cross, so it asks. A standing task
+  text, and where it may go. A lookup started from a conversation that is no
+  longer clean follows the same rule: it holds the turn the person typed last
+  and nothing else that the conversation holds, so it starts with no ask.
+  Anything else that conversation would send as a lookup asks. A standing task
   that looks things up has a fixed objective.
 - **A compartment that holds only public data and no login may reach any host
   on the open internet without asking.** Machines in the fleet and addresses on

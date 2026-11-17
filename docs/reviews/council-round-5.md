@@ -78,9 +78,9 @@ Jim answered yes to every question but one.
 | 4 | The person's own hand | A paste, a pick, a drop, a clicked link, or a typed request is never refused and never followed by an ask about that act. The second pass narrowed the last two. | ADR 0025 |
 | 5 | When an ask shows | It waits. It never takes the keyboard, and it is never refused for arriving too fast. | ADR 0026 |
 | 6 | How many answers | Three: a plain answer, the confirm gesture, a signature, by what is at stake. | ADR 0026, ADR 0014 |
-| 7 | What a conversation may read | What the person points it at. It is then marked for life, and its sends ask. | ADR 0008 |
+| 7 | What a conversation may read | What the person points it at. It is then marked for life, and its sends ask. After the second pass Jim decided one exception: the turn the person just typed leaves as a lookup with no ask. | ADR 0008 |
 | 8 | A logged-in site | One answer for each task and each site, not one for each request. The second pass found that the Allowance does not cap a payment method the site already stores. | ADR 0013 |
-| 9 | The numbers | 0, 1, 2, 2, and 1 asks by kind of task; 5 and 8 asks a day; no refusal of what the person did by hand. It is called the friction bar. | ADR 0024, [Milestone 2](../milestones/milestone-2.md) |
+| 9 | The numbers | 0, 1, 2, 2, and 1 asks by kind of task; 5 and 8 asks a day; no refusal of what the person did by hand. It is called the friction bar. After the second pass, task 13 moved from 1 to 0. | ADR 0024, [Milestone 2](../milestones/milestone-2.md) |
 | 10 | A value moved by hand | Its label is released and its mark is kept. | ADR 0025, ADR 0019 |
 | 11 | A lookup | A compartment of its own that holds only the typed words and what it found. | ADR 0011 |
 | 12 | A conversation | Each exchange with the Agent is one. It rises only when the person points it at something. | ADR 0008 |
@@ -114,7 +114,9 @@ Writing the answers down needed these. Each is the narrower reading.
   unchanged**, and the broker checks it against what the shell recorded.
   (ADR 0011)
 - **A lookup started from a conversation that is no longer clean asks.** Question 7
-  already says that conversation's sends ask. (ADR 0011)
+  already says that conversation's sends ask. Jim decided otherwise after the
+  second pass: see [his decisions](#jims-decisions-on-the-second-pass).
+  (ADR 0011)
 - **A task that composes its act later starts with no ask.** The bar gives a
   task with one act that leaves one ask, so the start and the act cannot each
   take one. (ADR 0011)
@@ -187,6 +189,9 @@ Each is in the [threat model](../threat-model.md) under what remains.
 - A plain answer can be made up by a bug in the shell, and a click can be
   arranged under a moving cursor, for what can be undone.
 - The person no longer sees an ask the moment it is raised.
+- A steered conversation can send the turn the person just typed out as a
+  lookup, and can signal by whether it does. Added by Jim's decision after the
+  second pass.
 
 ## Not done in this round
 
@@ -221,8 +226,8 @@ near the bar. The other day is at or over it in two of the three estimates,
 mostly through lookups started from a conversation that has read mail.
 
 **Were they satisfied?** Each said yes, once the items below are fixed and Jim
-has seen the choices listed for him. The fixes are made. Jim has not yet
-decided.
+has seen the choices listed for him. The fixes are made, and Jim's decisions
+follow the table.
 
 | Finding | Raised by | Closed in |
 | --- | --- | --- |
@@ -241,31 +246,37 @@ decided.
 | Loosened rules without an attack, and one row worded too widely. | Sol, Fable | Milestone 2 rows A21 to A24 and A27 revised, and A31 to A34 and B9 added. |
 | Earlier rules left standing in ADRs 0004, 0011, 0014, and 0018, the vision, the threat model, and Milestone 2. | All three | Each is corrected. |
 
-### For Jim to decide
+### Jim's decisions on the second pass
 
-The reviewers asked that Jim see these. The text takes the narrower reading of
-each until he does.
+The reviewers asked that Jim see nine choices. The text took the narrower
+reading of each until he decided, on November 16, 2026.
 
-1. **A payment method a site already stores.** Accept it as given up, as
-   written, or treat every site that stores one as adapter-only.
-2. **Links.** As written, or ask on a click from any compartment above public,
-   which adds an ask to a link clicked in mail.
-3. **A lookup from a conversation that is no longer clean.** As written it asks,
-   and it is most of the gap between the day of a person who is not a developer
-   and the bar. The other reading: no ask when the objective is exactly the turn
-   the person typed last.
-4. **Pasted text in a lookup.** As written the Agent must ask before it adds a
-   pasted error to a lookup. The other reading: a paste in that turn is part of
-   the turn.
-5. **Task 13's number.** The bar gives it 1, and a rule with a cap now fires
-   with none.
-6. **The shell carries a plain answer.**
-7. **A Tool change asked for in a conversation that is no longer clean costs a
-   signature.**
-8. **Fixed rules match typed words to a source**, and a wrong match lets the
-   Agent open a source the person did not mean.
-9. **A catalog snapshot that changes the two lists takes a signature, and a
-   wide compartment keeps its signature.**
+| # | Choice | Decision |
+| --- | --- | --- |
+| 1 | A payment method a site already stores | Accepted as given up, as written. The ask for the site says so, and the person can put any site on the adapter-only list. |
+| 2 | Links | As written. A link in an app, in a clean conversation, or in a lookup's answer opens. One shown by a Tool, or by a conversation that is no longer clean, asks on the click. |
+| 3 | A lookup from a conversation that is no longer clean | **Changed.** It no longer asks when it sends exactly the turn the person typed last. Anything else that conversation would send still asks. |
+| 4 | Pasted text in a lookup | As written. The Agent asks before it adds pasted text to a lookup. |
+| 5 | Task 13's number | **Changed** from 1 to 0. A rule with a cap fires without an ask. |
+| 6 | The shell carries a plain answer | As written. |
+| 7 | A Tool change asked for in a conversation that is no longer clean costs a signature | As written. |
+| 8 | Fixed rules match typed words to a source | As written. |
+| 9 | A catalog snapshot that changes the two lists takes a signature, and a wide compartment keeps its signature | As written. |
+
+Decision 3 was the reading the reviewers named as most of the gap between the
+bar and the day of a person who is not a developer. Writing it down needed
+three choices that were not put to Jim:
+
+- **One turn starts one lookup, from any conversation.** A second from the same
+  turn asks. Without it, a steered conversation could signal by how many it
+  starts. (ADR 0011)
+- **Whether a turn goes out is the conversation's choice**, so a steered one can
+  signal with it, once for each turn the person types. This is named as given
+  up, and Milestone 2 runs it as an attack that is expected to succeed.
+  (ADR 0011, the threat model)
+- **Milestone 2 gains row A35**, which shows what still holds: nothing the
+  conversation read is in the lookup. Row A23 loses the case decision 3
+  reversed, and gains a second lookup started from one turn.
 
 ## For Milestone 2 and the livability review to answer
 

@@ -24,7 +24,8 @@ For one task. The numbers in brackets are [Milestone 2](../milestones/milestone-
 | Task | Most asks |
 | --- | --- |
 | Local and read-only work (1–4, 7–10, 15, 19, 20) | 0 |
-| One act that leaves (5, 6, 11, 13) | 1: the act, with its exact content |
+| An act under a standing rule with a cap (13) | 0 |
+| One act that leaves (5, 6, 11) | 1: the act, with its exact content |
 | A logged-in site (12, 14) | 2 |
 | Build a Tool (16) | 2 |
 | Change a Tool (17, 18) | 1, when its needs do not change |
