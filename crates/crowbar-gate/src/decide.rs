@@ -36,7 +36,8 @@ const HOUR: u64 = 3_600;
 /// It decides only from metadata: handles, labels, marks, limits,
 /// authority, and the declared shape of the operation. A check that would
 /// depend on a value the task cannot read asks, so the person sees the
-/// value.
+/// value. The one exception is a standing rule with a cap: the answer is
+/// then "allowed if within the cap", and the adapter checks the amount.
 ///
 /// An operation with an idempotency key the caller used before gets the
 /// first decision again. The same key on a different operation is refused
@@ -54,7 +55,7 @@ const HOUR: u64 = 3_600;
 ///    often. A copy's uses count against its original's limits too, so
 ///    passing a handle on never multiplies what it allows. A delegation's
 ///    copy must be within the original's limits. A cost that depends on a
-///    value asks.
+///    value counts as nothing here, and check 6 decides it.
 /// 4. **The label and mark at issuance**: a Data handle's label and mark
 ///    are at or above the join of its objects' origins. An object with no
 ///    record is the unknown row.
@@ -69,6 +70,15 @@ const HOUR: u64 = 3_600;
 ///    decision (ADR 0011): a model request, and a connection to a host on
 ///    the open internet by a task or a workbench that holds only public
 ///    data and no login. With no authority to read, every crossing asks.
+///
+///    A use whose cost depends on a value needs a standing grant and a
+///    standing rule with a cap, by the same checks. With them the answer
+///    is [`Decision::AllowedWithinCap`]: the gate never reads the amount,
+///    and the adapter checks it against the cap when it carries the act
+///    out. The use counts as the whole cap against every limit on cost,
+///    the handle's among them. Without them it asks, and the person sees
+///    the value. A fixed cost over a rule's cap is not covered by that
+///    rule.
 /// 7. **The ask**, if the result is an ask: the answer it takes, and whether
 ///    it is held (ADR 0026). A use inside the undo boundary takes a plain
 ///    answer, and a crossing takes the confirm gesture. Installed software

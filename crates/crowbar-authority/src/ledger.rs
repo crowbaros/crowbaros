@@ -45,7 +45,9 @@ pub struct LedgerEntry {
     /// counts as one operation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub objects: Option<u64>,
-    /// What the operation cost, where that was a fixed amount.
+    /// What the operation cost, where that was a fixed amount. An amount
+    /// the task cannot read is never recorded: a use allowed within a cap
+    /// names the cap in its decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost: Option<Cost>,
     /// The idempotency key the task attached, with the digest of the

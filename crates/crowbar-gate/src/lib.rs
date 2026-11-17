@@ -12,6 +12,11 @@
 //!   and no network. It decides only from metadata, and a check that would
 //!   depend on a value the task cannot read asks, so the person sees the
 //!   value.
+//! - Under a **standing rule with a cap**, a use whose cost depends on a
+//!   value is "allowed if within the cap". The gate still reads no amount.
+//!   The [`Allowed`] carries the cap, the adapter checks the amount against
+//!   it when it carries the act out, and over the cap it carries nothing
+//!   out and the act asks ([`Gate::over_cap`]).
 //! - A **dry run** ([`Gate::dry_run`]) is the same decision, with nothing
 //!   counted, no ask opened, nothing issued, and nothing added to the ledger.
 //! - A **refusal** names a rule and the limit that applied, from one closed

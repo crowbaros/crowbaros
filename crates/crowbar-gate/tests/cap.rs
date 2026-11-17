@@ -5,7 +5,7 @@
 //! and the act asks (ADR 0021, attack A30).
 
 use crowbar_authority::{Authority, Change, Event, Grant, Holder, Rule, StandingId};
-use crowbar_capability::{Cost, EffectLimits, Principal, Rate, Resource, Right, Rights};
+use crowbar_capability::{Cost, EffectLimits, IdempotencyKey, Principal, Rate, Resource, Right, Rights};
 use crowbar_gate::{
     Act, Allowed, Answer, Ask, AskWhy, Caller, Decision, GateRule, Held, Operation, Presented, Refuse, Ruling, Use,
     UseCost,
@@ -423,4 +423,42 @@ fn a_fixed_cost_is_checked_against_the_cap_by_the_gate_itself() {
         bench.decide(&paying(&run, &compartment, &held, &costing(15_001)), later(1)),
         asked(AskWhy::Crosses)
     );
+}
+
+#[test]
+fn a_repeated_key_gets_allowed_if_within_the_cap_again_with_nothing_to_carry_out() {
+    let twice_a_month = Rule {
+        limits: EffectLimits::new().rate(Rate::per(2, MONTH)),
+        ..rule()
+    };
+    let mut bench = Bench::with(vec![Change::Granted(grant()), Change::RuleAdded(twice_a_month)]);
+    let under = standing(bench.authority.as_ref().expect("read"));
+    let run = task("run-41");
+    let held = on_the_account(&run);
+    let (compartment, pay) = (Compartment::fresh(), pay());
+    let key = IdempotencyKey::new("march");
+    let operation = Operation {
+        key: Some(&key),
+        ..paying(&run, &compartment, &held, &pay)
+    };
+    let within_the_cap = Decision::AllowedWithinCap { under, cap: CAP };
+
+    // The first attempt was over the cap, and the ask waits.
+    let allowed = allowed_for(&mut bench, &operation);
+    bench.gate.over_cap(allowed, &operation, NOW).expect("recorded");
+
+    // The retry is the gate's first decision again. It carries no
+    // `Allowed`, so the adapter is given nothing to carry out.
+    for retry in 1..=3 {
+        match bench.gate.decide(bench.authority.as_ref(), &operation, later(retry)) {
+            Ruling::Repeated(decision) => assert_eq!(decision, within_the_cap),
+            other => panic!("not a repeat: {other:?}"),
+        }
+    }
+    // The retries count nothing: the decision, then the ask, and the rule
+    // has one attempt left this month.
+    assert_eq!(bench.gate.ledger().entries().len(), 2);
+    bench.gate.ask_closed(&run, later(4)).expect("recorded");
+    let unkeyed = paying(&run, &compartment, &held, &pay);
+    assert_eq!(bench.decide(&unkeyed, later(5)), within_the_cap);
 }

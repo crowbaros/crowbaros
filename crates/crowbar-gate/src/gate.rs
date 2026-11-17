@@ -163,7 +163,9 @@ impl Allowed {
 /// What the gate ruled on an operation it was asked to carry out.
 #[derive(Debug)]
 pub enum Ruling {
-    /// Allowed: carry it out, spending this `Allowed`.
+    /// Allowed: carry it out, spending this `Allowed`. One given under a
+    /// standing rule with a cap carries the cap, and covers the act only
+    /// for an amount within it ([`Allowed::covers_use_costing`]).
     Allowed(Allowed),
     Refused(Refuse),
     /// Put to the person, to wait for an answer. An ask that is held is one

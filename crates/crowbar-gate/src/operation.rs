@@ -95,8 +95,10 @@ pub enum UseCost {
     /// A fixed amount, known before the use.
     Fixed(Cost),
     /// An amount that depends on a value the task cannot read, such as an
-    /// amount in a handle. The gate cannot check it, so it asks, and the
-    /// person sees the value.
+    /// amount in a handle. The gate cannot check it. Under a standing rule
+    /// with a cap the use is allowed if the amount is within the cap, and
+    /// its adapter checks that. Otherwise it asks, and the person sees the
+    /// value.
     DependsOnValue,
 }
 
