@@ -220,9 +220,13 @@ _Avoid_: Standing rule, permanent permission
 A person's pre-approval, with a rate limit, for a narrow kind of act that crosses the undo boundary, so that act doesn't ask again. It is held by a Tool, a standing task, or a workbench, never by the Agent. An act that crosses needs both the grant (access) and the rule (no ask).
 _Avoid_: Standing grant, allowlist
 
+**Refusal**:
+The gate's no to an operation. It names the rule and the limit that applied, never a value, and nothing happens.
+_Avoid_: Denial, permission denied, block, error
+
 **Ask**:
 A question the broker puts to the person in trusted UI, with an ID, exact content, and an expiry. The shell draws it, and one confirm gesture or one signature answers it.
-_Avoid_: Prompt, dialog, popup
+_Avoid_: Prompt, dialog, popup, permission request
 
 **Armed**:
 The state of an ask that is visible, on top, holding the keyboard, and steady for long enough that the confirm gesture can answer it.
