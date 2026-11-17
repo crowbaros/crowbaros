@@ -17,7 +17,8 @@
 //! - **compartments**: a [`Compartment`] is at the join of everything it has
 //!   read, for as long as it lives, and so is everything it emits. A native
 //!   sandbox is fixed at the join of its view when it starts, and a workbench
-//!   is always marked;
+//!   is always marked. A value the person moved in by hand is released: the
+//!   compartment takes its mark and not its label, and nothing is refused;
 //! - **storage**: a [`LabelStore`] write joins with what is stored, and the
 //!   records keep every label and mark when they are saved and loaded.
 //!
@@ -25,8 +26,8 @@
 //! the person can do, and clearances, which the gate checks, are not in this
 //! crate.
 //!
-//! Decisions: ADR 0003, ADR 0008, ADR 0011, ADR 0016, ADR 0017, and ADR 0019
-//! in `docs/adr/`. Design: `docs/architecture/capability-model.md`, "Data,
+//! Decisions: ADR 0003, ADR 0008, ADR 0011, ADR 0016, ADR 0017, ADR 0019, and
+//! ADR 0025 in `docs/adr/`. Design: `docs/architecture/capability-model.md`, "Data,
 //! labels, and compartments". Scope: `docs/milestones/milestone-2.md`.
 
 mod compartment;

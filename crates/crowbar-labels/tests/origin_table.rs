@@ -63,8 +63,17 @@ fn every_origin_gets_its_label_and_mark_from_the_table() {
             private(&[Category::Messages]),
             marks([S::Mail(me.clone())]),
         ),
-        // ADR 0011: files from outside are open. No record gives their label,
-        // so it fails closed.
+        // ADR 0019, ADR 0025: the person chose a file they bring in by hand,
+        // so its label is theirs to decide. A stranger may have written it,
+        // so it is marked.
+        (
+            "file the person brought in by hand",
+            Origin::File(FileOrigin::BroughtInByHand),
+            Label::Personal,
+            marks([S::Outside]),
+        ),
+        // ADR 0011: files from outside are open. With no act of the person's
+        // behind one, no record gives its label, so it fails closed.
         (
             "file from outside",
             Origin::File(FileOrigin::FromOutside),

@@ -11,8 +11,10 @@ use crate::mark::{LabelMark, Mark, MarkSource};
 ///
 /// Once a compartment reads a value it is at least at that value's label and
 /// carries its mark, for as long as it lives, and so is everything it emits
-/// (ADR 0008). Nothing here lowers either. A compartment ends when it is
-/// dropped; a new start is a new compartment.
+/// (ADR 0008). The one exception is a value the person moved in by hand: it
+/// is released, so the compartment takes its mark and not its label
+/// (ADR 0025). Nothing here lowers a label or removes a mark. A compartment
+/// ends when it is dropped; a new start is a new compartment.
 ///
 /// It cannot be copied. A copy taken before a read would keep emitting at the
 /// lower label, from the same start:
@@ -88,7 +90,9 @@ impl Compartment {
 
     /// Reads a value with this label and mark. A compartment that can grow
     /// rises to the join. A fixed one takes only what is already at or below
-    /// its label and mark, and refuses the rest.
+    /// its label and mark, and refuses the rest. A value the person moved in
+    /// by hand does not come this way: see
+    /// [`Compartment::moved_in_by_hand`].
     pub fn read(&mut self, value: &LabelMark) -> Result<(), ReadRefused> {
         match self.growth {
             Growth::Grows => {

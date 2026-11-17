@@ -5,10 +5,10 @@
 
 use std::collections::BTreeSet;
 
-use crowbar_labels::{Compartment, Fetch, Label, MarkSource, Origin};
+use crowbar_labels::{Category, Compartment, Fetch, FileOrigin, Label, LabelMark, MarkSource, Origin};
 
 mod common;
-use common::{me, news, sources};
+use common::{bank, me, news, private, sources};
 
 #[test]
 fn text_pasted_from_a_web_page_into_notes_lands_and_what_the_notes_app_saves_carries_the_mark() {
@@ -69,4 +69,118 @@ fn a_stack_trace_pasted_from_a_web_page_into_a_workbench_changes_nothing() {
 
     assert_eq!(workbench.label_mark(), &before);
     assert_eq!(workbench.emit("a commit").label_mark(), &before);
+}
+
+#[test]
+fn photos_imported_from_a_camera_card_are_personal_and_marked_as_from_outside() {
+    let photos = Origin::File(FileOrigin::BroughtInByHand).label_mark();
+
+    // The person chose them, so the label is theirs to decide.
+    assert_eq!(photos.label(), &Label::Personal);
+    // A stranger may have written them, so the mark is kept.
+    assert_eq!(sources(&photos), BTreeSet::from([MarkSource::Outside]));
+
+    // A file from outside with no act of the person's behind it still fails
+    // closed.
+    let dropped_off = Origin::File(FileOrigin::FromOutside).label_mark();
+    assert_eq!(dropped_off.label(), &private(&[Category::Unknown]));
+    assert_eq!(sources(&dropped_off), BTreeSet::from([MarkSource::Outside]));
+}
+
+#[test]
+fn a_conversation_the_person_pastes_into_stays_at_its_label_and_takes_the_values_mark() {
+    // ADR 0008: a value with no mark, such as the person's own note, leaves
+    // the conversation clean.
+    let mut conversation = Compartment::fresh();
+    conversation.moved_in_by_hand(&Origin::Typed.label_mark());
+    assert_eq!(conversation.label_mark().label(), &Label::Public);
+    assert!(!conversation.label_mark().mark().is_marked());
+
+    // A page of the bank's, under a login, is private to that site. Pasted
+    // in, it marks the conversation and does not raise it.
+    conversation.moved_in_by_hand(&Origin::WebPage(Fetch::UnderLogin(bank())).label_mark());
+    assert_eq!(conversation.label_mark().label(), &Label::Public);
+    assert_eq!(
+        sources(conversation.label_mark()),
+        BTreeSet::from([MarkSource::Site(bank())])
+    );
+
+    // What it reads any other way still raises it.
+    conversation
+        .read(&Origin::Mail { account: me() }.label_mark())
+        .expect("a conversation's compartment grows");
+    assert_eq!(conversation.label_mark().label(), &private(&[Category::Messages]));
+}
+
+/// One of each kind of compartment, each holding something already.
+fn compartments() -> Vec<(&'static str, Compartment)> {
+    let note = Origin::Typed.label_mark();
+    let download = Origin::File(FileOrigin::Downloaded(Fetch::WithoutLogin(news()))).label_mark();
+    let mut task = Compartment::fresh();
+    task.read(&note).expect("a task's compartment grows");
+    task.read(&download).expect("a task's compartment grows");
+    vec![
+        ("a new start", Compartment::fresh()),
+        ("a task that has read a note and a download", task),
+        ("installed software", Compartment::fixed([&note, &download])),
+        ("a workbench", Compartment::workbench([&note])),
+    ]
+}
+
+/// A value from every row of the origin table that gives a label and mark
+/// of its own.
+fn values() -> Vec<LabelMark> {
+    [
+        Origin::Typed,
+        Origin::Template,
+        Origin::Mail { account: me() },
+        Origin::WebPage(Fetch::WithoutLogin(news())),
+        Origin::WebPage(Fetch::UnderLogin(bank())),
+        Origin::File(FileOrigin::FromOutside),
+        Origin::File(FileOrigin::BroughtInByHand),
+        Origin::Pasted { copied_from: None },
+        Origin::Unknown,
+    ]
+    .iter()
+    .map(Origin::label_mark)
+    .collect()
+}
+
+#[test]
+fn a_move_by_hand_is_never_refused_never_changes_a_label_and_never_removes_a_mark() {
+    for value in values() {
+        for (name, mut compartment) in compartments() {
+            let before = compartment.label_mark().clone();
+
+            compartment.moved_in_by_hand(&value);
+
+            let after = compartment.label_mark();
+            assert_eq!(after.label(), before.label(), "label of {name} after {value:?}");
+            assert!(
+                before.mark().is_at_most(after.mark()),
+                "{name} lost a mark after {value:?}"
+            );
+            assert_eq!(
+                compartment.emit("a file").label_mark(),
+                after,
+                "what {name} emits after {value:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_compartment_but_a_workbench_carries_the_mark_of_what_was_moved_into_it() {
+    for value in values() {
+        for (name, mut compartment) in compartments() {
+            let is_workbench = sources(compartment.label_mark()).contains(&MarkSource::Workbench);
+            compartment.moved_in_by_hand(&value);
+            if !is_workbench {
+                assert!(
+                    value.mark().is_at_most(compartment.label_mark().mark()),
+                    "{name} does not carry the mark of {value:?}"
+                );
+            }
+        }
+    }
 }
