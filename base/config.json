@@ -1,0 +1,26 @@
+{
+  "comment": "The CrowbarOS base: plain Void Linux, built rootless and booted under UEFI. See README.md.",
+  "void_repository": "https://repo-default.voidlinux.org/current",
+  "xbps_static_url": "https://repo-default.voidlinux.org/static/xbps-static-static-0.60.4_1.x86_64-musl.tar.xz",
+  "xbps_static_sha256": "603b3c55e9cabd5af79b461b929b14e1556a443c97b5714d188681c2172d9e28",
+  "packages": [
+    "base-minimal",
+    "linux",
+    "btrfs-progs",
+    "grub-x86_64-efi",
+    "mtools",
+    "openssh",
+    "dhcpcd",
+    "iproute2"
+  ],
+  "hostname": "crowbaros",
+  "root_label": "crowbaros-root",
+  "esp_label": "CROWBAROS",
+  "esp_mib": 64,
+  "root_gib": 4,
+  "memory_mib": 2048,
+  "vcpus": 2,
+  "ssh_port": 22240,
+  "firmware_code": "/usr/share/edk2/x64/OVMF_CODE.4m.fd",
+  "firmware_vars": "/usr/share/edk2/x64/OVMF_VARS.4m.fd"
+}

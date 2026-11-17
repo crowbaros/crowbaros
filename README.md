@@ -33,6 +33,7 @@ The full roadmap is in the [vision](docs/VISION.md#roadmap).
 
 | Path | Contents |
 | --- | --- |
+| [`base/`](base/) | The rebuild's starting point: plain Void Linux, built without root, that boots under UEFI in a VM |
 | [`crates/`](crates/) | The Rust workspace: the Crowbar State, the apply engine, and the skeleton crates for Milestone 2 |
 | [`apps/`](apps/) | The GPUI interfaces: desktop shell, Studio Settings, and the GPUI probe |
 | [`compositor/`](compositor/) | The CrowbarOS Wayland compositor, on Smithay |
@@ -52,6 +53,7 @@ The full roadmap is in the [vision](docs/VISION.md#roadmap).
 ```sh
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+base/void_base.py check            # build the Void base, boot it, and check it
 lab/void/void_lab.py milestone     # the full Milestone 1 loop in a Void Linux VM
 ```
 
