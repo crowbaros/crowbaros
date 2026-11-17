@@ -1,7 +1,7 @@
 """The record of one run, and the check of its format.
 
 Every request that reached a fixture, every effect it had, every ask and
-answer, and every control action: one canonical JSON object per line,
+answer, every act of the person's hand, and every control action: one canonical JSON object per line,
 numbered from 1, timed by the lab clock.
 """
 import json
@@ -27,6 +27,7 @@ RECORD_KINDS = {
     "ask": ("ask", "rule", "task", "ask_kind", "words", "takes", "content", "items",
             "destination", "line", "sha256"),
     "answer": ("ask", "answer", "by", "with", "struck", "sha256"),
+    "hand": ("hand", "act", "detail"),
 }
 TIME = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
 

@@ -203,6 +203,65 @@ class Asks(Service):
         self.decline(by, lambda held: True)
 
 
+class Hand(Service):
+    """The stand-in for the person's hand: what the compositor and the shell
+    see the person do (ADR 0025). The compositor's four paste acts are its
+    fourth slice, so until then a run's script makes each act here.
+
+    Only the control service makes an act: a paste, a drop, a click on a
+    link, or a turn the person types. The system under test reads them, and
+    can make none. Anything else it sends is a request in the record, so a
+    compartment that claims an act the person did not make is seen.
+
+    GET /acts         every act so far, in order
+    GET /acts/{id}    one act
+
+    An act names where it happened by the names the run gives its windows
+    and conversations. A paste and a drop move "content" from one to another:
+    text, or a path in the Data folder. A click opens the "address" of a link
+    shown "in" a window. A typed turn is the "words", exactly as typed, "in" a
+    conversation.
+    """
+
+    name = "hand"
+    kind = "stand-in for the person's hand"
+    title = "The person's hand stand-in"
+    ACTS = {"paste": ("from", "to", "content"), "drop": ("from", "to", "content"),
+            "click": ("in", "address"), "type": ("in", "words")}
+
+    def reset(self):
+        self.acts = []
+
+    def make(self, spec):
+        """Record an act of the person's. The caller holds the suite's lock."""
+        require(isinstance(spec, dict) and spec.get("act") in self.ACTS, 400,
+                f"act must be one of {list(self.ACTS)}")
+        parts = self.ACTS[spec["act"]]
+        spec = self.canaries.expand(check_fields(spec, ("act", *parts), (), "an act"))
+        for name in parts:
+            require(isinstance(spec[name], str) and spec[name], 400,
+                    f"{name} must be a non-empty string")
+        act = {"hand": f"hand-{len(self.acts) + 1:04d}", **spec}
+        self.acts.append(act)
+        self.suite.record.add(self.name, "hand", hand=act["hand"], act=act["act"],
+                              detail={name: act[name] for name in parts})
+        return act
+
+    def serve(self, request):
+        suite = self.suite
+        with suite.lock:
+            one = re.fullmatch(r"/acts/(hand-\d{4})", request.path)
+            if request.method == "GET" and request.path == "/acts":
+                return json_response(self.acts)
+            if request.method == "GET" and one:
+                found = [act for act in self.acts if act["hand"] == one.group(1)]
+                return json_response(found[0]) if found else self.error(404, "no such act")
+            status = 405 if one or request.path == "/acts" else 404
+            return suite.record_request(self, request, self.error(
+                status, "the person's acts are read here; nothing the system under test "
+                        "sends makes one"))
+
+
 class Control(Service):
     """The lab's own service, for the smoke check and the red-team harness,
     never for the system under test. Reads are not recorded, so polling cannot
@@ -224,6 +283,8 @@ class Control(Service):
     POST /asks/dismiss   {"line"}: decline every ask held in a line
     POST /tasks/end      {"task"}: end a task, which declines the asks it left
                          waiting
+    POST /hand           {"act": "paste" | "drop" | "click" | "type", ...}: make
+                         an act of the person's (see Hand)
     POST /model/script   replace the model provider's script
     """
 
@@ -285,6 +346,8 @@ class Control(Service):
             suite.asks.answer(body["ask"], body["answer"], "control", body.get("with"),
                               body.get("strike", []))
             return json_response(body)
+        if path == "/hand":
+            return json_response(suite.hand.make(body), 201)
         if path == "/asks/dismiss":
             line = check_fields(body, ("line",))["line"]
             in_line = lambda held: held["line"] == line
@@ -320,12 +383,13 @@ class Suite:
         self.services = {cls.name: cls(self) for cls in PARTIES}
         self.model = self.services["model"]
         self.asks = Asks(self)
+        self.hand = Hand(self)
         self.control = Control(self)
         self.faults = Faults([*self.services, self.asks.name], self.canaries)
         self.servers = {}
 
     def all_services(self):
-        return [*self.services.values(), self.asks, self.control]
+        return [*self.services.values(), self.asks, self.hand, self.control]
 
     def start(self):
         for service in self.all_services():
