@@ -15,6 +15,8 @@ This is the bar the work is accepted against:
 
 There is no standing developer mode. When the person wants something opened up, a wide compartment (ADR 0016) does it for one start and one touch of a key. If confined software is not painless, the confinement is fixed, and no bypass is added.
 
+[ADR 0024](0024-the-friction-bar-ranks-with-the-attack-list.md) makes this the rule for the whole OS and gives it numbers. Revised after council round 5: a project is private or public, a host can be added for one run, and the catalog carries the two lists the browser rule needs.
+
 ## The catalog
 
 - **CrowbarOS keeps its own catalog.** It is the one place where an install is recorded and pinned. An entry names the source, pinned by hash; the needs the person sees; the sandbox profile; and what the app needs from the GPU and from portals. Rolling back installed software is a change to which entries are active.
@@ -29,6 +31,8 @@ There is no standing developer mode. When the person wants something opened up, 
 ## Installing and updating
 
 - **Two ways in, one approval.** The person asks the Agent ("install T3 Code"), or picks the app in the catalog screen the shell draws. Both end at the same trusted approval screen, which shows the app's needs in fixed words. Then the install goes through fork, preview, promote ([ADR 0007](0007-fork-verify-promote.md)).
+- **The approval is a signature, and a list takes one.** An app's needs are standing authority, so its approval is a signature ([ADR 0026](0026-asks-wait-and-take-one-of-three-answers.md)). Several apps the person chose, such as the fifteen they want on a new machine, are shown in full, each with its needs, and take one signature.
+- **The approval is the app's standing grant and standing rule.** Using what the approval screen showed never asks ([ADR 0011](0011-task-principals.md)).
 - **An update that asks for nothing new goes live by itself.** The person sets a standing rule once: an update to an installed app is promoted without asking when it asks for no new access and its checks pass in a fork. An update that asks for more waits for the person. This is the one standing exception to "one confirmation promotes", and the ledger records each promote it makes.
 
 ## The workbench
@@ -36,14 +40,17 @@ There is no standing developer mode. When the person wants something opened up, 
 A **workbench** is a changeable Linux system for one project's dev tools.
 
 - **One workbench for each project, made from a profile.** A profile such as "web dev" lists the folders, the sites (package registries, GitHub, the model APIs), and the needs. The person confirms it once. A dependency that goes bad in one project cannot reach another project's files or logins, and marks stay inside one project.
+- **A project is private or public, and the person says which when they make its workbench.** A private project's workbench reaches only the sites on its list. A public project's workbench holds only public data and no login of its own, so it may reach any host on the open internet without asking ([ADR 0011](0011-task-principals.md)). Secrets stay in the vault, and the broker fills them in only for the hosts they are tied to. A workbench that holds its own login, declared as below, is not public in this sense.
+- **Declaring a project public gives its folders the public label.** That is a declassify, and it is part of the profile the person signs. From then on, a write into those folders from a compartment above public is refused, unless the person's own hand moves the value in ([ADR 0025](0025-what-the-person-does-by-hand-is-the-answer.md)).
+- **A host the profile does not list is added for this run with the confirm gesture.** It lasts until the workbench stops. Adding it to the profile for good takes a signature, and one signature can cover the hosts the person added during the week (ADR 0026).
 - **A workbench is a principal, and each opening is a compartment.** Its system files live on a subvolume owned by the storage user. Each time it opens, the Warden starts a new compartment and maps that subvolume in. Snapshots of the subvolume are its undo. The Crowbar State records the workbench's profile and grants, not what is installed inside it.
 - **It has a block of user IDs, and it starts as root inside.** Package managers and containers need files owned by many users, so the Warden gives a workbench a block of user IDs and writes the user namespace map itself. Blocks never overlap between live compartments, and the subvolume is stored under a block on disk. Every compartment has `no_new_privs`, so `sudo` and setuid programs do nothing inside. The workbench starts as root in its own namespace instead.
 - **Its stated needs come from its profile.** Usually that is a user namespace (root inside, rootless podman, the browser sandbox in Electron and Chromium), tracing inside itself (debuggers), the GPU, and sometimes `/dev/kvm`. The person sees them once, on the approval screen.
 - **Installing inside a workbench never asks.** `apt`, `npm`, `cargo`, `uv`, `mise`, and podman work as on any Linux machine, inside what the workbench was granted.
 - **Dev apps with a window run inside their workbench.** T3 Code, an editor, and a dev server's browser window come from the catalog, are installed into the workbench, and reach the compositor through its one Wayland listener. They share one principal, one compartment, and one mark. A catalog app outside the workbench that reaches in would need an authority boundary between the two, and we would rather not design one.
-- **A workbench is always marked.** It reads the open web all the time. Its standing grants bind to its principal and the exact needs of its profile, with no clean-build condition ([ADR 0011](0011-task-principals.md)). A new need asks the person again.
+- **A workbench is always marked.** It reads the open web all the time. So a value the person pastes into it changes nothing: a paste is never refused, and the workbench already carries the mark ([ADR 0025](0025-what-the-person-does-by-hand-is-the-answer.md)). Its standing grants bind to its principal and the exact needs of its profile, with no clean-build condition ([ADR 0011](0011-task-principals.md)). A new need asks the person again.
 - **Standing rules let it cross.** When the person makes a workbench, they can write standing rules such as "may push to `crowbaros/crowbaros`, except to `main`", carried out by a broker adapter that knows git and GitHub operations. An act no rule covers asks, with its exact content shown.
-- **It is not wide.** A workbench sees only the folders it was granted, never the vault's values, and only the sites on its list. The person can start it wide for one debugging session.
+- **It is not wide.** A workbench sees only the folders it was granted and never the vault's values. For a private project it reaches only the sites on its list. The person can start it wide for one debugging session.
 
 ## Writes
 
@@ -84,9 +91,14 @@ A wide compartment reaches the network the same way, with every destination gran
 - **A network interface with a route for pass-through.** Rejected: it breaks ADR 0004 and ADR 0016. A broker relay does the same job.
 - **Adapters only.** Rejected: an app with no adapter would not work, and "there is always a way" would be false.
 - **Letting an app hold a login freely.** Rejected: the person would not know which compartments hold credentials.
+- **A signature for every host a workbench gains.** Rejected by round 5: a build that needs one more registry for one afternoon cost a passkey. The confirm gesture adds it for the run.
+- **Every workbench reaches only its list.** Rejected for a public project: nothing private is inside to leak, and each new host cost an ask.
 
 ## Consequences
 
+- **A real key the person typed or pasted into a file in a public project can be sent anywhere by an injected coding agent.** The vault is where a key belongs, and the broker fills it in only for its host.
+- **A task started from a conversation is at least personal, so it cannot write into a public project's folders.** Work in a public project is done inside its workbench, or the person moves the value in by hand. Whether that refuses something the person asked for is a question for the livability review.
+- The catalog carries two lists for task browser contexts, shared hosts and adapter-only sites ([ADR 0013](0013-agents-never-drive-the-persons-browser.md)).
 - **[ADR 0006](0006-broker-owns-all-egress.md)** gains the declared exception for an app that holds its own login.
 - **[ADR 0007](0007-fork-verify-promote.md)** names two kinds of writer, and the standing rule that promotes updates which ask for nothing new.
 - **[ADR 0011](0011-task-principals.md)** gains what a workbench's standing grants bind to.

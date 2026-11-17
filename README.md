@@ -5,8 +5,8 @@
 CrowbarOS is an operating system that ships a small, stable base, which each
 person turns into their own OS by stating intents to an agent. Changes to a
 person's tools are checked in a private copy before they go live, and can be
-kept, undone, and shared. Security comes first and does not depend on a model
-being right.
+kept, undone, and shared. Security does not depend on a model being right, and
+every rule is held to a limit on how often it asks the person.
 
 ## Start here
 

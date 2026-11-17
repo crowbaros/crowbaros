@@ -108,6 +108,10 @@ Anything that can hold authority: a person, an agent, a task, a Tool, installed 
 The person's own principal that does Shaping, edits intents with them, and starts tasks. It is a role the OS defines, whatever harness fills it.
 _Avoid_: Assistant, bot, AI
 
+**Conversation**:
+One exchange between the person and the Agent, run as a compartment of its own. It is _clean_ while it is personal and unmarked. Its label and mark change only when the person points it at something or puts something into it.
+_Avoid_: Session, thread, chat, context
+
 **Task**:
 One piece of agent work run as its own principal, with a stated objective, effect limits, a budget, and an expiry.
 _Avoid_: Job, session, run
@@ -119,6 +123,10 @@ _Avoid_: Automation, cron job, routine
 **Build task**:
 A task that writes or changes a Tool's code. It reads only the intent, the checks, the Tool's source, and admitted input, and has no web access.
 _Avoid_: Coding agent, compile
+
+**Lookup**:
+A task that answers a question from the open web. It holds only the turn the person typed, which that act releases to it, and what it found, so it is public and marked.
+_Avoid_: Research task, search, web task
 
 **Plan**:
 A small program the Agent writes whose variables are handles. A deterministic interpreter runs it, moves the actual values, and tracks the label and mark of every result. The Agent reads a value only where its label and mark allow.
@@ -209,27 +217,43 @@ The default line for what the agent does without asking. An effect within the ta
 _Avoid_: Risk tier, safety boundary
 
 **Outbox**:
-Where acts on the person's behalf wait for a visible delay before they leave the fleet. They can be cancelled until they leave.
+Where acts sent under a standing rule wait for a visible delay before they leave the fleet. They can be cancelled until they leave. An act the person answered leaves at once.
 _Avoid_: Queue, drafts
 
 **Standing grant**:
-Long-lived access to a thing, held by a Tool, a standing task, or a workbench, never by the Agent, and recorded in the authority domain. For a Tool it binds to the Tool's identity, the needs the person saw, and a clean build. For a workbench it binds to its identity and the needs of its profile.
+Long-lived access to a thing, held by a Tool, a standing task, a workbench, or installed software, never by the Agent, and recorded in the authority domain. For a Tool it binds to the Tool's identity, the needs the person saw, and a clean build. For a workbench it binds to its identity and the needs of its profile, and for installed software to its identity and the needs its approval showed.
 _Avoid_: Standing rule, permanent permission
 
 **Standing rule**:
-A person's pre-approval, with a rate limit, for a narrow kind of act that crosses the undo boundary, so that act doesn't ask again. It is held by a Tool, a standing task, or a workbench, never by the Agent. An act that crosses needs both the grant (access) and the rule (no ask).
+A person's pre-approval, with a rate limit, for a narrow kind of act that crosses the undo boundary, so that act doesn't ask again. It is held by a Tool, a standing task, a workbench, or installed software, never by the Agent. An act that crosses needs both the grant (access) and the rule (no ask).
 _Avoid_: Standing grant, allowlist
 
+**Refusal**:
+The gate's no to an operation. It names the rule and the limit that applied, never a value, and nothing happens.
+_Avoid_: Denial, permission denied, block, error
+
 **Ask**:
-A question the broker puts to the person in trusted UI, with an ID, exact content, and an expiry. The shell draws it, and one confirm gesture or one signature answers it.
-_Avoid_: Prompt, dialog, popup
+A question the broker puts to the person in trusted UI, with an ID and exact content. It waits for the person, never takes the keyboard from their work, and lasts as long as its task. The shell draws it, and a plain answer, the confirm gesture, or a signature answers it, by what is at stake.
+_Avoid_: Prompt, dialog, popup, permission request
+
+**Plain answer**:
+Any ordinary input in trusted UI. It answers an ask about something that stays inside the undo boundary, such as keeping a preview.
+_Avoid_: Click, OK button, tap
+
+**Signature**:
+An answer made with a passkey, a security key, or the phone, over the exact content shown. It answers an ask for authority that lasts.
+_Avoid_: Approval, password, 2FA
+
+**Friction bar**:
+The most asks and refusals a person may meet in one task and in one day. A rule that makes ordinary work miss it is redesigned.
+_Avoid_: Livability threshold, prompt budget
 
 **Armed**:
 The state of an ask that is visible, on top, holding the keyboard, and steady for long enough that the confirm gesture can answer it.
 _Avoid_: Active, ready
 
 **Confirm gesture**:
-The secure key press, taken by the compositor and never delivered to any client, with which the person answers an everyday ask. With no ask showing it locks the session, and on the lock screen it begins unlock. An ask that changes authority is answered by a passkey, a security key, or the phone instead.
+The secure key press, taken by the compositor and never delivered to any client, with which the person answers an ask for something that crosses the undo boundary, or for authority that lasts only for this run. With no ask showing it locks the session, and on the lock screen it begins unlock.
 _Avoid_: Click, OK button, voice confirmation
 
 **Compositor**:
@@ -265,7 +289,7 @@ The deterministic rules that give every object its label and mark from where it 
 _Avoid_: Classifier, labeling policy
 
 **Compartment**:
-One execution context: a task's model context and workspace, or one running copy of a Tool or of installed software. Each start makes a new compartment, so one principal can have several at once, such as a live Tool and its Preview. Once it reads a value it is at that value's label and carries its mark, and so is everything it emits.
+One execution context: a conversation, a task's model context and workspace, or one running copy of a Tool or of installed software. Each start makes a new compartment, so one principal can have several at once, such as a live Tool and its Preview. Once it reads a value it is at that value's label and carries its mark, and so is everything it emits.
 _Avoid_: Session, quarantine, instance
 
 **Sandbox**:
@@ -281,7 +305,7 @@ The part of Base that starts and stops every compartment, on the broker's orders
 _Avoid_: Launcher, spawner, supervisor
 
 **Untrusted input**:
-Content written by someone other than the person or their OS. It is _admitted_ when it comes from a pinned set the person admitted in advance (the Base package snapshot, the dependency set for build tasks), and _open_ otherwise (web pages, mail, shared intents, files from outside). What the person pastes carries the label and mark of where it was copied from. It includes short strings: a file name, a mail subject, error text from a server.
+Content written by someone other than the person or their OS. It is _admitted_ when it comes from a pinned set the person admitted in advance (the Base package snapshot, the dependency set for build tasks), and _open_ otherwise (web pages, mail, shared intents, files from outside). What the person pastes keeps the mark of where it was copied from. It includes short strings: a file name, a mail subject, error text from a server.
 _Avoid_: External data, tainted input
 
 **Mark**:
@@ -289,7 +313,7 @@ The record that a value was produced by a context that had read open untrusted i
 _Avoid_: Taint, flag
 
 **Release**:
-The person letting one exact value, shown in trusted UI, pass to one named destination despite its label or mark.
+The person letting one exact value pass to one named destination despite its label, by answering an ask that shows it or by moving it there with their own hand. The value keeps its mark.
 _Avoid_: Declassify, approve, share
 
 **Declassify**:
@@ -297,7 +321,7 @@ Making the label on stored data less strict. Only the person can do it.
 _Avoid_: Release, unlabel, relabel
 
 **Task browser context**:
-A fresh browser context for one task and the sites named in it, holding none of the person's sessions. The person's own browser profile is never driven by an agent.
+A fresh browser context for one task, holding none of the person's sessions. On a logged-in site it reaches only that site, after one answer from the person. The person's own browser profile is never driven by an agent.
 _Avoid_: Agent browser, headless browser
 
 **Allowance**:

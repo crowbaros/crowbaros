@@ -50,7 +50,7 @@ footer{padding:48px 0 80px;color:var(--steel);font-size:14px}
   <h2>The shift</h2>
   <p>People are increasingly <strong>building bespoke software instead of installing it</strong>. Today that's mostly developers working with agents. The cost of a small tool that fits one person exactly is falling fast, and within a few years most people will make software this way.</p>
   <div class="quote">If software becomes something you describe instead of something you install, the thing you own is the description.</div>
-  <p>So the substrate matters most: a small, stable base, an agent that helps you work out what you want before it builds, security that comes first and does not depend on the model being right, and a way to keep, undo, carry, and share what you make.</p>
+  <p>So the substrate matters most: a small, stable base, an agent that helps you work out what you want before it builds, security that does not depend on the model being right and is held to a limit on how often it asks you, and a way to keep, undo, carry, and share what you make.</p>
 </div></section>
 
 <section><div class="wrap">
@@ -59,9 +59,9 @@ footer{padding:48px 0 80px;color:var(--steel);font-size:14px}
     <div><span class="p">you ›</span> I write in the mornings. Give me a calm writing mode with no notifications until noon.</div>
     <div class="c">agent · two questions first: should anyone get through before noon? Weekends too?</div>
     <div><span class="p">you ›</span> Sam can always get through. Weekdays only.</div>
-    <div class="c">agent · intent saved with 3 checks you confirmed · built "Morning Pages" and a notification rule in a fork · here is a preview</div>
-    <div><span class="p">you ›</span> <span class="c">(confirms)</span></div>
-    <div class="c">agent · live · one step to undo</div>
+    <div class="c">agent · built "Morning Pages" and a notification rule in a fork · here is a preview, beside the 3 checks it passed</div>
+    <div><span class="p">you ›</span> <span class="c">(confirms once)</span></div>
+    <div class="c">agent · checks frozen · live · one step to undo</div>
     <div><span class="p">you ›</span> <span class="c">(points at the page list)</span> Sort these by date.</div>
     <div class="c">agent · intent updated, checks still pass · preview ready</div>
   </div>
@@ -73,7 +73,7 @@ footer{padding:48px 0 80px;color:var(--steel);font-size:14px}
   <div class="grid">
     <div class="card"><div class="n">01</div><h3>Intent, checks, and the pinned build are the source</h3><p>Your intents, the checks you confirmed, and the builds you accepted are your OS. Checks are scenarios in a fixed format, worded by templates and not by a model. A better model can re-derive a Tool only if the checks pass and a replay matches.</p></div>
     <div class="card"><div class="n">02</div><h3>Layers with their own undo</h3><p>Base changes rarely, at boot. The Environment changes one Tool at a time: fork, preview, promote. Your Data is never rolled back with them, and undoing software never restores a grant you revoked.</p></div>
-    <div class="card"><div class="n">03</div><h3>Deterministic security, first</h3><p>Handles, effect limits, and a gate with no model in it decide what can happen. Private values stay out of the agent's context, and nothing a model does cleans a stranger's text. Anything that crosses the undo boundary needs a grant and a rule, or you, and nothing but you can say yes.</p></div>
+    <div class="card"><div class="n">03</div><h3>Deterministic security, and few questions</h3><p>Handles, effect limits, and a gate with no model in it decide what can happen. Private values reach the agent only where you point it, and nothing a model does cleans a stranger's text. Anything that crosses the undo boundary needs a grant and a rule, or you, and nothing but you can say yes. What you do with your own hand is never refused, and every rule is held to a limit on how often you are asked.</p></div>
     <div class="card"><div class="n">04</div><h3>Tools are living and disposable</h3><p>A Tool starts with nothing and gets everything through the broker, whether it is WASM or native. The system draws its UI. Point at any part and say what to change.</p></div>
     <div class="card"><div class="n">05</div><h3>The agent is a role</h3><p>The OS owns the role and its authority. The harness and model are swappable, from open weights on your own hardware to Grok Bot, and none of them can allow anything.</p></div>
     <div class="card"><div class="n">06</div><h3>The owner is sovereign</h3><p>You can always take full control. Lean by default, as heavy as you choose. Recovery never depends on a model.</p></div>
@@ -115,7 +115,7 @@ flowchart TB
 <section><div class="wrap">
   <h2>The hard problems still open</h2>
   <ol class="q">
-    <li><strong>Too much asking.</strong> Previews, releases, and asks all end at you. How many a day before you stop reading them?</li>
+    <li><strong>The friction bar.</strong> At most five asks on an ordinary day, and no refusal of what you do by hand. Can every rule meet it?</li>
     <li><strong>The plan language.</strong> How much can an agent do through handles before it needs to see a value it may not see?</li>
     <li><strong>Checks for everyone.</strong> Can people who aren't developers say what they rely on in a fixed scenario format?</li>
     <li><strong>Marks spread.</strong> One file from outside marks what touches it. How much of your Data ends up marked?</li>

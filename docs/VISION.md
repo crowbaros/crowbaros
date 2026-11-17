@@ -10,7 +10,11 @@ and 0012 revised; ADRs 0013 and 0014 added), after
 0008, 0011, 0013, and 0014 revised), and after
 [council round 4](reviews/council-round-4.md), a confirmation round that closed
 gaps in the same ADRs. Jim Martin made the decisions in the council rounds.
-Revised November 15, 2026: the compositor is decided (ADR 0015 added). Decisions are in [`docs/adr/`](adr/). Terms are defined in the
+Revised November 15, 2026: the compositor is decided (ADR 0015 added).
+Revised November 16, 2026, after [council round 5](reviews/council-round-5.md):
+the friction bar ranks with the attack list (ADRs 0024, 0025, and 0026 added;
+ADRs 0001, 0003, 0004, 0007, 0008, 0011, 0013, 0014, and 0017 to 0022 revised).
+Decisions are in [`docs/adr/`](adr/). Terms are defined in the
 [glossary](../GLOSSARY.md). What the design defends against, and what it does
 not, is in the [threat model](threat-model.md).
 
@@ -47,19 +51,23 @@ So CrowbarOS ships the ability to make an OS, not a finished desktop. It starts
 lean. Each person shapes it into their own OS with their agent, and it stays as
 lean or grows as heavy as they choose.
 
-**Security comes first.** Agents read content written by strangers and act with a
-person's authority, so every design choice here is judged first by what it does to
-security. When security conflicts with convenience, autonomy, or speed of
-delivery, security wins.
+**Security and low friction both have to pass.** Agents read content written by
+strangers and act with a person's authority, so deterministic parts decide what
+can happen, and no model is on the trust path. A person who is asked too often
+turns the guards off, so every rule is also held to the friction bar. A rule that
+misses the bar is redesigned. Each redesign says what it gives up and gets an
+attack that shows what still holds. Where no design passes both, the Agent hands
+that work back to the person. What a person does with their own hand is never
+refused.
 
 ```mermaid
 flowchart LR
     U["You: 'Give me a calm writing mode,<br/>no notifications until noon'"] --> S["Shaping<br/>(your agent asks, proposes checks)"]
-    S --> I["Intent + checks<br/>(you confirm)"]
+    S --> I["Intent + proposed checks"]
     I --> F["Build task in a fork<br/>reads only the intent, the checks,<br/>and admitted dependencies"]
     F --> V{"Base runner: checks<br/>pass in rehearsal?"}
     V -- no --> F
-    V -- yes --> P["Preview<br/>you confirm once"]
+    V -- yes --> P["Preview beside its checks<br/>one answer confirms both"]
     P --> L{"Gate: needs unchanged,<br/>and the Tool not changed<br/>by someone else?"}
     L -- no --> R["You are asked about the new needs,<br/>or shown the conflict"]
     L -- yes --> E["Promote the change set<br/>new generation + ledger"]
@@ -81,12 +89,14 @@ mindmap
       Environment by fork, preview, promote, per Tool
       Data never rolled back
       Authority never restored by undo
-    3 Security is deterministic and comes first
+    3 Security is deterministic
+      Held to the friction bar
       Handles and effect limits
       Gate decides, monitor only pauses
       Labels and marks survive every handoff and storage
       Plan over handles
       A yes comes from the person
+      The person's hand is the answer
       Outbox
     4 Tools are living and disposable
       Contract is the broker protocol
@@ -161,9 +171,11 @@ Decision: [ADR 0001](adr/0001-intent-is-the-source.md).
 later. A task that changes installed behaviour works in a **fork**: a
 copy-on-write copy of the Environment. The task builds there, and the runner
 proves the checks in rehearsal. The person sees a **preview**: the forked Tool
-running in the fork, marked as a preview, with no effects outside the fork. One
-confirmation in trusted UI **promotes** exactly the build that was previewed.
-Nothing unconfirmed goes live.
+running in the fork, marked as a preview, with no effects outside the fork. The
+checks are shown in plain words beside it. One plain answer in trusted UI freezes
+the checks and **promotes** exactly the build that was previewed. The preview
+stays open while the person asks for further changes, and one answer at the end
+promotes the last build. Nothing unconfirmed goes live.
 
 **The unit of change is the Tool.** A promote carries a **change set**: the Tools
 it changes, and the build of each that the task started from. Two tasks on
@@ -212,10 +224,18 @@ Decisions: [ADR 0002](adr/0002-three-layers.md),
 [ADR 0009](adr/0009-base-from-a-pinned-package-set.md),
 [ADR 0012](adr/0012-authority-outside-the-state.md).
 
-### 3. Security is deterministic and comes first
+### 3. Security is deterministic
 
 **Deterministic parts decide what can happen.** No model is on the trust path:
 State, promote, rollback, handles, and the gate all work with no model at all.
+
+**Every rule is also held to the friction bar**: the most asks and refusals a
+person may meet in one task and in one day. An ordinary day costs at most five
+asks, a day that makes a Tool or sets up a project at most eight, and no day
+refuses what the person did by hand. A rule that misses the bar is redesigned,
+and where no design passes both, the Agent hands that work back to the person.
+[ADR 0024](adr/0024-the-friction-bar-ranks-with-the-attack-list.md) has the
+numbers.
 
 - **Handles.** No ambient authority. A principal can reach only what it holds an
   unforgeable, scoped, expiring handle for. Only the capability broker issues them.
@@ -223,10 +243,11 @@ State, promote, rollback, handles, and the gate all work with no model at all.
   objects, how many, for how long, at what cost, and how often. "Sort my photos" is
   a task on the photos, not on the disk. Limits are a ceiling: the gate refuses
   anything outside them, and a task cannot widen its own. The Agent proposes each
-  task's limits, so they bound a task's mistakes, not a steered Agent. What bounds
-  the Agent is that it holds no standing authority, that its context is kept
-  clean, and that the person sets a ceiling on tasks that do not cross: a task
-  proposed above it is authorized at its start.
+  task's limits (a lookup's are a fixed default), so they bound a task's
+  mistakes, not a steered Agent. What bounds
+  the Agent is that it holds no standing authority, that a conversation changes
+  only by the person's act, and that there is a ceiling on tasks that do not
+  cross: a task proposed above it is authorized at its start.
 - **The gate.** A deterministic rules engine checks each operation against handles,
   effect limits, standing grants, and standing rules, and signs what it allows.
   It is the only thing that allows. It checks every broker operation and every
@@ -256,12 +277,18 @@ Anything that crosses is allowed only by standing authority or the person's
 answer. A **standing grant** gives access to a thing. A **standing rule** lets a
 kind of act happen without asking, and carries a rate limit ("at most five emails
 an hour to new recipients"). An act that crosses needs both. Standing authority
-binds to a Tool, or to a **standing task** the person defined by name with a fixed
-objective and limits. It never binds to the Agent. An ad hoc task that needs to
-cross is authorized by the person once, at its start, with its objective and
-limits shown in fixed words. That answer covers the task's fetches, and the acts
-whose exact content was shown. A crossing act composed after the task was marked
-asks again.
+binds to a Tool, to a **standing task** the person defined by name with a fixed
+objective and limits, to a workbench, or to installed software. It never binds to
+the Agent. A model request does not ask while its provider is cleared for what
+the compartment holds and the model budget is not spent, and installed software
+does not ask for what its approval showed.
+
+A task asks once for what it does across the boundary, and never twice for one
+act. Where the exact content of an act is known when the task starts, the person
+sees it then. Where the task composes the act later, it starts with no ask, and
+the act asks with its exact content when it is ready. A rule with a cap, such as
+"pay the electric bill, up to $150", fires without an ask when the amount is under
+the cap.
 
 **A "yes" comes from the person.** Every crossing the gate does not already allow
 ends in the person's answer, so nothing else may be able to produce one:
@@ -271,23 +298,40 @@ ends in the person's answer, so nothing else may be able to produce one:
   every Linux route around this: a shared X11 server, the accessibility bus,
   virtual input and input-method protocols, the remote desktop portal, input
   devices, and a terminal that reaches owner authority.
-- An everyday ask is answered with a **confirm gesture**: a secure key press the
-  shell handles itself and never delivers to a Tool. An ask ignores the gesture
-  for a moment after it appears, and asks are rate-limited per task and across
-  all the Agent's tasks.
-- A change to standing authority (a new grant, rule, or standing task, wider
+- **An ask waits for the person.** It never takes the keyboard from their work.
+  The bar shows how many are waiting, and the one ask that opens by itself is the
+  one for what the person just asked for, in the conversation they are in.
+  Nothing is refused for asking too often: a flood is held in one line the
+  person can dismiss whole. One ask can
+  hold a list of acts of one kind, such as three drafted replies.
+- **Three answers, by what is at stake.** What stays inside the undo boundary,
+  such as keeping a preview, takes a **plain answer**: any ordinary input in
+  trusted UI. Anything that crosses, and authority that lasts only for this run,
+  takes the **confirm gesture**: a secure key press the compositor takes and
+  never delivers to a Tool. An ask ignores input for a moment after it
+  appears, whichever answer it takes.
+- Authority that lasts (a new grant, rule, or standing task, wider
   limits on one, a higher ceiling, a higher clearance, a
   declassify, a refilled Allowance, owner authority) needs a passkey, a security
-  key, or approval on the phone, as a signature over the exact content shown.
+  key, or approval on the phone, as a **signature** over the exact content shown.
+  It is asked for the first time something needs it, not up front, and a list the
+  person put together takes one signature.
+- **What the person does by hand is the answer.** A paste, a drop, a pick, and
+  a link they click in an app are never refused, and are never followed by an
+  ask about that same act. A request they type starts with no ask: it starts a
+  lookup, or points a conversation at a source, as it stands. What the Agent
+  then does across the boundary to carry it out asks once. A value moved by
+  hand is released to where the person put it, and keeps its mark.
 - Voice never counts as confirmation, because a speaker can produce it. Words
   that arrive by voice are marked until the person makes the confirm gesture.
 - The trusted UI and the confirm gesture are part of Base. They cannot be themed
   or rebound.
 
-**The outbox.** Acts on the person's behalf (messages, posts, purchases where the
-seller allows it) do not leave at once. They wait in the broker's outbox for a
-delay the person can see, and can be cancelled until they leave. The Agent keeps
-working while they wait, and the person reviews them in batches.
+**The outbox.** Acts sent on the person's behalf under a standing rule (messages,
+posts, purchases where the seller allows it) do not leave at once. They wait in
+the broker's outbox for a delay the person can see, and can be cancelled until
+they leave. The Agent keeps working while they wait, and the person reviews them
+in batches. An act the person answered leaves at once.
 
 **Labels, marks, and compartments.**
 
@@ -302,10 +346,11 @@ working while they wait, and the person reviews them in batches.
   input **marks** a context.
 - **Compartments.** A model's context cannot keep private and public apart, or a
   stranger's instructions and the person's. So labels and marks apply to whole
-  execution contexts. A **compartment** is a task's model context and workspace,
-  or a Tool's sandbox. Once it reads a value it is at that value's label and
-  carries its mark, and so is everything it emits: files, messages, logs, and
-  model calls.
+  execution contexts. A **compartment** is a conversation, a task's model context
+  and workspace, or a Tool's sandbox. Once it reads a value it is at that value's
+  label and carries its mark, and so is everything it emits: files, messages,
+  logs, and model calls. A value the person moved in by hand is the exception:
+  the compartment takes its mark and not its label.
 - **Nothing a model does removes a label or a mark, and nothing crosses freely.**
   Summarizing does not clean a value, a new task does not, and passing through the
   Agent does not. Marks persist in storage: a Tool's source and an entry in Agent
@@ -322,18 +367,39 @@ working while they wait, and the person reviews them in batches.
   counts as marked, so a steered choice cannot spend a standing rule. What can be
   observed about a result is a result too: its size, how many handles came back,
   whether a step was refused.
-- **What reaches the Agent.** The Agent does not read a result from a marked
-  task. The plan branches on it inside the interpreter, and the shell shows it to
-  the person. A context that does read one is marked for as long as it lives,
-  history and summaries included. A private result reaches the Agent's context only by
-  a **release** (the person sees the exact value in trusted UI and lets it pass to
-  one named destination) or inside a budget the person set for that category,
-  counted in bits across all tasks, zero by default. The shell can always show the
-  person a result directly. The Agent's own context is personal by default, and a
-  private value released into it is released to its model provider too.
+- **Conversations.** Each exchange between the person and the Agent is a
+  **conversation**, a compartment of its own. It starts **clean**: personal and
+  unmarked. It changes only by the person's act: they put a value in, which is
+  released and brings its mark with it, or they point it at a source such as
+  their mail, and it rises to that source's label and mark. Then it may read
+  and discuss what it was given. A value with no mark, such as the person's
+  own note, leaves it clean. Once it is marked or above personal, it is no
+  longer clean for as long as it lives,
+  and every act of its that crosses asks with the exact content, a link it
+  shows included. The one thing it sends to the open web with no ask is the
+  turn the person just typed, as a lookup. The Agent cannot mark or raise its own conversation, the frame
+  shows the label and mark, and a clean conversation is one action away. The
+  first time a conversation is pointed at a category of private data, one
+  signature clears the model provider for that category.
+- **What reaches a clean conversation.** A clean conversation does
+  not read a result from a marked task. The plan branches on it inside the
+  interpreter, and the shell shows it to the person. A private result reaches it
+  only by a **release** (the person lets one exact value pass to one named
+  destination, by answering an ask that shows it or by moving it there by hand)
+  or inside a budget for that category, counted in bits across all tasks, which
+  stays at zero. The shell can always show the person a result directly. A value
+  put into a conversation goes to its model provider too.
+- **Lookups.** A **lookup** answers a question from the open web. It holds only
+  the words the person typed, exactly as typed, and what it found. It holds
+  nothing the Agent remembers and nothing a conversation read, so it starts and
+  takes follow-ups with no ask. That holds from a conversation that is no
+  longer clean too, where a turn the person typed about private data may itself
+  say something private. A turn leaves once. A compartment
+  that holds only public data and no login may reach any host on the open
+  internet.
 - **Only the person's own words are theirs.** What the person types reaches the
-  Agent as theirs. What they paste or drop arrives as a handle with
-  its origin's label and mark. Every other string that the person did not type and
+  Agent as theirs. What they paste or drop into a conversation enters it, and
+  the conversation takes its mark. Every other string that the person did not type and
   a fixed template did not produce is data with its origin's label and mark: a
   file name, a mail subject, error text from a server. The Agent sees what the OS
   states about a handle, not a stranger's name for it.
@@ -358,13 +424,18 @@ working while they wait, and the person reviews them in batches.
   asks the person again, and its source stays marked until the Tool is re-derived
   from the intent and checks alone.
 - **The browser.** The person's own browser profile is never driven by an agent.
-  A task that needs the web gets a **task browser context**: fresh, for that task
-  and its named sites, with logins by approved fill and the session cookie kept
-  in the broker. Allowing a site does not
-  approve acts on the person's account there. In a logged-in context, every
-  request that can change state waits for the person's answer. An act happens
-  unasked only through a broker adapter that knows the operation, under a standing
-  rule for it.
+  A task that needs the web gets a **task browser context**: fresh, for that
+  task, with logins by approved fill and the session cookie kept in the broker.
+  On a logged-in site the person answers once for each task and each site. The
+  ask names the site, what the task may do, and the exact values it may send, and
+  the answer covers the task's requests to that one site until the task ends.
+  The Allowance is the only payment credential the task can supply, and the
+  person can watch the window. A payment method the site already stores is in
+  the site's hands.
+  Banks, mail providers, and identity providers are adapter-only: with no
+  adapter, the Agent hands the errand back. An act happens with no ask at all
+  only through a broker adapter that knows the operation, under a standing rule
+  for it.
 
 **Egress and secrets.**
 
@@ -380,7 +451,8 @@ working while they wait, and the person reviews them in batches.
 
 **Notify only on surprises**: something a background task did that the person did
 not directly ask for, anything blocked or refused, anything the monitor paused,
-and requests to cross the boundary. Everything else is in the ledger. Entries that
+and requests to cross the boundary. A notice never takes the keyboard or covers
+the person's work. Everything else is in the ledger. Entries that
 matter for security are rendered by the OS in fixed words, not summarized by the
 Agent they describe.
 
@@ -401,7 +473,10 @@ Decisions: [ADR 0003](adr/0003-security-is-deterministic.md),
 [ADR 0011](adr/0011-task-principals.md),
 [ADR 0013](adr/0013-agents-never-drive-the-persons-browser.md),
 [ADR 0014](adr/0014-a-yes-comes-from-the-person.md),
-[ADR 0015](adr/0015-our-own-compositor-on-smithay.md). Prior art:
+[ADR 0015](adr/0015-our-own-compositor-on-smithay.md),
+[ADR 0024](adr/0024-the-friction-bar-ranks-with-the-attack-list.md),
+[ADR 0025](adr/0025-what-the-person-does-by-hand-is-the-answer.md),
+[ADR 0026](adr/0026-asks-wait-and-take-one-of-three-answers.md). Prior art:
 [agent credentials research](research/agent-credentials-prior-art.md).
 
 ### 4. Tools are living and disposable
@@ -431,7 +506,9 @@ notifications until noon, and a photo sorter are all Tools.
   the person can add an entry for anything. One approval installs an app, and an
   update that asks for nothing new goes live by itself. Dev tools run in a
   **workbench**: a changeable Linux system for one project, approved once, where
-  package managers work without asking.
+  package managers work without asking. A workbench for a project the person
+  declared public may reach any host on the open internet, and a host a private project needs for one
+  run is added with the confirm gesture.
   [ADR 0017](adr/0017-a-pinned-catalog-and-workbenches.md).
 - **Declarative UI.** A Tool describes its UI, and a trusted shell draws it inside
   system chrome a Tool cannot imitate. Every Tool is themed and accessible, and can
@@ -459,7 +536,8 @@ Decision: [ADR 0004](adr/0004-capability-safe-tools.md).
   fresh principal with a stated objective, effect limits, a budget, and an expiry.
   The Agent keeps the person's history and starts tasks. It does not collect the
   authority of every task it has ever run. A task ends, and its handles end with
-  it.
+  it. Each exchange with the person is a **conversation**, a compartment of its
+  own, so what one conversation read does not mark the next.
 - A **harness** fills the role: the loop, tools, and conversation around a model.
   CrowbarOS ships a default harness. An external harness, such as Grok Bot, can
   replace it.
@@ -482,10 +560,11 @@ the harness decides how the conversation goes:
 
 - Every intent has checks, and the person confirms them in trusted UI. A harness
   cannot assert "the person confirmed".
-- Every change is shown as a **preview**, and one confirmation promotes exactly
-  what was previewed. Nothing goes live unconfirmed, however small.
+- Every change is shown as a **preview** beside its checks, and one plain answer
+  confirms the checks and promotes exactly what was previewed. Nothing goes live
+  unconfirmed, however small.
 - An edit that asks for **new authority** needs the authority change confirmed as
-  well, with a hardware root.
+  well, with a signature.
 
 Other agents (background workers, agents that come with shared Tools) are principals
 with handles. They can never edit intents. The person's Agent may propose a new
@@ -692,10 +771,10 @@ flowchart LR
 | Milestone | Scope | Proves |
 | --- | --- | --- |
 | **M1** (done) | State → apply → Base generation → broken change → boot-menu rollback, in a Void VM on Btrfs. See [Milestone 1](milestones/milestone-1.md). | The generation layout, boot menu, and rollback |
-| **M2** (next) | The security rules, built to be attacked, on stock Linux with no CrowbarOS Base. First: a broker and gate, task principals in Linux sandboxes, labels and marks, and a plan over handles run by a deterministic interpreter with a cloud model as the Agent. It passes when every named attack is refused and a fixed set of ordinary tasks has been run, with completions, asks, and releases per task reported. Second, and cut if the milestone slips: checks as scenarios with the Base runner, fork, preview, promote, undo, and grants across rebuilds. Scope and acceptance tests: [Milestone 2](milestones/milestone-2.md). | ADRs 0003, 0008, 0011 first; then 0001 and 0007. No model on the trust path. |
+| **M2** (next) | The security rules, built to be attacked, on stock Linux with no CrowbarOS Base. First: a broker and gate, task principals in Linux sandboxes, labels and marks, and a plan over handles run by a deterministic interpreter with a cloud model as the Agent. It passes when every named attack ends as its row says, which for most is a refusal, and a fixed set of ordinary tasks meets the friction bar. Second, and cut if the milestone slips: checks as scenarios with the Base runner, fork, preview, promote, undo, and grants across rebuilds. Scope and acceptance tests: [Milestone 2](milestones/milestone-2.md). | ADRs 0003, 0008, 0011 first; then 0001 and 0007. No model on the trust path. |
 | **M1b** | Build each Base generation from empty out of a complete pinned package set, with the State owning every package. Read-only generations. Data and machine state on their own subvolumes, so an apply never drops what was written before the reboot. Automatic fallback when a new generation fails to boot. Crash safety during an apply. | "The State is a lockfile" for Base; ADR 0009 |
 | **M3** | Data layer v0: objects with provenance, labels, stable ids, and history, as an index over files. Staged writes and commit. Compartments for every execution context. Label-based egress, including model calls. | Information-flow control on real Data |
-| **M4** | Shell: declarative UI renderer inside system chrome, powerbox, trusted asks with the confirm gesture and a hardware root, point and say with local perception. Recovery screen. | Living software; ADR 0014 |
+| **M4** | Shell: declarative UI renderer inside system chrome, powerbox, trusted asks that wait and take one of three answers, point and say with local perception. Recovery screen. | Living software; ADR 0014 |
 | **M5** | Harness protocol on MCP, external harnesses such as Grok Bot, the vault and broker adapters, task browser contexts, the outbox, the monitor, the Allowance. | The Agent role; ADRs 0006 and 0013 |
 | **M6** | Fleet: a lead machine and leases, joining machines with clearances, the phone as an approval device, local-first encrypted Data sync, sharing pinned Tools verified by the recipient. | "Your OS is portable and shareable"; ADRs 0010 and 0012 |
 
@@ -730,16 +809,23 @@ Carried forward:
 Raised by the council and not yet decided:
 
 - **Livability.** Marks spread: an app that touched one outside file marks what it
-  writes. If most Data and most tasks end up marked, every act asks, and people
-  turn the guards off. Milestone 2 measures this.
+  writes, and a value the person pastes carries its mark with it. If most Data
+  and most tasks end up marked, every act asks, and people turn the guards off.
+  Milestone 2 measures this against the friction bar.
 - **Outbox answers.** When the person lets a waiting act go, how long does that
   answer last, and does it cover the next act of the same kind?
 - **Admission.** Who admits the dependency set that build tasks read, how is it
   reviewed, and how does it receive updates?
 - **The plan language.** How much can a plan over handles express, when the Agent
   cannot read a stranger's file name or an error message?
-- **Too much asking.** Previews, releases, and asks all end at the person. How many
-  a day before they stop reading them?
+- **The friction bar's numbers.** Five asks on an ordinary day is a judgement,
+  not a measurement. The livability review tests it, and neither day's script is
+  written yet.
+- **Naming a source.** The shell matches the words a person typed to one of
+  their sources by fixed rules. How often does it miss, and what does a miss
+  cost?
+- **The chord with asks waiting.** With asks waiting and none open, the confirm
+  chord locks the session. Should it open the first waiting ask instead?
 - **Driving native apps.** An agent cannot send input events. Is there an
   accessibility interface, controlled by the shell, for apps with no UI
   description?

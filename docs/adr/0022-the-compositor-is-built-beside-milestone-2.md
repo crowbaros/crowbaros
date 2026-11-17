@@ -25,6 +25,18 @@
 
 - **After the livability review, each of the three is checked against its result.** A change to one of them gets a record of its own, and the attacks of its slice are run again.
 
+## What council round 5 changed
+
+[Council round 5](../reviews/council-round-5.md) changed two of the three parts on November 16, 2026, before the livability review and before either slice was built.
+
+| Part | Change | Record |
+| --- | --- | --- |
+| The ask | It waits until the person opens it, lasts as long as its task, may hold a list, and may take a plain answer. Arming and the chord are unchanged | [ADR 0026](0026-asks-wait-and-take-one-of-three-answers.md) |
+| What the compositor tells the broker about each paste | A middle click, a click before a read, and a drop count as well as a paste key, and the message names which act it followed | [ADR 0025](0025-what-the-person-does-by-hand-is-the-answer.md) |
+| Lock | No change. The chord's table is as ADR 0020 has it | — |
+
+Issues 71 and 166 are built to the revised ADRs 0018 and 0020. The livability review still checks all three parts against its result.
+
 ## Considered Options
 
 - **Keep ADR 0020's order.** Rejected: ten issues would close before a frame or a window exists, for a reason that covers three parts.

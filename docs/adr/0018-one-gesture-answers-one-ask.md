@@ -4,11 +4,13 @@
 
 [ADR 0014](0014-a-yes-comes-from-the-person.md) says a yes is worth something only if nothing else can produce it. The [compositor spike](../research/compositor-spike-2026-11-15.md) took the confirm chord before any client saw it, but its channel to the shell had no request IDs, no version, and no way to reconnect, and its confirm event named no ask. [ADR 0016](0016-the-warden-starts-every-compartment.md) then made the shell a service of its own that meets the compositor and the broker over path sockets. This record says how those parts talk, and how one press of the confirm gesture answers exactly one ask.
 
+Revised after council round 5 by [ADR 0026](0026-asks-wait-and-take-one-of-three-answers.md). An ask now waits until the person opens it, lasts as long as its task, may hold a list, and may take a plain answer. Arming, the chord, the hash, and who carries the yes are as they were.
+
 ## Who does what
 
-- **The broker owns the ask.** The gate decides that an act needs the person's answer. The broker makes the **ask**: its ID, its exact content, its kind, and its expiry. It holds the rate limits (ADR 0014, rule 2) and the queue.
-- **The shell draws the ask.** It draws the content inside a frame that only the compositor draws. The shell is trusted for what it shows, as ADR 0014 already accepts. It never carries a yes.
-- **The compositor carries the yes.** It checks that the ask is visible, on top, and steady, takes the gesture, and sends the answer straight to the broker. A bug in the shell cannot make up a yes.
+- **The broker owns the ask.** The gate decides that an act needs the person's answer. The broker makes the **ask**: its ID, its exact content, its kind, which answer it takes, and its expiry. It holds the counts (ADR 0014, rule 2) and the list of asks that wait.
+- **The shell draws the ask.** It draws the content inside a frame that only the compositor draws. The shell is trusted for what it shows, as ADR 0014 already accepts. It carries no yes but a plain answer (ADR 0026).
+- **The compositor carries the yes.** It checks that the ask is visible, on top, and steady, takes the gesture, and sends the answer straight to the broker. A bug in the shell cannot make up a yes. The one exception is a plain answer, which the shell carries, and which is accepted only for what stays inside the undo boundary (ADR 0026).
 
 ## The channels
 
@@ -20,23 +22,27 @@
 
 ## One ask, from open to answer
 
+0. **Waiting.** The broker makes the ask and tells the shell, and the bar shows how many are waiting. Nothing is shown over the person's work, and the keyboard stays where it is. The ask is opened when the person opens it, or in place when it is for what the person just asked for (ADR 0026).
 1. **Open.** The broker sends the compositor `ask_open {ask_id, content_hash, kind, expires}`, and sends the shell the same ID with the content.
 2. **Shown.** The shell tells the compositor which of its surfaces shows `ask_id`.
 3. **Armed.** The compositor **arms** the ask when that surface is mapped, fully visible, on top, holds the keyboard, and has drawn no new frame for one second. Any new frame starts the second again, so the content cannot change under the person's finger. Ask surfaces do not animate. The compositor tells the broker each time the ask is armed or disarmed.
 4. **Answered.** The gesture on an armed ask sends `confirmed {ask_id, content_hash}` to the broker. The broker checks the hash against the ask it made and uses each ask ID once. The gesture on an ask that is not armed does nothing.
 
-- **One ask at a time.** The compositor shows and arms at most one ask, on the output that has focus. The broker queues the rest, and the shell shows how many are waiting.
+Steps 1 to 4 are for an ask that takes the confirm gesture or a signature. An ask that takes a plain answer is never armed: the shell shows it and tells the broker the answer (ADR 0026).
+
+- **One ask at a time.** The compositor shows and arms at most one ask, on the output that has focus. The rest wait, and the shell shows how many.
+- **A list.** An ask may hold several acts of one kind. The person can strike any of them. The shell carries a strike to the broker, which makes the content hash again over what is left, and the compositor arms the ask again (ADR 0026).
 - **Declining.** Escape on the ask, or a click on Decline, declines it, whether the shell or the compositor sees it. The broker records the decline. A shell that declines wrongly costs a new ask, never a false yes.
-- **Expiry.** The broker withdraws an ask past its `expires`, and the compositor disarms it.
+- **Expiry.** An ask lasts as long as the task or the running compartment that raised it, and `expires` is when that ends. The broker withdraws an ask past it, and the compositor disarms it.
 - **The lock screen.** While the session is locked, no ask is shown or armed and the gesture does nothing. The ask waits in the broker's queue, and its second starts again after unlock. [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) gives the chord one job on the lock screen, which is to open the unlock entry. It still answers no ask there.
 
 ## Visible and on top
 
-While an ask is showing, the compositor dims every other surface, draws the ask's frame, and sends keyboard and pointer input to the ask surface alone. The cursor and drag icons draw under the frame. No client can dim another client, so "on top" is something the compositor enforces, not a stacking order a client can reach. What the frame looks like is decided with the rest of the trusted UI in [issue 66](https://github.com/crowbaros/crowbaros/issues/66). [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) fixes what a frame is and where it is drawn, and leaves its look to the design work under issue 22.
+While an ask that takes the confirm gesture or a signature is showing, the compositor dims every other surface, draws the ask's frame, and sends keyboard and pointer input to the ask surface alone. The cursor and drag icons draw under the frame. No client can dim another client, so "on top" is something the compositor enforces, not a stacking order a client can reach. What the frame looks like is decided with the rest of the trusted UI in [issue 66](https://github.com/crowbaros/crowbaros/issues/66). [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) fixes what a frame is and where it is drawn, and leaves its look to the design work under issue 22.
 
 ## The gesture
 
-- **The confirm gesture is Ctrl+Alt+Enter, and the keyboard alone can say yes.** The pointer can decline or dismiss an ask, never confirm one. A click can be arranged under a moving cursor; a chord is felt. Which keys make the chord can change later. That nothing in the Environment can rebind it cannot (ADR 0014, rule 5).
+- **The confirm gesture is Ctrl+Alt+Enter, and on an ask that takes it the keyboard alone can say yes.** The pointer can decline or dismiss such an ask, never confirm it. A click can be arranged under a moving cursor; a chord is felt. A click does answer an ask that takes a plain answer, which is accepted only for what can be undone (ADR 0026). Which keys make the chord can change later. That nothing in the Environment can rebind it cannot (ADR 0014, rule 5).
 - **The compositor always takes the chord.** It reaches no client, whether or not an ask is showing. With no armed ask it does nothing. [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) changes one case: with no ask showing and the session unlocked, the chord locks the session.
 - **One keyboard makes the chord.** The modifiers and Enter must be pressed on the same keyboard. The compositor tracks withheld keys for each keyboard, so a release with no press never reaches a client.
 - **A keyboard attached after an ask opened cannot confirm it.** A USB device can pretend to be a keyboard and type the chord.
@@ -45,9 +51,9 @@ While an ask is showing, the compositor dims every other surface, draws the ask'
 
 When the shell disconnects or stalls, the compositor disarms every ask at once, and the gesture does nothing. runit restarts the shell (ADR 0016). Until it is back, the compositor draws one plain notice of its own, "System UI restarting", and no app gets the keyboard. When the shell reconnects, the broker sends every open ask again with the same ID, and its second starts again.
 
-## Changes to authority
+## Authority that lasts
 
-An ask that changes authority (ADR 0014, rule 3) uses the same path with a different answer:
+An ask for authority that lasts (ADR 0014, rule 3) uses the same path with a different answer:
 
 - **The gesture does nothing on it.** Only a signature answers it.
 - **The broker asks for the touch only while the ask is armed.** It waits for the compositor's armed event.
@@ -59,8 +65,8 @@ An ask that changes authority (ADR 0014, rule 3) uses the same path with a diffe
 
 This answers the open consequence of ADR 0014.
 
-- **An everyday ask fits on one screen.** The broker writes it from fixed templates. Anything longer is split into separate asks, or becomes an ask that changes authority.
-- **An ask that changes authority can be longer.** The shell pages through it, and the compositor arms it only after the last page has been shown. Each page is a new frame, so the second starts again on every page.
+- **An everyday ask for one act fits on one screen.** The broker writes it from fixed templates.
+- **A list, and an ask for authority that lasts, can be longer.** The shell pages through it, and the compositor arms it only after the last page has been shown. Each page is a new frame, so the second starts again on every page.
 
 ## Tests
 
@@ -80,6 +86,17 @@ Each of these must pass, or be refused, before the shell protocol is accepted. [
 12. The chord with no ask showing. Nothing is confirmed, and no client sees it. The session locks (ADR 0020).
 13. A malformed, oversized, or unknown message on each socket. The connection is refused, and the trusted part does not crash.
 
+Added by ADR 0026:
+
+14. An ask is raised while the person types in another window. Nothing is shown, the keyboard stays where it is, and the count in the bar rises.
+15. An ask claims to be for what the person just asked for, while another window holds the keyboard, or after the person typed again in that conversation, or from an app's window. It waits.
+16. One principal raises asks past its limit, and the harness proposes tasks past the Agent's. The principal's further asks are held in one line, and the further asks of the Agent and all its tasks are held together in one more. Nothing is refused, and dismissing a line declines every ask in it.
+17. A list ask: the person strikes one item. The ask disarms until it is steady again, and a `confirmed` with the earlier hash is refused.
+18. The shell reports a strike the person did not make. The struck act does not happen. The shell reports that a struck item is back. The broker refuses it.
+19. The chord on an ask that takes a plain answer. Nothing is confirmed.
+20. A plain answer arrives for an ask that takes the confirm gesture or a signature. The broker refuses it.
+21. A key or a click reaches an ask that takes a plain answer in the moment after it appears. Nothing is answered.
+
 ## Considered Options
 
 - **The shell owns the ask and relays the yes.** Rejected: the largest trusted program would carry every yes.
@@ -88,16 +105,16 @@ Each of these must pass, or be refused, before the shell protocol is accepted. [
 - **The shell reports a hash of what it drew.** Rejected: nothing proves the pixels match the hash, so it adds a check that checks nothing.
 - **A private Wayland protocol between shell and compositor.** Rejected: GPUI 0.2.2 gives the shell no way to bind a global of its own.
 - **A schema format such as Cap'n Proto or protobuf.** Rejected for now: tighter, but it brings a toolchain, and its messages cannot be read in a log.
-- **A button the pointer can click to say yes.** Rejected: it is the usual target of clickjacking.
+- **A button the pointer can click to say yes.** Rejected: it is the usual target of clickjacking. ADR 0026 allows one only on an ask that takes a plain answer, for what can be undone.
 - **Several asks on screen at once.** Rejected: one gesture would have to choose between them.
 - **Apps keep the keyboard while the shell restarts.** Rejected: an app could put a window where the ask was.
-- **A scrolling everyday ask.** Rejected: it teaches the person to scroll past without reading.
+- **A scrolling everyday ask.** Rejected: it teaches the person to scroll past without reading. A list is paged, and armed only after its last page.
 - **A separate authenticator service for the security key.** Rejected: it keeps USB HID out of the broker, at the cost of a fifth trusted part.
 
 ## Consequences
 
 - The spike's channel is a reference only. Issue 71 builds the protocol on the production compositor.
 - The broker gains a socket to the compositor and one to the shell, and the compositor tells it when an ask is armed or disarmed.
-- The shell's design for asks has no animation and fits one screen for everyday asks.
+- The shell's design for asks has no animation and fits one screen for an everyday ask about one act.
 - ADR 0014's open consequence on long content is answered here.
 - A compromised shell can still show one thing while the broker asked another. Asks that change authority are where that matters most, and the phone's display does not rest on the desk's shell.

@@ -1,6 +1,6 @@
 # The first production compositor is a small floating desktop, and what it leaves out is on purpose
 
-**Status:** accepted on November 15, 2026, by Jim Martin, at the end of the design session for [issue 66](https://github.com/crowbaros/crowbaros/issues/66).
+**Status:** accepted on November 15, 2026, by Jim Martin, at the end of the design session for [issue 66](https://github.com/crowbaros/crowbaros/issues/66). Revised on November 16, 2026, after council round 5: the clipboard rules follow [ADR 0025](0025-what-the-person-does-by-hand-is-the-answer.md), so a paste from a menu, a middle click, and a drop between compartments now work.
 
 [ADR 0015](0015-our-own-compositor-on-smithay.md) says CrowbarOS owns its compositor. [ADR 0016](0016-the-warden-starts-every-compartment.md) says who its clients are, and [ADR 0018](0018-one-gesture-answers-one-ask.md) says how it carries a yes. The [design brief](../research/compositor-design-brief.md) left open what desktop the first real compositor is: decisions 3 to 9. This record answers them. "First" means the compositor that [issue 21](https://github.com/crowbaros/crowbaros/issues/21) builds for the Beta.
 
@@ -44,7 +44,7 @@ From the bottom to the top:
 3. The bar and the dock. A fullscreen window covers these two, and nothing else the shell draws.
 4. The launcher and the shell's other overlays.
 5. Cursor images and drag icons. They are a client's pixels, and the compositor clips them so that they cover no frame.
-6. While an ask is showing: the dim, the ask, and its frame (ADR 0018).
+6. While an ask that takes the confirm gesture or a signature is showing: the dim, the ask, and its frame (ADR 0018). An ask that takes a plain answer is drawn with the shell's other overlays ([ADR 0026](0026-asks-wait-and-take-one-of-three-answers.md)).
 7. While the session is locked: the lock screen, and nothing else.
 
 A client reaches only the second level and the fifth. A popup or a subsurface is clipped to the display, and it cannot cover another window's frame.
@@ -65,11 +65,15 @@ A client reaches only the second level and the fifth. A popup or a subsurface is
 ## The clipboard
 
 - **Copy and paste inside one compartment work as apps expect.**
-- **Between compartments, the compositor makes the transfer itself.** It holds what was offered, and moves the bytes from the source to the destination only when the person presses a paste key in the destination's window. The read must follow the key press within a short, fixed time.
-- **The paste keys are Ctrl+V, Ctrl+Shift+V, and Shift+Insert.** The compositor still delivers them to the app.
-- **A read with no paste key gets nothing.** That includes a paste from a right-click menu, which the compositor cannot tell from an app reading the clipboard unasked. The bar then shows a hint that names the source and says to press the paste key.
-- **The compositor tells the broker the source and the destination of each paste**, so the pasted value carries its source's label and mark ([ADR 0019](0019-the-origin-table-fails-closed.md)), and the destination compartment is then at that label, as with any value it reads.
-- **Left out:** clipboard managers, the primary selection (middle-click paste), and drag and drop between compartments. Drag and drop inside one compartment works.
+- **Between compartments, the compositor makes the transfer itself.** It holds what was offered, and moves the bytes from the source to the destination only when an act of the person's asks for it. Four acts count (ADR 0025):
+  1. **A paste key in the destination's window:** Ctrl+V, Ctrl+Shift+V, or Shift+Insert. The compositor still delivers the key to the app.
+  2. **A middle click in the destination's window.** It moves the primary selection.
+  3. **A click in the window that holds the keyboard.** This is what Paste in a right-click menu or a toolbar does. The compositor cannot tell which control was clicked, so any click in that window counts.
+  4. **A drop.** The person starts a drag in one compartment and releases the pointer over a window of another.
+- **For the first three, the read must follow the key or the click within a short, fixed time.**
+- **A read with none of these behind it gets nothing:** when a window gains the keyboard, on a timer, or from a window that does not hold the keyboard. The bar then shows a hint that names the source and says to press a paste key.
+- **The compositor tells the broker the source and the destination of each transfer, and which act it followed.** The broker records it as a release. The destination compartment keeps its label and takes the value's mark ([ADR 0019](0019-the-origin-table-fails-closed.md), ADR 0025).
+- **Left out:** clipboard managers. Drag and drop inside one compartment works as before.
 
 ## Capture
 
@@ -120,11 +124,11 @@ One default-deny table decides every global for every client, as in the spike. A
 
 | Offered to | Protocols |
 | --- | --- |
-| Every compartment with a Wayland listener | The core protocols, `xdg-shell`, the data device (under the clipboard rules above), viewporter, fractional scale, cursor shape, presentation time, idle inhibit |
+| Every compartment with a Wayland listener | The core protocols, `xdg-shell`, the data device and the primary selection (both under the clipboard rules above), viewporter, fractional scale, cursor shape, presentation time, idle inhibit |
 | A compartment whose needs include the GPU | `linux-dmabuf` and explicit sync (`linux-drm-syncobj-v1`) |
 | The shell alone | Layer shell |
 | The Warden alone | The security context manager |
-| Nobody | Activation, primary selection, data control, every capture protocol, virtual keyboard, virtual pointer, input method, text input, session lock, foreign toplevel lists, shortcut inhibit, pointer constraints, relative pointer, tablets, DRM leasing, the XWayland shell |
+| Nobody | Activation, data control, every capture protocol, virtual keyboard, virtual pointer, input method, text input, session lock, foreign toplevel lists, shortcut inhibit, pointer constraints, relative pointer, tablets, DRM leasing, the XWayland shell |
 
 [ADR 0023](0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) says which of these rows the shell and the Warden are offered.
 
@@ -137,7 +141,7 @@ One default-deny table decides every global for every client, as in the spike. A
 | Text input through an input method | The input-method route is one ADR 0014 closes. Compose and dead keys work. Chinese, Japanese, and Korean text waits for a trusted input method in the shell: issues [63](https://github.com/crowbaros/crowbaros/issues/63) and [124](https://github.com/crowbaros/crowbaros/issues/124) |
 | A screen reader across apps | An accessibility bus exists only inside one compartment (ADR 0016). Scale, contrast, and reduced motion are the whole of the Beta's offer: issues 63 and 124 |
 | X11 | The compositor never holds X11 code. A bridge for one app is an ordinary client inside that app's compartment, and issue 63 decides whether to package one |
-| Screen sharing, clipboard managers, primary selection, drag and drop between compartments | See above. Issue 112 |
+| Screen sharing, clipboard managers | See above. Issue 112 |
 | Games that capture the pointer | Pointer constraints are offered to nobody |
 | Tiling and scrolling layouts, a workspace set for each display | Not needed for a first desktop |
 | Animation, blur, shadows, rounded corners | The design asks for none |
@@ -186,7 +190,7 @@ The slices, in order. Each lands with the attacks below that test it.
 | 1 | [49](https://github.com/crowbaros/crowbaros/issues/49) | A clean skeleton, client identity through a stand-in for the Warden, the protocol table, redraw on change only, and the guard on what is linked |
 | 2 | [71](https://github.com/crowbaros/crowbaros/issues/71) | The shell protocol, arming an ask, the chord, and the restart notice (ADR 0018) |
 | 3 | [78](https://github.com/crowbaros/crowbaros/issues/78), narrowed | Frames, what is drawn above what, focus, floating windows, workspaces, and the compositor's keys |
-| 4 | A new issue, split from 78 | The clipboard and capture |
+| 4 | [166](https://github.com/crowbaros/crowbaros/issues/166), split from 78 | The clipboard, the primary selection, drag and drop between compartments, and capture. The last two clipboard parts were added by ADR 0025 and are built before the Alpha bar is measured ([ADR 0024](0024-the-friction-bar-ranks-with-the-attack-list.md)) |
 | 5 | [79](https://github.com/crowbaros/crowbaros/issues/79) | Displays, scale, input devices, explicit sync, and the hardware rows. It can run beside slices 2 to 4 |
 | 6 | [87](https://github.com/crowbaros/crowbaros/issues/87) | Lock and recovery from failure |
 
@@ -202,9 +206,9 @@ Each of these is a test, and each must be refused. They add to the attacks in AD
 4. A window draws a picture of a frame and a label tab inside itself. A fullscreen window draws a picture of the desktop, of an ask, and of the lock screen. The real frame is still drawn at the edge of the display in each case. [3]
 5. A client puts a popup, a subsurface, a cursor image, and a drag icon over another window's frame, over the bar, and over an ask. None covers them. [3]
 6. A focused client waits for a Super chord. It sees neither the press nor the release of the chord's key. [3]
-7. A client in another compartment reads the clipboard with no paste key: when it gains focus, on a timer, and from a menu click. It gets nothing, and the hint shows. [4]
-8. The person presses a paste key in one window. A window of another compartment reads the clipboard in the same moment. It gets nothing. [4]
-9. A drag that starts in one compartment is dropped in another. Nothing is delivered. [4]
+7. A client in another compartment reads the clipboard, and the primary selection, with no act of the person's behind the read: when it gains focus, on a timer, and after the short time that follows a click has passed. It gets nothing, and the hint shows. [4]
+8. The person presses a paste key, or clicks, in one window. A window of another compartment that does not hold the keyboard reads the clipboard in the same moment. It gets nothing. [4]
+9. A client starts a drag with no pointer button held by the person, or claims a drop on a window the pointer was not released over. Nothing is delivered. [4]
 10. A peer that is not the shell asks the compositor's interface for pixels. It is refused on its user ID. [4]
 11. A window that is not fullscreen, and a fullscreen window without the keyboard, each inhibit idle. The session still locks. [6]
 12. While the session is locked, a client maps a window, makes it fullscreen, and opens a popup. Nothing is shown, and it gets no input. [6]
@@ -215,6 +219,8 @@ Each of these is a test, and each must be refused. They add to the attacks in AD
 17. A fullscreen window imitates the lock screen, and the person presses the chord. The session locks, and the real lock screen covers the window. [6]
 18. A display is removed and attached again, with a window on it and an ask showing on it. No window is lost, and the ask is disarmed until it is steady again. [5]
 
+The fourth slice also shows that the four acts work: a paste key, a middle click, Paste in a right-click menu, and a drop each deliver the value between two compartments, and the broker is told the source, the destination, and the act.
+
 ## Considered Options
 
 - **A tiling or scrolling layout first.** Rejected: the brand kit's default is floating windows, and one layout is enough to test.
@@ -224,6 +230,7 @@ Each of these is a test, and each must be refused. They add to the attacks in AD
 - **Focus for every new window, as other desktops do.** Rejected: focus is what offers the clipboard and the next keys typed.
 - **The clipboard as apps expect it, with safe focus alone.** Rejected: the focused app could read every copy with no paste by the person, and the broker could not label what crossed.
 - **A paste through the powerbox every time.** Rejected: a paste is too common an act for a picker. The paste key in the destination's window is the person's say.
+- **A paste key only (the first version of this record).** Rejected by ADR 0025: Paste in a right-click menu is how most people who are not developers paste, and the friction bar allows no refusal of what the person did by hand. What it gives up: an app the person clicks in can read what they last copied.
 - **A change inside Smithay's selection code.** Rejected: the compositor making the transfer itself needs none.
 - **A lock screen the compositor draws.** Rejected: it needs text entry, and so text layout, in the compositor. The shell draws it, and the compositor and the broker hold the rules.
 - **Unlock on the shell's word.** Rejected: the largest trusted program would be able to unlock the session.
@@ -243,8 +250,8 @@ Each of these is a test, and each must be refused. They add to the attacks in AD
 - Issues 49, 71, 78, 79, and 87 build to this record. Issue 78 is narrowed, and two issues are new.
 - The glossary gains **trusted UI**, **shell**, and **frame**. "Marking" is no longer used for what the compositor draws, because a **mark** is already the record that a value came from open untrusted input.
 - The shell gains work: the bar names the focused window's principal, shows that a window wants attention, and shows the paste hint. It draws the lock screen and reports nothing about unlock.
-- The broker gains one message from the compositor, the source and destination of each paste, and sends it one: that the person authenticated.
-- An app that reads the clipboard when it gains focus, as some password managers and terminals do, gets nothing from another compartment.
+- The broker gains one message from the compositor, the source and destination of each transfer and the act it followed, and sends it one: that the person authenticated.
+- An app that reads the clipboard when it gains focus, as some password managers and terminals do, gets nothing from another compartment until the person clicks or presses a key in it.
 - A person who uses an input method, a screen reader, a touchscreen, or screen sharing cannot use the Beta as their only desktop. The Beta's cohort is chosen with that known ([issue 51](https://github.com/crowbaros/crowbaros/issues/51)).
 - A chord pressed just after an ask expired or was withdrawn locks the session, and the person unlocks again.
 - The compositor has no font renderer. Every word it shows is an image built into it.
