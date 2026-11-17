@@ -29,9 +29,10 @@ What the design defends against, and what it does not, is in the
   Tool cannot imitate.
 - **Powerbox, not prompts.** Wherever possible, the person picking something *is*
   the grant.
-- **What the person does by hand is the answer.** A paste, a drop, a pick, a
-  link they click, and a request they type are never refused, and are never
-  followed by an ask about that same act. See
+- **What the person does by hand is the answer.** A paste, a drop, a pick, and
+  a link they click in an app are never refused, and are never followed by an
+  ask about that same act. A request they type starts with no ask, and what the
+  Agent then does across the boundary asks once. See
   [ADR 0025](../adr/0025-what-the-person-does-by-hand-is-the-answer.md).
 - **A "yes" comes from the person.** Only the shell delivers input, and no
   principal can synthesize it. An ask waits for the person and takes one of
@@ -42,8 +43,7 @@ What the design defends against, and what it does not, is in the
   **compartment** that reads a value is at that value's label and carries its
   mark from then on. Nothing a model does removes either, nothing crosses
   freely, and marks persist in storage. Each **conversation** is a compartment
-  of its own, and it rises only by the person's act. In a conversation that has
-  not risen, the Agent works by **plan over handles**, so private values stay
+  of its own, and it rises only by the person's act. In a clean conversation, the Agent works by **plan over handles**, so private values stay
   out of it. See
   [ADR 0008](../adr/0008-private-values-stay-out-of-the-agent-context.md).
 - **Open untrusted input costs a task its standing authority.** The task keeps
@@ -94,8 +94,7 @@ flowchart TB
   standing grant and no standing rule (see
   [Who holds standing authority](#who-holds-standing-authority)). Each exchange
   with the person is a **conversation**, a compartment of its own that starts
-  personal and unmarked (see [Conversations](#conversations)). In a conversation
-  that has not risen, it works by plan over handles (see
+  personal and unmarked (see [Conversations](#conversations)). In a clean conversation, it works by plan over handles (see
   [Plan over handles](#plan-over-handles)).
 - **A task** is a fresh principal for one piece of work. It has a stated
   objective, effect limits, a budget, and an expiry. Every handle a task holds was
@@ -437,8 +436,15 @@ Flatpak apps already use. We adopt the portal protocol instead of inventing one.
 The powerbox's rule is the general one. See
 [ADR 0025](../adr/0025-what-the-person-does-by-hand-is-the-answer.md).
 
-- **A paste, a drop, a pick, a link the person clicks, and a request they type
-  are never refused**, and are never followed by an ask about that same act.
+- **A paste, a drop, a pick, and a link the person clicks in an app are never
+  refused**, and are never followed by an ask about that same act.
+- **A request the person types starts with no ask.** It starts a lookup, or
+  points a conversation at a source, as it stands. What the Agent then does
+  across the boundary to carry it out is the Agent's act: it asks once, or is
+  refused, by the rules for acts.
+- **A link shown by a Tool, or by a conversation that is no longer clean, is
+  that compartment's act.** A click on it asks, with the full address shown,
+  unless a standing rule covers it.
 - **Deterministic parts know the hand.** The compositor sees the key press, the
   click, and the drag. The shell sees the pick and the words typed into it. No
   model decides that the person did something. An act an agent makes, or one a
@@ -478,11 +484,13 @@ else can produce them. See
   reading input devices; tracing the shell; pushing characters into a terminal;
   and owner authority in any terminal an agent can reach. A route that is not
   closed is a hole.
-- **An ask waits for the person.** It does not open by itself. The task or
-  compartment that raised it pauses, the shell's bar shows how many asks are
-  waiting, and the keyboard stays where it is. The one ask that opens in place
-  is the one for what the person just asked for. An ask lasts as long as the
-  task or the running compartment that raised it.
+- **An ask waits for the person.** It does not open by itself. The task that
+  raised it pauses, and for a Tool, installed software, or a workbench only the
+  operation that asked waits. The shell's bar shows how many asks are waiting,
+  and the keyboard stays where it is. The one ask that opens in place is the
+  one for what the person just asked for, in the conversation they are in, when
+  they have given it no input since. An ask from an app's window always waits.
+  An ask lasts as long as the task or the running compartment that raised it.
 - **Three answers, by what is at stake.**
   - What stays inside the undo boundary, such as keeping a preview or an undo,
     takes a **plain answer**: any ordinary input in trusted UI. The shell
@@ -500,8 +508,9 @@ else can produce them. See
     keeps its signature, though it lasts for one start.
 - **Nothing is refused for asking too often.** Asks are counted per task and
   across all the Agent's tasks together, and the ask that starts a task counts.
-  Past the limits, a principal's further asks are held in one line, which the
-  person can open or dismiss whole.
+  Past one principal's limit, its further asks are held in one line. Past the
+  Agent's limit, the further asks of the Agent and all its tasks are held
+  together in one line. The person can open a line or dismiss it whole.
 - **One ask can hold a list** of acts of one kind, such as three drafted
   replies. Each is shown in full, the person can strike any of them, and one
   answer covers the rest.
@@ -711,19 +720,22 @@ compartment of its own. See
   reference from the person behind it is refused. It uses a lookup or a plan
   instead. Words that name no source the shell knows change nothing, and the
   Agent asks the person to pick one.
-- **A conversation that has risen stays risen for as long as it lives,** with
-  its history and any summary of it. Its frame shows its label and mark. It can
-  read and discuss what it was pointed at.
-- **It holds no standing authority, and every act of its that crosses asks,**
-  with the exact content shown. A lookup it starts is one of those acts. A
-  standing task started from it runs marked. What it writes to Agent memory
-  keeps its label and mark, so a new conversation does not load it.
+- **A conversation that is no longer clean stays that way for as long as it
+  lives,** with its history and any summary of it. A conversation is clean
+  while it is personal and unmarked. Its frame shows its label and mark. It can
+  read and discuss what it was given.
+- **Every act that crosses, from a conversation that is no longer clean,
+  asks,** with the exact content shown. A lookup it starts is one of those
+  acts, and so is a link it shows. A standing task started from it runs marked.
+- **What it writes keeps its label and mark:** an entry in Agent memory, which
+  a new conversation does not load, and an intent or a check. A build from such
+  an intent or check is not clean, so the grant asks again, with a signature.
 - **A clean conversation is one action away.**
 - **Its provider must be cleared.** A conversation pointed at a category of
   private data thinks with a model provider cleared for that category. The first
   time, one ask opens in place and takes a signature: "let your provider hold
-  messages". It is not asked again for that category. This is the one place a
-  request the person typed is followed by an ask.
+  messages". It is not asked again for that category. A typed request meets no
+  other ask before its work starts.
 
 ### What crosses between compartments
 
@@ -739,7 +751,7 @@ both fixed before the task read anything.
   carries that result's label and mark.
 - An act that depends on a result from a marked task counts as marked. A steered
   choice cannot spend a standing rule.
-- A conversation that has not risen does not read a result from a marked task.
+- A clean conversation does not read a result from a marked task.
   The plan branches on it inside the interpreter, and the shell shows it to the
   person. To have the Agent read it, the person puts it into the conversation or
   points the conversation at it.
@@ -751,7 +763,7 @@ both fixed before the task read anything.
   number of handles a task returns, and whether a step succeeded or was refused
   carry the label and mark of what they were computed from. They are hidden from
   the Agent, or charged to the budget, like any other result.
-- A private result reaches a conversation that has not risen only by a
+- A private result reaches a clean conversation only by a
   **release**, or inside a budget for that category. The budget is counted in
   bits across all tasks. It is zero, and no interface sets it yet.
 - A **release** is the person letting one exact value pass to one named
@@ -763,8 +775,7 @@ both fixed before the task read anything.
 
 ### Plan over handles
 
-We assume most people's Agent thinks with a cloud model. In a conversation that
-has not risen, and in a standing task, the Agent works by plan over handles. See
+We assume most people's Agent thinks with a cloud model. In a clean conversation, and in a standing task, the Agent works by plan over handles. See
 [ADR 0008](../adr/0008-private-values-stay-out-of-the-agent-context.md).
 
 - The Agent writes a **plan**: a small program whose variables are handles.
@@ -772,7 +783,7 @@ has not risen, and in a standing task, the Agent works by plan over handles. See
   values between Tools, broker operations, and model calls.
 - The interpreter is not a model, so it tracks the label and mark of every
   result. A model's context cannot.
-- A conversation that has not risen holds handles, schemas, synthetic samples,
+- A clean conversation holds handles, schemas, synthetic samples,
   results it is allowed to read, and the person's own words. **It is personal**:
   what the person types counts as personal by rule. A value put into a
   conversation goes to that conversation's model provider as well. When an ask
@@ -801,7 +812,7 @@ model from real Data.
 
 ```mermaid
 flowchart LR
-    AG["A conversation that<br/>has not risen<br/>(cloud model), personal"] -->|"plan: a program<br/>over handles"| IN
+    AG["A clean conversation<br/>(cloud model), personal"] -->|"plan: a program<br/>over handles"| IN
     subgraph FLEET["Inside the fleet"]
         IN["Plan interpreter<br/>deterministic; tracks label<br/>and mark of every result"]
         D[("Private Data")]
@@ -845,11 +856,12 @@ machine or an outside party may hold. For private data it names the categories.
   no ask. The broker checks its objective against what the shell recorded: it is
   one whole turn the person typed, unchanged. Any text the Agent adds to those
   words is shown to the person before it leaves, as a release in full: the exact
-  text, and where it may go. A lookup started from a conversation that has risen
+  text, and where it may go. A lookup started from a conversation that is no longer clean
   is one of that conversation's acts that cross, so it asks. A standing task
   that looks things up has a fixed objective.
 - **A compartment that holds only public data and no login may reach any host
-  without asking.** That covers a lookup, a task browser context that is not
+  on the open internet without asking.** Machines in the fleet and addresses on
+  the home network are not among them. That covers a lookup, a task browser context that is not
   logged in, and a workbench for a project the person declared public when they
   made it. Nothing private is inside to leak. Secrets stay in the vault, and the
   broker fills them in only for the hosts they are tied to.
@@ -875,7 +887,8 @@ cookies. See
 - A page fetched under a login is private to that site.
 - Each site is an outside party with a clearance: it receives public data, what
   it supplied itself, and what the person released to it. A context that is not
-  logged in holds only public data, so it may reach any host. A logged-in
+  logged in holds only public data, so it may reach any host on the open
+  internet. A logged-in
   context reaches its one site, and the shared hosts below.
 - The task drives its own context through the browser's automation interface
   inside its sandbox. That is not input to a surface the shell draws.
@@ -890,7 +903,10 @@ cookies. See
 - **What that answer does not change.** The task reaches that one site and the
   shared hosts, and a connection to any other host is dropped. The session
   cookie stays in the broker. The task holds only what the person released to it
-  in that ask. Money moves only from the Allowance. The context runs in a framed
+  in that ask. The Allowance is the only payment credential the task can
+  supply; a payment method the site already stores is not capped by it. A
+  shared host is cleared, for that task, for what the task holds for its site
+  and nothing else. The context runs in a framed
   window the person can watch. Every request is in the ledger.
 - **Two lists come with the catalog.** On the person's machine, a change to
   either takes a signature, whether the person makes it or a new catalog

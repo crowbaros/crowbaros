@@ -20,19 +20,19 @@
   2. The right, and for a delegation, that the handle may be passed on, and not to the Agent.
   3. The effect limits, with a copy's uses also counted against its original.
   4. The label and mark at issuance: a Data handle's are at or above the join of its objects' origins. An object with no record is the unknown row ([ADR 0019](0019-the-origin-table-fails-closed.md)).
-  5. The clearance, on egress: the compartment's whole label, from the broker's record of it, is at or below the party's clearance.
+  5. The clearance, on egress: the compartment's whole label, from the broker's record of it, is at or below the party's clearance. For a logged-in task, a host on the shared list is cleared for what the task holds for its one site, and for nothing else, until the task ends ([ADR 0013](0013-agents-never-drive-the-persons-browser.md)).
   6. The undo boundary, with the standing grant and standing rule a crossing needs, the rule for every source that marked the act.
   7. If the result is an ask: whether it is held, and which answer it takes.
 - **The undo boundary is a fixed table.** Each adapter operation declares whether it stays inside. An operation the table does not list crosses, and an egress always does.
 - **Three kinds of egress cross on authority the person already gave, and do not ask** (ADR 0011):
   - a model request, when the provider is cleared for everything the compartment holds and the model budget is not spent;
   - installed software or a workbench reaching what its approval showed: the approval is its standing grant and standing rule;
-  - a compartment that holds only public data and no login reaching any host. Every party is cleared for public data, so the clearance check is the whole decision.
+  - a compartment that holds only public data and no login reaching any host on the open internet. Every outside party is cleared for public data, so the clearance check is the whole decision. A machine in the fleet or an address on the home network is not such a host.
 - **An ask names the answer it takes** (ADR 0026): a plain answer when the effect stays inside the undo boundary, the confirm gesture when it crosses or the authority lasts only for this run, and a signature when the authority lasts for good.
 - **A use declares** which objects it affects, and its cost: a fixed amount, or "depends on a value". A cost that depends on a value asks, unless a standing rule with a cap covers the act.
 - **A standing rule with a cap fires without an ask when the amount is under the cap.** The gate still never reads the amount. It answers "allowed if within the cap", and the adapter checks the amount against the cap when it carries the act out. Over the cap, the adapter carries nothing out, and the act asks, with the amount shown. A dry run says only "allowed if within the cap". The gate checks the objects against the objects a Data handle names and against every "which objects" limit that applies, and counts them against "how many". A use that affects no object counts as one operation.
 - **A standing grant on a set of Data objects covers a handle on some of them.** Any other resource must be the same.
-- **Ask limits are constants for now.** A principal has 1 ask waiting at a time and pauses until it is answered. The limits are 10 an hour for one principal, and 30 an hour for the Agent and all its tasks together, and the asks that start tasks count. Over a limit, the gate still answers "ask", and marks the ask as held. The shell shows a principal's held asks as one line, which the person can open or dismiss whole (ADR 0026). Nothing is refused for asking too often.
+- **Ask limits are constants for now.** A principal has 1 ask waiting at a time. A task pauses until it is answered. For a Tool, installed software, or a workbench, only the operation that asked waits. The limits are 10 an hour for one principal, and 30 an hour for the Agent and all its tasks together, and the asks that start tasks count. Over a limit, the gate still answers "ask", and marks the ask as held, with the limit it passed. The shell shows the asks held under one principal's limit as one line, and the asks held under the Agent's limit as one line for the Agent and all its tasks together. The person can open a line or dismiss it whole (ADR 0026). Nothing is refused for asking too often.
 
 ## State
 

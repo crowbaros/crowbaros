@@ -8,9 +8,10 @@ The powerbox already works this way: the person's pick of a file is the grant of
 
 ## The rule
 
-- **What the person does with their own hand is the answer.** A paste, a drop, a pick in the powerbox, a link they click, and a request they type are never refused, and are never followed by an ask about that same act.
+- **What the person does with their own hand is the answer.** A paste, a drop, a pick in the powerbox, and a link they click in an app are never refused, and are never followed by an ask about that same act.
+- **A request the person types starts with no ask.** It starts a lookup, or points a conversation at a source, as it stands. What the Agent then does across the boundary to carry the request out is the Agent's act: it asks once, or is refused, by the rules for acts ([ADR 0011](0011-task-principals.md)).
 - **Deterministic parts know the hand.** The compositor sees the key press, the click, and the drag. The shell sees the pick and the words typed into it. No model decides that the person did something. An act an agent makes, or one a client claims with no input behind it, is not the person's hand.
-- **One exception.** The first time a conversation is pointed at a category of private data that its model provider is not cleared for, one ask opens in place and takes a signature. It is asked once for each category ([ADR 0008](0008-private-values-stay-out-of-the-agent-context.md)).
+- **One ask can come before a typed request's work starts.** The first time a conversation is pointed at a category of private data that its model provider is not cleared for, one ask opens in place and takes a signature. It is asked once for each category ([ADR 0008](0008-private-values-stay-out-of-the-agent-context.md)).
 
 ## A value moved by hand is released, and keeps its mark
 
@@ -18,7 +19,8 @@ A label says where a value may go, and that is the person's to decide. A mark sa
 
 - **The move is a release.** The value passes to the compartment the person moved it into, whatever its label. That compartment's label does not rise, and nothing is refused.
 - **The mark is kept.** The destination carries the value's mark from then on, and so does everything it writes afterwards.
-- **A compartment whose label was fixed at start takes the mark too.** ADR 0019 refused a value above such a compartment's start label and mark, and rejected letting it rise, because the gate cannot see a native process write inside its view. A value moved by hand has its label released, so only the mark has to rise. The broker records the mark on the compartment before it delivers the value. Every write it records for that compartment afterwards carries the mark, and a write it recorded earlier keeps what it had.
+- **A compartment whose label was fixed at start takes the mark too.** ADR 0019 refused a value above such a compartment's start label and mark, and rejected letting it rise, because the gate cannot see a native process write inside its view. A value moved by hand has its label released, so only the mark has to rise. The broker records the mark on the compartment before it delivers the value.
+- **The rule does not depend on seeing a write.** Installed software and workbenches write live ([ADR 0017](0017-a-pinned-catalog-and-workbenches.md)), and a file may already be open. So when the compartment takes the mark, the broker takes a snapshot of every folder that compartment can write. From then on, an object in those folders that differs from the snapshot carries the mark whenever another compartment is given it. What counts is that the object changed after the value arrived, not how it was written. The compartment cannot alter the snapshot. An object that did not change keeps what it had.
 - **The ledger records each one:** the source, the destination, and which act of the person's moved it.
 
 Four cases:
@@ -39,14 +41,16 @@ Four cases:
   4. a drop: a drag that starts in one compartment and is released over a window of another.
 - **A read with none of these behind it gets nothing:** when a window gains the keyboard, on a timer, or from a window that does not hold the keyboard.
 - **A pick** in the powerbox, as before.
-- **A link the person clicks** opens in their browser. The address is a value moved by hand.
-- **A request the person types.** A lookup started from the words they typed leaves with those words, exactly as typed, and with no ask ([ADR 0011](0011-task-principals.md)). A conversation they point at a source may read it ([ADR 0008](0008-private-values-stay-out-of-the-agent-context.md)).
+- **A link the person clicks in an app's window** opens in their browser. The address is a value moved by hand. The same holds for a link in a clean conversation and in a lookup's answer.
+- **A link shown by a Tool, or by a conversation that is no longer clean, is that compartment's act.** Whatever may be steering it composed the address. A click on it asks, with the full address shown, unless a standing rule covers it ([ADR 0008](0008-private-values-stay-out-of-the-agent-context.md)).
+- **A request the person types.** A lookup started from the turn they just typed leaves with those words, exactly as typed, and with no ask ([ADR 0011](0011-task-principals.md)). A conversation they point at a source may read it (ADR 0008).
 
 ## What this gives up
 
 - **A person tricked into pasting or typing something harmful.** The threat model already lists a person persuaded to release something as not defended.
 - **An app the person clicks in can read what they last copied.** A window that does not hold the keyboard still cannot, and a window that holds it cannot without a click or a key. Other Linux desktops let a window read the clipboard as soon as it has the keyboard.
 - **A private value the person pastes into an app is at that app's label from then on.** It can go wherever that app can send it.
+- **An app can put what it holds into the address of a link, and it leaves when the person clicks.** The person sees the link's words, not its address. A clean conversation can do the same with what it holds, which is at most personal.
 
 ## Considered Options
 
@@ -63,5 +67,5 @@ Four cases:
 - Those two are built before the Alpha bar is measured ([ADR 0024](0024-the-friction-bar-ranks-with-the-attack-list.md)), because the bar allows no refusal of what the person did by hand.
 - The compositor tells the broker which of the four acts each transfer followed, as well as its source and destination. The attacks of the fourth slice change with it, and are run again.
 - `crates/crowbar-labels` refuses a value above a fixed compartment today. It changes through its own issue.
-- Milestone 2 gains an attack: a paste with no hand behind it.
+- Milestone 2 gains attacks: a clipboard read with no hand behind it, a marked paste into a file an app already had open, and a link shown by a conversation that is no longer clean.
 - A mark now spreads by hand as well as by tasks. Milestone 2's measurement of how far marks spread counts it.

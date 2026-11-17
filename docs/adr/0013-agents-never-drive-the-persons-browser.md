@@ -13,13 +13,13 @@ What that answer does not change:
 - The task reaches that one site, and the shared hosts below. A connection to any other host is dropped.
 - The session cookie stays in the broker.
 - The task holds only what the person released to it in that ask.
-- Money moves only from the Allowance, so the card issuer or the wallet caps it.
+- The Allowance is the only payment credential the task can supply, and the card issuer or the wallet caps it. A payment method the site already stores is not the task's to supply, and is not capped: see what this gives up, below.
 - The context runs in a framed window the person can watch.
 - Every request is in the ledger.
 
 **Two lists come with the catalog** ([ADR 0017](0017-a-pinned-catalog-and-workbenches.md)). On the person's machine, a change to either takes a signature, whether the person makes it or a new catalog snapshot brings it. A snapshot's changes are shown together and take one signature.
 
-- **Shared hosts:** the payment processors, content delivery networks, and font hosts a page may load from. A logged-in context reaches these as well as its site. A request to any other host, telemetry included, is dropped quietly, and does not count as a refusal ([ADR 0024](0024-the-friction-bar-ranks-with-the-attack-list.md)).
+- **Shared hosts:** the payment processors, content delivery networks, and font hosts a page may load from, each named by its exact host. A logged-in context reaches these as well as its site. For the length of that task, a shared host is cleared for what the task holds for its site: the site's own pages, and what the person released to the site in the ask. The person's answer for the site is the authority for that, and the ask says so. A shared host is cleared for nothing else the fleet holds. A request to any other host, telemetry included, is dropped quietly, and does not count as a refusal ([ADR 0024](0024-the-friction-bar-ranks-with-the-attack-list.md)).
 - **Adapter-only sites:** banks, mail providers, and identity providers, and any site the person adds. A task gets no browser context for one of these. It acts there only through an adapter, and where there is no adapter, the Agent hands the errand back to the person.
 
 **A site that breaks without a host that is not on the shared list is handed back to the person.**
@@ -41,7 +41,8 @@ Revised after council round 5. Until then, every request in a logged-in context 
 - The person's browser is installed software in a sandbox with broker-owned egress. Inside it, keeping one site's content from another is the browser's job, and we rely on it.
 - Agent work on a site starts logged out and costs one ask, which includes the approved fill, or a standing grant for that site's login.
 - **While the task runs, an injected page on that site can make other changes on that one account:** a second booking, a changed address. The risk is confined to one account on one site for the length of one task, and the site already controls that account.
-- **What a task holds for one site can reach a host on the shared list.**
+- **That includes spending with a payment method the site already stores:** a saved card, or billing to the account. Nothing deterministic can tell that a request is a charge, so the Allowance does not cap it. The ask for the site says so in fixed words. A site where that matters belongs on the adapter-only list, which the person can add to.
+- **What a task holds for one site can reach a host on the shared list.** Some shared hosts serve anyone's content, as many content delivery networks do, so that can be an attacker's content on a shared host.
 - A site that needs a host the shared list leaves out does not work for a task until the list gains it.
 - Counting requests on real sites, with real accounts, would tune the shared list. It is not done yet and blocks nothing before Milestone 5.
 - Every kind of unasked act on a site needs an adapter.

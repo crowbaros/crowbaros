@@ -299,8 +299,9 @@ ends in the person's answer, so nothing else may be able to produce one:
   devices, and a terminal that reaches owner authority.
 - **An ask waits for the person.** It never takes the keyboard from their work.
   The bar shows how many are waiting, and the one ask that opens by itself is the
-  one for what the person just asked for. Nothing is refused for asking too
-  often: a flood is held in one line the person can dismiss whole. One ask can
+  one for what the person just asked for, in the conversation they are in.
+  Nothing is refused for asking too often: a flood is held in one line the
+  person can dismiss whole. One ask can
   hold a list of acts of one kind, such as three drafted replies.
 - **Three answers, by what is at stake.** What stays inside the undo boundary,
   such as keeping a preview, takes a **plain answer**: any ordinary input in
@@ -314,10 +315,12 @@ ends in the person's answer, so nothing else may be able to produce one:
   key, or approval on the phone, as a **signature** over the exact content shown.
   It is asked for the first time something needs it, not up front, and a list the
   person put together takes one signature.
-- **What the person does by hand is the answer.** A paste, a drop, a pick, a
-  link they click, and a request they type are never refused, and are never
-  followed by an ask about that same act. A value moved by hand is released to
-  where the person put it, and keeps its mark.
+- **What the person does by hand is the answer.** A paste, a drop, a pick, and
+  a link they click in an app are never refused, and are never followed by an
+  ask about that same act. A request they type starts with no ask: it starts a
+  lookup, or points a conversation at a source, as it stands. What the Agent
+  then does across the boundary to carry it out asks once. A value moved by
+  hand is released to where the person put it, and keeps its mark.
 - Voice never counts as confirmation, because a speaker can produce it. Words
   that arrive by voice are marked until the person makes the confirm gesture.
 - The trusted UI and the confirm gesture are part of Base. They cannot be themed
@@ -364,15 +367,17 @@ in batches. An act the person answered leaves at once.
   observed about a result is a result too: its size, how many handles came back,
   whether a step was refused.
 - **Conversations.** Each exchange between the person and the Agent is a
-  **conversation**, a compartment of its own. It starts personal and unmarked.
-  It rises only by the person's act: they put a value in, or they point it at a
-  source such as their mail. Then it may read and discuss what it was pointed at,
-  it is marked for as long as it lives, and every act of its that crosses asks
-  with the exact content. The Agent cannot raise its own conversation, the frame
+  **conversation**, a compartment of its own. It starts **clean**: personal and
+  unmarked. It changes only by the person's act: they put a value in, which is
+  released and brings its mark with it, or they point it at a source such as
+  their mail, and it rises to that source's label and mark. Then it may read
+  and discuss what it was given. It is no longer clean for as long as it lives,
+  and every act of its that crosses asks with the exact content, a link it
+  shows included. The Agent cannot mark or raise its own conversation, the frame
   shows the label and mark, and a clean conversation is one action away. The
   first time a conversation is pointed at a category of private data, one
   signature clears the model provider for that category.
-- **What reaches a clean conversation.** A conversation that has not risen does
+- **What reaches a clean conversation.** A clean conversation does
   not read a result from a marked task. The plan branches on it inside the
   interpreter, and the shell shows it to the person. A private result reaches it
   only by a **release** (the person lets one exact value pass to one named
@@ -383,7 +388,8 @@ in batches. An act the person answered leaves at once.
 - **Lookups.** A **lookup** answers a question from the open web. It holds only
   the words the person typed, exactly as typed, and what it found. Nothing
   private is in it, so it starts and takes follow-ups with no ask. A compartment
-  that holds only public data and no login may reach any host.
+  that holds only public data and no login may reach any host on the open
+  internet.
 - **Only the person's own words are theirs.** What the person types reaches the
   Agent as theirs. What they paste or drop into a conversation enters it, and
   the conversation takes its mark. Every other string that the person did not type and
@@ -416,7 +422,9 @@ in batches. An act the person answered leaves at once.
   On a logged-in site the person answers once for each task and each site. The
   ask names the site, what the task may do, and the exact values it may send, and
   the answer covers the task's requests to that one site until the task ends.
-  Money moves only from the Allowance, and the person can watch the window.
+  The Allowance is the only payment credential the task can supply, and the
+  person can watch the window. A payment method the site already stores is in
+  the site's hands.
   Banks, mail providers, and identity providers are adapter-only: with no
   adapter, the Agent hands the errand back. An act happens with no ask at all
   only through a broker adapter that knows the operation, under a standing rule
@@ -492,7 +500,7 @@ notifications until noon, and a photo sorter are all Tools.
   update that asks for nothing new goes live by itself. Dev tools run in a
   **workbench**: a changeable Linux system for one project, approved once, where
   package managers work without asking. A workbench for a project the person
-  declared public may reach any host, and a host a private project needs for one
+  declared public may reach any host on the open internet, and a host a private project needs for one
   run is added with the confirm gesture.
   [ADR 0017](adr/0017-a-pinned-catalog-and-workbenches.md).
 - **Declarative UI.** A Tool describes its UI, and a trusted shell draws it inside
@@ -756,7 +764,7 @@ flowchart LR
 | Milestone | Scope | Proves |
 | --- | --- | --- |
 | **M1** (done) | State → apply → Base generation → broken change → boot-menu rollback, in a Void VM on Btrfs. See [Milestone 1](milestones/milestone-1.md). | The generation layout, boot menu, and rollback |
-| **M2** (next) | The security rules, built to be attacked, on stock Linux with no CrowbarOS Base. First: a broker and gate, task principals in Linux sandboxes, labels and marks, and a plan over handles run by a deterministic interpreter with a cloud model as the Agent. It passes when every named attack is refused and a fixed set of ordinary tasks meets the friction bar. Second, and cut if the milestone slips: checks as scenarios with the Base runner, fork, preview, promote, undo, and grants across rebuilds. Scope and acceptance tests: [Milestone 2](milestones/milestone-2.md). | ADRs 0003, 0008, 0011 first; then 0001 and 0007. No model on the trust path. |
+| **M2** (next) | The security rules, built to be attacked, on stock Linux with no CrowbarOS Base. First: a broker and gate, task principals in Linux sandboxes, labels and marks, and a plan over handles run by a deterministic interpreter with a cloud model as the Agent. It passes when every named attack ends as its row says, which for most is a refusal, and a fixed set of ordinary tasks meets the friction bar. Second, and cut if the milestone slips: checks as scenarios with the Base runner, fork, preview, promote, undo, and grants across rebuilds. Scope and acceptance tests: [Milestone 2](milestones/milestone-2.md). | ADRs 0003, 0008, 0011 first; then 0001 and 0007. No model on the trust path. |
 | **M1b** | Build each Base generation from empty out of a complete pinned package set, with the State owning every package. Read-only generations. Data and machine state on their own subvolumes, so an apply never drops what was written before the reboot. Automatic fallback when a new generation fails to boot. Crash safety during an apply. | "The State is a lockfile" for Base; ADR 0009 |
 | **M3** | Data layer v0: objects with provenance, labels, stable ids, and history, as an index over files. Staged writes and commit. Compartments for every execution context. Label-based egress, including model calls. | Information-flow control on real Data |
 | **M4** | Shell: declarative UI renderer inside system chrome, powerbox, trusted asks that wait and take one of three answers, point and say with local perception. Recovery screen. | Living software; ADR 0014 |

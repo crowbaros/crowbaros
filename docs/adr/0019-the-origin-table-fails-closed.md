@@ -18,7 +18,7 @@
 ## Labels and marks only rise
 
 - **A compartment whose label was fixed at start refuses more.** A native sandbox is fixed at the join of its view, and a workbench is also always marked. A value above that, offered later, is refused with a refusal that names the rule. The compartment does not rise, and it is not restarted.
-- **A value the person moves in by hand is the exception.** It is not refused. Its label is released, so the compartment's label stays, and the compartment takes its mark. The broker records the mark on the compartment before it delivers the value, so every write it records afterwards carries the mark (ADR 0025).
+- **A value the person moves in by hand is the exception.** It is not refused. Its label is released, so the compartment's label stays, and the compartment takes its mark. The broker records the mark on the compartment before it delivers the value, and takes a snapshot of the folders the compartment can write. An object there that differs from the snapshot carries the mark when another compartment is given it, so the rule does not depend on seeing the write (ADR 0025).
 - **A write joins with what is stored.** A writer that never read the old object still cannot clear its mark. An object with no record may have been on disk before records were kept, so a write to it joins with the unknown row. Only a new object starts at the label and mark of what wrote it, and only the broker, which knows the object is new, records it so. A Tool re-derived from its intent and checks writes its source as a new object, and the old source stays marked in history.
 - **A stored record names both its label and its mark.** Loading refuses a record that is missing either, that names a field, category, or source the code does not know, or that names one object twice. A missing field is never read as public or unmarked.
 
@@ -30,7 +30,7 @@
 - **A mark that says only marked or not.** Rejected: ADR 0011's rule for a source cannot be checked without the source, and stored records could not gain it later.
 - **Mail marked by its authenticated sender.** Rejected for now: the account is what the broker knows for certain. A finer source can be added later, because a mark only gains sources.
 - **A logged-in site also carries a category the person or an adapter sets.** Rejected for now: ADR 0008 says private to that site, and a second category is a policy no record has made.
-- **A fixed compartment rises from then on.** Rejected: the gate cannot see a native process write inside its view, so a live write made earlier would keep the lower label. ADR 0025 accepts it for one case, the mark of a value the person moved in by hand, and orders the steps so that no write after the value arrives is recorded without the mark.
+- **A fixed compartment rises from then on.** Rejected: the gate cannot see a native process write inside its view, so a live write made earlier would keep the lower label. ADR 0025 accepts it for one case, the mark of a value the person moved in by hand. It answers the objection with a snapshot taken when the mark is: what changed afterwards carries the mark, whether or not the gate saw the write.
 - **A fixed compartment is restarted at the higher label.** Rejected for now: it stops the person's work in a running app to deliver one value.
 - **A full replace by an unmarked writer resets the record.** Rejected: the broker cannot tell a blind replace from a read and a write.
 

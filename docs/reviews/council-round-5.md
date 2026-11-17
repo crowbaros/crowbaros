@@ -35,7 +35,9 @@ Allowance. What they would change is a handful of rules added in the rounds that
 looked only at security.
 
 The findings were then settled in a design session of thirty questions with Jim.
-No reviewer has read the edits that record the answers.
+The three reviewers then read the edits that record the answers, in a
+[second pass](#the-second-pass). No reviewer has read the fixes that followed
+it.
 
 ## Findings and how each was closed
 
@@ -73,17 +75,17 @@ Jim answered yes to every question but one.
 | 1 | When security and low friction cannot both pass | The capability gives way. Security is not loosened and the bar is not raised. | ADR 0024 |
 | 2 | What counts against the bar | Every ask, and apart from them every refusal of what the person did by hand or asked for. | ADR 0024, the [glossary](../../GLOSSARY.md) |
 | 3 | Which bar applies when | Alpha: the developer's day and each Milestone 2 task. Beta: the day of a person who is not a developer. | ADR 0024 |
-| 4 | The person's own hand | A paste, a pick, a drop, a clicked link, or a typed request is never refused and never followed by an ask about that act. | ADR 0025 |
+| 4 | The person's own hand | A paste, a pick, a drop, a clicked link, or a typed request is never refused and never followed by an ask about that act. The second pass narrowed the last two. | ADR 0025 |
 | 5 | When an ask shows | It waits. It never takes the keyboard, and it is never refused for arriving too fast. | ADR 0026 |
 | 6 | How many answers | Three: a plain answer, the confirm gesture, a signature, by what is at stake. | ADR 0026, ADR 0014 |
 | 7 | What a conversation may read | What the person points it at. It is then marked for life, and its sends ask. | ADR 0008 |
-| 8 | A logged-in site | One answer for each task and each site, not one for each request. | ADR 0013 |
+| 8 | A logged-in site | One answer for each task and each site, not one for each request. The second pass found that the Allowance does not cap a payment method the site already stores. | ADR 0013 |
 | 9 | The numbers | 0, 1, 2, 2, and 1 asks by kind of task; 5 and 8 asks a day; no refusal of what the person did by hand. It is called the friction bar. | ADR 0024, [Milestone 2](../milestones/milestone-2.md) |
 | 10 | A value moved by hand | Its label is released and its mark is kept. | ADR 0025, ADR 0019 |
 | 11 | A lookup | A compartment of its own that holds only the typed words and what it found. | ADR 0011 |
 | 12 | A conversation | Each exchange with the Agent is one. It rises only when the person points it at something. | ADR 0008 |
 | 13 | Authority for a run and for good | The confirm gesture for this run, a signature for good. | ADR 0026, ADR 0017 |
-| 14 | Public data and no login | Such a compartment may reach any host without asking. | ADR 0011, ADR 0017 |
+| 14 | Public data and no login | Such a compartment may reach any host on the open internet without asking. | ADR 0011, ADR 0017 |
 | 15 | The two lists | The catalog keeps shared hosts and adapter-only sites, changed only by a signature. | ADR 0013 |
 | 16 | The signal for a waiting ask | A count in the bar and nothing else. An ask lasts as long as its task. | ADR 0026 |
 | 17 | The outbox | Its delay is for acts under a standing rule. An act the person answered leaves at once. | [ADR 0003](../adr/0003-security-is-deterministic.md) |
@@ -108,34 +110,60 @@ Writing the answers down needed these. Each is the narrower reading.
 - **How typed words name a source.** The shell matches them to one of the
   person's sources by fixed rules, never by a model, and the broker opens only
   what the reference names. A miss costs a pick. (ADR 0008)
-- **A lookup's objective is one whole turn the person typed, unchanged**, and the
-  broker checks it against what the shell recorded. (ADR 0011)
-- **A lookup started from a conversation that has risen asks.** Question 7
+- **A lookup's objective is the turn the person typed last, whole and
+  unchanged**, and the broker checks it against what the shell recorded.
+  (ADR 0011)
+- **A lookup started from a conversation that is no longer clean asks.** Question 7
   already says that conversation's sends ask. (ADR 0011)
 - **A task that composes its act later starts with no ask.** The bar gives a
   task with one act that leaves one ask, so the start and the act cannot each
   take one. (ADR 0011)
 - **The shell carries a plain answer**, and the compositor carries every other
   yes. (ADR 0026)
-- **When an ask opens in place:** the window that holds the keyboard belongs to
-  the conversation or compartment the ask came from, and the person's last input
-  to it was the request. (ADR 0026)
+- **When an ask opens in place:** only in a conversation, when its window holds
+  the keyboard and the person has given it no input since the turn that started
+  the work. An ask from an app's window always waits. (ADR 0026)
 - **A wide compartment keeps its signature**, though it lasts for one start.
   (ADR 0026)
 - **A compartment whose label was fixed at start takes the mark of a value moved
-  in by hand.** The broker records the mark before it delivers the value. This
-  reverses, for that one case, an option ADR 0019 rejected. (ADR 0025)
+  in by hand.** The broker records the mark and takes a snapshot of the folders
+  the compartment can write, and an object that differs from the snapshot
+  carries the mark. This reverses, for that one case, an option ADR 0019
+  rejected. (ADR 0025)
 - **A new catalog snapshot's changes to the two lists take one signature.**
   (ADR 0013)
 - **Work handed back to the person is reported beside the two counts.**
   (ADR 0024)
 - **Milestone 2 gains more attacks than the five named in question 25.** The
   rule in that question asks for one for each loosened rule, which adds A22, A25,
-  A28, A29, A30, and B8.
+  A28 to A34, B8, and B9.
 - **Milestone 2 builds the fixed rules that name a source**, and measures how
   often they miss and how far marks spread by hand.
 - **The bar's hint for a paste stays**, for a read with no act of the person's
   behind it. (ADR 0020)
+
+Added in the second pass:
+
+- **A link.** One the person clicks in an app, in a clean conversation, or in a
+  lookup's answer is released by hand. One shown by a Tool, or by a conversation
+  that is no longer clean, asks on the click with the full address shown.
+  (ADR 0025)
+- **Clean.** A conversation is clean while it is personal and unmarked. Every
+  rule that said "risen" now says "no longer clean", so a conversation marked by
+  a paste is treated like one pointed at mail. (ADR 0008)
+- **One object is a value, and anything that holds more than one is a source.**
+  Only typed words name a source. (ADR 0008)
+- **An intent or a check written from a conversation that is no longer clean
+  keeps its mark**, so a Tool change asked for there costs a signature.
+  (ADR 0008)
+- **A shared host is cleared, for one task, for what that task holds for its
+  site.** (ADR 0013, ADR 0021)
+- **Declaring a project public is a signed declassify of its folders**, and a
+  write into them from above public is refused. (ADR 0017)
+- **An ask that takes a plain answer ignores input for a moment after it
+  appears.** (ADR 0026)
+- **Past the Agent's limit, the asks of the Agent and all its tasks are held
+  together in one line.** (ADR 0026, ADR 0021)
 
 ## What this round gave up, on purpose
 
@@ -143,6 +171,10 @@ Each is in the [threat model](../threat-model.md) under what remains.
 
 - A person tricked into pasting or typing something harmful.
 - An app the person clicks in can read what they last copied.
+- An app can put what it holds into the address of a link, and it leaves when
+  the person clicks.
+- On a logged-in site, an injected page can spend with a payment method the
+  site already stores, which the Allowance does not cap.
 - A private value the person pastes into an app can go wherever that app can
   send it.
 - While a task runs on a logged-in site, an injected page can make other changes
@@ -167,10 +199,82 @@ Each is in the [threat model](../threat-model.md) under what remains.
   and still describes the ask as ADR 0018 first had it.
 - **Neither day's script is written.**
 
+## The second pass
+
+The same three models read the written result at commit `a6061b8`, read-only.
+
+| Delegate | The record, as ready to merge | Friction as now designed |
+| --- | --- | --- |
+| Claude Opus | 6 / 10 | 7 / 10 |
+| Claude Fable | 6 / 10 | 6 / 10 |
+| GPT Sol | 6 / 10 | 7 / 10 |
+
+Their estimates of a day under the new rules, from reading:
+
+| Day | Opus | Fable | Sol |
+| --- | --- | --- | --- |
+| A developer | 3 to 7 asks | 3 to 8 asks | 3 to 6 asks |
+| A person who is not a developer | 3 to 6 asks, 1 to 3 errands handed back | 7 to 12 asks, 1 to 3 handed back | 6 to 10 asks, 1 or 2 handed back |
+
+None expects a refusal of what the person did by hand. The developer's day is
+near the bar. The other day is at or over it in two of the three estimates,
+mostly through lookups started from a conversation that has read mail.
+
+**Were they satisfied?** Each said yes, once the items below are fixed and Jim
+has seen the choices listed for him. The fixes are made. Jim has not yet
+decided.
+
+| Finding | Raised by | Closed in |
+| --- | --- | --- |
+| "Money moves only from the Allowance" cannot be enforced: an injected page can spend with a payment method the site already stores. | All three | ADR 0013 says what the Allowance does cap, and names the rest as given up. Milestone 2 runs it as an attack that is expected to succeed. |
+| A clicked link can carry a private value out in its address, and no file named it. | Opus, Fable | ADR 0025: a link from a Tool or from a conversation that is no longer clean asks on the click. A link in an app is named as given up. Milestone 2 row A33. |
+| "A typed request is never refused or followed by an ask" was false as written. | Opus, Fable | ADR 0025: a typed request starts with no ask, and what the Agent then does across the boundary asks once. |
+| "Risen" meant two things, so it was unclear whose lookups ask. | Opus | ADR 0008 defines clean, and every file uses it. |
+| Typed words were both personal and public. | Opus, Fable | ADR 0011: the typed turn is released to the lookup by the person's act, and the ledger records it. |
+| The mark of a pasted value did not reach a file an app already had open. | Sol, Fable | ADR 0025: a snapshot when the mark is taken, and what changed after it carries the mark. Row A22 tests it. |
+| A shared host had no clearance for what a logged-in task holds. | Sol | ADR 0013 and ADR 0021, step 5. Row A24 tests both directions. |
+| A flood of new tasks made one held line for each task. | Sol, Fable | ADR 0026 and ADR 0021: one line for the Agent and all its tasks. |
+| The promise that an ask cannot be put under the cursor contradicted opening in place. | Fable, Sol | ADR 0026: an ask opens in place only in a conversation, and a plain answer ignores input for a moment after the ask appears. |
+| Nothing said that an intent or check written from a conversation that is no longer clean keeps its mark. | Fable | ADR 0008. Row B9. |
+| A public project had no rule that kept it public. | Opus | ADR 0017. Row A34. |
+| "Any host" included the fleet and the home network. | Fable | ADR 0011: any host on the open internet. |
+| Loosened rules without an attack, and one row worded too widely. | Sol, Fable | Milestone 2 rows A21 to A24 and A27 revised, and A31 to A34 and B9 added. |
+| Earlier rules left standing in ADRs 0004, 0011, 0014, and 0018, the vision, the threat model, and Milestone 2. | All three | Each is corrected. |
+
+### For Jim to decide
+
+The reviewers asked that Jim see these. The text takes the narrower reading of
+each until he does.
+
+1. **A payment method a site already stores.** Accept it as given up, as
+   written, or treat every site that stores one as adapter-only.
+2. **Links.** As written, or ask on a click from any compartment above public,
+   which adds an ask to a link clicked in mail.
+3. **A lookup from a conversation that is no longer clean.** As written it asks,
+   and it is most of the gap between the day of a person who is not a developer
+   and the bar. The other reading: no ask when the objective is exactly the turn
+   the person typed last.
+4. **Pasted text in a lookup.** As written the Agent must ask before it adds a
+   pasted error to a lookup. The other reading: a paste in that turn is part of
+   the turn.
+5. **Task 13's number.** The bar gives it 1, and a rule with a cap now fires
+   with none.
+6. **The shell carries a plain answer.**
+7. **A Tool change asked for in a conversation that is no longer clean costs a
+   signature.**
+8. **Fixed rules match typed words to a source**, and a wrong match lets the
+   Agent open a source the person did not mean.
+9. **A catalog snapshot that changes the two lists takes a signature, and a
+   wide compartment keeps its signature.**
+
 ## For Milestone 2 and the livability review to answer
 
 - Are five asks on an ordinary day, and eight on a day that makes a Tool, the
   right numbers?
+- Does the rule on asks answered yes more than 95 times in 100 flag asks the
+  design keeps on purpose, such as keeping a preview?
+- Does task 18 cost two asks? A check made from a real marked input makes the
+  build unclean, and the grant then takes a signature.
 - How far do marks spread once the person's pastes carry them?
 - How often do the fixed rules miss the source a person's words named?
 - What does a steered conversation cost a person who pointed it at hostile mail?

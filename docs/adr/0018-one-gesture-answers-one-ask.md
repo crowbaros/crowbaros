@@ -9,7 +9,7 @@ Revised after council round 5 by [ADR 0026](0026-asks-wait-and-take-one-of-three
 ## Who does what
 
 - **The broker owns the ask.** The gate decides that an act needs the person's answer. The broker makes the **ask**: its ID, its exact content, its kind, which answer it takes, and its expiry. It holds the counts (ADR 0014, rule 2) and the list of asks that wait.
-- **The shell draws the ask.** It draws the content inside a frame that only the compositor draws. The shell is trusted for what it shows, as ADR 0014 already accepts. It never carries a yes.
+- **The shell draws the ask.** It draws the content inside a frame that only the compositor draws. The shell is trusted for what it shows, as ADR 0014 already accepts. It carries no yes but a plain answer (ADR 0026).
 - **The compositor carries the yes.** It checks that the ask is visible, on top, and steady, takes the gesture, and sends the answer straight to the broker. A bug in the shell cannot make up a yes. The one exception is a plain answer, which the shell carries, and which is accepted only for what stays inside the undo boundary (ADR 0026).
 
 ## The channels
@@ -87,12 +87,13 @@ Each of these must pass, or be refused, before the shell protocol is accepted. [
 Added by ADR 0026:
 
 14. An ask is raised while the person types in another window. Nothing is shown, the keyboard stays where it is, and the count in the bar rises.
-15. An ask claims to be for what the person just asked for, while another window holds the keyboard, or after the person typed again in that window. It waits.
-16. One principal raises asks past its limit, and the harness proposes tasks past the Agent's. The further asks are held in one line. Nothing is refused, and dismissing the line declines them all.
+15. An ask claims to be for what the person just asked for, while another window holds the keyboard, or after the person typed again in that conversation, or from an app's window. It waits.
+16. One principal raises asks past its limit, and the harness proposes tasks past the Agent's. The principal's further asks are held in one line, and the further asks of the Agent and all its tasks are held together in one more. Nothing is refused, and dismissing a line declines every ask in it.
 17. A list ask: the person strikes one item. The ask disarms until it is steady again, and a `confirmed` with the earlier hash is refused.
 18. The shell reports a strike the person did not make. The struck act does not happen. The shell reports that a struck item is back. The broker refuses it.
 19. The chord on an ask that takes a plain answer. Nothing is confirmed.
 20. A plain answer arrives for an ask that takes the confirm gesture or a signature. The broker refuses it.
+21. A key or a click reaches an ask that takes a plain answer in the moment after it appears. Nothing is answered.
 
 ## Considered Options
 

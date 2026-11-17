@@ -109,7 +109,7 @@ The person's own principal that does Shaping, edits intents with them, and start
 _Avoid_: Assistant, bot, AI
 
 **Conversation**:
-One exchange between the person and the Agent, run as a compartment of its own. Its label and mark change only when the person points it at something or puts something into it.
+One exchange between the person and the Agent, run as a compartment of its own. It is _clean_ while it is personal and unmarked. Its label and mark change only when the person points it at something or puts something into it.
 _Avoid_: Session, thread, chat, context
 
 **Task**:
@@ -125,7 +125,7 @@ A task that writes or changes a Tool's code. It reads only the intent, the check
 _Avoid_: Coding agent, compile
 
 **Lookup**:
-A task that answers a question from the open web. It holds only the words the person typed and what it found, so it is public and marked.
+A task that answers a question from the open web. It holds only the turn the person typed and what it found, so it is public and marked.
 _Avoid_: Research task, search, web task
 
 **Plan**:
