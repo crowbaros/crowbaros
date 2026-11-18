@@ -83,10 +83,15 @@ Owning the wire layer lets Fulcrum enforce the CrowbarOS decisions where message
   - the cursor plane (#33).
 
   Still to come: the real GPUs, the RTX 4090, Intel, and Surface rows. A fullscreen client on the primary plane is ruled out, because ADR 0020 keeps a fullscreen window's frame inside the display's edge. Overlay planes may come later.
-- **Milestone 5** has workspaces and the shell's control channel (#17), maximize, fullscreen, snap, and frames (#18), move and resize (#20), and dialogs that take the keyboard (#25). Every global of ADR 0020's row for a compartment is built, idle inhibit (#30) and cursor shape (#32) last. Still to come, each needing the shell's interface, which CrowbarOS decides:
-  - the first window of a compartment the person started from the shell taking the keyboard, which needs the shell or the Warden to say so;
-  - the bar showing a new window that wants attention;
-  - the launcher's and lock's keys.
+- **Milestone 5** has:
+  - workspaces and the shell's control channel (#17);
+  - maximize, fullscreen, snap, and frames (#18);
+  - move and resize (#20);
+  - dialogs that take the keyboard (#25);
+  - every global of ADR 0020's row for a compartment, idle inhibit (#30) and cursor shape (#32) last;
+  - the launcher's key, a launched app's window taking the keyboard, and the attention of any other new window (#41, with the shell's half in [crowbaros#203](https://github.com/crowbaros/crowbaros/pull/203)).
+
+  The messages #41 adds are a proposal until a CrowbarOS record decides them: Super tapped alone, the shell's `launching`, and the snapshot's `attention`. Lock's key comes with lock itself, in Milestone 8.
 - **Milestone 6** has copy and paste inside one compartment (#38). Transfers between compartments wait for a record of how the broker records them.
 - **Milestone 7** has each display's scale, 1 to 3 in quarters (#35), and the layout kept by each monitor's identity and set through the control channel (#39). Its wire format is Fulcrum's proposal until CrowbarOS's display settings take it up. Still to come: input devices' settings, and suspend and resume and mixed scale on the hardware rows.
 - **Milestone 9:** CrowbarOS's Alpha desktop runs on Fulcrum ([crowbaros#199](https://github.com/crowbaros/crowbaros/pull/199)), and its desktop check passes there. The spike is deleted ([crowbaros#200](https://github.com/crowbaros/crowbaros/pull/200)).
@@ -100,7 +105,7 @@ Fulcrum builds what those records still decide:
 - buffers and timing;
 - displays and hardware.
 
-The parts of Milestones 4, 6, and 8 that rest on the broker wait for a new record before Fulcrum builds them: asks and their arming, transfers the broker records, and unlock by the broker.
+The parts of Milestones 4, 6, and 8 that rest on the broker wait for a new record before Fulcrum builds them: asks and their arming, transfers the broker records, and lock and unlock, which ADR 0020 has the broker authorize.
 
 Milestones 1 and 2 are where this approach costs the most. They rebuild what Smithay gave the baseline for free before any new behavior lands. The cost is bounded by building only what ADR 0020's table offers: no XWayland, one seat, and GLES as the only GPU renderer until a measurement asks for more.
 
