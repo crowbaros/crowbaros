@@ -5,9 +5,8 @@ Rust. It is part of CrowbarOS Base and part of what CrowbarOS trusts. It builds
 one program, `crowbar-compositor`.
 
 [The plan](docs/PLAN.md) says how it is built. Fulcrum writes its own wire
-protocol, event loop, display, input, rendering, and window-management code.
-[Smithay](https://github.com/Smithay/smithay) is the reference, not a
-dependency, and nothing from the Smithay organization is in the build
+protocol, event loop, display, input, rendering, and window-management code,
+and builds on no other compositor's crates
 ([CrowbarOS ADR 0028](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0028-the-compositor-is-written-from-the-ground-up.md)).
 
 CrowbarOS decides what the compositor must do. Its decision records stay in
@@ -21,7 +20,7 @@ the CrowbarOS repository:
 | What desktop it is, what each client is offered, and its slices | [ADR 0020](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0020-the-first-compositor-is-small-on-purpose.md) |
 | Which rows of that table the shell and the Warden are offered | [ADR 0023](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) |
 | It is built in its own repository, and Base pins one commit | [ADR 0027](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0027-the-compositor-is-built-in-its-own-repository.md) |
-| It is written from the ground up, with Smithay as its reference | [ADR 0028](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0028-the-compositor-is-written-from-the-ground-up.md) |
+| It is written from the ground up | [ADR 0028](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0028-the-compositor-is-written-from-the-ground-up.md) |
 
 ## Where it stands
 
@@ -196,11 +195,10 @@ The later milestones stand as far as CrowbarOS's records decide, and no run on r
 
 Several messages and flags are Fulcrum's proposals, built and checked, until CrowbarOS records decide them. [The plan](docs/PLAN.md) lists them, what each milestone has, and what is next. [Picking up the work](docs/picking-up.md) says where the work paused, how to run everything, and how to start each next piece.
 
-The Smithay-based compositor that Milestone 0 brought here is at commit
-`d11400f`, tagged `smithay-baseline`. This compositor passed the baseline's 57
-tests and the Void guest's checks, and CrowbarOS has built it in the baseline's
-place since [crowbaros#198](https://github.com/crowbaros/crowbaros/pull/198)
-(ADR 0028).
+The compositor Milestone 0 brought here, the baseline, is at commit
+`d11400f`. Fulcrum passed the baseline's 57 tests and the Void guest's checks,
+and CrowbarOS has built it in the baseline's place since
+[crowbaros#198](https://github.com/crowbaros/crowbaros/pull/198) (ADR 0028).
 
 ## Layout
 
@@ -249,7 +247,7 @@ place since [crowbaros#198](https://github.com/crowbaros/crowbaros/pull/198)
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `dl.rs` (libraries loaded at run time), `gles.rs` (EGL and GLES: the context, textures, targets, and draws), `gbm.rs`, `dmabuf.rs` (telling a dma-buf from other files, and reading one with the CPU), `syncobj.rs` (DRM timelines), `drm.rs` (mode setting, dumb buffers, and framebuffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (the guarded mapping) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `cursor.rs` and `cursor_shape.rs` cover the pointer's image; `outputs.rs` covers outputs that change size; `data_device.rs`, `primary_selection.rs`, and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `scale.rs` covers outputs at other scales; `layout.rs` covers the layout of displays; `dmabuf.rs` covers linux-dmabuf; `idle_inhibit.rs` covers idle inhibit; `lock.rs` covers the locked session; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `cursor.rs` and `cursor_shape.rs` cover the pointer's image; `outputs.rs` covers outputs that change size; `data_device.rs`, `primary_selection.rs`, and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `scale.rs` covers outputs at other scales; `layout.rs` covers the layout of displays; `dmabuf.rs` covers linux-dmabuf; `idle_inhibit.rs` covers idle inhibit; `lock.rs` covers the locked session; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate [the plan](docs/PLAN.md) rules out enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), [picking up the work](docs/picking-up.md), [how to run Fulcrum on real hardware](docs/hardware-runs.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.
@@ -318,9 +316,9 @@ This repository began as CrowbarOS's `compositor/` directory at commit
 [`30fadd8`](https://github.com/crowbaros/crowbaros/tree/30fadd8e88fbeb9991eb340f5dee27998b02c9fe/compositor),
 with the seven commits that touched it (tag `import/crowbaros-30fadd8`). The
 [Milestone 0 record](docs/independent-build-2026-11-17.md) shows CrowbarOS
-building it as a pinned commit. The Smithay-based code left `main` when this
-rewrite began, and it is at the `smithay-baseline` tag.
+building it as a pinned commit. The baseline's code left `main` when this
+rewrite began, and it is at commit `d11400f`.
 
-Smithay and Otto are MIT, so their code may be adapted, with attribution in
-[`LICENSE-smithay.txt`](LICENSE-smithay.txt) or a file like it. niri, COSMIC,
-Pinnacle, and Jay are GPL-3.0: read them for ideas, and copy nothing.
+Code adapted from an MIT-licensed project keeps its attribution, in a
+`LICENSE-*.txt` file beside this repository's own. Code under GPL-3.0 is read
+for ideas, and none of it is copied.
