@@ -14,6 +14,10 @@ use fulcrum_wire::{
             wp_linux_drm_syncobj_manager_v1, wp_linux_drm_syncobj_surface_v1, wp_linux_drm_syncobj_timeline_v1,
         },
         presentation_time::{wp_presentation, wp_presentation_feedback},
+        primary_selection_unstable_v1::{
+            zwp_primary_selection_device_manager_v1, zwp_primary_selection_device_v1, zwp_primary_selection_offer_v1,
+            zwp_primary_selection_source_v1,
+        },
         security_context_v1::{wp_security_context_manager_v1, wp_security_context_v1},
         viewporter::{wp_viewport, wp_viewporter},
         wayland::{
@@ -104,6 +108,7 @@ pub struct State {
     pub(crate) explicit_sync: crate::explicit_sync::ExplicitSync,
     /// Each monitor's mode, place, and scale, as the person chose them.
     pub(crate) layout: crate::layout::Layout,
+    pub(crate) primary: crate::primary_selection::PrimarySelections,
     /// When the shell last said the person launched an app, until a window
     /// takes the keyboard for it.
     pub(crate) launching: Option<std::time::Instant>,
@@ -166,6 +171,7 @@ impl State {
             controls: crate::control::Controls::default(),
             explicit_sync: crate::explicit_sync::ExplicitSync::default(),
             layout: crate::layout::Layout::default(),
+            primary: crate::primary_selection::PrimarySelections::default(),
             launching: None,
             idle_inhibitors: crate::idle_inhibit::IdleInhibitors::default(),
             cursor_theme: crate::xcursor::CursorTheme::none(),
@@ -218,6 +224,11 @@ impl State {
             &viewporter::wp_viewporter::INFO,
             crate::viewporter::VIEWPORTER_VERSION,
             GlobalKind::Viewporter,
+        );
+        self.add_global(
+            &zwp_primary_selection_device_manager_v1::INFO,
+            crate::primary_selection::PRIMARY_SELECTION_VERSION,
+            GlobalKind::PrimarySelection,
         );
         self.add_global(
             &zwp_idle_inhibit_manager_v1::INFO,
@@ -463,6 +474,8 @@ impl State {
             ObjectKind::Layer(surface) => self.forget_layer(*surface),
             ObjectKind::DataSource(source) => self.forget_source(*source),
             ObjectKind::DataOffer(offer) => self.forget_offer(*offer),
+            ObjectKind::PrimarySource(source) => self.forget_primary_source(*source),
+            ObjectKind::PrimaryOffer(offer) => self.forget_primary_offer(*offer),
             ObjectKind::BufferParams(params) => {
                 self.dmabufs.params.remove(params);
             }
@@ -596,6 +609,19 @@ impl State {
                 ObjectKind::DataOffer(offer) => {
                     wl_data_offer::Request::decode(opcode, &mut args).map(|request| Request::DataOffer(*offer, request))
                 }
+                ObjectKind::PrimaryManager => {
+                    zwp_primary_selection_device_manager_v1::Request::decode(opcode, &mut args)
+                        .map(Request::PrimaryManager)
+                }
+                ObjectKind::PrimaryDevice => {
+                    zwp_primary_selection_device_v1::Request::decode(opcode, &mut args).map(Request::PrimaryDevice)
+                }
+                ObjectKind::PrimarySource(source) => {
+                    zwp_primary_selection_source_v1::Request::decode(opcode, &mut args)
+                        .map(|request| Request::PrimarySource(*source, request))
+                }
+                ObjectKind::PrimaryOffer(offer) => zwp_primary_selection_offer_v1::Request::decode(opcode, &mut args)
+                    .map(|request| Request::PrimaryOffer(*offer, request)),
                 ObjectKind::DataDevice => wl_data_device::Request::decode(opcode, &mut args).map(Request::DataDevice),
                 ObjectKind::Viewporter => wp_viewporter::Request::decode(opcode, &mut args).map(Request::Viewporter),
                 ObjectKind::Dmabuf => zwp_linux_dmabuf_v1::Request::decode(opcode, &mut args).map(Request::Dmabuf),
@@ -686,6 +712,10 @@ impl State {
             Request::DataDeviceManager(request) => self.data_device_manager_request(client_id, version, request)?,
             Request::DataSource(source, request) => self.data_source_request(client_id, id, source, request)?,
             Request::DataOffer(offer, request) => self.data_offer_request(id, offer, request)?,
+            Request::PrimaryManager(request) => self.primary_manager_request(client_id, version, request)?,
+            Request::PrimaryDevice(request) => self.primary_device_request(client_id, request)?,
+            Request::PrimarySource(source, request) => self.primary_source_request(client_id, source, request)?,
+            Request::PrimaryOffer(offer, request) => self.primary_offer_request(offer, request)?,
             Request::DataDevice(request) => self.data_device_request(client_id, id, request)?,
             Request::Viewporter(request) => self.viewporter_request(client_id, id, request)?,
             Request::Viewport(surface, request) => self.viewport_request(id, surface, request)?,
@@ -784,6 +814,16 @@ enum Request {
     DataDeviceManager(wl_data_device_manager::Request),
     DataSource(crate::data_device::SourceId, wl_data_source::Request),
     DataOffer(crate::data_device::OfferId, wl_data_offer::Request),
+    PrimaryManager(zwp_primary_selection_device_manager_v1::Request),
+    PrimaryDevice(zwp_primary_selection_device_v1::Request),
+    PrimarySource(
+        crate::primary_selection::PrimarySourceId,
+        zwp_primary_selection_source_v1::Request,
+    ),
+    PrimaryOffer(
+        crate::primary_selection::PrimaryOfferId,
+        zwp_primary_selection_offer_v1::Request,
+    ),
     DataDevice(wl_data_device::Request),
     Viewporter(wp_viewporter::Request),
     Viewport(SurfaceId, wp_viewport::Request),

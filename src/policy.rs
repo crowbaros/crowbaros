@@ -11,8 +11,9 @@
 use crate::identity::Identity;
 
 /// Every compartment with a Wayland listener: the core protocols, xdg-shell,
-/// the data device, viewporter, fractional scale, cursor shape, presentation
-/// time, and idle inhibit.
+/// the data device and the primary selection (both under the clipboard's
+/// rules, see `data_device.rs`), viewporter, fractional scale, cursor shape,
+/// presentation time, and idle inhibit.
 const EVERY_COMPARTMENT: &[&str] = &[
     "wl_compositor",
     "wl_subcompositor",
@@ -20,6 +21,7 @@ const EVERY_COMPARTMENT: &[&str] = &[
     "wl_seat",
     "wl_output",
     "wl_data_device_manager",
+    "zwp_primary_selection_device_manager_v1",
     "xdg_wm_base",
     "wp_viewporter",
     "wp_fractional_scale_manager_v1",
@@ -43,8 +45,6 @@ const WARDEN_ALONE: &[&str] = &["wp_security_context_manager_v1"];
 pub const NOBODY: &[&str] = &[
     // Activation
     "xdg_activation_v1",
-    // Primary selection
-    "zwp_primary_selection_device_manager_v1",
     // Data control
     "zwlr_data_control_manager_v1",
     "ext_data_control_manager_v1",
@@ -119,13 +119,14 @@ mod tests {
     }
 
     /// The names ADR 0020 gives every compartment with a Wayland listener.
-    const ADR_EVERY_COMPARTMENT: [&str; 12] = [
+    const ADR_EVERY_COMPARTMENT: [&str; 13] = [
         "wl_compositor",
         "wl_subcompositor",
         "wl_shm",
         "wl_seat",
         "wl_output",
         "wl_data_device_manager",
+        "zwp_primary_selection_device_manager_v1",
         "xdg_wm_base",
         "wp_viewporter",
         "wp_fractional_scale_manager_v1",

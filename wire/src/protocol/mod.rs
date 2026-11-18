@@ -8,6 +8,7 @@ pub mod idle_inhibit_unstable_v1;
 pub mod linux_dmabuf_v1;
 pub mod linux_drm_syncobj_v1;
 pub mod presentation_time;
+pub mod primary_selection_unstable_v1;
 pub mod security_context_v1;
 pub mod viewporter;
 pub mod wayland;
@@ -32,6 +33,10 @@ pub static INTERFACES: &[&InterfaceInfo] = &[
     &linux_drm_syncobj_v1::wp_linux_drm_syncobj_surface_v1::INFO,
     &presentation_time::wp_presentation::INFO,
     &presentation_time::wp_presentation_feedback::INFO,
+    &primary_selection_unstable_v1::zwp_primary_selection_device_manager_v1::INFO,
+    &primary_selection_unstable_v1::zwp_primary_selection_device_v1::INFO,
+    &primary_selection_unstable_v1::zwp_primary_selection_offer_v1::INFO,
+    &primary_selection_unstable_v1::zwp_primary_selection_source_v1::INFO,
     &security_context_v1::wp_security_context_manager_v1::INFO,
     &security_context_v1::wp_security_context_v1::INFO,
     &viewporter::wp_viewporter::INFO,
@@ -113,6 +118,14 @@ pub fn reencode(
         ("wp_presentation", false) => presentation_time::wp_presentation::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_presentation_feedback", true) => presentation_time::wp_presentation_feedback::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_presentation_feedback", false) => presentation_time::wp_presentation_feedback::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("zwp_primary_selection_device_manager_v1", true) => primary_selection_unstable_v1::zwp_primary_selection_device_manager_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("zwp_primary_selection_device_manager_v1", false) => primary_selection_unstable_v1::zwp_primary_selection_device_manager_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("zwp_primary_selection_device_v1", true) => primary_selection_unstable_v1::zwp_primary_selection_device_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("zwp_primary_selection_device_v1", false) => primary_selection_unstable_v1::zwp_primary_selection_device_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("zwp_primary_selection_offer_v1", true) => primary_selection_unstable_v1::zwp_primary_selection_offer_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("zwp_primary_selection_offer_v1", false) => primary_selection_unstable_v1::zwp_primary_selection_offer_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("zwp_primary_selection_source_v1", true) => primary_selection_unstable_v1::zwp_primary_selection_source_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("zwp_primary_selection_source_v1", false) => primary_selection_unstable_v1::zwp_primary_selection_source_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_security_context_manager_v1", true) => security_context_v1::wp_security_context_manager_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_security_context_manager_v1", false) => security_context_v1::wp_security_context_manager_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_security_context_v1", true) => security_context_v1::wp_security_context_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),

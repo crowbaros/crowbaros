@@ -7,7 +7,7 @@ mod common;
 use common::Compositor;
 
 /// What every compartment with a Wayland listener is offered.
-const COMPARTMENT: [&str; 12] = [
+const COMPARTMENT: [&str; 13] = [
     "wl_compositor",
     "wl_data_device_manager",
     "wl_output",
@@ -20,6 +20,7 @@ const COMPARTMENT: [&str; 12] = [
     "wp_viewporter",
     "xdg_wm_base",
     "zwp_idle_inhibit_manager_v1",
+    "zwp_primary_selection_device_manager_v1",
 ];
 
 fn sorted(mut names: Vec<&'static str>) -> Vec<&'static str> {

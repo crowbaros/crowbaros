@@ -41,6 +41,7 @@ pub mod modes;
 mod output;
 pub mod policy;
 pub mod presentation;
+mod primary_selection;
 mod redraw;
 pub mod render;
 mod scene;

@@ -150,13 +150,7 @@ impl State {
         let fail = |code, message: String| ProtocolError { object, code, message };
         match request {
             wl_data_source::Request::Offer { mime_type } => {
-                let held: usize = self
-                    .data
-                    .sources
-                    .values()
-                    .filter(|source| source.client == client_id)
-                    .flat_map(|source| source.mime_types.iter().map(String::len))
-                    .sum();
+                let held = self.mime_bytes_held(client_id) + self.primary_mime_bytes_held(client_id);
                 let Some(data) = self.data.sources.get_mut(&source) else {
                     return Ok(());
                 };
@@ -326,8 +320,18 @@ impl State {
         }
     }
 
+    /// The bytes of MIME types a client's data sources hold.
+    pub(crate) fn mime_bytes_held(&self, client_id: ClientId) -> usize {
+        self.data
+            .sources
+            .values()
+            .filter(|source| source.client == client_id)
+            .flat_map(|source| source.mime_types.iter().map(String::len))
+            .sum()
+    }
+
     /// The client whose surface has the keyboard.
-    fn keyboard_client(&self) -> Option<ClientId> {
+    pub(crate) fn keyboard_client(&self) -> Option<ClientId> {
         self.seat
             .keyboard_focus
             .and_then(|focus| self.surfaces.get(&focus))

@@ -330,6 +330,7 @@ impl State {
             // A client is offered its group's selection just before it
             // gains the keyboard, as the data device's protocol says.
             self.offer_selection(client_id);
+            self.offer_primary_selection(client_id);
             let serial = self.next_serial();
             for keyboard in self.objects_of(client_id, true) {
                 self.send_keyboard_enter(client_id, keyboard, new, serial);

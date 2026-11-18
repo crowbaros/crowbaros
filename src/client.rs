@@ -60,6 +60,11 @@ pub(crate) enum ObjectKind {
     DataSource(crate::data_device::SourceId),
     /// A `wl_data_offer` the compositor made, of a selection.
     DataOffer(crate::data_device::OfferId),
+    PrimaryManager,
+    PrimaryDevice,
+    PrimarySource(crate::primary_selection::PrimarySourceId),
+    /// A `zwp_primary_selection_offer_v1` the compositor made.
+    PrimaryOffer(crate::primary_selection::PrimaryOfferId),
     DataDevice,
     Viewporter,
     /// A `wp_viewport`, for the surface it crops and scales.

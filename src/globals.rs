@@ -38,6 +38,7 @@ pub(crate) enum GlobalKind {
     FractionalScaleManager,
     Presentation,
     ExplicitSync,
+    PrimarySelection,
     IdleInhibitManager,
     CursorShapeManager,
     /// A global a test added, of an interface Fulcrum may not even know.
@@ -212,6 +213,7 @@ impl State {
             GlobalKind::FractionalScaleManager => ObjectKind::FractionalScaleManager,
             GlobalKind::Presentation => ObjectKind::Presentation,
             GlobalKind::ExplicitSync => ObjectKind::ExplicitSync,
+            GlobalKind::PrimarySelection => ObjectKind::PrimaryManager,
             GlobalKind::IdleInhibitManager => ObjectKind::IdleInhibitManager,
             GlobalKind::CursorShapeManager => ObjectKind::CursorShapeManager,
             GlobalKind::Planted => {
