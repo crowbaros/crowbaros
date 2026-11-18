@@ -23,10 +23,9 @@ set -euo pipefail
 : "${XDG_RUNTIME_DIR:?set XDG_RUNTIME_DIR to the runtime directory of that session}"
 
 here=$(cd "$(dirname "$0")/.." && pwd)
-root=$(cd "$here/.." && pwd)
 info=${1:?usage: checks/nested.sh /path/to/wayland-info}
 bin=${CROWBAR_BIN:-$here/target/debug}
-out=$root/.lab/compositor
+out=$here/.lab/compositor
 mkdir -p "$out"
 log=$out/nested-$(date -u +%Y%m%dT%H%M%SZ).log
 work=$(mktemp -d)

@@ -1,20 +1,38 @@
-# Compositor
+# Fulcrum
 
-The CrowbarOS Wayland compositor, written in Rust on
-[Smithay](https://github.com/Smithay/smithay). It is part of Base and part of
-what CrowbarOS trusts.
+Fulcrum is the CrowbarOS Wayland compositor, written in Rust on
+[Smithay](https://github.com/Smithay/smithay). It is part of CrowbarOS Base
+and part of what CrowbarOS trusts. It builds one program, `crowbar-compositor`,
+and a test client, `crowbar-probe`. [The plan](docs/PLAN.md) says how it grows
+into the compositor that runs the CrowbarOS desktop.
+
+CrowbarOS decides what the compositor must do. Fulcrum builds it. Its decision
+records stay in the CrowbarOS repository:
 
 | Decision | Record |
 | --- | --- |
-| CrowbarOS owns its compositor | [ADR 0015](../docs/adr/0015-our-own-compositor-on-smithay.md) |
-| Who its clients are, and how each connects | [ADR 0016](../docs/adr/0016-the-warden-starts-every-compartment.md) |
-| What desktop it is, what each client is offered, and its slices | [ADR 0020](../docs/adr/0020-the-first-compositor-is-small-on-purpose.md) |
-| Which rows of that table the shell and the Warden are offered | [ADR 0023](../docs/adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) |
-| It is built beside Milestone 2 | [ADR 0022](../docs/adr/0022-the-compositor-is-built-beside-milestone-2.md) |
+| CrowbarOS owns its compositor | [ADR 0015](https://github.com/crowbaros/crowbaros/blob/30fadd8e88fbeb9991eb340f5dee27998b02c9fe/docs/adr/0015-our-own-compositor-on-smithay.md) |
+| Who its clients are, and how each connects | [ADR 0016](https://github.com/crowbaros/crowbaros/blob/30fadd8e88fbeb9991eb340f5dee27998b02c9fe/docs/adr/0016-the-warden-starts-every-compartment.md) |
+| What desktop it is, what each client is offered, and its slices | [ADR 0020](https://github.com/crowbaros/crowbaros/blob/30fadd8e88fbeb9991eb340f5dee27998b02c9fe/docs/adr/0020-the-first-compositor-is-small-on-purpose.md) |
+| Which rows of that table the shell and the Warden are offered | [ADR 0023](https://github.com/crowbaros/crowbaros/blob/30fadd8e88fbeb9991eb340f5dee27998b02c9fe/docs/adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) |
+| It is built beside Milestone 2 | [ADR 0022](https://github.com/crowbaros/crowbaros/blob/30fadd8e88fbeb9991eb340f5dee27998b02c9fe/docs/adr/0022-the-compositor-is-built-beside-milestone-2.md) |
 
-The [spike](../lab/compositor-spike/README.md) that tested ADR 0015 is not this
-code. It is kept in `lab/compositor-spike/` because the Alpha desktop check
-still runs it, and it is deleted when this compositor passes that check.
+The [spike](https://github.com/crowbaros/crowbaros/blob/30fadd8e88fbeb9991eb340f5dee27998b02c9fe/lab/compositor-spike/README.md)
+that tested ADR 0015 is not this code. It stays in CrowbarOS's
+`lab/compositor-spike/` because the Alpha desktop check still runs it. It is
+deleted when this compositor passes that check.
+
+## Where it came from
+
+This repository began as CrowbarOS's `compositor/` directory at commit
+[`30fadd8`](https://github.com/crowbaros/crowbaros/tree/30fadd8e88fbeb9991eb340f5dee27998b02c9fe/compositor).
+`git subtree split` kept the seven commits that touched it, with their authors
+and dates. The tag `import/crowbaros-30fadd8` marks the last of them. Its tree
+is byte for byte that directory. Every later change is made here.
+
+CrowbarOS builds one Fulcrum revision at a time. The full commit ID is pinned
+in CrowbarOS's `compositor/fulcrum.json`, and changing the compositor in Base
+means changing that pin.
 
 ## What is built
 
@@ -119,13 +137,14 @@ how a client that commits on every frame is held to the display's rate.
 
 ## Layout
 
-This is a Cargo workspace of its own with a pinned `Cargo.lock`, like the apps
-in [`apps/`](../apps/README.md). It is not a member of the root workspace,
-because it pins Smithay to a git commit and needs system libraries (DRM,
-libinput, libseat, udev).
+This is a Cargo workspace with a pinned `Cargo.lock`. It pins Smithay to a git
+commit and needs system libraries (DRM, libinput, libseat, udev).
+`rustfmt.toml` holds the line width CrowbarOS formats Rust to, so code formats
+the same here as it did there.
 
 | Path | Contents |
 | --- | --- |
+| `docs/` | [The plan](docs/PLAN.md), and dated records of what was run |
 | `src/identity.rs` | Who a client is |
 | `src/connections.rs` | Every way a client can connect: the two trusted sockets, and a compartment's listener |
 | `src/policy.rs` | The one table that says which client is offered which Wayland global |
@@ -137,6 +156,7 @@ libinput, libseat, udev).
 | `probe/` | `crowbar-probe`: Wayland clients for looking at the compositor from outside, and the stand-in for the Warden. A crate of its own, and never part of Base |
 | `tests/` | Tests that run the compositor in-process, without a display, against real Wayland clients |
 | `checks/` | The check that needs a display on this host |
+| `.github/workflows/ci.yml` | What CI runs: the commands under [Build and test](#build-and-test) |
 
 `tests/attacks.rs` holds the attacks that the decision records give this
 slice: attack 1 of ADR 0020, and attacks 11 and 12 of ADR 0016.
@@ -152,8 +172,10 @@ The TTY backend is adapted from Smithay's `anvil` example, and the handlers
 began from its `smallvil` example. Both are MIT; see
 [`LICENSE-smithay.txt`](LICENSE-smithay.txt).
 
-Do not copy code from niri or cosmic-comp. Both are GPL-3.0, and CrowbarOS is
-MIT. Smithay and its example compositors are MIT.
+Do not copy code from niri or cosmic-comp. Both are GPL-3.0, and Fulcrum, like
+CrowbarOS, is MIT. Smithay and its example compositors are MIT. The other
+compositors [the plan](docs/PLAN.md) learns from are design references: take
+their ideas, and check a project's license before taking anything more.
 
 ## Build and test
 
@@ -173,9 +195,9 @@ compositor is built with `--features nested`. Base never builds it. It is for
 development and for `checks/nested.sh`, and it opens no other way in.
 
 ```sh
-cd compositor
-cargo test                                  # no display needed
-cargo clippy --all-targets -- -D warnings
+cargo test --locked                         # no display needed
+cargo clippy --all-targets --locked -- -D warnings
+cargo clippy --all-targets --locked --features nested -- -D warnings
 cargo fmt --all --check
 ```
 
@@ -196,12 +218,23 @@ The checks that need a display:
 # Nested, in a window on a Wayland session. The log goes to .lab/compositor/.
 cargo build --features nested
 checks/nested.sh /usr/bin/wayland-info
-
-# On a TTY in the Void guest, with a seat from seatd and no systemd. Every
-# pull request that touches the compositor runs this (ADR 0022).
-../lab/void/compositor_guest.py check
 ```
 
-The [Void lab](../lab/void/README.md#the-graphical-guest) says what the guest
-check covers. The run for slice 1 is in the
-[slice 1 record](../docs/research/compositor-slice-1-2026-11-15.md).
+The other check runs the compositor on a TTY in a Void Linux guest, with a seat
+from seatd and no systemd. Every pull request that changes the compositor runs
+it (ADR 0022). The guest lives in the CrowbarOS lab, so run it from a CrowbarOS
+checkout. Commit the change here first. Then point the lab at this repository
+and the commit:
+
+```sh
+cd ../crowbaros
+FULCRUM_REPOSITORY=../fulcrum \
+FULCRUM_REVISION=$(git -C ../fulcrum rev-parse HEAD) \
+    lab/void/compositor_guest.py check
+```
+
+Without the two variables, the lab builds the revision CrowbarOS pins. The
+evidence log names the Fulcrum revision it built, and says when it is not the
+pinned one. The [Void lab](https://github.com/crowbaros/crowbaros/blob/30fadd8e88fbeb9991eb340f5dee27998b02c9fe/lab/void/README.md#the-graphical-guest)
+says what the guest check covers. The run for slice 1, before the move here, is
+in the [slice 1 record](https://github.com/crowbaros/crowbaros/blob/30fadd8e88fbeb9991eb340f5dee27998b02c9fe/docs/research/compositor-slice-1-2026-11-15.md).

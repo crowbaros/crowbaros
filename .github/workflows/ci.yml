@@ -1,0 +1,59 @@
+name: CI
+
+# The compositor job that CrowbarOS ran on compositor/ before it moved here.
+# A change to docs alone starts no run. Keep the two lists the same.
+on:
+  pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE*"
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  compositor:
+    name: Compositor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      # The libraries Smithay's TTY backend links. The tests need no display.
+      - name: Install libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config \
+            libseat-dev libinput-dev libudev-dev libxkbcommon-dev \
+            libgbm-dev libdrm-dev libwayland-dev libegl1-mesa-dev
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+      # The backend for a window on a host session is left out of the
+      # compositor by default, so nothing above builds it.
+      - name: Lint the nested backend
+        run: cargo clippy --all-targets --locked --features nested -- -D warnings
