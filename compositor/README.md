@@ -32,7 +32,19 @@ now archived. They bind until a new record says what the compositor offers the
 shell and the Agent.
 
 Fulcrum's README says what is built, which slice is next, and how to build and
-test it. Through commit 30fadd8 the compositor's code was here. Its history moved
+test it. Its [plan](https://github.com/crowbaros/fulcrum/blob/main/docs/PLAN.md)
+says where each milestone stands, and what waits on CrowbarOS:
+
+- decision records on what Fulcrum built as proposals: the shell's control
+  messages for the launcher, attention, and lock; the lock screen's namespace;
+  the unlock authority, which the Alpha session's password helper uses; and
+  the layout of displays on the control channel;
+- a record of what replaces the broker, for asks and their arming, transfers
+  between compartments, and the record of each unlock;
+- records on capture by the shell and on input devices' settings;
+- runs on the RTX 4090, Intel, and Surface machines, which Fulcrum's
+  [hardware guide](https://github.com/crowbaros/fulcrum/blob/main/docs/hardware-runs.md)
+  describes. Through commit 30fadd8 the compositor's code was here. Its history moved
 with it, so `git log` in Fulcrum shows every commit that touched this
 directory.
 
