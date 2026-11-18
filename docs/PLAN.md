@@ -2,7 +2,7 @@
 
 ## A Wayland compositor for CrowbarOS, written from the ground up
 
-Fulcrum is the CrowbarOS Wayland compositor, written from the ground up in Rust. Fulcrum writes every layer of compositor code itself: the Wayland wire protocol, the event loop, display and input handling, the renderer, and window management. [Smithay](https://github.com/Smithay/smithay) is the reference. Fulcrum studies how Smithay solves each problem, may adapt its MIT code with attribution, and takes proven ideas from the compositors built on it. Fulcrum depends on no crate from the Smithay organization: not `smithay`, `wayland-rs`, `drm-rs`, `gbm.rs`, `input.rs`, `calloop`, or `libseat-rs`. The only C libraries it links are the ones a GPU desktop cannot avoid: Mesa's EGL, GLES, and GBM; libinput; and libxkbcommon.
+Fulcrum is the CrowbarOS Wayland compositor, written from the ground up in Rust. Fulcrum writes its Wayland wire protocol, event loop, display and input handling, renderer, and window management. It studies Smithay and the compositors built on it for design ideas. The build excludes crates from the Smithay organization, including `smithay`, `wayland-rs`, `drm-rs`, `gbm.rs`, `input.rs`, `calloop`, and `libseat-rs`. It links Mesa's EGL, GLES, and GBM, plus libinput and libxkbcommon. [Smithay](https://github.com/Smithay/smithay)
 
 Its first customer is the CrowbarOS Base image. A successful release lets a person boot CrowbarOS, launch and arrange applications, use multiple displays, move data deliberately between apps, and lock and recover the session. The GPUI shell supplies the bar, dock, launcher, and Settings UI. Fulcrum owns the pixels and input decisions those components must be able to trust.
 
@@ -15,7 +15,7 @@ Its first customer is the CrowbarOS Base image. A successful release lets a pers
 | Wire protocol | The message codec, descriptor passing, object IDs, and per-client limits. Rust code generated from the protocol XML at build time, for the server and the client side | Unix sockets and `SCM_RIGHTS` through `rustix` | `wayland-backend`, `wayland-scanner` |
 | Event loop | One thread on `epoll`, with timers and signals as descriptors | `rustix` | `calloop` |
 | Protocol state | Every global: double-buffered surface state, subsurface sync, buffer release, frame callbacks, the seat and focus | — | `smithay::wayland` |
-| Shared memory | Pool mappings that a client truncating its file cannot turn into a crash | `rustix` `mmap` | `smithay::wayland::shm` |
+| Shared memory | Copy only committed pixel rows and report a short read as an invalid buffer | Positioned file reads | `smithay::wayland::shm` |
 | Rendering | A CPU renderer for tests and fallback, a GLES 2 renderer, damage tracking, and later scanout planes | EGL, GLES, and GBM from Mesa, through Fulcrum's own bindings | `smithay::backend::renderer`, its damage tracker, and DRM compositor |
 | Displays | KMS atomic modesetting and page flips through the kernel's ioctls; connectors, CRTCs, and planes; hotplug from netlink uevents | The kernel's DRM interface | `drm-rs`, `smithay::backend::drm`, `udev` |
 | Session | A client of seatd's socket protocol: opening devices, switching virtual terminals, pausing and resuming | seatd, which CrowbarOS already runs | `libseat-rs`, `smithay::backend::session` |
@@ -39,7 +39,7 @@ Read each reference to learn how it solves a problem. A project's license decide
 
 | Reference | License | What to take |
 | --- | --- | --- |
-| [Smithay](https://github.com/Smithay/smithay) and its Anvil and Smallvil examples | MIT | The design of each layer listed above. Code may be adapted with attribution in `LICENSE-smithay.txt`. The cached surface state, the SIGBUS handling for shared memory, the damage tracker, and the DRM compositor's plane assignment are where its experience is densest |
+| [Smithay](https://github.com/Smithay/smithay) and its Anvil and Smallvil examples | MIT | Design ideas, especially cached surface state, damage tracking, and DRM plane assignment |
 | [Jay](https://github.com/mahkoh/jay) | GPL-3.0 | Not on Smithay's list. It shows that this approach works in Rust: its own wire code generated from XML, its own DRM, GBM, and graphics code, and its own event loop. Ideas only |
 | [niri](https://github.com/YaLTeR/niri) | GPL-3.0 | Frame clock and presentation timing, deliberate window placement when a monitor goes away and comes back, and randomized layout tests. Its scrolling columns are a post-Beta layout candidate. Ideas only |
 | [COSMIC](https://github.com/pop-os/cosmic-comp) | GPL-3.0 | The compositor, shell, and settings each have one owner and restart independently, yet ship as one desktop. Ideas only |

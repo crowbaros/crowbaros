@@ -31,9 +31,9 @@ These hold for every change ([the plan](docs/PLAN.md)):
 - **The only C libraries are Mesa's EGL, GLES, and GBM, libinput, and
   libxkbcommon.** Adding another needs a CrowbarOS decision record.
 - **`unsafe` code lives in `sys/` alone.** Every other crate forbids it.
-- **Smithay and Otto are MIT.** Their code may be adapted, with attribution in
-  `LICENSE-smithay.txt` or a file like it. niri, COSMIC, Pinnacle, and Jay are
-  GPL-3.0: read them for ideas, and copy nothing.
+- **Study Smithay for design ideas and write the implementation here.** Otto
+  is MIT and its code may be adapted with attribution. Use niri, COSMIC,
+  Pinnacle, and Jay as design references.
 - A new crate of any kind needs a reason in the pull request that adds it.
 
 ## Branches and pull requests

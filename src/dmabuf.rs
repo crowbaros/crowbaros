@@ -9,10 +9,9 @@
 //! dma-buf goes to the import (see `fulcrum_sys::dmabuf::is_dmabuf`).
 //!
 //! Where the GPU has not imported it, the compositor takes single-plane
-//! `XR24` and `AR24` buffers laid out in rows (the `LINEAR` modifier), maps
-//! them, and copies their pixels at each commit as it copies shared memory,
-//! through the same guarded mapping. Every client of a GPU can make such a
-//! buffer.
+//! `XR24` and `AR24` buffers laid out in rows (the `LINEAR` modifier) and
+//! copies their pixels at each commit. It maps genuine dma-bufs and uses
+//! positioned reads for regular files.
 //!
 //! The table (ADR 0020's, with ADR 0023's) decides who is offered it: the
 //! shell, and a compartment whose needs include the GPU.
@@ -27,7 +26,7 @@ use std::{
 
 use fulcrum_sys::{
     gles::{self, DmabufPlane, Gles},
-    shm::Mapping,
+    shm::BufferFile,
 };
 use fulcrum_wire::{
     NewId,
@@ -424,13 +423,15 @@ impl State {
             return Ok(None);
         }
         let plane = planes.into_iter().next().expect("one plane");
-        let size = file_size(&plane.fd).unwrap_or(0) as usize;
-        let Ok(mapping) = Mapping::new(plane.fd.as_fd(), size) else {
+        let Some(size) = file_size(&plane.fd).and_then(|size| usize::try_from(size).ok()) else {
+            return Ok(None);
+        };
+        let Ok(file) = BufferFile::from_dmabuf(plane.fd, size) else {
             return Ok(None);
         };
         Ok(Some(Made {
             buffer: self.next_resource(),
-            source: Source::Dmabuf { mapping, fd: plane.fd },
+            source: Source::Dmabuf { file },
             offset: plane.offset,
             stride: plane.stride,
         }))

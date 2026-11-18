@@ -3,15 +3,15 @@
 //! A client makes a pool from a file it shares, and buffers inside it. When a
 //! surface commits a buffer, the compositor copies its pixels and releases it
 //! at once, so the client may draw into it again. Every read of the pool goes
-//! through `fulcrum-sys`'s guarded mapping: a client that truncates its file
+//! through positioned file I/O: a client that truncates its file
 //! gets a protocol error, and the compositor goes on.
 //!
 //! A dma-buf the GPU imported is not copied: the surface shows it where it
 //! is, and the compositor releases it once other content replaces it.
 
-use std::{borrow::Cow, os::fd::OwnedFd, rc::Rc};
+use std::{borrow::Cow, rc::Rc};
 
-use fulcrum_sys::{gles::Texture, shm::Mapping};
+use fulcrum_sys::{gles::Texture, shm::BufferFile};
 use fulcrum_wire::protocol::wayland::{wl_buffer, wl_shm, wl_shm_pool};
 
 use crate::{
@@ -21,9 +21,9 @@ use crate::{
     surface::{Content, GpuContent},
 };
 
-/// The largest pool, in bytes. A pool is address space until its client
-/// writes to it: `foot` reserves 512 MiB that it leaves sparse, so that it
-/// scrolls by moving a buffer's offset.
+/// The largest pool, in bytes. The declared size can exceed the pixels in
+/// use: `foot` reserves a sparse 512 MiB so it can scroll by moving a buffer's
+/// offset.
 pub const MAX_POOL_SIZE: usize = 1024 * 1024 * 1024;
 
 pub(crate) type PoolId = u64;
@@ -32,8 +32,7 @@ pub(crate) type BufferId = u64;
 pub(crate) struct Pool {
     /// Its client, whose budget of shared memory it counts against.
     pub client: ClientId,
-    mapping: Mapping,
-    fd: OwnedFd,
+    file: BufferFile,
     /// Buffers made from it that still exist. A pool the client destroyed
     /// lives until its last buffer goes.
     buffers: usize,
@@ -44,8 +43,8 @@ pub(crate) struct Pool {
 pub(crate) enum Source {
     /// A region of a shared-memory pool.
     Pool(PoolId),
-    /// A dma-buf of its own that the CPU copies, mapped (see `dmabuf.rs`).
-    Dmabuf { mapping: Mapping, fd: OwnedFd },
+    /// A dma-buf of its own that the CPU copies (see `dmabuf.rs`).
+    Dmabuf { file: BufferFile },
     /// A dma-buf the GPU imported, which it draws from where it is.
     Gpu(Rc<Texture>),
 }
@@ -65,9 +64,9 @@ pub(crate) struct Buffer {
 }
 
 impl Pool {
-    /// Its size in bytes, as mapped.
+    /// Its declared size in bytes.
     pub fn size(&self) -> usize {
-        self.mapping.len()
+        self.file.len()
     }
 }
 
@@ -135,8 +134,8 @@ impl State {
                 format!("no pool: {over}"),
             )
         })?;
-        let mapping = Mapping::new(std::os::fd::AsFd::as_fd(&fd), size)
-            .map_err(|error| fail(wl_shm::error::INVALID_FD, format!("could not map the pool: {error}")))?;
+        let file = BufferFile::new(fd, size)
+            .map_err(|error| fail(wl_shm::error::INVALID_FD, format!("could not open the pool: {error}")))?;
         let pool = self.next_resource();
         let client = self.clients.get_mut(&client_id).expect("the client is dispatching");
         client.create(
@@ -150,8 +149,7 @@ impl State {
             pool,
             Pool {
                 client: client_id,
-                mapping,
-                fd,
+                file,
                 buffers: 0,
                 object_alive: true,
             },
@@ -182,7 +180,7 @@ impl State {
                         format!("invalid format {format:#x}"),
                     ));
                 }
-                let pool_size = self.pools.get(&pool_id).map_or(0, |pool| pool.mapping.len());
+                let pool_size = self.pools.get(&pool_id).map_or(0, Pool::size);
                 let end = (offset >= 0 && width > 0 && height > 0)
                     .then(|| i64::from(width) * 4)
                     .filter(|row| i64::from(stride) >= *row)
@@ -242,15 +240,15 @@ impl State {
                     .pools
                     .get_mut(&pool_id)
                     .expect("the pool exists while its object does");
-                if size < pool.mapping.len() {
+                if size < pool.size() {
                     return Err(fail(wl_shm::error::INVALID_STRIDE, "shrinking pool invalid".into()));
                 }
                 if size > MAX_POOL_SIZE {
                     return Err(fail(wl_shm::error::INVALID_STRIDE, format!("invalid pool size {size}")));
                 }
-                pool.mapping
-                    .grow(&pool.fd, size)
-                    .map_err(|error| fail(wl_shm::error::INVALID_FD, format!("could not map the pool: {error}")))
+                pool.file
+                    .grow(size)
+                    .map_err(|error| fail(wl_shm::error::INVALID_FD, format!("could not resize the pool: {error}")))
             }
         }
     }
@@ -294,20 +292,9 @@ impl State {
         let (client_id, object) = (buffer.client, buffer.object);
         let (offset, width, height, stride, format) =
             (buffer.offset, buffer.width, buffer.height, buffer.stride, buffer.format);
-        let copy = |bytes: &[u8]| Image::from_shm(bytes, offset, width, height, stride, format);
-        let read = match &mut buffer.source {
-            Source::Pool(pool) => self
-                .pools
-                .get_mut(pool)
-                .expect("a buffer's pool lives as long as it")
-                .mapping
-                .read(copy),
-            Source::Dmabuf { mapping, fd } => {
-                fulcrum_sys::dmabuf::begin_read(std::os::fd::AsFd::as_fd(fd));
-                let read = mapping.read(copy);
-                fulcrum_sys::dmabuf::end_read(std::os::fd::AsFd::as_fd(fd));
-                read
-            }
+        let file = match &mut buffer.source {
+            Source::Pool(pool) => &self.pools.get(pool).expect("a buffer's pool lives as long as it").file,
+            Source::Dmabuf { file } => file,
             Source::Gpu(texture) => {
                 buffer.held += 1;
                 return Ok(Content::Gpu(GpuContent {
@@ -318,11 +305,17 @@ impl State {
                 }));
             }
         };
-        let image = read.map_err(|truncated| ProtocolError {
-            object,
-            code: wl_shm::error::INVALID_FD,
-            message: format!("error accessing SHM buffer: {truncated}"),
-        })?;
+        let mut image = Image::new(width, height);
+        file.read_pixels(offset, stride as usize, width as usize, &mut image.pixels)
+            .map_err(|error| ProtocolError {
+                object,
+                code: wl_shm::error::INVALID_FD,
+                message: format!("error accessing SHM buffer: {error}"),
+            })?;
+        let alpha = if format == format::XRGB8888 { 0xff00_0000 } else { 0 };
+        for pixel in &mut image.pixels {
+            *pixel = u32::from_le(*pixel) | alpha;
+        }
         if let Some(client) = self.clients.get_mut(&client_id) {
             client.send(object, wl_buffer::Event::Release);
         }

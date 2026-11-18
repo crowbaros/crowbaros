@@ -1,88 +1,63 @@
-//! A client's shared memory, mapped so that the client cannot crash the
-//! compositor with it.
-//!
-//! A client hands the compositor a file descriptor and a size, and the
-//! compositor maps it. If the client then shrinks the file, reading the
-//! mapping past the file's new end raises `SIGBUS`, which would end the
-//! compositor. Every read here goes through [`Mapping::read`]: while it runs,
-//! a `SIGBUS` handler that knows the mapping replaces it with zero-filled
-//! memory, lets the read finish, and reports that the client truncated its
-//! file. Any other `SIGBUS` is passed to the handler that was there before.
-//!
-//! The technique is the one libwayland and Smithay use. This code is adapted
-//! from Smithay's `wayland/shm/pool.rs` (MIT; see `LICENSE-smithay.txt`).
+//! Copies client pixels into compositor-owned memory.
 
 use std::{
-    cell::Cell,
-    io,
-    os::fd::{AsFd, BorrowedFd},
-    ptr::{self, NonNull},
-    sync::{
-        OnceLock,
-        atomic::{AtomicBool, Ordering, compiler_fence},
+    fs::File,
+    io, mem,
+    os::{
+        fd::{AsFd, OwnedFd},
+        unix::fs::FileExt,
     },
 };
 
-use rustix::mm::{MapFlags, ProtFlags};
+use rustix::fs::{OFlags, fcntl_getfl};
 
-/// The mapping a read is in progress on.
-#[derive(Clone, Copy)]
-struct Guard {
-    start: usize,
+use crate::dmabuf::{CpuMapping, is_dmabuf};
+
+enum Storage {
+    File(File),
+    Dmabuf(CpuMapping),
+}
+
+/// A shared file or a linear DMA-BUF with a declared byte length.
+pub struct BufferFile {
+    storage: Storage,
     len: usize,
 }
 
-thread_local! {
-    // Const thread-locals hold no lazy initializer, so the signal handler
-    // can use them without allocating.
-    static GUARD: Cell<Option<Guard>> = const { Cell::new(None) };
-    // Whether a `SIGBUS` hit the read. An atomic, read after a compiler
-    // fence: the handler's write is invisible to the optimizer, which would
-    // otherwise reuse the value stored before the read.
-    static FAULTED: AtomicBool = const { AtomicBool::new(false) };
-}
-
-static PREVIOUS_HANDLER: OnceLock<libc::sigaction> = OnceLock::new();
-
-/// The client's file was shorter than it said while the compositor read it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Truncated;
-
-impl std::fmt::Display for Truncated {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the shared memory file is shorter than its pool")
-    }
-}
-
-impl std::error::Error for Truncated {}
-
-/// A read-only view of a client's shared memory.
-pub struct Mapping {
-    ptr: NonNull<u8>,
-    len: usize,
-    /// A `SIGBUS` replaced it with zeros. It is never read again.
-    broken: bool,
-}
-
-// SAFETY: the mapping is plain memory owned by this value. Moving it to
-// another thread moves the ownership; nothing else refers to it.
-unsafe impl Send for Mapping {}
-
-impl Mapping {
-    /// Maps `len` bytes of `fd` for reading.
-    pub fn new(fd: BorrowedFd<'_>, len: usize) -> io::Result<Self> {
-        if len == 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "an empty pool"));
+impl BufferFile {
+    /// A shared-memory pool backed by a readable regular file.
+    pub fn new(fd: OwnedFd, len: usize) -> io::Result<Self> {
+        let file = File::from(fd);
+        let access = fcntl_getfl(&file)? & (OFlags::ACCMODE | OFlags::PATH);
+        if access != OFlags::RDONLY && access != OFlags::RDWR {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the pool needs a readable file",
+            ));
         }
-        // SAFETY: a new shared, read-only mapping of the descriptor at an
-        // address the kernel chooses. It aliases no Rust object.
-        let ptr = unsafe { rustix::mm::mmap(ptr::null_mut(), len, ProtFlags::READ, MapFlags::SHARED, fd, 0)? };
-        let ptr = NonNull::new(ptr.cast()).ok_or_else(|| io::Error::other("mmap returned null"))?;
-        install_handler();
-        Ok(Mapping {
-            ptr,
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the pool needs a regular file",
+            ));
+        }
+        check_file_size(metadata.len(), len)?;
+        Ok(Self {
+            storage: Storage::File(file),
             len,
-            broken: false,
+        })
+    }
+
+    /// A linear DMA-BUF, or a regular file backing a software test buffer.
+    pub fn from_dmabuf(fd: OwnedFd, len: usize) -> io::Result<Self> {
+        if !is_dmabuf(fd.as_fd()) {
+            return Self::new(fd, len);
+        }
+        let mapping = CpuMapping::new(fd, len)?;
+        Ok(Self {
+            storage: Storage::Dmabuf(mapping),
+            len,
         })
     }
 
@@ -94,125 +69,87 @@ impl Mapping {
         self.len == 0
     }
 
-    /// Maps the descriptor again at a new, larger size. A pool only grows.
-    pub fn grow(&mut self, fd: impl AsFd, len: usize) -> io::Result<()> {
+    /// Changes the declared length of a pool after the client grows its file.
+    pub fn grow(&mut self, len: usize) -> io::Result<()> {
+        let Storage::File(file) = &self.storage else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a DMA-BUF has a fixed size",
+            ));
+        };
         if len < self.len {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "a pool only grows"));
         }
-        let new = Mapping::new(fd.as_fd(), len)?;
-        *self = new;
+        check_file_size(file.metadata()?.len(), len)?;
+        self.len = len;
         Ok(())
     }
 
-    /// Reads the mapping. `read` sees the client's bytes as they are now; the
-    /// client may change them at any time, so they are pixels to draw and
-    /// nothing to trust.
-    ///
-    /// Returns [`Truncated`] if the client's file was shorter than the
-    /// mapping. Then `read` saw zeros past the file's end, and the mapping
-    /// stays zeros.
-    pub fn read<T>(&mut self, read: impl FnOnce(&[u8]) -> T) -> Result<T, Truncated> {
-        if self.broken {
-            return Err(Truncated);
+    /// Copies four-byte pixels into tightly packed rows, preserving the byte
+    /// order and skipping source padding. An incomplete read leaves a
+    /// partial copy in the destination and returns an I/O error.
+    pub fn read_pixels(&self, offset: usize, stride: usize, width: usize, pixels: &mut [u32]) -> io::Result<()> {
+        let bad_layout = || io::Error::new(io::ErrorKind::InvalidInput, "pixel rows do not fit the buffer");
+        if width == 0 || pixels.is_empty() || !pixels.len().is_multiple_of(width) {
+            return Err(bad_layout());
         }
-        let start = self.ptr.as_ptr() as usize;
-        GUARD.with(|guard| {
-            assert!(guard.get().is_none(), "a shared-memory read inside another");
-            guard.set(Some(Guard { start, len: self.len }));
-        });
-        FAULTED.with(|faulted| faulted.store(false, Ordering::SeqCst));
-        compiler_fence(Ordering::SeqCst);
-        // SAFETY: the mapping is `len` readable bytes for as long as `self`
-        // lives. A `SIGBUS` while reading it is handled below by replacing
-        // the pages with readable zeros, so every byte stays readable.
-        let bytes = unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) };
-        let result = read(bytes);
-        compiler_fence(Ordering::SeqCst);
-        GUARD.with(|guard| guard.set(None));
-        let faulted = FAULTED.with(|faulted| faulted.swap(false, Ordering::SeqCst));
-        if faulted {
-            self.broken = true;
-            return Err(Truncated);
+        let rows = pixels.len() / width;
+        let row_bytes = width.checked_mul(size_of::<u32>()).ok_or_else(bad_layout)?;
+        let end = stride
+            .checked_mul(rows - 1)
+            .and_then(|distance| offset.checked_add(distance))
+            .and_then(|last_row| last_row.checked_add(row_bytes));
+        if stride < row_bytes || end.is_none_or(|end| end > self.len) {
+            return Err(bad_layout());
         }
-        Ok(result)
-    }
-}
 
-impl Drop for Mapping {
-    fn drop(&mut self) {
-        // SAFETY: the mapping was made by `mmap` with this length, and no
-        // slice of it outlives a `read` call.
-        unsafe {
-            let _ = rustix::mm::munmap(self.ptr.as_ptr().cast(), self.len);
+        // SAFETY: pixels is an exclusive slice of initialized u32s. Every byte
+        // can be written independently because all bit patterns are valid.
+        let bytes =
+            unsafe { std::slice::from_raw_parts_mut(pixels.as_mut_ptr().cast::<u8>(), mem::size_of_val(pixels)) };
+        match &self.storage {
+            Storage::File(file) => read_rows(offset, stride, row_bytes, bytes, |at, row| {
+                file.read_exact_at(row, at as u64)
+            }),
+            Storage::Dmabuf(mapping) => mapping.with_cpu_read(|mapping| {
+                read_rows(offset, stride, row_bytes, bytes, |at, row| mapping.read_at(at, row))
+            }),
         }
     }
 }
 
-fn install_handler() {
-    PREVIOUS_HANDLER.get_or_init(|| {
-        // SAFETY: `sigaction` with a zeroed struct, a handler that is
-        // async-signal-safe (see `on_sigbus`), and a place for the previous
-        // handler.
-        unsafe {
-            let mut action: libc::sigaction = std::mem::zeroed();
-            action.sa_sigaction = on_sigbus as *const () as usize;
-            action.sa_flags = libc::SA_SIGINFO | libc::SA_NODEFER;
-            let mut previous: libc::sigaction = std::mem::zeroed();
-            if libc::sigaction(libc::SIGBUS, &action, &mut previous) != 0 {
-                panic!("could not install the SIGBUS handler: {}", io::Error::last_os_error());
-            }
-            previous
-        }
-    });
+fn read_rows(
+    offset: usize,
+    stride: usize,
+    row_bytes: usize,
+    destination: &mut [u8],
+    mut read: impl FnMut(usize, &mut [u8]) -> io::Result<()>,
+) -> io::Result<()> {
+    if stride == row_bytes {
+        return read(offset, destination);
+    }
+    for (row, destination) in destination.chunks_exact_mut(row_bytes).enumerate() {
+        read(offset + row * stride, destination)?;
+    }
+    Ok(())
 }
 
-/// Restores the previous handler and raises the signal again, for a `SIGBUS`
-/// that is not a shared-memory read.
-fn reraise() {
-    // SAFETY: both calls are async-signal-safe, and the previous handler was
-    // stored before this handler was installed.
-    unsafe {
-        if let Some(previous) = PREVIOUS_HANDLER.get() {
-            libc::sigaction(libc::SIGBUS, previous, ptr::null_mut());
-        }
-        libc::raise(libc::SIGBUS);
+fn check_file_size(file_size: u64, len: usize) -> io::Result<()> {
+    if len == 0 {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "an empty pool"));
     }
-}
-
-extern "C" fn on_sigbus(_signal: libc::c_int, info: *mut libc::siginfo_t, _context: *mut libc::c_void) {
-    // SAFETY: the kernel passes a valid `siginfo_t` for a SA_SIGINFO handler.
-    let address = unsafe { (*info).si_addr() } as usize;
-    // Only async-signal-safe work below: a const thread-local, and `mmap`.
-    let guard = GUARD.with(Cell::get);
-    match guard {
-        Some(active) if address >= active.start && address < active.start + active.len => {
-            // SAFETY: the range is exactly the mapping being read, which this
-            // thread owns. A fixed private anonymous mapping replaces its
-            // pages with zeros, so the read can finish.
-            let replaced = unsafe {
-                libc::mmap(
-                    active.start as *mut libc::c_void,
-                    active.len,
-                    libc::PROT_READ,
-                    libc::MAP_FIXED | libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                    -1,
-                    0,
-                )
-            };
-            if replaced == libc::MAP_FAILED {
-                reraise();
-                return;
-            }
-            FAULTED.with(|faulted| faulted.store(true, Ordering::SeqCst));
-        }
-        _ => reraise(),
+    if file_size < len as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "the file is shorter than the pool",
+        ));
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::fd::OwnedFd;
 
     fn memfd(len: u64) -> OwnedFd {
         let fd = rustix::fs::memfd_create("fulcrum-test", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
@@ -221,38 +158,32 @@ mod tests {
     }
 
     #[test]
-    fn a_mapping_reads_what_the_client_wrote() {
-        let fd = memfd(4096);
-        rustix::io::pwrite(&fd, b"pixels", 100).unwrap();
-        let mut mapping = Mapping::new(fd.as_fd(), 4096).unwrap();
-        let read = mapping.read(|bytes| bytes[100..106].to_vec()).unwrap();
-        assert_eq!(read, b"pixels");
+    fn a_buffer_reads_its_rows_at_the_given_offset() {
+        let fd = memfd(64);
+        rustix::io::pwrite(&fd, &12u32.to_le_bytes(), 5).unwrap();
+        rustix::io::pwrite(&fd, &34u32.to_le_bytes(), 13).unwrap();
+        let buffer = BufferFile::new(fd.try_clone().unwrap(), 64).unwrap();
+        let mut pixels = [0; 2];
+        buffer.read_pixels(5, 8, 1, &mut pixels).unwrap();
+        assert_eq!(pixels.map(u32::from_le), [12, 34]);
+        assert_eq!(rustix::fs::seek(&fd, rustix::fs::SeekFrom::Current(0)).unwrap(), 0);
     }
 
     #[test]
-    fn a_client_that_truncates_its_file_cannot_crash_the_reader() {
-        let fd = memfd(64 * 1024);
-        let mut mapping = Mapping::new(fd.as_fd(), 64 * 1024).unwrap();
-        rustix::fs::ftruncate(&fd, 4096).unwrap();
-        // Reading past the new end would raise SIGBUS and end the process.
-        let result = mapping.read(|bytes| bytes.iter().map(|byte| u64::from(*byte)).sum::<u64>());
-        assert_eq!(result, Err(Truncated));
-        // The mapping stays broken, and says so.
-        assert_eq!(mapping.read(|bytes| bytes.len()), Err(Truncated));
+    fn a_pool_only_grows_to_the_size_of_its_file() {
+        let fd = memfd(8);
+        let mut buffer = BufferFile::new(fd.try_clone().unwrap(), 4).unwrap();
+        assert!(buffer.grow(2).is_err());
+        assert!(buffer.grow(12).is_err());
+        assert_eq!(buffer.len(), 4);
+
+        rustix::fs::ftruncate(fd, 12).unwrap();
+        buffer.grow(12).unwrap();
+        assert_eq!(buffer.len(), 12);
     }
 
     #[test]
-    fn a_pool_only_grows() {
-        let fd = memfd(8192);
-        let mut mapping = Mapping::new(fd.as_fd(), 4096).unwrap();
-        assert!(mapping.grow(&fd, 2048).is_err());
-        mapping.grow(&fd, 8192).unwrap();
-        assert_eq!(mapping.len(), 8192);
-    }
-
-    #[test]
-    fn an_empty_mapping_is_refused() {
-        let fd = memfd(0);
-        assert!(Mapping::new(fd.as_fd(), 0).is_err());
+    fn an_empty_pool_is_refused() {
+        assert!(BufferFile::new(memfd(0), 0).is_err());
     }
 }

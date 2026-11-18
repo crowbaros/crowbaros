@@ -2,9 +2,8 @@
 //! compositor takes, and buffers made from dma-bufs that are shown like any
 //! other.
 //!
-//! The dma-bufs here are memfds: the compositor reads a buffer it cannot
-//! give the GPU by mapping it, which is the same for both, and CI's machines
-//! have no GPU to make a real one.
+//! The buffers here are memfds, which exercise the CPU copy through
+//! positioned reads. CI's machines have no GPU to make a real dma-buf.
 
 mod common;
 
@@ -282,9 +281,7 @@ fn the_params_errors() {
     });
 }
 
-/// A dma-buf cannot shrink, but a memfd sent as one can. Reading it is
-/// guarded as shared memory is: the client gets an error, and the
-/// compositor goes on.
+/// Shortening a regular file used as a dma-buf produces a protocol error.
 #[test]
 fn a_dmabuf_that_shrinks_cannot_crash_the_compositor() {
     let compositor = Compositor::start();

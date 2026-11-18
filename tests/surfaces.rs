@@ -304,18 +304,20 @@ fn buffers_that_do_not_fit_their_pool_or_format_are_refused() {
     });
 }
 
-/// A client that shrinks the file behind its pool would make a naive
-/// compositor read past the file's end and die of SIGBUS.
+/// A client can shorten its pool even within the last page of a buffer.
 #[test]
 fn a_client_that_truncates_its_pool_gets_an_error_and_the_compositor_goes_on() {
     let compositor = Compositor::start();
-    let message = refused(&compositor, wl_shm::error::INVALID_FD, |client| {
-        let surface = client.create_surface().unwrap();
-        let buffer = client.shm_buffer((64, 64), RED).unwrap();
-        rustix::fs::ftruncate(&buffer.file, 0).unwrap();
-        client.show(surface, Some(&buffer)).unwrap();
-    });
-    assert!(message.contains("SHM"), "{message}");
+    for shortened_size in [0, 64 * 64 * 4 - 1] {
+        let message = refused(&compositor, wl_shm::error::INVALID_FD, |client| {
+            let surface = client.create_surface().unwrap();
+            let buffer = client.shm_buffer((64, 64), RED).unwrap();
+            client.roundtrip().unwrap();
+            rustix::fs::ftruncate(&buffer.file, shortened_size).unwrap();
+            client.show(surface, Some(&buffer)).unwrap();
+        });
+        assert!(message.contains("SHM"), "{message}");
+    }
 }
 
 #[test]
