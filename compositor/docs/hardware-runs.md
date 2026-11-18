@@ -23,7 +23,7 @@ CI and the Void guest check the rest, on llvmpipe and virtio-gpu, so these runs 
 
 ## Before
 
-- **Build:** `cargo build --release` in Fulcrum. It needs Rust, libxkbcommon, and libinput, and at run time Mesa's EGL, GLES, and GBM. On NVIDIA, the driver's GBM and EGL take their place, with `nvidia-drm.modeset=1` on the kernel's command line.
+- **Build:** `cargo build --release` in `compositor/`. It needs Rust, libxkbcommon, and libinput, and at run time Mesa's EGL, GLES, and GBM. On NVIDIA, the driver's GBM and EGL take their place, with `nvidia-drm.modeset=1` on the kernel's command line.
 - **The seat:** seatd must be running, and you must be in its group. On Void that is the `_seatd` group and the `seatd` service; elsewhere, often `seat`.
 - **Clients:**
   - `foot` for a plain client;

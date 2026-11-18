@@ -6,7 +6,7 @@ Fulcrum is the CrowbarOS Wayland compositor, written from the ground up in Rust.
 
 Its first customer is the CrowbarOS Base image. A successful release lets a person boot CrowbarOS, launch and arrange applications, use multiple displays, move data deliberately between apps, and lock and recover the session. The GPUI shell supplies the bar, dock, launcher, and Settings UI. Fulcrum owns the pixels and input decisions those components must be able to trust.
 
-**Where it starts.** [Milestone 0](independent-build-2026-11-17.md) moved CrowbarOS's Smithay-based compositor into this repository and made CrowbarOS build a pinned commit. That compositor, at `d11400f` and tag `smithay-baseline`, is now the behavioral specification. Its 57 tests and the 36 checks of CrowbarOS's Void guest describe what the new compositor must do before CrowbarOS moves its pin. Fulcrum's `main` is replaced from Milestone 1 on. CrowbarOS stays pinned to `d11400f` until Milestone 2 passes the same checks.
+**Where it started.** [Milestone 0](independent-build-2026-11-17.md) moved CrowbarOS's Smithay-based compositor into a repository of its own, `crowbaros/fulcrum`, and made CrowbarOS build a pinned commit. That compositor, at `d11400f`, was the behavioral specification: its 57 tests and the 36 checks of CrowbarOS's Void guest said what the new compositor had to do. The new one replaced it at Milestone 2. On November 18, 2026, Fulcrum came back to CrowbarOS's `compositor/`, and the pin went ([ADR 0031](../../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)). Bare pull request numbers in this plan, such as #41, are the archived `crowbaros/fulcrum`'s; `crowbaros#` numbers are CrowbarOS's.
 
 ## What Fulcrum writes, and what it learns from
 
@@ -73,7 +73,7 @@ Owning the wire layer lets Fulcrum enforce the CrowbarOS decisions where message
 
 **Where it stands, November 18, 2026.**
 
-- **Milestones 1 and 2** are done, and CrowbarOS pins the new compositor.
+- **Milestones 1 and 2** are done, and CrowbarOS builds the new compositor.
 - **Milestone 3** has:
   - the GLES renderer (#15);
   - linux-dmabuf (#16), whose buffers the GPU imports in any layout EGL takes and draws where they are (#28);

@@ -1,6 +1,6 @@
 # CrowbarOS starts again, as a small desktop with an agent at the person's side
 
-**Status:** proposed on November 17, 2026, by Jim Martin. It is accepted when Jason Alexander approves the pull request that adds it.
+**Status:** accepted on November 18, 2026, by Jim Martin and Jason Alexander. Proposed on November 17 by Jim Martin. [ADR 0031](0031-the-compositor-is-built-in-this-repository-again.md) later replaced ADR 0027, one of the compositor records it keeps.
 
 The [substrate vision](../archive/substrate-vision/README.md) made CrowbarOS a lean base that each person shaped into their own OS with Tools their agent built, under a deterministic security model. It produced 28 decision records, five council review rounds, a threat model, and about 20,000 lines of Rust for its state, apply engine, and security rules, but no desktop a person could use for a day. This record ends it and starts the [new vision](../VISION.md).
 

@@ -9,8 +9,7 @@ anywhere, and out of the way until the person asks.
 
 ## Start here
 
-1. [Vision](docs/VISION.md): the plan of record. It is a draft for both of us
-   to review.
+1. [Vision](docs/VISION.md): the plan of record.
 2. [Lessons](docs/LESSONS.md): what the earlier plans taught us.
 3. [Glossary](GLOSSARY.md): the words this project uses, and the ones it avoids.
 4. [Decision records](docs/adr/).

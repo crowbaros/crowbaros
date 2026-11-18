@@ -314,7 +314,9 @@ with arguments must be refused.
 
 ## Where it came from
 
-This repository began as CrowbarOS's `compositor/` directory at commit
+Fulcrum began in CrowbarOS's `compositor/` directory. On November 17, 2026,
+it moved to a repository of its own,
+`crowbaros/fulcrum`, starting from commit
 [`30fadd8`](https://github.com/crowbaros/crowbaros/tree/30fadd8e88fbeb9991eb340f5dee27998b02c9fe/compositor),
 with the seven commits that touched it (tag `import/crowbaros-30fadd8`). The
 [Milestone 0 record](docs/independent-build-2026-11-17.md) shows CrowbarOS
@@ -329,5 +331,5 @@ that. The numbers of its pull requests
 in these docs, such as #41, are its own, not CrowbarOS's.
 
 Code adapted from an MIT-licensed project keeps its attribution, in a
-`LICENSE-*.txt` file beside this repository's own. Code under GPL-3.0 is read
+`LICENSE-*.txt` file beside Fulcrum's own [`LICENSE`](LICENSE). Code under GPL-3.0 is read
 for ideas, and none of it is copied.
