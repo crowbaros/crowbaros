@@ -44,7 +44,8 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 - **xdg-shell windows and popups**: the configure handshake, window geometry,
   positioners, `wl_surface.enter` and `leave`, and the protocol's errors. A
   new window opens inside the usable area of the output the pointer is on,
-  offset from the last, and does not take the keyboard.
+  offset from the last, and does not take the keyboard unless its parent has
+  it, as a dialog does (ADR 0020).
 - **Windows maximize, go fullscreen, and snap to a half** of their output, at
   a client's request or by Super+Up, Super+F, and Super+Left or Right, and go
   back to where and as they floated (ADR 0020). A maximized or snapped window

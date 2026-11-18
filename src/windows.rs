@@ -173,6 +173,27 @@ impl State {
         }
         self.update_outputs_of(surface);
         self.queue_redraw_for(surface);
+        self.focus_new_child(surface);
+    }
+
+    /// A new window takes the keyboard when its parent has it, as a dialog
+    /// opened from the window the person is using (ADR 0020). It also opens
+    /// above. No other new window takes the keyboard here: the other case,
+    /// the first window of a compartment the person just started from the
+    /// shell, needs the shell to say so.
+    fn focus_new_child(&mut self, surface: SurfaceId) {
+        let Some(parent) = self.xdg.get(&surface).and_then(|xdg| xdg.toplevel.parent) else {
+            return;
+        };
+        let parent_has_keyboard = self
+            .seat
+            .keyboard_focus
+            .map(|focus| self.root_of(focus))
+            .is_some_and(|root| root == parent || self.toplevel_of(root) == Some(parent));
+        if parent_has_keyboard && self.windows.iter().any(|window| window.surface == surface) {
+            self.raise(surface);
+            self.set_keyboard_focus(Some(surface));
+        }
     }
 
     /// An xdg surface unmapped or went away: drawn away where it was.
