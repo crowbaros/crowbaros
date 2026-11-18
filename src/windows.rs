@@ -284,8 +284,13 @@ impl State {
                 }
             }
         }
+        let moved = self.surfaces.get(&surface).is_some_and(|known| known.entered != now);
         if let Some(surface) = self.surfaces.get_mut(&surface) {
             surface.entered = now;
+        }
+        // Another output may have another scale.
+        if moved {
+            self.update_fractional_scales();
         }
     }
 

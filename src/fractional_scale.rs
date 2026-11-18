@@ -1,9 +1,10 @@
 //! `wp_fractional_scale_manager_v1`: a surface hears the scale it should
 //! draw at, in 120ths, so a client can draw for a fractional scale.
 //!
-//! Every output is at scale 1 until displays get their own scale (ADR 0020,
-//! Milestone 7), so the preferred scale is 120. The table offers it to every
-//! compartment and the shell (ADR 0020, ADR 0023).
+//! A surface's preferred scale is the largest of the scales of the outputs
+//! it is on, or 1 where it is on none, and it hears it again whenever that
+//! changes. The table offers it to every compartment and the shell (ADR 0020,
+//! ADR 0023).
 
 use std::borrow::Cow;
 
@@ -38,6 +39,7 @@ impl State {
                 message: format!("wl_surface#{} already has a fractional scale", surface.0),
             });
         }
+        let scale = self.preferred_scale(surface_id);
         let client = self.clients.get_mut(&client_id).expect("the client is dispatching");
         client.create(
             id,
@@ -46,11 +48,53 @@ impl State {
             1,
             ObjectKind::FractionalScale(surface_id),
         )?;
-        client.send(id.0, wp_fractional_scale_v1::Event::PreferredScale { scale: 120 });
+        client.send(id.0, wp_fractional_scale_v1::Event::PreferredScale { scale });
         if let Some(surface) = self.surfaces.get_mut(&surface_id) {
             surface.fractional_scale = Some(id.0);
+            surface.fractional_sent = scale;
         }
         Ok(())
+    }
+
+    /// The scale a surface should draw at, in 120ths: the largest of the
+    /// outputs its window or layer is on.
+    pub(crate) fn preferred_scale(&self, surface: SurfaceId) -> u32 {
+        let root = self.root_of(surface);
+        let root = self.toplevel_of(root).unwrap_or(root);
+        let entered = self.surfaces.get(&root).map_or(&[][..], |surface| &surface.entered[..]);
+        self.outputs
+            .iter()
+            .filter(|output| entered.contains(&output.number))
+            .map(|output| output.scale_120)
+            .max()
+            .unwrap_or(crate::output::SCALE_ONE)
+    }
+
+    /// Tells each surface with a fractional scale object its preferred scale,
+    /// where it changed.
+    pub(crate) fn update_fractional_scales(&mut self) {
+        let surfaces: Vec<SurfaceId> = self
+            .surfaces
+            .iter()
+            .filter(|(_, surface)| surface.fractional_scale.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in surfaces {
+            let scale = self.preferred_scale(id);
+            let Some(surface) = self.surfaces.get_mut(&id) else {
+                continue;
+            };
+            let (Some(object), client_id) = (surface.fractional_scale, surface.client) else {
+                continue;
+            };
+            if surface.fractional_sent == scale {
+                continue;
+            }
+            surface.fractional_sent = scale;
+            if let Some(client) = self.clients.get_mut(&client_id) {
+                client.send(object, wp_fractional_scale_v1::Event::PreferredScale { scale });
+            }
+        }
     }
 
     /// A surface's fractional scale object is destroyed: another may be made.

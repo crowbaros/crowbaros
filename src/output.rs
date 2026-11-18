@@ -2,7 +2,14 @@
 //! `wl_output` global.
 //!
 //! A backend adds an output for each display it lights, and a test adds its
-//! own. Outputs sit side by side, left to right, at scale 1.
+//! own. Outputs sit side by side, left to right.
+//!
+//! Each has a scale from 1 to 3 in steps of a quarter (ADR 0020), kept in
+//! 120ths as fractional scale counts. The desktop is in logical units: an
+//! output covers its pixels over its scale, and the scene is drawn at its
+//! pixels (see `scene.rs`). A client hears the scale rounded up as
+//! `wl_output.scale`, and the scale itself as its surface's preferred
+//! fractional scale.
 
 use fulcrum_wire::protocol::wayland::wl_output;
 
@@ -15,12 +22,15 @@ pub const OUTPUT_VERSION: u32 = 4;
 pub struct Output {
     pub number: u64,
     pub name: String,
-    /// In pixels.
+    /// In pixels: its mode.
     pub size: (i32, i32),
     /// In millihertz.
     pub refresh: i32,
     /// Its top-left corner on the desktop.
     pub position: (i32, i32),
+    /// Its scale in 120ths: from 120 to 360, in steps of 30.
+    pub scale_120: u32,
+    /// The scale rounded up, as `wl_output.scale` says it.
     pub scale: i32,
     pub global: u32,
     pub(crate) redraw: crate::redraw::Redraw,
@@ -30,10 +40,21 @@ pub struct Output {
     pub(crate) presenting: Vec<(ClientId, u32)>,
 }
 
+/// The scale every output starts at, in 120ths.
+pub const SCALE_ONE: u32 = 120;
+
 impl Output {
+    /// Its size on the desktop: its pixels over its scale.
+    pub fn logical_size(&self) -> (i32, i32) {
+        let scale = i64::from(self.scale_120.max(1));
+        let over = |pixels: i32| ((i64::from(pixels) * 120 + scale / 2) / scale) as i32;
+        (over(self.size.0), over(self.size.1))
+    }
+
     /// The rectangle it covers on the desktop.
     pub fn rect(&self) -> crate::geometry::Rect {
-        crate::geometry::Rect::new(self.position.0, self.position.1, self.size.0, self.size.1)
+        let (width, height) = self.logical_size();
+        crate::geometry::Rect::new(self.position.0, self.position.1, width, height)
     }
 }
 
@@ -50,7 +71,8 @@ impl State {
         let x = self
             .outputs
             .iter()
-            .map(|output| output.position.0 + output.size.0)
+            .map(|output| output.rect())
+            .map(|rect| rect.x + rect.width)
             .max()
             .unwrap_or(0);
         let global = self.add_global(&wl_output::INFO, OUTPUT_VERSION, GlobalKind::Output(number));
@@ -60,6 +82,7 @@ impl State {
             size,
             refresh,
             position: (x, 0),
+            scale_120: SCALE_ONE,
             scale: 1,
             global,
             redraw: crate::redraw::Redraw::Idle,
@@ -115,6 +138,7 @@ impl State {
         for surface in windows {
             self.update_outputs_of(surface);
         }
+        self.update_fractional_scales();
         self.queue_redraw_all();
     }
 
@@ -122,16 +146,44 @@ impl State {
     /// nested backend draws into is resized. The outputs to its right move
     /// along, each client is told, and the layer surfaces are placed again.
     pub fn resize_output(&mut self, number: u64, size: (i32, i32)) {
+        self.reshape_output(number, |output| output.size = size);
+    }
+
+    /// Sets an output's scale, in 120ths: from 120 to 360 in steps of 30,
+    /// as ADR 0020 allows. The desktop it covers changes as a resize's does.
+    pub fn set_output_scale(&mut self, number: u64, scale_120: u32) -> Result<(), String> {
+        if !(SCALE_ONE..=3 * SCALE_ONE).contains(&scale_120) || !scale_120.is_multiple_of(30) {
+            return Err(format!(
+                "a scale is from 1 to 3 in steps of 0.25, not {}",
+                f64::from(scale_120) / 120.0
+            ));
+        }
+        self.reshape_output(number, |output| {
+            output.scale_120 = scale_120;
+            output.scale = scale_120.div_ceil(SCALE_ONE) as i32;
+        });
+        Ok(())
+    }
+
+    /// An output's size or scale changes: the outputs to its right move
+    /// along, each client is told, and what is on it is placed again.
+    fn reshape_output(&mut self, number: u64, change: impl FnOnce(&mut Output)) {
         let Some(index) = self.outputs.iter().position(|output| output.number == number) else {
             return;
         };
-        let old = self.outputs[index].rect();
-        if (old.width, old.height) == size {
+        let before = (
+            self.outputs[index].rect(),
+            self.outputs[index].size,
+            self.outputs[index].scale_120,
+        );
+        let old = before.0;
+        change(&mut self.outputs[index]);
+        let new = self.outputs[index].rect();
+        if (new, self.outputs[index].size, self.outputs[index].scale_120) == before {
             return;
         }
-        self.outputs[index].size = size;
         let mut changed = vec![number];
-        let shift = size.0 - old.width;
+        let shift = new.width - old.width;
         for output in &mut self.outputs {
             if output.number != number && output.position.0 >= old.x + old.width {
                 output.position.0 += shift;
@@ -168,6 +220,7 @@ impl State {
         for surface in windows {
             self.update_outputs_of(surface);
         }
+        self.update_fractional_scales();
         self.queue_redraw_all();
     }
 

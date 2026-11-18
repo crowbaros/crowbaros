@@ -34,9 +34,10 @@ pub(crate) enum PointerImage {
         cursor: std::rc::Rc<crate::xcursor::CursorImage>,
         at: (i32, i32),
     },
-    /// A client's surface, which is drawn with the scene so that it covers
-    /// no frame.
-    Surface,
+    /// Drawn with the scene: a client's surface, so that it covers no
+    /// frame, or any image on an output at another scale than 1, which the
+    /// scene scales.
+    Composited,
 }
 
 /// What the pointer looks like.
@@ -97,8 +98,11 @@ impl State {
             None => crate::xcursor::DEFAULT_SHAPE,
             Some(Cursor::Shape(shape)) => shape,
             Some(Cursor::Hidden) => return PointerImage::None,
-            Some(Cursor::Surface { .. }) => return PointerImage::Surface,
+            Some(Cursor::Surface { .. }) => return PointerImage::Composited,
         };
+        if output.scale_120 != crate::output::SCALE_ONE {
+            return PointerImage::Composited;
+        }
         let cursor = self.cursor_theme.image_or_square(shape);
         let (x, y) = self.pointer;
         let at = (
@@ -106,7 +110,8 @@ impl State {
             y as i32 - output.position.1 - cursor.hotspot.1,
         );
         let rect = Rect::new(at.0, at.1, cursor.image.width, cursor.image.height);
-        if !intersects(&rect, &Rect::new(0, 0, output.size.0, output.size.1)) {
+        let (width, height) = output.logical_size();
+        if !intersects(&rect, &Rect::new(0, 0, width, height)) {
             return PointerImage::None;
         }
         PointerImage::Own { cursor, at }

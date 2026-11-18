@@ -54,6 +54,23 @@ impl Image {
         }
     }
 
+    /// The image at another size, each pixel the nearest of the source's:
+    /// itself, borrowed, where the size is its own.
+    pub fn resized(&self, width: i32, height: i32) -> std::borrow::Cow<'_, Image> {
+        if (width, height) == (self.width, self.height) || self.width <= 0 || self.height <= 0 {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut out = Image::new(width.max(0), height.max(0));
+        for y in 0..out.height {
+            let from_y = (i64::from(y) * i64::from(self.height) / i64::from(out.height)) as i32;
+            for x in 0..out.width {
+                let from_x = (i64::from(x) * i64::from(self.width) / i64::from(out.width)) as i32;
+                out.pixels[(y * out.width + x) as usize] = self.pixels[(from_y * self.width + from_x) as usize];
+            }
+        }
+        std::borrow::Cow::Owned(out)
+    }
+
     pub fn pixel(&self, x: i32, y: i32) -> Option<u32> {
         if x < 0 || y < 0 || x >= self.width || y >= self.height {
             return None;

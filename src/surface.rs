@@ -309,6 +309,8 @@ pub(crate) struct Surface {
     pub viewport: Option<u32>,
     /// Its `wp_fractional_scale_v1`, if it has one.
     pub fractional_scale: Option<u32>,
+    /// The preferred scale it was last told, in 120ths.
+    pub fractional_sent: u32,
     /// Its `wp_linux_drm_syncobj_surface_v1`, if it has one.
     pub syncobj: Option<u32>,
 }
@@ -355,6 +357,7 @@ impl State {
                         entered: Vec::new(),
                         viewport: None,
                         fractional_scale: None,
+                        fractional_sent: 0,
                         syncobj: None,
                     },
                 );

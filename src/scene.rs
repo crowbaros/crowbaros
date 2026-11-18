@@ -55,6 +55,13 @@ impl State {
     /// bar and the dock, and nothing else the shell draws: it and every
     /// window above it go between the top layers and the overlay.
     pub(crate) fn scene(&self, number: u64) -> Option<Scene> {
+        let scene = self.logical_scene(number)?;
+        Some(self.in_pixels(number, scene))
+    }
+
+    /// The same, in the output's logical units: what the scene is before it
+    /// is scaled to the output's pixels.
+    fn logical_scene(&self, number: u64) -> Option<Scene> {
         let output = self.outputs.iter().find(|output| output.number == number)?;
         let origin = output.position;
         let to_output = |(x, y): (i32, i32)| (x - origin.0, y - origin.1);
@@ -108,10 +115,29 @@ impl State {
             }
         }
         Some(Scene {
-            size: output.size,
+            size: output.logical_size(),
             background: BACKGROUND,
             elements,
         })
+    }
+
+    /// A scene in an output's logical units, scaled to its pixels. Each
+    /// edge is rounded on its own, so that what meets still meets.
+    fn in_pixels(&self, number: u64, mut scene: Scene) -> Scene {
+        let Some(output) = self.outputs.iter().find(|output| output.number == number) else {
+            return scene;
+        };
+        scene.size = output.size;
+        if output.scale_120 != crate::output::SCALE_ONE {
+            for element in &mut scene.elements {
+                match element {
+                    Element::Surface { rect, .. } | Element::Solid { rect, .. } | Element::Cursor { rect, .. } => {
+                        *rect = scale_rect(*rect, output.scale_120);
+                    }
+                }
+            }
+        }
+        scene
     }
 
     /// A window, its frame, and its popups.
@@ -167,10 +193,10 @@ impl State {
     /// What an output shows, with the pointer's image above it, for a
     /// backend that draws the pointer.
     pub(crate) fn scene_with_cursor(&self, number: u64) -> Option<Scene> {
-        let mut scene = self.scene(number)?;
+        let mut scene = self.logical_scene(number)?;
         let cursor = self.cursor_elements(number, &scene);
         scene.elements.extend(cursor);
-        Some(scene)
+        Some(self.in_pixels(number, scene))
     }
 
     /// An output's frame with the pointer, drawn by the CPU renderer.
@@ -217,19 +243,30 @@ impl State {
             match element {
                 Element::Surface { surface, rect } => {
                     if let Some(shown) = self.surfaces.get(surface).and_then(|surface| surface.current.shown()) {
-                        image.draw(&shown, (rect.x, rect.y));
+                        image.draw(&shown.resized(rect.width, rect.height), (rect.x, rect.y));
                     }
                 }
                 Element::Solid { rect, colour } => image.fill(*rect, *colour),
                 Element::Cursor { shape, rect } => {
                     if let Some(cursor) = self.cursor_theme.image(*shape) {
-                        image.draw(&cursor.image, (rect.x, rect.y));
+                        image.draw(&cursor.image.resized(rect.width, rect.height), (rect.x, rect.y));
                     }
                 }
             }
         }
         image
     }
+}
+
+/// A rectangle in logical units, in the pixels of an output at a scale in
+/// 120ths: each edge rounded to the nearest pixel.
+pub(crate) fn scale_rect(rect: Rect, scale_120: u32) -> Rect {
+    let scale = i64::from(scale_120);
+    let pixel = |value: i64| (value * scale + 60).div_euclid(120) as i32;
+    let (left, top) = (pixel(i64::from(rect.x)), pixel(i64::from(rect.y)));
+    let right = pixel(i64::from(rect.x) + i64::from(rect.width));
+    let bottom = pixel(i64::from(rect.y) + i64::from(rect.height));
+    Rect::new(left, top, right - left, bottom - top)
 }
 
 /// A frame's four sides around a rectangle.
