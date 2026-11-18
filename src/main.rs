@@ -74,6 +74,7 @@ fn main() {
     };
     log::init_from_env();
     let run = || -> std::io::Result<()> {
+        crowbar_compositor::limits::raise_descriptor_limit();
         let mut state = State::new()?;
         state.listen(&args.parts)?;
         log::write(

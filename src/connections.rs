@@ -151,6 +151,7 @@ impl State {
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => return,
                 Err(error) => {
                     log::warning!("could not accept a connection ({:?}): {error}", part.identity);
+                    self.failed_accepts += 1;
                     self.event_loop.remove(part.listener.as_fd());
                     self.event_loop
                         .set_timer(Instant::now() + ACCEPT_RETRY, TimerKey::RetryTrusted(index));
@@ -329,9 +330,16 @@ impl State {
             };
             match rustix::net::accept_with(&listener.listen, SocketFlags::CLOEXEC) {
                 Ok(fd) => {
-                    let identity = Identity::Compartment(listener.compartment.clone());
-                    listener.compartment.client_connected();
-                    self.add_client(UnixStream::from(fd), identity);
+                    let compartment = listener.compartment.clone();
+                    if let Err(over) = self.may_connect(&compartment) {
+                        // Accepted and closed at once, so it waits in no
+                        // queue. The client sees its connection end.
+                        log::warning!("refused a connection for compartment {}: {over}", compartment.id());
+                        drop(fd);
+                        continue;
+                    }
+                    compartment.client_connected();
+                    self.add_client(UnixStream::from(fd), Identity::Compartment(compartment));
                 }
                 Err(rustix::io::Errno::AGAIN) => return,
                 Err(rustix::io::Errno::INTR) => continue,
@@ -340,6 +348,7 @@ impl State {
                         "could not accept a connection for compartment {}: {error}",
                         listener.compartment.id()
                     );
+                    self.failed_accepts += 1;
                     self.event_loop.remove(listener.listen.as_fd());
                     if let Some(listener) = self.listeners.get_mut(&number) {
                         listener.waiting = true;

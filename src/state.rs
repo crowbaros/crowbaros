@@ -56,6 +56,10 @@ pub struct State {
     pub(crate) buffers: HashMap<BufferId, Buffer>,
     /// The number given to the last surface, region, pool, or buffer.
     pub(crate) next_resource: u64,
+    /// The descriptors this process may hold.
+    pub(crate) descriptor_limit: usize,
+    /// How many times a listener could not accept.
+    pub(crate) failed_accepts: u64,
 }
 
 impl State {
@@ -83,6 +87,8 @@ impl State {
             pools: HashMap::new(),
             buffers: HashMap::new(),
             next_resource: 0,
+            descriptor_limit: crate::limits::descriptor_limit(),
+            failed_accepts: 0,
         };
         state.add_table_globals();
         Ok(state)
@@ -164,6 +170,19 @@ impl State {
         self.clients.len()
     }
 
+    /// Takes a lower descriptor limit than the process has, as a test does
+    /// to reach the reserve without filling the process.
+    #[doc(hidden)]
+    pub fn set_descriptor_limit(&mut self, limit: usize) {
+        self.descriptor_limit = limit;
+    }
+
+    /// How many times a listener could not accept, as when the process had
+    /// no descriptor left.
+    pub fn failed_accepts(&self) -> u64 {
+        self.failed_accepts
+    }
+
     fn client_ready(&mut self, id: ClientId, readiness: Readiness) {
         if readiness.readable || readiness.hung_up {
             for _ in 0..READS_PER_TURN {
@@ -180,6 +199,13 @@ impl State {
                         client.fail(&error);
                         // What arrived before the close is still read.
                     }
+                }
+                if self.over_descriptor_budget(id)
+                    && let Some(client) = self.clients.get_mut(&id)
+                {
+                    log::warning!("client {id}: its compartment holds too many descriptors; disconnecting it");
+                    client.doomed = true;
+                    break;
                 }
                 self.take_messages(id);
                 if self.clients.get(&id).is_none_or(|client| client.doomed) {

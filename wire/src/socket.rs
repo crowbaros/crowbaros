@@ -30,8 +30,10 @@ use crate::codec::{DecodeError, HEADER_SIZE, Header, MAX_MESSAGE_SIZE};
 /// The most descriptors one `sendmsg` carries, as in libwayland.
 pub const MAX_FDS_PER_SEND: usize = 28;
 
-/// The most descriptors that may wait to be taken by a message.
-pub const MAX_FDS_IN: usize = 256;
+/// The most descriptors that may wait to be taken by a message. One read
+/// brings at most [`MAX_FDS_PER_SEND`], and messages take them as they are
+/// read, so a well-behaved peer never comes near this.
+pub const MAX_FDS_IN: usize = 64;
 
 /// The most bytes that may wait to be read as messages. Four whole
 /// messages of the largest size.
@@ -48,6 +50,9 @@ pub enum ConnectionError {
     TooManyFds,
     /// More than [`MAX_BYTES_OUT`] bytes waiting for the peer.
     PeerNotReading,
+    /// The kernel dropped descriptors the peer sent, because this process
+    /// had no room for them. Messages would then take the wrong ones.
+    FdsDropped,
     /// The peer closed the connection.
     Closed,
 }
@@ -59,6 +64,7 @@ impl std::fmt::Display for ConnectionError {
             ConnectionError::Decode(error) => write!(f, "{error}"),
             ConnectionError::TooManyFds => write!(f, "more than {MAX_FDS_IN} descriptors waiting"),
             ConnectionError::PeerNotReading => write!(f, "more than {MAX_BYTES_OUT} bytes the peer has not read"),
+            ConnectionError::FdsDropped => f.write_str("the kernel dropped descriptors the peer sent"),
             ConnectionError::Closed => f.write_str("the peer closed the connection"),
         }
     }
@@ -142,6 +148,9 @@ impl Connection {
                 self.fds_in.extend(fds);
             }
         }
+        if received.flags.contains(rustix::net::ReturnFlags::CTRUNC) {
+            return Err(ConnectionError::FdsDropped);
+        }
         if received.bytes == 0 {
             return Err(ConnectionError::Closed);
         }
@@ -165,6 +174,11 @@ impl Connection {
         let body = self.bytes_in[HEADER_SIZE..header.size].to_vec();
         self.bytes_in.drain(..header.size);
         Ok(Some(Incoming { header, body }))
+    }
+
+    /// How many descriptors have arrived that no message has taken yet.
+    pub fn queued_fds(&self) -> usize {
+        self.fds_in.len()
     }
 
     /// The descriptors that have arrived and no message has taken yet.

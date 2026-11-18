@@ -25,7 +25,7 @@ the CrowbarOS repository:
 
 ## Where it stands
 
-Milestone 1, the Wayland core, is under way. What is built:
+Milestone 1, the Wayland core, is done ([record](docs/wayland-core-2026-11-17.md)). What is built:
 
 - **`fulcrum-wire`**, the wire protocol: the codec for headers and arguments,
   one end of a connection that passes descriptors beside the bytes, and Rust
@@ -52,6 +52,10 @@ Milestone 1, the Wayland core, is under way. What is built:
   `SIGBUS`.
 - **A CPU renderer** (`src/image.rs`) that composes premultiplied ARGB with
   the "over" operator. The tests check its pixels.
+- **Budgets** (`src/limits.rs`, CrowbarOS ADR 0029): each compartment may
+  hold 16 connections and 512 descriptors, each client 128 pools and 512 MiB
+  of shared memory, and a reserve of descriptors stays for the shell and the
+  Warden. One compartment cannot take the compositor away from the others.
 - **`crowbar-probe`**, the test client and the stand-in for the Warden, on
   `fulcrum-wire`'s client side.
 
@@ -83,10 +87,11 @@ must pass before CrowbarOS moves its pin.
 | `src/surface.rs` | Surfaces, regions, and subsurfaces: double-buffered state, held commits, stacking |
 | `src/shm.rs` | Pools and buffers in a client's shared memory |
 | `src/image.rs`, `src/geometry.rs` | The CPU renderer, rectangles, and regions |
+| `src/limits.rs` | What one client, and one compartment, may make the compositor hold |
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.

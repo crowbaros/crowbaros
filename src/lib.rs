@@ -19,6 +19,7 @@ pub mod geometry;
 mod globals;
 pub mod identity;
 pub mod image;
+pub mod limits;
 pub mod log;
 mod output;
 pub mod policy;

@@ -25,7 +25,6 @@ pub(crate) type BufferId = u64;
 
 pub(crate) struct Pool {
     /// Its client, whose budget of shared memory it counts against.
-    #[allow(dead_code)]
     pub client: ClientId,
     mapping: Mapping,
     fd: OwnedFd,
@@ -44,6 +43,13 @@ pub(crate) struct Buffer {
     height: i32,
     stride: i32,
     format: u32,
+}
+
+impl Pool {
+    /// Its size in bytes, as mapped.
+    pub fn size(&self) -> usize {
+        self.mapping.len()
+    }
 }
 
 impl Buffer {
@@ -82,6 +88,12 @@ impl State {
             .ok()
             .filter(|size| *size > 0 && *size <= MAX_POOL_SIZE)
             .ok_or_else(|| fail(wl_shm::error::INVALID_STRIDE, format!("invalid pool size {size}")))?;
+        self.may_make_pool(client_id, size).map_err(|over| {
+            fail(
+                fulcrum_wire::protocol::wayland::wl_display::error::NO_MEMORY,
+                format!("no pool: {over}"),
+            )
+        })?;
         let mapping = Mapping::new(std::os::fd::AsFd::as_fd(&fd), size)
             .map_err(|error| fail(wl_shm::error::INVALID_FD, format!("could not map the pool: {error}")))?;
         let pool = self.next_resource();
@@ -178,11 +190,18 @@ impl State {
                 Ok(())
             }
             wl_shm_pool::Request::Resize { size } => {
+                let size = usize::try_from(size).unwrap_or(0);
+                let growth = size.saturating_sub(self.pools.get(&pool_id).map_or(0, Pool::size));
+                self.may_grow_pool(client_id, growth).map_err(|over| {
+                    fail(
+                        fulcrum_wire::protocol::wayland::wl_display::error::NO_MEMORY,
+                        format!("the pool cannot grow: {over}"),
+                    )
+                })?;
                 let pool = self
                     .pools
                     .get_mut(&pool_id)
                     .expect("the pool exists while its object does");
-                let size = usize::try_from(size).unwrap_or(0);
                 if size < pool.mapping.len() {
                     return Err(fail(wl_shm::error::INVALID_STRIDE, "shrinking pool invalid".into()));
                 }

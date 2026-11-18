@@ -32,10 +32,13 @@ path = "src/main.rs"
 [dependencies]
 fulcrum-wire = { path = "wire" }
 fulcrum-sys = { path = "sys" }
-rustix = { workspace = true, features = ["event", "fs", "net"] }
+rustix = { workspace = true, features = ["event", "fs", "net", "process"] }
 
 [dev-dependencies]
 crowbar-probe = { path = "probe" }
+# Reads the built binary, for the guard on what is linked (tests/linked.rs).
+# Not from the Smithay organization.
+object = { version = "0.39", default-features = false, features = ["read_core", "elf", "std"] }
 rustix = { workspace = true, features = ["event", "fs", "net", "pipe", "process"] }
 
 [profile.release]
