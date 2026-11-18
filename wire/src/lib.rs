@@ -12,7 +12,7 @@ pub mod protocol;
 pub mod socket;
 
 pub use codec::{
-    Arg, ArgInfo, ArgKind, ArgReader, ArgWriter, DecodeError, DynamicNewId, Fixed, Header, InterfaceInfo, MessageInfo,
-    NewId, ObjectId,
+    Arg, ArgInfo, ArgKind, ArgReader, ArgWriter, DecodeError, DynamicNewId, Encode, Fixed, Header, InterfaceInfo,
+    MessageInfo, NewId, ObjectId, TooLong,
 };
 pub use socket::{Connection, ConnectionError, Incoming};

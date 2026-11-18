@@ -409,6 +409,15 @@ fn emit_messages(out: &mut String, kind: &str, messages: &[Message]) {
     }
     writeln!(out, "        }}").unwrap();
     writeln!(out, "    }}\n").unwrap();
+
+    writeln!(out, "    impl Encode for {kind} {{").unwrap();
+    writeln!(out, "        fn opcode(&self) -> u16 {{").unwrap();
+    writeln!(out, "            {kind}::opcode(self)").unwrap();
+    writeln!(out, "        }}\n").unwrap();
+    writeln!(out, "        fn encode(self, out: &mut ArgWriter) {{").unwrap();
+    writeln!(out, "            {kind}::encode(self, out)").unwrap();
+    writeln!(out, "        }}").unwrap();
+    writeln!(out, "    }}\n").unwrap();
 }
 
 /// The Rust module for one protocol file.
@@ -428,7 +437,7 @@ pub fn emit(protocol: &Protocol) -> String {
     .unwrap();
     writeln!(
         out,
-        "use crate::codec::{{ArgInfo, ArgKind, ArgReader, ArgWriter, DecodeError, DynamicNewId, Fixed, InterfaceInfo, MessageInfo, NewId, ObjectId}};"
+        "use crate::codec::{{ArgInfo, ArgKind, ArgReader, ArgWriter, DecodeError, DynamicNewId, Encode, Fixed, InterfaceInfo, MessageInfo, NewId, ObjectId}};"
     )
     .unwrap();
     writeln!(out, "use std::os::fd::OwnedFd;\n").unwrap();

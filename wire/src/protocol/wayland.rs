@@ -5,7 +5,7 @@
 
 #![allow(unused_imports, clippy::large_enum_variant, clippy::match_single_binding)]
 
-use crate::codec::{ArgInfo, ArgKind, ArgReader, ArgWriter, DecodeError, DynamicNewId, Fixed, InterfaceInfo, MessageInfo, NewId, ObjectId};
+use crate::codec::{ArgInfo, ArgKind, ArgReader, ArgWriter, DecodeError, DynamicNewId, Encode, Fixed, InterfaceInfo, MessageInfo, NewId, ObjectId};
 use std::os::fd::OwnedFd;
 
 pub mod wl_display {
@@ -63,6 +63,16 @@ pub mod wl_display {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -113,6 +123,16 @@ pub mod wl_display {
                     out.uint(id);
                 }
             }
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -172,6 +192,16 @@ pub mod wl_registry {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -225,6 +255,16 @@ pub mod wl_registry {
         }
     }
 
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
+        }
+    }
+
 }
 
 pub mod wl_callback {
@@ -253,6 +293,16 @@ pub mod wl_callback {
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = out;
             match self {}
+        }
+    }
+
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
         }
     }
 
@@ -289,6 +339,16 @@ pub mod wl_callback {
                     out.uint(callback_data);
                 }
             }
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -354,6 +414,16 @@ pub mod wl_compositor {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -372,6 +442,16 @@ pub mod wl_compositor {
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = out;
             match self {}
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -452,6 +532,16 @@ pub mod wl_shm_pool {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -470,6 +560,16 @@ pub mod wl_shm_pool {
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = out;
             match self {}
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -535,6 +635,16 @@ pub mod wl_shm {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -568,6 +678,16 @@ pub mod wl_shm {
                     out.uint(format);
                 }
             }
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -766,6 +886,16 @@ pub mod wl_buffer {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -791,6 +921,16 @@ pub mod wl_buffer {
 
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = (self, out);
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -881,6 +1021,16 @@ pub mod wl_data_offer {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -936,6 +1086,16 @@ pub mod wl_data_offer {
                     out.uint(dnd_action);
                 }
             }
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -1005,6 +1165,16 @@ pub mod wl_data_source {
                     out.uint(dnd_actions);
                 }
             }
+        }
+    }
+
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
         }
     }
 
@@ -1084,6 +1254,16 @@ pub mod wl_data_source {
         }
     }
 
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
+        }
+    }
+
     pub mod error {
         pub const INVALID_ACTION_MASK: u32 = 0;
         pub const INVALID_SOURCE: u32 = 1;
@@ -1160,6 +1340,16 @@ pub mod wl_data_device {
                 }
                 Self::Release => {}
             }
+        }
+    }
+
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
         }
     }
 
@@ -1260,6 +1450,16 @@ pub mod wl_data_device {
         }
     }
 
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
+        }
+    }
+
     pub mod error {
         pub const ROLE: u32 = 0;
         pub const USED_SOURCE: u32 = 1;
@@ -1330,6 +1530,16 @@ pub mod wl_data_device_manager {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -1348,6 +1558,16 @@ pub mod wl_data_device_manager {
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = out;
             match self {}
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -1407,6 +1627,16 @@ pub mod wl_shell {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -1425,6 +1655,16 @@ pub mod wl_shell {
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = out;
             match self {}
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -1610,6 +1850,16 @@ pub mod wl_shell_surface {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -1665,6 +1915,16 @@ pub mod wl_shell_surface {
                 }
                 Self::PopupDone => {}
             }
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -1873,6 +2133,16 @@ pub mod wl_surface {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -1939,6 +2209,16 @@ pub mod wl_surface {
                     out.uint(transform);
                 }
             }
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -2024,6 +2304,16 @@ pub mod wl_seat {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -2068,6 +2358,16 @@ pub mod wl_seat {
                     out.string(&name);
                 }
             }
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -2138,6 +2438,16 @@ pub mod wl_pointer {
                 }
                 Self::Release => {}
             }
+        }
+    }
+
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
         }
     }
 
@@ -2340,6 +2650,16 @@ pub mod wl_pointer {
         }
     }
 
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
+        }
+    }
+
     pub mod error {
         pub const ROLE: u32 = 0;
     }
@@ -2401,6 +2721,16 @@ pub mod wl_keyboard {
 
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = (self, out);
+        }
+    }
+
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
         }
     }
 
@@ -2534,6 +2864,16 @@ pub mod wl_keyboard {
         }
     }
 
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
+        }
+    }
+
     pub mod keymap_format {
         pub const NO_KEYMAP: u32 = 0;
         pub const XKB_V1: u32 = 1;
@@ -2580,6 +2920,16 @@ pub mod wl_touch {
 
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = (self, out);
+        }
+    }
+
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
         }
     }
 
@@ -2712,6 +3062,16 @@ pub mod wl_touch {
         }
     }
 
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
+        }
+    }
+
 }
 
 pub mod wl_output {
@@ -2747,6 +3107,16 @@ pub mod wl_output {
 
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = (self, out);
+        }
+    }
+
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
         }
     }
 
@@ -2865,6 +3235,16 @@ pub mod wl_output {
         }
     }
 
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
+        }
+    }
+
     pub mod subpixel {
         pub const UNKNOWN: u32 = 0;
         pub const NONE: u32 = 1;
@@ -2970,6 +3350,16 @@ pub mod wl_region {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -2988,6 +3378,16 @@ pub mod wl_region {
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = out;
             match self {}
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -3048,6 +3448,16 @@ pub mod wl_subcompositor {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -3066,6 +3476,16 @@ pub mod wl_subcompositor {
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = out;
             match self {}
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -3160,6 +3580,16 @@ pub mod wl_subsurface {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -3178,6 +3608,16 @@ pub mod wl_subsurface {
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = out;
             match self {}
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -3250,6 +3690,16 @@ pub mod wl_fixes {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -3268,6 +3718,16 @@ pub mod wl_fixes {
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = out;
             match self {}
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 

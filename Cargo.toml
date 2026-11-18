@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["wire", "codegen"]
+members = ["wire", "codegen", "probe"]
 # Plain `cargo build`, `cargo test`, and `cargo clippy` cover every crate.
-default-members = [".", "wire", "codegen"]
+default-members = [".", "wire", "codegen", "probe"]
 
 [workspace.package]
 edition = "2024"
@@ -22,12 +22,20 @@ license.workspace = true
 publish.workspace = true
 description = "The CrowbarOS Wayland compositor, written from the ground up. Part of Base."
 
+[lib]
+name = "crowbar_compositor"
+
 [[bin]]
 name = "crowbar-compositor"
 path = "src/main.rs"
 
 [dependencies]
 fulcrum-wire = { path = "wire" }
+rustix = { workspace = true, features = ["event", "fs", "net"] }
+
+[dev-dependencies]
+crowbar-probe = { path = "probe" }
+rustix = { workspace = true, features = ["event", "fs", "net", "pipe", "process"] }
 
 [profile.release]
 opt-level = 2

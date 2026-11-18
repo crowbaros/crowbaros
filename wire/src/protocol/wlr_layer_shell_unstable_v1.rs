@@ -5,7 +5,7 @@
 
 #![allow(unused_imports, clippy::large_enum_variant, clippy::match_single_binding)]
 
-use crate::codec::{ArgInfo, ArgKind, ArgReader, ArgWriter, DecodeError, DynamicNewId, Fixed, InterfaceInfo, MessageInfo, NewId, ObjectId};
+use crate::codec::{ArgInfo, ArgKind, ArgReader, ArgWriter, DecodeError, DynamicNewId, Encode, Fixed, InterfaceInfo, MessageInfo, NewId, ObjectId};
 use std::os::fd::OwnedFd;
 
 pub mod zwlr_layer_shell_v1 {
@@ -69,6 +69,16 @@ pub mod zwlr_layer_shell_v1 {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -87,6 +97,16 @@ pub mod zwlr_layer_shell_v1 {
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = out;
             match self {}
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -254,6 +274,16 @@ pub mod zwlr_layer_surface_v1 {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -298,6 +328,16 @@ pub mod zwlr_layer_surface_v1 {
                 }
                 Self::Closed => {}
             }
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 

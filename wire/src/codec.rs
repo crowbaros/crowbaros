@@ -341,6 +341,23 @@ impl ArgWriter {
     }
 }
 
+/// A request or event of a generated interface, ready to be written.
+pub trait Encode {
+    fn opcode(&self) -> u16;
+    fn encode(self, out: &mut ArgWriter);
+
+    /// The whole message for `object`, and the descriptors that go with it.
+    fn to_message(self, object: u32) -> Result<(Vec<u8>, Vec<OwnedFd>), TooLong>
+    where
+        Self: Sized,
+    {
+        let opcode = self.opcode();
+        let mut out = ArgWriter::default();
+        self.encode(&mut out);
+        out.finish(object, opcode)
+    }
+}
+
 /// The kinds of argument a message can carry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArgKind {

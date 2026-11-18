@@ -5,7 +5,7 @@
 
 #![allow(unused_imports, clippy::large_enum_variant, clippy::match_single_binding)]
 
-use crate::codec::{ArgInfo, ArgKind, ArgReader, ArgWriter, DecodeError, DynamicNewId, Fixed, InterfaceInfo, MessageInfo, NewId, ObjectId};
+use crate::codec::{ArgInfo, ArgKind, ArgReader, ArgWriter, DecodeError, DynamicNewId, Encode, Fixed, InterfaceInfo, MessageInfo, NewId, ObjectId};
 use std::os::fd::OwnedFd;
 
 pub mod wp_viewporter {
@@ -60,6 +60,16 @@ pub mod wp_viewporter {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -78,6 +88,16 @@ pub mod wp_viewporter {
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = out;
             match self {}
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 
@@ -159,6 +179,16 @@ pub mod wp_viewport {
         }
     }
 
+    impl Encode for Request {
+        fn opcode(&self) -> u16 {
+            Request::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Request::encode(self, out)
+        }
+    }
+
     /// Every event of this interface, by opcode.
     #[derive(Debug)]
     pub enum Event {
@@ -177,6 +207,16 @@ pub mod wp_viewport {
         pub fn encode(self, out: &mut ArgWriter) {
             let _ = out;
             match self {}
+        }
+    }
+
+    impl Encode for Event {
+        fn opcode(&self) -> u16 {
+            Event::opcode(self)
+        }
+
+        fn encode(self, out: &mut ArgWriter) {
+            Event::encode(self, out)
         }
     }
 

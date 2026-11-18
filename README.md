@@ -27,17 +27,30 @@ the CrowbarOS repository:
 
 Milestone 1, the Wayland core, is under way. What is built:
 
-- **`fulcrum-wire`**, the wire protocol. It holds the codec for headers and
-  arguments, and one end of a connection that passes descriptors beside the
-  bytes. It also holds Rust code for every request and event of the protocols
-  in `protocols/`, generated from their XML. Every queue is bounded, and
-  nothing a peer sends can make it panic.
-- **`fulcrum-codegen`**, which writes that code. It reads the XML with a
-  parser of its own, so it adds no crate.
+- **`fulcrum-wire`**, the wire protocol: the codec for headers and arguments,
+  one end of a connection that passes descriptors beside the bytes, and Rust
+  code for every request and event of the protocols in `protocols/`,
+  generated from their XML. Every queue is bounded, and nothing a peer sends
+  can make it panic.
+- **The server core** in `crowbar-compositor`: an event loop on `epoll`; the
+  two trusted sockets, each checking the peer's user ID; compartment
+  listeners registered by the Warden through the security context protocol;
+  the registry, which advertises a global to a client and lets it bind one
+  only if the policy table offers it (ADR 0020); `wl_display`, `wl_callback`,
+  and `wl_output`. A client that breaks the protocol gets `wl_display.error`
+  and is disconnected, and every other client goes on being served.
+- **`crowbar-probe`**, the test client and the stand-in for the Warden, on
+  `fulcrum-wire`'s client side.
 
-`crowbar-compositor` serves no clients yet, and refuses to start. CrowbarOS
-still builds the Smithay-based compositor that Milestone 0 brought here. That
-is commit `d11400f`, tagged `smithay-baseline`. Its 57 tests and the 36
+The other globals of the table (`wl_compositor`, `wl_subcompositor`, `wl_shm`,
+`wl_seat`, `xdg_wm_base`, `wp_viewporter`, `zwlr_layer_shell_v1`, and
+`zwp_linux_dmabuf_v1`) are advertised to the clients the table names, so who
+is offered what can be checked. A request on one is a protocol error that says
+this build does not carry it out yet. There is no display: the compositor
+serves clients and shows nothing until Milestone 2.
+
+CrowbarOS still builds the Smithay-based compositor that Milestone 0 brought
+here: commit `d11400f`, tagged `smithay-baseline`. Its 57 tests and the 36
 checks of CrowbarOS's Void guest are the specification the new compositor
 must pass before CrowbarOS moves its pin.
 
@@ -48,12 +61,37 @@ must pass before CrowbarOS moves its pin.
 | `wire/` | `fulcrum-wire`: `codec.rs` (the wire format), `socket.rs` (one end of a connection), and `protocol/` (generated; do not edit) |
 | `codegen/` | `fulcrum-codegen`: writes `wire/src/protocol/` from `protocols/`. A development tool, never part of Base |
 | `protocols/` | The protocol XML Fulcrum speaks, each file with its own license. [Where each came from](protocols/README.md) |
-| `src/` | `crowbar-compositor` |
-| `tests/dependencies.rs` | Fails if a crate from the Smithay organization enters `Cargo.lock` |
+| `src/event_loop.rs` | One thread on `epoll`, with timers in the loop and a waker for other threads |
+| `src/connections.rs` | Every way a client can connect: the two trusted sockets, and a compartment's listener |
+| `src/identity.rs` | Who a client is |
+| `src/policy.rs` | The one table that says which client is offered which global |
+| `src/globals.rs` | Globals and the registry |
+| `src/client.rs`, `src/state.rs` | Each client's objects, and how each request reaches the code that carries it out |
+| `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
+| `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), and dated records of what was run |
 
 Only `sys/`, when it comes, may hold `unsafe` code. Every other crate forbids
 it.
+
+## Run
+
+All four flags are required. There is no default for any of them.
+
+```sh
+crowbar-compositor \
+    --shell-socket /run/crowbar/compositor-shell/wayland --shell-uid 1001 \
+    --warden-socket /run/crowbar/compositor-warden/wayland --warden-uid 0
+```
+
+A compartment's client reaches it through a listener the Warden registers.
+`crowbar-probe warden` stands in for the Warden:
+
+```sh
+WAYLAND_DISPLAY=/path/to/warden-socket \
+    crowbar-probe warden org.example.App compartment-1 /tmp/c1 wayland-info
+```
 
 ## Build and test
 
