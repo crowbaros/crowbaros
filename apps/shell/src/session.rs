@@ -40,12 +40,16 @@ pub struct Snapshot {
     pub connected: bool,
     /// The compositor locked the session: the lock screen shows.
     pub locked: bool,
+    /// The confirm chord opened the lock screen's unlock entry.
+    pub unlock_entry: bool,
 }
 #[derive(Clone, Debug)]
 pub enum Event {
     Toggle,
     /// The compositor locked the session, or unlocked it.
     Lock(bool),
+    /// The confirm chord opened the lock screen's unlock entry.
+    UnlockEntry,
     Quit,
     Snapshot(Snapshot),
     Launch(Result<(), String>),
@@ -88,6 +92,7 @@ fn compositor_event(event: &serde_json::Value) {
         Some("launcher") => tx.send(Event::Toggle),
         Some("locked") => tx.send(Event::Lock(true)),
         Some("unlocked") => tx.send(Event::Lock(false)),
+        Some("unlock_entry") => tx.send(Event::UnlockEntry),
         _ => Ok(()),
     };
 }
@@ -186,6 +191,7 @@ impl Adapter for Hyprland {
             active: serde_json::from_str(&self.request("j/activewindow")?)?,
             connected: true,
             locked: false,
+            unlock_entry: false,
         })
     }
 
@@ -307,6 +313,8 @@ impl Adapter for Compositor {
             active: Option<String>,
             #[serde(default)]
             locked: bool,
+            #[serde(default)]
+            unlock_entry: bool,
             windows: Vec<Window>,
         }
         let reply: Reply =
@@ -333,6 +341,7 @@ impl Adapter for Compositor {
             active,
             connected: true,
             locked: reply.locked,
+            unlock_entry: reply.unlock_entry,
         })
     }
 
@@ -683,6 +692,9 @@ mod tests {
         compositor.pump();
         assert!(matches!(rx.try_recv(), Ok(Event::Lock(true))));
         assert!(matches!(rx.try_recv(), Ok(Event::Lock(false))));
+        theirs.write_all(b"{\"event\":\"unlock_entry\"}\n").unwrap();
+        compositor.pump();
+        assert!(matches!(rx.try_recv(), Ok(Event::UnlockEntry)));
 
         // Half an event that a request's reply follows is read with it.
         theirs.write_all(b"{\"event\":\"laun").unwrap();
@@ -752,6 +764,7 @@ mod tests {
                 active: studio,
                 connected: true,
                 locked: false,
+                unlock_entry: false,
             }
         );
         peer.join().unwrap();
@@ -901,6 +914,7 @@ mod tests {
                 active: terminal,
                 connected: true,
                 locked: false,
+                unlock_entry: false,
             }
         );
         peer.join().unwrap();

@@ -178,6 +178,11 @@ class Check:
         self.check('Super+L locks the session and shows the lock screen',
                    self.snapshot()['locked'] and 'SHELL lock open=true' in shell_log())
         self.key('ret')
+        time.sleep(1)
+        self.check('the lock screen takes no Enter before the confirm chord', self.snapshot()['locked'])
+        self.key('ctrl', 'alt', 'ret')
+        self.wait('the confirm chord opens the unlock entry', lambda: 'SHELL lock entry=open' in shell_log())
+        self.key('ret')
         self.wait('Enter unlocks', lambda: not self.snapshot().get('locked') and 'SHELL lock open=false' in shell_log())
         self.check('the lock screen unlocks, and the window has the keyboard back',
                    self.snapshot()['active']['address'] == terminal['address'])
