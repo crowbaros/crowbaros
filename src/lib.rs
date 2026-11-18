@@ -21,6 +21,7 @@ pub mod dmabuf;
 pub mod event_loop;
 pub mod geometry;
 mod globals;
+mod grabs;
 pub mod identity;
 pub mod image;
 mod json;

@@ -460,11 +460,21 @@ impl State {
             xdg_toplevel::Request::Resize { edges, .. } if edges > xdg_toplevel::resize_edge::BOTTOM_RIGHT => {
                 return Err(fail(xdg_toplevel::error::INVALID_RESIZE_EDGE, "an unknown edge"));
             }
-            // Carried out with the window manager (issue 78).
-            xdg_toplevel::Request::ShowWindowMenu { .. }
-            | xdg_toplevel::Request::Move { .. }
-            | xdg_toplevel::Request::Resize { .. }
-            | xdg_toplevel::Request::SetMinimized => {}
+            // A move or a resize is taken only while a button is held on
+            // the window, as after the press that asked for it.
+            xdg_toplevel::Request::Move { .. } => {
+                if let Some(button) = self.button_held_on(surface) {
+                    self.start_move(surface, button);
+                }
+            }
+            xdg_toplevel::Request::Resize { edges, .. } => {
+                if let Some(button) = self.button_held_on(surface) {
+                    self.start_resize(surface, button, edges);
+                }
+            }
+            // No window menu, and no minimized state: the bar and
+            // workspaces stand for them.
+            xdg_toplevel::Request::ShowWindowMenu { .. } | xdg_toplevel::Request::SetMinimized => {}
         }
         Ok(())
     }
@@ -582,7 +592,9 @@ impl State {
             }
             return Ok(());
         }
-        match (has_buffer, xdg.mapped) {
+        let mapped = xdg.mapped;
+        self.anchor_resized(surface);
+        match (has_buffer, mapped) {
             (true, false) => self.map_xdg(surface),
             (false, true) => {
                 self.unmap_xdg(surface);
@@ -609,6 +621,7 @@ impl State {
             (0, 0)
         };
         let mode = self.mode_of(surface);
+        let resizing = self.resizing(surface);
         let pending_mode = {
             let requests = &self.xdg[&surface].toplevel;
             match mode {
@@ -656,6 +669,9 @@ impl State {
                 }
                 if activated {
                     state(state::ACTIVATED);
+                }
+                if resizing {
+                    state(state::RESIZING);
                 }
                 if version >= 5 {
                     // What a client may ask the window manager for.

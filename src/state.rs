@@ -94,6 +94,8 @@ pub struct State {
     /// The workspace showing.
     pub(crate) workspace: u32,
     pub(crate) controls: crate::control::Controls,
+    /// What the pointer is doing to a window, if anything.
+    pub(crate) grab: Option<crate::grabs::Grab>,
     pub(crate) data: crate::data_device::DataDevices,
     pub(crate) dmabufs: crate::dmabuf::Dmabufs,
 }
@@ -142,6 +144,7 @@ impl State {
             seat: crate::seat::Seat::new(),
             workspace: 1,
             controls: crate::control::Controls::default(),
+            grab: None,
             data: crate::data_device::DataDevices::default(),
             dmabufs: crate::dmabuf::Dmabufs::default(),
         };

@@ -136,7 +136,7 @@ impl State {
         self.windows
             .iter_mut()
             .find(|window| window.surface == surface)
-            .and_then(|window| window.restore.take())
+            .and_then(|window| window.requested.or_else(|| window.restore.take()))
             .unwrap_or((0, 0))
     }
 

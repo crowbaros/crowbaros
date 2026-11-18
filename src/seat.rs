@@ -48,6 +48,8 @@ const KEY_UP: u32 = 103;
 const KEY_LEFT: u32 = 105;
 const KEY_RIGHT: u32 = 106;
 const KEY_DOWN: u32 = 108;
+const BTN_LEFT: u32 = 0x110;
+const BTN_RIGHT: u32 = 0x111;
 
 pub(crate) struct Seat {
     keyboard: Option<Keyboard>,
@@ -413,6 +415,23 @@ impl State {
         }
     }
 
+    /// The button held while the pointer is on a window's tree, as when its
+    /// client asks to move or resize it.
+    pub(crate) fn button_held_on(&self, window: SurfaceId) -> Option<u32> {
+        let button = *self.seat.buttons.first()?;
+        let (focus, _) = self.seat.pointer_focus?;
+        let root = self.root_of(focus);
+        (root == window || self.toplevel_of(root) == Some(window)).then_some(button)
+    }
+
+    /// The pointer leaves the surface it is on, as a grab starts.
+    pub(crate) fn end_pointer_focus(&mut self) {
+        if let Some((surface, _)) = self.seat.pointer_focus.take() {
+            self.send_pointer(surface, |serial, surface| wl_pointer::Event::Leave { serial, surface });
+        }
+        self.seat.buttons.clear();
+    }
+
     /// Looks again at what is under the pointer, as after what is shown
     /// changed under it.
     pub(crate) fn refresh_pointer_focus(&mut self) {
@@ -430,7 +449,12 @@ impl State {
     pub fn pointer_moved_at(&mut self, x: f64, y: f64, time: u32) {
         let (x, y) = self.clamp_to_outputs(x, y);
         self.pointer = (x, y);
-        self.update_pointer_focus(time);
+        if self.grab.is_some() {
+            // The pointer drives the window, and no client hears it.
+            self.grab_motion();
+        } else {
+            self.update_pointer_focus(time);
+        }
         self.queue_redraw_all();
     }
 
@@ -512,6 +536,33 @@ impl State {
     /// with no other button held gives the keyboard to what is under the
     /// pointer.
     pub fn pointer_button(&mut self, button: u32, pressed: bool, time: u32) {
+        if self.grab.is_some() {
+            self.seat.buttons.retain(|held| *held != button);
+            if !pressed {
+                self.grab_button_released(button);
+            }
+            return;
+        }
+        // Super with the left button moves the window under the pointer,
+        // and with the right button resizes it. Neither press reaches it.
+        if pressed && self.seat.buttons.is_empty() && self.seat.keys.iter().any(|held| SUPER.contains(held)) {
+            let window = self
+                .surface_under(self.pointer.0, self.pointer.1)
+                .map(|(surface, _)| self.root_of(surface))
+                .and_then(|root| self.toplevel_of(root))
+                .filter(|toplevel| self.windows.iter().any(|window| window.surface == *toplevel));
+            if let Some(window) = window {
+                self.raise(window);
+                match button {
+                    BTN_LEFT => return self.start_move(window, button),
+                    BTN_RIGHT => {
+                        let edges = self.nearest_edges(window);
+                        return self.start_resize(window, button, edges);
+                    }
+                    _ => {}
+                }
+            }
+        }
         if pressed {
             if self.seat.buttons.is_empty() {
                 self.focus_under_pointer();

@@ -39,6 +39,8 @@ pub(crate) struct Window {
     pub restore: Option<(i32, i32)>,
     /// The rectangle its mode last gave it.
     pub fitted: Option<Rect>,
+    /// The size a resize asks of it.
+    pub requested: Option<(i32, i32)>,
 }
 
 impl State {
@@ -142,6 +144,7 @@ impl State {
                 floating: None,
                 restore: None,
                 fitted: None,
+                requested: None,
             });
             // What the client asked for before it mapped.
             let requests = &self.xdg[&surface].toplevel;
