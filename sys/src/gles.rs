@@ -94,7 +94,6 @@ functions! {
         fn eglGetError() -> i32;
         fn eglQueryString(display: Display, name: i32) -> *const c_char;
         fn eglInitialize(display: Display, major: *mut i32, minor: *mut i32) -> u32;
-        fn eglTerminate(display: Display) -> u32;
         fn eglBindAPI(api: u32) -> u32;
         fn eglCreateContext(display: Display, config: *mut c_void, share: Context, attributes: *const i32) -> Context;
         fn eglDestroyContext(display: Display, context: Context) -> u32;
@@ -321,6 +320,8 @@ impl Inner {
 
 impl Drop for Inner {
     fn drop(&mut self) {
+        // The programs are this context's: it is made current to delete them.
+        self.current();
         // Safety: the context and display are live, and every texture and
         // target that used them held this and is gone.
         unsafe {
@@ -330,8 +331,11 @@ impl Drop for Inner {
             }
             (self.egl.eglMakeCurrent)(self.display, ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
             (self.egl.eglDestroyContext)(self.display, self.context);
-            (self.egl.eglTerminate)(self.display);
         }
+        // The display is not terminated. EGL gives one display for each
+        // platform and device to the whole process, so every other context
+        // on it would end with it: as the tests' contexts on the surfaceless
+        // display, which crashed when one test's ended another's.
     }
 }
 
@@ -459,18 +463,16 @@ impl Gles {
         let display_extensions = unsafe { CStr::from_ptr((egl.eglQueryString)(display, EGL_EXTENSIONS)) }
             .to_string_lossy()
             .into_owned();
+        // On an error the display is left initialized: it is the whole
+        // process's, and another context may be on it (see `Drop for Inner`).
         for needed in ["EGL_KHR_surfaceless_context", "EGL_KHR_image_base"] {
             if !has_extension(&display_extensions, needed) {
-                // Safety: the display was initialized.
-                unsafe { (egl.eglTerminate)(display) };
                 return Err(io::Error::other(format!("the EGL display has no {needed}")));
             }
         }
         if !has_extension(&display_extensions, "EGL_KHR_no_config_context")
             && !has_extension(&display_extensions, "EGL_MESA_configless_context")
         {
-            // Safety: the display was initialized.
-            unsafe { (egl.eglTerminate)(display) };
             return Err(io::Error::other("the EGL display needs a config for a context"));
         }
         // Safety: a valid API.
@@ -479,8 +481,6 @@ impl Gles {
         // Safety: the display was initialized; no config, no sharing.
         let context = unsafe { (egl.eglCreateContext)(display, ptr::null_mut(), ptr::null_mut(), attributes.as_ptr()) };
         if context.is_null() {
-            // Safety: the display was initialized.
-            unsafe { (egl.eglTerminate)(display) };
             return Err(io::Error::other("eglCreateContext failed"));
         }
         // Safety: surfaceless contexts need no surfaces.
@@ -488,7 +488,6 @@ impl Gles {
             // Safety: both are live.
             unsafe {
                 (egl.eglDestroyContext)(display, context);
-                (egl.eglTerminate)(display);
             }
             return Err(io::Error::other("eglMakeCurrent failed"));
         }
@@ -1214,6 +1213,19 @@ mod tests {
         assert_eq!(read[5], 0xffff_ffff);
         assert_eq!(read[10], 0xffff_ffff);
         assert_eq!(read[15], 0xff00_0000);
+    }
+
+    #[test]
+    fn ending_one_context_leaves_another_on_the_same_display_drawing() {
+        let Some(first) = gles() else { return };
+        let Some(second) = gles() else { return };
+        let kept = second.upload(1, 1, &[0xff20_40c0]).unwrap();
+        drop(first);
+
+        let made_after = second.upload(1, 1, &[0xffc0_4020]).unwrap();
+
+        assert_eq!(shown(&second, &kept)[9], 0xff20_40c0);
+        assert_eq!(shown(&second, &made_after)[9], 0xffc0_4020);
     }
 
     const XRGB8888: u32 = u32::from_le_bytes(*b"XR24");

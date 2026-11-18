@@ -3,12 +3,9 @@
 //!
 //! Each test keeps one target from frame to frame, as a display's buffer
 //! does, and holds each frame beside the same scene drawn whole. Where EGL
-//! cannot be loaded at all, a test says so and passes. EGL's surfaceless
-//! display is one for the whole process: one test runs at a time.
+//! cannot be loaded at all, a test says so and passes.
 
 mod common;
-
-use std::sync::{Mutex, MutexGuard};
 
 use common::Compositor;
 use crowbar_compositor::{
@@ -18,12 +15,6 @@ use crowbar_compositor::{
     render::{OffscreenOutput, Renderer, render_output_offscreen},
 };
 use fulcrum_sys::gles::Gles;
-
-static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
-
-fn one_at_a_time() -> MutexGuard<'static, ()> {
-    ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 thread_local! {
     /// The renderer and the kept target, on the compositor's thread.
@@ -54,7 +45,6 @@ fn same(drawn: &Image, whole: &Image) -> bool {
 
 #[test]
 fn a_commit_damages_its_window_alone_and_the_frame_is_whole() {
-    let _one = one_at_a_time();
     let compositor = Compositor::start();
     let (mut client, _listener) = compositor.compartment("c1");
     let first = client
@@ -81,7 +71,6 @@ fn a_commit_damages_its_window_alone_and_the_frame_is_whole() {
 
 #[test]
 fn a_window_that_goes_damages_where_it_was() {
-    let _one = one_at_a_time();
     let compositor = Compositor::start();
     let (mut client, _listener) = compositor.compartment("c1");
     let _below = client
@@ -115,7 +104,6 @@ fn a_window_that_goes_damages_where_it_was() {
 
 #[test]
 fn a_still_output_has_no_damage() {
-    let _one = one_at_a_time();
     let compositor = Compositor::start();
     let (mut client, _listener) = compositor.compartment("c1");
     let _window = client
@@ -135,7 +123,6 @@ fn a_still_output_has_no_damage() {
 
 #[test]
 fn a_focus_change_redraws_both_frames() {
-    let _one = one_at_a_time();
     let compositor = Compositor::start();
     let (mut client, _listener) = compositor.compartment("c1");
     let _first = client

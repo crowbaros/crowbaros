@@ -7,16 +7,10 @@
 //! `LIBGL_ALWAYS_SOFTWARE=1` runs those tests. A machine with a render node
 //! also runs a buffer in its GPU's own layout. Where EGL imports nothing,
 //! each test says so and passes.
-//!
-//! EGL's surfaceless display is one for the whole process, and a context
-//! that ends it ends it for every other: one test runs at a time.
 
 mod common;
 
-use std::{
-    os::fd::{AsFd, OwnedFd},
-    sync::{Mutex, MutexGuard},
-};
+use std::os::fd::{AsFd, OwnedFd};
 
 use common::{Compositor, OUTPUT_SIZE, TEST_DEVICE, own_uid};
 use crowbar_compositor::{
@@ -44,12 +38,6 @@ const BLUE: u32 = 0xff20_20c0;
 const GREEN: u32 = 0xff20_c020;
 /// Where a 64x48 window's content is on the screen.
 const INSIDE: (i32, i32) = (48 + 10, 48 + 10);
-
-static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
-
-fn one_at_a_time() -> MutexGuard<'static, ()> {
-    ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 /// A compositor whose GPU imports dma-bufs, made by `gpu` on its thread, or
 /// None where there is no such GPU.
@@ -197,7 +185,6 @@ fn window(compositor: &Compositor) -> (Client, Toplevel, crowbar_probe::Compartm
 
 #[test]
 fn a_dmabuf_the_gpu_imports_is_drawn_where_it_is_and_held() {
-    let _one = one_at_a_time();
     let Some(compositor) = compositor_with(surfaceless, true) else {
         return;
     };
@@ -227,7 +214,6 @@ fn a_dmabuf_the_gpu_imports_is_drawn_where_it_is_and_held() {
 
 #[test]
 fn a_held_buffer_is_released_when_other_content_replaces_it() {
-    let _one = one_at_a_time();
     let Some(compositor) = compositor_with(surfaceless, true) else {
         return;
     };
@@ -253,7 +239,6 @@ fn a_held_buffer_is_released_when_other_content_replaces_it() {
 
 #[test]
 fn a_surface_that_is_destroyed_lets_its_buffer_go() {
-    let _one = one_at_a_time();
     let Some(compositor) = compositor_with(surfaceless, true) else {
         return;
     };
@@ -275,7 +260,6 @@ fn a_surface_that_is_destroyed_lets_its_buffer_go() {
 /// client's error.
 #[test]
 fn a_memfd_is_copied_and_never_reaches_the_gpu() {
-    let _one = one_at_a_time();
     let Some(compositor) = compositor_with(surfaceless, false) else {
         return;
     };
@@ -319,7 +303,6 @@ fn render_node_gbm() -> Option<gbm::Device> {
 
 #[test]
 fn a_buffer_in_the_gpus_own_layout_is_shown() {
-    let _one = one_at_a_time();
     let Some(compositor) = compositor_with(render_node_gpu, false) else {
         return;
     };
@@ -381,7 +364,6 @@ fn a_held_buffers_release_point_waits_for_its_replacement() {
         wp_linux_drm_syncobj_manager_v1, wp_linux_drm_syncobj_surface_v1, wp_linux_drm_syncobj_timeline_v1,
     };
 
-    let _one = one_at_a_time();
     let Some(node) = render_node_fd().filter(|node| syncobj::supported(node.as_fd())) else {
         eprintln!("no render node with timeline syncobjs: skipped");
         return;
