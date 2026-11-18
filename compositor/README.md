@@ -1,9 +1,13 @@
 # Compositor
 
 The CrowbarOS Wayland compositor is built in its own repository,
-[Fulcrum](https://github.com/crowbaros/fulcrum), on
-[Smithay](https://github.com/Smithay/smithay). It is part of Base and part of
-what CrowbarOS trusts ([ADR 0027](../docs/adr/0027-the-compositor-is-built-in-its-own-repository.md)).
+[Fulcrum](https://github.com/crowbaros/fulcrum), and written there from the
+ground up, with [Smithay](https://github.com/Smithay/smithay) as its reference
+([ADR 0028](../docs/adr/0028-the-compositor-is-written-from-the-ground-up.md)).
+It is part of Base and part of what CrowbarOS trusts
+([ADR 0027](../docs/adr/0027-the-compositor-is-built-in-its-own-repository.md)).
+The pinned commit, `d11400f`, is still the Smithay-based baseline. The pin
+moves when the new compositor passes the same checks.
 
 This directory holds one thing: [`fulcrum.json`](fulcrum.json), the full commit ID
 of the Fulcrum revision that Base builds. CrowbarOS still decides what the
@@ -17,6 +21,7 @@ compositor must do, in its decision records:
 | Which rows of that table the shell and the Warden are offered | [ADR 0023](../docs/adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) |
 | It is built beside Milestone 2 | [ADR 0022](../docs/adr/0022-the-compositor-is-built-beside-milestone-2.md) |
 | It is built in its own repository, and Base pins one commit | [ADR 0027](../docs/adr/0027-the-compositor-is-built-in-its-own-repository.md) |
+| It is written from the ground up, with Smithay as its reference | [ADR 0028](../docs/adr/0028-the-compositor-is-written-from-the-ground-up.md) |
 
 Fulcrum's README says what is built, which slice is next, and how to build and
 test it. Through commit 30fadd8 the compositor's code was here. Its history moved

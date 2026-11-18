@@ -169,6 +169,8 @@ Mesa is the open-source set of graphics drivers that ships with Linux. It drives
 
 ## The Smithay pin
 
+[ADR 0028](0028-the-compositor-is-written-from-the-ground-up.md) ends these rules when CrowbarOS's pin leaves the Smithay-based Fulcrum `d11400f`. Until then the baseline is not bumped.
+
 A [measurement](../research/compositor-smithay-bump-2026-11-15.md) ported the compositor across 198 days and 245 commits of Smithay's `master`. Three causes broke the build, the fix was 31 lines in 4 files, and no logic in the protocol table or the confirm chord changed.
 
 - **The pin moves at least once a month, and sooner whenever either of us wants.** It moves at once for a Smithay fix that affects security.
