@@ -33,7 +33,7 @@ historical behavior evidence, not a current Fedora workflow.
 - The bar and dock reserve 44 and 96 pixels through Wayland layer surfaces.
 - Applications search supports keyboard navigation; closing the launcher returns focus.
 - Workspace and window focus requests use the CrowbarOS control channel when supplied.
-- On that channel, Super tapped alone toggles the launcher, an app the shell launches takes the keyboard with its first window, and the bar and dock mark a window that wants attention. While the compositor has the session locked, the shell shows its lock screen, which waits for the confirm chord, Ctrl+Alt+Enter, before its Unlock button or Enter unlocks it; the bar's lock button locks it. These messages are Fulcrum's proposal until a decision record settles them.
+- On that channel, Super tapped alone toggles the launcher, an app the shell launches takes the keyboard with its first window, and the bar and dock mark a window that wants attention. While the compositor has the session locked, the shell shows its lock screen, which waits for the confirm chord, Ctrl+Alt+Enter; the bar's lock button locks it. Where `CROWBAR_UNLOCK_SOCKET` names an unlock helper, as in the Alpha session, the lock screen then takes the person's password and sends it to the helper, which checks it and tells the compositor to unlock; a wrong one shows "Wrong password". Without one, its Unlock button or Enter asks the compositor to unlock. These messages, and the helper, are Fulcrum's proposal until a decision record settles them.
 - Saved Settings themes are read by the shell; it does not theme third-party apps.
 - Desktop-entry discovery honors XDG precedence, visibility, locale, and executable availability. Search text is never executed as a command.
 
@@ -51,7 +51,9 @@ hook are archived and are not installed.
 The [full Void acceptance record](../../docs/development/void-desktop-smoke-2026-11-15.md)
 covers the Alpha desktop. Production identity,
 locking, safe focus/clipboard, display policy, accessibility/IME, and crash
-recovery are not established by this slice. Desktop shortcuts and window-layout
+recovery are not established by this slice. The Alpha session's lock, with a
+root helper that checks one account's password, stands in for the broker's
+unlock; it records nothing. Desktop shortcuts and window-layout
 behavior come from the compositor, not the archived Hyprland configuration.
 
 ## Licensing
