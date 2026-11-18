@@ -91,12 +91,15 @@ Owning the wire layer lets Fulcrum enforce the CrowbarOS decisions where message
   - every global of ADR 0020's row for a compartment, idle inhibit (#30) and cursor shape (#32) last;
   - the launcher's key, a launched app's window taking the keyboard, and the attention of any other new window (#41, with the shell's half in [crowbaros#203](https://github.com/crowbaros/crowbaros/pull/203)).
 
-  The messages #41 adds are a proposal until a CrowbarOS record decides them: Super tapped alone, the shell's `launching`, and the snapshot's `attention`. Lock's key comes with lock itself, in Milestone 8.
-- **Milestone 6** has copy and paste inside one compartment (#38). Transfers between compartments wait for a record of how the broker records them.
+  The messages #41 adds are a proposal until a CrowbarOS record decides them: Super tapped alone, the shell's `launching`, and the snapshot's `attention`.
+- **Milestone 6** has copy and paste (#38) and the primary selection (#43) inside one compartment. Transfers between compartments wait for a record of how the broker records them.
 - **Milestone 7** has each display's scale, 1 to 3 in quarters (#35), and the layout kept by each monitor's identity and set through the control channel (#39). Its wire format is Fulcrum's proposal until CrowbarOS's display settings take it up. Still to come: input devices' settings, and suspend and resume and mixed scale on the hardware rows.
+- **Milestone 8** has lock (#44, with the shell's half in [crowbaros#204](https://github.com/crowbaros/crowbaros/pull/204)), as a proposal. The shell's request, Super+L, and the idle timer lock the session. While it is locked, the shell's lock screen is all that shows and all that gets input. The shell's request unlocks it, in the place of the broker ADR 0020 has end it. Still to come, with a record of what replaces the broker:
+  - unlock by the person's proof, with its secret (issues 87 and 100);
+  - the confirm chord's part;
+  - starting locked;
+  - suspend.
 - **Milestone 9:** CrowbarOS's Alpha desktop runs on Fulcrum ([crowbaros#199](https://github.com/crowbaros/crowbaros/pull/199)), and its desktop check passes there. The spike is deleted ([crowbaros#200](https://github.com/crowbaros/crowbaros/pull/200)).
-
-One question for CrowbarOS: the archived ADR 0020's table offers the primary selection to every compartment, under the clipboard rules. CrowbarOS's guest check expects it refused, and Fulcrum follows the guest check until a record says which.
 
 CrowbarOS started again on November 17 ([crowbaros#197](https://github.com/crowbaros/crowbaros/pull/197)). Its vision is now a small desktop with an Agent, and its substrate vision, with the broker, the Warden, and compartments, is archived. ADRs 0015, 0027, and 0028 stand. ADRs 0016, 0020, 0022, and 0023 bind until a new record says what the compositor offers the shell and the Agent.
 
@@ -105,7 +108,7 @@ Fulcrum builds what those records still decide:
 - buffers and timing;
 - displays and hardware.
 
-The parts of Milestones 4, 6, and 8 that rest on the broker wait for a new record before Fulcrum builds them: asks and their arming, transfers the broker records, and lock and unlock, which ADR 0020 has the broker authorize.
+The parts of Milestones 4, 6, and 8 that rest on the broker wait for a new record before Fulcrum builds them: asks and their arming, transfers the broker records, and unlock by the broker.
 
 Milestones 1 and 2 are where this approach costs the most. They rebuild what Smithay gave the baseline for free before any new behavior lands. The cost is bounded by building only what ADR 0020's table offers: no XWayland, one seat, and GLES as the only GPU renderer until a measurement asks for more.
 
