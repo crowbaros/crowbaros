@@ -21,8 +21,7 @@ This file covers what differs here.
 
 ## Dependencies
 
-These hold from Milestone 1 on, when the Smithay-based baseline leaves `main`
-([the plan](docs/PLAN.md)):
+These hold for every change ([the plan](docs/PLAN.md)):
 
 - **No crate from the Smithay organization**: not `smithay`, the `wayland-rs`
   crates, `drm`, `gbm`, `input`, `calloop`, or `libseat`. A test fails if one
@@ -41,8 +40,9 @@ These hold from Milestone 1 on, when the Smithay-based baseline leaves `main`
   merged. Commit locally as you go. Push, open a pull request, or merge only when
   the person you work for asks.
 - Write the pull request title as a conventional commit that states the outcome
-  in plain language. The scope is the area: `identity`, `policy`, `input`,
-  `windows`, `redraw`, `backend`, `probe`, `checks`, `ci`, `docs`.
+  in plain language. The scope is the area: `wire`, `codegen`, `sys`,
+  `identity`, `policy`, `input`, `windows`, `redraw`, `render`, `backend`,
+  `probe`, `checks`, `ci`, `docs`.
 - One pull request does one thing, with its code, tests, and docs.
 
 ## Checks
@@ -50,12 +50,12 @@ These hold from Milestone 1 on, when the Smithay-based baseline leaves `main`
 | Run | When |
 | --- | --- |
 | The commands under the README's [Build and test](README.md#build-and-test) | Every change to code. CI runs them too |
-| `checks/nested.sh` | A change to the nested backend, or to what a client is offered |
-| CrowbarOS's `lab/void/compositor_guest.py check`, pointed at the commit as the README's [Run](README.md#run) section says | Every pull request that changes the compositor (ADR 0022). Attach the evidence log it writes |
+| `cargo run -p fulcrum-codegen` | A change to `protocols/`. Commit what it writes |
+| CrowbarOS's `lab/void/compositor_guest.py check`, with `FULCRUM_REPOSITORY` and `FULCRUM_REVISION` set to the commit | Every pull request that changes how the compositor serves clients (ADR 0022), once it serves them (Milestone 2). Attach the evidence log it writes |
 
-A bug fix comes with a test that fails without the fix. A new protocol global
-gets a row in `src/policy.rs`, a test in `tests/table.rs`, and the matching list
-in CrowbarOS's guest check.
+A bug fix comes with a test that fails without the fix. Offering a protocol
+global to a client takes a row in the policy table, a test of who is offered
+it, and the matching list in CrowbarOS's guest check.
 
 ## Releasing to CrowbarOS
 
