@@ -1,26 +1,29 @@
-name: CI
+name: Compositor
 
+# Fulcrum, the compositor in compositor/, is its own Cargo project with its own
+# job (ADR 0031). It runs when the compositor's code changes, not for its docs.
 # Fulcrum links only the C libraries ADR 0028 allows, and installs each as
 # the code that needs it lands.
-# A change to docs alone starts no run. Keep the two lists the same.
 on:
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "LICENSE*"
+    paths:
+      - "compositor/**"
+      - "!compositor/**.md"
+      - "!compositor/docs/**"
+      - ".github/workflows/compositor.yml"
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "LICENSE*"
+    paths:
+      - "compositor/**"
+      - "!compositor/**.md"
+      - "!compositor/docs/**"
+      - ".github/workflows/compositor.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
+  group: compositor-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -28,6 +31,9 @@ jobs:
     name: Compositor
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: compositor
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
