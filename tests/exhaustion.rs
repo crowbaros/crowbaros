@@ -186,8 +186,10 @@ fn a_client_is_stopped_at_its_budget_of_pools() {
         client.shm_buffer((1, 1), 0).unwrap();
     }
     client.roundtrip().unwrap();
-    client.shm_buffer((1, 1), 0).unwrap();
-    assert!(client.roundtrip().is_err());
+    // The refusal can come back while the buffer's requests are still being
+    // sent, as the compositor closes the connection, or at the roundtrip.
+    let refused = client.shm_buffer((1, 1), 0).and_then(|_| client.roundtrip());
+    assert!(refused.is_err(), "the compositor took a pool over the budget");
     let error = client.error.clone().unwrap();
     assert_eq!(error.code, wl_display::error::NO_MEMORY, "{error:?}");
     assert!(error.message.contains("pools"), "{error:?}");
