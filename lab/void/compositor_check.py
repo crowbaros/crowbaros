@@ -45,7 +45,8 @@ AS_CLIENT = f"{AS_APP} WAYLAND_DISPLAY={LISTENER}"
 # the compositor does not create yet. Fulcrum's tests/table.rs holds the same
 # lists.
 COMPARTMENT = {"wl_compositor", "wl_data_device_manager", "wl_output", "wl_seat", "wl_shm",
-               "wl_subcompositor", "wp_viewporter", "xdg_wm_base"}
+               "wl_subcompositor", "wp_fractional_scale_manager_v1", "wp_presentation",
+               "wp_viewporter", "xdg_wm_base"}
 SHELL_ALSO = {"zwp_linux_dmabuf_v1", "zwlr_layer_shell_v1"}
 WARDEN = {"wp_security_context_manager_v1"}
 

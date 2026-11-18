@@ -84,11 +84,11 @@ From the repository root:
 python3 lab/void/compositor_guest.py desktop-check
 ```
 
-This builds and tests the [compositor spike](../compositor-spike/README.md),
-the shell, and Settings in Void, creates a fresh guest image, exercises the
-desktop, and powers off the test guest. The Alpha desktop runs the spike until
-the compositor passes this check
-([ADR 0020](../../docs/archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md)). Every
+This builds and tests the compositor at the Fulcrum commit
+[`compositor/`](../../compositor/README.md) pins, the shell, and Settings in
+Void, creates a fresh guest image, exercises the desktop, and powers off the
+test guest. To try a Fulcrum commit that is not pinned yet, set
+`FULCRUM_REPOSITORY` and `FULCRUM_REVISION` as for `check`. Every
 run gets a new directory in `.lab/void-desktop-checks/`, its own SSH port, key,
 and Unix VNC sockets. It never stops or replaces `.lab/void-graphical/disk.raw`.
 Do not use the `check` or `desktop` command against a preserved preview:
@@ -133,8 +133,9 @@ The compositor currently has no animations; Settings saves the motion preference
 for compatible sessions and says so without claiming an effect here.
 
 This is not the production Warden or principal isolation. Apps still share one
-user and can reach one another. The spike keeps its public ordinary Wayland
-socket and security-context behavior. The compositor built with #49 has
-neither, and the Alpha desktop does not run it yet. The spike has no per-compartment
-namespaces, cgroups, broker authorization, or production resource enforcement.
+user and can reach one another. The compositor has no public socket: the
+launcher registers one compartment for every app through the compositor's
+Warden socket, with `crowbar-probe warden`, and starts each app on that
+compartment's listener (ADR 0016). There are no per-compartment namespaces,
+cgroups, broker authorization, or production resource enforcement.
 The fixed lab UIDs are not production compartment IDs.

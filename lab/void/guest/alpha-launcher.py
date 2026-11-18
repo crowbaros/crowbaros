@@ -1,8 +1,12 @@
 #!/usr/bin/python3
 """Root stand-in for the Warden in the disposable Alpha lab (ADR 0016).
 
-Not the production broker/Warden: all apps still share one UID and public
-Wayland socket. Only the shell UID can request a root-owned desktop entry.
+Not the production broker/Warden: all apps share one UID and one compartment.
+The compositor has no public socket, so the launcher registers that
+compartment's listener through the compositor's Warden socket, with
+`crowbar-probe warden`, and starts every app on it. The probe holds the
+listener for as long as the compositor runs, and is started again if it ends.
+Only the shell UID can request a root-owned desktop entry.
 No caller environment, inherited descriptor, command string, or supplied UID
 is accepted. Settings are read through bounded, no-follow directory handles.
 """
@@ -17,6 +21,12 @@ import subprocess
 
 SOCKET = '/run/crowbar-launch/socket'
 APP = 'crowbar-app'
+WARDEN_SOCKET = '/run/crowbar-trusted/warden/wayland'
+# The apps' compartment's listener. Its directory lets the app's account in;
+# the probe makes the socket itself.
+APPS_DIRECTORY = '/run/crowbar-apps'
+APPS_LISTENER = APPS_DIRECTORY + '/wayland'
+apps_compartment = None
 SHELL = 'crowbar-shell'
 MAX_REQUEST = 4096
 
@@ -64,8 +74,29 @@ def app_environment(account):
                 PATH='/usr/local/bin:/usr/bin:/bin', LANG='C.UTF-8',
                 XDG_RUNTIME_DIR=f'/run/user/{account.pw_uid}',
                 XDG_CURRENT_DESKTOP='CrowbarOS', XDG_SESSION_TYPE='wayland',
-                WAYLAND_DISPLAY='/run/crowbar-display/wayland-1',
+                WAYLAND_DISPLAY=APPS_LISTENER,
                 CROWBAR_SESSION='alpha-no-animations', RUST_LOG='info')
+
+
+def ensure_apps_compartment():
+    """Registers the apps' compartment, unless its probe still holds it."""
+    global apps_compartment
+    if apps_compartment is not None and apps_compartment.poll() is None:
+        return
+    os.makedirs(APPS_DIRECTORY, mode=0o755, exist_ok=True)
+    os.chmod(APPS_DIRECTORY, 0o755)
+    log = open('/var/log/crowbar-apps-compartment.log', 'ab', buffering=0)
+    apps_compartment = subprocess.Popen(
+        ['/usr/local/bin/crowbar-probe', 'warden', 'org.crowbaros.Apps', 'alpha-apps', APPS_LISTENER],
+        env={'WAYLAND_DISPLAY': WARDEN_SOCKET, 'PATH': '/usr/bin:/bin'},
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log, close_fds=True,
+    )
+    # The probe says where it listens once the compositor took the listener.
+    line = apps_compartment.stdout.readline()
+    if not line.startswith(b'listening at '):
+        apps_compartment.kill()
+        apps_compartment = None
+        raise ValueError('The compositor did not take the apps\' listener')
 
 
 def dispatch(request):
@@ -75,6 +106,7 @@ def dispatch(request):
     if set(request) != {'op', 'desktop'} or request['op'] != 'launch':
         raise ValueError('Unknown request')
     path = desktop_path(request['desktop'])
+    ensure_apps_compartment()
     with open('/var/log/crowbar-apps.log', 'ab', buffering=0) as log:
         result = subprocess.run(
             ['/usr/bin/setpriv', '--no-new-privs', '/usr/bin/gio', 'launch', path], user=app.pw_uid, group=app.pw_gid,

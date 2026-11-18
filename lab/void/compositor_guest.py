@@ -10,9 +10,9 @@ runs on a TTY under runit, without systemd or a host compositor.
 
 There are two images. The plain one holds the compositor and its probe, for
 `check`. They are built from the Fulcrum revision that `compositor/fulcrum.json`
-pins (ADR 0027). The desktop one holds the Alpha desktop: the shell, Studio
-Settings, and the compositor spike in `lab/compositor-spike/`, which the Alpha
-desktop runs until the compositor passes `desktop-check` (ADR 0020).
+pins (ADR 0027). The desktop one holds the Alpha desktop on that compositor:
+the shell and Studio Settings, with a stand-in for the Warden that registers
+one compartment for the apps (ADR 0016).
 
     compositor_guest.py rootfs     install the guest root and the build root (rootless)
     compositor_guest.py build      build and test in Void what an image holds (--desktop for the desktop image)
@@ -70,11 +70,9 @@ VNC = [WORK / "vnc0.sock", WORK / "vnc1.sock"]
 PIN = ROOT / "compositor/fulcrum.json"
 FULCRUM_GIT = ROOT / ".lab/fulcrum.git"
 FULCRUM_TREES = ROOT / ".lab/fulcrum"
-# Both compositors build a `crowbar-compositor` and a `crowbar-probe`, so the
-# compositor builds in a part of the target directory of its own. The spike
-# and the apps stay where the desktop image has always built them.
+# The compositor builds in a part of the target directory of its own. The
+# apps stay where the desktop image has always built them.
 COMPOSITOR_PART = "compositor"
-SPIKE = ("lab/compositor-spike", "")
 APPS = [("apps/shell", ""), ("apps/studio-settings", "")]
 COMPOSITOR_BINARIES = ["crowbar-compositor", "crowbar-probe"]
 APP_BINARIES = ["crowbaros-shell", "crowbaros-studio-settings"]
@@ -170,16 +168,17 @@ def fulcrum_source(pin=None, git_dir=None, trees=None):
 
 
 def projects(desktop):
-    """What an image is built from: each project and its part of the target directory."""
-    if desktop:
-        return [SPIKE, *APPS]
-    return [(fulcrum_source().relative_to(ROOT).as_posix(), COMPOSITOR_PART)]
+    """What an image is built from: each project and its part of the target directory.
+
+    Both images hold the compositor the pin names (or FULCRUM_REVISION). The
+    desktop one adds the shell and Studio Settings."""
+    compositor = (fulcrum_source().relative_to(ROOT).as_posix(), COMPOSITOR_PART)
+    return [compositor, *APPS] if desktop else [compositor]
 
 
 def binaries(desktop):
     """The programs an image holds, and where the build leaves each."""
-    part = SPIKE[1] if desktop else COMPOSITOR_PART
-    built = {name: TARGET / part / "release" / name for name in COMPOSITOR_BINARIES}
+    built = {name: TARGET / COMPOSITOR_PART / "release" / name for name in COMPOSITOR_BINARIES}
     if desktop:
         built.update({name: TARGET / "release" / name for name in APP_BINARIES})
     return built
