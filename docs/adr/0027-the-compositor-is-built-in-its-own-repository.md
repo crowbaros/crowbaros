@@ -1,6 +1,6 @@
 # The compositor is built in its own repository, and Base pins one commit
 
-**Status:** proposed on November 17, 2026, by Jason Alexander. It takes effect when Jim Martin agrees, and the pull request that carries it merges then.
+**Status:** accepted on November 17, 2026, by Jason Alexander, who merged it before Jim Martin had reviewed it.
 
 [ADR 0015](0015-our-own-compositor-on-smithay.md) put the compositor in `compositor/`, as a Cargo project of its own outside the root workspace. [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) started it clean there, and slice 1 is built. Five slices remain, and then the work after a first release: input methods, window sharing, more layouts, and more hardware. This record moves the code to a repository of its own, named Fulcrum. Everything else in ADRs 0015, 0016, 0020, 0022, and 0023 stands.
 
@@ -24,6 +24,6 @@
 
 - There are two repositories. Work that needs both lands in Fulcrum first, then a pin change here.
 - This repository's CI no longer builds the compositor; Fulcrum's CI runs the same commands. `lab/void/test_fulcrum_pin.py` checks here that the pin names a full commit, and that the lab builds a commit's tree and nothing from a working copy.
-- Fulcrum must be published at the pin's repository before anyone without a local clone can build the compositor. Until then `FULCRUM_REPOSITORY` names that clone.
+- Fulcrum is private, like this repository, so building the compositor takes read access to both.
 - `compositor/README.md` stays, so every link to it still lands somewhere that says where the code went. Dated records that name a file under `compositor/` stay as written. That file is in Fulcrum at the import tag.
 - ADR 0015's line about where the compositor lives points here.
