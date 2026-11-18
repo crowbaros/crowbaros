@@ -66,6 +66,9 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   input, on no output, and without the keyboard. Every chord with Super
   belongs to the compositor and never reaches a client: Super+1 to 9 show a
   workspace, and Super+Shift+1 to 9 move the window with the keyboard there.
+  Super tapped alone sends the shell a `launcher` event on its control
+  channel. The launcher event, the `launching` request, and the snapshot's
+  `attention` are Fulcrum's proposal until a CrowbarOS record decides them.
 - **The shell's control channel**: a path socket of its own, checked against
   the shell's user ID, where the shell asks for a snapshot of the windows and
   shows a workspace or a window. One JSON object per line, as the spike
@@ -91,7 +94,10 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 - **The seat**: one keyboard and one pointer. The keymap is compiled by
   libxkbcommon and shared through a sealed memfd. The keyboard goes to the
   window or key-taking layer the person clicks, and a click raises and
-  activates a window; a new window never takes it. The pointer follows what
+  activates a window. A new window takes it only where its parent has it,
+  or where it is the first after the shell says the person launched an app;
+  any other new window wants attention, which the shell's snapshot shows.
+  The pointer follows what
   is under it, by input region, and stays with its surface while a button is
   held.
 - **linux-dmabuf**, version 4: feedback names the GPU's device and a sealed

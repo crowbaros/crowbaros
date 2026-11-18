@@ -10,11 +10,14 @@
 //!
 //! ```text
 //! -> {"op":"snapshot"}
-//! <- {"reply":"snapshot","workspace":1,"active":"0x2","windows":[{"id":"0x2","app_id":"foot","title":"~","workspace":1}]}
+//! <- {"reply":"snapshot","workspace":1,"active":"0x2","windows":[{"id":"0x2","app_id":"foot","title":"~","workspace":1,"attention":false}]}
 //! -> {"op":"focus_workspace","id":2}
 //! <- {"reply":"ok"}
 //! -> {"op":"focus_window","id":"0x2"}
 //! <- {"reply":"ok"}
+//! -> {"op":"launching"}
+//! <- {"reply":"ok"}
+//! <- {"event":"launcher"}
 //! -> {"op":"outputs"}
 //! <- {"reply":"outputs","outputs":[{"name":"HDMI-A-1","identity":"DEL DELL U2723QE 8GZGCP3","width":3840,"height":2160,"refresh":60000,"x":0,"y":0,"scale":150,"modes":[{"width":3840,"height":2160,"refresh":60000}]}]}
 //! -> {"op":"configure_output","name":"HDMI-A-1","width":2560,"height":1440,"refresh":59951,"x":0,"y":0,"scale":120}
@@ -22,6 +25,16 @@
 //! -> {"op":"anything else"}
 //! <- {"reply":"error","message":"..."}
 //! ```
+//!
+//! The compositor also sends events, at any time, one object per line with
+//! no reply: `launcher` when the person taps Super alone, for the shell to
+//! open or close its launcher (ADR 0020's keys). A window that opened
+//! without the keyboard has `attention` in the snapshot until it gets it,
+//! for the bar to show (ADR 0020's focus). `launching` says the person just
+//! started an app from the shell: the next window a compartment maps within
+//! [`LAUNCH_FOCUS`] takes the keyboard, as the first window of a compartment
+//! the person started does. These three are Fulcrum's proposal until a
+//! CrowbarOS record decides them.
 //!
 //! `outputs` and `configure_output` are the shell's interface to the layout
 //! of displays (ADR 0020): a monitor's mode, place, and scale, the scale in
@@ -62,6 +75,9 @@ pub const MAX_LINE: usize = 4096;
 pub const MAX_PENDING: usize = 1024 * 1024;
 /// How many control connections the shell may hold at once.
 pub const MAX_CONNECTIONS: usize = 4;
+/// How long after the shell says it is launching an app its first window
+/// takes the keyboard.
+pub const LAUNCH_FOCUS: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub(crate) struct ControlListener {
     listener: UnixListener,
@@ -217,6 +233,20 @@ impl State {
         }
     }
 
+    /// Sends an event to every control connection: a line with no reply.
+    pub(crate) fn control_event(&mut self, name: &str) {
+        let line = format!("{{\"event\":{}}}\n", quote(name));
+        let ids: Vec<u64> = self.controls.connections.keys().copied().collect();
+        for id in ids {
+            if let Some(connection) = self.controls.connections.get_mut(&id) {
+                connection.output.extend_from_slice(line.as_bytes());
+            }
+            if !self.flush_control(id) {
+                self.close_control(id);
+            }
+        }
+    }
+
     /// Writes what waits for a connection. False if it must be closed.
     fn flush_control(&mut self, id: u64) -> bool {
         let Some(connection) = self.controls.connections.get_mut(&id) else {
@@ -293,6 +323,10 @@ impl State {
                 Ok(ok_reply())
             }),
             "outputs" => only(&[], &request).map(|()| self.outputs_reply()),
+            "launching" => only(&[], &request).map(|()| {
+                self.launching = Some(std::time::Instant::now());
+                ok_reply()
+            }),
             "configure_output" => only(&["name", "width", "height", "refresh", "x", "y", "scale"], &request)
                 .and_then(|()| self.configure_output(&request))
                 .map(|()| ok_reply()),
@@ -328,11 +362,12 @@ impl State {
             .map(|window| {
                 let requests = self.xdg.get(&window.surface).map(|xdg| &xdg.toplevel);
                 format!(
-                    "{{\"id\":{},\"app_id\":{},\"title\":{},\"workspace\":{}}}",
+                    "{{\"id\":{},\"app_id\":{},\"title\":{},\"workspace\":{},\"attention\":{}}}",
                     quote(&window_id(window.surface)),
                     quote(requests.map_or("", |requests| requests.app_id.as_str())),
                     quote(requests.map_or("", |requests| requests.title.as_str())),
-                    window.workspace
+                    window.workspace,
+                    window.attention
                 )
             })
             .collect();

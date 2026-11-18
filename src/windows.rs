@@ -3,11 +3,13 @@
 //!
 //! A new window opens on the workspace showing, on the output the pointer is
 //! on, inside the room the shell's layers leave, offset a little from the
-//! last. It does not take the keyboard. A window on a workspace that is not
-//! showing is nowhere: it is not drawn, takes no input, and is on no output
-//! (see `workspaces.rs`). Frames, moving and resizing, and the two cases in
-//! which a new window takes the keyboard come with the rest of the window
-//! manager (ADR 0020, CrowbarOS issue 78).
+//! last. It takes the keyboard in ADR 0020's two cases: its parent has the
+//! keyboard, as a dialog's does, or it is the first window a compartment maps
+//! after the shell says the person launched an app (`launching`, see
+//! `control.rs`). Any other new window opens without the keyboard and wants
+//! attention, which the snapshot tells the shell, until it gets it. A window
+//! on a workspace that is not showing is nowhere: it is not drawn, takes no
+//! input, and is on no output (see `workspaces.rs`).
 
 use fulcrum_wire::protocol::wayland::wl_surface;
 
@@ -41,6 +43,9 @@ pub(crate) struct Window {
     pub fitted: Option<Rect>,
     /// The size a resize asks of it.
     pub requested: Option<(i32, i32)>,
+    /// It opened without the keyboard, and has not had it since: the bar
+    /// shows that it wants attention (ADR 0020).
+    pub attention: bool,
 }
 
 impl State {
@@ -145,6 +150,7 @@ impl State {
                 restore: None,
                 fitted: None,
                 requested: None,
+                attention: false,
             });
             // What the client asked for before it mapped.
             let requests = &self.xdg[&surface].toplevel;
@@ -174,6 +180,38 @@ impl State {
         self.update_outputs_of(surface);
         self.queue_redraw_for(surface);
         self.focus_new_child(surface);
+        self.focus_launched(surface);
+        // Any other new window opens without the keyboard, and wants
+        // attention until it has it.
+        let focused = self.seat.keyboard_focus.map(|focus| self.root_of(focus)) == Some(surface);
+        if let Some(window) = self.windows.iter_mut().find(|window| window.surface == surface) {
+            window.attention = !focused;
+        }
+    }
+
+    /// The first window a compartment maps after the shell says the person
+    /// launched an app takes the keyboard, as the first window of a
+    /// compartment the person started from the shell does (ADR 0020).
+    fn focus_launched(&mut self, surface: SurfaceId) {
+        let Some(asked) = self.launching else {
+            return;
+        };
+        if asked.elapsed() > crate::control::LAUNCH_FOCUS {
+            self.launching = None;
+            return;
+        }
+        let from_compartment = self
+            .surfaces
+            .get(&surface)
+            .and_then(|surface| self.clients.get(&surface.client))
+            .is_some_and(|client| matches!(client.identity, Identity::Compartment(_)));
+        let new_window = self.windows.iter().any(|window| window.surface == surface)
+            && self.xdg.get(&surface).is_some_and(|xdg| xdg.toplevel.parent.is_none());
+        if from_compartment && new_window {
+            self.launching = None;
+            self.raise(surface);
+            self.set_keyboard_focus(Some(surface));
+        }
     }
 
     /// A new window takes the keyboard when its parent has it, as a dialog

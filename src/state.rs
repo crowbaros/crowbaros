@@ -104,6 +104,9 @@ pub struct State {
     pub(crate) explicit_sync: crate::explicit_sync::ExplicitSync,
     /// Each monitor's mode, place, and scale, as the person chose them.
     pub(crate) layout: crate::layout::Layout,
+    /// When the shell last said the person launched an app, until a window
+    /// takes the keyboard for it.
+    pub(crate) launching: Option<std::time::Instant>,
     pub(crate) idle_inhibitors: crate::idle_inhibit::IdleInhibitors,
     /// The system's cursor images, for named shapes and the compositor's
     /// own pointer.
@@ -163,6 +166,7 @@ impl State {
             controls: crate::control::Controls::default(),
             explicit_sync: crate::explicit_sync::ExplicitSync::default(),
             layout: crate::layout::Layout::default(),
+            launching: None,
             idle_inhibitors: crate::idle_inhibit::IdleInhibitors::default(),
             cursor_theme: crate::xcursor::CursorTheme::none(),
             grab: None,

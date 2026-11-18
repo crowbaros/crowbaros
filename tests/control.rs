@@ -184,3 +184,78 @@ fn a_request_longer_than_the_limit_closes_the_connection() {
             .starts_with(r#"{"reply":"snapshot""#)
     );
 }
+
+impl Control {
+    /// Reads one line the compositor sent.
+    fn line(&mut self) -> String {
+        let mut line = String::new();
+        self.reader.read_line(&mut line).unwrap();
+        line.trim_end().to_string()
+    }
+}
+
+const KEY_LEFTMETA: u32 = 125;
+const KEY_1: u32 = 2;
+
+#[test]
+fn super_tapped_alone_asks_the_shell_for_its_launcher() {
+    let compositor = Compositor::start();
+    let mut control = Control::connect(&compositor);
+
+    compositor.key(KEY_LEFTMETA, true);
+    compositor.key(KEY_LEFTMETA, false);
+
+    assert_eq!(control.line(), r#"{"event":"launcher"}"#);
+
+    // A chord with Super, or a click with it held, is not a tap.
+    compositor.key(KEY_LEFTMETA, true);
+    compositor.key(KEY_1, true);
+    compositor.key(KEY_1, false);
+    compositor.key(KEY_LEFTMETA, false);
+    compositor.key(KEY_LEFTMETA, true);
+    compositor.with(|state| state.pointer_button(0x110, true, 0));
+    compositor.with(|state| state.pointer_button(0x110, false, 0));
+    compositor.key(KEY_LEFTMETA, false);
+    let reply = control.ask(r#"{"op":"snapshot"}"#);
+    assert!(
+        reply.starts_with(r#"{"reply":"snapshot""#),
+        "an event came first: {reply}"
+    );
+}
+
+#[test]
+fn a_window_that_opens_without_the_keyboard_wants_attention_until_it_has_it() {
+    let compositor = Compositor::start();
+    let mut control = Control::connect(&compositor);
+    let (_client, _listener) = window(&compositor, "c1", "test.quiet");
+
+    let snapshot = control.ask(r#"{"op":"snapshot"}"#);
+    assert!(snapshot.contains(r#""attention":true"#), "{snapshot}");
+
+    compositor.click(60, 60);
+    let snapshot = control.ask(r#"{"op":"snapshot"}"#);
+    assert!(snapshot.contains(r#""attention":false"#), "{snapshot}");
+}
+
+#[test]
+fn the_first_window_after_the_shell_launches_an_app_takes_the_keyboard() {
+    let compositor = Compositor::start();
+    let mut control = Control::connect(&compositor);
+    let (_first, _one) = window(&compositor, "c1", "test.before");
+    let snapshot = control.ask(r#"{"op":"snapshot"}"#);
+    assert!(
+        snapshot.contains(r#""active":null"#),
+        "a window took the keyboard unasked: {snapshot}"
+    );
+
+    assert_eq!(control.ask(r#"{"op":"launching"}"#), r#"{"reply":"ok"}"#);
+    let (_launched, _two) = window(&compositor, "c2", "test.launched");
+    let (_after, _three) = window(&compositor, "c3", "test.after");
+
+    let snapshot = control.ask(r#"{"op":"snapshot"}"#);
+    let launched = ids(&snapshot)[1].clone();
+    assert!(snapshot.contains(&format!(r#""active":"{launched}""#)), "{snapshot}");
+    // The one launch gave the keyboard once: the window after wants
+    // attention.
+    assert!(snapshot.ends_with(r#""workspace":1,"attention":true}]}"#), "{snapshot}");
+}

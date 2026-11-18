@@ -3,10 +3,11 @@
 //! - **The keyboard goes where the person clicks.** A click on a window gives
 //!   it the keyboard and raises it. A click on a layer surface that takes
 //!   keys gives the keyboard to it. A click on anything else leaves the
-//!   keyboard where it was. A new window never takes the keyboard, and when
-//!   the window with the keyboard goes, no other window is handed it. The two
-//!   cases in which a new window takes the keyboard come with the window
-//!   manager (CrowbarOS issue 78).
+//!   keyboard where it was. A new window takes the keyboard in two cases
+//!   only: its parent has it, or it is the first window after the shell says
+//!   the person launched an app (see `windows.rs`). Any other new window wants
+//!   attention, which the shell shows. When the window with the keyboard
+//!   goes, no other window is handed it.
 //! - **The pointer goes to what is under it**, and stays with the surface a
 //!   button was pressed on until every button is let go.
 //! - **One keymap, compiled by libxkbcommon**, shared with every client
@@ -64,6 +65,8 @@ pub(crate) struct Seat {
     /// Keys the compositor took: pressed with Super held. Their releases are
     /// taken too, and no client ever hears of them.
     withheld: Vec<u32>,
+    /// Super is held, and nothing else was pressed since it went down.
+    super_alone: bool,
     /// The image a client set, if it has the pointer and set one.
     pub(crate) cursor: Option<crate::cursor::Cursor>,
 }
@@ -83,6 +86,7 @@ impl Seat {
             pointer_focus: None,
             keys: Vec::new(),
             withheld: Vec::new(),
+            super_alone: false,
             cursor: None,
             buttons: Vec::new(),
         }
@@ -298,6 +302,12 @@ impl State {
             return;
         }
         self.seat.keyboard_focus = surface;
+        // A window with the keyboard wants no attention.
+        if let Some(root) = surface.map(|focus| self.root_of(focus))
+            && let Some(window) = self.windows.iter_mut().find(|window| window.surface == root)
+        {
+            window.attention = false;
+        }
         if let Some(old) = old
             && let Some((client_id, object)) = self.surfaces.get(&old).map(|s| (s.client, s.object))
         {
@@ -355,6 +365,17 @@ impl State {
     /// with its release. Super is the physical key, whatever the keymap
     /// says.
     pub fn handle_key(&mut self, key: u32, pressed: bool, time: u32) {
+        // Super tapped alone, with no other key or button between its press
+        // and its release, asks the shell for its launcher.
+        if SUPER.contains(&key) {
+            if pressed {
+                self.seat.super_alone = self.seat.keys.is_empty() && self.seat.buttons.is_empty();
+            } else if std::mem::take(&mut self.seat.super_alone) {
+                self.control_event("launcher");
+            }
+        } else if pressed {
+            self.seat.super_alone = false;
+        }
         if !pressed && self.seat.withheld.contains(&key) {
             self.seat.withheld.retain(|held| *held != key);
             return;
@@ -431,7 +452,9 @@ impl State {
     /// | Super+Left, Super+Right | Snaps it to that half, or restores it |
     /// | Super+Down | Restores it |
     ///
-    /// Every other chord with Super is taken and does nothing yet.
+    /// Super tapped alone, pressed and let go with nothing else between,
+    /// asks the shell for its launcher (see `handle_key`). Every other chord
+    /// with Super is taken and does nothing yet.
     fn compositor_key(&mut self, key: u32, shift: bool) {
         use crate::modes::Mode;
         match key {
@@ -584,6 +607,9 @@ impl State {
     /// with no other button held gives the keyboard to what is under the
     /// pointer.
     pub fn pointer_button(&mut self, button: u32, pressed: bool, time: u32) {
+        if pressed {
+            self.seat.super_alone = false;
+        }
         if self.grab.is_some() {
             self.seat.buttons.retain(|held| *held != button);
             if !pressed {
