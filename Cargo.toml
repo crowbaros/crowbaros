@@ -29,6 +29,11 @@ name = "crowbar_compositor"
 name = "crowbar-compositor"
 path = "src/main.rs"
 
+[features]
+# The nested backend: the compositor as a window on a host Wayland session,
+# for development. Base never builds it (ADR 0016).
+nested = []
+
 [dependencies]
 fulcrum-wire = { path = "wire" }
 fulcrum-sys = { path = "sys" }

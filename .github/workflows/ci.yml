@@ -50,7 +50,14 @@ jobs:
       - name: Lint
         run: cargo clippy --all-targets --locked -- -D warnings
 
+      # The nested backend, which Base never builds.
+      - name: Lint the nested build
+        run: cargo clippy --all-targets --features nested --locked -- -D warnings
+
       # Includes the check that the generated protocol code matches the XML,
       # and that no crate from the Smithay organization is in Cargo.lock.
       - name: Test
         run: cargo test --locked
+
+      - name: Test the nested build
+        run: cargo test --locked --features nested

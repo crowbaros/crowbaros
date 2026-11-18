@@ -1,7 +1,8 @@
 //! `crowbar-compositor`: the CrowbarOS Wayland compositor.
 //!
-//! It serves clients on its own wire code. Until Milestone 2 brings displays,
-//! it shows nothing: it has no backend, and says so when it starts.
+//! It serves clients on its own wire code, and shows them on a virtual
+//! terminal. A build with `--features nested` can instead show them in a
+//! window on a host session, for development; Base never builds that.
 
 #![forbid(unsafe_code)]
 
@@ -27,18 +28,30 @@ Warden registers for one compartment. All four of these are required:
   --warden-uid UID       The user ID the Warden runs as.
 
   --backend tty          Where frames go: a virtual terminal, with the seat
-                         from seatd. The only backend, and the default.
+                         from seatd. The default.
+  --backend nested       A window on the host session, for development. Only
+                         in a build with the nested feature.
 
 Base makes the directory of each socket, and decides who can enter it.
 FULCRUM_LOG sets the log level: error, warn, info, or debug.
 ";
 
+/// Where frames go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackendKind {
+    Tty,
+    #[cfg(feature = "nested")]
+    Nested,
+}
+
 struct Args {
     parts: TrustedParts,
+    backend: BackendKind,
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
     let (mut shell_socket, mut shell_uid, mut warden_socket, mut warden_uid) = (None, None, None, None);
+    let mut backend = BackendKind::Tty;
     let mut rest = args;
     while let Some(flag) = rest.next() {
         let mut value = || rest.next().ok_or(format!("{flag} needs a value"));
@@ -49,7 +62,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--warden-socket" => warden_socket = Some(PathBuf::from(value()?)),
             "--warden-uid" => warden_uid = Some(uid(value()?)?),
             "--backend" => match value()?.as_str() {
-                "tty" => {}
+                "tty" => backend = BackendKind::Tty,
+                #[cfg(feature = "nested")]
+                "nested" => backend = BackendKind::Nested,
                 other => return Err(format!("this build has no backend {other}\n\n{USAGE}")),
             },
             "--help" | "-h" => return Err(USAGE.into()),
@@ -65,6 +80,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             shell: part(shell_socket, shell_uid, "shell")?,
             warden: part(warden_socket, warden_uid, "warden")?,
         },
+        backend,
     })
 }
 
@@ -81,9 +97,19 @@ fn main() {
         crowbar_compositor::limits::raise_descriptor_limit();
         let mut state = State::new()?;
         // Clients are accepted only once there is something to show them on.
-        crowbar_compositor::backend::tty::init(&mut state)?;
+        let name = match args.backend {
+            BackendKind::Tty => {
+                crowbar_compositor::backend::tty::init(&mut state)?;
+                "tty"
+            }
+            #[cfg(feature = "nested")]
+            BackendKind::Nested => {
+                crowbar_compositor::backend::nested::init(&mut state)?;
+                "nested"
+            }
+        };
         state.listen(&args.parts)?;
-        log::write(Level::Info, format_args!("compositor is up backend=tty"));
+        log::write(Level::Info, format_args!("compositor is up backend={name}"));
         state.run()
     };
     if let Err(error) = run() {
@@ -146,6 +172,16 @@ mod tests {
         }
         let mut args = PARTS.to_vec();
         args.extend(["--backend", "tty"]);
-        assert!(parse(&args).is_ok());
+        assert_eq!(parse(&args).map(|args| args.backend), Ok(BackendKind::Tty));
+    }
+
+    /// The nested backend makes the compositor a client of another display.
+    /// Base's build has no such backend.
+    #[cfg(not(feature = "nested"))]
+    #[test]
+    fn a_build_without_the_nested_feature_has_no_nested_backend() {
+        let mut args = PARTS.to_vec();
+        args.extend(["--backend", "nested"]);
+        assert!(parse(&args).is_err());
     }
 }

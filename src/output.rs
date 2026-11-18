@@ -1,8 +1,8 @@
 //! Outputs: each display the compositor shows the desktop on, and its
 //! `wl_output` global.
 //!
-//! Until Milestone 2 brings displays, an output is added by its caller, as a
-//! test does. Outputs sit side by side, left to right, at scale 1.
+//! A backend adds an output for each display it lights, and a test adds its
+//! own. Outputs sit side by side, left to right, at scale 1.
 
 use fulcrum_wire::protocol::wayland::wl_output;
 
@@ -107,7 +107,61 @@ impl State {
         self.queue_redraw_all();
     }
 
-    /// A client bound an output: tells it what the output is.
+    /// Changes an output's size, as when its mode changes or the window the
+    /// nested backend draws into is resized. The outputs to its right move
+    /// along, each client is told, and the layer surfaces are placed again.
+    pub fn resize_output(&mut self, number: u64, size: (i32, i32)) {
+        let Some(index) = self.outputs.iter().position(|output| output.number == number) else {
+            return;
+        };
+        let old = self.outputs[index].rect();
+        if (old.width, old.height) == size {
+            return;
+        }
+        self.outputs[index].size = size;
+        let mut changed = vec![number];
+        let shift = size.0 - old.width;
+        for output in &mut self.outputs {
+            if output.number != number && output.position.0 >= old.x + old.width {
+                output.position.0 += shift;
+                changed.push(output.number);
+            }
+        }
+        for number in &changed {
+            let bound: Vec<(ClientId, u32)> = self
+                .clients
+                .iter()
+                .flat_map(|(id, client)| client.outputs_bound(*number).into_iter().map(|object| (*id, object)))
+                .collect();
+            for (client, object) in bound {
+                self.output_bound(client, object, *number);
+            }
+        }
+        let numbers: Vec<u64> = self.outputs.iter().map(|output| output.number).collect();
+        for number in numbers {
+            self.rearrange(number);
+        }
+        // A window the smaller output left on no output moves back onto it.
+        let area = self.usable_area(number);
+        let bounds: Vec<_> = self.outputs.iter().map(Output::rect).collect();
+        for window in &mut self.windows {
+            let (x, y) = window.location;
+            if old.contains(x, y) && !bounds.iter().any(|bound| bound.contains(x, y)) {
+                window.location = (
+                    area.x + crate::windows::NEW_WINDOW_OFFSET.0,
+                    area.y + crate::windows::NEW_WINDOW_OFFSET.1,
+                );
+            }
+        }
+        let windows: Vec<_> = self.windows.iter().map(|window| window.surface).collect();
+        for surface in windows {
+            self.update_outputs_of(surface);
+        }
+        self.queue_redraw_all();
+    }
+
+    /// Tells a client's `wl_output` what the output is: when it is bound,
+    /// and again when the output changes.
     pub(crate) fn output_bound(&mut self, client_id: ClientId, object: u32, number: u64) {
         let Some(output) = self.outputs.iter().find(|output| output.number == number).cloned() else {
             return;

@@ -76,6 +76,14 @@ impl Compositor {
 
     /// A compositor that takes these user IDs for the shell and the Warden.
     pub fn start_trusting(shell_uid: u32, warden_uid: u32) -> Self {
+        Self::start_with(shell_uid, warden_uid, |state| {
+            state.add_output("TEST-1", OUTPUT_SIZE, 60_000);
+            state.set_backend(crowbar_compositor::backend::headless::Headless::default());
+        })
+    }
+
+    /// A compositor whose outputs and backend `setup` gives it.
+    pub fn start_with(shell_uid: u32, warden_uid: u32, setup: impl FnOnce(&mut State) + Send + 'static) -> Self {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let dir = base_dir().join(format!("compositor-{}", NEXT.fetch_add(1, Ordering::Relaxed)));
         {
@@ -100,8 +108,7 @@ impl Compositor {
             // The tests provoke refusals on purpose; their warnings are noise.
             crowbar_compositor::log::set_level(crowbar_compositor::log::Level::Error);
             let mut state = State::new().unwrap();
-            state.add_output("TEST-1", OUTPUT_SIZE, 60_000);
-            state.set_backend(crowbar_compositor::backend::headless::Headless::default());
+            setup(&mut state);
             state.offer_dmabuf();
             state.listen(&listen_on).unwrap();
             ready_tx.send(state.remote()).unwrap();

@@ -307,6 +307,16 @@ impl State {
         Ok(())
     }
 
+    /// Places an output's layer surfaces again after the output changed, and
+    /// configures each one whose size that changed.
+    pub(crate) fn rearrange(&mut self, output: u64) {
+        let before = self.layer_rects(output);
+        self.arrange(output);
+        if self.layer_rects(output) != before {
+            self.configure_changed_layers(output, &before);
+        }
+    }
+
     fn layer_rects(&self, output: u64) -> Vec<(SurfaceId, Rect)> {
         self.layers
             .iter()

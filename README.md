@@ -69,11 +69,13 @@ terminal. What is built:
   CPU renderer into dumb buffers; input through libinput; and monitors and
   input devices plugged in and out, heard from the kernel's netlink uevents.
   Ctrl+Alt+F1 to F12 switch virtual terminals.
+- **The nested backend**, for development: the desktop in a window on a host
+  session. Only in a build with `--features nested`, which Base never is.
 - **A headless backend** that draws each output with the CPU renderer, and
   `crowbar-probe`, the test client, on `fulcrum-wire`'s client side.
 
-Still to come in Milestone 2: the nested backend. The GLES renderer, GBM, and
-linux-dmabuf come with Milestone 3.
+The GLES renderer, GBM, damage tracking, and linux-dmabuf come with
+Milestone 3.
 
 CrowbarOS still builds the Smithay-based compositor that Milestone 0 brought
 here: commit `d11400f`, tagged `smithay-baseline`. Its 57 tests and the 36
@@ -103,11 +105,11 @@ must pass before CrowbarOS moves its pin.
 | `src/data_device.rs` | The data device, which moves nothing between clients until slice 4 |
 | `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
 | `src/redraw.rs` | Drawing only on change |
-| `src/backend/` | Where frames go: `tty.rs` (a virtual terminal), `session.rs` (Fulcrum's client of seatd), `uevent.rs` (hotplug from netlink), and `headless.rs` (the tests) |
+| `src/backend/` | Where frames go: `tty.rs` (a virtual terminal), `session.rs` (Fulcrum's client of seatd), `uevent.rs` (hotplug from netlink), `nested.rs` (a window on a host session), and `headless.rs` (the tests) |
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `drm.rs` (mode setting and dumb buffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (the guarded mapping) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `data_device.rs` and `viewporter.rs` cover those protocols; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `outputs.rs` covers outputs that change size; `data_device.rs` and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.
@@ -121,6 +123,15 @@ virtual terminal, with seatd running and the compositor's user in its group:
 crowbar-compositor \
     --shell-socket /run/crowbar/compositor-shell/wayland --shell-uid 1001 \
     --warden-socket /run/crowbar/compositor-warden/wayland --warden-uid 0
+```
+
+For development, a build with the nested feature runs in a window on the
+session it is started from:
+
+```sh
+cargo run --features nested -- --backend nested \
+    --shell-socket /tmp/fulcrum/shell --shell-uid "$(id -u)" \
+    --warden-socket /tmp/fulcrum/warden --warden-uid "$(id -u)"
 ```
 
 A compartment's client reaches it through a listener the Warden registers.
@@ -140,7 +151,9 @@ libinput`; Debian and Ubuntu: `libxkbcommon-dev xkb-data libinput-dev`; Void:
 
 ```sh
 cargo test --locked
+cargo test --locked --features nested
 cargo clippy --all-targets --locked -- -D warnings
+cargo clippy --all-targets --features nested --locked -- -D warnings
 cargo fmt --all --check
 ```
 

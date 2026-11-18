@@ -5,8 +5,8 @@
 //! Each connected monitor gets a CRTC, its primary plane, and two dumb
 //! buffers. The CPU renderer draws an output into the buffer the display is
 //! not showing, and an atomic commit flips to it; the kernel's flip event
-//! ends the frame's wait. The compositor draws the pointer itself, as a
-//! white square: a TTY has no cursor of its own.
+//! ends the frame's wait. The compositor draws the pointer itself (see
+//! [`draw_pointer`]): a TTY has no cursor of its own.
 //!
 //! When the person switches to another virtual terminal, seatd takes the
 //! devices back. The compositor stops drawing and reading input until it is
@@ -28,17 +28,13 @@ use fulcrum_sys::{
 use crate::{
     State,
     backend::{
-        Backend, Drawn,
+        Backend, Drawn, draw_pointer,
         session::{Session, SessionEvent},
         uevent::Uevents,
     },
     geometry::Rect,
     log,
 };
-
-/// The side of the square drawn where the pointer is.
-pub const POINTER_SIZE: i32 = 12;
-const POINTER_COLOUR: u32 = 0xffff_ffff;
 
 const SOURCE_SESSION: u64 = 1;
 const SOURCE_DRM: u64 = 2;
@@ -457,13 +453,7 @@ impl Backend for Tty {
             return Drawn::Nothing;
         };
         // The pointer, which a TTY does not draw for the compositor.
-        if let Some(position) = state.outputs().iter().find(|o| o.number == output).map(|o| o.position) {
-            let (x, y) = state.pointer_position();
-            let at = (x as i32 - position.0, y as i32 - position.1);
-            if at.0 >= 0 && at.1 >= 0 && at.0 < image.width && at.1 < image.height {
-                image.fill(Rect::new(at.0, at.1, POINTER_SIZE, POINTER_SIZE), POINTER_COLOUR);
-            }
-        }
+        draw_pointer(state, output, &mut image);
         let back = 1 - monitor.front;
         monitor.buffers[back].write(&image.pixels, image.width as u32);
         let (width, height) = (u64::from(monitor.mode.hdisplay), u64::from(monitor.mode.vdisplay));

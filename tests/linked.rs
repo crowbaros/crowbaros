@@ -92,7 +92,9 @@ fn the_binary_holds_no_smithay_or_wayland_rs_code() {
 }
 
 /// The compositor has no public socket (ADR 0016). A compositor that made
-/// one would look for where to put it.
+/// one would look for where to put it. The nested backend, which Base never
+/// builds, looks for its host's socket the same way.
+#[cfg(not(feature = "nested"))]
 #[test]
 fn the_binary_never_looks_for_where_a_public_socket_would_go() {
     let bytes = binary();
