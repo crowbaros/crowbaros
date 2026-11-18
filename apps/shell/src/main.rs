@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 use theme::{Palette, Preferences};
-actions!(shell, [Next, Previous, Open, Close]);
+actions!(shell, [Next, Previous, Open, Close, Unlock]);
 struct Assets;
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
@@ -20,6 +20,7 @@ impl AssetSource for Assets {
             "apps" => include_bytes!("../assets/apps.svg"),
             "terminal" => include_bytes!("../assets/terminal.svg"),
             "settings" => include_bytes!("../assets/settings.svg"),
+            "lock" => include_bytes!("../assets/lock.svg"),
             "application" => include_bytes!("../assets/application.svg"),
             "search" => include_bytes!("../assets/search.svg"),
             "close" => include_bytes!("../assets/close.svg"),
@@ -41,6 +42,9 @@ struct Model {
     snapshot: session::Snapshot,
     preferences: Preferences,
     launcher: Option<WindowHandle<Launcher>>,
+    lock: Option<WindowHandle<LockScreen>>,
+    /// The confirm chord opened the lock screen's unlock entry.
+    unlock_entry: bool,
     apps: Vec<AppEntry>,
     tx: Sender<session::Event>,
     clock: String,
@@ -106,10 +110,22 @@ impl Render for Bar {
             "Connecting to the compositor…".into()
         };
         let clock = m.clock.clone();
+        // A workspace with a window that wants attention is marked, and
+        // shown past the first four.
+        let wanting: Vec<i32> = m
+            .snapshot
+            .clients
+            .iter()
+            .filter(|c| c.attention)
+            .map(|c| c.workspace.id)
+            .collect();
         let mut workspaces = vec![1, 2, 3, 4];
-        if active > 4 {
-            workspaces.push(active)
+        for id in std::iter::once(active).chain(wanting.iter().copied()) {
+            if id > 4 && !workspaces.contains(&id) {
+                workspaces.push(id)
+            }
         }
+        workspaces.sort();
         div()
             .size_full()
             .flex()
@@ -151,8 +167,11 @@ impl Render for Bar {
                     )
                     .child(div().flex().items_center().gap(px(4.)).children(
                         workspaces.into_iter().map(|id| {
+                            let attention = wanting.contains(&id);
                             div()
                                 .id(("workspace", id as usize))
+                                .border_b_2()
+                                .border_color(rgb(if attention { p.accent } else { p.canvas }))
                                 .w(px(28.))
                                 .h(px(28.))
                                 .flex()
@@ -179,7 +198,25 @@ impl Render for Bar {
                     .child(title),
             )
             .child(
-                div().flex().items_center().gap(px(18.)).child(clock).child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(18.))
+                    .child(clock)
+                    .child(
+                        div()
+                            .id("lock")
+                            .size(px(32.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(8.))
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(rgb(p.surface)))
+                            .child(icon("lock", p.muted, 19.))
+                            .on_click(|_, _, _| session::lock(true)),
+                    )
+                    .child(
                     div()
                         .id("settings")
                         .size(px(32.))
@@ -255,9 +292,14 @@ impl Render for Dock {
                     .border_1()
                     .border_color(rgb(p.line))
                     .children(pins.into_iter().map(|(ic, label, id)| {
-                        let running = id
-                            .and_then(|id| apps.iter().find(|a| a.id == id))
-                            .is_some_and(|a| clients.iter().any(|c| a.matches_class(&c.class)));
+                        let app = id.and_then(|id| apps.iter().find(|a| a.id == id));
+                        let running =
+                            app.is_some_and(|a| clients.iter().any(|c| a.matches_class(&c.class)));
+                        let attention = app.is_some_and(|a| {
+                            clients
+                                .iter()
+                                .any(|c| c.attention && a.matches_class(&c.class))
+                        });
                         div()
                             .id(ic)
                             .w(px(84.))
@@ -274,10 +316,22 @@ impl Render for Dock {
                             .child(label)
                             .child(
                                 div()
-                                    .w(px(if running { 12. } else { 3. }))
+                                    .w(px(if attention {
+                                        20.
+                                    } else if running {
+                                        12.
+                                    } else {
+                                        3.
+                                    }))
                                     .h(px(2.))
                                     .rounded(px(1.))
-                                    .bg(rgb(if running { p.focus } else { p.canvas })),
+                                    .bg(rgb(if attention {
+                                        p.accent
+                                    } else if running {
+                                        p.focus
+                                    } else {
+                                        p.canvas
+                                    })),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(id) = id {
@@ -592,9 +646,11 @@ fn close_launcher(model: &Entity<Model>, cx: &mut App) {
 }
 fn toggle_launcher(model: Entity<Model>, cx: &mut App) {
     if model.read(cx).launcher.is_some() {
+        log::info!("SHELL launcher open=false");
         close_launcher(&model, cx);
         return;
     }
+    log::info!("SHELL launcher open=true");
     let apps = catalog::discover();
     model.update(cx, |m, _| m.apps = apps.clone());
     let model2 = model.clone();
@@ -639,6 +695,189 @@ fn toggle_launcher(model: Entity<Model>, cx: &mut App) {
         Err(e) => log::error!("Opening launcher: {e}"),
     }
 }
+/// The lock screen: shown while the compositor has the session locked, and
+/// all it shows (ADR 0020). Unlock begins with the confirm chord,
+/// Ctrl+Alt+Enter, which opens its entry. Where an unlock helper checks the
+/// person's password, the entry takes it, and Enter sends it to the helper,
+/// which tells the compositor to unlock: the shell's own word is not enough.
+/// Without one, Enter asks the compositor to unlock. Both stand in for the
+/// broker, as Fulcrum's proposal until a record decides (issues 87 and 100).
+struct LockScreen {
+    model: Entity<Model>,
+    focus: FocusHandle,
+    /// What the person typed, shown only as dots, and dropped once sent.
+    password: String,
+    /// Why the last password did not unlock.
+    error: Option<String>,
+    /// A password is with the helper.
+    busy: bool,
+}
+impl LockScreen {
+    const MAX_PASSWORD: usize = 1024;
+    fn submit(&mut self, cx: &mut Context<Self>) {
+        let m = self.model.read(cx);
+        if !m.unlock_entry || self.busy {
+            return;
+        }
+        if !session::unlocks_with_password() {
+            session::lock(false);
+            return;
+        }
+        if self.password.is_empty() {
+            return;
+        }
+        let tx = m.tx.clone();
+        self.busy = true;
+        self.error = None;
+        session::unlock_with_password(std::mem::take(&mut self.password), tx);
+        cx.notify();
+    }
+    fn typed(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        if !self.model.read(cx).unlock_entry || self.busy || !session::unlocks_with_password() {
+            return;
+        }
+        let k = &event.keystroke;
+        if k.modifiers.control || k.modifiers.alt || k.modifiers.platform || k.modifiers.function {
+            return;
+        }
+        match k.key.as_str() {
+            "backspace" => {
+                self.password.pop();
+            }
+            "escape" => self.password.clear(),
+            _ => match &k.key_char {
+                Some(c)
+                    if !c.chars().any(char::is_control)
+                        && self.password.len() + c.len() <= Self::MAX_PASSWORD =>
+                {
+                    self.password.push_str(c)
+                }
+                _ => return,
+            },
+        }
+        self.error = None;
+        cx.notify();
+    }
+    /// The helper answered: a wrong password is said, and the entry is
+    /// ready for another.
+    fn answered(&mut self, result: Result<(), String>, cx: &mut Context<Self>) {
+        self.busy = false;
+        self.error = result.err();
+        cx.notify();
+    }
+}
+impl Render for LockScreen {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let m = self.model.read(cx);
+        let p = m.palette();
+        let clock = m.clock.clone();
+        let entry = m.unlock_entry;
+        let with_password = session::unlocks_with_password();
+        let prompt = match (entry, with_password) {
+            (false, _) => "Press Ctrl+Alt+Enter to unlock",
+            (true, true) if self.busy => "Checking…",
+            (true, true) => "Type your password, then press Enter",
+            (true, false) => "Press Enter to unlock",
+        };
+        let dots = "•".repeat(self.password.chars().count());
+        div()
+            .size_full()
+            .track_focus(&self.focus)
+            .key_context("Lock")
+            .on_action(cx.listener(|this, _: &Unlock, _, cx| this.submit(cx)))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| this.typed(event, cx)))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(16.))
+            .bg(rgb(0x000000))
+            .text_color(rgb(0xe5e5e5))
+            .font_family("Manrope")
+            .child(
+                div()
+                    .text_size(px(40.))
+                    .font_weight(FontWeight::BOLD)
+                    .child(clock),
+            )
+            .child(div().text_size(px(15.)).text_color(rgb(0x9a9a9a)).child(prompt))
+            .when(entry && with_password, |d| {
+                d.child(
+                    div()
+                        .id("password")
+                        .w(px(280.))
+                        .h(px(40.))
+                        .px(px(14.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(10.))
+                        .bg(rgb(0x1c1c1c))
+                        .border_1()
+                        .border_color(rgb(0x3a3a3a))
+                        .text_size(px(20.))
+                        .child(dots),
+                )
+            })
+            .when_some(self.error.clone(), |d, error| {
+                d.child(div().text_size(px(15.)).text_color(rgb(0xff8a80)).child(error))
+            })
+            .child(
+                div()
+                    .id("unlock")
+                    .when(!entry, |d| d.invisible())
+                    .px(px(20.))
+                    .py(px(10.))
+                    .rounded(px(10.))
+                    .bg(rgb(p.accent))
+                    .text_color(rgb(p.on_accent))
+                    .cursor_pointer()
+                    .child("Unlock")
+                    .on_click(cx.listener(|this, _, _, cx| this.submit(cx))),
+            )
+    }
+}
+/// Shows the lock screen over every display, or takes it down.
+fn set_lock_screen(model: &Entity<Model>, locked: bool, cx: &mut App) {
+    if !locked {
+        if let Some(w) = model.update(cx, |m, _| m.lock.take()) {
+            log::info!("SHELL lock open=false");
+            let _ = w.update(cx, |_, w, _| w.remove_window());
+        }
+        return;
+    }
+    if model.read(cx).lock.is_some() {
+        return;
+    }
+    close_launcher(model, cx);
+    log::info!("SHELL lock open=true");
+    let screen = model.clone();
+    let result = cx.open_window(
+        layer(
+            "lock",
+            Layer::Overlay,
+            Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+            0.,
+            0.,
+            Some(-1.),
+            KeyboardInteractivity::Exclusive,
+        ),
+        move |w, cx| {
+            let focus = cx.focus_handle();
+            w.focus(&focus);
+            cx.new(|_| LockScreen {
+                model: screen,
+                focus,
+                password: String::new(),
+                error: None,
+                busy: false,
+            })
+        },
+    );
+    match result {
+        Ok(w) => model.update(cx, |m, _| m.lock = Some(w)),
+        Err(e) => log::error!("Opening the lock screen: {e}"),
+    }
+}
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     match std::env::args().nth(1).as_deref() {
@@ -660,6 +899,7 @@ fn main() -> anyhow::Result<()> {
     }
     session::connect();
     let (tx, rx) = mpsc::channel();
+    session::deliver_events_to(tx.clone());
     let _lock = session::server(tx.clone())?;
     let watcher = tx.clone();
     std::thread::spawn(move || {
@@ -672,7 +912,11 @@ fn main() -> anyhow::Result<()> {
                     break;
                 }
             }
-            std::thread::sleep(Duration::from_millis(700));
+            // Events, as Super tapped alone, are read sooner than snapshots.
+            for _ in 0..7 {
+                session::pump();
+                std::thread::sleep(Duration::from_millis(100));
+            }
         }
     });
     Application::new().with_assets(Assets).run(move |cx| {
@@ -691,6 +935,7 @@ fn main() -> anyhow::Result<()> {
             KeyBinding::new("shift-tab", Previous, Some("Launcher")),
             KeyBinding::new("enter", Open, Some("Launcher")),
             KeyBinding::new("escape", Close, Some("Launcher")),
+            KeyBinding::new("enter", Unlock, Some("Lock")),
         ]);
         let model = cx.new(|_| Model {
             snapshot: Default::default(),
@@ -700,6 +945,8 @@ fn main() -> anyhow::Result<()> {
                 preferences
             },
             launcher: None,
+            lock: None,
+            unlock_entry: false,
             apps: catalog::discover(),
             tx,
             clock: chrono::Local::now().format("%a %b %-d   %H:%M").to_string(),
@@ -765,8 +1012,32 @@ fn main() -> anyhow::Result<()> {
                                 session::Event::Toggle => toggle_launcher(model.clone(), cx),
                                 session::Event::Quit => cx.quit(),
                                 session::Event::Snapshot(s) => {
-                                    model.update(cx, |m, _| m.snapshot = s);
+                                    // A shell that starts while locked shows
+                                    // the lock screen too.
+                                    let locked = s.locked;
+                                    let entry = s.unlock_entry;
+                                    model.update(cx, |m, _| {
+                                        m.snapshot = s;
+                                        m.unlock_entry = entry;
+                                    });
+                                    if locked != model.read(cx).lock.is_some() {
+                                        set_lock_screen(&model, locked, cx);
+                                    }
                                     refresh = true
+                                }
+                                session::Event::Lock(locked) => {
+                                    model.update(cx, |m, _| m.unlock_entry = false);
+                                    set_lock_screen(&model, locked, cx)
+                                }
+                                session::Event::UnlockEntry => {
+                                    log::info!("SHELL lock entry=open");
+                                    model.update(cx, |m, _| m.unlock_entry = true);
+                                    refresh = true
+                                }
+                                session::Event::Unlock(result) => {
+                                    if let Some(w) = model.read(cx).lock {
+                                        let _ = w.update(cx, |v, _, cx| v.answered(result, cx));
+                                    }
                                 }
                                 session::Event::Launch(result) => {
                                     if let Some(w) = model.read(cx).launcher {

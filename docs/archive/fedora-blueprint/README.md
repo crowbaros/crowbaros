@@ -4,7 +4,7 @@
 
 This was the first plan for CrowbarOS: a curated desktop on Fedora (RPM/DNF)
 with a Hyprland fork, five default apps, and no AI. In November 2026 Jim Martin
-and Jason Alexander replaced it with the [vision](../../VISION.md). Where the two
+and Jason Alexander replaced it with the [vision](../substrate-vision/VISION.md). Where the two
 disagree, the vision is right.
 
 | File | What it is |
@@ -19,7 +19,7 @@ disagree, the vision is right.
 | --- | --- |
 | Name, crow, palette, typography | The [brand kit](../../branding/) and [`DESIGN.md`](../../../DESIGN.md) |
 | Native interface design | [`DESIGN.md`](../../../DESIGN.md), [`PRODUCT.md`](../../../PRODUCT.md), and [`apps/`](../../../apps/README.md) |
-| Stack, security, software model, roadmap | The [vision](../../VISION.md) |
+| Stack, security, software model, roadmap | The [vision](../substrate-vision/VISION.md) |
 
 Two parts of the plan have no current replacement yet: the **governance charter**
 (section 5) and the **desktop UX specification** (section 3). Treat them as

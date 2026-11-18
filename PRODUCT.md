@@ -13,7 +13,7 @@ CrowbarOS is an operating system that each person shapes into their own OS with
 their agent. It ships a small base, not a finished desktop. A person says or
 points at what they want, the agent builds it as a Tool in a private copy, and
 the person previews and confirms it. The first users are curious, technically
-inclined people, one person per machine. The [vision](docs/VISION.md) is the
+inclined people, one person per machine. The [vision](docs/archive/substrate-vision/VISION.md) is the
 plan of record.
 
 The interfaces CrowbarOS owns are the shell and the trusted system surfaces. The

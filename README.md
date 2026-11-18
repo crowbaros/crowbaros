@@ -2,63 +2,64 @@
 
 **Quiet surface. Sharp mind.**
 
-CrowbarOS is an operating system that ships a small, stable base, which each
-person turns into their own OS by stating intents to an agent. Changes to a
-person's tools are checked in a private copy before they go live, and can be
-kept, undone, and shared. Security does not depend on a model being right, and
-every rule is held to a limit on how often it asks the person.
+CrowbarOS is a small operating system on Void Linux with an agent built into it.
+A person installs a bare desktop: our own compositor, a shell, a handful of
+default apps, and the Agent. The Agent is part of the OS, one gesture away from
+anywhere, and out of the way until the person asks.
 
 ## Start here
 
-1. [Vision](docs/VISION.md): the plan of record. The one-page
-   [pitch](docs/pitch.html) is the short version.
-2. [Glossary](GLOSSARY.md): the words this project uses, and the ones it avoids.
-3. [Decision records](docs/adr/) and the [threat model](docs/threat-model.md).
-4. [Design system](DESIGN.md) and [product brief](PRODUCT.md): how CrowbarOS
+1. [Vision](docs/VISION.md): the plan of record. It is a draft for both of us
+   to review.
+2. [Lessons](docs/LESSONS.md): what the earlier plans taught us.
+3. [Glossary](GLOSSARY.md): the words this project uses, and the ones it avoids.
+4. [Decision records](docs/adr/).
+5. [Design system](DESIGN.md) and [product brief](PRODUCT.md): how CrowbarOS
    looks and what its interfaces must do.
 
 ## Status
 
+CrowbarOS started again on November 17, 2026
+([ADR 0030](docs/adr/0030-crowbaros-starts-again-with-an-agent-at-the-persons-side.md)).
+The substrate vision before it is archived, and its code is at the
+[`substrate-final`](https://github.com/crowbaros/crowbaros/tree/substrate-final) tag.
+
 | Area | State |
 | --- | --- |
-| Milestone 1: Crowbar State, apply engine, Base generations, boot-menu rollback | Done. [Record](docs/milestones/milestone-1.md) |
-| Milestone 2: the security rules, built to be attacked | Next. [Scope](docs/milestones/milestone-2.md) |
+| Base | Being rebuilt as plain Void, built without root, booted under UEFI, on the `new-vision` branch |
+| Compositor | Our own ([ADR 0015](docs/adr/0015-our-own-compositor-on-smithay.md)), built in Fulcrum at the commit Base pins ([ADR 0027](docs/adr/0027-the-compositor-is-built-in-its-own-repository.md)), written there from the ground up with Smithay as its reference ([ADR 0028](docs/adr/0028-the-compositor-is-written-from-the-ground-up.md)). The Alpha desktop runs on it |
+| Shell and Studio Settings | An Alpha session on Void with separate runit services, saved appearance, and 37 passing desktop checks. [Record](docs/development/void-desktop-smoke-2026-11-15.md), [apps](apps/) |
 | Brand and design system | Approved. [Brand kit](docs/branding/), [DESIGN.md](DESIGN.md) |
-| GPUI shell and Studio Settings | Integrated Void Alpha session with separate runit services, saved appearance, and 37 passing desktop checks. [Record](docs/development/void-desktop-smoke-2026-11-15.md), [apps](apps/) |
-| Compositor | Our own, on Smithay ([ADR 0015](docs/adr/0015-our-own-compositor-on-smithay.md)). The first of six slices is built: client identity, the protocol table, and drawing only on change ([ADR 0020](docs/adr/0020-the-first-compositor-is-small-on-purpose.md), [record](docs/research/compositor-slice-1-2026-11-15.md)). The Alpha desktop still runs the spike that tested the decision. [Spike record](docs/research/compositor-spike-2026-11-15.md); [NVIDIA runs](docs/research/compositor-nvidia-2026-11-15.md) |
-
-The full roadmap is in the [vision](docs/VISION.md#roadmap).
+| The Agent | Not started. See the [vision](docs/VISION.md#the-agent) |
 
 ## Repository map
 
 | Path | Contents |
 | --- | --- |
 | [`base/`](base/) | The rebuild's starting point: plain Void Linux, built without root, that boots under UEFI in a VM |
-| [`crates/`](crates/) | The Rust workspace: the Crowbar State, the apply engine, and the skeleton crates for Milestone 2 |
 | [`apps/`](apps/) | The GPUI interfaces: desktop shell, Studio Settings, and the GPUI probe |
-| [`compositor/`](compositor/) | The CrowbarOS Wayland compositor, on Smithay |
-| [`lab/`](lab/) | Void Base and desktop labs, the compositor spike that the Alpha desktop still runs, and adversarial scaffolding; Fedora tooling is archived |
-| [`docs/VISION.md`](docs/VISION.md) | The vision, the stack, and the roadmap |
+| [`compositor/`](compositor/) | The Fulcrum commit that Base builds as its Wayland compositor, and where the code lives |
+| [`lab/`](lab/) | The Void lab for the compositor and the Alpha desktop |
+| [`docs/VISION.md`](docs/VISION.md), [`docs/LESSONS.md`](docs/LESSONS.md) | The vision, and what the earlier plans taught us |
 | [`docs/adr/`](docs/adr/) | Decision records |
-| [`docs/architecture/`](docs/architecture/) | Design notes: state and apply engine, capability model, gate and monitor |
-| [`docs/milestones/`](docs/milestones/) | Milestone scopes, write-ups, and evidence |
-| [`docs/research/`](docs/research/), [`docs/reviews/`](docs/reviews/) | Prior-art research and the council review rounds |
+| [`docs/research/`](docs/research/) | Prior-art research and compositor records |
 | [`docs/branding/`](docs/branding/) | The approved brand kit and the rounds that led to it |
-| [`docs/development/`](docs/development/) | Current Void build/run guidance and unchanged historical validation records |
-| [`docs/archive/`](docs/archive/) | Superseded material. Not current. Do not build on it |
+| [`docs/development/`](docs/development/) | Current Void build and run guidance, and dated validation records |
+| [`docs/archive/`](docs/archive/) | The Fedora blueprint and the substrate vision. Not current. Do not build on them |
 | [`DESIGN.md`](DESIGN.md), [`PRODUCT.md`](PRODUCT.md), [`.impeccable/`](.impeccable/) | The design system, the product brief, and the design review evidence |
 
 ## Build and test
 
 ```sh
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-base/void_base.py check            # build the Void base, boot it, and check it
-lab/void/void_lab.py milestone     # the full Milestone 1 loop in a Void Linux VM
+python3 -m unittest discover -s lab/void -p "test_*.py"
+base/void_base.py check                     # build the Void base, boot it, and check it
+lab/void/compositor_guest.py check          # the compositor in a Void VM
+lab/void/compositor_guest.py desktop-check  # the Alpha desktop in a fresh Void VM
 ```
 
-The GPUI apps are separate Cargo projects with their own pinned dependencies.
-See [`apps/`](apps/README.md) for how to build and run them.
+The GPUI apps are separate Cargo projects with their own pinned
+dependencies. See [`apps/`](apps/README.md) for how to build and run
+them.
 
 ## Working in this repository
 
@@ -67,8 +68,8 @@ See [`apps/`](apps/README.md) for how to build and run them.
 - Use the terms in the [glossary](GLOSSARY.md). When a term is missing or wrong,
   change the glossary first.
 - A decision that is hard to reverse gets a [decision record](docs/adr/).
-- [`docs/archive/`](docs/archive/) describes the earlier Fedora plan. Where it
-  disagrees with the vision, the vision is right.
+- [`docs/archive/`](docs/archive/) is history. Where it disagrees with the
+  vision, the vision is right.
 - CrowbarOS is [MIT](LICENSE). Third-party parts keep their own terms: the GPUI
   layer-shell backport and the adapted GPUI text input in `apps/shell` are
   Apache-2.0, and the bundled fonts are OFL-1.1.

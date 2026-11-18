@@ -28,6 +28,9 @@ pub struct Client {
     pub class: String,
     pub title: String,
     pub workspace: Workspace,
+    /// It opened without the keyboard and has not had it since: the bar
+    /// shows it wants attention. Only the CrowbarOS compositor says so.
+    pub attention: bool,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Snapshot {
@@ -35,13 +38,24 @@ pub struct Snapshot {
     pub clients: Vec<Client>,
     pub active: Client,
     pub connected: bool,
+    /// The compositor locked the session: the lock screen shows.
+    pub locked: bool,
+    /// The confirm chord opened the lock screen's unlock entry.
+    pub unlock_entry: bool,
 }
 #[derive(Clone, Debug)]
 pub enum Event {
     Toggle,
+    /// The compositor locked the session, or unlocked it.
+    Lock(bool),
+    /// The confirm chord opened the lock screen's unlock entry.
+    UnlockEntry,
     Quit,
     Snapshot(Snapshot),
     Launch(Result<(), String>),
+    /// The unlock helper's answer to the person's password: `Ok` once the
+    /// compositor unlocked, or why not.
+    Unlock(Result<(), String>),
 }
 /// What the shell asks of the compositor it runs under: the windows and
 /// workspaces, and the two focus requests.
@@ -49,6 +63,92 @@ pub trait Adapter: Send + Sync {
     fn snapshot(&self) -> Result<Snapshot>;
     fn focus_workspace(&self, id: i32) -> Result<()>;
     fn focus_window(&self, address: &str) -> Result<()>;
+    /// Says the person is launching an app, whose first window then takes
+    /// the keyboard. A compositor that does not ask for it is not told.
+    fn launching(&self) -> Result<()> {
+        Ok(())
+    }
+    /// Reads the events the compositor sent while no request was waiting.
+    fn pump(&self) {}
+    /// Asks the compositor to lock the session, or to unlock it.
+    fn lock(&self, _locked: bool) -> Result<()> {
+        bail!("This compositor does not lock")
+    }
+}
+
+/// Where the compositor's events go: the shell's own event channel.
+static EVENTS: OnceLock<Sender<Event>> = OnceLock::new();
+
+/// Sends the compositor's events to the shell's event channel from now on.
+pub fn deliver_events_to(tx: Sender<Event>) {
+    let _ = EVENTS.set(tx);
+}
+
+/// One event the compositor sent: `launcher` opens or closes the launcher,
+/// as Super tapped alone asks (Fulcrum's proposal, ADR 0020's keys).
+fn compositor_event(event: &serde_json::Value) {
+    log::info!("SHELL event=compositor-event name={event}");
+    let Some(tx) = EVENTS.get() else {
+        return;
+    };
+    let _ = match event.as_str() {
+        Some("launcher") => tx.send(Event::Toggle),
+        Some("locked") => tx.send(Event::Lock(true)),
+        Some("unlocked") => tx.send(Event::Lock(false)),
+        Some("unlock_entry") => tx.send(Event::UnlockEntry),
+        _ => Ok(()),
+    };
+}
+
+/// The lines the compositor sends, read whole: what has arrived of a line
+/// waits here for the rest, whichever of a request or the pump reads next.
+struct Lines {
+    stream: UnixStream,
+    pending: Vec<u8>,
+}
+
+impl Lines {
+    /// The longest line read.
+    const MAX: usize = 4 * 1024 * 1024;
+
+    fn take(&mut self) -> Option<String> {
+        let end = self.pending.iter().position(|byte| *byte == b'\n')?;
+        let line: Vec<u8> = self.pending.drain(..=end).collect();
+        Some(String::from_utf8_lossy(&line).into_owned())
+    }
+
+    /// The next line, as long as the stream's read timeout waits for it.
+    fn next(&mut self) -> Result<String> {
+        loop {
+            if let Some(line) = self.take() {
+                return Ok(line);
+            }
+            if self.pending.len() > Self::MAX {
+                bail!("A line from the compositor is too long")
+            }
+            let mut chunk = [0u8; 4096];
+            let read = self.stream.read(&mut chunk)?;
+            if read == 0 {
+                bail!("The compositor closed the control channel")
+            }
+            self.pending.extend_from_slice(&chunk[..read]);
+        }
+    }
+
+    /// The whole lines that wait now, without waiting for more.
+    fn waiting(&mut self) -> Vec<String> {
+        if self.stream.set_nonblocking(true).is_ok() {
+            let mut chunk = [0u8; 4096];
+            while self.pending.len() <= Self::MAX {
+                match self.stream.read(&mut chunk) {
+                    Ok(read) if read > 0 => self.pending.extend_from_slice(&chunk[..read]),
+                    _ => break,
+                }
+            }
+            let _ = self.stream.set_nonblocking(false);
+        }
+        std::iter::from_fn(|| self.take()).collect()
+    }
 }
 
 /// The Hyprland socket. The Fedora lab runs the shell under Hyprland, which
@@ -93,6 +193,8 @@ impl Adapter for Hyprland {
             clients: serde_json::from_str(&self.request("j/clients")?)?,
             active: serde_json::from_str(&self.request("j/activewindow")?)?,
             connected: true,
+            locked: false,
+            unlock_entry: false,
         })
     }
 
@@ -113,14 +215,14 @@ impl Adapter for Hyprland {
 
 /// The shell's end of the compositor's control channel.
 ///
-/// The CrowbarOS compositor starts the shell and hands it a connected socket
-/// in `CROWBAR_SHELL_CONTROL_FD`. The wire format is one JSON object per
-/// line: a request gets one reply, and the compositor may send events at any
-/// time. See `lab/compositor-spike/src/control.rs`.
+/// The shell's wrapper connects to the compositor's control channel and hands
+/// the shell the socket in `CROWBAR_SHELL_CONTROL_FD`. The wire format is one
+/// JSON object per line: a request gets one reply, and the compositor may
+/// send events at any time. See Fulcrum's `src/control.rs`.
 pub struct Compositor {
     /// The read and write halves of the socket. `None` once an exchange has
     /// failed.
-    lines: Mutex<Option<(BufReader<UnixStream>, UnixStream)>>,
+    lines: Mutex<Option<(Lines, UnixStream)>>,
 }
 
 impl Compositor {
@@ -128,7 +230,13 @@ impl Compositor {
         stream.set_read_timeout(Some(Duration::from_millis(500)))?;
         stream.set_write_timeout(Some(Duration::from_millis(500)))?;
         Ok(Self {
-            lines: Mutex::new(Some((BufReader::new(stream.try_clone()?), stream))),
+            lines: Mutex::new(Some((
+                Lines {
+                    stream: stream.try_clone()?,
+                    pending: Vec::new(),
+                },
+                stream,
+            ))),
         })
     }
 
@@ -171,19 +279,16 @@ impl Compositor {
     }
 
     fn exchange(
-        reader: &mut BufReader<UnixStream>,
+        reader: &mut Lines,
         writer: &mut UnixStream,
         request: serde_json::Value,
     ) -> Result<serde_json::Value> {
         writer.write_all(format!("{request}\n").as_bytes())?;
         loop {
-            let mut line = String::new();
-            if reader.take(4 * 1024 * 1024).read_line(&mut line)? == 0 {
-                bail!("The compositor closed the control channel")
-            }
+            let line = reader.next()?;
             let message: serde_json::Value = serde_json::from_str(&line)?;
             if let Some(event) = message.get("event") {
-                log::info!("SHELL event=compositor-event name={event}");
+                compositor_event(event);
                 continue;
             }
             if message["reply"].is_string() {
@@ -202,11 +307,17 @@ impl Adapter for Compositor {
             app_id: String,
             title: String,
             workspace: i32,
+            #[serde(default)]
+            attention: bool,
         }
         #[derive(Deserialize)]
         struct Reply {
             workspace: i32,
             active: Option<String>,
+            #[serde(default)]
+            locked: bool,
+            #[serde(default)]
+            unlock_entry: bool,
             windows: Vec<Window>,
         }
         let reply: Reply =
@@ -219,6 +330,7 @@ impl Adapter for Compositor {
                 class: w.app_id,
                 title: w.title,
                 workspace: Workspace { id: w.workspace },
+                attention: w.attention,
             })
             .collect();
         let active = clients
@@ -231,6 +343,8 @@ impl Adapter for Compositor {
             clients,
             active,
             connected: true,
+            locked: reply.locked,
+            unlock_entry: reply.unlock_entry,
         })
     }
 
@@ -242,6 +356,34 @@ impl Adapter for Compositor {
     fn focus_window(&self, address: &str) -> Result<()> {
         self.request(serde_json::json!({"op": "focus_window", "id": address}))
             .map(drop)
+    }
+
+    fn launching(&self) -> Result<()> {
+        self.request(serde_json::json!({"op": "launching"})).map(drop)
+    }
+
+    fn lock(&self, locked: bool) -> Result<()> {
+        let op = if locked { "lock" } else { "unlock" };
+        self.request(serde_json::json!({ "op": op })).map(drop)
+    }
+
+    fn pump(&self) {
+        let Ok(mut lines) = self.lines.lock() else {
+            return;
+        };
+        let Some((reader, _)) = lines.as_mut() else {
+            return;
+        };
+        for line in reader.waiting() {
+            match serde_json::from_str::<serde_json::Value>(&line) {
+                Ok(message) => {
+                    if let Some(event) = message.get("event") {
+                        compositor_event(event);
+                    }
+                }
+                Err(e) => log::warn!("Compositor: {e}"),
+            }
+        }
     }
 }
 
@@ -286,6 +428,64 @@ pub fn connect() {
 
 pub fn snapshot() -> Result<Snapshot> {
     connection()?.snapshot()
+}
+/// Asks the compositor to lock the session, or to unlock it, as the person
+/// asks the shell. Unlocking is the shell's word, in the place of the broker
+/// ADR 0020 has end it: Fulcrum's proposal until a record decides.
+pub fn lock(locked: bool) {
+    std::thread::spawn(move || {
+        if let Err(e) = connection().and_then(|c| c.lock(locked)) {
+            log::warn!("Lock: {e}");
+        }
+    });
+}
+/// Whether an unlock helper checks the person's password. Where one does,
+/// the compositor takes its word to unlock, and not the shell's.
+pub fn unlocks_with_password() -> bool {
+    std::env::var_os("CROWBAR_UNLOCK_SOCKET").is_some()
+}
+/// Sends the person's password to the unlock helper, which checks it and
+/// tells the compositor to unlock; the answer comes back as
+/// [`Event::Unlock`]. The password is not kept.
+pub fn unlock_with_password(password: String, tx: Sender<Event>) {
+    std::thread::spawn(move || {
+        let result = std::env::var_os("CROWBAR_UNLOCK_SOCKET")
+            .context("No unlock helper")
+            .and_then(|path| {
+                UnixStream::connect(path).context("The unlock helper is not running")
+            })
+            .and_then(|stream| ask_unlock_helper(stream, password));
+        log::info!("SHELL unlock ok={}", result.is_ok());
+        let _ = tx.send(Event::Unlock(result.map_err(|e| e.to_string())));
+    });
+}
+/// One request to the unlock helper: the password, and its answer.
+fn ask_unlock_helper(mut stream: UnixStream, password: String) -> Result<()> {
+    // A wrong password costs a pause before the helper answers.
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    let mut body = serde_json::to_vec(&serde_json::json!({ "password": password }))?;
+    drop(password);
+    body.push(b'\n');
+    let sent = stream.write_all(&body);
+    body.fill(0);
+    sent?;
+    let mut response = String::new();
+    BufReader::new(stream).take(4097).read_line(&mut response)?;
+    if response.len() > 4096 || !response.ends_with('\n') {
+        bail!("The unlock helper did not answer")
+    }
+    let reply: serde_json::Value = serde_json::from_str(&response)?;
+    if reply["ok"] != true {
+        bail!("{}", reply["error"].as_str().unwrap_or("Could not unlock"));
+    }
+    Ok(())
+}
+/// Reads the compositor's events that wait, as Super tapped alone.
+pub fn pump() {
+    if let Ok(connection) = connection() {
+        connection.pump();
+    }
 }
 pub fn workspace(id: i32) {
     if id > 0 {
@@ -354,6 +554,10 @@ pub fn lab_request(request: serde_json::Value) -> Result<serde_json::Value> {
 
 pub fn launch(path: PathBuf, tx: Sender<Event>) {
     std::thread::spawn(move || {
+        // The app's first window takes the keyboard, as the person started it.
+        if let Err(e) = connection().and_then(|c| c.launching()) {
+            log::warn!("Launching: {e}");
+        }
         let result = (|| -> Result<()> {
             if std::env::var_os("CROWBAR_LAUNCH_SOCKET").is_some() {
                 lab_request(serde_json::json!({"op": "launch", "desktop": path}))?;
@@ -487,6 +691,29 @@ mod tests {
     use super::*;
     use std::thread::JoinHandle;
 
+    /// The lock screen sends the unlock helper the password alone, and says
+    /// why it did not unlock.
+    #[test]
+    fn the_unlock_helper_hears_the_password_and_its_answer_is_said() {
+        for (reply, expected) in [
+            ("{\"ok\":true}\n", Ok(())),
+            ("{\"ok\":false,\"error\":\"Wrong password\"}\n", Err("Wrong password")),
+            ("{\"ok\":true}", Err("The unlock helper did not answer")),
+        ] {
+            let (ours, theirs) = UnixStream::pair().unwrap();
+            let helper = std::thread::spawn(move || {
+                let mut line = String::new();
+                BufReader::new(theirs.try_clone().unwrap()).read_line(&mut line).unwrap();
+                (&theirs).write_all(reply.as_bytes()).unwrap();
+                line
+            });
+            let result = ask_unlock_helper(ours, "crowbar".into()).map_err(|e| e.to_string());
+            assert_eq!(result, expected.map_err(str::to_string));
+            let sent: serde_json::Value = serde_json::from_str(&helper.join().unwrap()).unwrap();
+            assert_eq!(sent, serde_json::json!({ "password": "crowbar" }));
+        }
+    }
+
     /// Plays the compositor: for each expected request, checks it and sends
     /// the scripted lines back.
     fn scripted(script: Vec<(&'static str, &'static str)>) -> (Compositor, JoinHandle<()>) {
@@ -504,6 +731,67 @@ mod tests {
             }
         });
         (Compositor::new(ours).unwrap(), peer)
+    }
+
+    #[test]
+    fn super_tapped_alone_toggles_the_launcher_and_a_launch_is_announced() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        deliver_events_to(tx);
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
+        let compositor = Compositor::new(ours).unwrap();
+
+        // An event that waits with no request is read by the pump.
+        theirs.write_all(b"{\"event\":\"launcher\"}\n").unwrap();
+        compositor.pump();
+        assert!(matches!(rx.try_recv(), Ok(Event::Toggle)));
+
+        // Half a line waits for the rest, and nothing is lost.
+        theirs.write_all(b"{\"event\":\"laun").unwrap();
+        compositor.pump();
+        assert!(rx.try_recv().is_err());
+        theirs.write_all(b"cher\"}\n").unwrap();
+        compositor.pump();
+        assert!(matches!(rx.try_recv(), Ok(Event::Toggle)));
+
+        // The compositor locking and unlocking the session reaches the shell.
+        theirs
+            .write_all(b"{\"event\":\"locked\"}\n{\"event\":\"unlocked\"}\n")
+            .unwrap();
+        compositor.pump();
+        assert!(matches!(rx.try_recv(), Ok(Event::Lock(true))));
+        assert!(matches!(rx.try_recv(), Ok(Event::Lock(false))));
+        theirs.write_all(b"{\"event\":\"unlock_entry\"}\n").unwrap();
+        compositor.pump();
+        assert!(matches!(rx.try_recv(), Ok(Event::UnlockEntry)));
+
+        // Half an event that a request's reply follows is read with it.
+        theirs.write_all(b"{\"event\":\"laun").unwrap();
+        compositor.pump();
+        let peer = std::thread::spawn(move || {
+            let mut reader = BufReader::new(theirs.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert_eq!(line, "{\"op\":\"launching\"}\n");
+            theirs.write_all(b"cher\"}\n{\"reply\":\"ok\"}\n").unwrap();
+        });
+        compositor.launching().unwrap();
+        peer.join().unwrap();
+        assert!(matches!(rx.try_recv(), Ok(Event::Toggle)));
+    }
+
+    #[test]
+    fn a_window_that_wants_attention_is_marked_in_the_snapshot() {
+        let (compositor, peer) = scripted(vec![(
+            r#"{"op":"snapshot"}"#,
+            concat!(
+                r#"{"reply":"snapshot","workspace":1,"active":null,"windows":["#,
+                r#"{"id":"0x1","app_id":"org.example.Notes","title":"Notes","workspace":3,"attention":true}]}"#,
+                "\n"
+            ),
+        )]);
+        let snapshot = compositor.snapshot().unwrap();
+        peer.join().unwrap();
+        assert!(snapshot.clients[0].attention);
     }
 
     #[test]
@@ -525,6 +813,7 @@ mod tests {
             class: "com.crowbaros.StudioSettings".into(),
             title: "Studio \"Settings\"".into(),
             workspace: Workspace { id: 2 },
+            attention: false,
         };
         assert_eq!(
             snapshot,
@@ -536,11 +825,14 @@ mod tests {
                         class: "org.example.Terminal".into(),
                         title: "Terminal".into(),
                         workspace: Workspace { id: 1 },
+                        attention: false,
                     },
                     studio.clone(),
                 ],
                 active: studio,
                 connected: true,
+                locked: false,
+                unlock_entry: false,
             }
         );
         peer.join().unwrap();
@@ -680,6 +972,7 @@ mod tests {
             class: "org.example.Terminal".into(),
             title: "Terminal".into(),
             workspace: Workspace { id: 1 },
+            attention: false,
         };
         assert_eq!(
             snapshot,
@@ -688,6 +981,8 @@ mod tests {
                 clients: vec![terminal.clone()],
                 active: terminal,
                 connected: true,
+                locked: false,
+                unlock_entry: false,
             }
         );
         peer.join().unwrap();
@@ -722,12 +1017,14 @@ mod tests {
                     class: "org.example.Terminal".into(),
                     title: "Terminal".into(),
                     workspace: Workspace { id: 1 },
+                    attention: false,
                 },
                 Client {
                     address: "0x2".into(),
                     class: "org.example.Notes".into(),
                     title: "Notes".into(),
                     workspace: Workspace { id: 0 },
+                    attention: false,
                 },
             ]
         );

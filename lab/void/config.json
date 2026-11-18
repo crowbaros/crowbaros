@@ -2,24 +2,6 @@
   "void_repository": "https://repo-default.voidlinux.org/current",
   "xbps_static_url": "https://repo-default.voidlinux.org/static/xbps-static-static-0.60.4_1.x86_64-musl.tar.xz",
   "xbps_static_sha256": "603b3c55e9cabd5af79b461b929b14e1556a443c97b5714d188681c2172d9e28",
-  "base_packages": [
-    "base-minimal",
-    "linux",
-    "btrfs-progs",
-    "grub-x86_64-efi",
-    "openssh",
-    "iproute2",
-    "dhcpcd",
-    "mtools"
-  ],
-  "firmware_code": "/usr/share/edk2/x64/OVMF_CODE.4m.fd",
-  "firmware_vars": "/usr/share/edk2/x64/OVMF_VARS.4m.fd",
-  "root_label": "crowbar-root",
-  "esp_mib": 128,
-  "root_gib": 8,
-  "memory_mib": 2048,
-  "vcpus": 2,
-  "ssh_port": 22230,
   "graphical": {
     "comment": "The graphical guest that runs the CrowbarOS compositor. See compositor_guest.py.",
     "guest_packages": [

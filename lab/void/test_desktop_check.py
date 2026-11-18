@@ -13,6 +13,47 @@ spec = importlib.util.spec_from_file_location('alpha_launcher', Path(__file__).p
 launcher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher)
 
+spec = importlib.util.spec_from_file_location('alpha_unlock', Path(__file__).parent / 'guest/alpha-unlock.py')
+unlocker = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(unlocker)
+
+
+class UnlockHelper(unittest.TestCase):
+    """The unlock helper tells the compositor to unlock on the person's
+    password alone."""
+
+    def setUp(self):
+        self.told = []
+        self.stored = unlocker.libcrypt.crypt(b'crowbar', unlocker.libcrypt.crypt_gensalt(b'$6$', 0, None, 0))
+        patches = [
+            patch.object(unlocker, 'shadow_hash', lambda account: self.stored),
+            patch.object(unlocker, 'tell_compositor', lambda op: self.told.append(op)),
+            patch.object(unlocker, 'WRONG_PAUSE', 0),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_the_password_unlocks_and_nothing_else_does(self):
+        self.assertEqual(unlocker.unlock({'password': 'wrong'}), {'ok': False, 'error': 'Wrong password'})
+        self.assertEqual(unlocker.unlock({'password': ''}), {'ok': False, 'error': 'Wrong password'})
+        self.assertEqual(self.told, [])
+        self.assertEqual(unlocker.unlock({'password': 'crowbar'}), {'ok': True})
+        self.assertEqual(self.told, ['unlock'])
+
+    def test_a_locked_or_empty_account_matches_nothing(self):
+        for stored in (b'!' + self.stored, b'*', b'', None):
+            self.stored = stored
+            self.assertFalse(unlocker.password_matches('crowbar'), stored)
+            self.assertFalse(unlocker.password_matches(''), stored)
+
+    def test_a_request_is_the_password_and_nothing_else(self):
+        for request in ({}, {'password': 1}, {'password': 'crowbar', 'account': 'root'}):
+            with self.assertRaises(ValueError):
+                unlocker.unlock(request)
+        self.assertEqual(unlocker.unlock({'password': 'x' * (unlocker.MAX_PASSWORD + 1)})['ok'], False)
+        self.assertEqual(self.told, [])
+
 
 class PreferencesSafety(unittest.TestCase):
     def setUp(self):

@@ -1,7 +1,0 @@
-[package]
-name = "crowbar-plan"
-description = "Plans over handles and their deterministic interpreter"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-publish.workspace = true

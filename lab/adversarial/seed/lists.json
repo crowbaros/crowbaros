@@ -1,5 +1,0 @@
-{
-  "note": "The two lists for task browser contexts (ADR 0013), as the runs use them. A logged-in task reaches its one site and the shared hosts, and a connection to any other host is dropped. A task gets no browser context for an adapter-only site. Each host is named exactly.",
-  "shared_hosts": ["assets.fixture.test"],
-  "adapter_only": ["mail.fixture.test", "payments.fixture.test"]
-}

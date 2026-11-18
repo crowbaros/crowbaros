@@ -17,7 +17,7 @@ separate Cargo project. The shell's verified GPUI layer-shell backport and
 startup hooks are in the [workflow archive](../docs/archive/fedora-workflow/README.md).
 Portable desktop entries and icons remain beside the source.
 The `.desktop` launcher is Alpha scaffolding. Production installed software
-comes from the pinned catalog in [ADR 0017](../docs/adr/0017-a-pinned-catalog-and-workbenches.md)
+comes from the pinned catalog in [ADR 0017](../docs/archive/substrate-vision/adr/0017-a-pinned-catalog-and-workbenches.md)
 and starts through the Warden; Tools run through the broker.
 
 The [Void desktop smoke command](../lab/void/README.md#full-desktop-smoke-check)
@@ -34,4 +34,4 @@ and are not installed. Production compartment isolation remains separate work.
 
 Trusted asks, declarative Tool UI, powerbox, preview/promote, point-and-say,
 task visibility, emergency stop, and recovery are still roadmap work. See the
-[vision](../docs/VISION.md). Retiring packaging does not implement those features.
+[vision](../docs/archive/substrate-vision/VISION.md). Retiring packaging does not implement those features.

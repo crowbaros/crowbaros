@@ -112,6 +112,30 @@ class Check:
         for key in reversed(keys):
             self.qmp.key(key, False)
 
+    def type(self, text):
+        for letter in text:
+            self.key(letter)
+
+    def shell_log(self):
+        return guest.ssh('cat /var/log/crowbar-shell.log', check=False).stdout
+
+    def shell_unlock(self):
+        """The compositor's reply when the shell asks it to unlock."""
+        code = ("import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(3); "
+                "s.connect('/run/crowbar-trusted/compositor/control'); "
+                "s.sendall(b'{\"op\":\"unlock\"}\\n'); print(s.makefile('rb').readline().decode())")
+        return self.python(code, 'crowbar-shell')
+
+    def unlock(self, password='crowbar'):
+        """The confirm chord, then the person's password, as the lock screen
+        sends it to the unlock helper."""
+        opened = self.shell_log().count('SHELL lock entry=open')
+        self.key('ctrl', 'alt', 'ret')
+        self.wait('the confirm chord opens the unlock entry',
+                  lambda: self.shell_log().count('SHELL lock entry=open') > opened)
+        self.type(password)
+        self.key('ret')
+
     def capture(self, name):
         self.qmp.screendump(guest.WORK / f'{name}.png', 0)
 
@@ -128,6 +152,7 @@ class Check:
             'compositor.log': 'cat /var/log/crowbar-compositor.log',
             'shell.log': 'cat /var/log/crowbar-shell.log',
             'launcher.log': 'cat /var/log/crowbar-launcher.log',
+            'unlock.log': 'cat /var/log/crowbar-unlock.log',
             'apps.log': 'cat /var/log/crowbar-apps.log',
             'kernel.log': 'dmesg | tail -200',
         }
@@ -149,18 +174,64 @@ class Check:
         self.ready()
         self.check('Void Linux and runit PID 1',
                    self.run('. /etc/os-release; printf "%s\\n" "$ID"; cat /proc/1/comm').splitlines() == ['void', 'runit'])
-        self.check('seatd and three Alpha services supervised',
-                   all(line.startswith('run: ') for line in self.run('sv status seatd crowbar-compositor crowbar-shell crowbar-launcher').splitlines()))
+        self.check('seatd and four Alpha services supervised',
+                   all(line.startswith('run: ') for line in self.run('sv status seatd crowbar-compositor crowbar-shell crowbar-launcher crowbar-unlock').splitlines()))
         digests = self.run('sha256sum ' + ' '.join('/usr/local/bin/' + n for n in built))
         self.check('guest binaries match this build', all(f'{h}  /usr/local/bin/{n}' in digests for n, h in built.items()))
         for name in built:
             linked = self.run('ldd /usr/local/bin/' + name)
             self.check(name + ' linked libraries resolve', '=> /' in linked and 'not found' not in linked)
+        shell_log = self.shell_log
+        # The session starts locked, and only the unlock helper's word, on the
+        # person's password after the confirm chord, unlocks it.
+        self.wait('the session starts locked', lambda: self.snapshot().get('locked') and 'SHELL lock open=true' in shell_log())
+        self.capture('00-locked-at-boot')
+        self.check('the session starts locked, behind the lock screen',
+                   self.snapshot()['locked'] and 'SHELL lock open=true' in shell_log())
+        answered = shell_log().count('SHELL unlock ok=false')
+        self.unlock('wrong')
+        self.wait('a wrong password is answered', lambda: shell_log().count('SHELL unlock ok=false') > answered)
+        self.capture('00-wrong-password')
+        self.check('a wrong password leaves the session locked', self.snapshot()['locked'])
+        refused = self.shell_unlock()
+        self.check("the shell's own word does not unlock", '"reply":"error"' in refused and self.snapshot()['locked'], refused.strip())
+        self.type('crowbar')
+        self.key('ret')
+        self.wait('the password unlocks', lambda: not self.snapshot().get('locked') and 'SHELL lock open=false' in shell_log())
+        self.check("the person's password unlocks the session", 'SHELL unlock ok=true' in shell_log())
         self.capture('01-boot')
         self.check('fresh guest has no saved preferences', self.preferences() is None)
         self.click(640, 908)  # Terminal dock entry, through the real shell launch path.
         terminal = self.wait('terminal launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
         self.check('Terminal launch through the shell', bool(terminal))
+        self.wait('launched window focus', lambda: self.snapshot()['active']['address'] == terminal['address'])
+        self.check('a window launched from the shell takes the keyboard',
+                   self.snapshot()['active']['address'] == terminal['address'])
+        self.key('meta_l')
+        self.wait('Super opens the launcher', lambda: 'SHELL launcher open=true' in shell_log())
+        self.capture('01-launcher')
+        self.key('meta_l')
+        self.wait('Super closes the launcher', lambda: 'SHELL launcher open=false' in shell_log())
+        self.check('Super tapped alone opens and closes the launcher',
+                   'SHELL launcher open=true' in shell_log() and 'SHELL launcher open=false' in shell_log())
+        self.key('meta_l', 'l')
+        self.wait('Super+L locks', lambda: self.snapshot().get('locked') and 'SHELL lock open=true' in shell_log())
+        self.capture('01-locked')
+        self.check('Super+L locks the session and shows the lock screen',
+                   self.snapshot()['locked'] and 'SHELL lock open=true' in shell_log())
+        self.type('crowbar')
+        self.key('ret')
+        time.sleep(1)
+        self.check('the lock screen takes no password before the confirm chord', self.snapshot()['locked'])
+        self.unlock()
+        self.wait('the password unlocks', lambda: not self.snapshot().get('locked'))
+        self.check('the lock screen unlocks, and the window has the keyboard back',
+                   self.snapshot()['active']['address'] == terminal['address'])
+        self.run('/etc/zzz.d/suspend/50-crowbar-lock')
+        self.wait('the suspend hook locks', lambda: self.snapshot().get('locked'))
+        self.check('the suspend hook locks the session before the machine sleeps', int(self.run("grep -c 'session locked by=authority' /var/log/crowbar-compositor.log || true").strip() or 0) > 0)
+        self.unlock()
+        self.wait('the password unlocks after the suspend hook', lambda: not self.snapshot().get('locked'))
         self.click(728, 908)
         settings = self.wait('Settings launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'com.crowbaros.StudioSettings'), None))
         self.check('Settings launch through the shell', bool(settings))
@@ -215,6 +286,9 @@ class Check:
         self.run("nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &")
         self.wait('new boot ID after clean reboot', lambda: (r := guest.ssh('cat /proc/sys/kernel/random/boot_id', check=False, timeout=6)).returncode == 0 and r.stdout.strip() != boot_id, timeout=180)
         self.ready()
+        self.wait('the session starts locked after reboot', lambda: self.snapshot().get('locked'))
+        self.unlock()
+        self.wait('the password unlocks after reboot', lambda: not self.snapshot().get('locked'))
         self.check('saved preferences survive clean reboot', self.preferences() == saved)
         log_offset = len(self.app_log())
         self.click(728, 908)
@@ -259,7 +333,8 @@ print(json.dumps({'processes': found, 'seat_members': seat.gr_mem, 'seat_gid': s
     def socket_refusals(self):
         # Give the app the exact paths and temporarily allow directory traversal:
         # refusal must still come from peer credentials, not just Unix modes.
-        paths = ['/run/crowbar-trusted/compositor/control', '/run/crowbar-trusted/compositor/wayland', '/run/crowbar-launch/socket', '/run/user/1001/crowbaros-shell/control.sock']
+        paths = ['/run/crowbar-trusted/compositor/control', '/run/crowbar-trusted/compositor/wayland', '/run/crowbar-launch/socket', '/run/user/1001/crowbaros-shell/control.sock',
+                 '/run/crowbar-unlock/socket', '/run/crowbar-trusted/unlock/compositor']
         code = """
 import json, socket
 results = []
@@ -274,7 +349,8 @@ for path in PATHS:
  finally: s.close()
 print(json.dumps(results))
 """.replace('PATHS', repr(paths))
-        directories = ['/run/crowbar-trusted/compositor', '/run/crowbar-launch', '/run/user/1001', '/run/user/1001/crowbaros-shell']
+        directories = ['/run/crowbar-trusted/compositor', '/run/crowbar-launch', '/run/user/1001', '/run/user/1001/crowbaros-shell',
+                       '/run/crowbar-unlock', '/run/crowbar-trusted/unlock']
         modes = json.loads(self.python('import os,json; print(json.dumps({p:os.stat(p).st_mode & 0o7777 for p in ' + repr(paths + directories) + '}))'))
         try:
             self.run('chmod o+x ' + ' '.join(directories) + '; chmod o+rw ' + ' '.join(paths))

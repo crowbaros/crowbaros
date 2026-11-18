@@ -2,7 +2,9 @@
 
 The Wayland compositor is a CrowbarOS program, written in Rust on the [Smithay](https://github.com/Smithay/smithay) library. It is part of Base and part of what we trust. We do not ship Hyprland, a fork of it, or another existing compositor.
 
-The compositor is where three rules of [ADR 0014](0014-a-yes-comes-from-the-person.md) are enforced, so it cannot be a borrowed part that we configure:
+[ADR 0028](0028-the-compositor-is-written-from-the-ground-up.md) changes what it is built on: it is written from the ground up, with Smithay as its reference and not a dependency.
+
+The compositor is where three rules of [ADR 0014](../archive/substrate-vision/adr/0014-a-yes-comes-from-the-person.md) are enforced, so it cannot be a borrowed part that we configure:
 
 1. **Only the shell delivers input.** The compositor offers no virtual keyboard, virtual pointer, input-method, or input-emulation interface to a Tool or an app. With Smithay a protocol exists only if our compositor creates it, and each one can be limited to named clients.
 2. **The confirm gesture never reaches a Tool.** The compositor takes the key press itself and forwards it to no client.
@@ -34,7 +36,7 @@ The evidence is in the [compositor research](../research/compositor-smithay.md).
 - The look in [`DESIGN.md`](../../DESIGN.md) carries over: the apps draw their own content, and the bar, dock, launcher, and wallpaper stay layer surfaces. Effects the compositor would draw, such as blur or window animation, are ours to write if the design later asks for them.
 - X11 apps run through a separate bridge process per app, or not at all. No X server is shared.
 - NVIDIA is a cost, not a barrier. The proprietary driver needs a glibc Base and Void's nonfree repository. Known problems on Smithay compositors with NVIDIA are an open flicker bug and a freeze seen with the GPUI version we pin; the second may force a change of GPUI version.
-- The compositor lives in [`compositor/`](../../compositor/README.md), as its own Cargo project outside the root workspace.
+- The compositor lives in [`compositor/`](../../compositor/README.md), as its own Cargo project outside the root workspace. [ADR 0027](0027-the-compositor-is-built-in-its-own-repository.md) moves it to a repository of its own, Fulcrum, and Base pins one commit.
 - The Void lab's graphical guest runs this compositor. The Fedora lab is removed when it does.
 - The compositor is no longer an open question in the vision.
 
@@ -46,6 +48,6 @@ The [spike](https://github.com/crowbaros/crowbaros/issues/3) tests this decision
 - a client can still receive the confirm key, or still see a protocol it should not;
 - the compositor cannot run on a Void guest without systemd.
 
-[ADR 0020](0020-the-first-compositor-is-small-on-purpose.md) records that none of the three is met after the spike and the NVIDIA run, so this decision stands. It also says what the first compositor has and leaves out.
+[ADR 0020](../archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md) records that none of the three is met after the spike and the NVIDIA run, so this decision stands. It also says what the first compositor has and leaves out.
 
 Cost does not reopen it. This list once had a fourth condition: that the measured cost of the spike showed the full compositor to be beyond two people alongside Milestones 2 to 4. The spike could not measure that, and on November 15, 2026 we dropped the condition: we build this compositor whatever it costs. What can still change is what the first compositor has, and where its work sits among the milestones.

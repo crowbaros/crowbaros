@@ -291,8 +291,8 @@ had to write).
 
 ### The vision's requirements against the three options
 
-The requirements are from [ADR 0014](../adr/0014-a-yes-comes-from-the-person.md)
-and section 3 of the [vision](../VISION.md). Sources for each cell are the
+The requirements are from [ADR 0014](../archive/substrate-vision/adr/0014-a-yes-comes-from-the-person.md)
+and section 3 of the [vision](../archive/substrate-vision/VISION.md). Sources for each cell are the
 subsections above. Cells about our own compositor are **[inference]**: they
 say what the API permits.
 
@@ -695,7 +695,7 @@ Void template above.
    each arrive as "one more protocol". ADR 0014 leaves the accessibility
    route open, and text input for CJK needs input-method, which is on the
    list of routes to close. Section 1 and
-   [ADR 0014](../adr/0014-a-yes-comes-from-the-person.md).
+   [ADR 0014](../archive/substrate-vision/adr/0014-a-yes-comes-from-the-person.md).
 7. **X11 apps.** xwayland-satellite covers most, not all. Whether CrowbarOS
    needs X11 at all is undecided. Section 3.
 8. **Licence drift.** Reading GPL-3.0 compositors while writing an MIT one

@@ -8,8 +8,7 @@ scripts, RPM recipes, and session hooks are no longer active entry points.
 
 | Environment | Current capability | State directory |
 | --- | --- | --- |
-| [Base lab](../../lab/void/README.md) | M1 generation/apply/manual-rollback loop | `.lab/void/` |
-| Graphical lab | The compositor on a TTY, checked with a stand-in for the Warden; software rendering | `.lab/void-graphical/` |
+| [Graphical lab](../../lab/void/README.md) | The compositor on a TTY, checked with a stand-in for the Warden; software rendering | `.lab/void-graphical/` |
 | Isolated desktop smoke | Fresh guest per run; launch/focus/workspaces, Save/Undo, restart/reboot, identity checks | `.lab/void-desktop-checks/<run>/` |
 | Existing desktop preview | A previously prepared VM may already be running | Preserve its disk and recorded configuration |
 
@@ -21,7 +20,6 @@ From the repository root, inspect the available commands or an already-running
 guest without rebuilding its disk:
 
 ```sh
-rtk python3 lab/void/void_lab.py --help
 rtk python3 lab/void/compositor_guest.py --help
 rtk python3 lab/void/compositor_guest.py ssh cat /etc/os-release
 ```
@@ -40,18 +38,16 @@ selects the development disk. Do not build concurrently against the same cache.
 See the [lab guide](../../lab/void/README.md#full-desktop-smoke-check) for prerequisites
 and diagnostics. Credentials and disks stay out of published evidence.
 
-For a **disposable checkout with no existing VM state**, the older full
-checks build or replace their configured images:
+For a **disposable checkout with no existing VM state**, the compositor check
+builds or replaces its configured image:
 
 ```sh
-rtk python3 lab/void/void_lab.py milestone
 rtk python3 lab/void/compositor_guest.py check
 ```
 
-Do not use `image`, `check`, `desktop`, or `milestone` to reopen a preserved development VM:
+Do not use `image`, `check`, or `desktop` to reopen a preserved development VM:
 they build or replace lab state. Keep its `.lab/` files and its viewer/connection
-settings. The Base and graphical guests use different SSH ports; each lab still
-supports only one run at a time at its configured paths.
+settings. The lab supports only one run at a time at its configured paths.
 
 ## Build the interfaces on Void
 
@@ -69,7 +65,6 @@ not a build dependency):
 
 ```sh
 python3 apps/shell/packaging/prepare-gpui.py
-cargo build --release --locked --manifest-path lab/compositor-spike/Cargo.toml
 cargo build --release --locked --manifest-path apps/shell/Cargo.toml
 cargo test --release --locked --manifest-path apps/shell/Cargo.toml
 cargo build --release --locked --manifest-path apps/studio-settings/Cargo.toml
@@ -81,19 +76,22 @@ backport. It is portable build tooling and stays in `apps/shell/packaging/`.
 Cargo downloads require access to the pinned dependency sources on a cold build.
 Tests are headless; they do not establish correct GUI behavior or session recovery.
 
-The Alpha desktop runs the [compositor spike](../../lab/compositor-spike/README.md).
-The [compositor](../../compositor/README.md) does not run the shell yet: it has
-no public socket, and the shell's protocol is
-[#71](https://github.com/crowbaros/crowbaros/issues/71).
+The Alpha desktop runs the [compositor](../../compositor/README.md) Base pins.
 
 For a same-user rendering experiment inside an existing **development** Wayland
-session, start the spike nested (paths assume the default Cargo target
-directories). This does not exercise the separate Alpha identities or launcher:
+session, run Fulcrum's nested backend from a Fulcrum checkout, register a
+compartment with its stand-in for the Warden, and start an app on that
+compartment's listener. This does not exercise the separate Alpha identities
+or launcher:
 
 ```sh
-CROWBAR_SESSION=alpha-no-animations lab/compositor-spike/target/release/crowbar-compositor \
-  --shell "$PWD/apps/shell/target/release/crowbaros-shell" \
-  --spawn "$PWD/apps/studio-settings/target/release/crowbaros-studio-settings"
+# In Fulcrum:
+cargo run --release --features nested -- --backend nested \
+  --shell-socket /tmp/fulcrum/shell --shell-uid "$(id -u)" \
+  --warden-socket /tmp/fulcrum/warden --warden-uid "$(id -u)"
+# Then:
+WAYLAND_DISPLAY=/tmp/fulcrum/warden crowbar-probe warden dev.settings dev-1 /tmp/fulcrum/apps \
+  env CROWBAR_SESSION=alpha-no-animations "$PWD/apps/studio-settings/target/release/crowbaros-studio-settings"
 ```
 
 For a dedicated Void TTY, use the operator-led procedure and prerequisites in
