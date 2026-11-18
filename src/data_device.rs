@@ -1,13 +1,17 @@
-//! The data device: `wl_data_device_manager`, its sources, and each seat's
-//! data device.
+//! The data device: `wl_data_device_manager`, its sources, each seat's data
+//! device, and the offers it makes.
 //!
-//! ADR 0020 offers it to every compartment and the shell. Moving data between
-//! clients is slice 4 (CrowbarOS issue 166, Milestone 6): it must follow the
-//! person's act, and the broker records it. Until then the protocol works and
-//! nothing moves. A client can make sources and set its selection, which no
-//! other client is offered, and a drag is refused at once by cancelling its
-//! source. Programs that will not start without the data device, such as
-//! `foot`, start.
+//! ADR 0020 offers it to every compartment and the shell, and says how the
+//! clipboard works. Inside one compartment, copy and paste work as apps
+//! expect: a client's selection is the compartment's, and is offered to the
+//! compartment's client that holds the keyboard, as it gains it and when the
+//! selection changes. The shell's clients share one selection of their own.
+//!
+//! Between compartments, the compositor makes the transfer itself, when one
+//! of the person's acts asks for it, and the broker records it: that is slice
+//! 4 (CrowbarOS issue 166, Milestone 6). Until then nothing crosses: a
+//! selection is offered to no client of another compartment, and a drag is
+//! refused at once by cancelling its source.
 
 use std::{borrow::Cow, collections::HashMap};
 
@@ -16,11 +20,18 @@ use fulcrum_wire::{
     protocol::wayland::{wl_data_device, wl_data_device_manager, wl_data_source},
 };
 
+use fulcrum_wire::protocol::wayland::wl_data_offer;
+
 use crate::{
     State,
     client::{ClientId, ObjectKind, ProtocolError},
+    identity::Identity,
     surface::Role,
 };
+
+/// Offers one client may hold at once. Past them it is offered nothing more
+/// until it destroys some: a client that never does holds only its own.
+pub const CLIENT_OFFERS: usize = 256;
 
 /// The `wl_data_device_manager` version Fulcrum offers.
 pub const DATA_DEVICE_MANAGER_VERSION: u32 = 3;
@@ -46,12 +57,32 @@ pub(crate) struct DataSource {
     pub used: bool,
 }
 
+/// Clients that share a selection without an act of the person's: one
+/// compartment's, or the shell's.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Group {
+    Shell,
+    Compartment(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct OfferId(pub u64);
+
+/// A selection offered to a client.
+#[derive(Debug)]
+pub(crate) struct Offer {
+    pub client: ClientId,
+    pub source: SourceId,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct DataDevices {
     pub sources: HashMap<SourceId, DataSource>,
     next_source: u64,
-    /// The source each client last set as its selection.
-    pub selections: HashMap<ClientId, SourceId>,
+    /// Each group's selection: the source one of its clients set last.
+    pub selections: HashMap<Group, SourceId>,
+    pub offers: HashMap<OfferId, Offer>,
+    next_offer: u64,
 }
 
 impl State {
@@ -85,6 +116,10 @@ impl State {
             }
             wl_data_device_manager::Request::GetDataDevice { id, .. } => {
                 self.create_data_object(client_id, id, wl_data_device::NAME, version, ObjectKind::DataDevice)?;
+                // A client that holds the keyboard learns the selection.
+                if self.keyboard_client() == Some(client_id) {
+                    self.offer_selection_on(client_id, id.0);
+                }
             }
             // A destructor, from a version Fulcrum does not offer.
             wl_data_device_manager::Request::Release => {}
@@ -182,13 +217,20 @@ impl State {
                     Some(source) => Some(self.use_source(client_id, object, source)?),
                     None => None,
                 };
+                let Some(group) = self.group_of(client_id) else {
+                    if let Some(new) = new {
+                        self.cancel_source(new);
+                    }
+                    return Ok(());
+                };
                 let old = match new {
-                    Some(new) => self.data.selections.insert(client_id, new),
-                    None => self.data.selections.remove(&client_id),
+                    Some(new) => self.data.selections.insert(group.clone(), new),
+                    None => self.data.selections.remove(&group),
                 };
                 if let Some(old) = old.filter(|old| Some(*old) != new) {
                     self.cancel_source(old);
                 }
+                self.offer_selection_to_keyboard(&group);
             }
             wl_data_device::Request::StartDrag { source, icon, .. } => {
                 if let Some(icon) = icon {
@@ -254,12 +296,174 @@ impl State {
         }
     }
 
-    /// Lets go of a source, when it is destroyed or its client is gone.
+    /// Lets go of a source, when it is destroyed or its client is gone. A
+    /// group whose selection it was has none, and its client with the
+    /// keyboard hears so.
     pub(crate) fn forget_source(&mut self, source: SourceId) {
-        if let Some(data) = self.data.sources.remove(&source)
-            && self.data.selections.get(&data.client) == Some(&source)
-        {
-            self.data.selections.remove(&data.client);
+        if self.data.sources.remove(&source).is_none() {
+            return;
         }
+        let emptied: Vec<Group> = self
+            .data
+            .selections
+            .iter()
+            .filter(|(_, selected)| **selected == source)
+            .map(|(group, _)| group.clone())
+            .collect();
+        for group in emptied {
+            self.data.selections.remove(&group);
+            self.offer_selection_to_keyboard(&group);
+        }
+    }
+
+    /// The group a client shares a selection with: none for the Warden,
+    /// which is offered no data device.
+    pub(crate) fn group_of(&self, client_id: ClientId) -> Option<Group> {
+        match &self.clients.get(&client_id)?.identity {
+            Identity::Shell => Some(Group::Shell),
+            Identity::Compartment(compartment) => Some(Group::Compartment(compartment.id().to_owned())),
+            Identity::Warden => None,
+        }
+    }
+
+    /// The client whose surface has the keyboard.
+    fn keyboard_client(&self) -> Option<ClientId> {
+        self.seat
+            .keyboard_focus
+            .and_then(|focus| self.surfaces.get(&focus))
+            .map(|surface| surface.client)
+    }
+
+    /// A group's selection changed: its client with the keyboard, if it has
+    /// one, is offered the new one.
+    fn offer_selection_to_keyboard(&mut self, group: &Group) {
+        if let Some(client_id) = self.keyboard_client()
+            && self.group_of(client_id).as_ref() == Some(group)
+        {
+            self.offer_selection(client_id);
+        }
+    }
+
+    /// Offers a client its group's selection, or none, on each of its data
+    /// devices: as it gains the keyboard, and when the selection changes
+    /// while it holds it.
+    pub(crate) fn offer_selection(&mut self, client_id: ClientId) {
+        let devices: Vec<u32> = self.clients.get(&client_id).map_or(Vec::new(), |client| {
+            client
+                .objects
+                .iter()
+                .filter(|(_, object)| matches!(object.kind, ObjectKind::DataDevice))
+                .map(|(id, _)| *id)
+                .collect()
+        });
+        for device in devices {
+            self.offer_selection_on(client_id, device);
+        }
+    }
+
+    fn offer_selection_on(&mut self, client_id: ClientId, device: u32) {
+        let source = self
+            .group_of(client_id)
+            .and_then(|group| self.data.selections.get(&group).copied())
+            .filter(|source| self.data.sources.contains_key(source));
+        let held = self
+            .data
+            .offers
+            .values()
+            .filter(|offer| offer.client == client_id)
+            .count();
+        let offer = match source {
+            Some(source) if held < CLIENT_OFFERS => self.make_offer(client_id, device, source),
+            _ => None,
+        };
+        if let Some(client) = self.clients.get_mut(&client_id) {
+            client.send(
+                device,
+                wl_data_device::Event::Selection {
+                    id: offer.map(ObjectId),
+                },
+            );
+        }
+    }
+
+    /// A new offer of a source, introduced on a data device with the MIME
+    /// types the source offers.
+    fn make_offer(&mut self, client_id: ClientId, device: u32, source: SourceId) -> Option<u32> {
+        let mime_types = self.data.sources.get(&source)?.mime_types.clone();
+        let client = self.clients.get_mut(&client_id)?;
+        let version = client.objects.get(&device).map_or(1, |object| object.version);
+        self.data.next_offer += 1;
+        let offer = OfferId(self.data.next_offer);
+        let id = client
+            .create_server_object(
+                Cow::Borrowed(wl_data_offer::NAME),
+                Some(&wl_data_offer::INFO),
+                version,
+                ObjectKind::DataOffer(offer),
+            )
+            .ok()?;
+        client.send(device, wl_data_device::Event::DataOffer { id: NewId(id) });
+        for mime_type in mime_types {
+            client.send(id, wl_data_offer::Event::Offer { mime_type });
+        }
+        self.data.offers.insert(
+            offer,
+            Offer {
+                client: client_id,
+                source,
+            },
+        );
+        Some(id)
+    }
+
+    pub(crate) fn data_offer_request(
+        &mut self,
+        object: u32,
+        offer: OfferId,
+        request: wl_data_offer::Request,
+    ) -> Result<(), ProtocolError> {
+        match request {
+            wl_data_offer::Request::Receive { mime_type, fd } => {
+                // The source sends its data, if it is still there and offers
+                // that type. Otherwise the descriptor closes, and the reader
+                // reads nothing.
+                let Some(source) = self.data.offers.get(&offer).map(|offer| offer.source) else {
+                    return Ok(());
+                };
+                let Some(data) = self.data.sources.get(&source) else {
+                    return Ok(());
+                };
+                if !data.mime_types.contains(&mime_type) {
+                    return Ok(());
+                }
+                let (client_id, source_object) = (data.client, data.object);
+                if let Some(client) = self.clients.get_mut(&client_id) {
+                    client.send(source_object, wl_data_source::Event::Send { mime_type, fd });
+                }
+            }
+            wl_data_offer::Request::Destroy => self.forget_offer(offer),
+            // A selection's offer takes no part in drag and drop.
+            wl_data_offer::Request::Accept { .. } => {}
+            wl_data_offer::Request::Finish => {
+                return Err(ProtocolError {
+                    object,
+                    code: wl_data_offer::error::INVALID_FINISH,
+                    message: "finish is for a drag's offer".into(),
+                });
+            }
+            wl_data_offer::Request::SetActions { .. } => {
+                return Err(ProtocolError {
+                    object,
+                    code: wl_data_offer::error::INVALID_OFFER,
+                    message: "actions are for a drag's offer".into(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Lets go of an offer, when it is destroyed or its client is gone.
+    pub(crate) fn forget_offer(&mut self, offer: OfferId) {
+        self.data.offers.remove(&offer);
     }
 }

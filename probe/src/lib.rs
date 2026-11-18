@@ -250,6 +250,13 @@ impl Client {
             let mut fds = std::mem::take(self.conn.fds());
             let args = message.decode(&mut ArgReader::new(&incoming.body, &mut fds))?;
             *self.conn.fds() = fds;
+            // An object the compositor made, as a data offer: its events
+            // are read as its interface's from now on.
+            for (info, arg) in message.args.iter().zip(&args) {
+                if let (Arg::NewId(made), Some(interface)) = (arg, info.interface) {
+                    self.objects.insert(made.0, interface);
+                }
+            }
             self.handle(Event {
                 object,
                 interface: info.name,

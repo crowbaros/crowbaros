@@ -58,6 +58,8 @@ pub(crate) enum ObjectKind {
     Layer(crate::surface::SurfaceId),
     DataDeviceManager,
     DataSource(crate::data_device::SourceId),
+    /// A `wl_data_offer` the compositor made, of a selection.
+    DataOffer(crate::data_device::OfferId),
     DataDevice,
     Viewporter,
     /// A `wp_viewport`, for the surface it crops and scales.

@@ -17,9 +17,9 @@ use fulcrum_wire::{
         security_context_v1::{wp_security_context_manager_v1, wp_security_context_v1},
         viewporter::{wp_viewport, wp_viewporter},
         wayland::{
-            wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_source, wl_display,
-            wl_keyboard, wl_output, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_subcompositor,
-            wl_subsurface, wl_surface,
+            wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
+            wl_data_source, wl_display, wl_keyboard, wl_output, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
+            wl_shm_pool, wl_subcompositor, wl_subsurface, wl_surface,
         },
         wlr_layer_shell_unstable_v1::{zwlr_layer_shell_v1, zwlr_layer_surface_v1},
         xdg_shell::{xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base},
@@ -455,6 +455,7 @@ impl State {
             ObjectKind::XdgSurface(surface) => self.forget_xdg(*surface),
             ObjectKind::Layer(surface) => self.forget_layer(*surface),
             ObjectKind::DataSource(source) => self.forget_source(*source),
+            ObjectKind::DataOffer(offer) => self.forget_offer(*offer),
             ObjectKind::BufferParams(params) => {
                 self.dmabufs.params.remove(params);
             }
@@ -585,6 +586,9 @@ impl State {
                 }
                 ObjectKind::DataSource(source) => wl_data_source::Request::decode(opcode, &mut args)
                     .map(|request| Request::DataSource(*source, request)),
+                ObjectKind::DataOffer(offer) => {
+                    wl_data_offer::Request::decode(opcode, &mut args).map(|request| Request::DataOffer(*offer, request))
+                }
                 ObjectKind::DataDevice => wl_data_device::Request::decode(opcode, &mut args).map(Request::DataDevice),
                 ObjectKind::Viewporter => wp_viewporter::Request::decode(opcode, &mut args).map(Request::Viewporter),
                 ObjectKind::Dmabuf => zwp_linux_dmabuf_v1::Request::decode(opcode, &mut args).map(Request::Dmabuf),
@@ -674,6 +678,7 @@ impl State {
             Request::Layer(surface, request) => self.layer_surface_request(id, surface, request)?,
             Request::DataDeviceManager(request) => self.data_device_manager_request(client_id, version, request)?,
             Request::DataSource(source, request) => self.data_source_request(client_id, id, source, request)?,
+            Request::DataOffer(offer, request) => self.data_offer_request(id, offer, request)?,
             Request::DataDevice(request) => self.data_device_request(client_id, id, request)?,
             Request::Viewporter(request) => self.viewporter_request(client_id, id, request)?,
             Request::Viewport(surface, request) => self.viewport_request(id, surface, request)?,
@@ -771,6 +776,7 @@ enum Request {
     Layer(SurfaceId, zwlr_layer_surface_v1::Request),
     DataDeviceManager(wl_data_device_manager::Request),
     DataSource(crate::data_device::SourceId, wl_data_source::Request),
+    DataOffer(crate::data_device::OfferId, wl_data_offer::Request),
     DataDevice(wl_data_device::Request),
     Viewporter(wp_viewporter::Request),
     Viewport(SurfaceId, wp_viewport::Request),

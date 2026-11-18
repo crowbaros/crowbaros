@@ -127,9 +127,14 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   buffer: at once for a copy, and when other content replaces it for a
   buffer the GPU draws where it is. Drivers without implicit sync, as NVIDIA's, need it. It is offered
   where the display's device has timeline syncobjs.
-- **The data device**, with nothing moving between clients until slice 4
-  (Milestone 6): a selection is offered to no other client, and a drag is
-  cancelled as it starts. `foot` will not start without it.
+- **The data device**: inside one compartment, copy and paste work as apps
+  expect (ADR 0020). A client's selection is its compartment's, and the
+  compartment's client that holds the keyboard is offered it, as it gains
+  the keyboard and when the selection changes; the shell's clients share
+  one of their own. Between compartments nothing moves until slice 4
+  (Milestone 6), which ties each transfer to the person's act and the
+  broker's record, and a drag is cancelled as it starts. `foot` will not
+  start without it.
 - **Budgets** (CrowbarOS ADR 0029): one compartment cannot take the
   compositor's descriptors from the others, and one client cannot make it
   hold pixels without end.
@@ -186,7 +191,7 @@ place since [crowbaros#198](https://github.com/crowbaros/crowbaros/pull/198)
 | `src/modes.rs` | Maximized, fullscreen, and snapped windows |
 | `src/grabs.rs` | Moving and resizing windows with the pointer |
 | `src/control.rs`, `src/json.rs` | The shell's control channel, and the flat JSON it speaks |
-| `src/data_device.rs` | The data device, which moves nothing between clients until slice 4 |
+| `src/data_device.rs` | The data device: the clipboard inside one compartment, and nothing between compartments until slice 4 |
 | `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
 | `src/fractional_scale.rs` | The scale a surface should draw at |
 | `src/idle_inhibit.rs` | Surfaces that keep their outputs from going idle while shown |
