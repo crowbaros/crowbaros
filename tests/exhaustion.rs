@@ -299,6 +299,9 @@ fn a_client_may_hold_sparse_pools_as_large_as_foots() {
 /// committed on many surfaces, so the copies have a budget of their own.
 #[test]
 fn a_client_is_stopped_at_its_budget_of_pixels() {
+    // Others lower the process's descriptor limit, which would refuse this
+    // test's connections.
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let compositor = Compositor::start();
     // Four buffers of 256x256.
     compositor.with(|state| state.set_pixel_budget(4 * 256 * 256 * 4));
