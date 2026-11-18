@@ -9,7 +9,7 @@
 //! What to draw, and in what order, is the scene's (see `scene.rs`), the
 //! same scene the CPU renderer draws. The GPU calls are `fulcrum-sys`'s.
 
-use std::{collections::HashMap, io};
+use std::{collections::HashMap, io, rc::Rc};
 
 use fulcrum_sys::gles::{Gles, Target, Texture};
 
@@ -20,6 +20,7 @@ use crate::{
     image::Image,
     scene::{Element, Scene},
     surface::{Content, SurfaceId},
+    xcursor::CursorImage,
 };
 
 pub struct Renderer {
@@ -27,6 +28,8 @@ pub struct Renderer {
     /// Each surface's texture of copied pixels, with the content serial it
     /// was uploaded at.
     textures: HashMap<SurfaceId, (u64, Texture)>,
+    /// Each cursor shape's texture, with the image it was uploaded from.
+    cursors: HashMap<u32, (Rc<CursorImage>, Texture)>,
 }
 
 impl Renderer {
@@ -34,6 +37,7 @@ impl Renderer {
         Renderer {
             gles,
             textures: HashMap::new(),
+            cursors: HashMap::new(),
         }
     }
 
@@ -49,6 +53,30 @@ impl Renderer {
                 .get(surface)
                 .is_some_and(|surface| matches!(surface.current.content, Some(Content::Copied(_))))
         });
+        for element in &scene.elements {
+            let Element::Cursor { shape, .. } = element else {
+                continue;
+            };
+            let Some(image) = state.cursor_theme.image(*shape) else {
+                continue;
+            };
+            if self
+                .cursors
+                .get(shape)
+                .is_some_and(|(uploaded, _)| Rc::ptr_eq(uploaded, &image))
+            {
+                continue;
+            }
+            match self
+                .gles
+                .upload(image.image.width, image.image.height, &image.image.pixels)
+            {
+                Ok(texture) => {
+                    self.cursors.insert(*shape, (image, texture));
+                }
+                Err(error) => crate::log::warning!("could not upload a cursor: {error}"),
+            }
+        }
         for element in &scene.elements {
             let Element::Surface { surface: id, .. } = element else {
                 continue;
@@ -110,6 +138,19 @@ impl Renderer {
                         let inside = rect.intersection(clip);
                         frame.clear((inside.x, inside.y, inside.width, inside.height), *colour);
                     }
+                    Element::Cursor { shape, rect } => {
+                        let Some((_, texture)) = self.cursors.get(shape).filter(|_| rect.overlaps(clip)) else {
+                            continue;
+                        };
+                        frame.draw(
+                            texture,
+                            (0.0, 0.0, texture.width as f32, texture.height as f32),
+                            (rect.x, rect.y, rect.width, rect.height),
+                            clip_box,
+                            false,
+                            1.0,
+                        );
+                    }
                 }
             }
         }
@@ -163,6 +204,17 @@ impl OffscreenOutput {
         renderer.draw(state, &scene, target, &damage);
         Ok((renderer.read(target), damage))
     }
+}
+
+/// Draws an output with the pointer, as a backend that draws the pointer
+/// does, with the GLES renderer into a target of its own, and reads it back.
+/// For the tests.
+#[doc(hidden)]
+pub fn render_output_with_cursor_offscreen(state: &State, output: u64, renderer: &mut Renderer) -> io::Result<Image> {
+    let scene = state
+        .scene_with_cursor(output)
+        .ok_or_else(|| io::Error::other("no such output"))?;
+    renderer.draw_to_image(state, &scene)
 }
 
 /// Draws an output with the GLES renderer into a target of its own and

@@ -2,6 +2,7 @@
 
 //! Every protocol Fulcrum speaks, generated from `protocols/`.
 
+pub mod cursor_shape_v1;
 pub mod fractional_scale_v1;
 pub mod idle_inhibit_unstable_v1;
 pub mod linux_dmabuf_v1;
@@ -17,6 +18,8 @@ use crate::codec::InterfaceInfo;
 
 /// Every interface of every protocol.
 pub static INTERFACES: &[&InterfaceInfo] = &[
+    &cursor_shape_v1::wp_cursor_shape_manager_v1::INFO,
+    &cursor_shape_v1::wp_cursor_shape_device_v1::INFO,
     &fractional_scale_v1::wp_fractional_scale_manager_v1::INFO,
     &fractional_scale_v1::wp_fractional_scale_v1::INFO,
     &idle_inhibit_unstable_v1::zwp_idle_inhibit_manager_v1::INFO,
@@ -82,6 +85,10 @@ pub fn reencode(
 ) -> Option<Result<crate::codec::ArgWriter, crate::codec::DecodeError>> {
     let mut out = crate::codec::ArgWriter::default();
     let decoded = match (interface, request) {
+        ("wp_cursor_shape_manager_v1", true) => cursor_shape_v1::wp_cursor_shape_manager_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("wp_cursor_shape_manager_v1", false) => cursor_shape_v1::wp_cursor_shape_manager_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("wp_cursor_shape_device_v1", true) => cursor_shape_v1::wp_cursor_shape_device_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("wp_cursor_shape_device_v1", false) => cursor_shape_v1::wp_cursor_shape_device_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_fractional_scale_manager_v1", true) => fractional_scale_v1::wp_fractional_scale_manager_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_fractional_scale_manager_v1", false) => fractional_scale_v1::wp_fractional_scale_manager_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_fractional_scale_v1", true) => fractional_scale_v1::wp_fractional_scale_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),

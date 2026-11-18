@@ -39,6 +39,7 @@ pub(crate) enum GlobalKind {
     Presentation,
     ExplicitSync,
     IdleInhibitManager,
+    CursorShapeManager,
     /// A global a test added, of an interface Fulcrum may not even know.
     Planted,
 }
@@ -212,6 +213,7 @@ impl State {
             GlobalKind::Presentation => ObjectKind::Presentation,
             GlobalKind::ExplicitSync => ObjectKind::ExplicitSync,
             GlobalKind::IdleInhibitManager => ObjectKind::IdleInhibitManager,
+            GlobalKind::CursorShapeManager => ObjectKind::CursorShapeManager,
             GlobalKind::Planted => {
                 self.planted_binds += 1;
                 ObjectKind::Unimplemented

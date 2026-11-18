@@ -6,6 +6,7 @@ use std::{borrow::Cow, collections::HashMap, io, os::fd::AsFd, sync::Weak, time:
 use fulcrum_wire::{
     ArgReader, ConnectionError, DecodeError, Incoming,
     protocol::{
+        cursor_shape_v1::{wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1},
         fractional_scale_v1::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
         idle_inhibit_unstable_v1::{zwp_idle_inhibit_manager_v1, zwp_idle_inhibitor_v1},
         linux_dmabuf_v1::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1},
@@ -102,6 +103,9 @@ pub struct State {
     pub(crate) controls: crate::control::Controls,
     pub(crate) explicit_sync: crate::explicit_sync::ExplicitSync,
     pub(crate) idle_inhibitors: crate::idle_inhibit::IdleInhibitors,
+    /// The system's cursor images, for named shapes and the compositor's
+    /// own pointer.
+    pub(crate) cursor_theme: crate::xcursor::CursorTheme,
     /// What the pointer is doing to a window, if anything.
     pub(crate) grab: Option<crate::grabs::Grab>,
     /// Commits by window and layer, and when they were last reported.
@@ -157,6 +161,7 @@ impl State {
             controls: crate::control::Controls::default(),
             explicit_sync: crate::explicit_sync::ExplicitSync::default(),
             idle_inhibitors: crate::idle_inhibit::IdleInhibitors::default(),
+            cursor_theme: crate::xcursor::CursorTheme::none(),
             grab: None,
             commit_counts: std::collections::BTreeMap::new(),
             last_report: None,
@@ -211,6 +216,11 @@ impl State {
             &zwp_idle_inhibit_manager_v1::INFO,
             crate::idle_inhibit::IDLE_INHIBIT_VERSION,
             GlobalKind::IdleInhibitManager,
+        );
+        self.add_global(
+            &wp_cursor_shape_manager_v1::INFO,
+            crate::cursor_shape::CURSOR_SHAPE_VERSION,
+            GlobalKind::CursorShapeManager,
         );
     }
 
@@ -607,6 +617,12 @@ impl State {
                 }
                 ObjectKind::IdleInhibitor(inhibitor) => zwp_idle_inhibitor_v1::Request::decode(opcode, &mut args)
                     .map(|request| Request::IdleInhibitor(*inhibitor, request)),
+                ObjectKind::CursorShapeManager => {
+                    wp_cursor_shape_manager_v1::Request::decode(opcode, &mut args).map(Request::CursorShapeManager)
+                }
+                ObjectKind::CursorShapeDevice => {
+                    wp_cursor_shape_device_v1::Request::decode(opcode, &mut args).map(Request::CursorShapeDevice)
+                }
                 ObjectKind::DmabufFeedback => {
                     zwp_linux_dmabuf_feedback_v1::Request::decode(opcode, &mut args).map(Request::DmabufFeedback)
                 }
@@ -681,6 +697,10 @@ impl State {
             Request::IdleInhibitor(inhibitor, zwp_idle_inhibitor_v1::Request::Destroy) => {
                 self.forget_inhibitor(inhibitor);
             }
+            Request::CursorShapeManager(request) => {
+                self.cursor_shape_manager_request(client_id, id, version, request)?
+            }
+            Request::CursorShapeDevice(request) => self.cursor_shape_device_request(client_id, id, version, request)?,
         }
         if destructor && let Some(client) = self.clients.get_mut(&client_id) {
             client.destroy(id);
@@ -761,6 +781,8 @@ enum Request {
     FractionalScale(SurfaceId, wp_fractional_scale_v1::Request),
     IdleInhibitManager(zwp_idle_inhibit_manager_v1::Request),
     IdleInhibitor(crate::idle_inhibit::InhibitorId, zwp_idle_inhibitor_v1::Request),
+    CursorShapeManager(wp_cursor_shape_manager_v1::Request),
+    CursorShapeDevice(wp_cursor_shape_device_v1::Request),
     Presentation(wp_presentation::Request),
     ExplicitSync(wp_linux_drm_syncobj_manager_v1::Request),
     SyncobjSurface(SurfaceId, wp_linux_drm_syncobj_surface_v1::Request),

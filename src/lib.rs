@@ -17,6 +17,7 @@ mod client;
 pub mod connections;
 pub mod control;
 mod cursor;
+mod cursor_shape;
 mod damage;
 pub mod data_device;
 pub mod dmabuf;
@@ -48,6 +49,7 @@ mod surface;
 mod viewporter;
 mod windows;
 pub mod workspaces;
+mod xcursor;
 mod xdg;
 
 pub use output::{OUTPUT_VERSION, Output};
@@ -57,4 +59,6 @@ pub use shm::MAX_POOL_SIZE;
 pub use state::State;
 pub use surface::MAX_SUBSURFACE_DEPTH;
 pub use windows::{BACKGROUND, NEW_WINDOW_OFFSET};
+#[doc(hidden)]
+pub use xcursor::file_for_tests as xcursor_file_for_tests;
 pub use xdg::ToplevelRequests;

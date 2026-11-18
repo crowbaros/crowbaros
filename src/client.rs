@@ -70,6 +70,8 @@ pub(crate) enum ObjectKind {
     FractionalScale(crate::surface::SurfaceId),
     IdleInhibitManager,
     IdleInhibitor(crate::idle_inhibit::InhibitorId),
+    CursorShapeManager,
+    CursorShapeDevice,
     Presentation,
     PresentationFeedback,
     ExplicitSync,

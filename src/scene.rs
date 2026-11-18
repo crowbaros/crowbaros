@@ -34,6 +34,9 @@ pub(crate) enum Element {
     Surface { surface: SurfaceId, rect: Rect },
     /// A rectangle of one opaque colour: part of a frame.
     Solid { rect: Rect, colour: u32 },
+    /// The cursor theme's image of a shape, drawn into `rect` (see
+    /// `xcursor.rs`).
+    Cursor { shape: u32, rect: Rect },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -218,6 +221,11 @@ impl State {
                     }
                 }
                 Element::Solid { rect, colour } => image.fill(*rect, *colour),
+                Element::Cursor { shape, rect } => {
+                    if let Some(cursor) = self.cursor_theme.image(*shape) {
+                        image.draw(&cursor.image, (rect.x, rect.y));
+                    }
+                }
             }
         }
         image

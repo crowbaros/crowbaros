@@ -104,6 +104,7 @@ fn main() {
     let run = || -> std::io::Result<()> {
         crowbar_compositor::limits::raise_descriptor_limit();
         let mut state = State::new()?;
+        state.use_cursor_theme_from_environment();
         // Clients are accepted only once there is something to show them on.
         let name = match args.backend {
             BackendKind::Tty => {

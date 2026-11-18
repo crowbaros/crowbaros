@@ -169,15 +169,14 @@ fn a_bind_that_misnames_the_interface_or_its_version_is_refused() {
 
 /// A global the compositor has but does not carry out says so, and never
 /// pretends to work. A test plants one: every global Fulcrum creates now
-/// carries out its requests.
+/// carries out its requests. It is planted beside the real one of a row's
+/// interface, and bound by its own number.
 #[test]
 fn a_request_this_build_does_not_carry_out_is_an_implementation_error() {
     let compositor = Compositor::start();
-    compositor.with(|state| {
-        state.plant_global("wp_cursor_shape_manager_v1");
-    });
+    let planted = compositor.with(|state| state.plant_global("wp_cursor_shape_manager_v1"));
     let (mut client, _listener) = compositor.compartment("c1");
-    let manager = client.bind("wp_cursor_shape_manager_v1", 1).unwrap();
+    let manager = client.bind_name(planted, "wp_cursor_shape_manager_v1", 1).unwrap();
     let destroy = Header {
         object: manager,
         opcode: 0,

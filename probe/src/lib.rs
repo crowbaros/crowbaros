@@ -374,7 +374,9 @@ impl Client {
         self.bind_name(global.name, interface, version)
     }
 
-    fn bind_name(&mut self, name: u32, interface: &'static str, version: u32) -> Result<u32, Error> {
+    /// Binds the global of one number, as an interface: for a global of an
+    /// interface that more than one global has.
+    pub fn bind_name(&mut self, name: u32, interface: &'static str, version: u32) -> Result<u32, Error> {
         let id = self.new_id(interface);
         self.request(
             self.registry,

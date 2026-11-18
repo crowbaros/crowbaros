@@ -69,13 +69,13 @@ impl DamageTracker {
 fn commits_of(state: &State, element: &Element) -> u64 {
     match element {
         Element::Surface { surface, .. } => state.surfaces.get(surface).map_or(0, |surface| surface.commits),
-        Element::Solid { .. } => 0,
+        Element::Solid { .. } | Element::Cursor { .. } => 0,
     }
 }
 
 fn rect_of(element: &Element) -> Rect {
     match element {
-        Element::Surface { rect, .. } | Element::Solid { rect, .. } => *rect,
+        Element::Surface { rect, .. } | Element::Solid { rect, .. } | Element::Cursor { rect, .. } => *rect,
     }
 }
 
