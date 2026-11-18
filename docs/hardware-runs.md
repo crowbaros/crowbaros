@@ -19,6 +19,7 @@ CI and the Void guest check the rest, on llvmpipe and virtio-gpu, so these runs 
 | Displays come and go | A monitor unplugged and plugged in again: windows stay, the layout comes back | 7 |
 | Scale on a dense panel | The Surface's panel at 1.5 or 2: text is sharp, and windows are the right size | 7 |
 | Suspend and resume | After resume, the displays show frames again | 7 |
+| Locked across suspend | Locked before suspend, with a second monitor attached: after resume, every display shows the lock screen or black, and no client hears a key before unlock | 8 |
 
 ## Before
 
@@ -105,6 +106,7 @@ Then each row:
    - Super+L, or Ctrl+Alt+Enter, locks.
    - With no shell to draw the lock screen, every display goes black, and keys reach no client.
    - Unlock it from the control channel: `{"op":"unlock"}` is refused until Ctrl+Alt+Enter opens the unlock entry, and taken after.
+   - To try the unlock authority, as CrowbarOS's desktop runs it, start Fulcrum with `--unlock-socket $D/unlock --unlock-uid $(id -u) --start-locked` as well. It starts locked, the control channel's `unlock` is refused, and `{"op":"unlock"}` on `$D/unlock` is taken after the chord. Lock it there with `{"op":"lock"}`, suspend with a second monitor attached, and resume: that is the row for Milestone 8.
 
 ## What to record
 

@@ -143,8 +143,8 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   Fulcrum's proposal until a record decides.
 - **Idle inhibit**: a surface that is shown, drawn on an output on the
   workspace the person is on, keeps that output from going idle. One that is
-  hidden or gone does not. Idle itself comes with Milestone 8, which reads
-  it.
+  hidden or gone does not. The idle timer that locks the session
+  (`--lock-after`) honours it.
 - **Explicit sync**: a commit with a dma-buf waits, without blocking the
   compositor, until its acquire point on the client's timeline is signalled,
   and the compositor signals its release point when it is done with the
@@ -158,8 +158,9 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   one of their own. The primary selection, which a middle click pastes,
   follows the same rules. Between compartments nothing moves until slice 4
   (Milestone 6), which ties each transfer to the person's act and the
-  broker's record, and a drag is cancelled as it starts. `foot` will not
-  start without it.
+  broker's record. Drag and drop is not built, even inside one compartment:
+  a drag is cancelled as it starts. `foot` will not start without the data
+  device.
 - **Budgets** (CrowbarOS ADR 0029): one compartment cannot take the
   compositor's descriptors from the others, and one client cannot make it
   hold pixels without end.
@@ -181,7 +182,19 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 - **A headless backend** that draws each output with the CPU renderer, and
   `crowbar-probe`, the test client, on `fulcrum-wire`'s client side.
 
-Milestone 3, buffers and timing, is built but for the runs on real GPUs. The window manager of Milestone 5, the clipboard inside a compartment of Milestone 6, and the scale and layout of displays of Milestone 7 are under way, each as far as CrowbarOS's records decide. CrowbarOS's Alpha desktop, its GPUI shell and Studio Settings, runs on Fulcrum. [The plan](docs/PLAN.md) says what is done and what is next.
+The later milestones stand as far as CrowbarOS's records decide, and no run on real hardware has been made yet:
+
+| Milestone | Where it stands |
+| --- | --- |
+| 3 · Buffers and timing | Built, but not yet run on real GPUs |
+| 4 · Trusted shell session | The control channel and the confirm chord. Asks, arming, and the restart notice wait for a record of what replaces the broker |
+| 5 · Working window manager | Built |
+| 6 · Clipboard and capture | Copy and paste and the primary selection inside one compartment. Drag and drop is not built. Transfers between compartments and capture wait for records |
+| 7 · Displays, input, and hardware | Scale, the layout of displays, and hotplug. Input devices' settings wait for a record; suspend and mixed scale wait for the hardware runs |
+| 8 · Lock and recovery | Lock, the idle timer, the confirm chord, starting locked, and unlock by the person's password through Base's helper, as a proposal. The broker's record of each unlock waits for a record |
+| 9 · CrowbarOS cutover | The Alpha desktop, its GPUI shell and Studio Settings, runs on Fulcrum. The production interfaces wait for the records above |
+
+Several messages and flags are Fulcrum's proposals, built and checked, until CrowbarOS records decide them. [The plan](docs/PLAN.md) lists them, what each milestone has, and what is next.
 
 The Smithay-based compositor that Milestone 0 brought here is at commit
 `d11400f`, tagged `smithay-baseline`. This compositor passed the baseline's 57
@@ -216,7 +229,7 @@ place since [crowbaros#198](https://github.com/crowbaros/crowbaros/pull/198)
 | `src/modes.rs` | Maximized, fullscreen, and snapped windows |
 | `src/grabs.rs` | Moving and resizing windows with the pointer |
 | `src/control.rs`, `src/json.rs` | The shell's control channel, and the flat JSON it speaks |
-| `src/data_device.rs` | The data device: the clipboard inside one compartment, and nothing between compartments until slice 4 |
+| `src/data_device.rs` | The data device: the clipboard inside one compartment, nothing between compartments until slice 4, and no drag and drop yet |
 | `src/primary_selection.rs` | The primary selection, under the clipboard's rules |
 | `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
 | `src/fractional_scale.rs` | The scale a surface should draw at |
