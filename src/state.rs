@@ -11,6 +11,7 @@ use fulcrum_wire::{
             wl_buffer, wl_callback, wl_compositor, wl_display, wl_output, wl_region, wl_registry, wl_shm, wl_shm_pool,
             wl_subcompositor, wl_subsurface, wl_surface,
         },
+        wlr_layer_shell_unstable_v1::{zwlr_layer_shell_v1, zwlr_layer_surface_v1},
         xdg_shell::{xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base},
     },
 };
@@ -23,6 +24,7 @@ use crate::{
     geometry::Region,
     globals::{GlobalKind, Globals},
     identity::Compartment,
+    layer::LayerSurface,
     log,
     output::Output,
     shm::{Buffer, BufferId, Pool, PoolId},
@@ -79,6 +81,10 @@ pub struct State {
     pub(crate) frames_drawn: u64,
     pub(crate) draw_passes: u64,
     pub(crate) start_time: std::time::Instant,
+    /// The shell's layer surfaces, in the order they were made.
+    pub(crate) layers: Vec<LayerSurface>,
+    /// Each output's usable area, after its layers reserved their room.
+    pub(crate) usable: HashMap<u64, crate::geometry::Rect>,
 }
 
 impl State {
@@ -119,6 +125,8 @@ impl State {
             frames_drawn: 0,
             draw_passes: 0,
             start_time: std::time::Instant::now(),
+            layers: Vec::new(),
+            usable: HashMap::new(),
         };
         state.add_table_globals();
         Ok(state)
@@ -138,11 +146,12 @@ impl State {
             crate::xdg::XDG_WM_BASE_VERSION,
             GlobalKind::XdgWmBase,
         );
-        for (info, version) in [
-            (&wayland::wl_seat::INFO, 7),
-            (&viewporter::wp_viewporter::INFO, 1),
-            (&layer::zwlr_layer_shell_v1::INFO, 4),
-        ] {
+        self.add_global(
+            &layer::zwlr_layer_shell_v1::INFO,
+            crate::layer::LAYER_SHELL_VERSION,
+            GlobalKind::LayerShell,
+        );
+        for (info, version) in [(&wayland::wl_seat::INFO, 7), (&viewporter::wp_viewporter::INFO, 1)] {
             self.add_global(info, version, GlobalKind::Unimplemented);
         }
     }
@@ -369,6 +378,7 @@ impl State {
                 self.positioners.remove(positioner);
             }
             ObjectKind::XdgSurface(surface) => self.forget_xdg(*surface),
+            ObjectKind::Layer(surface) => self.forget_layer(*surface),
             _ => {}
         }
     }
@@ -479,6 +489,11 @@ impl State {
                 ObjectKind::Popup(surface) => {
                     xdg_popup::Request::decode(opcode, &mut args).map(|request| Request::Popup(*surface, request))
                 }
+                ObjectKind::LayerShell => {
+                    zwlr_layer_shell_v1::Request::decode(opcode, &mut args).map(Request::LayerShell)
+                }
+                ObjectKind::Layer(surface) => zwlr_layer_surface_v1::Request::decode(opcode, &mut args)
+                    .map(|request| Request::Layer(*surface, request)),
                 ObjectKind::Unimplemented => {
                     *client.conn.fds() = fds;
                     return Err(ProtocolError {
@@ -517,6 +532,8 @@ impl State {
             }
             Request::Toplevel(surface, request) => self.toplevel_request(client_id, id, surface, request)?,
             Request::Popup(surface, request) => self.popup_request(id, surface, request)?,
+            Request::LayerShell(request) => self.layer_shell_request(client_id, id, version, request)?,
+            Request::Layer(surface, request) => self.layer_surface_request(id, surface, request)?,
         }
         if destructor && let Some(client) = self.clients.get_mut(&client_id) {
             client.destroy(id);
@@ -580,6 +597,8 @@ enum Request {
     XdgSurface(SurfaceId, xdg_surface::Request),
     Toplevel(SurfaceId, xdg_toplevel::Request),
     Popup(SurfaceId, xdg_popup::Request),
+    LayerShell(zwlr_layer_shell_v1::Request),
+    Layer(SurfaceId, zwlr_layer_surface_v1::Request),
 }
 
 impl From<ConnectionError> for ProtocolError {

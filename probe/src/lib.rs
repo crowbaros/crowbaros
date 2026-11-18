@@ -113,6 +113,8 @@ pub struct Client {
     /// The size each toplevel's last configure gave, where zero means the
     /// client chooses.
     toplevel_size: HashMap<u32, (i32, i32)>,
+    /// The size each layer surface's last configure gave.
+    pub layer_sizes: HashMap<u32, (u32, u32)>,
 }
 
 impl Client {
@@ -135,6 +137,7 @@ impl Client {
             frames_done: 0,
             configured: Default::default(),
             toplevel_size: HashMap::new(),
+            layer_sizes: HashMap::new(),
         };
         let registry = client.new_id(wl_registry::NAME);
         client.registry = registry.0;
@@ -293,6 +296,17 @@ impl Client {
                     fulcrum_wire::protocol::xdg_shell::xdg_surface::Request::AckConfigure { serial },
                 );
                 self.configured.insert(object);
+                self.events.push_back(event);
+            }
+            ("zwlr_layer_surface_v1", "configure", [Arg::Uint(serial), Arg::Uint(width), Arg::Uint(height)]) => {
+                let (object, serial) = (event.object, *serial);
+                self.layer_sizes.insert(object, (*width, *height));
+                let _ = self.request(
+                    object,
+                    fulcrum_wire::protocol::wlr_layer_shell_unstable_v1::zwlr_layer_surface_v1::Request::AckConfigure {
+                        serial,
+                    },
+                );
                 self.events.push_back(event);
             }
             ("xdg_toplevel", "configure", [Arg::Int(width), Arg::Int(height), _]) => {
@@ -699,6 +713,86 @@ impl Client {
             return Err(error.clone().into());
         }
         Ok(())
+    }
+}
+
+/// What to ask for when making a layer surface.
+#[derive(Clone, Copy, Debug)]
+pub struct LayerRequest<'a> {
+    pub namespace: &'a str,
+    /// 0 background, 1 bottom, 2 top, 3 overlay.
+    pub layer: u32,
+    /// The `zwlr_layer_surface_v1.anchor` bits.
+    pub anchor: u32,
+    /// Zero on an axis stretches between the anchored edges.
+    pub size: (u32, u32),
+    pub exclusive_zone: i32,
+    /// 0 none, 1 exclusive, 2 on demand.
+    pub keyboard: u32,
+}
+
+/// A mapped layer surface and the size the compositor gave it.
+#[derive(Clone, Copy, Debug)]
+pub struct LayerWindow {
+    pub surface: u32,
+    pub layer_surface: u32,
+    pub size: (u32, u32),
+}
+
+impl Client {
+    /// Makes a layer surface, as the shell does: placement, an empty commit,
+    /// the configure, then a buffer of the size it was given.
+    pub fn open_layer(&mut self, request: LayerRequest<'_>, argb: u32) -> Result<LayerWindow, Error> {
+        use fulcrum_wire::protocol::wlr_layer_shell_unstable_v1::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+        let shell = match self.bound.get(zwlr_layer_shell_v1::NAME) {
+            Some(id) => *id,
+            None => {
+                let id = self.bind(zwlr_layer_shell_v1::NAME, 4)?;
+                self.bound.insert(zwlr_layer_shell_v1::NAME, id);
+                id
+            }
+        };
+        let surface = self.create_surface()?;
+        let layer = self.new_id(zwlr_layer_surface_v1::NAME);
+        self.request(
+            shell,
+            zwlr_layer_shell_v1::Request::GetLayerSurface {
+                id: layer,
+                surface: fulcrum_wire::ObjectId(surface),
+                output: None,
+                layer: request.layer,
+                namespace: request.namespace.into(),
+            },
+        )?;
+        let (width, height) = request.size;
+        self.request(layer.0, zwlr_layer_surface_v1::Request::SetSize { width, height })?;
+        self.request(
+            layer.0,
+            zwlr_layer_surface_v1::Request::SetAnchor { anchor: request.anchor },
+        )?;
+        self.request(
+            layer.0,
+            zwlr_layer_surface_v1::Request::SetExclusiveZone {
+                zone: request.exclusive_zone,
+            },
+        )?;
+        self.request(
+            layer.0,
+            zwlr_layer_surface_v1::Request::SetKeyboardInteractivity {
+                keyboard_interactivity: request.keyboard,
+            },
+        )?;
+        self.request(surface, wayland::wl_surface::Request::Commit)?;
+        self.wait_until(|client| client.layer_sizes.contains_key(&layer.0))?;
+        let size = self.layer_sizes[&layer.0];
+        let buffer = self.shm_buffer((size.0 as i32, size.1 as i32), argb)?;
+        self.show(surface, Some(&buffer))?;
+        self.roundtrip()?;
+        Ok(LayerWindow {
+            surface,
+            layer_surface: layer.0,
+            size,
+        })
     }
 }
 

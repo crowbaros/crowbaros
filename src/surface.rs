@@ -43,6 +43,7 @@ pub(crate) enum Role {
     Subsurface,
     Toplevel,
     Popup,
+    Layer,
 }
 
 /// Requests since the last commit.

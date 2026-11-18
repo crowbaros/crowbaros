@@ -74,6 +74,16 @@ impl State {
         };
         let output = self.outputs.remove(index);
         self.remove_global(output.global);
+        self.usable.remove(&number);
+        let closed: Vec<_> = self
+            .layers
+            .iter()
+            .filter(|layer| layer.output == number)
+            .map(|layer| layer.surface)
+            .collect();
+        for surface in closed {
+            self.close_layer(surface);
+        }
         // A window that is then on no output moves to the first one left.
         if let Some(first) = self.outputs.first().map(|output| output.number) {
             let area = self.usable_area(first);

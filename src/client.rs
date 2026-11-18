@@ -50,6 +50,9 @@ pub(crate) enum ObjectKind {
     XdgSurface(crate::surface::SurfaceId),
     Toplevel(crate::surface::SurfaceId),
     Popup(crate::surface::SurfaceId),
+    LayerShell,
+    /// A `zwlr_layer_surface_v1`, for the surface it gives the role to.
+    Layer(crate::surface::SurfaceId),
     /// A global's object whose requests this build does not carry out yet,
     /// or a global a test planted. Any request on it is a protocol error.
     Unimplemented,

@@ -47,15 +47,19 @@ Milestone 2, first light, is under way. What is built:
   changed, then waits one frame time, so a still desktop draws nothing and a
   busy client is held to the display's rate. Frame callbacks are answered
   after each draw.
+- **Layer shell** for the shell's bar, dock, launcher, and wallpaper: layers
+  placed by anchors and margins, exclusive zones that make the usable area
+  where windows open, background and bottom layers below the windows and top
+  and overlay layers above, popups of layers, and a layer closed when its
+  output goes.
 - **Budgets** (CrowbarOS ADR 0029): one compartment cannot take the
   compositor's descriptors from the others.
 - **A headless backend** that draws each output with the CPU renderer, and
   `crowbar-probe`, the test client, on `fulcrum-wire`'s client side.
 
-Still to come in Milestone 2: layer shell, the seat (keyboard and pointer),
+Still to come in Milestone 2: the seat (keyboard and pointer),
 the GLES renderer, KMS, the seatd client, libinput, hotplug, and a nested
-backend. `wl_seat`, `wp_viewporter`, `zwlr_layer_shell_v1`, and
-`zwp_linux_dmabuf_v1` are advertised to the clients the table names, and a
+backend. `wl_seat`, `wp_viewporter`, and `zwp_linux_dmabuf_v1` are advertised to the clients the table names, and a
 request on one is a protocol error that says this build does not carry it
 out yet.
 
@@ -82,11 +86,12 @@ must pass before CrowbarOS moves its pin.
 | `src/image.rs`, `src/geometry.rs` | The CPU renderer, rectangles, and regions |
 | `src/limits.rs` | What one client, and one compartment, may make the compositor hold |
 | `src/xdg.rs`, `src/windows.rs` | xdg-shell, and where windows go and what each output shows |
+| `src/layer.rs` | The shell's layer surfaces and the room they reserve |
 | `src/redraw.rs`, `src/backend/` | Drawing only on change, and where frames go: the headless backend so far |
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.

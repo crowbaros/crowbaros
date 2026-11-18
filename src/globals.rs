@@ -30,6 +30,7 @@ pub(crate) enum GlobalKind {
     Subcompositor,
     Shm,
     XdgWmBase,
+    LayerShell,
     /// A global this build advertises before it carries out its requests.
     Unimplemented,
     /// A global a test added, of an interface Fulcrum may not even know.
@@ -196,6 +197,7 @@ impl State {
             GlobalKind::Subcompositor => ObjectKind::Subcompositor,
             GlobalKind::Shm => ObjectKind::Shm,
             GlobalKind::XdgWmBase => ObjectKind::XdgWmBase,
+            GlobalKind::LayerShell => ObjectKind::LayerShell,
             GlobalKind::Unimplemented => ObjectKind::Unimplemented,
             GlobalKind::Planted => {
                 self.planted_binds += 1;

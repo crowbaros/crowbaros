@@ -634,11 +634,29 @@ impl State {
         self.unmap_xdg(surface);
         self.popups.retain(|popup| *popup != surface);
         self.xdg.remove(&surface);
+        self.forget_popups_of(surface);
+    }
+
+    /// A layer surface takes a popup made with no parent as its own.
+    pub(crate) fn adopt_popup(&mut self, popup: SurfaceId, layer: SurfaceId) {
+        if let Some(xdg) = self.xdg.get_mut(&popup)
+            && let XdgRole::Popup { parent, .. } = &mut xdg.role
+            && parent.is_none()
+        {
+            *parent = Some(layer);
+        }
+    }
+
+    /// The popups whose parent is gone are told they are done.
+    pub(crate) fn forget_popups_of(&mut self, parent_surface: SurfaceId) {
         let children: Vec<SurfaceId> = self
             .popups
             .iter()
             .copied()
-            .filter(|popup| matches!(self.xdg.get(popup).map(|xdg| xdg.role), Some(XdgRole::Popup { parent: Some(parent), .. }) if parent == surface))
+            .filter(|popup| {
+                matches!(self.xdg.get(popup).map(|xdg| xdg.role),
+                    Some(XdgRole::Popup { parent: Some(parent), .. }) if parent == parent_surface)
+            })
             .collect();
         for child in children {
             let xdg = &self.xdg[&child];
