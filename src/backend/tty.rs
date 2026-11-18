@@ -662,7 +662,8 @@ impl Backend for Tty {
                 for flip in flips {
                     if let Some(monitor) = self.monitors.iter_mut().find(|monitor| monitor.crtc == flip.crtc) {
                         monitor.flip_pending = false;
-                        state.frame_shown(monitor.output);
+                        let shown = crate::presentation::Shown::flip(flip.seconds, flip.microseconds, flip.sequence);
+                        state.frame_shown_at(monitor.output, shown);
                     }
                 }
             }

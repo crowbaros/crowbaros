@@ -314,6 +314,11 @@ pub struct DumbBuffer {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Flip {
     pub crtc: u32,
+    /// When the display showed the frame, on the monotonic clock.
+    pub seconds: u32,
+    pub microseconds: u32,
+    /// The display's vertical blank count at that moment.
+    pub sequence: u32,
 }
 
 /// One change in an atomic commit: an object, a property, and its value.
@@ -796,8 +801,15 @@ impl Device {
                 break;
             }
             if kind == EVENT_FLIP_COMPLETE && length >= 32 {
-                let crtc = u32::from_ne_bytes(buffer[at + 28..at + 32].try_into().expect("four bytes"));
-                flips.push(Flip { crtc });
+                let word = |offset: usize| {
+                    u32::from_ne_bytes(buffer[at + offset..at + offset + 4].try_into().expect("four bytes"))
+                };
+                flips.push(Flip {
+                    seconds: word(16),
+                    microseconds: word(20),
+                    sequence: word(24),
+                    crtc: word(28),
+                });
             }
             at += length;
         }

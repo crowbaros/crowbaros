@@ -36,6 +36,7 @@ pub(crate) enum GlobalKind {
     Viewporter,
     Dmabuf,
     FractionalScaleManager,
+    Presentation,
     /// A global a test added, of an interface Fulcrum may not even know.
     Planted,
 }
@@ -206,6 +207,7 @@ impl State {
             GlobalKind::Viewporter => ObjectKind::Viewporter,
             GlobalKind::Dmabuf => ObjectKind::Dmabuf,
             GlobalKind::FractionalScaleManager => ObjectKind::FractionalScaleManager,
+            GlobalKind::Presentation => ObjectKind::Presentation,
             GlobalKind::Planted => {
                 self.planted_binds += 1;
                 ObjectKind::Unimplemented
@@ -217,6 +219,7 @@ impl State {
             GlobalKind::Output(output) => self.output_bound(client_id, id.id, output),
             GlobalKind::Shm => self.shm_bound(client_id, id.id),
             GlobalKind::Seat => self.seat_bound(client_id, id.id),
+            GlobalKind::Presentation => self.presentation_bound(client_id, id.id),
             _ => {}
         }
         Ok(())

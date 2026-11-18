@@ -120,12 +120,23 @@ impl State {
             self.event_loop
                 .set_timer(Instant::now() + frame, TimerKey::FrameWait(number, draw));
         }
-        self.send_frames(number);
+        let shown = self.send_frames(number);
+        self.wait_for_presentation(number, &shown);
+        if drawn != Drawn::Flip {
+            // No display will say when the frame was shown, either.
+            self.present(number, crate::presentation::Shown::now());
+        }
     }
 
     /// A backend says the display showed the frame it was sent, or that it
     /// never will, as after the session was paused.
     pub fn frame_shown(&mut self, number: u64) {
+        self.frame_shown_at(number, crate::presentation::Shown::now());
+    }
+
+    /// A backend says the display showed the frame it was sent, and when.
+    pub fn frame_shown_at(&mut self, number: u64, shown: crate::presentation::Shown) {
+        self.present(number, shown);
         self.wait_over(number, None);
     }
 
@@ -152,7 +163,7 @@ impl State {
 
     /// Tells the clients shown on an output that a frame was drawn, so each
     /// may draw its next. A window on several outputs hears from the first.
-    fn send_frames(&mut self, number: u64) {
+    fn send_frames(&mut self, number: u64) -> Vec<SurfaceId> {
         let time = self.start_time.elapsed().as_millis() as u32;
         let shown: Vec<SurfaceId> = self
             .windows
@@ -161,8 +172,10 @@ impl State {
             .chain(self.layer_surfaces())
             .filter(|surface| self.surfaces.get(surface).and_then(|s| s.entered.first()) == Some(&number))
             .collect();
+        let mut every = Vec::new();
         for root in shown {
             for surface in self.surfaces_of_window(root) {
+                every.push(surface);
                 let Some(state) = self.surfaces.get_mut(&surface) else {
                     continue;
                 };
@@ -176,6 +189,7 @@ impl State {
                 }
             }
         }
+        every
     }
 
     /// Frames that reached a display, and times the compositor looked for

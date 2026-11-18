@@ -4,6 +4,7 @@
 
 pub mod fractional_scale_v1;
 pub mod linux_dmabuf_v1;
+pub mod presentation_time;
 pub mod security_context_v1;
 pub mod viewporter;
 pub mod wayland;
@@ -19,6 +20,8 @@ pub static INTERFACES: &[&InterfaceInfo] = &[
     &linux_dmabuf_v1::zwp_linux_dmabuf_v1::INFO,
     &linux_dmabuf_v1::zwp_linux_buffer_params_v1::INFO,
     &linux_dmabuf_v1::zwp_linux_dmabuf_feedback_v1::INFO,
+    &presentation_time::wp_presentation::INFO,
+    &presentation_time::wp_presentation_feedback::INFO,
     &security_context_v1::wp_security_context_manager_v1::INFO,
     &security_context_v1::wp_security_context_v1::INFO,
     &viewporter::wp_viewporter::INFO,
@@ -82,6 +85,10 @@ pub fn reencode(
         ("zwp_linux_buffer_params_v1", false) => linux_dmabuf_v1::zwp_linux_buffer_params_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("zwp_linux_dmabuf_feedback_v1", true) => linux_dmabuf_v1::zwp_linux_dmabuf_feedback_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("zwp_linux_dmabuf_feedback_v1", false) => linux_dmabuf_v1::zwp_linux_dmabuf_feedback_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("wp_presentation", true) => presentation_time::wp_presentation::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("wp_presentation", false) => presentation_time::wp_presentation::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("wp_presentation_feedback", true) => presentation_time::wp_presentation_feedback::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("wp_presentation_feedback", false) => presentation_time::wp_presentation_feedback::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_security_context_manager_v1", true) => security_context_v1::wp_security_context_manager_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_security_context_manager_v1", false) => security_context_v1::wp_security_context_manager_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_security_context_v1", true) => security_context_v1::wp_security_context_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),

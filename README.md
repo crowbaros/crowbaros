@@ -90,6 +90,10 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   same guarded mapping as shared memory. The shell and a compartment whose
   needs include the GPU are offered it (ADR 0020, ADR 0023). The GPU's own
   import of tiled buffers, without a copy, comes later in Milestone 3.
+- **Presentation time**: a client learns when its content was shown, on
+  which output, and the refresh, so it can pace itself. A page flip's time
+  is the kernel's, on the monotonic clock, with the display's vertical blank
+  count. Content replaced before it was drawn is discarded.
 - **Fractional scale**: a surface hears the scale it should draw at, 120ths
   of its output's scale of 1, until displays get their own scale.
 - **The data device**, with nothing moving between clients until slice 4
@@ -150,6 +154,7 @@ included, and the pin moves in a CrowbarOS pull request of its own.
 | `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
 | `src/fractional_scale.rs` | The scale a surface should draw at |
 | `src/redraw.rs` | Drawing only on change |
+| `src/presentation.rs` | When each commit's content was shown |
 | `src/evidence.rs` | The line it logs for the checks that run it: commits by window and layer, and frames drawn |
 | `src/dmabuf.rs` | linux-dmabuf: feedback, params, and buffers made from dma-bufs |
 | `src/scene.rs` | What an output shows, back to front, for either renderer, frames included |

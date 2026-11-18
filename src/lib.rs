@@ -33,6 +33,7 @@ pub mod log;
 pub mod modes;
 mod output;
 pub mod policy;
+pub mod presentation;
 mod redraw;
 pub mod render;
 mod scene;

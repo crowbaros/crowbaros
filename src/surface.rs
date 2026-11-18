@@ -61,6 +61,8 @@ pub(crate) struct Pending {
     input: Option<Option<Region>>,
     transform: Option<i32>,
     scale: Option<i32>,
+    /// `wp_presentation.feedback` objects for this commit.
+    pub(crate) presentation: Vec<u32>,
     /// `wp_viewport.set_source`: `Some(None)` unsets it.
     pub(crate) source: Option<Option<Crop>>,
     /// `wp_viewport.set_destination`: `Some(None)` unsets it.
@@ -87,6 +89,7 @@ impl Pending {
         }
         older.damage.extend(self.damage);
         older.frames.extend(self.frames);
+        older.presentation.extend(self.presentation);
         if self.opaque.is_some() {
             older.opaque = self.opaque;
         }
@@ -117,6 +120,8 @@ pub(crate) struct Current {
     pub content: Option<Image>,
     /// Frame callbacks waiting for the surface to be drawn.
     pub frames: Vec<u32>,
+    /// Presentation feedback waiting for the surface to be drawn.
+    pub(crate) presentation: Vec<u32>,
     pub opaque: Option<Region>,
     pub input: Option<Region>,
     pub transform: i32,
@@ -137,6 +142,7 @@ impl Default for Current {
         Current {
             content: None,
             frames: Vec::new(),
+            presentation: Vec::new(),
             opaque: None,
             input: None,
             transform: 0,
@@ -574,6 +580,9 @@ impl State {
             surface.current.offset = offset;
         }
         surface.current.frames.extend(state.frames);
+        // Feedback for content not yet drawn is superseded by this commit's.
+        let superseded = std::mem::replace(&mut surface.current.presentation, state.presentation);
+        let feedback_client = surface.client;
         if let Some(opaque) = state.opaque {
             surface.current.opaque = opaque;
         }
@@ -583,6 +592,10 @@ impl State {
         surface.current.transform = state.transform.unwrap_or(surface.current.transform);
         surface.current.scale = scale;
         surface.commits += 1;
+        if !superseded.is_empty() {
+            self.discard_feedback(feedback_client, superseded);
+        }
+        let surface = self.surface_mut(id);
         if let Some(stack) = surface.pending_stack.take() {
             surface.stack = stack;
         }
@@ -765,6 +778,18 @@ impl State {
             client.pixel_bytes = client
                 .pixel_bytes
                 .saturating_sub(pixel_bytes(surface.current.content.as_ref()));
+        }
+        if tell {
+            // Content of a surface that is gone will not be shown.
+            let feedback: Vec<u32> = surface
+                .current
+                .presentation
+                .iter()
+                .chain(&surface.pending.presentation)
+                .chain(surface.cached.iter().flat_map(|cached| &cached.presentation))
+                .copied()
+                .collect();
+            self.discard_feedback(surface.client, feedback);
         }
         for child in surface.stack.iter().filter(|child| **child != id) {
             if let Some(child) = self.surfaces.get_mut(child) {

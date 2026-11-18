@@ -68,6 +68,8 @@ pub(crate) enum ObjectKind {
     FractionalScaleManager,
     /// A `wp_fractional_scale_v1`, for its surface.
     FractionalScale(crate::surface::SurfaceId),
+    Presentation,
+    PresentationFeedback,
     /// The object of a global a test planted. Any request on it is a
     /// protocol error.
     Unimplemented,

@@ -26,6 +26,8 @@ pub struct Output {
     pub(crate) redraw: crate::redraw::Redraw,
     /// How many times it was drawn, or looked at for drawing.
     pub(crate) draws: u64,
+    /// Presentation feedback for the frame on its way to the display.
+    pub(crate) presenting: Vec<(ClientId, u32)>,
 }
 
 impl Output {
@@ -62,6 +64,7 @@ impl State {
             global,
             redraw: crate::redraw::Redraw::Idle,
             draws: 0,
+            presenting: Vec::new(),
         });
         self.queue_redraw(number);
         number
@@ -74,6 +77,14 @@ impl State {
         };
         let output = self.outputs.remove(index);
         self.remove_global(output.global);
+        // The frame it was showing never will be.
+        let mut by_client: std::collections::HashMap<ClientId, Vec<u32>> = std::collections::HashMap::new();
+        for (client, feedback) in &output.presenting {
+            by_client.entry(*client).or_default().push(*feedback);
+        }
+        for (client, feedbacks) in by_client {
+            self.discard_feedback(client, feedbacks);
+        }
         self.usable.remove(&number);
         let closed: Vec<_> = self
             .layers

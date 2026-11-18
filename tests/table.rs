@@ -7,7 +7,7 @@ mod common;
 use common::Compositor;
 
 /// What every compartment with a Wayland listener is offered.
-const COMPARTMENT: [&str; 9] = [
+const COMPARTMENT: [&str; 10] = [
     "wl_compositor",
     "wl_data_device_manager",
     "wl_output",
@@ -15,6 +15,7 @@ const COMPARTMENT: [&str; 9] = [
     "wl_shm",
     "wl_subcompositor",
     "wp_fractional_scale_manager_v1",
+    "wp_presentation",
     "wp_viewporter",
     "xdg_wm_base",
 ];

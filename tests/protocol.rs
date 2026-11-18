@@ -174,12 +174,12 @@ fn a_bind_that_misnames_the_interface_or_its_version_is_refused() {
 fn a_request_this_build_does_not_carry_out_is_an_implementation_error() {
     let compositor = Compositor::start();
     compositor.with(|state| {
-        state.plant_global("wp_presentation");
+        state.plant_global("zwp_idle_inhibit_manager_v1");
     });
     let (mut client, _listener) = compositor.compartment("c1");
-    let presentation = client.bind("wp_presentation", 1).unwrap();
+    let inhibitor = client.bind("zwp_idle_inhibit_manager_v1", 1).unwrap();
     let destroy = Header {
-        object: presentation,
+        object: inhibitor,
         opcode: 0,
         size: 8,
     }
