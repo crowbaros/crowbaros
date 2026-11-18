@@ -1,15 +1,19 @@
 # CrowbarOS
 
-CrowbarOS is an operating system that each person shapes with their agent, on a
-small Void Linux base. Two people build it, Jim Martin and Jason Alexander, each
-working with coding agents. This file is the standard both sides hold.
+CrowbarOS is a small operating system on Void Linux with an agent built into
+it, always at the person's side. Two people build it, Jim Martin and Jason
+Alexander, each working with coding agents. This file is the standard both
+sides hold.
 
 ## Ground rules
 
 - The [vision](docs/VISION.md) is the plan of record. Read it before work that
   changes what CrowbarOS does. The [README](README.md) has the repository map.
+- Read the [lessons](docs/LESSONS.md) before you design a part the earlier
+  plans already explored.
 - Write with the terms in the [glossary](GLOSSARY.md). Call the project
-  CrowbarOS and the earlier plan "the Fedora blueprint".
+  CrowbarOS and the earlier plans "the Fedora blueprint" and "the substrate
+  vision".
 - [`docs/archive/`](docs/archive/) is history. Where it disagrees with the
   vision, the vision is right.
 - A decision that is hard to reverse gets a record in [`docs/adr/`](docs/adr/),
@@ -26,10 +30,9 @@ working with coding agents. This file is the standard both sides hold.
   tests, and docs.
 - **Squash merge.** The pull request title becomes the one commit on `main`, so
   write it as a conventional commit that states the outcome in plain language:
-  `fix(apply): a failed apply no longer leaves a half-built generation`.
-  The scope is the area: `state`, `apply`, `shell`, `compositor`, `studio`,
-  `labels`, `broker`, `authority`, `sandbox`, `lab`, `design`, `vision`, `adr`,
-  `ci`.
+  `fix(base): a build that stopped partway no longer leaves a root the next build trusts`.
+  The scope is the area: `base`, `compositor`, `shell`, `agent`, `apps`,
+  `studio`, `lab`, `design`, `vision`, `adr`, `ci`.
 - Fill in the [pull request template](.github/pull_request_template.md). Under
   Verification, say what you ran and what you saw, and name what you could not
   run. End with the model and harness that did the work.
@@ -47,7 +50,8 @@ working with coding agents. This file is the standard both sides hold.
 
 | Change touches | Run | Show |
 | --- | --- | --- |
-| How Base is built, booted, or rolled back; `lab/void/` | `lab/void/void_lab.py milestone` | The evidence log it writes |
+| The graphical guest in `lab/void/` | `lab/void/compositor_guest.py check` | The evidence log it writes |
+| The Alpha desktop: `lab/compositor-spike/`, or how `lab/void/` runs the shell | `lab/void/compositor_guest.py desktop-check` | The run's `desktop.log` and `results.json` |
 | `compositor/fulcrum.json`, or a Fulcrum change before it is pinned | `lab/void/compositor_guest.py check`, as [`compositor/`](compositor/README.md) says | The evidence log it writes |
 | `apps/` | The app's Void build and run steps in its README | Before and after captures; a short recording for motion |
 

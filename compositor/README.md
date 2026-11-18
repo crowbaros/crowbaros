@@ -16,12 +16,17 @@ compositor must do, in its decision records:
 | Decision | Record |
 | --- | --- |
 | CrowbarOS owns its compositor | [ADR 0015](../docs/adr/0015-our-own-compositor-on-smithay.md) |
-| Who its clients are, and how each connects | [ADR 0016](../docs/adr/0016-the-warden-starts-every-compartment.md) |
-| What desktop it is, what each client is offered, and its slices | [ADR 0020](../docs/adr/0020-the-first-compositor-is-small-on-purpose.md) |
-| Which rows of that table the shell and the Warden are offered | [ADR 0023](../docs/adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) |
-| It is built beside Milestone 2 | [ADR 0022](../docs/adr/0022-the-compositor-is-built-beside-milestone-2.md) |
 | It is built in its own repository, and Base pins one commit | [ADR 0027](../docs/adr/0027-the-compositor-is-built-in-its-own-repository.md) |
 | It is written from the ground up, with Smithay as its reference | [ADR 0028](../docs/adr/0028-the-compositor-is-written-from-the-ground-up.md) |
+| The substrate vision ends, and these three stand | [ADR 0029](../docs/adr/0029-crowbaros-starts-again-with-an-agent-at-the-persons-side.md) |
+
+Who the compositor's clients are, what each is offered, and its slices were
+decided in ADRs [0016](../docs/archive/substrate-vision/adr/0016-the-warden-starts-every-compartment.md),
+[0020](../docs/archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md),
+[0022](../docs/archive/substrate-vision/adr/0022-the-compositor-is-built-beside-milestone-2.md),
+and [0023](../docs/archive/substrate-vision/adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md),
+now archived. They bind until a new record says what the compositor offers the
+shell and the Agent.
 
 Fulcrum's README says what is built, which slice is next, and how to build and
 test it. Through commit 30fadd8 the compositor's code was here. Its history moved

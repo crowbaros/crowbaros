@@ -9,7 +9,7 @@ still runs the spike, which moved to
 [`lab/compositor-spike/`](../../lab/compositor-spike/README.md).
 
 This is the record for [issue 49](https://github.com/crowbaros/crowbaros/issues/49),
-slice 1 of [ADR 0020](../adr/0020-the-first-compositor-is-small-on-purpose.md).
+slice 1 of [ADR 0020](../archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md).
 The evidence is in
 [`evidence/compositor-slice-1-2026-11-15/`](evidence/compositor-slice-1-2026-11-15/):
 the logs the runs wrote, copied byte for byte, and two captures. Times in the
@@ -52,7 +52,7 @@ Both were built in the Void build root.
 ## Identity
 
 The compositor has two ways in
-([ADR 0016](../adr/0016-the-warden-starts-every-compartment.md)).
+([ADR 0016](../archive/substrate-vision/adr/0016-the-warden-starts-every-compartment.md)).
 
 - **A trusted part's path socket.** The shell and the Warden each have one. The
   compositor accepts a peer only with that part's user ID, as the kernel
@@ -162,7 +162,7 @@ Slice 1 met three gaps in the records. Jim decided each on the same day.
 
 | Gap | Decision |
 | --- | --- |
-| ADR 0020's table gives layer shell to "the shell alone", and names nothing else for the shell | The shell is offered what a compartment with the GPU is offered, and layer shell: [ADR 0023](../adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) |
+| ADR 0020's table gives layer shell to "the shell alone", and names nothing else for the shell | The shell is offered what a compartment with the GPU is offered, and layer shell: [ADR 0023](../archive/substrate-vision/adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) |
 | The Warden says who a compartment is and nothing more, so nothing tells the compositor that a compartment's needs include the GPU | The broker says it. [Issue 71](https://github.com/crowbaros/crowbaros/issues/71) decides how. Until then, outside the tests no compartment is offered `zwp_linux_dmabuf_v1` |
 | ADR 0020 names no slice for presentation time or cursor shape | Presentation time is built with slice 5 ([issue 79](https://github.com/crowbaros/crowbaros/issues/79)), and cursor shape with slice 3 ([issue 78](https://github.com/crowbaros/crowbaros/issues/78)) |
 

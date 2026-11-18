@@ -8,8 +8,7 @@ scripts, RPM recipes, and session hooks are no longer active entry points.
 
 | Environment | Current capability | State directory |
 | --- | --- | --- |
-| [Base lab](../../lab/void/README.md) | M1 generation/apply/manual-rollback loop | `.lab/void/` |
-| Graphical lab | The compositor on a TTY, checked with a stand-in for the Warden; software rendering | `.lab/void-graphical/` |
+| [Graphical lab](../../lab/void/README.md) | The compositor on a TTY, checked with a stand-in for the Warden; software rendering | `.lab/void-graphical/` |
 | Isolated desktop smoke | Fresh guest per run; launch/focus/workspaces, Save/Undo, restart/reboot, identity checks | `.lab/void-desktop-checks/<run>/` |
 | Existing desktop preview | A previously prepared VM may already be running | Preserve its disk and recorded configuration |
 
@@ -21,7 +20,6 @@ From the repository root, inspect the available commands or an already-running
 guest without rebuilding its disk:
 
 ```sh
-rtk python3 lab/void/void_lab.py --help
 rtk python3 lab/void/compositor_guest.py --help
 rtk python3 lab/void/compositor_guest.py ssh cat /etc/os-release
 ```
@@ -40,18 +38,16 @@ selects the development disk. Do not build concurrently against the same cache.
 See the [lab guide](../../lab/void/README.md#full-desktop-smoke-check) for prerequisites
 and diagnostics. Credentials and disks stay out of published evidence.
 
-For a **disposable checkout with no existing VM state**, the older full
-checks build or replace their configured images:
+For a **disposable checkout with no existing VM state**, the compositor check
+builds or replaces its configured image:
 
 ```sh
-rtk python3 lab/void/void_lab.py milestone
 rtk python3 lab/void/compositor_guest.py check
 ```
 
-Do not use `image`, `check`, `desktop`, or `milestone` to reopen a preserved development VM:
+Do not use `image`, `check`, or `desktop` to reopen a preserved development VM:
 they build or replace lab state. Keep its `.lab/` files and its viewer/connection
-settings. The Base and graphical guests use different SSH ports; each lab still
-supports only one run at a time at its configured paths.
+settings. The lab supports only one run at a time at its configured paths.
 
 ## Build the interfaces on Void
 

@@ -13,7 +13,7 @@ Rookslash crow, the Nullkeel palette, Manrope, and IBM Plex Mono.
 
 The kit is a released artifact with a manifest of file hashes, so its files are
 left as approved. Its notes name Fedora, Hyprland, and five default apps as the
-product. That part is superseded by the [vision](../VISION.md). The desktop
+product. That part is superseded by the [vision](../archive/substrate-vision/VISION.md). The desktop
 studies in `mockups/` are visual references, not a specification.
 
 For how the identity is applied in native interfaces, see
