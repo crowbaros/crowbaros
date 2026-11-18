@@ -26,7 +26,7 @@ The substrate vision before it is archived, and its code is at the
 
 | Area | State |
 | --- | --- |
-| Base | Being rebuilt as plain Void, built without root, booted under UEFI, on the `new-vision` branch |
+| Base | Being rebuilt as plain Void, built without root, booted under UEFI, in [`base/`](base/) |
 | Compositor | Our own ([ADR 0015](docs/adr/0015-our-own-compositor-on-smithay.md)), built in Fulcrum at the commit Base pins ([ADR 0027](docs/adr/0027-the-compositor-is-built-in-its-own-repository.md)), written there from the ground up with Smithay as its reference ([ADR 0028](docs/adr/0028-the-compositor-is-written-from-the-ground-up.md)). The Alpha desktop runs on it |
 | Shell and Studio Settings | An Alpha session on Void with separate runit services, saved appearance, and 37 passing desktop checks. [Record](docs/development/void-desktop-smoke-2026-11-15.md), [apps](apps/) |
 | Brand and design system | Approved. [Brand kit](docs/branding/), [DESIGN.md](DESIGN.md) |
@@ -36,6 +36,7 @@ The substrate vision before it is archived, and its code is at the
 
 | Path | Contents |
 | --- | --- |
+| [`base/`](base/) | The rebuild's starting point: plain Void Linux, built without root, that boots under UEFI in a VM |
 | [`apps/`](apps/) | The GPUI interfaces: desktop shell, Studio Settings, and the GPUI probe |
 | [`compositor/`](compositor/) | The Fulcrum commit that Base builds as its Wayland compositor, and where the code lives |
 | [`lab/`](lab/) | The Void lab for the compositor and the Alpha desktop |
@@ -51,6 +52,7 @@ The substrate vision before it is archived, and its code is at the
 
 ```sh
 python3 -m unittest discover -s lab/void -p "test_*.py"
+base/void_base.py check                     # build the Void base, boot it, and check it
 lab/void/compositor_guest.py check          # the compositor in a Void VM
 lab/void/compositor_guest.py desktop-check  # the Alpha desktop in a fresh Void VM
 ```
