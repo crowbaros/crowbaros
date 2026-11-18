@@ -4,7 +4,7 @@
 
 Every connection and every shared-memory pool costs the compositor a descriptor, and its process has a fixed number of them. Issue 174 found that nothing capped either. One compartment could take every descriptor, and then the compositor accepted nothing more: not another compartment, not the shell, not the Warden. It lasted until the Warden stopped that compartment. A connected client that sent a descriptor could also lose it silently, because the kernel drops a descriptor the receiver has no room for.
 
-Issue 174 asked three questions. This record answers them for Fulcrum, which now owns the wire layer where the descriptors arrive ([ADR 0028](0028-the-compositor-is-written-from-the-ground-up.md)).
+Issue 174 asked three questions. This record answers them for Fulcrum, which now owns the wire layer where the descriptors arrive ([ADR 0028](../../../adr/0028-the-compositor-is-written-from-the-ground-up.md)).
 
 ## The decision
 
