@@ -197,6 +197,14 @@ impl State {
                         job(self);
                     }
                 }
+                Token::Backend(source) => {
+                    if let Some(mut backend) = self.backend.take() {
+                        backend.ready(self, source);
+                        if self.backend.is_none() {
+                            self.backend = Some(backend);
+                        }
+                    }
+                }
             }
         }
         for timer in timers {
@@ -220,6 +228,17 @@ impl State {
     /// How many clients are connected.
     pub fn client_count(&self) -> usize {
         self.clients.len()
+    }
+
+    /// Watches a descriptor for the backend. When it is readable, the
+    /// backend's `ready` is called with `source`.
+    pub fn watch(&mut self, fd: std::os::fd::BorrowedFd<'_>, source: u64) -> io::Result<()> {
+        self.event_loop.add(fd, Token::Backend(source), false)
+    }
+
+    /// Where the pointer is on the desktop.
+    pub fn pointer_position(&self) -> (f64, f64) {
+        self.pointer
     }
 
     /// Sets where frames go. Without a backend nothing is drawn.

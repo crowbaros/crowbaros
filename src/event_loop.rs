@@ -36,6 +36,8 @@ pub enum Token {
     CompartmentClose(u64),
     /// Work handed to the compositor from another thread.
     Waker,
+    /// A descriptor the backend watches, by the backend's own number.
+    Backend(u64),
 }
 
 impl Token {
@@ -46,6 +48,7 @@ impl Token {
             Token::CompartmentListener(id) => (3, id),
             Token::CompartmentClose(id) => (4, id),
             Token::Waker => (5, 0),
+            Token::Backend(source) => (6, source),
         };
         debug_assert!(value < 1 << 56);
         (kind << 56) | value
@@ -59,6 +62,7 @@ impl Token {
             3 => Token::CompartmentListener(value),
             4 => Token::CompartmentClose(value),
             5 => Token::Waker,
+            6 => Token::Backend(value),
             _ => return None,
         })
     }

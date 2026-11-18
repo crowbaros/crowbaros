@@ -4,5 +4,7 @@
 //! the unsafe part behind a safe interface, and says in a `SAFETY` comment why
 //! the wrapper holds.
 
+pub mod drm;
+pub mod libinput;
 pub mod shm;
 pub mod xkb;

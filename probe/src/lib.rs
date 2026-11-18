@@ -146,8 +146,11 @@ impl Client {
         Ok(client)
     }
 
+    /// Connects to the socket at `path`. A socket that nothing accepts on,
+    /// such as a stopped compartment's, refuses the connection.
     pub fn connect(path: &Path) -> Result<Self, Error> {
-        Self::new(connect(path)?)
+        let stream = connect(path).map_err(|error| format!("could not connect to {}: {error}", path.display()))?;
+        Self::new(stream)
     }
 
     /// The next free ID, for an object of this interface.

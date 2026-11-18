@@ -26,11 +26,11 @@ Warden registers for one compartment. All four of these are required:
   --warden-socket PATH   Where the Warden connects.
   --warden-uid UID       The user ID the Warden runs as.
 
+  --backend tty          Where frames go: a virtual terminal, with the seat
+                         from seatd. The only backend, and the default.
+
 Base makes the directory of each socket, and decides who can enter it.
 FULCRUM_LOG sets the log level: error, warn, info, or debug.
-
-This build has no display backend yet (docs/PLAN.md, Milestone 2): it serves
-clients and shows nothing.
 ";
 
 struct Args {
@@ -48,6 +48,10 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--shell-uid" => shell_uid = Some(uid(value()?)?),
             "--warden-socket" => warden_socket = Some(PathBuf::from(value()?)),
             "--warden-uid" => warden_uid = Some(uid(value()?)?),
+            "--backend" => match value()?.as_str() {
+                "tty" => {}
+                other => return Err(format!("this build has no backend {other}\n\n{USAGE}")),
+            },
             "--help" | "-h" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument {other}\n\n{USAGE}")),
         }
@@ -76,11 +80,10 @@ fn main() {
     let run = || -> std::io::Result<()> {
         crowbar_compositor::limits::raise_descriptor_limit();
         let mut state = State::new()?;
+        // Clients are accepted only once there is something to show them on.
+        crowbar_compositor::backend::tty::init(&mut state)?;
         state.listen(&args.parts)?;
-        log::write(
-            Level::Info,
-            format_args!("compositor is up (no display backend in this build)"),
-        );
+        log::write(Level::Info, format_args!("compositor is up backend=tty"));
         state.run()
     };
     if let Err(error) = run() {
@@ -130,18 +133,19 @@ mod tests {
     /// starts, a socket any process can find, or a backend that is not a
     /// TTY.
     #[test]
-    fn no_flag_starts_a_client_opens_a_socket_or_picks_a_backend() {
-        for flag in [
-            "--spawn",
-            "--shell",
-            "--shell-service",
-            "--socket",
-            "--public-socket",
-            "--backend",
-        ] {
+    fn no_flag_starts_a_client_opens_a_socket_or_picks_another_backend() {
+        for flag in ["--spawn", "--shell", "--shell-service", "--socket", "--public-socket"] {
             let mut args = PARTS.to_vec();
             args.extend([flag, "value"]);
             assert!(parse(&args).is_err(), "{flag} was accepted");
         }
+        for backend in ["winit", "x11", "headless", "wayland"] {
+            let mut args = PARTS.to_vec();
+            args.extend(["--backend", backend]);
+            assert!(parse(&args).is_err(), "--backend {backend} was accepted");
+        }
+        let mut args = PARTS.to_vec();
+        args.extend(["--backend", "tty"]);
+        assert!(parse(&args).is_ok());
     }
 }

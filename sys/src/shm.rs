@@ -17,23 +17,29 @@ use std::{
     io,
     os::fd::{AsFd, BorrowedFd},
     ptr::{self, NonNull},
-    sync::OnceLock,
+    sync::{
+        OnceLock,
+        atomic::{AtomicBool, Ordering, compiler_fence},
+    },
 };
 
 use rustix::mm::{MapFlags, ProtFlags};
 
-/// The mapping a read is in progress on, and whether a `SIGBUS` hit it.
+/// The mapping a read is in progress on.
 #[derive(Clone, Copy)]
 struct Guard {
     start: usize,
     len: usize,
-    faulted: bool,
 }
 
 thread_local! {
-    // A const thread-local holds no lazy initializer, so the signal handler
-    // can read it without allocating.
+    // Const thread-locals hold no lazy initializer, so the signal handler
+    // can use them without allocating.
     static GUARD: Cell<Option<Guard>> = const { Cell::new(None) };
+    // Whether a `SIGBUS` hit the read. An atomic, read after a compiler
+    // fence: the handler's write is invisible to the optimizer, which would
+    // otherwise reuse the value stored before the read.
+    static FAULTED: AtomicBool = const { AtomicBool::new(false) };
 }
 
 static PREVIOUS_HANDLER: OnceLock<libc::sigaction> = OnceLock::new();
@@ -112,18 +118,18 @@ impl Mapping {
         let start = self.ptr.as_ptr() as usize;
         GUARD.with(|guard| {
             assert!(guard.get().is_none(), "a shared-memory read inside another");
-            guard.set(Some(Guard {
-                start,
-                len: self.len,
-                faulted: false,
-            }));
+            guard.set(Some(Guard { start, len: self.len }));
         });
+        FAULTED.with(|faulted| faulted.store(false, Ordering::SeqCst));
+        compiler_fence(Ordering::SeqCst);
         // SAFETY: the mapping is `len` readable bytes for as long as `self`
         // lives. A `SIGBUS` while reading it is handled below by replacing
         // the pages with readable zeros, so every byte stays readable.
         let bytes = unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) };
         let result = read(bytes);
-        let faulted = GUARD.with(|guard| guard.take().is_some_and(|guard| guard.faulted));
+        compiler_fence(Ordering::SeqCst);
+        GUARD.with(|guard| guard.set(None));
+        let faulted = FAULTED.with(|faulted| faulted.swap(false, Ordering::SeqCst));
         if faulted {
             self.broken = true;
             return Err(Truncated);
@@ -179,7 +185,7 @@ extern "C" fn on_sigbus(_signal: libc::c_int, info: *mut libc::siginfo_t, _conte
     // Only async-signal-safe work below: a const thread-local, and `mmap`.
     let guard = GUARD.with(Cell::get);
     match guard {
-        Some(mut active) if address >= active.start && address < active.start + active.len => {
+        Some(active) if address >= active.start && address < active.start + active.len => {
             // SAFETY: the range is exactly the mapping being read, which this
             // thread owns. A fixed private anonymous mapping replaces its
             // pages with zeros, so the read can finish.
@@ -197,8 +203,7 @@ extern "C" fn on_sigbus(_signal: libc::c_int, info: *mut libc::siginfo_t, _conte
                 reraise();
                 return;
             }
-            active.faulted = true;
-            GUARD.with(|guard| guard.set(Some(active)));
+            FAULTED.with(|faulted| faulted.store(true, Ordering::SeqCst));
         }
         _ => reraise(),
     }

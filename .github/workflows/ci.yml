@@ -37,11 +37,12 @@ jobs:
           rustup toolchain install stable --profile minimal --component rustfmt,clippy
           rustup default stable
 
-      # libxkbcommon, which the keyboard links (ADR 0028), and its keymaps.
+      # libxkbcommon and libinput, which Fulcrum links (ADR 0028), and the
+      # keymaps.
       - name: Install libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libxkbcommon-dev xkb-data
+          sudo apt-get install -y --no-install-recommends libxkbcommon-dev xkb-data libinput-dev
 
       - name: Format
         run: cargo fmt --all --check

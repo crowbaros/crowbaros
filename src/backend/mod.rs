@@ -5,6 +5,9 @@
 //! became of the frame.
 
 pub mod headless;
+pub mod session;
+pub mod tty;
+pub mod uevent;
 
 use crate::State;
 
@@ -25,4 +28,7 @@ pub enum Drawn {
 pub trait Backend {
     /// Draws one output if what it shows has changed since the last frame.
     fn draw(&mut self, state: &State, output: u64) -> Drawn;
+
+    /// A descriptor the backend watches with [`State::watch`] is ready.
+    fn ready(&mut self, _state: &mut State, _source: u64) {}
 }

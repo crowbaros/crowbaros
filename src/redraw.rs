@@ -139,8 +139,10 @@ impl State {
         }
         match output.redraw {
             Redraw::Waiting { again: true } => {
+                // At the end of the turn, when the backend is free to draw:
+                // this may run while the backend handles its own events.
                 output.redraw = Redraw::Queued;
-                self.draw(number);
+                self.draws_due.push(number);
             }
             Redraw::Waiting { again: false } => output.redraw = Redraw::Idle,
             Redraw::Idle | Redraw::Queued => {}

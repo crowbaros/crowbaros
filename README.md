@@ -26,7 +26,8 @@ the CrowbarOS repository:
 ## Where it stands
 
 Milestone 1, the Wayland core, is done ([record](docs/wayland-core-2026-11-17.md)).
-Milestone 2, first light, is under way. What is built:
+Milestone 2, first light, is under way: Fulcrum shows windows on a virtual
+terminal. What is built:
 
 - **`fulcrum-wire`**, the wire protocol: the codec, connections that pass
   descriptors beside the bytes, and Rust code generated from the protocol XML.
@@ -44,7 +45,7 @@ Milestone 2, first light, is under way. What is built:
   new window opens inside the usable area of the output the pointer is on,
   offset from the last, and does not take the keyboard.
 - **Redraw on change**: an output is drawn only when something it shows
-  changed, then waits one frame time, so a still desktop draws nothing and a
+  changed, then waits for the display, so a still desktop draws nothing and a
   busy client is held to the display's rate. Frame callbacks are answered
   after each draw.
 - **Layer shell** for the shell's bar, dock, launcher, and wallpaper: layers
@@ -60,13 +61,18 @@ Milestone 2, first light, is under way. What is built:
   held.
 - **Budgets** (CrowbarOS ADR 0029): one compartment cannot take the
   compositor's descriptors from the others.
+- **The TTY backend**: the seat from seatd, through Fulcrum's own client of
+  its socket; displays through the kernel's atomic mode setting, drawn by the
+  CPU renderer into dumb buffers; input through libinput; and monitors and
+  input devices plugged in and out, heard from the kernel's netlink uevents.
+  Ctrl+Alt+F1 to F12 switch virtual terminals.
 - **A headless backend** that draws each output with the CPU renderer, and
   `crowbar-probe`, the test client, on `fulcrum-wire`'s client side.
 
-Still to come in Milestone 2: the GLES renderer, KMS, the seatd client, libinput, hotplug, and a nested
-backend. `wp_viewporter` and `zwp_linux_dmabuf_v1` are advertised to the clients the table names, and a
-request on one is a protocol error that says this build does not carry it
-out yet.
+Still to come in Milestone 2: the nested backend. `wp_viewporter` is
+advertised to the clients the table names, and a request on it is a protocol
+error that says this build does not carry it out yet. The GLES renderer, GBM,
+and linux-dmabuf come with Milestone 3.
 
 CrowbarOS still builds the Smithay-based compositor that Milestone 0 brought
 here: commit `d11400f`, tagged `smithay-baseline`. Its 57 tests and the 36
@@ -93,8 +99,9 @@ must pass before CrowbarOS moves its pin.
 | `src/xdg.rs`, `src/windows.rs` | xdg-shell, and where windows go and what each output shows |
 | `src/layer.rs` | The shell's layer surfaces and the room they reserve |
 | `src/seat.rs` | The keyboard and the pointer, and who has them |
-| `src/redraw.rs`, `src/backend/` | Drawing only on change, and where frames go: the headless backend so far |
-| `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here |
+| `src/redraw.rs` | Drawing only on change |
+| `src/backend/` | Where frames go: `tty.rs` (a virtual terminal), `session.rs` (Fulcrum's client of seatd), `uevent.rs` (hotplug from netlink), and `headless.rs` (the tests) |
+| `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `drm.rs` (mode setting and dumb buffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (the guarded mapping) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
 | `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
@@ -104,7 +111,8 @@ Only `sys/` may hold `unsafe` code. Every other crate forbids it.
 
 ## Run
 
-All four flags are required. There is no default for any of them.
+All four flags are required. There is no default for any of them. On a
+virtual terminal, with seatd running and the compositor's user in its group:
 
 ```sh
 crowbar-compositor \
@@ -122,9 +130,10 @@ WAYLAND_DISPLAY=/path/to/warden-socket \
 
 ## Build and test
 
-The keyboard links libxkbcommon, and its tests need the keymaps of
-xkeyboard-config (Arch: `libxkbcommon`; Debian and Ubuntu:
-`libxkbcommon-dev xkb-data`; Void: `libxkbcommon-devel`).
+The keyboard links libxkbcommon, whose tests need the keymaps of
+xkeyboard-config, and the TTY backend links libinput (Arch: `libxkbcommon
+libinput`; Debian and Ubuntu: `libxkbcommon-dev xkb-data libinput-dev`; Void:
+`libxkbcommon-devel libinput-devel`).
 
 ```sh
 cargo test --locked
