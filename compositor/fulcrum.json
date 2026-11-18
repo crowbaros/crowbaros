@@ -1,5 +1,5 @@
 {
   "comment": "The Fulcrum commit that Base builds as its compositor (ADR 0027). A full commit ID, never a branch. Change it in a pull request of its own, with the Void guest check run at the new commit.",
   "repository": "https://github.com/crowbaros/fulcrum.git",
-  "revision": "0cdf7fd267cc5978ff815b3e174fa7f992d2a68c"
+  "revision": "93f1051f554a249de6e1e6671606ed60c4c09928"
 }

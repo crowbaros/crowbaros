@@ -47,7 +47,10 @@ AS_CLIENT = f"{AS_APP} WAYLAND_DISPLAY={LISTENER}"
 COMPARTMENT = {"wl_compositor", "wl_data_device_manager", "wl_output", "wl_seat", "wl_shm",
                "wl_subcompositor", "wp_fractional_scale_manager_v1", "wp_presentation",
                "wp_viewporter", "xdg_wm_base"}
-SHELL_ALSO = {"zwp_linux_dmabuf_v1", "zwlr_layer_shell_v1"}
+# The shell is offered a compartment-with-the-GPU's row too (ADR 0023), so
+# explicit sync where the display's device has timeline syncobjs, as the
+# guest's does.
+SHELL_ALSO = {"wp_linux_drm_syncobj_manager_v1", "zwp_linux_dmabuf_v1", "zwlr_layer_shell_v1"}
 WARDEN = {"wp_security_context_manager_v1"}
 
 
