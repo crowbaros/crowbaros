@@ -1,6 +1,6 @@
 # CrowbarOS: vision
 
-**Status:** draft by Jim Martin, November 17, 2026, for Jason Alexander's review.
+**Status:** accepted on November 18, 2026, by Jim Martin and Jason Alexander.
 It replaces the [substrate vision](archive/substrate-vision/README.md), which
 replaced the [Fedora blueprint](archive/fedora-blueprint/README.md). The decision
 is [ADR 0030](adr/0030-crowbaros-starts-again-with-an-agent-at-the-persons-side.md).
