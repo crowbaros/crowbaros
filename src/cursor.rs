@@ -24,6 +24,21 @@ use crate::{
     windows::intersects,
 };
 
+/// The pointer on one output, for a backend that shows it on a plane of its
+/// own.
+pub(crate) enum PointerImage {
+    /// It is not on the output, or a client hid it.
+    None,
+    /// The compositor's own image, with its top-left corner on the output.
+    Own {
+        cursor: std::rc::Rc<crate::xcursor::CursorImage>,
+        at: (i32, i32),
+    },
+    /// A client's surface, which is drawn with the scene so that it covers
+    /// no frame.
+    Surface,
+}
+
 /// What the pointer looks like.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Cursor {
@@ -71,6 +86,30 @@ impl State {
             .collect();
         elements.extend(frames);
         elements
+    }
+
+    /// The pointer on one output, as a cursor plane would show it.
+    pub(crate) fn pointer_image(&self, output: u64) -> PointerImage {
+        let Some(output) = self.outputs.iter().find(|o| o.number == output) else {
+            return PointerImage::None;
+        };
+        let shape = match self.seat.cursor {
+            None => crate::xcursor::DEFAULT_SHAPE,
+            Some(Cursor::Shape(shape)) => shape,
+            Some(Cursor::Hidden) => return PointerImage::None,
+            Some(Cursor::Surface { .. }) => return PointerImage::Surface,
+        };
+        let cursor = self.cursor_theme.image_or_square(shape);
+        let (x, y) = self.pointer;
+        let at = (
+            x as i32 - output.position.0 - cursor.hotspot.0,
+            y as i32 - output.position.1 - cursor.hotspot.1,
+        );
+        let rect = Rect::new(at.0, at.1, cursor.image.width, cursor.image.height);
+        if !intersects(&rect, &Rect::new(0, 0, output.size.0, output.size.1)) {
+            return PointerImage::None;
+        }
+        PointerImage::Own { cursor, at }
     }
 
     /// The theme's image of a shape at the pointer, or the square where

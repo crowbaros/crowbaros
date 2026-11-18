@@ -85,7 +85,9 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   the system XCursor theme's images (`XCURSOR_THEME`, `XCURSOR_SIZE`, and
   `XCURSOR_PATH`), or a white square where there is no theme. It is drawn
   above everything at its hotspot, and a client's surface is clipped so that
-  it covers no frame (ADR 0020).
+  it covers no frame (ADR 0020). On the TTY, the compositor's own image goes
+  on the display's cursor plane where it has one, so moving the pointer
+  redraws no frame.
 - **The seat**: one keyboard and one pointer. The keymap is compiled by
   libxkbcommon and shared through a sealed memfd. The keyboard goes to the
   window or key-taking layer the person clicks, and a click raises and

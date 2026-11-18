@@ -224,11 +224,16 @@ pub const OBJECT_CONNECTOR: u32 = 0xc0c0_c0c0;
 pub const OBJECT_PLANE: u32 = 0xeeee_eeee;
 
 const CAP_DUMB_BUFFER: u64 = 0x1;
+const CAP_CURSOR_WIDTH: u64 = 0x8;
+const CAP_CURSOR_HEIGHT: u64 = 0x9;
 const CAP_ADDFB2_MODIFIERS: u64 = 0x10;
 /// `DRM_MODE_FB_MODIFIERS`: the framebuffer's modifier is given.
 const FB_MODIFIERS: u32 = 1 << 1;
 const CLIENT_CAP_UNIVERSAL_PLANES: u64 = 2;
 const CLIENT_CAP_ATOMIC: u64 = 3;
+/// The client sets a cursor plane's hotspot. Drivers of a virtual GPU, whose
+/// host draws the cursor, show their cursor planes only to such a client.
+const CLIENT_CAP_CURSOR_PLANE_HOTSPOT: u64 = 6;
 
 const PAGE_FLIP_EVENT: u32 = 0x01;
 const ATOMIC_TEST_ONLY: u32 = 0x0100;
@@ -238,6 +243,8 @@ const EVENT_FLIP_COMPLETE: u32 = 0x02;
 
 /// XRGB8888, as a fourcc.
 pub const FORMAT_XRGB8888: u32 = u32::from_le_bytes(*b"XR24");
+/// The same, with alpha: a cursor plane's format.
+pub const FORMAT_ARGB8888: u32 = u32::from_le_bytes(*b"AR24");
 
 /// What a connector says about itself.
 #[derive(Clone, Debug)]
@@ -335,6 +342,8 @@ impl Device {
         let device = Device { fd };
         device.set_client_cap(CLIENT_CAP_UNIVERSAL_PLANES, 1)?;
         device.set_client_cap(CLIENT_CAP_ATOMIC, 1)?;
+        // Older kernels do not know it, and every other driver has no need.
+        let _ = device.set_client_cap(CLIENT_CAP_CURSOR_PLANE_HOTSPOT, 1);
         if device.cap(CAP_DUMB_BUFFER)? == 0 {
             return Err(io::Error::other("the device has no dumb buffers"));
         }
@@ -575,8 +584,26 @@ impl Device {
         Ok(blob.blob_id)
     }
 
+    /// The size of buffer a cursor plane takes, as the driver says, or the
+    /// 64x64 every driver takes.
+    pub fn cursor_size(&self) -> (u32, u32) {
+        let side = |capability| {
+            self.cap(capability)
+                .ok()
+                .filter(|side| (1..=512).contains(side))
+                .unwrap_or(64) as u32
+        };
+        (side(CAP_CURSOR_WIDTH), side(CAP_CURSOR_HEIGHT))
+    }
+
     /// A dumb buffer of this size, its framebuffer, and its memory mapped.
     pub fn dumb_buffer(&self, width: u32, height: u32) -> io::Result<DumbBuffer> {
+        self.dumb_buffer_in(width, height, FORMAT_XRGB8888)
+    }
+
+    /// A dumb buffer of this size whose framebuffer has this format, of four
+    /// bytes a pixel.
+    pub fn dumb_buffer_in(&self, width: u32, height: u32, format: u32) -> io::Result<DumbBuffer> {
         let mut create = CreateDumb {
             width,
             height,
@@ -603,7 +630,7 @@ impl Device {
         let mut command = FbCmd2 {
             width,
             height,
-            pixel_format: FORMAT_XRGB8888,
+            pixel_format: format,
             ..Default::default()
         };
         command.handles[0] = create.handle;
@@ -818,8 +845,8 @@ impl Device {
 }
 
 impl DumbBuffer {
-    /// Writes rows of XRGB8888 pixels into the buffer, row by row, `width`
-    /// pixels a row, clipped to the buffer.
+    /// Writes rows of pixels in the buffer's format into it, row by row,
+    /// `width` pixels a row, clipped to the buffer.
     pub fn write(&mut self, pixels: &[u32], width: u32) {
         let rows = (pixels.len() as u32 / width.max(1)).min(self.height);
         let copied = width.min(self.width) as usize;

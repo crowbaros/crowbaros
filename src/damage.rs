@@ -38,6 +38,22 @@ pub(crate) struct DamageTracker {
 }
 
 impl DamageTracker {
+    /// Whether a scene differs from the last one drawn, so that it must be
+    /// drawn at all. Nothing is recorded.
+    pub(crate) fn changes(&self, state: &State, scene: &Scene) -> bool {
+        match &self.last {
+            Some((size, background, last)) if *size == scene.size && *background == scene.background => {
+                let drawn: Vec<Drawn> = scene
+                    .elements
+                    .iter()
+                    .map(|element| (*element, commits_of(state, element)))
+                    .collect();
+                !changed(last, &drawn).is_empty()
+            }
+            _ => true,
+        }
+    }
+
     /// What to draw of `scene` into a buffer that holds the frame drawn
     /// `age` frames ago: 1 for the last frame, and 0 for a buffer that holds
     /// none of them. The scene is recorded as drawn.

@@ -19,6 +19,13 @@
 //! The GPU draws into a GBM buffer only what changed since the frame that
 //! buffer holds (see `damage.rs`). After a switch back, it draws all of it.
 //!
+//! Where the display has a cursor plane, the compositor's own pointer image
+//! goes on it, above the frame, so that moving the pointer only moves the
+//! plane and redraws no frame. A client's cursor surface is still drawn with
+//! the frame, so that it covers no frame (ADR 0020), as is an image larger
+//! than the plane takes. A display that refuses the plane has the pointer
+//! drawn with the frame from then on.
+//!
 //! When the person switches to another virtual terminal, seatd takes the
 //! devices back. The compositor stops drawing and reading input until it is
 //! switched back to, and then sets every mode again.
@@ -32,7 +39,10 @@ use std::{
 };
 
 use fulcrum_sys::{
-    drm::{Change, Device, DumbBuffer, FORMAT_XRGB8888, ModeInfo, OBJECT_CONNECTOR, OBJECT_CRTC, OBJECT_PLANE},
+    drm::{
+        Change, Device, DumbBuffer, FORMAT_ARGB8888, FORMAT_XRGB8888, ModeInfo, OBJECT_CONNECTOR, OBJECT_CRTC,
+        OBJECT_PLANE,
+    },
     gbm,
     gles::{Dmabuf, DmabufPlane, Gles, Target},
     libinput::{Input, InputEvent, Opener},
@@ -45,10 +55,12 @@ use crate::{
         session::{Session, SessionEvent},
         uevent::Uevents,
     },
+    cursor::PointerImage,
     damage::DamageTracker,
     geometry::Rect,
     log,
     render::Renderer,
+    xcursor::CursorImage,
 };
 
 const SOURCE_SESSION: u64 = 1;
@@ -101,8 +113,93 @@ struct Monitor {
     flip_pending: bool,
     /// What each frame changed, for the GPU to draw only that.
     damage: DamageTracker,
+    /// The plane the pointer is shown on, where the display has one.
+    cursor: Option<CursorPlane>,
     /// How many frames have been drawn.
     frames: u64,
+}
+
+/// An image the cursor plane shows, and where its corner is.
+type CursorShown = (Rc<CursorImage>, (i32, i32));
+
+/// The plane the display shows the pointer on, above the frame: moving the
+/// pointer moves the plane, and redraws no frame.
+struct CursorPlane {
+    plane: u32,
+    fb: u32,
+    crtc: u32,
+    src: [u32; 4],
+    dst: [u32; 4],
+    /// `HOTSPOT_X` and `HOTSPOT_Y`, which a virtual GPU's cursor plane has:
+    /// its host draws the cursor, and needs the point that is the pointer.
+    hotspot: Option<[u32; 2]>,
+    /// The size of buffer it takes.
+    size: (u32, u32),
+    buffers: [DumbBuffer; 2],
+    /// Which buffer it shows.
+    front: usize,
+    /// What it shows: none while it is off.
+    showing: Option<CursorShown>,
+}
+
+impl CursorPlane {
+    /// Whether it already shows what is wanted.
+    fn shows(&self, wanted: Option<&CursorShown>) -> bool {
+        match (&self.showing, wanted) {
+            (None, None) => true,
+            (Some((image, at)), Some((wanted, wanted_at))) => Rc::ptr_eq(image, wanted) && at == wanted_at,
+            _ => false,
+        }
+    }
+
+    /// The changes that make it show what is wanted, on `crtc`. A new image
+    /// is written into the buffer it does not show: true if one was.
+    fn changes(&mut self, crtc: u32, wanted: Option<&CursorShown>, changes: &mut Vec<Change>) -> bool {
+        let Some((image, at)) = wanted else {
+            changes.extend([(self.plane, self.fb, 0), (self.plane, self.crtc, 0)]);
+            return false;
+        };
+        let same_image = self
+            .showing
+            .as_ref()
+            .is_some_and(|(showing, _)| Rc::ptr_eq(showing, image));
+        let mut buffer = self.front;
+        if !same_image {
+            buffer = 1 - self.front;
+            let (width, height) = self.size;
+            let mut pixels = vec![0u32; (width * height) as usize];
+            let picture = &image.image;
+            for row in 0..picture.height.min(height as i32) {
+                let from = (row * picture.width) as usize;
+                let to = row as usize * width as usize;
+                let count = picture.width.min(width as i32) as usize;
+                pixels[to..to + count].copy_from_slice(&picture.pixels[from..from + count]);
+            }
+            self.buffers[buffer].write(&pixels, width);
+        }
+        let (width, height) = (u64::from(self.size.0), u64::from(self.size.1));
+        // Plane positions are signed: one off the top or the left is negative.
+        let position = |value: i32| i64::from(value) as u64;
+        changes.extend([
+            (self.plane, self.fb, u64::from(self.buffers[buffer].framebuffer)),
+            (self.plane, self.crtc, u64::from(crtc)),
+            (self.plane, self.src[0], 0),
+            (self.plane, self.src[1], 0),
+            (self.plane, self.src[2], width << 16),
+            (self.plane, self.src[3], height << 16),
+            (self.plane, self.dst[0], position(at.0)),
+            (self.plane, self.dst[1], position(at.1)),
+            (self.plane, self.dst[2], width),
+            (self.plane, self.dst[3], height),
+        ]);
+        if let Some([x, y]) = self.hotspot {
+            changes.extend([
+                (self.plane, x, image.hotspot.0.max(0) as u64),
+                (self.plane, y, image.hotspot.1.max(0) as u64),
+            ]);
+        }
+        !same_image
+    }
 }
 
 /// A monitor's two buffers: the one it shows, and the one drawn next.
@@ -424,12 +521,28 @@ impl Tty {
                 log::warning!("no primary plane for {}", connector.name());
                 continue;
             };
+            let taken: Vec<u32> = self
+                .monitors
+                .iter()
+                .filter_map(|monitor| monitor.cursor.as_ref().map(|cursor| cursor.plane))
+                .collect();
+            let cursor = planes
+                .iter()
+                .find(|plane| {
+                    plane.possible_crtcs & (1 << index) != 0
+                        && !taken.contains(&plane.id)
+                        && self
+                            .device
+                            .properties(plane.id, OBJECT_PLANE)
+                            .is_ok_and(|props| props.iter().any(|(name, _, value)| name == "type" && *value == 2))
+                })
+                .map(|plane| plane.id);
             let mode = *connector
                 .modes
                 .iter()
                 .find(|mode| mode.preferred())
                 .unwrap_or(&connector.modes[0]);
-            match self.light(state, &connector, crtc, plane.id, mode) {
+            match self.light(state, &connector, crtc, plane.id, cursor, mode) {
                 Ok(monitor) => self.monitors.push(monitor),
                 Err(error) => log::warning!("could not light {}: {error}", connector.name()),
             }
@@ -442,6 +555,7 @@ impl Tty {
         connector: &fulcrum_sys::drm::Connector,
         crtc: u32,
         plane: u32,
+        cursor: Option<u32>,
         mode: ModeInfo,
     ) -> io::Result<Monitor> {
         let find = |object, kind, name: &str| -> io::Result<u32> {
@@ -481,11 +595,22 @@ impl Tty {
                 ])
             }
         };
+        let cursor = match (cursor, &buffers) {
+            (Some(id), Buffers::Gpu(_)) => match self.cursor_plane(id) {
+                Ok(plane) => Some(plane),
+                Err(error) => {
+                    log::warning!("the pointer is drawn with the frame on {}: {error}", connector.name());
+                    None
+                }
+            },
+            _ => None,
+        };
         let mode_blob = self.device.mode_blob(&mode)?;
         let name = connector.name();
         let refresh = mode.refresh_millihertz();
         let output = state.add_output(&name, (width as i32, height as i32), refresh);
-        log::info!("output connected name={name} size={width}x{height} refresh={refresh}");
+        let pointer = if cursor.is_some() { "cursor-plane" } else { "frame" };
+        log::info!("output connected name={name} size={width}x{height} refresh={refresh} pointer={pointer}");
         Ok(Monitor {
             output,
             name,
@@ -501,17 +626,50 @@ impl Tty {
             flip_pending: false,
             damage: DamageTracker::default(),
             frames: 0,
+            cursor,
+        })
+    }
+
+    /// A cursor plane's properties and two buffers of the size it takes.
+    fn cursor_plane(&self, plane: u32) -> io::Result<CursorPlane> {
+        let find = |name: &str| -> io::Result<u32> {
+            self.device
+                .properties(plane, OBJECT_PLANE)?
+                .into_iter()
+                .find(|(property, _, _)| property == name)
+                .map(|(_, id, _)| id)
+                .ok_or_else(|| io::Error::other(format!("no {name} property")))
+        };
+        let size = self.device.cursor_size();
+        Ok(CursorPlane {
+            plane,
+            fb: find("FB_ID")?,
+            crtc: find("CRTC_ID")?,
+            src: [find("SRC_X")?, find("SRC_Y")?, find("SRC_W")?, find("SRC_H")?],
+            dst: [find("CRTC_X")?, find("CRTC_Y")?, find("CRTC_W")?, find("CRTC_H")?],
+            hotspot: find("HOTSPOT_X").and_then(|x| Ok([x, find("HOTSPOT_Y")?])).ok(),
+            size,
+            buffers: [
+                self.device.dumb_buffer_in(size.0, size.1, FORMAT_ARGB8888)?,
+                self.device.dumb_buffer_in(size.0, size.1, FORMAT_ARGB8888)?,
+            ],
+            front: 0,
+            showing: None,
         })
     }
 
     fn turn_off(&self, monitor: &Monitor) {
-        let changes: [Change; 5] = [
+        let mut changes: Vec<Change> = vec![
             (monitor.connector, monitor.props.connector_crtc, 0),
             (monitor.crtc, monitor.props.crtc_active, 0),
             (monitor.crtc, monitor.props.crtc_mode, 0),
             (monitor.plane, monitor.props.plane_fb, 0),
             (monitor.plane, monitor.props.plane_crtc, 0),
         ];
+        // A plane may not stay on a CRTC that is off.
+        if let Some(cursor) = &monitor.cursor {
+            changes.extend([(cursor.plane, cursor.fb, 0), (cursor.plane, cursor.crtc, 0)]);
+        }
         if let Err(error) = self.device.commit(&changes, true, false) {
             log::warning!("could not turn {} off: {error}", monitor.name);
         }
@@ -582,6 +740,10 @@ impl Tty {
                 self.input.suspend();
                 for monitor in &mut self.monitors {
                     monitor.needs_modeset = true;
+                    // What the display shows when it comes back is not known.
+                    if let Some(cursor) = &mut monitor.cursor {
+                        cursor.showing = None;
+                    }
                     if std::mem::take(&mut monitor.flip_pending) {
                         state.frame_shown(monitor.output);
                     }
@@ -617,7 +779,19 @@ impl Backend for Tty {
         }
         let back = 1 - monitor.front;
         // The pointer is drawn too: a TTY does not draw one for the
-        // compositor.
+        // compositor. The compositor's own image goes on the cursor plane
+        // where there is one, so that moving it redraws no frame; a client's
+        // surface is drawn with the frame, so that it covers no frame.
+        let pointer = state.pointer_image(output);
+        let on_plane: Option<Option<CursorShown>> = match (&monitor.cursor, pointer, &monitor.buffers) {
+            (Some(plane), PointerImage::Own { cursor, at }, Buffers::Gpu(_))
+                if cursor.image.width as u32 <= plane.size.0 && cursor.image.height as u32 <= plane.size.1 =>
+            {
+                Some(Some((cursor, at)))
+            }
+            (Some(_), PointerImage::None, Buffers::Gpu(_)) => Some(None),
+            _ => None,
+        };
         let framebuffer = match &mut monitor.buffers {
             Buffers::Dumb(buffers) => {
                 // Where there is a GPU, it draws what only it can show, as a
@@ -632,29 +806,41 @@ impl Backend for Tty {
                     return Drawn::Nothing;
                 };
                 buffers[back].write(&image.pixels, image.width as u32);
-                buffers[back].framebuffer
+                Some(buffers[back].framebuffer)
             }
             Buffers::Gpu(buffers) => {
-                let (Some(scene), Some(gpu)) = (state.scene_with_cursor(output), self.gpu.as_mut()) else {
+                let scene = if on_plane.is_some() {
+                    state.scene(output)
+                } else {
+                    state.scene_with_cursor(output)
+                };
+                let (Some(scene), Some(gpu)) = (scene, self.gpu.as_mut()) else {
                     return Drawn::Nothing;
                 };
-                // The back buffer holds an older frame: only what changed
-                // since is drawn. After a switch back, all of it is.
-                let buffer = &mut buffers[back];
-                let age = match buffer.holds {
-                    Some(held) if !monitor.needs_modeset => (monitor.frames + 1 - held) as usize,
-                    _ => 0,
-                };
-                let damage = monitor.damage.damage(state, &scene, age);
-                gpu.renderer.draw(state, &scene, &buffer.target, &damage);
-                monitor.frames += 1;
-                buffer.holds = Some(monitor.frames);
-                buffer.framebuffer
+                if monitor.needs_modeset || monitor.damage.changes(state, &scene) {
+                    // The back buffer holds an older frame: only what changed
+                    // since is drawn. After a switch back, all of it is.
+                    let buffer = &mut buffers[back];
+                    let age = match buffer.holds {
+                        Some(held) if !monitor.needs_modeset => (monitor.frames + 1 - held) as usize,
+                        _ => 0,
+                    };
+                    let damage = monitor.damage.damage(state, &scene, age);
+                    gpu.renderer.draw(state, &scene, &buffer.target, &damage);
+                    monitor.frames += 1;
+                    buffer.holds = Some(monitor.frames);
+                    Some(buffer.framebuffer)
+                } else {
+                    None
+                }
             }
         };
         let (width, height) = (u64::from(monitor.mode.hdisplay), u64::from(monitor.mode.vdisplay));
         let props = monitor.props;
-        let mut changes: Vec<Change> = vec![(monitor.plane, props.plane_fb, u64::from(framebuffer))];
+        let mut changes: Vec<Change> = Vec::new();
+        if let Some(framebuffer) = framebuffer {
+            changes.push((monitor.plane, props.plane_fb, u64::from(framebuffer)));
+        }
         if monitor.needs_modeset {
             changes.extend([
                 (monitor.crtc, props.crtc_mode, u64::from(monitor.mode_blob)),
@@ -671,15 +857,42 @@ impl Backend for Tty {
                 (monitor.plane, props.crtc_h, height),
             ]);
         }
+        // The cursor plane shows what is wanted of it: the compositor's own
+        // image, or nothing while the pointer is elsewhere or drawn with the
+        // frame.
+        let wanted = on_plane.flatten();
+        let crtc = monitor.crtc;
+        let mut wrote = false;
+        if let Some(plane) = &mut monitor.cursor
+            && !plane.shows(wanted.as_ref())
+        {
+            wrote = plane.changes(crtc, wanted.as_ref(), &mut changes);
+        }
+        if changes.is_empty() {
+            return Drawn::Nothing;
+        }
         match self.device.commit(&changes, monitor.needs_modeset, false) {
             Ok(()) => {
-                monitor.front = back;
+                if framebuffer.is_some() {
+                    monitor.front = back;
+                }
+                if let Some(plane) = &mut monitor.cursor {
+                    if wrote {
+                        plane.front = 1 - plane.front;
+                    }
+                    plane.showing = wanted;
+                }
                 monitor.needs_modeset = false;
                 monitor.flip_pending = true;
                 Drawn::Flip
             }
             Err(error) => {
                 log::warning!("could not show a frame on {}: {error}", monitor.name);
+                // A cursor plane the display refuses is given up: the pointer
+                // is drawn with the frame from now on.
+                if monitor.cursor.take().is_some() {
+                    log::warning!("the pointer is drawn with the frame on {}", monitor.name);
+                }
                 Drawn::Nothing
             }
         }

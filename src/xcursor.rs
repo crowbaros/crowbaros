@@ -19,7 +19,10 @@ use std::{
     rc::Rc,
 };
 
-use crate::image::Image;
+use crate::{
+    backend::{POINTER_COLOUR, POINTER_SIZE},
+    image::Image,
+};
 
 /// The largest cursor file read.
 const MAX_FILE: u64 = 16 * 1024 * 1024;
@@ -147,6 +150,8 @@ pub(crate) struct CursorTheme {
     size: u32,
     /// Each shape's image, once looked for: None if the theme has none.
     loaded: HashMap<u32, Option<Rc<CursorImage>>>,
+    /// The compositor's own pointer where there is no theme.
+    square: Rc<CursorImage>,
 }
 
 impl CursorTheme {
@@ -156,6 +161,14 @@ impl CursorTheme {
             name: name.to_owned(),
             size: size.clamp(8, 256),
             loaded: HashMap::new(),
+            square: Rc::new(CursorImage {
+                image: Image {
+                    width: POINTER_SIZE,
+                    height: POINTER_SIZE,
+                    pixels: vec![POINTER_COLOUR; (POINTER_SIZE * POINTER_SIZE) as usize],
+                },
+                hotspot: (0, 0),
+            }),
         }
     }
 
@@ -200,6 +213,12 @@ impl CursorTheme {
     pub(crate) fn image(&self, shape: u32) -> Option<Rc<CursorImage>> {
         let loaded = |shape| self.loaded.get(&shape).cloned().flatten();
         loaded(shape).or_else(|| loaded(DEFAULT_SHAPE))
+    }
+
+    /// A shape's image, or the white square where the theme has neither it
+    /// nor the arrow.
+    pub(crate) fn image_or_square(&self, shape: u32) -> Rc<CursorImage> {
+        self.image(shape).unwrap_or_else(|| self.square.clone())
     }
 
     /// Reads a shape's image, and the arrow's, if they have not been.
