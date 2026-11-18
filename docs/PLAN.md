@@ -82,7 +82,7 @@ Owning the wire layer lets Fulcrum enforce the CrowbarOS decisions where message
   - damage tracking: by scene (#29), by what a client damaged (#36), and in uploads (#37);
   - the cursor plane (#33).
 
-  Still to come: the real GPUs, the RTX 4090, Intel, and Surface rows. A fullscreen client on the primary plane is ruled out, because ADR 0020 keeps a fullscreen window's frame inside the display's edge. Overlay planes may come later.
+  Still to come: the real GPUs, the RTX 4090, Intel, and Surface rows, which [Running Fulcrum on real hardware](hardware-runs.md) says how to run. A fullscreen client on the primary plane is ruled out, because ADR 0020 keeps a fullscreen window's frame inside the display's edge. Overlay planes may come later.
 - **Milestone 5** has:
   - workspaces and the shell's control channel (#17);
   - maximize, fullscreen, snap, and frames (#18);
