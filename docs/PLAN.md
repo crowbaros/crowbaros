@@ -71,6 +71,27 @@ Owning the wire layer lets Fulcrum enforce the CrowbarOS decisions where message
 | **8 · Lock and recovery** | Slice 6, [issue 87](https://github.com/crowbaros/crowbaros/issues/87): start locked, input to the lock screen alone, blank secondary displays, and broker-authorized unlock, with idle, suspend, and service restart | Restart the shell during an ask, restart the compositor during a session, and suspend with a second monitor attached. Each reaches its documented state before an app receives input |
 | **9 · CrowbarOS cutover** | The Alpha desktop runs on Fulcrum with the production interfaces, and the spike is deleted | The full desktop smoke check passes, the real Warden and broker satisfy the contracts the stand-ins exercised, and the previous Base generation still boots |
 
+**Where it stands, November 18, 2026.**
+
+- **Milestones 1 and 2** are done, and CrowbarOS pins the new compositor.
+- **Milestone 3** has the GLES renderer (#15), linux-dmabuf with buffers the CPU copies (#16), fractional scale (#22), presentation time (#23), clients' cursor images (#24), and explicit sync (#26). Still to come:
+  - the GPU's own import of tiled dma-bufs;
+  - damage tracking and scanout planes;
+  - the real GPUs.
+- **Milestone 5** has workspaces and the shell's control channel (#17), maximize, fullscreen, snap, and frames (#18), move and resize (#20), and dialogs that take the keyboard (#25). Still to come:
+  - the new window the person started from the shell taking the keyboard;
+  - the launcher's and lock's keys.
+- **Milestone 9:** CrowbarOS's Alpha desktop runs on Fulcrum ([crowbaros#199](https://github.com/crowbaros/crowbaros/pull/199)), and its desktop check passes there.
+
+CrowbarOS started again on November 17 ([crowbaros#197](https://github.com/crowbaros/crowbaros/pull/197)). Its vision is now a small desktop with an Agent, and its substrate vision, with the broker, the Warden, and compartments, is archived. ADRs 0015, 0027, and 0028 stand. ADRs 0016, 0020, 0022, and 0023 bind until a new record says what the compositor offers the shell and the Agent.
+
+Fulcrum builds what those records still decide:
+- the window manager;
+- buffers and timing;
+- displays and hardware.
+
+The parts of Milestones 4, 6, and 8 that rest on the broker wait for a new record before Fulcrum builds them: asks and their arming, transfers the broker records, and unlock by the broker.
+
 Milestones 1 and 2 are where this approach costs the most. They rebuild what Smithay gave the baseline for free before any new behavior lands. The cost is bounded by building only what ADR 0020's table offers: no XWayland, one seat, and GLES as the only GPU renderer until a measurement asks for more.
 
 ## Decisions this needs in CrowbarOS

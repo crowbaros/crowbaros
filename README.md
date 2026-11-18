@@ -128,13 +128,13 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 - **A headless backend** that draws each output with the CPU renderer, and
   `crowbar-probe`, the test client, on `fulcrum-wire`'s client side.
 
-Milestone 3, buffers and timing, is under way.
+Milestone 3, buffers and timing, is under way, and so is the window manager of Milestone 5. CrowbarOS's Alpha desktop, its GPUI shell and Studio Settings, runs on Fulcrum. [The plan](docs/PLAN.md) says what is done and what is next.
 
 The Smithay-based compositor that Milestone 0 brought here is at commit
-`d11400f`, tagged `smithay-baseline`, and CrowbarOS still builds it. CrowbarOS
-ADR 0028 moves the pin when this compositor passes the baseline's 57 tests and
-the Void guest's checks. It now passes them, linux-dmabuf for the shell
-included, and the pin moves in a CrowbarOS pull request of its own.
+`d11400f`, tagged `smithay-baseline`. This compositor passed the baseline's 57
+tests and the Void guest's checks, and CrowbarOS has built it in the baseline's
+place since [crowbaros#198](https://github.com/crowbaros/crowbaros/pull/198)
+(ADR 0028).
 
 ## Layout
 
