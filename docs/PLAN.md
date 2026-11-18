@@ -94,9 +94,13 @@ Owning the wire layer lets Fulcrum enforce the CrowbarOS decisions where message
   The messages #41 adds are a proposal until a CrowbarOS record decides them: Super tapped alone, the shell's `launching`, and the snapshot's `attention`.
 - **Milestone 6** has copy and paste (#38) and the primary selection (#43) inside one compartment. Transfers between compartments wait for a record of how the broker records them.
 - **Milestone 7** has each display's scale, 1 to 3 in quarters (#35), and the layout kept by each monitor's identity and set through the control channel (#39). Its wire format is Fulcrum's proposal until CrowbarOS's display settings take it up. Still to come: input devices' settings, and suspend and resume and mixed scale on the hardware rows.
-- **Milestone 8** has lock (#44, with the shell's half in [crowbaros#204](https://github.com/crowbaros/crowbaros/pull/204)), as a proposal. The shell's request, Super+L, and the idle timer lock the session. While it is locked, the shell's lock screen is all that shows and all that gets input. The shell's request unlocks it, in the place of the broker ADR 0020 has end it. Still to come, with a record of what replaces the broker:
+- **Milestone 8** has lock (#44, with the shell's half in [crowbaros#204](https://github.com/crowbaros/crowbaros/pull/204)) and the confirm chord's part (#46, [crowbaros#206](https://github.com/crowbaros/crowbaros/pull/206)), as a proposal:
+  - The shell's request, Super+L, Ctrl+Alt+Enter, and the idle timer lock the session.
+  - While it is locked, the shell's lock screen is all that shows and all that gets input, and it takes no text until the confirm chord opens its unlock entry.
+  - The shell's request then unlocks it, in the place of the broker ADR 0020 has end it.
+
+  Still to come, with a record of what replaces the broker:
   - unlock by the person's proof, with its secret (issues 87 and 100);
-  - the confirm chord's part;
   - starting locked;
   - suspend.
 - **Milestone 9:** CrowbarOS's Alpha desktop runs on Fulcrum ([crowbaros#199](https://github.com/crowbaros/crowbaros/pull/199)), and its desktop check passes there. The spike is deleted ([crowbaros#200](https://github.com/crowbaros/crowbaros/pull/200)).
