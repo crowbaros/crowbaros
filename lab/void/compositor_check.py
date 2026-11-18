@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Checks the CrowbarOS compositor on a TTY in the Void guest.
 
-The compositor is built from the Fulcrum commit that compositor/fulcrum.json
-pins, or the one FULCRUM_REVISION names (ADR 0027). The log names both
-repositories' commits.
+The compositor, Fulcrum, is built from compositor/ (ADR 0031). The log names
+the commit, and says when the build had changes that were not committed.
 
 Run through `compositor_guest.py check`. It boots the guest and starts the
 compositor on a virtual terminal as its own user. Clients reach it the two
@@ -42,7 +41,7 @@ AS_APP = f"chpst -u {APP}:{APP} env HOME=/home/{APP}"
 AS_CLIENT = f"{AS_APP} WAYLAND_DISPLAY={LISTENER}"
 
 # What each client is offered: the rows of ADR 0020's table, less the globals
-# the compositor does not create yet. Fulcrum's tests/table.rs holds the same
+# the compositor does not create yet. compositor/tests/table.rs holds the same
 # lists.
 COMPARTMENT = {"wl_compositor", "wl_data_device_manager", "wl_output", "wl_seat", "wl_shm",
                "wl_subcompositor", "wp_cursor_shape_manager_v1", "wp_fractional_scale_manager_v1",
@@ -57,11 +56,11 @@ WARDEN = {"wp_security_context_manager_v1"}
 
 def nobody_row():
     """The "Nobody" row of the table, read from the source of the compositor that was built."""
-    source = (guest.fulcrum_source() / "src/policy.rs").read_text()
+    source = (guest.ROOT / guest.COMPOSITOR / "src/policy.rs").read_text()
     row = re.search(r"pub const NOBODY: &\[&str\] = &\[(.*?)\];", source, re.S)
     names = re.findall(r'"([a-z0-9_]+)"', row.group(1)) if row else []
     if len(names) < 20:
-        raise RuntimeError("could not read the Nobody row from Fulcrum's src/policy.rs")
+        raise RuntimeError("could not read the Nobody row from compositor/src/policy.rs")
     return names
 
 
@@ -124,10 +123,6 @@ def main():
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=guest.ROOT, text=True).strip()
     changed = subprocess.check_output(["git", "status", "--porcelain"], cwd=guest.ROOT, text=True).strip()
     ev.log(f"CrowbarOS commit {commit}" + (", with changes that are not committed" if changed else ""))
-    fulcrum = guest.fulcrum_pin()
-    ev.log(f"Fulcrum commit {fulcrum['revision']} from {fulcrum['repository']}"
-           + (", as pinned" if fulcrum["pinned"] else
-              f", NOT the pinned {fulcrum['pinned_revision']}: FULCRUM_REVISION names it"))
     if guest.running():
         guest.stop()
     guest.build()
