@@ -15,6 +15,7 @@
 pub mod backend;
 mod client;
 pub mod connections;
+pub mod control;
 pub mod data_device;
 pub mod dmabuf;
 pub mod event_loop;
@@ -22,6 +23,7 @@ pub mod geometry;
 mod globals;
 pub mod identity;
 pub mod image;
+mod json;
 mod layer;
 pub mod limits;
 pub mod log;
@@ -36,6 +38,7 @@ mod state;
 mod surface;
 mod viewporter;
 mod windows;
+pub mod workspaces;
 mod xdg;
 
 pub use output::{OUTPUT_VERSION, Output};

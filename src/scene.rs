@@ -56,7 +56,7 @@ impl State {
             ],
             &mut elements,
         );
-        for window in &self.windows {
+        for window in self.windows.iter().filter(|window| window.workspace == self.workspace) {
             self.push_tree(window.surface, to_output(self.window_origin(window)), &mut elements, 0);
             for popup in &self.popups {
                 if self.toplevel_of(*popup) != Some(window.surface) || !self.xdg[popup].mapped {

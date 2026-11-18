@@ -146,7 +146,9 @@ fn a_planted_global_with_a_row_is_bound_by_the_client_the_row_names() {
 /// ADR 0016, attack 11: a compartment with no listener looks for any Wayland
 /// socket. It finds none.
 ///
-/// The compositor makes two sockets, and each refuses a peer by its user ID.
+/// The compositor makes three sockets: the shell's and the Warden's Wayland
+/// sockets and the shell's control channel. Each refuses a peer by its user
+/// ID.
 /// Here neither trusted part has this process's user ID, so this process is
 /// in the place of that compartment, and it is given both paths on purpose.
 #[test]
@@ -157,16 +159,21 @@ fn adr_0016_attack_11_a_compartment_with_no_listener_finds_no_wayland_socket() {
     let public: Vec<_> = std::fs::read_dir(runtime_dir()).unwrap().collect();
     assert!(public.is_empty(), "something was made in XDG_RUNTIME_DIR: {public:?}");
 
-    // The compositor made exactly its two sockets.
+    // The compositor made exactly its three sockets.
     let mut made: Vec<String> = std::fs::read_dir(&compositor.dir)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
     made.sort();
-    assert_eq!(made, ["shell", "warden"]);
+    assert_eq!(made, ["control", "shell", "warden"]);
 
-    // Neither one is a way in.
-    for socket in [&compositor.parts.shell.socket, &compositor.parts.warden.socket] {
+    // None is a way in.
+    let control = compositor.dir.join("control");
+    for socket in [
+        &compositor.parts.shell.socket,
+        &compositor.parts.warden.socket,
+        &control,
+    ] {
         assert!(
             connect(socket).is_err(),
             "{} accepted a peer with the wrong user ID",

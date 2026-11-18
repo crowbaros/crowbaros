@@ -27,6 +27,10 @@ Warden registers for one compartment. All four of these are required:
   --warden-socket PATH   Where the Warden connects.
   --warden-uid UID       The user ID the Warden runs as.
 
+  --shell-control-socket PATH
+                         Where the shell's control channel connects, from
+                         the shell's user ID. Without it there is none.
+
   --backend tty          Where frames go: a virtual terminal, with the seat
                          from seatd. The default.
   --backend nested       A window on the host session, for development. Only
@@ -47,11 +51,13 @@ enum BackendKind {
 struct Args {
     parts: TrustedParts,
     backend: BackendKind,
+    shell_control: Option<PathBuf>,
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
     let (mut shell_socket, mut shell_uid, mut warden_socket, mut warden_uid) = (None, None, None, None);
     let mut backend = BackendKind::Tty;
+    let mut shell_control = None;
     let mut rest = args;
     while let Some(flag) = rest.next() {
         let mut value = || rest.next().ok_or(format!("{flag} needs a value"));
@@ -61,6 +67,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--shell-uid" => shell_uid = Some(uid(value()?)?),
             "--warden-socket" => warden_socket = Some(PathBuf::from(value()?)),
             "--warden-uid" => warden_uid = Some(uid(value()?)?),
+            "--shell-control-socket" => shell_control = Some(PathBuf::from(value()?)),
             "--backend" => match value()?.as_str() {
                 "tty" => backend = BackendKind::Tty,
                 #[cfg(feature = "nested")]
@@ -81,6 +88,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             warden: part(warden_socket, warden_uid, "warden")?,
         },
         backend,
+        shell_control,
     })
 }
 
@@ -109,6 +117,9 @@ fn main() {
             }
         };
         state.listen(&args.parts)?;
+        if let Some(socket) = &args.shell_control {
+            state.listen_for_control(socket, args.parts.shell.uid)?;
+        }
         log::write(Level::Info, format_args!("compositor is up backend={name}"));
         state.run()
     };

@@ -38,6 +38,10 @@ pub enum Token {
     Waker,
     /// A descriptor the backend watches, by the backend's own number.
     Backend(u64),
+    /// The shell's control channel's listener.
+    ControlListener,
+    /// A control connection.
+    Control(u64),
 }
 
 impl Token {
@@ -49,6 +53,8 @@ impl Token {
             Token::CompartmentClose(id) => (4, id),
             Token::Waker => (5, 0),
             Token::Backend(source) => (6, source),
+            Token::ControlListener => (7, 0),
+            Token::Control(id) => (8, id),
         };
         debug_assert!(value < 1 << 56);
         (kind << 56) | value
@@ -63,6 +69,8 @@ impl Token {
             4 => Token::CompartmentClose(value),
             5 => Token::Waker,
             6 => Token::Backend(value),
+            7 => Token::ControlListener,
+            8 => Token::Control(value),
             _ => return None,
         })
     }

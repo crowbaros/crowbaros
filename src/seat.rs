@@ -34,6 +34,16 @@ pub const SEAT_VERSION: u32 = 7;
 pub const REPEAT: (i32, i32) = (25, 200);
 
 /// The keyboard and pointer, and who has them.
+/// The Super keys, as evdev codes: left and right.
+const SUPER: [u32; 2] = [125, 126];
+const SHIFT: [u32; 2] = [42, 54];
+/// Super, Shift, Ctrl, and Alt, each side: held as part of a chord, never
+/// its key.
+const MODIFIERS: [u32; 8] = [125, 126, 42, 54, 29, 97, 56, 100];
+/// The keys 1 and 9 of the top row.
+const KEY_1: u32 = 2;
+const KEY_9: u32 = 10;
+
 pub(crate) struct Seat {
     keyboard: Option<Keyboard>,
     pub keyboard_focus: Option<SurfaceId>,
@@ -44,6 +54,9 @@ pub(crate) struct Seat {
     keys: Vec<u32>,
     /// Buttons held. While any is, the pointer stays with its surface.
     buttons: Vec<u32>,
+    /// Keys the compositor took: pressed with Super held. Their releases are
+    /// taken too, and no client ever hears of them.
+    withheld: Vec<u32>,
 }
 
 impl Seat {
@@ -60,6 +73,7 @@ impl Seat {
             keyboard_focus: None,
             pointer_focus: None,
             keys: Vec::new(),
+            withheld: Vec::new(),
             buttons: Vec::new(),
         }
     }
@@ -281,10 +295,26 @@ impl State {
     }
 
     /// Every key from every backend enters here: the evdev code, whether it
-    /// went down, and the time in milliseconds. The compositor's own keys
-    /// and the confirm chord are taken here first, when Milestones 4 and 5
-    /// build them.
+    /// went down, and the time in milliseconds.
+    ///
+    /// Every chord with Super belongs to the compositor and is never sent to
+    /// a client (ADR 0020): a key pressed while Super is held is taken here,
+    /// with its release. Super is the physical key, whatever the keymap
+    /// says.
     pub fn handle_key(&mut self, key: u32, pressed: bool, time: u32) {
+        if !pressed && self.seat.withheld.contains(&key) {
+            self.seat.withheld.retain(|held| *held != key);
+            return;
+        }
+        let super_held = self.seat.keys.iter().any(|held| SUPER.contains(held));
+        if pressed && super_held && !MODIFIERS.contains(&key) {
+            if !self.seat.withheld.contains(&key) {
+                self.seat.withheld.push(key);
+            }
+            let shift = self.seat.keys.iter().any(|held| SHIFT.contains(held));
+            self.compositor_key(key, shift);
+            return;
+        }
         if pressed {
             if !self.seat.keys.contains(&key) {
                 self.seat.keys.push(key);
@@ -335,6 +365,41 @@ impl State {
                 }
             }
         }
+    }
+
+    /// A chord with Super: one of the compositor's keys.
+    ///
+    /// | Chord | What it does |
+    /// | --- | --- |
+    /// | Super+1 to Super+9 | Shows that workspace |
+    /// | Super+Shift+1 to Super+Shift+9 | Moves the window with the keyboard there |
+    ///
+    /// Every other chord with Super is taken and does nothing yet.
+    fn compositor_key(&mut self, key: u32, shift: bool) {
+        if !(KEY_1..=KEY_9).contains(&key) {
+            return;
+        }
+        let workspace = key - KEY_1 + 1;
+        if !shift {
+            self.show_workspace(workspace);
+            return;
+        }
+        if let Some(focus) = self.seat.keyboard_focus {
+            let root = self.root_of(focus);
+            let window = self
+                .toplevel_of(root)
+                .filter(|toplevel| self.windows.iter().any(|window| window.surface == *toplevel));
+            if let Some(window) = window {
+                self.move_to_workspace(window, workspace);
+            }
+        }
+    }
+
+    /// Looks again at what is under the pointer, as after what is shown
+    /// changed under it.
+    pub(crate) fn refresh_pointer_focus(&mut self) {
+        let time = self.start_time.elapsed().as_millis() as u32;
+        self.update_pointer_focus(time);
     }
 
     /// The pointer is now at this place on the desktop: it is kept on the
@@ -537,11 +602,15 @@ impl State {
                 })
             })
             .or_else(|| {
-                self.windows.iter().rev().find_map(|window| {
-                    let geometry = self.window_geometry(window.surface);
-                    let origin = (window.location.0 - geometry.x, window.location.1 - geometry.y);
-                    self.tree_hit(window.surface, origin, point, 0)
-                })
+                self.windows
+                    .iter()
+                    .rev()
+                    .filter(|window| window.workspace == self.workspace)
+                    .find_map(|window| {
+                        let geometry = self.window_geometry(window.surface);
+                        let origin = (window.location.0 - geometry.x, window.location.1 - geometry.y);
+                        self.tree_hit(window.surface, origin, point, 0)
+                    })
             })
             .or_else(|| layers([layer::BOTTOM, layer::BACKGROUND]))?;
         Some((hit.0, (f64::from(hit.1.0), f64::from(hit.1.1))))

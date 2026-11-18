@@ -45,6 +45,15 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   positioners, `wl_surface.enter` and `leave`, and the protocol's errors. A
   new window opens inside the usable area of the output the pointer is on,
   offset from the last, and does not take the keyboard.
+- **Nine workspaces**, each spanning every output, one showing at a time
+  (ADR 0020). A window on a hidden workspace is nowhere: not drawn, given no
+  input, on no output, and without the keyboard. Every chord with Super
+  belongs to the compositor and never reaches a client: Super+1 to 9 show a
+  workspace, and Super+Shift+1 to 9 move the window with the keyboard there.
+- **The shell's control channel**: a path socket of its own, checked against
+  the shell's user ID, where the shell asks for a snapshot of the windows and
+  shows a workspace or a window. One JSON object per line, as the spike
+  spoke and the shell already speaks.
 - **Redraw on change**: an output is drawn only when something it shows
   changed, then waits for the display, so a still desktop draws nothing and a
   busy client is held to the display's rate. Frame callbacks are answered
@@ -115,7 +124,9 @@ included, and the pin moves in a CrowbarOS pull request of its own.
 | `src/limits.rs` | What one client, and one compartment, may make the compositor hold |
 | `src/xdg.rs`, `src/windows.rs` | xdg-shell, and where windows go and what each output shows |
 | `src/layer.rs` | The shell's layer surfaces and the room they reserve |
-| `src/seat.rs` | The keyboard and the pointer, and who has them |
+| `src/seat.rs` | The keyboard and the pointer, who has them, and the compositor's Super chords |
+| `src/workspaces.rs` | The nine workspaces |
+| `src/control.rs`, `src/json.rs` | The shell's control channel, and the flat JSON it speaks |
 | `src/data_device.rs` | The data device, which moves nothing between clients until slice 4 |
 | `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
 | `src/redraw.rs` | Drawing only on change |
@@ -126,7 +137,7 @@ included, and the pin moves in a CrowbarOS pull request of its own.
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `dl.rs` (libraries loaded at run time), `gles.rs` (EGL and GLES: the context, textures, targets, and draws), `gbm.rs`, `dmabuf.rs` (reading a dma-buf with the CPU), `drm.rs` (mode setting, dumb buffers, and framebuffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (the guarded mapping) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `outputs.rs` covers outputs that change size; `data_device.rs` and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `gles.rs` draws each scene with both renderers and compares them; `dmabuf.rs` covers linux-dmabuf; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `outputs.rs` covers outputs that change size; `data_device.rs` and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `gles.rs` draws each scene with both renderers and compares them; `dmabuf.rs` covers linux-dmabuf; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.
@@ -141,6 +152,9 @@ crowbar-compositor \
     --shell-socket /run/crowbar/compositor-shell/wayland --shell-uid 1001 \
     --warden-socket /run/crowbar/compositor-warden/wayland --warden-uid 0
 ```
+
+`--shell-control-socket PATH` adds the shell's control channel, from the
+shell's user ID.
 
 For development, a build with the nested feature runs in a window on the
 session it is started from:

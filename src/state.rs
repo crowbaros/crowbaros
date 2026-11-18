@@ -91,6 +91,9 @@ pub struct State {
     /// Each output's usable area, after its layers reserved their room.
     pub(crate) usable: HashMap<u64, crate::geometry::Rect>,
     pub(crate) seat: crate::seat::Seat,
+    /// The workspace showing.
+    pub(crate) workspace: u32,
+    pub(crate) controls: crate::control::Controls,
     pub(crate) data: crate::data_device::DataDevices,
     pub(crate) dmabufs: crate::dmabuf::Dmabufs,
 }
@@ -137,6 +140,8 @@ impl State {
             layers: Vec::new(),
             usable: HashMap::new(),
             seat: crate::seat::Seat::new(),
+            workspace: 1,
+            controls: crate::control::Controls::default(),
             data: crate::data_device::DataDevices::default(),
             dmabufs: crate::dmabuf::Dmabufs::default(),
         };
@@ -210,6 +215,8 @@ impl State {
                         job(self);
                     }
                 }
+                Token::ControlListener => self.accept_control(),
+                Token::Control(id) => self.control_ready(id, readiness),
                 Token::Backend(source) => {
                     if let Some(mut backend) = self.backend.take() {
                         backend.ready(self, source);

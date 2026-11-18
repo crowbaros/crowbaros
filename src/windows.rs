@@ -1,11 +1,13 @@
 //! Windows: where a toplevel goes when it maps, the order they are stacked
 //! in, and what each output shows.
 //!
-//! This is the least that lets a client be seen. A new window opens on the
-//! output the pointer is on, inside the room the shell's layers leave, offset
-//! a little from the last. It does not take the keyboard. Frames, moving and
-//! resizing, workspaces, and the two cases in which a new window takes the
-//! keyboard come with the window manager (CrowbarOS issue 78).
+//! A new window opens on the workspace showing, on the output the pointer is
+//! on, inside the room the shell's layers leave, offset a little from the
+//! last. It does not take the keyboard. A window on a workspace that is not
+//! showing is nowhere: it is not drawn, takes no input, and is on no output
+//! (see `workspaces.rs`). Frames, moving and resizing, and the two cases in
+//! which a new window takes the keyboard come with the rest of the window
+//! manager (ADR 0020, CrowbarOS issue 78).
 
 use fulcrum_wire::protocol::wayland::wl_surface;
 
@@ -28,6 +30,8 @@ pub(crate) struct Window {
     pub surface: SurfaceId,
     /// Where the window geometry's top-left corner is on the desktop.
     pub location: (i32, i32),
+    /// The workspace it is on, from 1 to 9.
+    pub workspace: u32,
 }
 
 impl State {
@@ -64,10 +68,12 @@ impl State {
             return None;
         }
         match self.xdg.get(&surface)?.role {
+            // A window on a workspace that is not showing is nowhere, and
+            // so are its popups.
             XdgRole::Toplevel { .. } => self
                 .windows
                 .iter()
-                .find(|window| window.surface == surface)
+                .find(|window| window.surface == surface && window.workspace == self.workspace)
                 .map(|window| window.location),
             XdgRole::Popup { parent, at, .. } => {
                 let parent = parent?;
@@ -114,9 +120,18 @@ impl State {
                 return;
             };
             let area = self.usable_area(output);
-            let step = 32 * (self.windows.len() as i32 % 8);
+            let showing = self
+                .windows
+                .iter()
+                .filter(|window| window.workspace == self.workspace)
+                .count();
+            let step = 32 * (showing as i32 % 8);
             let location = (area.x + NEW_WINDOW_OFFSET.0 + step, area.y + NEW_WINDOW_OFFSET.1 + step);
-            self.windows.push(Window { surface, location });
+            self.windows.push(Window {
+                surface,
+                location,
+                workspace: self.workspace,
+            });
             let client = self.surfaces[&surface].client;
             crate::log::debug!(
                 "window mapped client={client} app_id={} at={},{}",
@@ -235,7 +250,11 @@ impl State {
 
     /// Where each window is on the desktop, bottom to top.
     pub fn window_rects(&self) -> Vec<Rect> {
-        self.windows.iter().map(|window| self.window_rect(window)).collect()
+        self.windows
+            .iter()
+            .filter(|window| window.workspace == self.workspace)
+            .map(|window| self.window_rect(window))
+            .collect()
     }
 
     /// Draws everything an output shows with the CPU renderer: the

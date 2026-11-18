@@ -108,6 +108,7 @@ impl Compositor {
         };
         let (ready_tx, ready_rx) = mpsc::channel();
         let listen_on = parts.clone();
+        let control_socket = dir.join("control");
         let thread = std::thread::spawn(move || {
             // The tests provoke refusals on purpose; their warnings are noise.
             crowbar_compositor::log::set_level(crowbar_compositor::log::Level::Error);
@@ -115,6 +116,7 @@ impl Compositor {
             setup(&mut state);
             state.offer_dmabuf(TEST_DEVICE);
             state.listen(&listen_on).unwrap();
+            state.listen_for_control(&control_socket, listen_on.shell.uid).unwrap();
             ready_tx.send(state.remote()).unwrap();
             state.run().unwrap();
         });
