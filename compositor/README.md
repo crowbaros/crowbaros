@@ -323,8 +323,9 @@ rewrite began, and it is at commit `d11400f`.
 
 On November 18, 2026, Fulcrum came back to CrowbarOS's `compositor/`
 ([ADR 0031](../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)).
-`git subtree add` imported its `main` at `15322b2` with every commit. The old
-repository, `crowbaros/fulcrum`, is archived. The numbers of its pull requests
+It came as the tree of its `main` at `15322b2`, in one commit. The old
+repository, `crowbaros/fulcrum`, is archived and keeps the 64 commits before
+that. The numbers of its pull requests
 in these docs, such as #41, are its own, not CrowbarOS's.
 
 Code adapted from an MIT-licensed project keeps its attribution, in a
