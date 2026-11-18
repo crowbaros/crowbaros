@@ -18,6 +18,12 @@
 //! -> {"op":"launching"}
 //! <- {"reply":"ok"}
 //! <- {"event":"launcher"}
+//! -> {"op":"lock"}
+//! <- {"event":"locked"}
+//! <- {"reply":"ok"}
+//! -> {"op":"unlock"}
+//! <- {"event":"unlocked"}
+//! <- {"reply":"ok"}
 //! -> {"op":"outputs"}
 //! <- {"reply":"outputs","outputs":[{"name":"HDMI-A-1","identity":"DEL DELL U2723QE 8GZGCP3","width":3840,"height":2160,"refresh":60000,"x":0,"y":0,"scale":150,"modes":[{"width":3840,"height":2160,"refresh":60000}]}]}
 //! -> {"op":"configure_output","name":"HDMI-A-1","width":2560,"height":1440,"refresh":59951,"x":0,"y":0,"scale":120}
@@ -33,7 +39,10 @@
 //! for the bar to show (ADR 0020's focus). `launching` says the person just
 //! started an app from the shell: the next window a compartment maps within
 //! [`LAUNCH_FOCUS`] takes the keyboard, as the first window of a compartment
-//! the person started does. These three are Fulcrum's proposal until a
+//! the person started does. `lock` and `unlock` lock and unlock the session,
+//! and the events `locked` and `unlocked` say it changed, as Super+L and the
+//! idle timer change it too (see `lock.rs`); the snapshot has `locked`.
+//! These are Fulcrum's proposal until a
 //! CrowbarOS record decides them.
 //!
 //! `outputs` and `configure_output` are the shell's interface to the layout
@@ -323,6 +332,14 @@ impl State {
                 Ok(ok_reply())
             }),
             "outputs" => only(&[], &request).map(|()| self.outputs_reply()),
+            "lock" => only(&[], &request).map(|()| {
+                self.lock("shell");
+                ok_reply()
+            }),
+            "unlock" => only(&[], &request).map(|()| {
+                self.unlock();
+                ok_reply()
+            }),
             "launching" => only(&[], &request).map(|()| {
                 self.launching = Some(std::time::Instant::now());
                 ok_reply()
@@ -372,8 +389,9 @@ impl State {
             })
             .collect();
         format!(
-            "{{\"reply\":\"snapshot\",\"workspace\":{},\"active\":{active},\"windows\":[{}]}}",
+            "{{\"reply\":\"snapshot\",\"workspace\":{},\"active\":{active},\"locked\":{},\"windows\":[{}]}}",
             self.workspace,
+            self.locked(),
             windows.join(",")
         )
     }

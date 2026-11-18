@@ -31,6 +31,10 @@ Warden registers for one compartment. All four of these are required:
                          Where the shell's control channel connects, from
                          the shell's user ID. Without it there is none.
 
+  --lock-after SECONDS   Locks the session after this long without input,
+                         unless a shown surface inhibits idle. Without it,
+                         only the shell and Super+L lock it.
+
   --layout PATH          Where the layout of displays is kept: each
                          monitor's mode, place, and scale. Without it, the
                          layout lasts until the compositor stops.
@@ -57,6 +61,7 @@ struct Args {
     backend: BackendKind,
     shell_control: Option<PathBuf>,
     layout: Option<PathBuf>,
+    lock_after: Option<std::time::Duration>,
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -64,6 +69,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut backend = BackendKind::Tty;
     let mut shell_control = None;
     let mut layout = None;
+    let mut lock_after = None;
     let mut rest = args;
     while let Some(flag) = rest.next() {
         let mut value = || rest.next().ok_or(format!("{flag} needs a value"));
@@ -75,6 +81,15 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--warden-uid" => warden_uid = Some(uid(value()?)?),
             "--shell-control-socket" => shell_control = Some(PathBuf::from(value()?)),
             "--layout" => layout = Some(PathBuf::from(value()?)),
+            "--lock-after" => {
+                let text = value()?;
+                let seconds = text
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|seconds| *seconds > 0)
+                    .ok_or(format!("{text} is not a number of seconds"))?;
+                lock_after = Some(std::time::Duration::from_secs(seconds));
+            }
             "--backend" => match value()?.as_str() {
                 "tty" => backend = BackendKind::Tty,
                 #[cfg(feature = "nested")]
@@ -97,6 +112,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         backend,
         shell_control,
         layout,
+        lock_after,
     })
 }
 
@@ -117,6 +133,7 @@ fn main() {
         if let Some(layout) = &args.layout {
             state.keep_layout_in(layout);
         }
+        state.lock_after_idle(args.lock_after);
         // Clients are accepted only once there is something to show them on.
         let name = match args.backend {
             BackendKind::Tty => {

@@ -109,6 +109,7 @@ pub struct State {
     /// Each monitor's mode, place, and scale, as the person chose them.
     pub(crate) layout: crate::layout::Layout,
     pub(crate) primary: crate::primary_selection::PrimarySelections,
+    pub(crate) lock: crate::lock::Lock,
     /// When the shell last said the person launched an app, until a window
     /// takes the keyboard for it.
     pub(crate) launching: Option<std::time::Instant>,
@@ -172,6 +173,7 @@ impl State {
             explicit_sync: crate::explicit_sync::ExplicitSync::default(),
             layout: crate::layout::Layout::default(),
             primary: crate::primary_selection::PrimarySelections::default(),
+            lock: crate::lock::Lock::default(),
             launching: None,
             idle_inhibitors: crate::idle_inhibit::IdleInhibitors::default(),
             cursor_theme: crate::xcursor::CursorTheme::none(),
@@ -294,6 +296,7 @@ impl State {
                 TimerKey::RetryTrusted(index) => self.retry_trusted(index),
                 TimerKey::RetryCompartment(number) => self.retry_compartment(number),
                 TimerKey::FrameWait(output, draw) => self.wait_over(output, Some(draw)),
+                TimerKey::IdleLock => self.idle_timer(),
             }
         }
         self.run_due_draws();

@@ -302,6 +302,9 @@ impl State {
         if self.layer_rects(output) != before {
             self.configure_changed_layers(output, &before);
         }
+        if has_buffer {
+            self.lock_screen_mapped(surface);
+        }
         self.queue_redraw(output);
         Ok(())
     }

@@ -65,7 +65,7 @@ fn a_snapshot_lists_every_window_and_the_one_with_the_keyboard() {
     let mut control = Control::connect(&compositor);
     assert_eq!(
         control.ask(r#"{"op":"snapshot"}"#),
-        r#"{"reply":"snapshot","workspace":1,"active":null,"windows":[]}"#
+        r#"{"reply":"snapshot","workspace":1,"active":null,"locked":false,"windows":[]}"#
     );
     let (_first, _a) = window(&compositor, "c1", "test.first");
     let (_second, _b) = window(&compositor, "c2", "test.second");

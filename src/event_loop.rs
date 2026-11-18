@@ -99,6 +99,8 @@ pub enum TimerKey {
     /// One frame time after the draw with this number on this output, for a
     /// backend that does not hear when the display shows a frame.
     FrameWait(u64, u64),
+    /// The session may have been idle long enough to lock (see `lock.rs`).
+    IdleLock,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

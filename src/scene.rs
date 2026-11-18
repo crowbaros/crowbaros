@@ -66,6 +66,22 @@ impl State {
         let origin = output.position;
         let to_output = |(x, y): (i32, i32)| (x - origin.0, y - origin.1);
         let mut elements = Vec::new();
+        // Locked, an output shows the lock screen on it and nothing else:
+        // blank where there is none (see `lock.rs`).
+        if self.locked() {
+            for layer in self
+                .layers
+                .iter()
+                .filter(|layer| layer.output == number && layer.mapped && self.is_lock_screen(layer.surface))
+            {
+                self.push_tree(layer.surface, to_output((layer.rect.x, layer.rect.y)), &mut elements, 0);
+            }
+            return Some(Scene {
+                size: output.logical_size(),
+                background: crate::lock::LOCKED_BACKGROUND,
+                elements,
+            });
+        }
         let layers = |kinds: &[u32], elements: &mut Vec<Element>| {
             for kind in kinds {
                 for layer in self

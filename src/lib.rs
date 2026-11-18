@@ -36,6 +36,7 @@ mod json;
 mod layer;
 mod layout;
 pub mod limits;
+pub mod lock;
 pub mod log;
 pub mod modes;
 mod output;

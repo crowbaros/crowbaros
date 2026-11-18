@@ -45,6 +45,7 @@ const MODIFIERS: [u32; 8] = [125, 126, 42, 54, 29, 97, 56, 100];
 const KEY_1: u32 = 2;
 const KEY_9: u32 = 10;
 const KEY_F: u32 = 33;
+const KEY_L: u32 = 38;
 const KEY_UP: u32 = 103;
 const KEY_LEFT: u32 = 105;
 const KEY_RIGHT: u32 = 106;
@@ -297,6 +298,10 @@ impl State {
     /// hears `leave`, and the one that gets it `enter` with the keys held.
     /// A toplevel's activated state follows.
     pub(crate) fn set_keyboard_focus(&mut self, surface: Option<SurfaceId>) {
+        // While the session is locked, only the lock screen has it.
+        if self.locked() && surface.is_some_and(|surface| !self.is_lock_screen(surface)) {
+            return;
+        }
         let old = self.seat.keyboard_focus;
         if old == surface {
             return;
@@ -366,12 +371,13 @@ impl State {
     /// with its release. Super is the physical key, whatever the keymap
     /// says.
     pub fn handle_key(&mut self, key: u32, pressed: bool, time: u32) {
+        self.input_seen();
         // Super tapped alone, with no other key or button between its press
         // and its release, asks the shell for its launcher.
         if SUPER.contains(&key) {
             if pressed {
                 self.seat.super_alone = self.seat.keys.is_empty() && self.seat.buttons.is_empty();
-            } else if std::mem::take(&mut self.seat.super_alone) {
+            } else if std::mem::take(&mut self.seat.super_alone) && !self.locked() {
                 self.control_event("launcher");
             }
         } else if pressed {
@@ -386,8 +392,11 @@ impl State {
             if !self.seat.withheld.contains(&key) {
                 self.seat.withheld.push(key);
             }
-            let shift = self.seat.keys.iter().any(|held| SHIFT.contains(held));
-            self.compositor_key(key, shift);
+            // While locked, the chord is taken and does nothing.
+            if !self.locked() {
+                let shift = self.seat.keys.iter().any(|held| SHIFT.contains(held));
+                self.compositor_key(key, shift);
+            }
             return;
         }
         if pressed {
@@ -459,6 +468,7 @@ impl State {
     fn compositor_key(&mut self, key: u32, shift: bool) {
         use crate::modes::Mode;
         match key {
+            KEY_L => return self.lock("key"),
             KEY_UP => return self.toggle_mode(Mode::Maximized),
             KEY_F => return self.toggle_mode(Mode::Fullscreen),
             KEY_LEFT => return self.toggle_mode(Mode::Left),
@@ -517,6 +527,7 @@ impl State {
     }
 
     pub fn pointer_moved_at(&mut self, x: f64, y: f64, time: u32) {
+        self.input_seen();
         let (x, y) = self.clamp_to_outputs(x, y);
         self.pointer = (x, y);
         if self.grab.is_some() {
@@ -608,6 +619,7 @@ impl State {
     /// with no other button held gives the keyboard to what is under the
     /// pointer.
     pub fn pointer_button(&mut self, button: u32, pressed: bool, time: u32) {
+        self.input_seen();
         if pressed {
             self.seat.super_alone = false;
         }
@@ -669,6 +681,7 @@ impl State {
     /// A scroll: distances along each axis, in the units of
     /// `wl_pointer.axis`.
     pub fn pointer_axis(&mut self, horizontal: f64, vertical: f64, time: u32) {
+        self.input_seen();
         let Some((surface, _)) = self.seat.pointer_focus else {
             return;
         };
@@ -725,6 +738,16 @@ impl State {
     pub(crate) fn surface_under(&self, x: f64, y: f64) -> Option<(SurfaceId, (f64, f64))> {
         use fulcrum_wire::protocol::wlr_layer_shell_unstable_v1::zwlr_layer_shell_v1::layer;
         let point = (x.floor() as i32, y.floor() as i32);
+        // While the session is locked, only the lock screen is under the
+        // pointer.
+        if self.locked() {
+            let hit = self.layers.iter().rev().find_map(|surface| {
+                (surface.mapped && self.is_lock_screen(surface.surface))
+                    .then(|| self.tree_hit(surface.surface, (surface.rect.x, surface.rect.y), point, 0))
+                    .flatten()
+            })?;
+            return Some((hit.0, (f64::from(hit.1.0), f64::from(hit.1.1))));
+        }
         let layers = |kinds: [u32; 2]| {
             kinds.into_iter().find_map(|kind| {
                 self.layers
