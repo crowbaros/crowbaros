@@ -1,0 +1,13 @@
+[package]
+name = "fulcrum-sys"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Fulcrum's bindings to the kernel and the C libraries it links. The only Fulcrum crate with unsafe code."
+
+[dependencies]
+# Memory mappings and system calls.
+rustix = { workspace = true, features = ["mm", "fs", "event"] }
+# Loading graphics and input libraries at runtime.
+libc = "0.2"

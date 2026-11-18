@@ -1,0 +1,51 @@
+[workspace]
+resolver = "3"
+members = ["wire", "codegen", "probe", "sys"]
+# Plain `cargo build`, `cargo test`, and `cargo clippy` cover every crate.
+default-members = [".", "wire", "codegen", "probe", "sys"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# System calls, sockets, and descriptor passing, with no `unsafe` of ours.
+# Not from the Smithay organization.
+rustix = { version = "1", default-features = false, features = ["std"] }
+
+[package]
+name = "crowbar-compositor"
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The CrowbarOS Wayland compositor, written from the ground up. Part of Base."
+
+[lib]
+name = "crowbar_compositor"
+
+[[bin]]
+name = "crowbar-compositor"
+path = "src/main.rs"
+
+[features]
+# The nested backend: the compositor as a window on a host Wayland session,
+# for development. Base never builds it (ADR 0016).
+nested = []
+
+[dependencies]
+fulcrum-wire = { path = "wire" }
+fulcrum-sys = { path = "sys" }
+rustix = { workspace = true, features = ["event", "fs", "net", "process", "time"] }
+
+[dev-dependencies]
+crowbar-probe = { path = "probe" }
+# Reads the built binary, for the guard on what is linked (tests/linked.rs).
+# Not from the Smithay organization.
+object = { version = "0.39", default-features = false, features = ["read_core", "elf", "std"] }
+rustix = { workspace = true, features = ["event", "fs", "net", "pipe", "process"] }
+
+[profile.release]
+opt-level = 2
+debug = 0
