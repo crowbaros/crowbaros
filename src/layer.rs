@@ -421,6 +421,7 @@ impl State {
             return;
         };
         let layer = self.layers.remove(index);
+        self.drag_surface_unmapped(surface);
         if let Some(surface) = self.surfaces.get_mut(&surface)
             && surface.role == Role::Layer
         {
@@ -443,6 +444,7 @@ impl State {
         if let Some(client) = self.clients.get_mut(&client) {
             client.send(object, zwlr_layer_surface_v1::Event::Closed);
         }
+        self.drag_surface_unmapped(surface);
     }
 
     /// The part of an output that the shell's layers have not reserved, on

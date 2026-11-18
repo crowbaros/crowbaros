@@ -67,6 +67,8 @@ pub(crate) struct Seat {
     keys: Vec<u32>,
     /// Buttons held. While any is, the pointer stays with its surface.
     buttons: Vec<u32>,
+    /// The first press of the current implicit grab, as sent to the client.
+    pub(crate) drag_press: Option<(SurfaceId, u32)>,
     /// Keys the compositor took: pressed with Super held. Their releases are
     /// taken too, and no client ever hears of them.
     withheld: Vec<u32>,
@@ -94,6 +96,7 @@ impl Seat {
             super_alone: false,
             cursor: None,
             buttons: Vec::new(),
+            drag_press: None,
         }
     }
 
@@ -211,13 +214,7 @@ impl State {
         else {
             return Ok(());
         };
-        // Only the client whose surface the pointer is on sets its image.
-        let focused = self
-            .seat
-            .pointer_focus
-            .and_then(|(focus, _)| self.surfaces.get(&focus))
-            .is_some_and(|focus| focus.client == client_id);
-        if !focused {
+        if self.cursor_client() != Some(client_id) {
             return Ok(());
         }
         let cursor = match surface {
@@ -246,6 +243,14 @@ impl State {
         self.seat.cursor = Some(cursor);
         self.queue_redraw_all();
         Ok(())
+    }
+
+    /// The source controls the cursor for the duration of its drag.
+    pub(crate) fn cursor_client(&self) -> Option<ClientId> {
+        self.drag_client().or_else(|| {
+            let (focus, _) = self.seat.pointer_focus?;
+            self.surfaces.get(&focus).map(|surface| surface.client)
+        })
     }
 
     /// The objects of one kind a client holds.
@@ -532,10 +537,23 @@ impl State {
 
     /// The pointer leaves the surface it is on, as a grab starts.
     pub(crate) fn end_pointer_focus(&mut self) {
+        self.leave_pointer_focus();
+        self.seat.buttons.clear();
+    }
+
+    pub(crate) fn has_drag_press(&self, origin: SurfaceId, serial: u32) -> bool {
+        self.seat.drag_press == Some((origin, serial))
+            && self.seat.pointer_focus.is_some_and(|(surface, _)| surface == origin)
+            && !self.seat.buttons.is_empty()
+    }
+
+    /// Replaces the implicit pointer grab while keeping its held buttons
+    /// until they are physically released.
+    pub(crate) fn leave_pointer_focus(&mut self) {
         if let Some((surface, _)) = self.seat.pointer_focus.take() {
             self.send_pointer(surface, |serial, surface| wl_pointer::Event::Leave { serial, surface });
         }
-        self.seat.buttons.clear();
+        self.seat.drag_press = None;
     }
 
     /// Looks again at what is under the pointer, as after what is shown
@@ -586,6 +604,10 @@ impl State {
     }
 
     fn update_pointer_focus(&mut self, time: u32) {
+        if self.data.drag.is_some() {
+            self.drag_motion(time);
+            return;
+        }
         let (x, y) = self.pointer;
         let under = if self.seat.buttons.is_empty() {
             self.surface_under(x, y)
@@ -625,12 +647,14 @@ impl State {
     }
 
     /// Sends one event, then a frame, to each pointer of a surface's client.
-    fn send_pointer(&mut self, surface: SurfaceId, event: impl Fn(u32, ObjectId) -> wl_pointer::Event) {
-        let Some((client_id, object)) = self.surfaces.get(&surface).map(|s| (s.client, s.object)) else {
-            return;
-        };
+    fn send_pointer(&mut self, surface: SurfaceId, event: impl Fn(u32, ObjectId) -> wl_pointer::Event) -> Option<u32> {
+        let (client_id, object) = self.surfaces.get(&surface).map(|s| (s.client, s.object))?;
+        let pointers = self.objects_of(client_id, false);
+        if pointers.is_empty() {
+            return None;
+        }
         let serial = self.next_serial();
-        for pointer in self.objects_of(client_id, false) {
+        for pointer in pointers {
             if let Some(client) = self.clients.get_mut(&client_id) {
                 let version = client.objects.get(&pointer).map_or(1, |object| object.version);
                 client.send(pointer, event(serial, ObjectId(object)));
@@ -639,6 +663,7 @@ impl State {
                 }
             }
         }
+        Some(serial)
     }
 
     /// A pointer button went down or up: `button` is the evdev code. A press
@@ -648,6 +673,21 @@ impl State {
         self.input_seen();
         if pressed {
             self.seat.super_alone = false;
+        }
+        if self.data.drag.is_some() {
+            if pressed {
+                if !self.seat.buttons.contains(&button) {
+                    self.seat.buttons.push(button);
+                }
+            } else {
+                self.seat.buttons.retain(|held| *held != button);
+                if self.seat.buttons.is_empty() {
+                    self.drag_motion(time);
+                    self.drop_drag();
+                    self.update_pointer_focus(time);
+                }
+            }
+            return;
         }
         if self.grab.is_some() {
             self.seat.buttons.retain(|held| *held != button);
@@ -676,8 +716,9 @@ impl State {
                 }
             }
         }
+        let first_press = pressed && self.seat.buttons.is_empty();
         if pressed {
-            if self.seat.buttons.is_empty() {
+            if first_press {
                 self.focus_under_pointer();
             }
             if !self.seat.buttons.contains(&button) {
@@ -692,14 +733,18 @@ impl State {
             } else {
                 wl_pointer::button_state::RELEASED
             };
-            self.send_pointer(surface, |serial, _| wl_pointer::Event::Button {
+            let serial = self.send_pointer(surface, |serial, _| wl_pointer::Event::Button {
                 serial,
                 time,
                 button,
                 state,
             });
+            if first_press {
+                self.seat.drag_press = serial.map(|serial| (surface, serial));
+            }
         }
         if !pressed && self.seat.buttons.is_empty() {
+            self.seat.drag_press = None;
             self.update_pointer_focus(time);
         }
     }

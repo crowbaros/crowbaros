@@ -243,7 +243,10 @@ impl State {
             {
                 self.push_tree(
                     *member,
-                    (at.0 + child.position.0, at.1 + child.position.1),
+                    (
+                        at.0.saturating_add(child.position.0),
+                        at.1.saturating_add(child.position.1),
+                    ),
                     elements,
                     depth + 1,
                 );

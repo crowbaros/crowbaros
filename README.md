@@ -156,11 +156,11 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   compartment's client that holds the keyboard is offered it, as it gains
   the keyboard and when the selection changes; the shell's clients share
   one of their own. The primary selection, which a middle click pastes,
-  follows the same rules. Between compartments nothing moves until slice 4
-  (Milestone 6), which ties each transfer to the person's act and the
-  broker's record. Drag and drop is not built, even inside one compartment:
-  a drag is cancelled as it starts. `foot` will not start without the data
-  device.
+  follows the same rules. Drag and drop works within one compartment. A
+  drag starts from a held pointer press, negotiates an action with its
+  destination, and ends if the session locks or its source goes away. Any
+  drag icon follows the pointer below trusted frames. Transfers between
+  compartments wait on CrowbarOS's decision about the broker.
 - **Budgets** (CrowbarOS ADR 0029): one compartment cannot take the
   compositor's descriptors from the others, and one client cannot make it
   hold pixels without end.
@@ -228,7 +228,8 @@ and CrowbarOS has built it in the baseline's place since
 | `src/modes.rs` | Maximized, fullscreen, and snapped windows |
 | `src/grabs.rs` | Moving and resizing windows with the pointer |
 | `src/control.rs`, `src/json.rs` | The shell's control channel, and the flat JSON it speaks |
-| `src/data_device.rs` | The data device: the clipboard inside one compartment, nothing between compartments until slice 4, and no drag and drop yet |
+| `src/data_device.rs` | Data sources and offers, the clipboard, and routing within a compartment |
+| `src/drag.rs` | Drag targets, action negotiation, drop, and cancellation |
 | `src/primary_selection.rs` | The primary selection, under the clipboard's rules |
 | `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
 | `src/fractional_scale.rs` | The scale a surface should draw at |

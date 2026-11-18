@@ -21,6 +21,7 @@ mod cursor_shape;
 mod damage;
 pub mod data_device;
 pub mod dmabuf;
+mod drag;
 mod edid;
 pub mod event_loop;
 mod evidence;

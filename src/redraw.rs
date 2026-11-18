@@ -58,8 +58,8 @@ impl State {
     /// before, and the ones that show it now.
     pub(crate) fn queue_redraw_for(&mut self, surface: SurfaceId) {
         let root = self.root_of(surface);
-        if self.cursor_surface() == Some(root) {
-            // The pointer's image changed, wherever the pointer is.
+        if self.cursor_surface() == Some(root) || self.drag_icon() == Some(root) {
+            // An image that follows the pointer changed.
             self.queue_redraw_all();
             return;
         }
@@ -184,7 +184,8 @@ impl State {
             .find(|output| output.number == number)
             .is_some_and(|output| output.rect().contains(self.pointer.0 as i32, self.pointer.1 as i32));
         let cursor = self.cursor_surface().filter(|_| pointer_here);
-        for root in shown.into_iter().chain(cursor) {
+        let icon = self.drag_icon().filter(|_| pointer_here);
+        for root in shown.into_iter().chain(cursor).chain(icon) {
             for surface in self.surfaces_of_window(root) {
                 every.push(surface);
                 let Some(state) = self.surfaces.get_mut(&surface) else {

@@ -245,6 +245,7 @@ impl State {
             xdg.mapped = false;
         }
         self.windows.retain(|window| window.surface != surface);
+        self.drag_surface_unmapped(surface);
         self.drop_focus_from(surface);
         for output in outputs {
             self.queue_redraw(output);

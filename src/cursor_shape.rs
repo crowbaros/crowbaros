@@ -2,9 +2,9 @@
 //! as "text" or "pointer", and the compositor draws the system theme's
 //! image of it, so a client need not carry cursor images of its own.
 //!
-//! As with `wl_pointer.set_cursor`, only the client whose surface the
-//! pointer is on sets the shape, and the compositor's own image comes back
-//! when the pointer leaves it (see `cursor.rs`). The table offers it to
+//! As with `wl_pointer.set_cursor`, the client with pointer focus or the
+//! active drag sets the shape. The compositor's own image comes back when
+//! control changes hands (see `cursor.rs`). The table offers it to
 //! every compartment and the shell (ADR 0020, ADR 0023).
 
 use std::borrow::Cow;
@@ -78,13 +78,7 @@ impl State {
                 message: format!("{shape} is not a shape of version {version}"),
             });
         }
-        // Only the client whose surface the pointer is on sets its image.
-        let focused = self
-            .seat
-            .pointer_focus
-            .and_then(|(focus, _)| self.surfaces.get(&focus))
-            .is_some_and(|focus| focus.client == client_id);
-        if !focused {
+        if self.cursor_client() != Some(client_id) {
             return Ok(());
         }
         self.cursor_theme.load(shape);

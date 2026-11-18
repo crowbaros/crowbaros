@@ -1,19 +1,16 @@
 //! The pointer's image: a client's cursor surface, a shape it named, or the
-//! compositor's own.
+//! compositor's own. A drag can also show an icon beside the pointer.
 //!
-//! A client sets the cursor with `wl_pointer.set_cursor`, or names a shape
-//! with `wp_cursor_shape_device_v1` (see `cursor_shape.rs`), and only while
-//! the pointer is on one of its surfaces. When the pointer moves to another
-//! client's surface, or to none, the compositor's own image comes back until
-//! that client sets one. A null surface hides the pointer.
+//! A client sets a cursor surface or shape while it has pointer focus or
+//! owns the active drag. The compositor's own image comes back when
+//! control changes hands. A null cursor surface hides the pointer.
 //!
 //! A shape, and the compositor's own pointer, are the cursor theme's images
 //! where there is a theme, and a white square where there is none.
 //!
-//! The image is drawn above everything, at the pointer less its hotspot. A
-//! client's surface is a client's pixels, so the compositor clips it so that
-//! it covers no frame (ADR 0020): a frame under it is drawn again above it.
-//! The theme's images are the compositor's own, as the square is.
+//! The cursor is drawn at the pointer less its hotspot. The drag icon follows
+//! the hotspot plus the icon's committed offset. Frames are drawn above any
+//! client pixels that overlap them (ADR 0020).
 
 use crate::{
     State,
@@ -58,34 +55,62 @@ impl State {
             return Vec::new();
         };
         let (x, y) = self.pointer;
-        let at = (x as i32 - position.0, y as i32 - position.1);
+        let at = (
+            (x as i32).saturating_sub(position.0),
+            (y as i32).saturating_sub(position.1),
+        );
         let mut elements = Vec::new();
-        match self.seat.cursor {
-            None => return self.own_pointer(at, crate::xcursor::DEFAULT_SHAPE),
-            Some(Cursor::Shape(shape)) => return self.own_pointer(at, shape),
-            Some(Cursor::Hidden) => return elements,
-            Some(Cursor::Surface { surface, hotspot }) => {
-                self.push_cursor_tree(surface, (at.0 - hotspot.0, at.1 - hotspot.1), &mut elements);
-            }
+        if let Some(surface) = self.drag_icon()
+            && let Some(icon) = self.surfaces.get(&surface)
+        {
+            let (dx, dy) = icon.current.drag_offset;
+            self.push_tree_public(
+                surface,
+                (at.0.saturating_add(dx), at.1.saturating_add(dy)),
+                &mut elements,
+            );
         }
-        // No frame is covered by a client's pixels.
-        let covered: Vec<Rect> = elements
-            .iter()
-            .filter_map(|element| match element {
-                Element::Surface { rect, .. } => Some(*rect),
-                Element::Solid { .. } | Element::Cursor { .. } => None,
-            })
-            .collect();
-        let frames: Vec<Element> = scene
-            .elements
-            .iter()
-            .filter(|element| match element {
-                Element::Solid { rect, .. } => covered.iter().any(|cursor| intersects(cursor, rect)),
-                Element::Surface { .. } | Element::Cursor { .. } => false,
-            })
-            .copied()
-            .collect();
-        elements.extend(frames);
+        let own_shape = match self.seat.cursor {
+            None => Some(crate::xcursor::DEFAULT_SHAPE),
+            Some(Cursor::Shape(shape)) => Some(shape),
+            Some(Cursor::Hidden) => None,
+            Some(Cursor::Surface { surface, hotspot }) => {
+                self.push_tree_public(
+                    surface,
+                    (at.0.saturating_sub(hotspot.0), at.1.saturating_sub(hotspot.1)),
+                    &mut elements,
+                );
+                None
+            }
+        };
+        if !elements.is_empty() {
+            let bounds = Rect::new(0, 0, scene.size.0, scene.size.1);
+            elements.retain(|element| match element {
+                Element::Surface { rect, .. } => intersects(rect, &bounds),
+                Element::Solid { .. } | Element::Cursor { .. } => true,
+            });
+            // Only the compositor's own cursor may cover a frame.
+            let covered: Vec<Rect> = elements
+                .iter()
+                .filter_map(|element| match element {
+                    Element::Surface { rect, .. } => Some(*rect),
+                    Element::Solid { .. } | Element::Cursor { .. } => None,
+                })
+                .collect();
+            elements.extend(
+                scene
+                    .elements
+                    .iter()
+                    .filter(|element| match element {
+                        Element::Solid { rect, .. } => covered.iter().any(|cursor| intersects(cursor, rect)),
+                        Element::Surface { .. } | Element::Cursor { .. } => false,
+                    })
+                    .copied(),
+            );
+        }
+        if let Some(shape) = own_shape {
+            elements.push(self.own_pointer(at, shape));
+        }
         elements
     }
 
@@ -94,6 +119,9 @@ impl State {
         let Some(output) = self.outputs.iter().find(|o| o.number == output) else {
             return PointerImage::None;
         };
+        if self.drag_icon().is_some() {
+            return PointerImage::Composited;
+        }
         let shape = match self.seat.cursor {
             None => crate::xcursor::DEFAULT_SHAPE,
             Some(Cursor::Shape(shape)) => shape,
@@ -119,28 +147,22 @@ impl State {
 
     /// The theme's image of a shape at the pointer, or the square where
     /// there is no theme.
-    fn own_pointer(&self, at: (i32, i32), shape: u32) -> Vec<Element> {
+    fn own_pointer(&self, at: (i32, i32), shape: u32) -> Element {
         match self.cursor_theme.image(shape) {
-            Some(cursor) => vec![Element::Cursor {
+            Some(cursor) => Element::Cursor {
                 shape,
                 rect: Rect::new(
-                    at.0 - cursor.hotspot.0,
-                    at.1 - cursor.hotspot.1,
+                    at.0.saturating_sub(cursor.hotspot.0),
+                    at.1.saturating_sub(cursor.hotspot.1),
                     cursor.image.width,
                     cursor.image.height,
                 ),
-            }],
-            None => vec![Element::Solid {
+            },
+            None => Element::Solid {
                 rect: Rect::new(at.0, at.1, POINTER_SIZE, POINTER_SIZE),
                 colour: POINTER_COLOUR,
-            }],
+            },
         }
-    }
-
-    fn push_cursor_tree(&self, surface: SurfaceId, at: (i32, i32), elements: &mut Vec<Element>) {
-        let mut scene = Vec::new();
-        self.push_tree_public(surface, at, &mut scene);
-        elements.extend(scene);
     }
 
     /// The client's cursor surface lost the pointer, or is gone: the

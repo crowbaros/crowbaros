@@ -55,6 +55,8 @@ pub(crate) enum Role {
     Layer,
     /// The pointer's image.
     Cursor,
+    /// A surface shown beside the pointer while its drag is active.
+    DragIcon,
 }
 
 /// Requests since the last commit.
@@ -102,8 +104,9 @@ impl Pending {
         if self.buffer.is_some() {
             older.buffer = self.buffer;
         }
-        if self.offset.is_some() {
-            older.offset = self.offset;
+        if let Some((dx, dy)) = self.offset {
+            let (x, y) = older.offset.unwrap_or_default();
+            older.offset = Some((x.saturating_add(dx), y.saturating_add(dy)));
         }
         older.damage.extend(self.damage);
         older.damage_buffer.extend(self.damage_buffer);
@@ -200,9 +203,8 @@ pub(crate) struct Current {
     pub input: Option<Region>,
     pub transform: i32,
     pub scale: i32,
-    /// The last `wl_surface.offset`, or the offset given to `attach`. A role
-    /// reads it.
-    pub offset: (i32, i32),
+    /// The drag icon's buffer origin relative to the pointer hotspot.
+    pub drag_offset: (i32, i32),
     /// The viewport's crop and the size it scales to.
     pub(crate) source: Option<Crop>,
     pub(crate) destination: Option<(i32, i32)>,
@@ -224,7 +226,7 @@ impl Default for Current {
             input: None,
             transform: 0,
             scale: 1,
-            offset: (0, 0),
+            drag_offset: (0, 0),
             source: None,
             destination: None,
             content_serial: 0,
@@ -489,6 +491,17 @@ impl State {
             ObjectKind::Surface(surface) => Some(surface),
             _ => None,
         }
+    }
+
+    /// Assigns the drag icon role and starts this drag at the pointer hotspot.
+    pub(crate) fn assign_drag_icon(&mut self, id: SurfaceId) -> bool {
+        let surface = self.surface_mut(id);
+        if !matches!(surface.role, Role::None | Role::DragIcon) {
+            return false;
+        }
+        surface.role = Role::DragIcon;
+        surface.current.drag_offset = (0, 0);
+        true
     }
 
     pub(crate) fn surface_request(
@@ -767,8 +780,11 @@ impl State {
             self.let_go(old);
         }
         let surface = self.surface_mut(id);
-        if let Some(offset) = state.offset {
-            surface.current.offset = offset;
+        if surface.role == Role::DragIcon
+            && let Some((dx, dy)) = state.offset
+        {
+            let (x, y) = surface.current.drag_offset;
+            surface.current.drag_offset = (x.saturating_add(dx), y.saturating_add(dy));
         }
         surface.current.frames.extend(state.frames);
         // Feedback for content not yet drawn is superseded by this commit's.
@@ -837,6 +853,9 @@ impl State {
             {
                 self.apply(child, held)?;
             }
+        }
+        if before.0 && !after.0 {
+            self.drag_surface_unmapped(id);
         }
         Ok(())
     }
@@ -919,7 +938,13 @@ impl State {
             return Ok(());
         };
         match request {
-            wl_subsurface::Request::Destroy => self.unparent(id),
+            wl_subsurface::Request::Destroy => {
+                self.unparent(id);
+                self.drag_surface_unmapped(id);
+                if self.drag_icon() == Some(self.root_of(parent)) {
+                    self.queue_redraw_all();
+                }
+            }
             wl_subsurface::Request::SetPosition { x, y } => {
                 self.surface_mut(id).pending_position = Some((x, y));
             }
@@ -956,6 +981,9 @@ impl State {
                     && let Some(held) = self.surface_mut(id).cached.take()
                 {
                     self.apply(id, held)?;
+                    if self.drag_icon() == Some(self.root_of(id)) {
+                        self.queue_redraw_all();
+                    }
                 }
             }
         }
@@ -984,9 +1012,11 @@ impl State {
     /// callbacks are destroyed too; `tell` says whether its client is still
     /// there to hear of it.
     pub(crate) fn destroy_surface(&mut self, id: SurfaceId, tell: bool) {
+        let root = self.root_of(id);
+        let is_icon_child = root != id && self.drag_icon() == Some(root);
         let outputs = self
             .surfaces
-            .get(&self.root_of(id))
+            .get(&root)
             .map(|root| root.entered.clone())
             .unwrap_or_default();
         self.forget_xdg(id);
@@ -1003,6 +1033,10 @@ impl State {
         let Some(mut surface) = self.surfaces.remove(&id) else {
             return;
         };
+        self.drag_surface_destroyed(id);
+        if is_icon_child {
+            self.queue_redraw_all();
+        }
         if let Some(client) = self.clients.get_mut(&surface.client) {
             client.pixel_bytes = client
                 .pixel_bytes

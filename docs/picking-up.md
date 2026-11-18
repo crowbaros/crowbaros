@@ -4,7 +4,7 @@ Where the buildout paused, how to run everything, what trips people up, and how 
 
 ## Where it paused
 
-On November 18, 2026, Fulcrum's `main` held everything built so far, and CrowbarOS pinned Fulcrum `c99eaca`. No pull request was open in either repository.
+CrowbarOS pins Fulcrum `c99eaca`. This workspace also has drag and drop inside one compartment. Its tests cover the pointer grab, action negotiation and data transfer, lock and unmap cancellation, compartment isolation, and the icon's placement below trusted frames.
 
 - **Built:**
   - Milestones 1, 2, and 5;
@@ -18,46 +18,6 @@ On November 18, 2026, Fulcrum's `main` held everything built so far, and Crowbar
 - **Waiting on hardware:** the RTX 4090, Intel, and Surface runs ([how](hardware-runs.md)).
 
 ## Next, without a new record
-
-Two pieces can be built before any record. Each is one pull request.
-
-### Drag and drop inside one compartment
-
-ADR 0020 offers the data device under the clipboard's rules: inside one compartment it works as apps expect, and between compartments nothing crosses before slice 4. Copy and paste (#38) and the primary selection (#43) already work that way. Today `StartDrag` in `src/data_device.rs` cancels the source at once, and `tests/data_device.rs` checks that (`a_drag_is_refused_as_it_starts`). That test changes with this work.
-
-How it fits:
-
-- **Starting.** A drag starts only while a button is held with the pointer on one of the client's surfaces. That stands for the implicit grab the protocol asks for. Otherwise the source is cancelled, as now.
-- **The pointer.** A drag holds the pointer the way a move or resize does. The surface under the pointer gets `wl_pointer.leave`, and no client hears pointer events until the button is let go.
-  - Move and resize live in `src/grabs.rs`, as `State::grab`, and `src/seat.rs` hands motion and buttons to it (`pointer_moved_at`, `pointer_button`).
-  - The drag can be a variant of `Grab` or a field of its own. `Grab` is matched in a few places, so check them all.
-- **Targets.** Only surfaces of the drag's group are targets: the same compartment, or the shell's clients for a shell drag (`group_of`). Over anything else there is no target, and nothing is offered.
-- **Events.**
-  - On `wl_data_device`: `enter` with a new offer, then `motion`, `leave`, and `drop`.
-  - At version 3, the offer carries `source_actions`.
-  - `wl_data_offer.accept` sends the source `target`.
-  - `set_actions` chooses an action from what both sides allow, the destination's preferred first. The offer and the source each hear `action`.
-- **The drop.**
-  - Letting go over a target that accepted a type, and an action other than none, sends `drop`. The source hears `dnd_drop_performed`, and later `dnd_finished` when the offer calls `finish`.
-  - Otherwise the target hears `leave`, and the source `cancelled`.
-  - `finish` before a drop, or with no action, is `invalid_finish`.
-- **Ends early.** Locking the session ends a drag, as `lock()` ends a grab. So does the source being destroyed, or its client or the origin going away.
-- **The icon.** It is a client's surface with a role of its own (`Role` in `src/surface.rs`), drawn at the pointer plus its offset.
-  - It is drawn in `cursor_elements` in `src/cursor.rs`. Like a client's cursor surface, it is clipped so it covers no frame (ADR 0020).
-  - While there is an icon, `pointer_image` returns `Composited`, so the TTY backend draws it with the frame instead of the cursor plane.
-  - It gets frame callbacks where the cursor surface does, in `src/redraw.rs`.
-  - `queue_redraw_for` treats it as the cursor.
-  - `destroy_surface` lets go of it.
-- **Tests,** in `tests/data_device.rs`:
-  - a drag and drop between two clients of one compartment, with the bytes received;
-  - none offered to another compartment's window under the pointer;
-  - a drop with nothing accepted, cancelled;
-  - a drag ended by lock;
-  - the action negotiation;
-  - the protocol errors;
-  - the icon drawn and not covering a frame.
-
-  `tests/common/mod.rs` has `pointer` and `click`. A drag needs a press and a release apart: `pointer_button` called through `Compositor::with`.
 
 ### A compositor restart, in CrowbarOS's desktop check
 

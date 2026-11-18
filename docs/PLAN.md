@@ -93,7 +93,7 @@ Owning the wire layer lets Fulcrum enforce the CrowbarOS decisions where message
   - the launcher's key, a launched app's window taking the keyboard, and the attention of any other new window (#41, with the shell's half in [crowbaros#203](https://github.com/crowbaros/crowbaros/pull/203)).
 
   The messages #41 adds are a proposal until a CrowbarOS record decides them: Super tapped alone, the shell's `launching`, and the snapshot's `attention`.
-- **Milestone 6** has copy and paste (#38) and the primary selection (#43) inside one compartment. Drag and drop inside one compartment is not built: a drag ends as it starts. Transfers between compartments wait for a record of how the broker records them. Capture by the shell waits for a record too, since every capture protocol is in the policy table's row for nobody.
+- **Milestone 6** has copy and paste (#38), primary selection (#43), and drag and drop inside one compartment. A drag takes an active pointer grab and offers data only to targets in the source's group. Transfers between compartments and capture by the shell wait for CrowbarOS records.
 - **Milestone 7** has each display's scale, 1 to 3 in quarters (#35), and the layout kept by each monitor's identity and set through the control channel (#39). Its wire format is Fulcrum's proposal until CrowbarOS's display settings take it up. Still to come: input devices' settings, and suspend and resume and mixed scale on the hardware rows.
 - **Milestone 8** has lock (#44, with the shell's half in [crowbaros#204](https://github.com/crowbaros/crowbaros/pull/204)) and the confirm chord's part (#46, [crowbaros#206](https://github.com/crowbaros/crowbaros/pull/206)), as a proposal:
   - The shell's request, Super+L, Ctrl+Alt+Enter, and the idle timer lock the session.
@@ -133,7 +133,6 @@ Records still to write before Fulcrum builds more:
 - how Settings sets input devices.
 
 Next without a new record, each with how to start it in [Picking up the work](picking-up.md):
-- drag and drop inside one compartment;
 - a desktop check that restarts the compositor during a session and finds the session locked;
 - the hardware rows, run by someone at the RTX 4090, Intel, and Surface machines ([how](hardware-runs.md)).
 

@@ -74,6 +74,8 @@ impl State {
         }
         log::info!("session locked by={by}");
         self.grab = None;
+        self.cancel_drag();
+        self.seat.drag_press = None;
         self.lock.focus_before = self.seat.keyboard_focus.map(|focus| self.root_of(focus));
         self.lock.locked = true;
         self.lock.entry_open = false;

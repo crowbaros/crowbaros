@@ -9,9 +9,8 @@
 //!
 //! Between compartments, the compositor makes the transfer itself, when one
 //! of the person's acts asks for it, and the broker records it: that is slice
-//! 4 (CrowbarOS issue 166, Milestone 6). Until then nothing crosses: a
-//! selection is offered to no client of another compartment, and a drag is
-//! refused at once by cancelling its source.
+//! 4 (CrowbarOS issue 166, Milestone 6). Copy, paste, and drag and drop
+//! stay within the group identified by the client's connection.
 
 use std::{borrow::Cow, collections::HashMap};
 
@@ -25,8 +24,8 @@ use fulcrum_wire::protocol::wayland::wl_data_offer;
 use crate::{
     State,
     client::{ClientId, ObjectKind, ProtocolError},
+    drag::{Drag, DragOffer, DragStart},
     identity::Identity,
-    surface::Role,
 };
 
 /// Offers one client may hold at once. Past them it is offered nothing more
@@ -40,7 +39,7 @@ pub const SOURCE_MIME_TYPES: usize = 64;
 /// Bytes of MIME types one client's sources may hold in all.
 pub const CLIENT_MIME_BYTES: usize = 64 * 1024;
 
-const EVERY_ACTION: u32 = wl_data_device_manager::dnd_action::COPY
+pub(crate) const EVERY_ACTION: u32 = wl_data_device_manager::dnd_action::COPY
     | wl_data_device_manager::dnd_action::MOVE
     | wl_data_device_manager::dnd_action::ASK;
 
@@ -51,6 +50,7 @@ pub(crate) struct SourceId(pub u64);
 pub(crate) struct DataSource {
     pub client: ClientId,
     pub object: u32,
+    pub version: u32,
     pub mime_types: Vec<String>,
     pub actions: Option<u32>,
     /// It was given to a selection or a drag, and may not be given again.
@@ -68,11 +68,13 @@ pub(crate) enum Group {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct OfferId(pub u64);
 
-/// A selection offered to a client.
+/// An offer belongs to a single destination.
 #[derive(Debug)]
 pub(crate) struct Offer {
     pub client: ClientId,
+    pub version: u32,
     pub source: SourceId,
+    pub drag: Option<DragOffer>,
 }
 
 #[derive(Debug, Default)]
@@ -83,6 +85,7 @@ pub(crate) struct DataDevices {
     pub selections: HashMap<Group, SourceId>,
     pub offers: HashMap<OfferId, Offer>,
     next_offer: u64,
+    pub drag: Option<Drag>,
 }
 
 impl State {
@@ -108,6 +111,7 @@ impl State {
                     DataSource {
                         client: client_id,
                         object: id.0,
+                        version,
                         mime_types: Vec::new(),
                         actions: None,
                         used: false,
@@ -204,11 +208,21 @@ impl State {
         object: u32,
         request: wl_data_device::Request,
     ) -> Result<(), ProtocolError> {
-        let fail = |code, message: String| ProtocolError { object, code, message };
         match request {
             wl_data_device::Request::SetSelection { source, .. } => {
                 let new = match source {
-                    Some(source) => Some(self.use_source(client_id, object, source)?),
+                    Some(source) => {
+                        let source = self.use_source(client_id, object, source)?;
+                        let data = &self.data.sources[&source];
+                        if data.actions.is_some() {
+                            return Err(ProtocolError {
+                                object: data.object,
+                                code: wl_data_source::error::INVALID_SOURCE,
+                                message: "a source with drag actions cannot be a selection".into(),
+                            });
+                        }
+                        Some(source)
+                    }
                     None => None,
                 };
                 let Some(group) = self.group_of(client_id) else {
@@ -226,32 +240,35 @@ impl State {
                 }
                 self.offer_selection_to_keyboard(&group);
             }
-            wl_data_device::Request::StartDrag { source, icon, .. } => {
-                if let Some(icon) = icon {
-                    let surface = self
-                        .surface_of(client_id, icon)
-                        .expect("the dispatch checked the argument's interface");
-                    if self.surfaces[&surface].role != Role::None {
-                        return Err(fail(
-                            wl_data_device::error::ROLE,
-                            format!("wl_surface#{} already has a role", icon.0),
-                        ));
-                    }
-                }
-                // Drag and drop between clients comes with slice 4. Until
-                // then a drag ends as soon as it starts.
-                if let Some(source) = source {
-                    let source = self.use_source(client_id, object, source)?;
-                    self.cancel_source(source);
-                }
+            wl_data_device::Request::StartDrag {
+                source,
+                origin,
+                icon,
+                serial,
+            } => {
+                self.start_drag(
+                    client_id,
+                    object,
+                    DragStart {
+                        source,
+                        origin,
+                        icon,
+                        serial,
+                    },
+                )?;
             }
-            wl_data_device::Request::Release => {}
+            wl_data_device::Request::Release => self.drag_device_released(client_id, object),
         }
         Ok(())
     }
 
     /// The source an argument names, marked as used.
-    fn use_source(&mut self, client_id: ClientId, device: u32, object: ObjectId) -> Result<SourceId, ProtocolError> {
+    pub(crate) fn use_source(
+        &mut self,
+        client_id: ClientId,
+        device: u32,
+        object: ObjectId,
+    ) -> Result<SourceId, ProtocolError> {
         let source = match self
             .clients
             .get(&client_id)
@@ -282,11 +299,17 @@ impl State {
     /// Tells a source's client it is no longer the selection, or that its
     /// drag is over.
     fn cancel_source(&mut self, source: SourceId) {
+        self.send_source(source, 1, wl_data_source::Event::Cancelled);
+    }
+
+    pub(crate) fn send_source(&mut self, source: SourceId, since: u32, event: wl_data_source::Event) {
         let Some(data) = self.data.sources.get(&source) else {
             return;
         };
-        if let Some(client) = self.clients.get_mut(&data.client) {
-            client.send(data.object, wl_data_source::Event::Cancelled);
+        if data.version >= since
+            && let Some(client) = self.clients.get_mut(&data.client)
+        {
+            client.send(data.object, event);
         }
     }
 
@@ -297,6 +320,7 @@ impl State {
         if self.data.sources.remove(&source).is_none() {
             return;
         }
+        self.drag_source_destroyed(source);
         let emptied: Vec<Group> = self
             .data
             .selections
@@ -370,21 +394,12 @@ impl State {
             .group_of(client_id)
             .and_then(|group| self.data.selections.get(&group).copied())
             .filter(|source| self.data.sources.contains_key(source));
-        let held = self
-            .data
-            .offers
-            .values()
-            .filter(|offer| offer.client == client_id)
-            .count();
-        let offer = match source {
-            Some(source) if held < CLIENT_OFFERS => self.make_offer(client_id, device, source),
-            _ => None,
-        };
+        let offer = source.and_then(|source| self.make_offer(client_id, device, source, None));
         if let Some(client) = self.clients.get_mut(&client_id) {
             client.send(
                 device,
                 wl_data_device::Event::Selection {
-                    id: offer.map(ObjectId),
+                    id: offer.map(|(_, object)| ObjectId(object)),
                 },
             );
         }
@@ -392,10 +407,25 @@ impl State {
 
     /// A new offer of a source, introduced on a data device with the MIME
     /// types the source offers.
-    fn make_offer(&mut self, client_id: ClientId, device: u32, source: SourceId) -> Option<u32> {
+    pub(crate) fn make_offer(
+        &mut self,
+        client_id: ClientId,
+        device: u32,
+        source: SourceId,
+        drag: Option<DragOffer>,
+    ) -> Option<(OfferId, u32)> {
+        let held = self
+            .data
+            .offers
+            .values()
+            .filter(|offer| offer.client == client_id)
+            .count();
+        if held >= CLIENT_OFFERS {
+            return None;
+        }
         let mime_types = self.data.sources.get(&source)?.mime_types.clone();
         let client = self.clients.get_mut(&client_id)?;
-        let version = client.objects.get(&device).map_or(1, |object| object.version);
+        let version = client.objects.get(&device)?.version;
         self.data.next_offer += 1;
         let offer = OfferId(self.data.next_offer);
         let id = client
@@ -414,10 +444,12 @@ impl State {
             offer,
             Offer {
                 client: client_id,
+                version,
                 source,
+                drag,
             },
         );
-        Some(id)
+        Some((offer, id))
     }
 
     pub(crate) fn data_offer_request(
@@ -431,10 +463,20 @@ impl State {
                 // The source sends its data, if it is still there and offers
                 // that type. Otherwise the descriptor closes, and the reader
                 // reads nothing.
-                let Some(source) = self.data.offers.get(&offer).map(|offer| offer.source) else {
+                let Some(offer) = self.data.offers.get(&offer) else {
                     return Ok(());
                 };
-                let Some(data) = self.data.sources.get(&source) else {
+                if offer.drag.as_ref().is_some_and(DragOffer::finished) {
+                    return Err(ProtocolError {
+                        object,
+                        code: wl_data_offer::error::INVALID_OFFER,
+                        message: "the drop has finished".into(),
+                    });
+                }
+                if offer.drag.as_ref().is_some_and(|drag| !drag.can_receive()) {
+                    return Ok(());
+                }
+                let Some(data) = self.data.sources.get(&offer.source) else {
                     return Ok(());
                 };
                 if !data.mime_types.contains(&mime_type) {
@@ -446,21 +488,13 @@ impl State {
                 }
             }
             wl_data_offer::Request::Destroy => self.forget_offer(offer),
-            // A selection's offer takes no part in drag and drop.
-            wl_data_offer::Request::Accept { .. } => {}
-            wl_data_offer::Request::Finish => {
-                return Err(ProtocolError {
-                    object,
-                    code: wl_data_offer::error::INVALID_FINISH,
-                    message: "finish is for a drag's offer".into(),
-                });
-            }
-            wl_data_offer::Request::SetActions { .. } => {
-                return Err(ProtocolError {
-                    object,
-                    code: wl_data_offer::error::INVALID_OFFER,
-                    message: "actions are for a drag's offer".into(),
-                });
+            wl_data_offer::Request::Accept { mime_type, .. } => self.drag_accept(object, offer, mime_type)?,
+            wl_data_offer::Request::Finish => self.drag_finish(object, offer)?,
+            wl_data_offer::Request::SetActions {
+                dnd_actions,
+                preferred_action,
+            } => {
+                self.drag_actions(object, offer, dnd_actions, preferred_action)?;
             }
         }
         Ok(())
@@ -468,6 +502,8 @@ impl State {
 
     /// Lets go of an offer, when it is destroyed or its client is gone.
     pub(crate) fn forget_offer(&mut self, offer: OfferId) {
-        self.data.offers.remove(&offer);
+        if let Some(removed) = self.data.offers.remove(&offer) {
+            self.drag_offer_destroyed(removed);
+        }
     }
 }
