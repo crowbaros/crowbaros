@@ -14,13 +14,20 @@
 //!   connections and [`COMPARTMENT_DESCRIPTORS`] descriptors in all:
 //!   connections, pools, and descriptors a client sent that no message has
 //!   taken yet.
-//! - **Each client has a budget** of [`CLIENT_POOLS`] pools and
-//!   [`CLIENT_POOL_BYTES`] bytes of shared memory.
+//! - **Each client has a budget** of [`CLIENT_POOLS`] pools,
+//!   [`CLIENT_POOL_BYTES`] bytes of them mapped, and [`CLIENT_PIXEL_BYTES`]
+//!   bytes of pixels: the compositor copies each buffer a client commits,
+//!   and holds the copy until the next.
 //!
 //! A connection over its compartment's budget is refused: it is accepted and
-//! closed at once, so it waits in no queue. A pool over a budget is a
-//! protocol error that ends its client. Nothing over a budget harms another
-//! client.
+//! closed at once, so it waits in no queue. A pool or a commit over a budget
+//! is a protocol error that ends its client. Nothing over a budget harms
+//! another client.
+//!
+//! A pool costs address space, not memory, until its client writes to it, so
+//! the budget of mapped bytes is large. Memory the compositor itself holds
+//! for a client is the copies of its buffers: one buffer can be committed
+//! many times from the same bytes, so those are budgeted on their own.
 //!
 //! The compositor raises its own descriptor limit to the hard limit when it
 //! starts, so the budgets are a small part of what it has.
@@ -40,8 +47,11 @@ pub const COMPARTMENT_CONNECTIONS: usize = 16;
 pub const COMPARTMENT_DESCRIPTORS: usize = 512;
 /// Shared-memory pools one client may hold.
 pub const CLIENT_POOLS: usize = 128;
-/// Bytes of shared memory one client may hold mapped.
-pub const CLIENT_POOL_BYTES: usize = 512 * 1024 * 1024;
+/// Bytes of shared-memory pools one client may hold mapped: address space,
+/// room for `foot`'s sparse pools of 512 MiB for a window each.
+pub const CLIENT_POOL_BYTES: usize = 8 * 1024 * 1024 * 1024;
+/// Bytes of pixels the compositor may hold for one client's surfaces.
+pub const CLIENT_PIXEL_BYTES: usize = 512 * 1024 * 1024;
 
 /// The descriptors this process may hold, as its soft limit says.
 pub fn descriptor_limit() -> usize {
@@ -73,6 +83,7 @@ pub enum OverBudget {
     Descriptors,
     Pools,
     PoolBytes,
+    PixelBytes,
 }
 
 impl std::fmt::Display for OverBudget {
@@ -85,6 +96,7 @@ impl std::fmt::Display for OverBudget {
             }
             OverBudget::Pools => write!(f, "the client holds {CLIENT_POOLS} pools"),
             OverBudget::PoolBytes => write!(f, "the client holds {CLIENT_POOL_BYTES} bytes of shared memory"),
+            OverBudget::PixelBytes => write!(f, "the client's surfaces hold {CLIENT_PIXEL_BYTES} bytes of pixels"),
         }
     }
 }
@@ -166,6 +178,16 @@ impl State {
             && self.compartment_descriptors(compartment) >= COMPARTMENT_DESCRIPTORS
         {
             return Err(OverBudget::Descriptors);
+        }
+        Ok(())
+    }
+
+    /// Whether a client's surfaces may hold `bytes` more of pixels, where a
+    /// commit replaces `replaced` bytes.
+    pub(crate) fn may_hold_pixels(&self, client_id: ClientId, replaced: usize, bytes: usize) -> Result<(), OverBudget> {
+        let held = self.clients.get(&client_id).map_or(0, |client| client.pixel_bytes);
+        if held.saturating_sub(replaced).saturating_add(bytes) > self.pixel_budget {
+            return Err(OverBudget::PixelBytes);
         }
         Ok(())
     }

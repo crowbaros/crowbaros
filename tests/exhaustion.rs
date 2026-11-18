@@ -20,7 +20,10 @@ use std::{
 
 use common::{Compositor, connect};
 use crowbar_compositor::limits;
-use fulcrum_wire::protocol::wayland::{wl_display, wl_shm};
+use fulcrum_wire::{
+    ObjectId,
+    protocol::wayland::{wl_buffer, wl_display, wl_shm, wl_shm_pool, wl_surface},
+};
 use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
 
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
@@ -229,6 +232,97 @@ fn a_client_is_stopped_at_its_budget_of_shared_memory() {
     assert!(client.roundtrip().is_err());
     let error = client.error.clone().unwrap();
     assert_eq!(error.code, wl_display::error::NO_MEMORY, "{error:?}");
+}
+
+/// `foot` reserves a pool of 512 MiB for each window and leaves it sparse,
+/// so that it scrolls by moving a buffer's offset. A pool costs address
+/// space until it is written to, so a client may hold several.
+#[test]
+fn a_client_may_hold_sparse_pools_as_large_as_foots() {
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+    let compositor = Compositor::start();
+    let (mut client, _listener) = compositor.compartment("foot");
+    let shm = client.bind(wl_shm::NAME, 1).unwrap();
+    const FOOT_POOL: i32 = 512 * 1024 * 1024;
+    let file = rustix::fs::memfd_create("foot-like", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
+    rustix::fs::ftruncate(&file, FOOT_POOL as u64).unwrap();
+    rustix::io::pwrite(&file, &[0xff; 100 * 100 * 4], 0).unwrap();
+
+    for _ in 0..3 {
+        let pool = client.new_id(wl_shm_pool::NAME);
+        client
+            .request(
+                shm,
+                wl_shm::Request::CreatePool {
+                    id: pool,
+                    fd: file.try_clone().unwrap(),
+                    size: FOOT_POOL,
+                },
+            )
+            .unwrap();
+        let buffer = client.new_id(wl_buffer::NAME);
+        client
+            .request(
+                pool.0,
+                wl_shm_pool::Request::CreateBuffer {
+                    id: buffer,
+                    offset: 0,
+                    width: 100,
+                    height: 100,
+                    stride: 400,
+                    format: wl_shm::format::ARGB8888,
+                },
+            )
+            .unwrap();
+        let surface = client.create_surface().unwrap();
+        client
+            .request(
+                surface,
+                wl_surface::Request::Attach {
+                    buffer: Some(ObjectId(buffer.0)),
+                    x: 0,
+                    y: 0,
+                },
+            )
+            .unwrap();
+        client.request(surface, wl_surface::Request::Commit).unwrap();
+    }
+
+    client.roundtrip().unwrap();
+    let shown = compositor.with(|state| state.render_root_surfaces().len());
+    assert_eq!(shown, 3);
+}
+
+/// The compositor copies each buffer a client commits. One buffer can be
+/// committed on many surfaces, so the copies have a budget of their own.
+#[test]
+fn a_client_is_stopped_at_its_budget_of_pixels() {
+    let compositor = Compositor::start();
+    // Four buffers of 256x256.
+    compositor.with(|state| state.set_pixel_budget(4 * 256 * 256 * 4));
+    let (mut client, _listener) = compositor.compartment("pixels");
+    let buffer = client.shm_buffer((256, 256), 0xffff_ffff).unwrap();
+    let surfaces: Vec<u32> = (0..6).map(|_| client.create_surface().unwrap()).collect();
+
+    for surface in &surfaces[..4] {
+        client.show(*surface, Some(&buffer)).unwrap();
+    }
+    // A surface's new pixels replace its old ones.
+    for _ in 0..3 {
+        client.show(surfaces[0], Some(&buffer)).unwrap();
+    }
+    client.roundtrip().unwrap();
+    // A destroyed surface's pixels are let go.
+    client.request(surfaces[3], wl_surface::Request::Destroy).unwrap();
+    client.show(surfaces[4], Some(&buffer)).unwrap();
+    client.roundtrip().unwrap();
+
+    client.show(surfaces[5], Some(&buffer)).unwrap();
+    assert!(client.roundtrip().is_err(), "the compositor held more than its budget");
+    let error = client.error.clone().unwrap();
+    assert_eq!(error.code, wl_display::error::NO_MEMORY, "{error:?}");
+    assert!(error.message.contains("pixels"), "{error:?}");
+    compositor.shell().roundtrip().unwrap();
 }
 
 /// When few descriptors are left, a compartment is refused before the

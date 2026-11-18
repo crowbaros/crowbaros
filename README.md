@@ -63,7 +63,8 @@ terminal. What is built:
   (Milestone 6): a selection is offered to no other client, and a drag is
   cancelled as it starts. `foot` will not start without it.
 - **Budgets** (CrowbarOS ADR 0029): one compartment cannot take the
-  compositor's descriptors from the others.
+  compositor's descriptors from the others, and one client cannot make it
+  hold pixels without end.
 - **The TTY backend**: the seat from seatd, through Fulcrum's own client of
   its socket; displays through the kernel's atomic mode setting, drawn by the
   CPU renderer into dumb buffers; input through libinput; and monitors and

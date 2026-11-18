@@ -66,6 +66,8 @@ pub struct State {
     pub(crate) next_resource: u64,
     /// The descriptors this process may hold.
     pub(crate) descriptor_limit: usize,
+    /// Bytes of pixels one client's surfaces may hold.
+    pub(crate) pixel_budget: usize,
     /// How many times a listener could not accept.
     pub(crate) failed_accepts: u64,
     pub(crate) xdg: HashMap<SurfaceId, XdgSurface>,
@@ -117,6 +119,7 @@ impl State {
             buffers: HashMap::new(),
             next_resource: 0,
             descriptor_limit: crate::limits::descriptor_limit(),
+            pixel_budget: crate::limits::CLIENT_PIXEL_BYTES,
             failed_accepts: 0,
             xdg: HashMap::new(),
             positioners: HashMap::new(),
@@ -265,6 +268,13 @@ impl State {
     #[doc(hidden)]
     pub fn set_descriptor_limit(&mut self, limit: usize) {
         self.descriptor_limit = limit;
+    }
+
+    /// Takes a smaller budget of pixels for each client, as a test does to
+    /// reach it with small buffers.
+    #[doc(hidden)]
+    pub fn set_pixel_budget(&mut self, bytes: usize) {
+        self.pixel_budget = bytes;
     }
 
     /// How many times a listener could not accept, as when the process had

@@ -473,6 +473,18 @@ impl State {
                             message: format!("a {width}x{height} buffer is not a multiple of its scale {scale}"),
                         });
                     }
+                    // The copy is budgeted before it is made.
+                    let held = &self.surfaces[&id];
+                    let replaced = pixel_bytes(held.current.content.as_ref());
+                    let bytes = (width.max(0) as usize)
+                        .saturating_mul(height.max(0) as usize)
+                        .saturating_mul(4);
+                    self.may_hold_pixels(held.client, replaced, bytes)
+                        .map_err(|over| ProtocolError {
+                            object: 1,
+                            code: fulcrum_wire::protocol::wayland::wl_display::error::NO_MEMORY,
+                            message: format!("wl_surface#{object} cannot show its buffer: {over}"),
+                        })?;
                     Some(self.import_buffer(buffer)?)
                 }
                 None => None,
@@ -516,8 +528,17 @@ impl State {
         surface.current.source = source;
         surface.current.destination = destination;
         if let Some(content) = content {
+            let (replaced, bytes) = (
+                pixel_bytes(surface.current.content.as_ref()),
+                pixel_bytes(content.as_ref()),
+            );
             surface.current.content = content;
+            let client_id = surface.client;
+            if let Some(client) = self.clients.get_mut(&client_id) {
+                client.pixel_bytes = client.pixel_bytes.saturating_sub(replaced) + bytes;
+            }
         }
+        let surface = self.surface_mut(id);
         if let Some(offset) = state.offset {
             surface.current.offset = offset;
         }
@@ -709,6 +730,11 @@ impl State {
         let Some(surface) = self.surfaces.remove(&id) else {
             return;
         };
+        if let Some(client) = self.clients.get_mut(&surface.client) {
+            client.pixel_bytes = client
+                .pixel_bytes
+                .saturating_sub(pixel_bytes(surface.current.content.as_ref()));
+        }
         for child in surface.stack.iter().filter(|child| **child != id) {
             if let Some(child) = self.surfaces.get_mut(child) {
                 child.parent = None;
@@ -823,4 +849,9 @@ impl State {
         roots.sort_by_key(|(id, _)| **id);
         roots.into_iter().map(|(_, surface)| surface.commits).collect()
     }
+}
+
+/// The bytes the compositor holds for a surface's pixels.
+fn pixel_bytes(content: Option<&Image>) -> usize {
+    content.map_or(0, |image| image.pixels.len() * 4)
 }

@@ -86,6 +86,8 @@ pub(crate) struct Client {
     pub doomed: bool,
     /// Its socket is watched for room to write.
     pub watching_writes: bool,
+    /// Bytes of pixels the compositor holds for its surfaces.
+    pub pixel_bytes: usize,
 }
 
 /// Why a client cannot be served any longer.
@@ -115,6 +117,7 @@ impl Client {
             objects,
             doomed: false,
             watching_writes: false,
+            pixel_bytes: 0,
         })
     }
 

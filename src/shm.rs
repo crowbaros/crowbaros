@@ -17,8 +17,10 @@ use crate::{
     image::{Image, format},
 };
 
-/// The largest pool, in bytes. Two 4K frames fit with room to spare.
-pub const MAX_POOL_SIZE: usize = 256 * 1024 * 1024;
+/// The largest pool, in bytes. A pool is address space until its client
+/// writes to it: `foot` reserves 512 MiB that it leaves sparse, so that it
+/// scrolls by moving a buffer's offset.
+pub const MAX_POOL_SIZE: usize = 1024 * 1024 * 1024;
 
 pub(crate) type PoolId = u64;
 pub(crate) type BufferId = u64;
