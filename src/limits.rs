@@ -12,8 +12,8 @@
 //!   last one.
 //! - **Each compartment has a budget** of [`COMPARTMENT_CONNECTIONS`]
 //!   connections and [`COMPARTMENT_DESCRIPTORS`] descriptors in all:
-//!   connections, pools, and descriptors a client sent that no message has
-//!   taken yet.
+//!   connections, pools, dma-bufs, and descriptors a client sent that no
+//!   message has taken yet.
 //! - **Each client has a budget** of [`CLIENT_POOLS`] pools,
 //!   [`CLIENT_POOL_BYTES`] bytes of them mapped, and [`CLIENT_PIXEL_BYTES`]
 //!   bytes of pixels: the compositor copies each buffer a client commits,
@@ -36,6 +36,7 @@ use crate::{
     State,
     client::{ClientId, ObjectKind},
     identity::{Compartment, Identity},
+    shm::Source,
 };
 
 /// Descriptors kept free for the shell, the Warden, and the compositor's own
@@ -109,7 +110,18 @@ impl State {
         let own = 2;
         let listeners = self.trusted.len() + 2 * self.listeners.len();
         let connections: usize = self.clients.values().map(|client| 1 + client.conn.queued_fds()).sum();
-        own + listeners + connections + self.pools.len()
+        let dmabufs = self
+            .buffers
+            .values()
+            .filter(|buffer| matches!(buffer.source, Source::Dmabuf { .. }))
+            .count()
+            + self
+                .dmabufs
+                .params
+                .keys()
+                .map(|params| self.params_descriptors(*params))
+                .sum::<usize>();
+        own + listeners + connections + self.pools.len() + dmabufs
     }
 
     fn descriptors_left(&self) -> usize {
@@ -133,8 +145,16 @@ impl State {
                     + client
                         .objects
                         .values()
-                        .filter(|object| matches!(object.kind, ObjectKind::Pool(_)))
-                        .count()
+                        .map(|object| match object.kind {
+                            ObjectKind::Pool(_) => 1,
+                            ObjectKind::BufferParams(params) => self.params_descriptors(params),
+                            ObjectKind::Buffer(buffer) => self
+                                .buffers
+                                .get(&buffer)
+                                .map_or(0, |buffer| usize::from(matches!(buffer.source, Source::Dmabuf { .. }))),
+                            _ => 0,
+                        })
+                        .sum::<usize>()
             })
             .sum()
     }

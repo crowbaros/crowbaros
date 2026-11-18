@@ -62,8 +62,11 @@ pub(crate) enum ObjectKind {
     Viewporter,
     /// A `wp_viewport`, for the surface it crops and scales.
     Viewport(crate::surface::SurfaceId),
-    /// A global's object whose requests this build does not carry out yet,
-    /// or a global a test planted. Any request on it is a protocol error.
+    Dmabuf,
+    BufferParams(crate::dmabuf::ParamsId),
+    DmabufFeedback,
+    /// The object of a global a test planted. Any request on it is a
+    /// protocol error.
     Unimplemented,
 }
 
@@ -88,6 +91,8 @@ pub(crate) struct Client {
     pub watching_writes: bool,
     /// Bytes of pixels the compositor holds for its surfaces.
     pub pixel_bytes: usize,
+    /// The next ID the compositor gives an object it makes for the client.
+    next_server_id: u32,
 }
 
 /// Why a client cannot be served any longer.
@@ -118,6 +123,7 @@ impl Client {
             doomed: false,
             watching_writes: false,
             pixel_bytes: 0,
+            next_server_id: SERVER_ID_START,
         })
     }
 
@@ -197,6 +203,39 @@ impl Client {
             },
         );
         Ok(())
+    }
+
+    /// Makes an object whose ID the compositor chooses, as for a buffer an
+    /// event hands the client. Its IDs start at [`SERVER_ID_START`].
+    pub fn create_server_object(
+        &mut self,
+        interface: Cow<'static, str>,
+        info: Option<&'static InterfaceInfo>,
+        version: u32,
+        kind: ObjectKind,
+    ) -> Result<u32, ProtocolError> {
+        if self.objects.len() >= MAX_OBJECTS {
+            return Err(ProtocolError {
+                object: 1,
+                code: wl_display::error::NO_MEMORY,
+                message: format!("more than {MAX_OBJECTS} objects"),
+            });
+        }
+        let mut id = self.next_server_id;
+        while self.objects.contains_key(&id) {
+            id = id.checked_add(1).unwrap_or(SERVER_ID_START);
+        }
+        self.next_server_id = id.checked_add(1).unwrap_or(SERVER_ID_START);
+        self.objects.insert(
+            id,
+            Object {
+                interface,
+                info,
+                version,
+                kind,
+            },
+        );
+        Ok(id)
     }
 
     /// Destroys an object and tells the client its ID is free.

@@ -16,6 +16,7 @@ pub mod backend;
 mod client;
 pub mod connections;
 pub mod data_device;
+pub mod dmabuf;
 pub mod event_loop;
 pub mod geometry;
 mod globals;

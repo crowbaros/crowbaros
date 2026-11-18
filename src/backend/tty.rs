@@ -311,6 +311,17 @@ pub fn init(state: &mut State) -> io::Result<()> {
         gpu,
     };
     tty.scan(state);
+    // Clients allocate their dma-bufs on the GPU's render node where EGL
+    // names it, or else on the display's device.
+    let render_node = tty
+        .gpu
+        .as_ref()
+        .and_then(|gpu| gpu.renderer.gles().render_node())
+        .and_then(|path| rustix::fs::stat(&path).ok());
+    match render_node.or_else(|| rustix::fs::fstat(tty.device.fd()).ok()) {
+        Some(stat) => state.offer_dmabuf(stat.st_rdev),
+        None => log::warning!("no linux-dmabuf: the DRM device could not be named"),
+    }
     state.watch(tty.session.borrow().fd(), SOURCE_SESSION)?;
     state.watch(tty.device.fd(), SOURCE_DRM)?;
     state.watch(tty.input.fd(), SOURCE_INPUT)?;

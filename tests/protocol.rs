@@ -10,10 +10,7 @@ use crowbar_probe::Client;
 use fulcrum_wire::{
     Arg, ArgWriter, DynamicNewId, Header, NewId,
     codec::MAX_MESSAGE_SIZE,
-    protocol::{
-        linux_dmabuf_v1::zwp_linux_dmabuf_v1,
-        wayland::{wl_display, wl_output, wl_registry},
-    },
+    protocol::wayland::{wl_display, wl_output, wl_registry},
 };
 
 /// Sends a request and expects the compositor to refuse it with `code`.
@@ -170,24 +167,30 @@ fn a_bind_that_misnames_the_interface_or_its_version_is_refused() {
     }
 }
 
-/// A global this build advertises but does not carry out yet says so, and
-/// never pretends to work. The tests offer linux-dmabuf, which the shell may
-/// bind, before Milestone 3 carries it out.
+/// A global the compositor has but does not carry out says so, and never
+/// pretends to work. A test plants one: every global Fulcrum creates now
+/// carries out its requests.
 #[test]
 fn a_request_this_build_does_not_carry_out_is_an_implementation_error() {
     let compositor = Compositor::start();
-    let mut shell = compositor.shell();
-    let dmabuf = shell.bind(zwp_linux_dmabuf_v1::NAME, 4).unwrap();
-    let params = shell.new_id("zwp_linux_buffer_params_v1");
-    shell
-        .request(dmabuf, zwp_linux_dmabuf_v1::Request::CreateParams { params_id: params })
-        .unwrap();
+    compositor.with(|state| {
+        state.plant_global("wp_presentation");
+    });
+    let (mut client, _listener) = compositor.compartment("c1");
+    let presentation = client.bind("wp_presentation", 1).unwrap();
+    let destroy = Header {
+        object: presentation,
+        opcode: 0,
+        size: 8,
+    }
+    .encode()
+    .to_vec();
+    client.send_raw(destroy, Vec::new()).ok();
 
-    assert!(shell.roundtrip().is_err(), "the compositor accepted it");
-    let error = shell.error.clone().expect("a protocol error, not a closed socket");
+    assert!(client.roundtrip().is_err(), "the compositor accepted it");
+    let error = client.error.clone().expect("a protocol error, not a closed socket");
     assert_eq!(error.code, wl_display::error::IMPLEMENTATION, "{error:?}");
-    assert!(error.message.contains("not carried out"), "{error:?}");
-    compositor.warden().roundtrip().unwrap();
+    compositor.shell().roundtrip().unwrap();
 }
 
 /// A client that sends requests and reads no answers fills its queue, and

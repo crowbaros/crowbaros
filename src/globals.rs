@@ -34,8 +34,7 @@ pub(crate) enum GlobalKind {
     Seat,
     DataDeviceManager,
     Viewporter,
-    /// A global this build advertises before it carries out its requests.
-    Unimplemented,
+    Dmabuf,
     /// A global a test added, of an interface Fulcrum may not even know.
     Planted,
 }
@@ -204,7 +203,7 @@ impl State {
             GlobalKind::Seat => ObjectKind::Seat,
             GlobalKind::DataDeviceManager => ObjectKind::DataDeviceManager,
             GlobalKind::Viewporter => ObjectKind::Viewporter,
-            GlobalKind::Unimplemented => ObjectKind::Unimplemented,
+            GlobalKind::Dmabuf => ObjectKind::Dmabuf,
             GlobalKind::Planted => {
                 self.planted_binds += 1;
                 ObjectKind::Unimplemented

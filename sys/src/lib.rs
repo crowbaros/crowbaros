@@ -5,6 +5,7 @@
 //! the wrapper holds.
 
 mod dl;
+pub mod dmabuf;
 pub mod drm;
 pub mod gbm;
 pub mod gles;

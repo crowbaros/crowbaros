@@ -36,10 +36,18 @@ pub(crate) struct Pool {
     object_alive: bool,
 }
 
+/// Where a buffer's pixels are.
+pub(crate) enum Source {
+    /// A region of a shared-memory pool.
+    Pool(PoolId),
+    /// A dma-buf of its own, mapped (see `dmabuf.rs`).
+    Dmabuf { mapping: Mapping, fd: OwnedFd },
+}
+
 pub(crate) struct Buffer {
     pub client: ClientId,
     pub object: u32,
-    pool: PoolId,
+    pub source: Source,
     offset: usize,
     width: i32,
     height: i32,
@@ -55,13 +63,34 @@ impl Pool {
 }
 
 impl Buffer {
+    pub fn new(
+        client: ClientId,
+        object: u32,
+        source: Source,
+        offset: usize,
+        size: (i32, i32),
+        stride: i32,
+        format: u32,
+    ) -> Buffer {
+        Buffer {
+            client,
+            object,
+            source,
+            offset,
+            width: size.0,
+            height: size.1,
+            stride,
+            format,
+        }
+    }
+
     pub fn size(&self) -> (i32, i32) {
         (self.width, self.height)
     }
 }
 
 impl State {
-    fn next_resource(&mut self) -> u64 {
+    pub(crate) fn next_resource(&mut self) -> u64 {
         self.next_resource += 1;
         self.next_resource
     }
@@ -171,16 +200,15 @@ impl State {
                 }
                 self.buffers.insert(
                     buffer,
-                    Buffer {
-                        client: client_id,
-                        object: id.0,
-                        pool: pool_id,
-                        offset: offset as usize,
-                        width,
-                        height,
+                    Buffer::new(
+                        client_id,
+                        id.0,
+                        Source::Pool(pool_id),
+                        offset as usize,
+                        (width, height),
                         stride,
                         format,
-                    },
+                    ),
                 );
                 Ok(())
             }
@@ -219,11 +247,13 @@ impl State {
 
     /// The client destroyed a buffer, or the client is gone.
     pub(crate) fn forget_buffer(&mut self, buffer: BufferId) {
-        if let Some(buffer) = self.buffers.remove(&buffer) {
-            if let Some(pool) = self.pools.get_mut(&buffer.pool) {
-                pool.buffers -= 1;
+        if let Some(buffer) = self.buffers.remove(&buffer)
+            && let Source::Pool(pool) = buffer.source
+        {
+            if let Some(pool_state) = self.pools.get_mut(&pool) {
+                pool_state.buffers -= 1;
             }
-            self.drop_pool_if_unused(buffer.pool);
+            self.drop_pool_if_unused(pool);
         }
     }
 
@@ -248,22 +278,30 @@ impl State {
     /// Copies a committed buffer's pixels, and releases the buffer. A pool
     /// whose file the client truncated is a protocol error on the buffer.
     pub(crate) fn import_buffer(&mut self, buffer_id: BufferId) -> Result<Image, ProtocolError> {
-        let buffer = self.buffers.get(&buffer_id).expect("a committed buffer exists");
+        let buffer = self.buffers.get_mut(&buffer_id).expect("a committed buffer exists");
         let (client_id, object) = (buffer.client, buffer.object);
         let (offset, width, height, stride, format) =
             (buffer.offset, buffer.width, buffer.height, buffer.stride, buffer.format);
-        let pool = self
-            .pools
-            .get_mut(&buffer.pool)
-            .expect("a buffer's pool lives as long as it");
-        let image = pool
-            .mapping
-            .read(|bytes| Image::from_shm(bytes, offset, width, height, stride, format))
-            .map_err(|truncated| ProtocolError {
-                object,
-                code: wl_shm::error::INVALID_FD,
-                message: format!("error accessing SHM buffer: {truncated}"),
-            })?;
+        let copy = |bytes: &[u8]| Image::from_shm(bytes, offset, width, height, stride, format);
+        let read = match &mut buffer.source {
+            Source::Pool(pool) => self
+                .pools
+                .get_mut(pool)
+                .expect("a buffer's pool lives as long as it")
+                .mapping
+                .read(copy),
+            Source::Dmabuf { mapping, fd } => {
+                fulcrum_sys::dmabuf::begin_read(std::os::fd::AsFd::as_fd(fd));
+                let read = mapping.read(copy);
+                fulcrum_sys::dmabuf::end_read(std::os::fd::AsFd::as_fd(fd));
+                read
+            }
+        };
+        let image = read.map_err(|truncated| ProtocolError {
+            object,
+            code: wl_shm::error::INVALID_FD,
+            message: format!("error accessing SHM buffer: {truncated}"),
+        })?;
         if let Some(client) = self.clients.get_mut(&client_id) {
             client.send(object, wl_buffer::Event::Release);
         }

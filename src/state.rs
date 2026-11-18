@@ -6,6 +6,7 @@ use std::{borrow::Cow, collections::HashMap, io, os::fd::AsFd, sync::Weak, time:
 use fulcrum_wire::{
     ArgReader, ConnectionError, DecodeError, Incoming,
     protocol::{
+        linux_dmabuf_v1::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1},
         security_context_v1::{wp_security_context_manager_v1, wp_security_context_v1},
         viewporter::{wp_viewport, wp_viewporter},
         wayland::{
@@ -91,6 +92,7 @@ pub struct State {
     pub(crate) usable: HashMap<u64, crate::geometry::Rect>,
     pub(crate) seat: crate::seat::Seat,
     pub(crate) data: crate::data_device::DataDevices,
+    pub(crate) dmabufs: crate::dmabuf::Dmabufs,
 }
 
 impl State {
@@ -136,6 +138,7 @@ impl State {
             usable: HashMap::new(),
             seat: crate::seat::Seat::new(),
             data: crate::data_device::DataDevices::default(),
+            dmabufs: crate::dmabuf::Dmabufs::default(),
         };
         state.add_table_globals();
         Ok(state)
@@ -171,12 +174,6 @@ impl State {
             crate::viewporter::VIEWPORTER_VERSION,
             GlobalKind::Viewporter,
         );
-    }
-
-    /// Offers linux-dmabuf. The table still decides which clients see it.
-    pub fn offer_dmabuf(&mut self) {
-        use fulcrum_wire::protocol::linux_dmabuf_v1::zwp_linux_dmabuf_v1;
-        self.add_global(&zwp_linux_dmabuf_v1::INFO, 4, GlobalKind::Unimplemented);
     }
 
     /// Hands work to the compositor from another thread.
@@ -407,6 +404,9 @@ impl State {
             ObjectKind::XdgSurface(surface) => self.forget_xdg(*surface),
             ObjectKind::Layer(surface) => self.forget_layer(*surface),
             ObjectKind::DataSource(source) => self.forget_source(*source),
+            ObjectKind::BufferParams(params) => {
+                self.dmabufs.params.remove(params);
+            }
             _ => {}
         }
     }
@@ -532,6 +532,12 @@ impl State {
                     .map(|request| Request::DataSource(*source, request)),
                 ObjectKind::DataDevice => wl_data_device::Request::decode(opcode, &mut args).map(Request::DataDevice),
                 ObjectKind::Viewporter => wp_viewporter::Request::decode(opcode, &mut args).map(Request::Viewporter),
+                ObjectKind::Dmabuf => zwp_linux_dmabuf_v1::Request::decode(opcode, &mut args).map(Request::Dmabuf),
+                ObjectKind::BufferParams(params) => zwp_linux_buffer_params_v1::Request::decode(opcode, &mut args)
+                    .map(|request| Request::BufferParams(*params, request)),
+                ObjectKind::DmabufFeedback => {
+                    zwp_linux_dmabuf_feedback_v1::Request::decode(opcode, &mut args).map(Request::DmabufFeedback)
+                }
                 ObjectKind::Viewport(surface) => {
                     wp_viewport::Request::decode(opcode, &mut args).map(|request| Request::Viewport(*surface, request))
                 }
@@ -583,6 +589,9 @@ impl State {
             Request::DataDevice(request) => self.data_device_request(client_id, id, request)?,
             Request::Viewporter(request) => self.viewporter_request(client_id, id, request)?,
             Request::Viewport(surface, request) => self.viewport_request(id, surface, request)?,
+            Request::Dmabuf(request) => self.dmabuf_request(client_id, id, version, request)?,
+            Request::BufferParams(params, request) => self.buffer_params_request(client_id, id, params, request)?,
+            Request::DmabufFeedback(zwp_linux_dmabuf_feedback_v1::Request::Destroy) => {}
         }
         if destructor && let Some(client) = self.clients.get_mut(&client_id) {
             client.destroy(id);
@@ -656,6 +665,9 @@ enum Request {
     DataDevice(wl_data_device::Request),
     Viewporter(wp_viewporter::Request),
     Viewport(SurfaceId, wp_viewport::Request),
+    Dmabuf(zwp_linux_dmabuf_v1::Request),
+    BufferParams(crate::dmabuf::ParamsId, zwp_linux_buffer_params_v1::Request),
+    DmabufFeedback(zwp_linux_dmabuf_feedback_v1::Request),
 }
 
 impl From<ConnectionError> for ProtocolError {

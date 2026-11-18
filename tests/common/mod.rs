@@ -23,6 +23,10 @@ use crowbar_compositor::{
 };
 use crowbar_probe::{self as probe, Client, CompartmentListener};
 
+/// The `dev_t` the test compositor names as its GPU: `/dev/dri/renderD128`,
+/// major 226 and minor 128.
+pub const TEST_DEVICE: u64 = (226 << 8) | 128;
+
 /// The test output.
 pub const OUTPUT_SIZE: (i32, i32) = (1280, 800);
 /// One frame on the test output, which runs at 60 Hz.
@@ -109,7 +113,7 @@ impl Compositor {
             crowbar_compositor::log::set_level(crowbar_compositor::log::Level::Error);
             let mut state = State::new().unwrap();
             setup(&mut state);
-            state.offer_dmabuf();
+            state.offer_dmabuf(TEST_DEVICE);
             state.listen(&listen_on).unwrap();
             ready_tx.send(state.remote()).unwrap();
             state.run().unwrap();
