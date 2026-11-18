@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 use theme::{Palette, Preferences};
-actions!(shell, [Next, Previous, Open, Close]);
+actions!(shell, [Next, Previous, Open, Close, Unlock]);
 struct Assets;
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
@@ -20,6 +20,7 @@ impl AssetSource for Assets {
             "apps" => include_bytes!("../assets/apps.svg"),
             "terminal" => include_bytes!("../assets/terminal.svg"),
             "settings" => include_bytes!("../assets/settings.svg"),
+            "lock" => include_bytes!("../assets/lock.svg"),
             "application" => include_bytes!("../assets/application.svg"),
             "search" => include_bytes!("../assets/search.svg"),
             "close" => include_bytes!("../assets/close.svg"),
@@ -41,6 +42,7 @@ struct Model {
     snapshot: session::Snapshot,
     preferences: Preferences,
     launcher: Option<WindowHandle<Launcher>>,
+    lock: Option<WindowHandle<LockScreen>>,
     apps: Vec<AppEntry>,
     tx: Sender<session::Event>,
     clock: String,
@@ -194,7 +196,25 @@ impl Render for Bar {
                     .child(title),
             )
             .child(
-                div().flex().items_center().gap(px(18.)).child(clock).child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(18.))
+                    .child(clock)
+                    .child(
+                        div()
+                            .id("lock")
+                            .size(px(32.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(8.))
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(rgb(p.surface)))
+                            .child(icon("lock", p.muted, 19.))
+                            .on_click(|_, _, _| session::lock(true)),
+                    )
+                    .child(
                     div()
                         .id("settings")
                         .size(px(32.))
@@ -673,6 +693,92 @@ fn toggle_launcher(model: Entity<Model>, cx: &mut App) {
         Err(e) => log::error!("Opening launcher: {e}"),
     }
 }
+/// The lock screen: shown while the compositor has the session locked, and
+/// all it shows (ADR 0020). Unlock, its button or Enter, asks the compositor
+/// to unlock, in the place of the broker: Fulcrum's proposal until a record
+/// decides. What the person proves, and how, is issues 87 and 100.
+struct LockScreen {
+    model: Entity<Model>,
+    focus: FocusHandle,
+}
+impl Render for LockScreen {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let m = self.model.read(cx);
+        let p = m.palette();
+        let clock = m.clock.clone();
+        div()
+            .size_full()
+            .track_focus(&self.focus)
+            .key_context("Lock")
+            .on_action(|_: &Unlock, _, _| session::lock(false))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(16.))
+            .bg(rgb(0x000000))
+            .text_color(rgb(0xe5e5e5))
+            .font_family("Manrope")
+            .child(
+                div()
+                    .text_size(px(40.))
+                    .font_weight(FontWeight::BOLD)
+                    .child(clock),
+            )
+            .child(div().text_size(px(15.)).text_color(rgb(0x9a9a9a)).child("Locked"))
+            .child(
+                div()
+                    .id("unlock")
+                    .px(px(20.))
+                    .py(px(10.))
+                    .rounded(px(10.))
+                    .bg(rgb(p.accent))
+                    .text_color(rgb(p.on_accent))
+                    .cursor_pointer()
+                    .child("Unlock")
+                    .on_click(|_, _, _| session::lock(false)),
+            )
+    }
+}
+/// Shows the lock screen over every display, or takes it down.
+fn set_lock_screen(model: &Entity<Model>, locked: bool, cx: &mut App) {
+    if !locked {
+        if let Some(w) = model.update(cx, |m, _| m.lock.take()) {
+            log::info!("SHELL lock open=false");
+            let _ = w.update(cx, |_, w, _| w.remove_window());
+        }
+        return;
+    }
+    if model.read(cx).lock.is_some() {
+        return;
+    }
+    close_launcher(model, cx);
+    log::info!("SHELL lock open=true");
+    let screen = model.clone();
+    let result = cx.open_window(
+        layer(
+            "lock",
+            Layer::Overlay,
+            Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+            0.,
+            0.,
+            Some(-1.),
+            KeyboardInteractivity::Exclusive,
+        ),
+        move |w, cx| {
+            let focus = cx.focus_handle();
+            w.focus(&focus);
+            cx.new(|_| LockScreen {
+                model: screen,
+                focus,
+            })
+        },
+    );
+    match result {
+        Ok(w) => model.update(cx, |m, _| m.lock = Some(w)),
+        Err(e) => log::error!("Opening the lock screen: {e}"),
+    }
+}
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     match std::env::args().nth(1).as_deref() {
@@ -730,6 +836,7 @@ fn main() -> anyhow::Result<()> {
             KeyBinding::new("shift-tab", Previous, Some("Launcher")),
             KeyBinding::new("enter", Open, Some("Launcher")),
             KeyBinding::new("escape", Close, Some("Launcher")),
+            KeyBinding::new("enter", Unlock, Some("Lock")),
         ]);
         let model = cx.new(|_| Model {
             snapshot: Default::default(),
@@ -739,6 +846,7 @@ fn main() -> anyhow::Result<()> {
                 preferences
             },
             launcher: None,
+            lock: None,
             apps: catalog::discover(),
             tx,
             clock: chrono::Local::now().format("%a %b %-d   %H:%M").to_string(),
@@ -804,9 +912,16 @@ fn main() -> anyhow::Result<()> {
                                 session::Event::Toggle => toggle_launcher(model.clone(), cx),
                                 session::Event::Quit => cx.quit(),
                                 session::Event::Snapshot(s) => {
+                                    // A shell that starts while locked shows
+                                    // the lock screen too.
+                                    let locked = s.locked;
                                     model.update(cx, |m, _| m.snapshot = s);
+                                    if locked != model.read(cx).lock.is_some() {
+                                        set_lock_screen(&model, locked, cx);
+                                    }
                                     refresh = true
                                 }
+                                session::Event::Lock(locked) => set_lock_screen(&model, locked, cx),
                                 session::Event::Launch(result) => {
                                     if let Some(w) = model.read(cx).launcher {
                                         match result {

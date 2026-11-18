@@ -172,6 +172,15 @@ class Check:
         self.wait('Super closes the launcher', lambda: 'SHELL launcher open=false' in shell_log())
         self.check('Super tapped alone opens and closes the launcher',
                    'SHELL launcher open=true' in shell_log() and 'SHELL launcher open=false' in shell_log())
+        self.key('meta_l', 'l')
+        self.wait('Super+L locks', lambda: self.snapshot().get('locked') and 'SHELL lock open=true' in shell_log())
+        self.capture('01-locked')
+        self.check('Super+L locks the session and shows the lock screen',
+                   self.snapshot()['locked'] and 'SHELL lock open=true' in shell_log())
+        self.key('ret')
+        self.wait('Enter unlocks', lambda: not self.snapshot().get('locked') and 'SHELL lock open=false' in shell_log())
+        self.check('the lock screen unlocks, and the window has the keyboard back',
+                   self.snapshot()['active']['address'] == terminal['address'])
         self.click(728, 908)
         settings = self.wait('Settings launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'com.crowbaros.StudioSettings'), None))
         self.check('Settings launch through the shell', bool(settings))

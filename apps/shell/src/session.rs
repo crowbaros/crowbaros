@@ -38,10 +38,14 @@ pub struct Snapshot {
     pub clients: Vec<Client>,
     pub active: Client,
     pub connected: bool,
+    /// The compositor locked the session: the lock screen shows.
+    pub locked: bool,
 }
 #[derive(Clone, Debug)]
 pub enum Event {
     Toggle,
+    /// The compositor locked the session, or unlocked it.
+    Lock(bool),
     Quit,
     Snapshot(Snapshot),
     Launch(Result<(), String>),
@@ -59,6 +63,10 @@ pub trait Adapter: Send + Sync {
     }
     /// Reads the events the compositor sent while no request was waiting.
     fn pump(&self) {}
+    /// Asks the compositor to lock the session, or to unlock it.
+    fn lock(&self, _locked: bool) -> Result<()> {
+        bail!("This compositor does not lock")
+    }
 }
 
 /// Where the compositor's events go: the shell's own event channel.
@@ -73,11 +81,15 @@ pub fn deliver_events_to(tx: Sender<Event>) {
 /// as Super tapped alone asks (Fulcrum's proposal, ADR 0020's keys).
 fn compositor_event(event: &serde_json::Value) {
     log::info!("SHELL event=compositor-event name={event}");
-    if event.as_str() == Some("launcher")
-        && let Some(tx) = EVENTS.get()
-    {
-        let _ = tx.send(Event::Toggle);
-    }
+    let Some(tx) = EVENTS.get() else {
+        return;
+    };
+    let _ = match event.as_str() {
+        Some("launcher") => tx.send(Event::Toggle),
+        Some("locked") => tx.send(Event::Lock(true)),
+        Some("unlocked") => tx.send(Event::Lock(false)),
+        _ => Ok(()),
+    };
 }
 
 /// The lines the compositor sends, read whole: what has arrived of a line
@@ -173,6 +185,7 @@ impl Adapter for Hyprland {
             clients: serde_json::from_str(&self.request("j/clients")?)?,
             active: serde_json::from_str(&self.request("j/activewindow")?)?,
             connected: true,
+            locked: false,
         })
     }
 
@@ -292,6 +305,8 @@ impl Adapter for Compositor {
         struct Reply {
             workspace: i32,
             active: Option<String>,
+            #[serde(default)]
+            locked: bool,
             windows: Vec<Window>,
         }
         let reply: Reply =
@@ -317,6 +332,7 @@ impl Adapter for Compositor {
             clients,
             active,
             connected: true,
+            locked: reply.locked,
         })
     }
 
@@ -332,6 +348,11 @@ impl Adapter for Compositor {
 
     fn launching(&self) -> Result<()> {
         self.request(serde_json::json!({"op": "launching"})).map(drop)
+    }
+
+    fn lock(&self, locked: bool) -> Result<()> {
+        let op = if locked { "lock" } else { "unlock" };
+        self.request(serde_json::json!({ "op": op })).map(drop)
     }
 
     fn pump(&self) {
@@ -395,6 +416,16 @@ pub fn connect() {
 
 pub fn snapshot() -> Result<Snapshot> {
     connection()?.snapshot()
+}
+/// Asks the compositor to lock the session, or to unlock it, as the person
+/// asks the shell. Unlocking is the shell's word, in the place of the broker
+/// ADR 0020 has end it: Fulcrum's proposal until a record decides.
+pub fn lock(locked: bool) {
+    std::thread::spawn(move || {
+        if let Err(e) = connection().and_then(|c| c.lock(locked)) {
+            log::warn!("Lock: {e}");
+        }
+    });
 }
 /// Reads the compositor's events that wait, as Super tapped alone.
 pub fn pump() {
@@ -645,6 +676,14 @@ mod tests {
         compositor.pump();
         assert!(matches!(rx.try_recv(), Ok(Event::Toggle)));
 
+        // The compositor locking and unlocking the session reaches the shell.
+        theirs
+            .write_all(b"{\"event\":\"locked\"}\n{\"event\":\"unlocked\"}\n")
+            .unwrap();
+        compositor.pump();
+        assert!(matches!(rx.try_recv(), Ok(Event::Lock(true))));
+        assert!(matches!(rx.try_recv(), Ok(Event::Lock(false))));
+
         // Half an event that a request's reply follows is read with it.
         theirs.write_all(b"{\"event\":\"laun").unwrap();
         compositor.pump();
@@ -712,6 +751,7 @@ mod tests {
                 ],
                 active: studio,
                 connected: true,
+                locked: false,
             }
         );
         peer.join().unwrap();
@@ -860,6 +900,7 @@ mod tests {
                 clients: vec![terminal.clone()],
                 active: terminal,
                 connected: true,
+                locked: false,
             }
         );
         peer.join().unwrap();
