@@ -194,7 +194,7 @@ The later milestones stand as far as CrowbarOS's records decide, and no run on r
 | 8 · Lock and recovery | Lock, the idle timer, the confirm chord, starting locked, and unlock by the person's password through Base's helper, as a proposal. The broker's record of each unlock waits for a record |
 | 9 · CrowbarOS cutover | The Alpha desktop, its GPUI shell and Studio Settings, runs on Fulcrum. The production interfaces wait for the records above |
 
-Several messages and flags are Fulcrum's proposals, built and checked, until CrowbarOS records decide them. [The plan](docs/PLAN.md) lists them, what each milestone has, and what is next.
+Several messages and flags are Fulcrum's proposals, built and checked, until CrowbarOS records decide them. [The plan](docs/PLAN.md) lists them, what each milestone has, and what is next. [Picking up the work](docs/picking-up.md) says where the work paused, how to run everything, and how to start each next piece.
 
 The Smithay-based compositor that Milestone 0 brought here is at commit
 `d11400f`, tagged `smithay-baseline`. This compositor passed the baseline's 57
@@ -250,7 +250,7 @@ place since [crowbaros#198](https://github.com/crowbaros/crowbaros/pull/198)
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
 | `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `cursor.rs` and `cursor_shape.rs` cover the pointer's image; `outputs.rs` covers outputs that change size; `data_device.rs`, `primary_selection.rs`, and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `scale.rs` covers outputs at other scales; `layout.rs` covers the layout of displays; `dmabuf.rs` covers linux-dmabuf; `idle_inhibit.rs` covers idle inhibit; `lock.rs` covers the locked session; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
-| `docs/` | [The plan](docs/PLAN.md), [how to run Fulcrum on real hardware](docs/hardware-runs.md), and dated records of what was run |
+| `docs/` | [The plan](docs/PLAN.md), [picking up the work](docs/picking-up.md), [how to run Fulcrum on real hardware](docs/hardware-runs.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.
 

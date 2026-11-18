@@ -132,7 +132,7 @@ Records still to write before Fulcrum builds more:
 - whether the shell captures the screen;
 - how Settings sets input devices.
 
-Next without a new record:
+Next without a new record, each with how to start it in [Picking up the work](picking-up.md):
 - drag and drop inside one compartment;
 - a desktop check that restarts the compositor during a session and finds the session locked;
 - the hardware rows, run by someone at the RTX 4090, Intel, and Surface machines ([how](hardware-runs.md)).

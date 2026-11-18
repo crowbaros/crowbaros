@@ -8,7 +8,9 @@ This file covers what differs here.
 ## Ground rules
 
 - [The plan](docs/PLAN.md) orders the work. The [README](README.md) says what is
-  built and where it lives.
+  built and where it lives. [Picking up the work](docs/picking-up.md) says where
+  the work paused and how to start the next piece; keep it current when the
+  work pauses.
 - CrowbarOS decides what the compositor must do: who its clients are, what each
   is offered, what it draws, and how a person confirms. A change to any of those
   needs a decision record in CrowbarOS's `docs/adr/` first. Link to it from the
