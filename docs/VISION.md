@@ -57,7 +57,7 @@ Each milestone ends in something a person can use.
 
 | Milestone | Scope |
 | --- | --- |
-| **1. Base boots** | Plain Void Linux, built without root, boots under UEFI. Jason Alexander started this on the `new-vision` branch |
+| **1. Base boots** | Plain Void Linux, built without root, boots under UEFI. Jason Alexander started this in [`base/`](../base/) |
 | **2. A desktop** | Our compositor runs the shell and Studio Settings on Base, in the VM and on real hardware |
 | **3. The Agent at hand** | The person summons the Agent from anywhere, asks, and it answers and acts on the desktop |
 | **4. Installable** | An image a person installs on their own machine, with the default apps. The release process gets an ADR before it is published |

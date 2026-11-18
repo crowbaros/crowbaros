@@ -1,8 +1,7 @@
 # The CrowbarOS base
 
 Plain Void Linux, built without root and booted under UEFI. This is the first
-step of the rebuild on the `new-vision` branch: a base that boots, before
-anything is built on it. It has no apply engine, no generations, and no
+step of the rebuild: a base that boots, before anything is built on it. It has no apply engine, no generations, and no
 desktop.
 
 ```sh
