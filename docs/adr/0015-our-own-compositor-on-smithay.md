@@ -2,6 +2,8 @@
 
 The Wayland compositor is a CrowbarOS program, written in Rust on the [Smithay](https://github.com/Smithay/smithay) library. It is part of Base and part of what we trust. We do not ship Hyprland, a fork of it, or another existing compositor.
 
+[ADR 0028](0028-the-compositor-is-written-from-the-ground-up.md) changes what it is built on: it is written from the ground up, with Smithay as its reference and not a dependency.
+
 The compositor is where three rules of [ADR 0014](0014-a-yes-comes-from-the-person.md) are enforced, so it cannot be a borrowed part that we configure:
 
 1. **Only the shell delivers input.** The compositor offers no virtual keyboard, virtual pointer, input-method, or input-emulation interface to a Tool or an app. With Smithay a protocol exists only if our compositor creates it, and each one can be limited to named clients.
