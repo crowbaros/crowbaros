@@ -74,14 +74,24 @@ Owning the wire layer lets Fulcrum enforce the CrowbarOS decisions where message
 **Where it stands, November 18, 2026.**
 
 - **Milestones 1 and 2** are done, and CrowbarOS pins the new compositor.
-- **Milestone 3** has the GLES renderer (#15), linux-dmabuf with buffers the CPU copies (#16), fractional scale (#22), presentation time (#23), clients' cursor images (#24), and explicit sync (#26). Still to come:
-  - the GPU's own import of tiled dma-bufs;
-  - damage tracking and scanout planes;
-  - the real GPUs.
-- **Milestone 5** has workspaces and the shell's control channel (#17), maximize, fullscreen, snap, and frames (#18), move and resize (#20), and dialogs that take the keyboard (#25). Still to come:
-  - the new window the person started from the shell taking the keyboard;
+- **Milestone 3** has:
+  - the GLES renderer (#15);
+  - linux-dmabuf (#16), whose buffers the GPU imports in any layout EGL takes and draws where they are (#28);
+  - fractional scale (#22), presentation time (#23), and clients' cursor images (#24);
+  - explicit sync (#26);
+  - damage tracking: by scene (#29), by what a client damaged (#36), and in uploads (#37);
+  - the cursor plane (#33).
+
+  Still to come: the real GPUs, the RTX 4090, Intel, and Surface rows. A fullscreen client on the primary plane is ruled out, because ADR 0020 keeps a fullscreen window's frame inside the display's edge. Overlay planes may come later.
+- **Milestone 5** has workspaces and the shell's control channel (#17), maximize, fullscreen, snap, and frames (#18), move and resize (#20), and dialogs that take the keyboard (#25). Every global of ADR 0020's row for a compartment is built, idle inhibit (#30) and cursor shape (#32) last. Still to come, each needing the shell's interface, which CrowbarOS decides:
+  - the first window of a compartment the person started from the shell taking the keyboard, which needs the shell or the Warden to say so;
+  - the bar showing a new window that wants attention;
   - the launcher's and lock's keys.
-- **Milestone 9:** CrowbarOS's Alpha desktop runs on Fulcrum ([crowbaros#199](https://github.com/crowbaros/crowbaros/pull/199)), and its desktop check passes there.
+- **Milestone 6** has copy and paste inside one compartment (#38). Transfers between compartments wait for a record of how the broker records them.
+- **Milestone 7** has each display's scale, 1 to 3 in quarters (#35), and the layout kept by each monitor's identity and set through the control channel (#39). Its wire format is Fulcrum's proposal until CrowbarOS's display settings take it up. Still to come: input devices' settings, and suspend and resume and mixed scale on the hardware rows.
+- **Milestone 9:** CrowbarOS's Alpha desktop runs on Fulcrum ([crowbaros#199](https://github.com/crowbaros/crowbaros/pull/199)), and its desktop check passes there. The spike is deleted ([crowbaros#200](https://github.com/crowbaros/crowbaros/pull/200)).
+
+One question for CrowbarOS: the archived ADR 0020's table offers the primary selection to every compartment, under the clipboard rules. CrowbarOS's guest check expects it refused, and Fulcrum follows the guest check until a record says which.
 
 CrowbarOS started again on November 17 ([crowbaros#197](https://github.com/crowbaros/crowbaros/pull/197)). Its vision is now a small desktop with an Agent, and its substrate vision, with the broker, the Warden, and compartments, is archived. ADRs 0015, 0027, and 0028 stand. ADRs 0016, 0020, 0022, and 0023 bind until a new record says what the compositor offers the shell and the Agent.
 
