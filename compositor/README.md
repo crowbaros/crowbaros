@@ -6,8 +6,10 @@ ground up, with [Smithay](https://github.com/Smithay/smithay) as its reference
 ([ADR 0028](../docs/adr/0028-the-compositor-is-written-from-the-ground-up.md)).
 It is part of Base and part of what CrowbarOS trusts
 ([ADR 0027](../docs/adr/0027-the-compositor-is-built-in-its-own-repository.md)).
-The pinned commit, `d11400f`, is still the Smithay-based baseline. The pin
-moves when the new compositor passes the same checks.
+The pinned commit is Fulcrum's own compositor, written from the ground up. It
+passed the Smithay-based baseline's 57 tests and the Void guest's checks, and
+took the baseline's place (ADR 0028). The baseline is at Fulcrum's
+`smithay-baseline` tag.
 
 This directory holds one thing: [`fulcrum.json`](fulcrum.json), the full commit ID
 of the Fulcrum revision that Base builds. CrowbarOS still decides what the
