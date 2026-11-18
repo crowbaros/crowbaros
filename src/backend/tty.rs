@@ -2,10 +2,15 @@
 //! seatd, displays through the kernel's mode setting, and input through
 //! libinput.
 //!
-//! Each connected monitor gets a CRTC, its primary plane, and two dumb
-//! buffers. The CPU renderer draws an output into the buffer the display is
-//! not showing, and an atomic commit flips to it; the kernel's flip event
-//! ends the frame's wait. The compositor draws the pointer itself (see
+//! Each connected monitor gets a CRTC, its primary plane, and two buffers.
+//! The compositor draws an output into the buffer the display is not
+//! showing, and an atomic commit flips to it; the kernel's flip event ends
+//! the frame's wait.
+//!
+//! The buffers are the GPU's where it can: GBM buffers the display scans out,
+//! drawn by the GLES renderer. Where GBM or EGL is missing, or the GPU cannot
+//! draw into a buffer the display shows, they are dumb buffers drawn by the
+//! CPU renderer. `FULCRUM_RENDERER=cpu` asks for the CPU renderer. The compositor draws the pointer itself (see
 //! [`draw_pointer`]): a TTY has no cursor of its own.
 //!
 //! When the person switches to another virtual terminal, seatd takes the
@@ -21,19 +26,22 @@ use std::{
 };
 
 use fulcrum_sys::{
-    drm::{Change, Device, DumbBuffer, ModeInfo, OBJECT_CONNECTOR, OBJECT_CRTC, OBJECT_PLANE},
+    drm::{Change, Device, DumbBuffer, FORMAT_XRGB8888, ModeInfo, OBJECT_CONNECTOR, OBJECT_CRTC, OBJECT_PLANE},
+    gbm,
+    gles::{Dmabuf, DmabufPlane, Gles, Target},
     libinput::{Input, InputEvent, Opener},
 };
 
 use crate::{
     State,
     backend::{
-        Backend, Drawn, draw_pointer,
+        Backend, Drawn, draw_pointer, pointer_rect,
         session::{Session, SessionEvent},
         uevent::Uevents,
     },
     geometry::Rect,
     log,
+    render::Renderer,
 };
 
 const SOURCE_SESSION: u64 = 1;
@@ -78,12 +86,97 @@ struct Monitor {
     mode: ModeInfo,
     mode_blob: u32,
     props: Props,
-    buffers: [DumbBuffer; 2],
+    buffers: Buffers,
     /// Which buffer the display shows.
     front: usize,
     /// The next commit must set the mode, as after a switch back.
     needs_modeset: bool,
     flip_pending: bool,
+}
+
+/// A monitor's two buffers: the one it shows, and the one drawn next.
+enum Buffers {
+    /// Drawn by the CPU renderer.
+    Dumb([DumbBuffer; 2]),
+    /// Drawn by the GLES renderer.
+    Gpu([GpuBuffer; 2]),
+}
+
+/// A GBM buffer the display scans out, and the target the GPU draws it as.
+struct GpuBuffer {
+    // The target is dropped before the buffer it draws into.
+    target: Target,
+    _buffer: gbm::Buffer,
+    framebuffer: u32,
+}
+
+/// The GPU, where it draws the monitors' frames.
+struct Gpu {
+    gbm: gbm::Device,
+    renderer: Renderer,
+}
+
+impl Gpu {
+    fn new(device: &Device) -> io::Result<Gpu> {
+        let gbm = gbm::Device::new(device.fd().try_clone_to_owned()?)?;
+        let gles = Gles::on_gbm(&gbm)?;
+        Ok(Gpu {
+            gbm,
+            renderer: Renderer::new(gles),
+        })
+    }
+
+    /// Two buffers the display can show and the GPU can draw into.
+    fn buffers(&self, device: &Device, width: u32, height: u32) -> io::Result<[GpuBuffer; 2]> {
+        let make = || -> io::Result<GpuBuffer> {
+            let buffer = self.gbm.create_buffer(
+                width,
+                height,
+                FORMAT_XRGB8888,
+                &[],
+                gbm::USE_SCANOUT | gbm::USE_RENDERING,
+            )?;
+            let planes = buffer.planes();
+            let dmabuf = Dmabuf {
+                width: width as i32,
+                height: height as i32,
+                format: FORMAT_XRGB8888,
+                modifier: buffer.modifier(),
+                planes: planes
+                    .iter()
+                    .enumerate()
+                    .map(|(index, plane)| {
+                        Ok(DmabufPlane {
+                            fd: buffer.export(index)?,
+                            offset: plane.offset,
+                            stride: plane.stride,
+                        })
+                    })
+                    .collect::<io::Result<_>>()?,
+            };
+            let target = self.renderer.gles().target(&dmabuf)?;
+            let modifier =
+                (device.supports_modifiers() && buffer.modifier() != gbm::MODIFIER_INVALID).then(|| buffer.modifier());
+            let layout: Vec<(u32, u32, u32)> = planes
+                .iter()
+                .map(|plane| (plane.handle, plane.stride, plane.offset))
+                .collect();
+            let framebuffer = device.add_framebuffer(width, height, FORMAT_XRGB8888, &layout, modifier)?;
+            Ok(GpuBuffer {
+                target,
+                _buffer: buffer,
+                framebuffer,
+            })
+        };
+        let first = make()?;
+        match make() {
+            Ok(second) => Ok([first, second]),
+            Err(error) => {
+                device.remove_framebuffer(first.framebuffer);
+                Err(error)
+            }
+        }
+    }
 }
 
 /// Opens libinput's devices through the seat.
@@ -111,6 +204,8 @@ pub struct Tty {
     uevents: Uevents,
     /// Ctrl and Alt held, for the switch to another virtual terminal.
     modifiers: Vec<u32>,
+    /// The GPU, if it draws the frames.
+    gpu: Option<Gpu>,
 }
 
 /// Every `/dev/dri/card*`, in order.
@@ -189,6 +284,21 @@ pub fn init(state: &mut State) -> io::Result<()> {
         }
     }
     let uevents = Uevents::open()?;
+    let gpu = if std::env::var_os("FULCRUM_RENDERER").is_some_and(|renderer| renderer == "cpu") {
+        log::info!("renderer=cpu reason=FULCRUM_RENDERER");
+        None
+    } else {
+        match Gpu::new(&device) {
+            Ok(gpu) => {
+                log::info!("renderer=gles gpu={}", gpu.renderer.gles().renderer());
+                Some(gpu)
+            }
+            Err(error) => {
+                log::info!("renderer=cpu reason={error}");
+                None
+            }
+        }
+    };
 
     let mut tty = Tty {
         session,
@@ -198,6 +308,7 @@ pub fn init(state: &mut State) -> io::Result<()> {
         input,
         uevents,
         modifiers: Vec::new(),
+        gpu,
     };
     tty.scan(state);
     state.watch(tty.session.borrow().fd(), SOURCE_SESSION)?;
@@ -234,9 +345,17 @@ impl Tty {
             log::info!("output disconnected name={}", monitor.name);
             self.turn_off(&monitor);
             state.remove_output(monitor.output);
-            let [first, second] = monitor.buffers;
-            self.device.destroy(first);
-            self.device.destroy(second);
+            match monitor.buffers {
+                Buffers::Dumb([first, second]) => {
+                    self.device.destroy(first);
+                    self.device.destroy(second);
+                }
+                Buffers::Gpu(buffers) => {
+                    for buffer in buffers {
+                        self.device.remove_framebuffer(buffer.framebuffer);
+                    }
+                }
+            }
         }
         let planes = self.device.planes().unwrap_or_default();
         for connector in connected {
@@ -313,10 +432,19 @@ impl Tty {
             crtc_h: find(plane, OBJECT_PLANE, "CRTC_H")?,
         };
         let (width, height) = (u32::from(mode.hdisplay), u32::from(mode.vdisplay));
-        let buffers = [
-            self.device.dumb_buffer(width, height)?,
-            self.device.dumb_buffer(width, height)?,
-        ];
+        let gpu_buffers = self.gpu.as_ref().map(|gpu| gpu.buffers(&self.device, width, height));
+        let buffers = match gpu_buffers {
+            Some(Ok(buffers)) => Buffers::Gpu(buffers),
+            other => {
+                if let Some(Err(error)) = other {
+                    log::warning!("the GPU cannot draw {}, so the CPU does: {error}", connector.name());
+                }
+                Buffers::Dumb([
+                    self.device.dumb_buffer(width, height)?,
+                    self.device.dumb_buffer(width, height)?,
+                ])
+            }
+        };
         let mode_blob = self.device.mode_blob(&mode)?;
         let name = connector.name();
         let refresh = mode.refresh_millihertz();
@@ -449,20 +577,30 @@ impl Backend for Tty {
         if monitor.flip_pending {
             return Drawn::Nothing;
         }
-        let Some(mut image) = state.render_output(output) else {
-            return Drawn::Nothing;
-        };
-        // The pointer, which a TTY does not draw for the compositor.
-        draw_pointer(state, output, &mut image);
         let back = 1 - monitor.front;
-        monitor.buffers[back].write(&image.pixels, image.width as u32);
+        // The pointer is drawn too: a TTY does not draw one for the
+        // compositor.
+        let framebuffer = match &mut monitor.buffers {
+            Buffers::Dumb(buffers) => {
+                let Some(mut image) = state.render_output(output) else {
+                    return Drawn::Nothing;
+                };
+                draw_pointer(state, output, &mut image);
+                buffers[back].write(&image.pixels, image.width as u32);
+                buffers[back].framebuffer
+            }
+            Buffers::Gpu(buffers) => {
+                let (Some(scene), Some(gpu)) = (state.scene(output), self.gpu.as_mut()) else {
+                    return Drawn::Nothing;
+                };
+                gpu.renderer
+                    .draw(state, &scene, &buffers[back].target, pointer_rect(state, output));
+                buffers[back].framebuffer
+            }
+        };
         let (width, height) = (u64::from(monitor.mode.hdisplay), u64::from(monitor.mode.vdisplay));
         let props = monitor.props;
-        let mut changes: Vec<Change> = vec![(
-            monitor.plane,
-            props.plane_fb,
-            u64::from(monitor.buffers[back].framebuffer),
-        )];
+        let mut changes: Vec<Change> = vec![(monitor.plane, props.plane_fb, u64::from(framebuffer))];
         if monitor.needs_modeset {
             changes.extend([
                 (monitor.crtc, props.crtc_mode, u64::from(monitor.mode_blob)),

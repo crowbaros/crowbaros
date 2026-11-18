@@ -224,6 +224,9 @@ pub const OBJECT_CONNECTOR: u32 = 0xc0c0_c0c0;
 pub const OBJECT_PLANE: u32 = 0xeeee_eeee;
 
 const CAP_DUMB_BUFFER: u64 = 0x1;
+const CAP_ADDFB2_MODIFIERS: u64 = 0x10;
+/// `DRM_MODE_FB_MODIFIERS`: the framebuffer's modifier is given.
+const FB_MODIFIERS: u32 = 1 << 1;
 const CLIENT_CAP_UNIVERSAL_PLANES: u64 = 2;
 const CLIENT_CAP_ATOMIC: u64 = 3;
 
@@ -654,7 +657,52 @@ impl Device {
         })
     }
 
-    fn remove_framebuffer(&self, framebuffer: u32) {
+    /// Whether a framebuffer can be made with a modifier: a GPU buffer whose
+    /// layout is tiled.
+    pub fn supports_modifiers(&self) -> bool {
+        self.cap(CAP_ADDFB2_MODIFIERS).is_ok_and(|value| value != 0)
+    }
+
+    /// Makes a framebuffer of a buffer on this device, as a GBM buffer: each
+    /// plane's GEM handle, pitch, and offset. `modifier` is given when the
+    /// device takes modifiers.
+    pub fn add_framebuffer(
+        &self,
+        width: u32,
+        height: u32,
+        format: u32,
+        planes: &[(u32, u32, u32)],
+        modifier: Option<u64>,
+    ) -> io::Result<u32> {
+        if planes.is_empty() || planes.len() > 4 {
+            return Err(io::Error::other("a framebuffer has one to four planes"));
+        }
+        let mut command = FbCmd2 {
+            width,
+            height,
+            pixel_format: format,
+            flags: if modifier.is_some() { FB_MODIFIERS } else { 0 },
+            ..Default::default()
+        };
+        for (index, (handle, pitch, offset)) in planes.iter().enumerate() {
+            command.handles[index] = *handle;
+            command.pitches[index] = *pitch;
+            command.offsets[index] = *offset;
+            command.modifier[index] = modifier.unwrap_or(0);
+        }
+        // SAFETY: the opcode matches the struct, which the kernel reads and
+        // fills; the handles are the caller's buffer's.
+        unsafe {
+            ioctl(
+                &self.fd,
+                Updater::<{ opcode::read_write::<FbCmd2>(DRM, 0xb8) }, _>::new(&mut command),
+            )?;
+        }
+        Ok(command.fb_id)
+    }
+
+    /// Removes a framebuffer made with [`Device::add_framebuffer`].
+    pub fn remove_framebuffer(&self, framebuffer: u32) {
         let mut id = framebuffer;
         // SAFETY: the opcode matches an unsigned int, which the kernel reads.
         let _ = unsafe {

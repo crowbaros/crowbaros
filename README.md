@@ -67,23 +67,30 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   compositor's descriptors from the others, and one client cannot make it
   hold pixels without end.
 - **The TTY backend**: the seat from seatd, through Fulcrum's own client of
-  its socket; displays through the kernel's atomic mode setting, drawn by the
-  CPU renderer into dumb buffers; input through libinput; and monitors and
-  input devices plugged in and out, heard from the kernel's netlink uevents.
-  Ctrl+Alt+F1 to F12 switch virtual terminals.
+  its socket; displays through the kernel's atomic mode setting; input
+  through libinput; and monitors and input devices plugged in and out, heard
+  from the kernel's netlink uevents. Ctrl+Alt+F1 to F12 switch virtual
+  terminals.
+- **The GLES renderer**: where Mesa's EGL and GBM load, each monitor's frames
+  are drawn by the GPU into GBM buffers the display scans out. Where they do
+  not, or `FULCRUM_RENDERER=cpu` says so, the CPU renderer draws into dumb
+  buffers. Both draw the same scene: what each output shows, back to front.
+  EGL, GLES, and GBM are loaded at run time, so building Fulcrum needs none of
+  them.
 - **The nested backend**, for development: the desktop in a window on a host
   session. Only in a build with `--features nested`, which Base never is.
 - **A headless backend** that draws each output with the CPU renderer, and
   `crowbar-probe`, the test client, on `fulcrum-wire`'s client side.
 
-Milestone 3 brings the GLES renderer, GBM buffers for the display, damage
-tracking, and linux-dmabuf. Until then `zwp_linux_dmabuf_v1` is created for no
-one, though the table's rows say who will be offered it.
+Milestone 3, buffers and timing, is under way. linux-dmabuf comes next. Until
+then `zwp_linux_dmabuf_v1` is created for no one, though the table's rows say
+who will be offered it.
 
 The Smithay-based compositor that Milestone 0 brought here is at commit
-`d11400f`, tagged `smithay-baseline`. Its 57 tests and CrowbarOS's Void guest
-check were the specification this one passed before CrowbarOS moved its pin
-to it.
+`d11400f`, tagged `smithay-baseline`, and CrowbarOS still builds it. CrowbarOS
+ADR 0028 moves the pin when this compositor passes the baseline's 57 tests and
+the Void guest's checks. One of those checks offers the shell linux-dmabuf,
+which comes next, so the pin moves after it.
 
 ## Layout
 
@@ -108,11 +115,13 @@ to it.
 | `src/data_device.rs` | The data device, which moves nothing between clients until slice 4 |
 | `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
 | `src/redraw.rs` | Drawing only on change |
+| `src/scene.rs` | What an output shows, back to front, for either renderer |
+| `src/render.rs` | The GLES renderer's compositor half: a texture for each surface, kept until its content changes |
 | `src/backend/` | Where frames go: `tty.rs` (a virtual terminal), `session.rs` (Fulcrum's client of seatd), `uevent.rs` (hotplug from netlink), `nested.rs` (a window on a host session), and `headless.rs` (the tests) |
-| `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `drm.rs` (mode setting and dumb buffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (the guarded mapping) |
+| `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `dl.rs` (libraries loaded at run time), `gles.rs` (EGL and GLES: the context, textures, targets, and draws), `gbm.rs`, `drm.rs` (mode setting, dumb buffers, and framebuffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (the guarded mapping) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `outputs.rs` covers outputs that change size; `data_device.rs` and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `outputs.rs` covers outputs that change size; `data_device.rs` and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `gles.rs` draws each scene with both renderers and compares them; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.

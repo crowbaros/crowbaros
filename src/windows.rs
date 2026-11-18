@@ -45,7 +45,7 @@ impl State {
     }
 
     /// Where a window's root surface is drawn on the desktop.
-    fn window_origin(&self, window: &Window) -> (i32, i32) {
+    pub(crate) fn window_origin(&self, window: &Window) -> (i32, i32) {
         let geometry = self.window_geometry(window.surface);
         (window.location.0 - geometry.x, window.location.1 - geometry.y)
     }
@@ -82,7 +82,7 @@ impl State {
     }
 
     /// The toplevel a popup belongs to, through its parents.
-    fn toplevel_of(&self, surface: SurfaceId) -> Option<SurfaceId> {
+    pub(crate) fn toplevel_of(&self, surface: SurfaceId) -> Option<SurfaceId> {
         let mut at = surface;
         for _ in 0..=crate::surface::MAX_SUBSURFACE_DEPTH {
             match self.xdg.get(&at)?.role {
@@ -242,30 +242,8 @@ impl State {
     /// background, the shell's lower layers, the windows bottom to top with
     /// their popups, and the shell's upper layers.
     pub fn render_output(&self, number: u64) -> Option<Image> {
-        let output = self.outputs.iter().find(|output| output.number == number)?;
-        let mut image = Image::new(output.size.0, output.size.1);
-        image.fill(Rect::new(0, 0, output.size.0, output.size.1), BACKGROUND);
-        let to_output = |(x, y): (i32, i32)| (x - output.position.0, y - output.position.1);
-        self.draw_layers(number, &mut image, false);
-        for window in &self.windows {
-            self.draw_tree(window.surface, to_output(self.window_origin(window)), &mut image, 0);
-            for popup in &self.popups {
-                if self.toplevel_of(*popup) != Some(window.surface) || !self.xdg[popup].mapped {
-                    continue;
-                }
-                if let Some(corner) = self.xdg_location(*popup, 0) {
-                    let geometry = self.window_geometry(*popup);
-                    self.draw_tree(
-                        *popup,
-                        to_output((corner.0 - geometry.x, corner.1 - geometry.y)),
-                        &mut image,
-                        0,
-                    );
-                }
-            }
-        }
-        self.draw_layers(number, &mut image, true);
-        Some(image)
+        let scene = self.scene(number)?;
+        Some(self.draw_scene(&scene))
     }
 
     /// The layer surface a popup belongs to, through its parents.
@@ -283,30 +261,20 @@ impl State {
         None
     }
 
-    /// Draws the popups of the layer surfaces on an output, above every
-    /// layer.
-    pub(crate) fn draw_layer_popups(&self, output: u64, image: &mut Image) {
-        let Some(origin) = self.outputs.iter().find(|o| o.number == output).map(|o| o.position) else {
-            return;
-        };
-        for popup in &self.popups {
-            let on_output = self
-                .layer_of_popup(*popup)
-                .and_then(|layer| self.layer_of(layer))
-                .is_some_and(|layer| layer.output == output);
-            if !on_output || !self.xdg[popup].mapped {
-                continue;
-            }
-            if let Some(corner) = self.xdg_location(*popup, 0) {
-                let geometry = self.window_geometry(*popup);
-                self.draw_tree(
-                    *popup,
-                    (corner.0 - geometry.x - origin.0, corner.1 - geometry.y - origin.1),
-                    image,
-                    0,
-                );
-            }
-        }
+    /// The mapped popups of the layer surfaces on an output, drawn above
+    /// every layer.
+    pub(crate) fn layer_popups(&self, output: u64) -> Vec<SurfaceId> {
+        self.popups
+            .iter()
+            .copied()
+            .filter(|popup| {
+                self.xdg[popup].mapped
+                    && self
+                        .layer_of_popup(*popup)
+                        .and_then(|layer| self.layer_of(layer))
+                        .is_some_and(|layer| layer.output == output)
+            })
+            .collect()
     }
 
     /// Every surface of a tree that has frame callbacks waiting, with the

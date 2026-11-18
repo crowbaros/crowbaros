@@ -21,7 +21,6 @@ use crate::{
     State,
     client::{ClientId, ObjectKind, ProtocolError},
     geometry::Rect,
-    image::Image,
     surface::{Role, SurfaceId},
 };
 
@@ -409,35 +408,6 @@ impl State {
             .filter(|layer| layer.mapped)
             .map(|layer| layer.surface)
             .collect()
-    }
-
-    /// Draws an output's layers: the background and bottom layers below the
-    /// windows, or the top and overlay layers, and their popups, above them.
-    pub(crate) fn draw_layers(&self, output: u64, image: &mut Image, upper: bool) {
-        let Some(origin) = self.outputs.iter().find(|o| o.number == output).map(|o| o.position) else {
-            return;
-        };
-        let kinds = if upper {
-            [zwlr_layer_shell_v1::layer::TOP, zwlr_layer_shell_v1::layer::OVERLAY]
-        } else {
-            [
-                zwlr_layer_shell_v1::layer::BACKGROUND,
-                zwlr_layer_shell_v1::layer::BOTTOM,
-            ]
-        };
-        for kind in kinds {
-            for layer in self
-                .layers
-                .iter()
-                .filter(|layer| layer.output == output && layer.mapped && layer.current.layer == kind)
-            {
-                let at = (layer.rect.x - origin.0, layer.rect.y - origin.1);
-                self.draw_tree(layer.surface, at, image, 0);
-            }
-        }
-        if upper {
-            self.draw_layer_popups(output, image);
-        }
     }
 
     /// A layer surface is gone, or its client is.

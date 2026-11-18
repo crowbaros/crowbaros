@@ -38,11 +38,13 @@ jobs:
           rustup default stable
 
       # libxkbcommon and libinput, which Fulcrum links (ADR 0028), and the
-      # keymaps.
+      # keymaps. Mesa's EGL, GLES, and GBM, which it loads at run time, and
+      # Mesa's software renderer, so the GLES tests draw without a GPU.
       - name: Install libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libxkbcommon-dev xkb-data libinput-dev
+          sudo apt-get install -y --no-install-recommends libxkbcommon-dev xkb-data libinput-dev \
+            libegl1 libegl-mesa0 libgles2 libgbm1 libgl1-mesa-dri
 
       - name: Format
         run: cargo fmt --all --check

@@ -127,6 +127,9 @@ pub(crate) struct Current {
     /// The viewport's crop and the size it scales to.
     pub(crate) source: Option<Crop>,
     pub(crate) destination: Option<(i32, i32)>,
+    /// Counts the times `content` was replaced, so a renderer knows when
+    /// what it uploaded is stale.
+    pub(crate) content_serial: u64,
 }
 
 impl Default for Current {
@@ -141,6 +144,7 @@ impl Default for Current {
             offset: (0, 0),
             source: None,
             destination: None,
+            content_serial: 0,
         }
     }
 }
@@ -156,6 +160,26 @@ impl Current {
             (Some(size), _) => size,
             (None, Some(crop)) => (crop.width as i32, crop.height as i32),
             (None, None) => (image.width / self.scale, image.height / self.scale),
+        }
+    }
+
+    /// The part of the buffer that is shown, in the buffer's pixels: the
+    /// viewport's crop at the buffer's scale, or all of it.
+    pub(crate) fn source_in_buffer(&self) -> (f32, f32, f32, f32) {
+        let Some(image) = &self.content else {
+            return (0.0, 0.0, 0.0, 0.0);
+        };
+        match self.source {
+            Some(crop) => {
+                let scale = self.scale as f32;
+                (
+                    crop.x as f32 * scale,
+                    crop.y as f32 * scale,
+                    crop.width as f32 * scale,
+                    crop.height as f32 * scale,
+                )
+            }
+            None => (0.0, 0.0, image.width as f32, image.height as f32),
         }
     }
 
@@ -533,6 +557,7 @@ impl State {
                 pixel_bytes(content.as_ref()),
             );
             surface.current.content = content;
+            surface.current.content_serial += 1;
             let client_id = surface.client;
             if let Some(client) = self.clients.get_mut(&client_id) {
                 client.pixel_bytes = client.pixel_bytes.saturating_sub(replaced) + bytes;

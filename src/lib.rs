@@ -27,6 +27,8 @@ pub mod log;
 mod output;
 pub mod policy;
 mod redraw;
+pub mod render;
+mod scene;
 mod seat;
 mod shm;
 mod state;
