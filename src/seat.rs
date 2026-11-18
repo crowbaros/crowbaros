@@ -38,6 +38,10 @@ pub const REPEAT: (i32, i32) = (25, 200);
 /// The Super keys, as evdev codes: left and right.
 const SUPER: [u32; 2] = [125, 126];
 const SHIFT: [u32; 2] = [42, 54];
+const CTRL: [u32; 2] = [29, 97];
+const ALT: [u32; 2] = [56, 100];
+/// Enter, and the keypad's Enter.
+const ENTER: [u32; 2] = [28, 96];
 /// Super, Shift, Ctrl, and Alt, each side: held as part of a chord, never
 /// its key.
 const MODIFIERS: [u32; 8] = [125, 126, 42, 54, 29, 97, 56, 100];
@@ -387,6 +391,23 @@ impl State {
             self.seat.withheld.retain(|held| *held != key);
             return;
         }
+        // The confirm chord, Ctrl+Alt+Enter (ADR 0020's lock): its Enter goes
+        // to no client, and Ctrl and Alt do, so a client may guess it was
+        // pressed. Unlocked, it locks the session; locked, it opens the lock
+        // screen's unlock entry. Asks, which it answers first, come with
+        // Milestone 4.
+        let held = |keys: &[u32; 2]| self.seat.keys.iter().any(|held| keys.contains(held));
+        if pressed && ENTER.contains(&key) && held(&CTRL) && held(&ALT) {
+            if !self.seat.withheld.contains(&key) {
+                self.seat.withheld.push(key);
+            }
+            if self.locked() {
+                self.open_unlock_entry();
+            } else {
+                self.lock("chord");
+            }
+            return;
+        }
         let super_held = self.seat.keys.iter().any(|held| SUPER.contains(held));
         if pressed && super_held && !MODIFIERS.contains(&key) {
             if !self.seat.withheld.contains(&key) {
@@ -414,6 +435,11 @@ impl State {
         let Some(focus) = self.seat.keyboard_focus else {
             return;
         };
+        // Until the confirm chord opens its entry, the lock screen takes no
+        // text: it hears the modifiers alone.
+        if self.locked() && !self.unlock_entry_open() && !MODIFIERS.contains(&key) {
+            return;
+        }
         let Some(client_id) = self.surfaces.get(&focus).map(|surface| surface.client) else {
             return;
         };

@@ -129,9 +129,11 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 - **Fractional scale**: a surface hears the scale it should draw at, in
   120ths: the largest scale of the outputs it is on, again whenever that
   changes.
-- **Lock** (ADR 0020): the shell's `lock` request, Super+L, or `--lock-after`
+- **Lock** (ADR 0020): the shell's `lock` request, Super+L, the confirm
+  chord (Ctrl+Alt+Enter, whose Enter no client hears), or `--lock-after`
   seconds without input lock the session, unless a shown surface inhibits
-  idle. Locked, the shell's lock screen (its layer surface of namespace
+  idle. Locked, the chord opens the unlock entry: until it does, the lock
+  screen hears no key but the modifiers, and the shell may not unlock. Locked, the shell's lock screen (its layer surface of namespace
   `crowbaros-lock`) is all that is drawn, every other display is blank, and
   input goes to it alone. The shell's `unlock` ends it, in the place of the
   broker that ADR 0020 has end it: Fulcrum's proposal until a record decides.

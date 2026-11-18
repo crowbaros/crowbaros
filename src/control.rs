@@ -40,8 +40,10 @@
 //! started an app from the shell: the next window a compartment maps within
 //! [`LAUNCH_FOCUS`] takes the keyboard, as the first window of a compartment
 //! the person started does. `lock` and `unlock` lock and unlock the session,
-//! and the events `locked` and `unlocked` say it changed, as Super+L and the
-//! idle timer change it too (see `lock.rs`); the snapshot has `locked`.
+//! and the events `locked` and `unlocked` say it changed, as Super+L, the
+//! confirm chord, and the idle timer change it too (see `lock.rs`).
+//! `unlock_entry` says the confirm chord opened the unlock entry, before
+//! which `unlock` is refused. The snapshot has `locked` and `unlock_entry`.
 //! These are Fulcrum's proposal until a
 //! CrowbarOS record decides them.
 //!
@@ -336,9 +338,12 @@ impl State {
                 self.lock("shell");
                 ok_reply()
             }),
-            "unlock" => only(&[], &request).map(|()| {
+            "unlock" => only(&[], &request).and_then(|()| {
+                if self.locked() && !self.unlock_entry_open() {
+                    return Err("unlock begins with the confirm chord".into());
+                }
                 self.unlock();
-                ok_reply()
+                Ok(ok_reply())
             }),
             "launching" => only(&[], &request).map(|()| {
                 self.launching = Some(std::time::Instant::now());
@@ -389,9 +394,10 @@ impl State {
             })
             .collect();
         format!(
-            "{{\"reply\":\"snapshot\",\"workspace\":{},\"active\":{active},\"locked\":{},\"windows\":[{}]}}",
+            "{{\"reply\":\"snapshot\",\"workspace\":{},\"active\":{active},\"locked\":{},\"unlock_entry\":{},\"windows\":[{}]}}",
             self.workspace,
             self.locked(),
+            self.unlock_entry_open(),
             windows.join(",")
         )
     }

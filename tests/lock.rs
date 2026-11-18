@@ -19,6 +19,9 @@ const KEY_A: u32 = 30;
 const KEY_L: u32 = 38;
 const KEY_2: u32 = 3;
 const KEY_SUPER: u32 = 125;
+const KEY_CTRL: u32 = 29;
+const KEY_ALT: u32 = 56;
+const KEY_ENTER: u32 = 28;
 
 struct Control {
     reader: BufReader<UnixStream>,
@@ -114,18 +117,31 @@ fn locked_the_lock_screen_is_all_that_shows_and_all_that_hears() {
     assert_eq!(compositor.screen(0).pixel(60, 60), Some(BLUE));
     shell.take_keys().unwrap();
 
-    // Keys go to the lock screen, and a click or a chord moves nothing.
+    // A click or a chord moves nothing, and until the confirm chord the lock
+    // screen takes no text, and the shell may not unlock.
     compositor.click(60, 60);
     chord(&compositor, &[KEY_SUPER, KEY_2]);
     compositor.key(KEY_A, true);
     compositor.key(KEY_A, false);
     shell.roundtrip().unwrap();
     client.roundtrip().unwrap();
-    // Super itself reaches whoever has the keyboard, as always; the chord's
-    // other key does not.
-    assert_eq!(pressed(&mut shell), [KEY_SUPER, KEY_A]);
+    assert_eq!(pressed(&mut shell), [KEY_SUPER], "the lock screen took text");
     assert!(pressed(&mut client).is_empty(), "a window heard a key while locked");
     assert_eq!(compositor.with(|state| state.workspace()), 1, "a chord acted");
+    control.send(r#"{"op":"unlock"}"#);
+    assert!(
+        control.line().starts_with(r#"{"reply":"error""#),
+        "unlocked without the chord"
+    );
+
+    // The confirm chord opens the unlock entry: the lock screen takes text,
+    // and never hears the chord's Enter.
+    chord(&compositor, &[KEY_CTRL, KEY_ALT, KEY_ENTER]);
+    assert_eq!(control.line(), r#"{"event":"unlock_entry"}"#);
+    compositor.key(KEY_A, true);
+    compositor.key(KEY_A, false);
+    shell.roundtrip().unwrap();
+    assert_eq!(pressed(&mut shell), [KEY_CTRL, KEY_ALT, KEY_A]);
 
     control.send(r#"{"op":"unlock"}"#);
     assert_eq!(control.line(), r#"{"event":"unlocked"}"#);
@@ -202,4 +218,18 @@ fn the_session_locks_itself_when_idle_unless_a_shown_surface_inhibits_it() {
         !compositor.with(|state| state.locked()),
         "a shown inhibitor did not hold it"
     );
+}
+
+#[test]
+fn the_confirm_chord_locks_an_unlocked_session_and_no_client_hears_its_enter() {
+    let compositor = Compositor::start();
+    let mut control = Control::connect(&compositor);
+    let (mut client, _listener) = focused_window(&compositor);
+
+    chord(&compositor, &[KEY_CTRL, KEY_ALT, KEY_ENTER]);
+
+    assert_eq!(control.line(), r#"{"event":"locked"}"#);
+    client.roundtrip().unwrap();
+    let keys = pressed(&mut client);
+    assert!(!keys.contains(&KEY_ENTER), "a client heard the chord's Enter: {keys:?}");
 }

@@ -2,6 +2,11 @@
 //! lock screen and nothing else.
 //!
 //! The shell's request, the idle timer, and Super+L each lock the session.
+//! The confirm chord, Ctrl+Alt+Enter, locks an unlocked session too. While
+//! the session is locked, the chord opens the lock screen's unlock entry:
+//! until it does, the lock screen hears no key but the modifiers, and the
+//! shell may not unlock (ADR 0020: unlock begins with the chord).
+//!
 //! While it is locked, the shell's lock screen, its layer surface whose
 //! namespace is [`LOCK_NAMESPACE`], is the only thing drawn, on the displays
 //! it is on; every other display is blank. Input goes to the lock screen
@@ -28,6 +33,8 @@ pub const LOCKED_BACKGROUND: u32 = 0xff00_0000;
 #[derive(Debug)]
 pub(crate) struct Lock {
     pub locked: bool,
+    /// The confirm chord opened the lock screen's unlock entry.
+    entry_open: bool,
     /// The window that had the keyboard as the session locked, to have it
     /// back when it unlocks.
     focus_before: Option<SurfaceId>,
@@ -41,6 +48,7 @@ impl Default for Lock {
     fn default() -> Self {
         Lock {
             locked: false,
+            entry_open: false,
             focus_before: None,
             idle_after: None,
             last_input: Instant::now(),
@@ -64,6 +72,7 @@ impl State {
         self.grab = None;
         self.lock.focus_before = self.seat.keyboard_focus.map(|focus| self.root_of(focus));
         self.lock.locked = true;
+        self.lock.entry_open = false;
         let screen = self.lock_screen();
         self.set_keyboard_focus(screen);
         self.seat.pointer_focus = None;
@@ -81,6 +90,7 @@ impl State {
         }
         log::info!("session unlocked");
         self.lock.locked = false;
+        self.lock.entry_open = false;
         let before = self.lock.focus_before.take().filter(|window| {
             self.windows
                 .iter()
@@ -91,6 +101,23 @@ impl State {
         self.control_event("unlocked");
         self.input_seen();
         self.queue_redraw_all();
+    }
+
+    /// The confirm chord, pressed while locked, opens the lock screen's
+    /// unlock entry: from now the lock screen takes text, and the shell may
+    /// ask to unlock (ADR 0020: unlock begins with the chord).
+    pub(crate) fn open_unlock_entry(&mut self) {
+        if !self.lock.locked || self.lock.entry_open {
+            return;
+        }
+        log::info!("unlock entry opened");
+        self.lock.entry_open = true;
+        self.control_event("unlock_entry");
+    }
+
+    /// Whether the confirm chord opened the unlock entry of the lock.
+    pub fn unlock_entry_open(&self) -> bool {
+        self.lock.locked && self.lock.entry_open
     }
 
     /// Whether a surface belongs to the lock screen: the shell's layer
