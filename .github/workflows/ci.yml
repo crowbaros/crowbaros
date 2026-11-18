@@ -27,70 +27,22 @@ concurrency:
 
 jobs:
   check:
-    name: Check
+    name: Lab scripts
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Rust
+      - name: Lab scripts compile and pass their tests
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy
-          rustup default stable
-
-      - name: Format
-        run: cargo fmt --all --check
-
-      - name: Lint
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-
-      - name: Test
-        run: cargo test --workspace --locked
-
-      - name: Lab scripts compile
-        run: |
-          python3 -m py_compile lab/void/*.py lab/void/guest/*.py lab/adversarial/*.py
+          python3 -m py_compile lab/void/*.py lab/void/guest/*.py
           python3 -m unittest discover -s lab/void -p "test_*.py"
 
-      # The Milestone 2 fixture services on loopback: no VM, stdlib only.
-      - name: Adversarial fixtures smoke
-        run: python3 lab/adversarial/adversarial_lab.py smoke
-
-  warden:
-    name: Warden
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-
-      # Ubuntu lets a process that is not root make a user namespace only
-      # with no capability inside it. One test gives a compartment the need
-      # for user namespaces, as stock Linux has them.
-      - name: Allow user namespaces as stock Linux does
-        run: |
-          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-
-      # The Warden runs as root (ADR 0016). The tests that start real
-      # compartments are ignored without it, so Cargo builds them as the
-      # runner's user and runs them under sudo.
-      - name: Compartment tests, as root
-        env:
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sudo -E
-        run: cargo test --locked -p crowbar-sandbox --test compartments -- --ignored
-
-  # The spike that the Alpha desktop still runs (ADR 0020). The compositor is
-  # built and tested by Fulcrum's own CI, and by the Void guest check at the
-  # commit compositor/fulcrum.json pins (ADR 0027). test_fulcrum_pin.py, in the
-  # job above, checks that the pin names a full commit.
+  # The spike that the Alpha desktop still runs. The compositor is built and
+  # tested by Fulcrum's own CI, and by the Void guest check at the commit
+  # compositor/fulcrum.json pins (ADR 0027). test_fulcrum_pin.py, in the job
+  # above, checks that the pin names a full commit.
   compositor:
     name: Compositor (${{ matrix.project }})
     strategy:
@@ -164,4 +116,3 @@ jobs:
 
       - name: Test
         run: cargo test --locked
-

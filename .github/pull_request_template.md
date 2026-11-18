@@ -1,5 +1,5 @@
 <!-- Title: a conventional commit in plain language, such as
-"fix(apply): a failed apply no longer leaves a half-built generation".
+"fix(base): a build that stopped partway no longer leaves a root the next build trusts".
 It becomes the commit on main. See AGENTS.md. -->
 
 ## Problem

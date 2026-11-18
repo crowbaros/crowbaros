@@ -2,7 +2,7 @@
 
 **Status:** accepted on November 17, 2026, by Jason Alexander. Jim Martin had not reviewed it when it was accepted.
 
-[ADR 0015](0015-our-own-compositor-on-smithay.md) made the compositor a CrowbarOS program written in Rust on the Smithay library. [ADR 0020](0020-the-first-compositor-is-small-on-purpose.md#the-smithay-pin) set rules for bumping the Smithay commit it pins. [ADR 0027](0027-the-compositor-is-built-in-its-own-repository.md) moved the code to its own repository, Fulcrum. This record changes what Fulcrum is built on. Everything else in those records stands: who the clients are, what each is offered, what the compositor draws, the attacks its tests must refuse, and that nothing is copied from a GPL-3.0 compositor.
+[ADR 0015](0015-our-own-compositor-on-smithay.md) made the compositor a CrowbarOS program written in Rust on the Smithay library. [ADR 0020](../archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md#the-smithay-pin) set rules for bumping the Smithay commit it pins. [ADR 0027](0027-the-compositor-is-built-in-its-own-repository.md) moved the code to its own repository, Fulcrum. This record changes what Fulcrum is built on. Everything else in those records stands: who the clients are, what each is offered, what the compositor draws, the attacks its tests must refuse, and that nothing is copied from a GPL-3.0 compositor.
 
 ## The decision
 

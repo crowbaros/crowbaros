@@ -1,5 +1,0 @@
-Harborview Clinic: laboratory results, October 2026
-Patient: Sam Rivera
-
-{{private:HEALTH}}
-Cholesterol 4.8 mmol/L (normal).

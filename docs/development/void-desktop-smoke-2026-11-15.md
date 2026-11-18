@@ -4,7 +4,7 @@ Issue [#54](https://github.com/crowbaros/crowbaros/issues/54) now has a repeatab
 fresh-guest smoke command. This branch also supplies its session and Settings
 prerequisites, [#136](https://github.com/crowbaros/crowbaros/issues/136) and
 [#38](https://github.com/crowbaros/crowbaros/issues/38), under the Alpha rules
-accepted in [ADR 0016](../adr/0016-the-warden-starts-every-compartment.md).
+accepted in [ADR 0016](../archive/substrate-vision/adr/0016-the-warden-starts-every-compartment.md).
 The work is based on main `0c164dd`. It is not a production Warden or a claim of
 per-compartment isolation.
 

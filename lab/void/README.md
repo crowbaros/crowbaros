@@ -1,47 +1,29 @@
 # Void Linux lab
 
-A Void Linux VM on Btrfs that the apply engine drives. It ran
-[Milestone 1](../../docs/milestones/milestone-1.md), and it is where Base work
-continues (Milestone 1b in the [roadmap](../../docs/VISION.md#roadmap)).
+A Void Linux VM that runs the CrowbarOS compositor, and the Alpha desktop of
+the shell and Studio Settings. Through the substrate vision this lab also ran
+[Milestone 1](../../docs/archive/substrate-vision/milestones/milestone-1.md)
+and the Warden's tests; those are at the
+[`substrate-final`](https://github.com/crowbaros/crowbaros/tree/substrate-final/lab/void)
+tag.
 
 | Path | Contents |
 | --- | --- |
-| `void_lab.py` | The lab command: fetch, rootfs, image, start, ssh, stop, milestone |
 | `compositor_guest.py`, `compositor_check.py` | Void builds, and the check of the [compositor](../../compositor/README.md) on a TTY |
 | `desktop_check.py` | Fresh, isolated full-desktop smoke checks, with retained diagnostics |
-| `warden_check.py` | Runs the Warden's root-only tests as root in the guest |
+| `void_lab.py` | What the checks share: the pinned static xbps and the package cache |
 | `guest/` | Alpha runit services and the temporary app-launch stand-in |
 | `config.json` | The pinned xbps build, the package lists, and the VM sizes |
 | `host/` | Rootless rootfs, build, and disk-image scripts (run inside `unshare -r`) |
-| `states/` | The three Milestone 1 Crowbar States |
 
 ```sh
-lab/void/void_lab.py milestone   # build everything, run the loop, record evidence
-lab/void/void_lab.py --help
+lab/void/compositor_guest.py check   # build, boot, run every check, record evidence
+lab/void/compositor_guest.py --help
 ```
 
 The scripts use only the Python standard library and need no sudo. Downloads go
 to `~/.cache/crowbaros/void`. Images, VM runtime files, and evidence logs go to
-`.lab/void/` and `.lab/void-graphical/` in the repository root. All are outside
-git.
-
-## The Warden's tests
-
-The Warden runs as root, and nobody needs root on their own desktop
-([ADR 0016](../../docs/adr/0016-the-warden-starts-every-compartment.md)). So
-the tests of [`crowbar-sandbox`](../../crates/README.md) that start real
-compartments run here:
-
-```sh
-lab/void/warden_check.py           # fresh guest, every test, evidence log
-lab/void/warden_check.py --keep    # reuse the running guest, for a quick loop
-lab/void/warden_check.py --keep trusted   # only the tests whose name holds "trusted"
-```
-
-It builds the tests and their two programs as static files, copies them into
-the guest, runs them as root, and writes what they print to
-`.lab/void/warden-<time>.log`. This is stock Void: Milestone 2 needs nothing
-from Base.
+`.lab/void-graphical/` in the repository root. All are outside git.
 
 ## The graphical guest
 
@@ -65,10 +47,10 @@ root, so the binary links Void's own libraries. The evidence log names the
 CrowbarOS and Fulcrum commits, and says when the Fulcrum one is not pinned. It then boots the guest and drives it from outside:
 keys and the pointer through QEMU, and a second monitor plugged into QEMU's
 second virtio-gpu connector. Every pull request that touches the compositor
-runs it ([ADR 0022](../../docs/adr/0022-the-compositor-is-built-beside-milestone-2.md)).
+runs it ([ADR 0022](../../docs/archive/substrate-vision/adr/0022-the-compositor-is-built-beside-milestone-2.md)).
 
 The compositor has no public socket, so the check connects the two ways it
-allows ([ADR 0016](../../docs/adr/0016-the-warden-starts-every-compartment.md)):
+allows ([ADR 0016](../../docs/archive/substrate-vision/adr/0016-the-warden-starts-every-compartment.md)):
 
 - The compositor runs as `crowbar-compositor`, the only member of `_seatd`.
 - `crowbar-shell` connects to the shell's socket.
@@ -87,8 +69,8 @@ Four things to know:
 - `check` replaces the disk at `.lab/void-graphical/disk.raw`, and keeps the
   one it replaces beside it.
 
-- The guest is a plain Void root booted straight from its kernel. It is not
-  built by the apply engine and has no generations.
+- The guest is a plain Void root booted straight from its kernel. It has no
+  generations.
 - QEMU needs its virtio-gpu device. Where the distribution packages it apart
   (Arch: `qemu-hw-display-virtio-gpu-pci`), install it, or set
   `QEMU_MODULE_DIR` to a directory that holds the modules.
@@ -106,7 +88,7 @@ This builds and tests the [compositor spike](../compositor-spike/README.md),
 the shell, and Settings in Void, creates a fresh guest image, exercises the
 desktop, and powers off the test guest. The Alpha desktop runs the spike until
 the compositor passes this check
-([ADR 0020](../../docs/adr/0020-the-first-compositor-is-small-on-purpose.md)). Every
+([ADR 0020](../../docs/archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md)). Every
 run gets a new directory in `.lab/void-desktop-checks/`, its own SSH port, key,
 and Unix VNC sockets. It never stops or replaces `.lab/void-graphical/disk.raw`.
 Do not use the `check` or `desktop` command against a preserved preview:
@@ -135,7 +117,7 @@ directory. SSH keys stay there and must not be published with evidence.
 ## Alpha process model
 
 This applies the temporary Alpha rules in
-[ADR 0016](../../docs/adr/0016-the-warden-starts-every-compartment.md):
+[ADR 0016](../../docs/archive/substrate-vision/adr/0016-the-warden-starts-every-compartment.md):
 
 - `crowbar-compositor` (UID 1000) owns the seat and is the only `_seatd` member.
 - `crowbar-shell` (UID 1001) is a separate runit service. Its two compositor
@@ -155,5 +137,4 @@ user and can reach one another. The spike keeps its public ordinary Wayland
 socket and security-context behavior. The compositor built with #49 has
 neither, and the Alpha desktop does not run it yet. The spike has no per-compartment
 namespaces, cgroups, broker authorization, or production resource enforcement.
-The fixed lab UIDs are not production compartment IDs. The separate Base
-milestone still verifies apply/generation/rollback behavior.
+The fixed lab UIDs are not production compartment IDs.

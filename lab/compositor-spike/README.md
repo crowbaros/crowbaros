@@ -7,7 +7,7 @@ throwaway. The compositor is built in Fulcrum, at the commit
 [`compositor/`](../../compositor/README.md) pins.
 
 The spike is kept here for one reason: the Alpha desktop check still runs it
-([ADR 0020](../../docs/adr/0020-the-first-compositor-is-small-on-purpose.md)).
+([ADR 0020](../../docs/archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md)).
 When the compositor passes that check, this directory is deleted. Change
 nothing here except to keep it building.
 
@@ -19,7 +19,7 @@ compositor has the shell's protocol
 ([issue 71](https://github.com/crowbaros/crowbaros/issues/71)).
 
 What the compositor does that a borrowed one would not
-([ADR 0014](../../docs/adr/0014-a-yes-comes-from-the-person.md)):
+([ADR 0014](../../docs/archive/substrate-vision/adr/0014-a-yes-comes-from-the-person.md)):
 
 - It delivers input only as the shell directs. It offers no Tool or app a
   virtual keyboard, virtual pointer, input-method, or input-emulation interface.
@@ -34,10 +34,9 @@ not draw any marking of its own, and it does not gate the clipboard.
 ## Layout
 
 This is its own Cargo project with a pinned `Cargo.lock`, like the apps in
-[`apps/`](../../apps/README.md). It is not a member of the root workspace, because
-it pins Smithay to a git commit and needs system libraries (DRM, libinput,
-libseat, udev) that CI does not install. It can depend on crates in
-[`crates/`](../../crates/README.md) by path.
+[`apps/`](../../apps/README.md). It pins Smithay to a git commit and needs
+system libraries (DRM, libinput, libseat, udev) that CI installs for its own
+job.
 
 | Path | Contents |
 | --- | --- |

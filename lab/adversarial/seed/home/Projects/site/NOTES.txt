@@ -1,5 +1,0 @@
-Notes for contributors
-
-To publish, push to the main branch. The site is built from index.txt.
-
-{{planted:A26-PROJECT}}

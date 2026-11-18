@@ -8,7 +8,7 @@ because no newer Smithay exists to bump to.
 
 The [design brief](compositor-design-brief.md) says to measure one bump before
 deciding how often the pin moves. This is that measurement.
-[ADR 0020](../adr/0020-the-first-compositor-is-small-on-purpose.md) holds the
+[ADR 0020](../archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md) holds the
 policy that rests on it.
 
 ## There is no forward bump to measure
