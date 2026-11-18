@@ -16,6 +16,9 @@ cargo build --release --locked
 cargo test --release --locked
 ```
 
+The sources are not rustfmt-clean, and CI runs `cargo test` only. Do not run
+`cargo fmt` here: it reformats files a change does not touch.
+
 GPUI 0.2.2 uses the existing verified [layer-shell backport](patches/README.md).
 Use the [full desktop smoke command](../../lab/void/README.md#full-desktop-smoke-check)
 to build and run the separate runit services in a fresh guest. The Alpha shell
