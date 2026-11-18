@@ -51,10 +51,18 @@ on a virtual terminal, with seatd as the seat manager and no systemd.
 ```sh
 lab/void/compositor_guest.py check   # build, boot, run every check, record evidence
 lab/void/compositor_guest.py --help
+
+# A Fulcrum commit that is not pinned yet, from a local clone
+FULCRUM_REPOSITORY=../fulcrum FULCRUM_REVISION=<full commit ID> lab/void/compositor_guest.py check
 ```
 
-`check` builds and tests the compositor inside a Void build root, so the binary
-links Void's own libraries. It then boots the guest and drives it from outside:
+The compositor is built in Fulcrum, its own repository
+([ADR 0027](../../docs/adr/0027-the-compositor-is-built-in-its-own-repository.md)).
+`check` fetches the commit that `compositor/fulcrum.json` pins into
+`.lab/fulcrum.git`, and writes the commit's tree, not a working copy, to
+`.lab/fulcrum/<commit>/`. It builds and tests that tree inside a Void build
+root, so the binary links Void's own libraries. The evidence log names the
+CrowbarOS and Fulcrum commits, and says when the Fulcrum one is not pinned. It then boots the guest and drives it from outside:
 keys and the pointer through QEMU, and a second monitor plugged into QEMU's
 second virtio-gpu connector. Every pull request that touches the compositor
 runs it ([ADR 0022](../../docs/adr/0022-the-compositor-is-built-beside-milestone-2.md)).
