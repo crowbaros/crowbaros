@@ -150,3 +150,59 @@ fn a_texture_is_uploaded_again_when_its_surface_changes() {
     assert_eq!(gpu.pixel(100, 100), Some(0xff00_8000), "the old texture was drawn");
     assert!(differences(&cpu, &gpu).is_empty());
 }
+
+#[test]
+fn only_what_a_client_damaged_is_uploaded_again() {
+    let compositor = Compositor::start();
+    let (mut client, _listener) = compositor.compartment("c1");
+    let window = client
+        .open_toplevel("window", "test.patch", (120, 80), 0xff80_0000)
+        .unwrap();
+    client.roundtrip().unwrap();
+    if both_kept(&compositor).is_none() {
+        eprintln!("no EGL: skipped");
+        return;
+    }
+    // A new colour all over, of which the client damages only a patch.
+    let buffer = client.shm_buffer((120, 80), 0xff00_8000).unwrap();
+    client
+        .request(
+            window.surface,
+            fulcrum_wire::protocol::wayland::wl_surface::Request::Attach {
+                buffer: Some(fulcrum_wire::ObjectId(buffer.buffer)),
+                x: 0,
+                y: 0,
+            },
+        )
+        .unwrap();
+    client
+        .request(
+            window.surface,
+            fulcrum_wire::protocol::wayland::wl_surface::Request::DamageBuffer {
+                x: 10,
+                y: 10,
+                width: 20,
+                height: 20,
+            },
+        )
+        .unwrap();
+    client
+        .request(
+            window.surface,
+            fulcrum_wire::protocol::wayland::wl_surface::Request::Commit,
+        )
+        .unwrap();
+    client.roundtrip().unwrap();
+
+    let (_, gpu) = both_kept(&compositor).unwrap();
+
+    let at = compositor.with(|state| state.window_rects()[0]);
+    assert_eq!(gpu.pixel(at.x + 15, at.y + 15), Some(0xff00_8000), "the patch");
+    // What the client did not damage it may not have changed, and the
+    // texture keeps it: only the patch was uploaded.
+    assert_eq!(
+        gpu.pixel(at.x + 60, at.y + 60),
+        Some(0xff80_0000),
+        "the rest was uploaded"
+    );
+}

@@ -331,6 +331,28 @@ pub(crate) struct Surface {
 }
 
 impl Surface {
+    /// The same, in the buffer's pixels: None under a viewport too, whose
+    /// crop and scale the damage does not follow.
+    pub(crate) fn buffer_damage_since(&self, commits: u64) -> Option<Vec<Rect>> {
+        if self.current.source.is_some() || self.current.destination.is_some() {
+            return None;
+        }
+        let scale = self.current.scale.max(1);
+        Some(
+            self.damage_since(commits)?
+                .into_iter()
+                .map(|rect| {
+                    Rect::new(
+                        rect.x.saturating_mul(scale),
+                        rect.y.saturating_mul(scale),
+                        rect.width.saturating_mul(scale),
+                        rect.height.saturating_mul(scale),
+                    )
+                })
+                .collect(),
+        )
+    }
+
     /// What its commits after the first `commits` damaged, in surface
     /// coordinates. None for all of it: when a commit damaged all of it, or
     /// when the log does not reach back that far.

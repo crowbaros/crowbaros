@@ -25,9 +25,9 @@ use crate::{
 
 pub struct Renderer {
     gles: Gles,
-    /// Each surface's texture of copied pixels, with the content serial it
-    /// was uploaded at.
-    textures: HashMap<SurfaceId, (u64, Texture)>,
+    /// Each surface's texture of copied pixels, with the content serial and
+    /// the count of the surface's commits it was uploaded at.
+    textures: HashMap<SurfaceId, (u64, u64, Texture)>,
     /// Each cursor shape's texture, with the image it was uploaded from.
     cursors: HashMap<u32, (Rc<CursorImage>, Texture)>,
 }
@@ -88,12 +88,32 @@ impl Renderer {
                 continue;
             };
             let serial = surface.current.content_serial;
-            if self.textures.get(id).is_some_and(|(uploaded, _)| *uploaded == serial) {
-                continue;
+            if let Some((uploaded, commits, texture)) = self.textures.get_mut(id) {
+                if *uploaded == serial {
+                    continue;
+                }
+                // The same size: only what the client damaged since is
+                // uploaded again.
+                let damaged = (texture.width, texture.height) == (image.width, image.height);
+                if let Some(rects) = damaged.then(|| surface.buffer_damage_since(*commits)).flatten() {
+                    let bounds = Rect::new(0, 0, image.width, image.height);
+                    for rect in rects.iter().map(|rect| rect.intersection(&bounds)) {
+                        if !rect.is_empty() {
+                            self.gles.update(
+                                texture,
+                                &image.pixels,
+                                image.width,
+                                (rect.x, rect.y, rect.width, rect.height),
+                            );
+                        }
+                    }
+                    (*uploaded, *commits) = (serial, surface.commits);
+                    continue;
+                }
             }
             match self.gles.upload(image.width, image.height, &image.pixels) {
                 Ok(texture) => {
-                    self.textures.insert(*id, (serial, texture));
+                    self.textures.insert(*id, (serial, surface.commits, texture));
                 }
                 Err(error) => crate::log::warning!("could not upload a surface: {error}"),
             }
@@ -120,7 +140,7 @@ impl Renderer {
                         let texture = match &surface.current.content {
                             Some(Content::Gpu(gpu)) => &*gpu.texture,
                             Some(Content::Copied(_)) => match self.textures.get(id) {
-                                Some((_, texture)) => texture,
+                                Some((_, _, texture)) => texture,
                                 None => continue,
                             },
                             None => continue,
