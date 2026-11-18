@@ -44,7 +44,11 @@ says where each milestone stands, and what waits on CrowbarOS:
 - records on capture by the shell and on input devices' settings;
 - runs on the RTX 4090, Intel, and Surface machines, which Fulcrum's
   [hardware guide](https://github.com/crowbaros/fulcrum/blob/main/docs/hardware-runs.md)
-  describes. Through commit 30fadd8 the compositor's code was here. Its history moved
+  describes.
+
+Fulcrum's [picking up the work](https://github.com/crowbaros/fulcrum/blob/main/docs/picking-up.md)
+says where the compositor's work paused, how to run its checks from here, how a
+change reaches this pin, and how to start each next piece. Through commit 30fadd8 the compositor's code was here. Its history moved
 with it, so `git log` in Fulcrum shows every commit that touched this
 directory.
 
