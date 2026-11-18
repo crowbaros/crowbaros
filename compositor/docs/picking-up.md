@@ -4,7 +4,7 @@ Where the buildout paused, how to run everything, what trips people up, and how 
 
 ## Where it paused
 
-CrowbarOS pins Fulcrum `c99eaca`. This workspace also has drag and drop inside one compartment. Its tests cover the pointer grab, action negotiation and data transfer, lock and unmap cancellation, compartment isolation, and the icon's placement below trusted frames.
+Fulcrum came back to CrowbarOS's `compositor/` on November 18, 2026 ([ADR 0031](../../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)). It has drag and drop inside one compartment, which was not yet in a guest check when it was imported. Its tests cover the pointer grab, action negotiation and data transfer, lock and unmap cancellation, compartment isolation, and the icon's placement below trusted frames.
 
 - **Built:**
   - Milestones 1, 2, and 5;
@@ -33,18 +33,16 @@ Milestone 8's exit check restarts the compositor during a session. The session m
 ## Running everything
 
 - **Fulcrum's own checks:** the commands under the README's [Build and test](../README.md#build-and-test). CI runs the same. The GL tests draw with llvmpipe in CI. Run them locally with `LIBGL_ALWAYS_SOFTWARE=1` as well as on your GPU.
-- **CrowbarOS's guest checks,** from a CrowbarOS checkout, one at a time, since they share the guest's ports and work directory:
-  - `lab/void/compositor_guest.py check` builds Fulcrum at the pin, runs its tests in the Void guest, and checks what the compositor serves. It takes about 3 minutes.
+- **CrowbarOS's guest checks,** from the repository's root, one at a time, since they share the guest's ports and work directory:
+  - `lab/void/compositor_guest.py check` builds `compositor/`, runs its tests in the Void guest, and checks what the compositor serves. It takes about 3 minutes.
   - `lab/void/compositor_guest.py desktop-check --build-cache .lab/void-graphical` runs the whole Alpha desktop in a fresh guest. It takes 4 to 8 minutes, and rebuilds GPUI the first time.
-  - For a Fulcrum commit that is not pinned yet, set `FULCRUM_REPOSITORY` to a Fulcrum clone and `FULCRUM_REVISION` to the full commit ID. Get the ID from `git rev-parse`; never type one.
   - Evidence (logs, screenshots, `results.json`) lands under `.lab/`. Attach the log to the pull request.
 - **The Alpha desktop's lock:** it starts locked. Press Ctrl+Alt+Enter, then type the lab account's password, `crowbar` (the account is `crowbar-person`), and press Enter.
 
-## Releasing a change to CrowbarOS
+## Getting a change into Base
 
-1. Merge the Fulcrum pull request, with the guest check's evidence for the commit.
-2. Open a CrowbarOS pull request that changes `compositor/fulcrum.json` to the merged commit. Run the guest check, and the desktop check if the desktop changes.
-   - When CrowbarOS needs its own half of the change (the shell, the image, the lab), it has gone in the same pull request as the pin. crowbaros#206 and #207 did that. Without the new pin, that half does not work.
+1. A change reaches Base when its pull request merges. Run the guest check, and the desktop check if the desktop changes, and attach the evidence.
+2. When the shell, the image, or the lab needs its own half of the change, it goes in the same pull request.
 3. Offering a global to a client takes a row in `src/policy.rs`, a test of who is offered it, and the matching list in CrowbarOS's guest check, which reads the `NOBODY` row.
 
 ## Things that trip people up

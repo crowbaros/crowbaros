@@ -218,7 +218,7 @@ impl Adapter for Hyprland {
 /// The shell's wrapper connects to the compositor's control channel and hands
 /// the shell the socket in `CROWBAR_SHELL_CONTROL_FD`. The wire format is one
 /// JSON object per line: a request gets one reply, and the compositor may
-/// send events at any time. See Fulcrum's `src/control.rs`.
+/// send events at any time. See `compositor/src/control.rs`.
 pub struct Compositor {
     /// The read and write halves of the socket. `None` once an exchange has
     /// failed.

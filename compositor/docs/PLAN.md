@@ -50,8 +50,8 @@ Read each reference to learn how it solves a problem. A project's license decide
 
 Owning the wire layer lets Fulcrum enforce the CrowbarOS decisions where messages enter, not on top of someone else's dispatch.
 
-- **One registry, with the policy table** ([ADR 0020](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0020-the-first-compositor-is-small-on-purpose.md)). A global a client is not offered is never advertised, and binding it by number is a protocol error. A global with no row is offered to nobody.
-- **Identity at accept** ([ADR 0016](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0016-the-warden-starts-every-compartment.md)). It works as in the baseline: two trusted path sockets checked by peer user ID, and listeners the Warden registers for compartments.
+- **One registry, with the policy table** ([ADR 0020](../../docs/archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md)). A global a client is not offered is never advertised, and binding it by number is a protocol error. A global with no row is offered to nobody.
+- **Identity at accept** ([ADR 0016](../../docs/archive/substrate-vision/adr/0016-the-warden-starts-every-compartment.md)). It works as in the baseline: two trusted path sockets checked by peer user ID, and listeners the Warden registers for compartments.
 - **Limits for each client and each compartment.** Fulcrum caps objects, descriptors, and shared-memory bytes per client, and descriptors per compartment. A client that passes its cap is disconnected, and every other client keeps being served. This closes [issue 174](https://github.com/crowbaros/crowbaros/issues/174) at its root, before CrowbarOS cutover.
 - **Malformed input is a disconnect, never a panic.** Handlers return errors and do not unwrap client data. The codec gets property tests over random and truncated messages.
 - **A test guards what is linked.** As in the baseline, the build fails if the binary gains X11, libei, or code that opens a public socket. It also fails if a crate from the Smithay organization appears in `Cargo.lock`.
@@ -107,7 +107,7 @@ Owning the wire layer lets Fulcrum enforce the CrowbarOS decisions where message
   - suspend on real hardware, with a second monitor, which waits for the hardware rows.
 - **Milestone 9:** CrowbarOS's Alpha desktop runs on Fulcrum ([crowbaros#199](https://github.com/crowbaros/crowbaros/pull/199)), and its desktop check passes there. The spike is deleted ([crowbaros#200](https://github.com/crowbaros/crowbaros/pull/200)).
 
-CrowbarOS started again on November 17 ([crowbaros#197](https://github.com/crowbaros/crowbaros/pull/197)). Its vision is now a small desktop with an Agent, and its substrate vision, with the broker, the Warden, and compartments, is archived. ADRs 0015, 0027, and 0028 stand. ADRs 0016, 0020, 0022, and 0023 bind until a new record says what the compositor offers the shell and the Agent.
+CrowbarOS started again on November 17 ([crowbaros#197](https://github.com/crowbaros/crowbaros/pull/197)). Its vision is now a small desktop with an Agent, and its substrate vision, with the broker, the Warden, and compartments, is archived. ADRs 0015 and 0028 stand. On November 18, Fulcrum came back to CrowbarOS's `compositor/`, and ADR 0031 replaced ADR 0027. ADRs 0016, 0020, 0022, and 0023 bind until a new record says what the compositor offers the shell and the Agent.
 
 Fulcrum builds what those records still decide:
 - the window manager;
@@ -120,7 +120,7 @@ Milestones 1 and 2 are where this approach costs the most. They rebuild what Smi
 
 ## Decisions this needs in CrowbarOS
 
-[ADR 0015](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0015-our-own-compositor-on-smithay.md) says the compositor is built on Smithay, and ADR 0020 sets rules for bumping a Smithay pin. A new CrowbarOS record, ADR 0028, replaces both: Fulcrum is written from the ground up, with no crate from the Smithay organization and only the C libraries named above. Every other part of those records stands, including what each client is offered, the attacks the tests must refuse, and that no code is copied from GPL-3.0 compositors.
+[ADR 0015](../../docs/adr/0015-our-own-compositor-on-smithay.md) says the compositor is built on Smithay, and ADR 0020 sets rules for bumping a Smithay pin. A new CrowbarOS record, ADR 0028, replaces both: Fulcrum is written from the ground up, with no crate from the Smithay organization and only the C libraries named above. Every other part of those records stands, including what each client is offered, the attacks the tests must refuse, and that no code is copied from GPL-3.0 compositors.
 
 Fulcrum's proposals wait for records. Each is built, tested, and passes CrowbarOS's checks, and the code marks each as a proposal:
 - the shell's messages on the control channel: the `launcher` event, `launching`, `attention` (#41), `lock`, `unlock`, `locked`, `unlocked` (#44), `unlock_entry` (#46), and the lock screen's namespace, `crowbaros-lock`;

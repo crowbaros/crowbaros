@@ -76,17 +76,17 @@ backport. It is portable build tooling and stays in `apps/shell/packaging/`.
 Cargo downloads require access to the pinned dependency sources on a cold build.
 Tests are headless; they do not establish correct GUI behavior or session recovery.
 
-The Alpha desktop runs the [compositor](../../compositor/README.md) Base pins.
+The Alpha desktop runs the [compositor](../../compositor/README.md), Fulcrum.
 
 For a same-user rendering experiment inside an existing **development** Wayland
-session, run Fulcrum's nested backend from a Fulcrum checkout, register a
+session, run Fulcrum's nested backend, register a
 compartment with its stand-in for the Warden, and start an app on that
 compartment's listener. This does not exercise the separate Alpha identities
 or launcher:
 
 ```sh
-# In Fulcrum:
-cargo run --release --features nested -- --backend nested \
+# From the repository root:
+cargo run --manifest-path compositor/Cargo.toml --release --features nested -- --backend nested \
   --shell-socket /tmp/fulcrum/shell --shell-uid "$(id -u)" \
   --warden-socket /tmp/fulcrum/warden --warden-uid "$(id -u)"
 # Then:

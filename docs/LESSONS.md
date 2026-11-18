@@ -65,9 +65,12 @@ record in the archive, with the attacks it was built against.
   compositor we wrote. Hyprland, wlroots compositors, niri, and cosmic-comp were
   each considered and turned down.
   ([ADR 0015](adr/0015-our-own-compositor-on-smithay.md))
-- **Pin a commit, not a branch.** The compositor lives in Fulcrum, and Base
-  builds one full commit ID from it. A pin change is a pull request of its own.
-  ([ADR 0027](adr/0027-the-compositor-is-built-in-its-own-repository.md))
+- **Split a repository only when the parts change apart.** The compositor
+  moved to its own repository, with Base pinning one commit, and came back a
+  day and a half later: most changes needed the shell and the compositor
+  together, so each cost two pull requests and a pin change.
+  ([ADR 0027](adr/0027-the-compositor-is-built-in-its-own-repository.md),
+  [ADR 0031](adr/0031-the-compositor-is-built-in-this-repository-again.md))
 - **NVIDIA is a cost.** The proprietary driver needs a glibc Base and Void's
   nonfree repository. Smithay compositors had an open flicker bug with it, and
   the pinned GPUI version froze.

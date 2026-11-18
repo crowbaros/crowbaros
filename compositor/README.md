@@ -1,26 +1,26 @@
 # Fulcrum
 
 Fulcrum is the CrowbarOS Wayland compositor, written from the ground up in
-Rust. It is part of CrowbarOS Base and part of what CrowbarOS trusts. It builds
+Rust. It is part of CrowbarOS Base and part of what CrowbarOS trusts, and lives in
+CrowbarOS's `compositor/` directory. It builds
 one program, `crowbar-compositor`.
 
 [The plan](docs/PLAN.md) says how it is built. Fulcrum writes its own wire
 protocol, event loop, display, input, rendering, and window-management code,
 and builds on no other compositor's crates
-([CrowbarOS ADR 0028](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0028-the-compositor-is-written-from-the-ground-up.md)).
+([CrowbarOS ADR 0028](../docs/adr/0028-the-compositor-is-written-from-the-ground-up.md)).
 
-CrowbarOS decides what the compositor must do. Its decision records stay in
-the CrowbarOS repository:
+CrowbarOS decides what the compositor must do, in its decision records:
 
 | Decision | Record |
 | --- | --- |
-| CrowbarOS owns its compositor | [ADR 0015](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0015-our-own-compositor-on-smithay.md) |
-| Who its clients are, and how each connects | [ADR 0016](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0016-the-warden-starts-every-compartment.md) |
-| How an ask is shown and answered | [ADR 0018](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0018-one-gesture-answers-one-ask.md) |
-| What desktop it is, what each client is offered, and its slices | [ADR 0020](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0020-the-first-compositor-is-small-on-purpose.md) |
-| Which rows of that table the shell and the Warden are offered | [ADR 0023](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) |
-| It is built in its own repository, and Base pins one commit | [ADR 0027](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0027-the-compositor-is-built-in-its-own-repository.md) |
-| It is written from the ground up | [ADR 0028](https://github.com/crowbaros/crowbaros/blob/main/docs/adr/0028-the-compositor-is-written-from-the-ground-up.md) |
+| CrowbarOS owns its compositor | [ADR 0015](../docs/adr/0015-our-own-compositor-on-smithay.md) |
+| Who its clients are, and how each connects | [ADR 0016](../docs/archive/substrate-vision/adr/0016-the-warden-starts-every-compartment.md) |
+| How an ask is shown and answered | [ADR 0018](../docs/archive/substrate-vision/adr/0018-one-gesture-answers-one-ask.md) |
+| What desktop it is, what each client is offered, and its slices | [ADR 0020](../docs/archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md) |
+| Which rows of that table the shell and the Warden are offered | [ADR 0023](../docs/archive/substrate-vision/adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) |
+| It is built in this repository, and reaches Base when a change merges | [ADR 0031](../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md), which replaces [ADR 0027](../docs/adr/0027-the-compositor-is-built-in-its-own-repository.md) |
+| It is written from the ground up | [ADR 0028](../docs/adr/0028-the-compositor-is-written-from-the-ground-up.md) |
 
 ## Where it stands
 
@@ -320,6 +320,12 @@ with the seven commits that touched it (tag `import/crowbaros-30fadd8`). The
 [Milestone 0 record](docs/independent-build-2026-11-17.md) shows CrowbarOS
 building it as a pinned commit. The baseline's code left `main` when this
 rewrite began, and it is at commit `d11400f`.
+
+On November 18, 2026, Fulcrum came back to CrowbarOS's `compositor/`
+([ADR 0031](../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)).
+`git subtree add` imported its `main` at `15322b2` with every commit. The old
+repository, `crowbaros/fulcrum`, is archived. The numbers of its pull requests
+in these docs, such as #41, are its own, not CrowbarOS's.
 
 Code adapted from an MIT-licensed project keeps its attribution, in a
 `LICENSE-*.txt` file beside this repository's own. Code under GPL-3.0 is read
