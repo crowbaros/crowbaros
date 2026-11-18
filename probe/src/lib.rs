@@ -7,6 +7,8 @@
 //! read by their protocol description, not by type, so the probe can watch
 //! any object it makes.
 
+#![forbid(unsafe_code)]
+
 use std::{
     collections::{HashMap, VecDeque},
     io,
@@ -23,7 +25,7 @@ use fulcrum_wire::{
     protocol::{
         self,
         security_context_v1::{wp_security_context_manager_v1, wp_security_context_v1},
-        wayland::{wl_display, wl_registry},
+        wayland::{self, wl_display, wl_registry},
     },
 };
 
@@ -100,6 +102,8 @@ pub struct Client {
     /// The callbacks that have come back.
     done: Vec<u32>,
     closed: bool,
+    /// Globals this end bound once for its helpers.
+    bound: HashMap<&'static str, u32>,
 }
 
 impl Client {
@@ -117,6 +121,7 @@ impl Client {
             events: VecDeque::new(),
             done: Vec::new(),
             closed: false,
+            bound: HashMap::new(),
         };
         let registry = client.new_id(wl_registry::NAME);
         client.registry = registry.0;
@@ -434,6 +439,139 @@ impl Client {
             path: path.to_path_buf(),
             close: Some(close_write),
         })
+    }
+}
+
+/// A buffer in shared memory that this end made and drew into.
+pub struct ShmBuffer {
+    pub pool: u32,
+    pub buffer: u32,
+    /// The file the pool shares. Writing to it changes the buffer.
+    pub file: OwnedFd,
+    pub size: (i32, i32),
+}
+
+impl Client {
+    /// Binds `wl_compositor` once and returns it.
+    pub fn compositor(&mut self) -> Result<u32, Error> {
+        if let Some(id) = self.bound.get(wayland::wl_compositor::NAME) {
+            return Ok(*id);
+        }
+        let id = self.bind(wayland::wl_compositor::NAME, 6)?;
+        self.bound.insert(wayland::wl_compositor::NAME, id);
+        Ok(id)
+    }
+
+    fn shm(&mut self) -> Result<u32, Error> {
+        if let Some(id) = self.bound.get(wayland::wl_shm::NAME) {
+            return Ok(*id);
+        }
+        let id = self.bind(wayland::wl_shm::NAME, 1)?;
+        self.bound.insert(wayland::wl_shm::NAME, id);
+        Ok(id)
+    }
+
+    /// A new surface with no role.
+    pub fn create_surface(&mut self) -> Result<u32, Error> {
+        let compositor = self.compositor()?;
+        let id = self.new_id(wayland::wl_surface::NAME);
+        self.request(compositor, wayland::wl_compositor::Request::CreateSurface { id })?;
+        Ok(id.0)
+    }
+
+    /// A buffer of one colour, premultiplied ARGB8888, in a pool of its own.
+    pub fn shm_buffer(&mut self, size: (i32, i32), argb: u32) -> Result<ShmBuffer, Error> {
+        let shm = self.shm()?;
+        let (width, height) = size;
+        let bytes: Vec<u8> = std::iter::repeat_n(argb.to_le_bytes(), (width * height) as usize)
+            .flatten()
+            .collect();
+        let file = rustix::fs::memfd_create("crowbar-probe", rustix::fs::MemfdFlags::CLOEXEC)?;
+        rustix::fs::ftruncate(&file, bytes.len() as u64)?;
+        rustix::io::pwrite(&file, &bytes, 0)?;
+        let pool = self.new_id(wayland::wl_shm_pool::NAME);
+        self.request(
+            shm,
+            wayland::wl_shm::Request::CreatePool {
+                id: pool,
+                fd: file.try_clone()?,
+                size: bytes.len() as i32,
+            },
+        )?;
+        let buffer = self.new_id(wayland::wl_buffer::NAME);
+        self.request(
+            pool.0,
+            wayland::wl_shm_pool::Request::CreateBuffer {
+                id: buffer,
+                offset: 0,
+                width,
+                height,
+                stride: width * 4,
+                format: 0,
+            },
+        )?;
+        Ok(ShmBuffer {
+            pool: pool.0,
+            buffer: buffer.0,
+            file,
+            size,
+        })
+    }
+
+    /// Attaches a buffer, damages all of it, and commits.
+    pub fn show(&mut self, surface: u32, buffer: Option<&ShmBuffer>) -> Result<(), Error> {
+        self.request(
+            surface,
+            wayland::wl_surface::Request::Attach {
+                buffer: buffer.map(|buffer| fulcrum_wire::ObjectId(buffer.buffer)),
+                x: 0,
+                y: 0,
+            },
+        )?;
+        if let Some(buffer) = buffer {
+            self.request(
+                surface,
+                wayland::wl_surface::Request::Damage {
+                    x: 0,
+                    y: 0,
+                    width: buffer.size.0,
+                    height: buffer.size.1,
+                },
+            )?;
+        }
+        self.request(surface, wayland::wl_surface::Request::Commit)
+    }
+
+    /// Makes `surface` a subsurface of `parent`, and returns the
+    /// `wl_subsurface`.
+    pub fn subsurface(&mut self, surface: u32, parent: u32) -> Result<u32, Error> {
+        let subcompositor = match self.bound.get(wayland::wl_subcompositor::NAME) {
+            Some(id) => *id,
+            None => {
+                let id = self.bind(wayland::wl_subcompositor::NAME, 1)?;
+                self.bound.insert(wayland::wl_subcompositor::NAME, id);
+                id
+            }
+        };
+        let id = self.new_id(wayland::wl_subsurface::NAME);
+        self.request(
+            subcompositor,
+            wayland::wl_subcompositor::Request::GetSubsurface {
+                id,
+                surface: fulcrum_wire::ObjectId(surface),
+                parent: fulcrum_wire::ObjectId(parent),
+            },
+        )?;
+        Ok(id.0)
+    }
+
+    /// Whether an event with this name has arrived on this object, taking it.
+    pub fn take_event(&mut self, object: u32, name: &str) -> Option<Event> {
+        let at = self
+            .events
+            .iter()
+            .position(|event| event.object == object && event.name == name)?;
+        self.events.remove(at)
     }
 }
 

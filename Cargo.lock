@@ -13,6 +13,7 @@ name = "crowbar-compositor"
 version = "0.2.0"
 dependencies = [
  "crowbar-probe",
+ "fulcrum-sys",
  "fulcrum-wire",
  "rustix",
 ]
@@ -38,6 +39,14 @@ dependencies = [
 [[package]]
 name = "fulcrum-codegen"
 version = "0.1.0"
+
+[[package]]
+name = "fulcrum-sys"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rustix",
+]
 
 [[package]]
 name = "fulcrum-wire"

@@ -1,3 +1,13 @@
+Adapted in Fulcrum from Smithay, under the license below:
+
+- sys/src/shm.rs: the SIGBUS guard for shared-memory reads, from Smithay's
+  src/wayland/shm/pool.rs.
+
+Fulcrum studies Smithay for every layer it writes. A file not listed here
+holds no code taken from Smithay.
+
+---
+
 MIT License
 
 Copyright (c) 2017 Victor Berger and Victoria Brekenfeld

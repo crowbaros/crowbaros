@@ -15,12 +15,18 @@
 mod client;
 pub mod connections;
 pub mod event_loop;
+pub mod geometry;
 mod globals;
 pub mod identity;
+pub mod image;
 pub mod log;
 mod output;
 pub mod policy;
+mod shm;
 mod state;
+mod surface;
 
 pub use output::{OUTPUT_VERSION, Output};
+pub use shm::MAX_POOL_SIZE;
 pub use state::State;
+pub use surface::MAX_SUBSURFACE_DEPTH;

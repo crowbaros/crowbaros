@@ -7,7 +7,10 @@ use fulcrum_wire::{
     ArgReader, ConnectionError, DecodeError, Incoming,
     protocol::{
         security_context_v1::{wp_security_context_manager_v1, wp_security_context_v1},
-        wayland::{wl_callback, wl_display, wl_output, wl_registry},
+        wayland::{
+            wl_buffer, wl_callback, wl_compositor, wl_display, wl_output, wl_region, wl_registry, wl_shm, wl_shm_pool,
+            wl_subcompositor, wl_subsurface, wl_surface,
+        },
     },
 };
 
@@ -15,10 +18,13 @@ use crate::{
     client::{Client, ClientId, ObjectKind, ProtocolError},
     connections::{CompartmentListener, TrustedListener},
     event_loop::{EventLoop, Readiness, Remote, TimerKey, Token},
+    geometry::Region,
     globals::{GlobalKind, Globals},
     identity::Compartment,
     log,
     output::Output,
+    shm::{Buffer, BufferId, Pool, PoolId},
+    surface::{RegionId, Surface, SurfaceId},
 };
 
 /// How many times one client's socket is read in one turn of the loop,
@@ -44,6 +50,12 @@ pub struct State {
     pub(crate) planted_binds: usize,
     /// A callback's serial: the event loop's turns, as libwayland does.
     serial: u32,
+    pub(crate) surfaces: HashMap<SurfaceId, Surface>,
+    pub(crate) regions: HashMap<RegionId, Region>,
+    pub(crate) pools: HashMap<PoolId, Pool>,
+    pub(crate) buffers: HashMap<BufferId, Buffer>,
+    /// The number given to the last surface, region, pool, or buffer.
+    pub(crate) next_resource: u64,
 }
 
 impl State {
@@ -66,6 +78,11 @@ impl State {
             next_output: 0,
             planted_binds: 0,
             serial: 0,
+            surfaces: HashMap::new(),
+            regions: HashMap::new(),
+            pools: HashMap::new(),
+            buffers: HashMap::new(),
+            next_resource: 0,
         };
         state.add_table_globals();
         Ok(state)
@@ -77,10 +94,10 @@ impl State {
     /// a request on one is a protocol error.
     fn add_table_globals(&mut self) {
         use fulcrum_wire::protocol::{viewporter, wayland, wlr_layer_shell_unstable_v1 as layer, xdg_shell};
+        self.add_global(&wayland::wl_compositor::INFO, 6, GlobalKind::Compositor);
+        self.add_global(&wayland::wl_subcompositor::INFO, 1, GlobalKind::Subcompositor);
+        self.add_global(&wayland::wl_shm::INFO, 2, GlobalKind::Shm);
         for (info, version) in [
-            (&wayland::wl_compositor::INFO, 6),
-            (&wayland::wl_subcompositor::INFO, 1),
-            (&wayland::wl_shm::INFO, 1),
             (&wayland::wl_seat::INFO, 7),
             (&xdg_shell::xdg_wm_base::INFO, 6),
             (&viewporter::wp_viewporter::INFO, 1),
@@ -241,7 +258,24 @@ impl State {
     fn disconnect(&mut self, id: ClientId) {
         if let Some(client) = self.clients.remove(&id) {
             self.event_loop.remove(client.conn.stream().as_fd());
+            for object in client.objects.values() {
+                self.forget(&object.kind);
+            }
             log::debug!("client {id} disconnected");
+        }
+    }
+
+    /// Lets go of what an object held in the compositor, when its client is
+    /// gone.
+    fn forget(&mut self, kind: &ObjectKind) {
+        match kind {
+            ObjectKind::Surface(surface) => self.destroy_surface(*surface, false),
+            ObjectKind::Region(region) => {
+                self.regions.remove(region);
+            }
+            ObjectKind::Pool(pool) => self.forget_pool(*pool),
+            ObjectKind::Buffer(buffer) => self.forget_buffer(*buffer),
+            _ => {}
         }
     }
 
@@ -281,6 +315,27 @@ impl State {
             )));
         }
         let what = || format!("{}#{}.{}", info.name, header.object, message.name);
+        // Every object argument names an existing object of the interface
+        // the protocol says, as libwayland checks.
+        for (arg, named) in message
+            .object_args(&body)
+            .map_err(|error| invalid_method(format!("invalid arguments for {}: {error}", what())))?
+        {
+            if named == 0 {
+                continue;
+            }
+            let fits = client
+                .objects
+                .get(&named)
+                .is_some_and(|object| arg.interface.is_none_or(|interface| object.interface == interface));
+            if !fits {
+                return Err(ProtocolError {
+                    object: 1,
+                    code: wl_display::error::INVALID_OBJECT,
+                    message: format!("invalid object {named} for {}.{}", what(), arg.name),
+                });
+            }
+        }
         let bad_arguments = |error: DecodeError| invalid_method(format!("invalid arguments for {}: {error}", what()));
         let destructor = message.destructor;
         let opcode = header.opcode;
@@ -299,6 +354,25 @@ impl State {
                 }
                 ObjectKind::SecurityContext(_) => {
                     wp_security_context_v1::Request::decode(opcode, &mut args).map(Request::SecurityContext)
+                }
+                ObjectKind::Compositor => wl_compositor::Request::decode(opcode, &mut args).map(Request::Compositor),
+                ObjectKind::Surface(surface) => {
+                    wl_surface::Request::decode(opcode, &mut args).map(|request| Request::Surface(*surface, request))
+                }
+                ObjectKind::Region(region) => {
+                    wl_region::Request::decode(opcode, &mut args).map(|request| Request::Region(*region, request))
+                }
+                ObjectKind::Subcompositor => {
+                    wl_subcompositor::Request::decode(opcode, &mut args).map(Request::Subcompositor)
+                }
+                ObjectKind::Subsurface(surface) => wl_subsurface::Request::decode(opcode, &mut args)
+                    .map(|request| Request::Subsurface(*surface, request)),
+                ObjectKind::Shm => wl_shm::Request::decode(opcode, &mut args).map(Request::Shm),
+                ObjectKind::Pool(pool) => {
+                    wl_shm_pool::Request::decode(opcode, &mut args).map(|request| Request::Pool(*pool, request))
+                }
+                ObjectKind::Buffer(buffer) => {
+                    wl_buffer::Request::decode(opcode, &mut args).map(|request| Request::Buffer(*buffer, request))
                 }
                 ObjectKind::Unimplemented => {
                     *client.conn.fds() = fds;
@@ -323,6 +397,14 @@ impl State {
             Request::Output(wl_output::Request::Release) => {}
             Request::SecurityContextManager(request) => self.security_context_manager_request(client_id, request)?,
             Request::SecurityContext(request) => self.security_context_request(client_id, id, request)?,
+            Request::Compositor(request) => self.compositor_request(client_id, version, request)?,
+            Request::Surface(surface, request) => self.surface_request(client_id, id, version, surface, request)?,
+            Request::Region(region, request) => self.region_request(id, region, request)?,
+            Request::Subcompositor(request) => self.subcompositor_request(client_id, id, request)?,
+            Request::Subsurface(surface, request) => self.subsurface_request(id, surface, request, client_id)?,
+            Request::Shm(request) => self.shm_request(client_id, id, request)?,
+            Request::Pool(pool, request) => self.pool_request(client_id, id, pool, request)?,
+            Request::Buffer(buffer, wl_buffer::Request::Destroy) => self.forget_buffer(buffer),
         }
         if destructor && let Some(client) = self.clients.get_mut(&client_id) {
             client.destroy(id);
@@ -373,6 +455,14 @@ enum Request {
     Output(wl_output::Request),
     SecurityContextManager(wp_security_context_manager_v1::Request),
     SecurityContext(wp_security_context_v1::Request),
+    Compositor(wl_compositor::Request),
+    Surface(SurfaceId, wl_surface::Request),
+    Region(RegionId, wl_region::Request),
+    Subcompositor(wl_subcompositor::Request),
+    Subsurface(SurfaceId, wl_subsurface::Request),
+    Shm(wl_shm::Request),
+    Pool(PoolId, wl_shm_pool::Request),
+    Buffer(BufferId, wl_buffer::Request),
 }
 
 impl From<ConnectionError> for ProtocolError {

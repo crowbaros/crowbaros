@@ -10,7 +10,7 @@ use crowbar_probe::Client;
 use fulcrum_wire::{
     Arg, ArgWriter, DynamicNewId, Header, NewId,
     codec::MAX_MESSAGE_SIZE,
-    protocol::wayland::{wl_compositor, wl_display, wl_output, wl_registry},
+    protocol::wayland::{wl_display, wl_output, wl_registry, wl_seat},
 };
 
 /// Sends a request and expects the compositor to refuse it with `code`.
@@ -173,10 +173,10 @@ fn a_bind_that_misnames_the_interface_or_its_version_is_refused() {
 fn a_request_this_build_does_not_carry_out_is_an_implementation_error() {
     let compositor = Compositor::start();
     let message = refused(&compositor, wl_display::error::IMPLEMENTATION, |client| {
-        let compositor_object = client.bind(wl_compositor::NAME, 1).unwrap();
-        let surface = client.new_id("wl_surface");
+        let seat = client.bind(wl_seat::NAME, 1).unwrap();
+        let pointer = client.new_id("wl_pointer");
         client
-            .request(compositor_object, wl_compositor::Request::CreateSurface { id: surface })
+            .request(seat, wl_seat::Request::GetPointer { id: pointer })
             .unwrap();
     });
     assert!(message.contains("not carried out"), "{message}");

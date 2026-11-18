@@ -4,6 +4,8 @@
 //! `cargo run -p fulcrum-codegen` after changing a protocol file. A test fails
 //! while the committed code differs from what this would write.
 
+#![forbid(unsafe_code)]
+
 pub mod xml;
 
 use std::{

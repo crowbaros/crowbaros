@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Wayland clients for looking at a compositor from outside.
 
 use std::{io::Write, path::Path, process::Command};

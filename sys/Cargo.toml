@@ -1,0 +1,14 @@
+[package]
+name = "fulcrum-sys"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Fulcrum's bindings to the kernel and the C libraries it links. The only Fulcrum crate with unsafe code."
+
+[dependencies]
+# Memory mappings and system calls.
+rustix = { workspace = true, features = ["mm", "fs"] }
+# `sigaction` and `siginfo_t`, which rustix does not offer outside its
+# runtime interface. Not from the Smithay organization.
+libc = "0.2"

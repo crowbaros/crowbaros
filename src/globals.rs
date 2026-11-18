@@ -26,6 +26,9 @@ pub(crate) enum GlobalKind {
     /// A `wl_output`, for the output with this number.
     Output(u64),
     SecurityContextManager,
+    Compositor,
+    Subcompositor,
+    Shm,
     /// A global this build advertises before it carries out its requests.
     Unimplemented,
     /// A global a test added, of an interface Fulcrum may not even know.
@@ -188,6 +191,9 @@ impl State {
         let object_kind = match kind {
             GlobalKind::Output(output) => ObjectKind::Output(output),
             GlobalKind::SecurityContextManager => ObjectKind::SecurityContextManager,
+            GlobalKind::Compositor => ObjectKind::Compositor,
+            GlobalKind::Subcompositor => ObjectKind::Subcompositor,
+            GlobalKind::Shm => ObjectKind::Shm,
             GlobalKind::Unimplemented => ObjectKind::Unimplemented,
             GlobalKind::Planted => {
                 self.planted_binds += 1;
@@ -196,8 +202,10 @@ impl State {
         };
         let client = self.clients.get_mut(&client_id).expect("checked above");
         client.create(fulcrum_wire::NewId(id.id), interface, info, id.version, object_kind)?;
-        if let GlobalKind::Output(output) = kind {
-            self.output_bound(client_id, id.id, output);
+        match kind {
+            GlobalKind::Output(output) => self.output_bound(client_id, id.id, output),
+            GlobalKind::Shm => self.shm_bound(client_id, id.id),
+            _ => {}
         }
         Ok(())
     }

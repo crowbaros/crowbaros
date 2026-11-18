@@ -35,6 +35,15 @@ pub(crate) enum ObjectKind {
     Output(u64),
     SecurityContextManager,
     SecurityContext(Box<crate::connections::PendingContext>),
+    Compositor,
+    Surface(crate::surface::SurfaceId),
+    Region(crate::surface::RegionId),
+    Subcompositor,
+    /// A `wl_subsurface`, for the surface it gives the role to.
+    Subsurface(crate::surface::SurfaceId),
+    Shm,
+    Pool(crate::shm::PoolId),
+    Buffer(crate::shm::BufferId),
     /// A global's object whose requests this build does not carry out yet,
     /// or a global a test planted. Any request on it is a protocol error.
     Unimplemented,

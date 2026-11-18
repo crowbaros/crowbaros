@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["wire", "codegen", "probe"]
+members = ["wire", "codegen", "probe", "sys"]
 # Plain `cargo build`, `cargo test`, and `cargo clippy` cover every crate.
-default-members = [".", "wire", "codegen", "probe"]
+default-members = [".", "wire", "codegen", "probe", "sys"]
 
 [workspace.package]
 edition = "2024"
@@ -31,6 +31,7 @@ path = "src/main.rs"
 
 [dependencies]
 fulcrum-wire = { path = "wire" }
+fulcrum-sys = { path = "sys" }
 rustix = { workspace = true, features = ["event", "fs", "net"] }
 
 [dev-dependencies]

@@ -15,4 +15,4 @@ path = "src/bin/crowbar-probe.rs"
 
 [dependencies]
 fulcrum-wire = { path = "../wire" }
-rustix = { workspace = true, features = ["event", "pipe"] }
+rustix = { workspace = true, features = ["event", "fs", "pipe"] }

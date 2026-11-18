@@ -439,6 +439,40 @@ impl MessageInfo {
         Ok(values)
     }
 
+    /// The object arguments of a message body, without reading its
+    /// descriptors: each one's description and the ID it names (zero for
+    /// none). The dispatch checks each names an object of the right
+    /// interface before the message is decoded.
+    pub fn object_args(&'static self, body: &[u8]) -> Result<Vec<(&'static ArgInfo, u32)>, DecodeError> {
+        let mut no_fds = VecDeque::new();
+        let mut reader = ArgReader::new(body, &mut no_fds);
+        let mut found = Vec::new();
+        for arg in self.args {
+            match arg.kind {
+                ArgKind::Int | ArgKind::Uint | ArgKind::Fixed => {
+                    reader.uint()?;
+                }
+                ArgKind::NewId if arg.interface.is_some() => {
+                    reader.uint()?;
+                }
+                ArgKind::NewId => {
+                    reader.string_opt()?;
+                    reader.uint()?;
+                    reader.uint()?;
+                }
+                ArgKind::String => {
+                    reader.string_opt()?;
+                }
+                ArgKind::Array => {
+                    reader.array()?;
+                }
+                ArgKind::Fd => {}
+                ArgKind::Object => found.push((arg, reader.uint()?)),
+            }
+        }
+        Ok(found)
+    }
+
     /// Writes arguments by this description. Each value must be of the kind
     /// the description gives, or the message is not one a peer would read.
     pub fn encode(&self, values: Vec<Arg>, out: &mut ArgWriter) {
