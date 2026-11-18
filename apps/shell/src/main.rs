@@ -697,12 +697,74 @@ fn toggle_launcher(model: Entity<Model>, cx: &mut App) {
 }
 /// The lock screen: shown while the compositor has the session locked, and
 /// all it shows (ADR 0020). Unlock begins with the confirm chord,
-/// Ctrl+Alt+Enter, which opens its entry; then its button or Enter asks the
-/// compositor to unlock, in the place of the broker: Fulcrum's proposal until
-/// a record decides. What the person proves, and how, is issues 87 and 100.
+/// Ctrl+Alt+Enter, which opens its entry. Where an unlock helper checks the
+/// person's password, the entry takes it, and Enter sends it to the helper,
+/// which tells the compositor to unlock: the shell's own word is not enough.
+/// Without one, Enter asks the compositor to unlock. Both stand in for the
+/// broker, as Fulcrum's proposal until a record decides (issues 87 and 100).
 struct LockScreen {
     model: Entity<Model>,
     focus: FocusHandle,
+    /// What the person typed, shown only as dots, and dropped once sent.
+    password: String,
+    /// Why the last password did not unlock.
+    error: Option<String>,
+    /// A password is with the helper.
+    busy: bool,
+}
+impl LockScreen {
+    const MAX_PASSWORD: usize = 1024;
+    fn submit(&mut self, cx: &mut Context<Self>) {
+        let m = self.model.read(cx);
+        if !m.unlock_entry || self.busy {
+            return;
+        }
+        if !session::unlocks_with_password() {
+            session::lock(false);
+            return;
+        }
+        if self.password.is_empty() {
+            return;
+        }
+        let tx = m.tx.clone();
+        self.busy = true;
+        self.error = None;
+        session::unlock_with_password(std::mem::take(&mut self.password), tx);
+        cx.notify();
+    }
+    fn typed(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        if !self.model.read(cx).unlock_entry || self.busy || !session::unlocks_with_password() {
+            return;
+        }
+        let k = &event.keystroke;
+        if k.modifiers.control || k.modifiers.alt || k.modifiers.platform || k.modifiers.function {
+            return;
+        }
+        match k.key.as_str() {
+            "backspace" => {
+                self.password.pop();
+            }
+            "escape" => self.password.clear(),
+            _ => match &k.key_char {
+                Some(c)
+                    if !c.chars().any(char::is_control)
+                        && self.password.len() + c.len() <= Self::MAX_PASSWORD =>
+                {
+                    self.password.push_str(c)
+                }
+                _ => return,
+            },
+        }
+        self.error = None;
+        cx.notify();
+    }
+    /// The helper answered: a wrong password is said, and the entry is
+    /// ready for another.
+    fn answered(&mut self, result: Result<(), String>, cx: &mut Context<Self>) {
+        self.busy = false;
+        self.error = result.err();
+        cx.notify();
+    }
 }
 impl Render for LockScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -710,20 +772,20 @@ impl Render for LockScreen {
         let p = m.palette();
         let clock = m.clock.clone();
         let entry = m.unlock_entry;
-        let prompt = if entry {
-            "Press Enter to unlock"
-        } else {
-            "Press Ctrl+Alt+Enter to unlock"
+        let with_password = session::unlocks_with_password();
+        let prompt = match (entry, with_password) {
+            (false, _) => "Press Ctrl+Alt+Enter to unlock",
+            (true, true) if self.busy => "Checking…",
+            (true, true) => "Type your password, then press Enter",
+            (true, false) => "Press Enter to unlock",
         };
+        let dots = "•".repeat(self.password.chars().count());
         div()
             .size_full()
             .track_focus(&self.focus)
             .key_context("Lock")
-            .on_action(move |_: &Unlock, _, _| {
-                if entry {
-                    session::lock(false)
-                }
-            })
+            .on_action(cx.listener(|this, _: &Unlock, _, cx| this.submit(cx)))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| this.typed(event, cx)))
             .flex()
             .flex_col()
             .items_center()
@@ -739,6 +801,26 @@ impl Render for LockScreen {
                     .child(clock),
             )
             .child(div().text_size(px(15.)).text_color(rgb(0x9a9a9a)).child(prompt))
+            .when(entry && with_password, |d| {
+                d.child(
+                    div()
+                        .id("password")
+                        .w(px(280.))
+                        .h(px(40.))
+                        .px(px(14.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(10.))
+                        .bg(rgb(0x1c1c1c))
+                        .border_1()
+                        .border_color(rgb(0x3a3a3a))
+                        .text_size(px(20.))
+                        .child(dots),
+                )
+            })
+            .when_some(self.error.clone(), |d, error| {
+                d.child(div().text_size(px(15.)).text_color(rgb(0xff8a80)).child(error))
+            })
             .child(
                 div()
                     .id("unlock")
@@ -750,11 +832,7 @@ impl Render for LockScreen {
                     .text_color(rgb(p.on_accent))
                     .cursor_pointer()
                     .child("Unlock")
-                    .on_click(move |_, _, _| {
-                        if entry {
-                            session::lock(false)
-                        }
-                    }),
+                    .on_click(cx.listener(|this, _, _, cx| this.submit(cx))),
             )
     }
 }
@@ -789,6 +867,9 @@ fn set_lock_screen(model: &Entity<Model>, locked: bool, cx: &mut App) {
             cx.new(|_| LockScreen {
                 model: screen,
                 focus,
+                password: String::new(),
+                error: None,
+                busy: false,
             })
         },
     );
@@ -952,6 +1033,11 @@ fn main() -> anyhow::Result<()> {
                                     log::info!("SHELL lock entry=open");
                                     model.update(cx, |m, _| m.unlock_entry = true);
                                     refresh = true
+                                }
+                                session::Event::Unlock(result) => {
+                                    if let Some(w) = model.read(cx).lock {
+                                        let _ = w.update(cx, |v, _, cx| v.answered(result, cx));
+                                    }
                                 }
                                 session::Event::Launch(result) => {
                                     if let Some(w) = model.read(cx).launcher {

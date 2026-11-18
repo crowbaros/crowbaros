@@ -106,8 +106,10 @@ The host needs Python, Cargo and its pinned dependency cache, QEMU/KVM, Btrfs
 image tools, and working user/mount namespaces; downloads use the configured
 Void mirror. No host desktop configuration or installed packages are changed.
 
-The check drives real QEMU keyboard/pointer events for launch, focus, workspaces,
-Settings preview/Save/Undo, and relaunch. It checks saved appearance after a
+The check drives real QEMU keyboard/pointer events for unlock at boot (the
+confirm chord, a wrong password, then the right one), launch, focus, workspaces,
+lock and unlock, the suspend hook's lock, Settings preview/Save/Undo, and
+relaunch. It checks saved appearance after a
 clean reboot, service identities, linked libraries, binary hashes, render
 activity, shell restart, and refusal of app access to trusted sockets. An error
 returns nonzero and retains `desktop.log`, `results.json`, build/package logs,
@@ -126,6 +128,17 @@ This applies the temporary Alpha rules in
   stand-in, with no inherited trusted descriptors or supplementary groups,
   a fixed environment, and `no_new_privs`. Only the shell UID may request a
   root-owned entry in `/usr/share/applications`.
+- `crowbar-person` (UID 1003) is the person's account. It has no login shell
+  and no home. Its password, `crowbar` in the lab, unlocks the session.
+- `crowbar-unlock` is a root service, `guest/alpha-unlock.py`, that stands in
+  for the broker's unlock (ADR 0020, as Fulcrum's proposal). The compositor
+  starts locked and listens for it at a socket only root may use. After the
+  confirm chord, the lock screen sends the person's password to the helper,
+  at a socket only the shell's UID may use. The helper checks the password
+  against `/etc/shadow` through libcrypt, and only then tells the compositor
+  to unlock. Each wrong password costs a pause, and the shell's own `unlock`
+  is refused. zzz's suspend hook, `guest/zzz-lock`, locks the session through
+  the same helper before the machine sleeps.
 
 The shell reads saved appearance through a bounded, read-only request to that
 stand-in. Settings retains private mode-0600 preferences in the app user's home.

@@ -4,10 +4,14 @@ exec >>/var/log/crowbar-compositor.log 2>&1
 # The shell reaches the compositor's Wayland socket and its control channel in
 # a directory only the compositor and the shell's group can enter, and the
 # stand-in for the Warden reaches its socket in one only root can. The
-# compositor accepts each by the peer's user ID as well (ADR 0016).
+# compositor accepts each by the peer's user ID as well (ADR 0016). The
+# unlock helper, as root, reaches the compositor's unlock socket in a
+# directory no one else can enter; once it listens, only the helper's word
+# unlocks, and the session starts locked (Fulcrum's proposal).
 install -d -m 0755 /run/crowbar-trusted
 install -d -o crowbar-compositor -g crowbar-shell -m 2750 /run/crowbar-trusted/compositor
 install -d -o crowbar-compositor -g root -m 0750 /run/crowbar-trusted/warden
+install -d -o crowbar-compositor -g root -m 0700 /run/crowbar-trusted/unlock
 chown crowbar-compositor:crowbar-compositor /var/log/crowbar-compositor.log
 chown crowbar-compositor:crowbar-compositor /home/crowbar-compositor
 test -S /run/seatd.sock || exit 1
@@ -17,4 +21,6 @@ exec openvt -c 2 -s -f -w -- chpst -u crowbar-compositor:crowbar-compositor:_sea
   --shell-socket /run/crowbar-trusted/compositor/wayland --shell-uid 1001 \
   --shell-control-socket /run/crowbar-trusted/compositor/control \
   --warden-socket /run/crowbar-trusted/warden/wayland --warden-uid 0 \
+  --unlock-socket /run/crowbar-trusted/unlock/compositor --unlock-uid 0 \
+  --start-locked \
   >>/var/log/crowbar-compositor.log 2>&1'

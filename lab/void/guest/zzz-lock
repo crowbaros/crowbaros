@@ -1,0 +1,4 @@
+#!/bin/sh
+# zzz runs this before the machine suspends: the session locks first, so it is
+# locked when the machine wakes. It waits for the compositor's reply.
+exec /usr/local/bin/crowbar-alpha-unlock lock
