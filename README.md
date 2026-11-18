@@ -112,8 +112,14 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   (ADR 0020). The desktop is in logical units: an output covers its pixels
   over its scale, outputs meet at their logical edges, and what an output
   shows, frames included, is drawn at its pixels. A client hears the scale
-  rounded up as `wl_output.scale`. Only the code sets a scale for now: the
-  shell's interface for the layout comes next.
+  rounded up as `wl_output.scale`.
+- **The layout of displays** (ADR 0020): each monitor's mode, place, and
+  scale, kept by its identity from its EDID in the file `--layout` names,
+  and set only through the shell's control channel (`outputs` and
+  `configure_output`). A monitor the layout does not name takes its
+  preferred mode, the place to the right of the others, and a scale of 1.
+  The wire format is Fulcrum's proposal until CrowbarOS's display settings
+  take it up.
 - **Fractional scale**: a surface hears the scale it should draw at, in
   120ths: the largest scale of the outputs it is on, again whenever that
   changes.
@@ -194,6 +200,8 @@ place since [crowbaros#198](https://github.com/crowbaros/crowbaros/pull/198)
 | `src/data_device.rs` | The data device: the clipboard inside one compartment, and nothing between compartments until slice 4 |
 | `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
 | `src/fractional_scale.rs` | The scale a surface should draw at |
+| `src/layout.rs` | The layout of displays, kept by each monitor's identity |
+| `src/edid.rs` | A monitor's identity, from its EDID |
 | `src/idle_inhibit.rs` | Surfaces that keep their outputs from going idle while shown |
 | `src/redraw.rs` | Drawing only on change |
 | `src/explicit_sync.rs` | Commits that wait for their acquire point, and release points |
@@ -207,7 +215,7 @@ place since [crowbaros#198](https://github.com/crowbaros/crowbaros/pull/198)
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `dl.rs` (libraries loaded at run time), `gles.rs` (EGL and GLES: the context, textures, targets, and draws), `gbm.rs`, `dmabuf.rs` (telling a dma-buf from other files, and reading one with the CPU), `syncobj.rs` (DRM timelines), `drm.rs` (mode setting, dumb buffers, and framebuffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (the guarded mapping) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `cursor.rs` and `cursor_shape.rs` cover the pointer's image; `outputs.rs` covers outputs that change size; `data_device.rs` and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `scale.rs` covers outputs at other scales; `dmabuf.rs` covers linux-dmabuf; `idle_inhibit.rs` covers idle inhibit; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `cursor.rs` and `cursor_shape.rs` cover the pointer's image; `outputs.rs` covers outputs that change size; `data_device.rs` and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `scale.rs` covers outputs at other scales; `layout.rs` covers the layout of displays; `dmabuf.rs` covers linux-dmabuf; `idle_inhibit.rs` covers idle inhibit; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.

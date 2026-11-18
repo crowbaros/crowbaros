@@ -178,6 +178,18 @@ struct CreateBlob {
     blob_id: u32,
 }
 
+/// `struct drm_mode_get_blob`.
+#[repr(C)]
+#[derive(Default)]
+struct GetBlob {
+    blob_id: u32,
+    length: u32,
+    data: u64,
+}
+
+/// The largest blob read: an EDID is 128 bytes and its extensions.
+const MAX_BLOB: u32 = 64 * 1024;
+
 #[repr(C)]
 #[derive(Default)]
 struct FbCmd2 {
@@ -564,6 +576,52 @@ impl Device {
             found.push((String::from_utf8_lossy(&property.name[..end]).into_owned(), id, value));
         }
         Ok(found)
+    }
+
+    /// The bytes of a property blob, as a connector's `EDID`.
+    pub fn blob(&self, blob_id: u32) -> io::Result<Vec<u8>> {
+        let mut first = GetBlob {
+            blob_id,
+            ..Default::default()
+        };
+        // SAFETY: with no data pointer the kernel fills only the length.
+        unsafe {
+            ioctl(
+                &self.fd,
+                Updater::<{ opcode::read_write::<GetBlob>(DRM, 0xac) }, _>::new(&mut first),
+            )?;
+        }
+        if first.length > MAX_BLOB {
+            return Err(io::Error::other("the blob is larger than any EDID"));
+        }
+        let mut bytes = vec![0u8; first.length as usize];
+        let mut again = GetBlob {
+            blob_id,
+            length: first.length,
+            data: bytes.as_mut_ptr() as u64,
+        };
+        // SAFETY: the buffer holds the length the kernel said, which it
+        // writes no more than.
+        unsafe {
+            ioctl(
+                &self.fd,
+                Updater::<{ opcode::read_write::<GetBlob>(DRM, 0xac) }, _>::new(&mut again),
+            )?;
+        }
+        bytes.truncate(again.length.min(first.length) as usize);
+        Ok(bytes)
+    }
+
+    /// A connector's EDID: what the monitor says it is. None where it says
+    /// nothing, as a virtual display may.
+    pub fn edid(&self, connector: u32) -> Option<Vec<u8>> {
+        let (_, _, blob) = self
+            .properties(connector, OBJECT_CONNECTOR)
+            .ok()?
+            .into_iter()
+            .find(|(name, _, _)| name == "EDID")?;
+        let blob = u32::try_from(blob).ok().filter(|blob| *blob != 0)?;
+        self.blob(blob).ok().filter(|bytes| !bytes.is_empty())
     }
 
     /// A blob holding a mode, for a CRTC's `MODE_ID`.

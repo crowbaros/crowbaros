@@ -117,6 +117,11 @@ struct Monitor {
     cursor: Option<CursorPlane>,
     /// How many frames have been drawn.
     frames: u64,
+    /// The modes the monitor can show.
+    modes: Vec<ModeInfo>,
+    /// The buffers of the mode it showed before, until a commit of the new
+    /// one has replaced them on the display.
+    retired: Option<Buffers>,
 }
 
 /// An image the cursor plane shows, and where its corner is.
@@ -208,6 +213,21 @@ enum Buffers {
     Dumb([DumbBuffer; 2]),
     /// Drawn by the GLES renderer.
     Gpu([GpuBuffer; 2]),
+}
+
+/// Lets go of a monitor's buffers and their framebuffers.
+fn release(device: &Device, buffers: Buffers) {
+    match buffers {
+        Buffers::Dumb([first, second]) => {
+            device.destroy(first);
+            device.destroy(second);
+        }
+        Buffers::Gpu(buffers) => {
+            for buffer in buffers {
+                device.remove_framebuffer(buffer.framebuffer);
+            }
+        }
+    }
 }
 
 /// A GBM buffer the display scans out, and the target the GPU draws it as.
@@ -478,15 +498,13 @@ impl Tty {
             log::info!("output disconnected name={}", monitor.name);
             self.turn_off(&monitor);
             state.remove_output(monitor.output);
-            match monitor.buffers {
-                Buffers::Dumb([first, second]) => {
-                    self.device.destroy(first);
-                    self.device.destroy(second);
-                }
-                Buffers::Gpu(buffers) => {
-                    for buffer in buffers {
-                        self.device.remove_framebuffer(buffer.framebuffer);
-                    }
+            release(&self.device, monitor.buffers);
+            if let Some(retired) = monitor.retired {
+                release(&self.device, retired);
+            }
+            if let Some(cursor) = monitor.cursor {
+                for buffer in cursor.buffers {
+                    self.device.destroy(buffer);
                 }
             }
         }
@@ -537,12 +555,23 @@ impl Tty {
                             .is_ok_and(|props| props.iter().any(|(name, _, value)| name == "type" && *value == 2))
                 })
                 .map(|plane| plane.id);
-            let mode = *connector
-                .modes
-                .iter()
-                .find(|mode| mode.preferred())
+            // The monitor's identity keys its layout: the mode the person
+            // chose for it, or else the one it prefers.
+            let identity = self
+                .device
+                .edid(connector.id)
+                .and_then(|edid| crate::edid::identity(&edid))
+                .unwrap_or_else(|| connector.name());
+            let saved = state.saved_mode(&identity).and_then(|(width, height, refresh)| {
+                connector.modes.iter().find(|mode| {
+                    (i32::from(mode.hdisplay), i32::from(mode.vdisplay)) == (width, height)
+                        && (refresh == 0 || mode.refresh_millihertz() == refresh)
+                })
+            });
+            let mode = *saved
+                .or_else(|| connector.modes.iter().find(|mode| mode.preferred()))
                 .unwrap_or(&connector.modes[0]);
-            match self.light(state, &connector, crtc, plane.id, cursor, mode) {
+            match self.light(state, &connector, crtc, (plane.id, cursor), mode, &identity) {
                 Ok(monitor) => self.monitors.push(monitor),
                 Err(error) => log::warning!("could not light {}: {error}", connector.name()),
             }
@@ -554,9 +583,9 @@ impl Tty {
         state: &mut State,
         connector: &fulcrum_sys::drm::Connector,
         crtc: u32,
-        plane: u32,
-        cursor: Option<u32>,
+        (plane, cursor): (u32, Option<u32>),
         mode: ModeInfo,
+        identity: &str,
     ) -> io::Result<Monitor> {
         let find = |object, kind, name: &str| -> io::Result<u32> {
             self.device
@@ -609,6 +638,18 @@ impl Tty {
         let name = connector.name();
         let refresh = mode.refresh_millihertz();
         let output = state.add_output(&name, (width as i32, height as i32), refresh);
+        let modes = connector
+            .modes
+            .iter()
+            .map(|mode| {
+                (
+                    i32::from(mode.hdisplay),
+                    i32::from(mode.vdisplay),
+                    mode.refresh_millihertz(),
+                )
+            })
+            .collect();
+        state.identify_output(output, identity, modes);
         let pointer = if cursor.is_some() { "cursor-plane" } else { "frame" };
         log::info!("output connected name={name} size={width}x{height} refresh={refresh} pointer={pointer}");
         Ok(Monitor {
@@ -627,6 +668,8 @@ impl Tty {
             damage: DamageTracker::default(),
             frames: 0,
             cursor,
+            modes: connector.modes.clone(),
+            retired: None,
         })
     }
 
@@ -876,6 +919,10 @@ impl Backend for Tty {
                 if framebuffer.is_some() {
                     monitor.front = back;
                 }
+                // The display shows the new mode's buffer now.
+                if let Some(retired) = monitor.retired.take() {
+                    release(&self.device, retired);
+                }
                 if let Some(plane) = &mut monitor.cursor {
                     if wrote {
                         plane.front = 1 - plane.front;
@@ -896,6 +943,58 @@ impl Backend for Tty {
                 Drawn::Nothing
             }
         }
+    }
+
+    /// Shows a monitor in another of its modes: new buffers of its size,
+    /// set with the next frame's commit.
+    fn set_mode(&mut self, state: &mut State, output: u64, wanted: (i32, i32, i32)) -> Result<(), String> {
+        let Some(index) = self.monitors.iter().position(|monitor| monitor.output == output) else {
+            return Err("no such monitor".into());
+        };
+        let mode = self.monitors[index]
+            .modes
+            .iter()
+            .find(|mode| {
+                (
+                    i32::from(mode.hdisplay),
+                    i32::from(mode.vdisplay),
+                    mode.refresh_millihertz(),
+                ) == wanted
+            })
+            .copied()
+            .ok_or("the monitor has no such mode")?;
+        let (width, height) = (u32::from(mode.hdisplay), u32::from(mode.vdisplay));
+        let buffers = match self.gpu.as_ref().map(|gpu| gpu.buffers(&self.device, width, height)) {
+            Some(Ok(buffers)) => Buffers::Gpu(buffers),
+            _ => Buffers::Dumb([
+                self.device
+                    .dumb_buffer(width, height)
+                    .map_err(|error| error.to_string())?,
+                self.device
+                    .dumb_buffer(width, height)
+                    .map_err(|error| error.to_string())?,
+            ]),
+        };
+        let blob = self.device.mode_blob(&mode).map_err(|error| error.to_string())?;
+        let monitor = &mut self.monitors[index];
+        let old = std::mem::replace(&mut monitor.buffers, buffers);
+        if let Some(older) = monitor.retired.replace(old) {
+            release(&self.device, older);
+        }
+        let monitor = &mut self.monitors[index];
+        monitor.mode = mode;
+        monitor.mode_blob = blob;
+        monitor.needs_modeset = true;
+        monitor.front = 1;
+        monitor.damage = DamageTracker::default();
+        monitor.frames = 0;
+        log::info!(
+            "output mode name={} size={width}x{height} refresh={}",
+            monitor.name,
+            wanted.2
+        );
+        state.set_output_mode(output, wanted);
+        Ok(())
     }
 
     fn ready(&mut self, state: &mut State, source: u64) {

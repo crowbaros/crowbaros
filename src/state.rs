@@ -102,6 +102,8 @@ pub struct State {
     pub(crate) workspace: u32,
     pub(crate) controls: crate::control::Controls,
     pub(crate) explicit_sync: crate::explicit_sync::ExplicitSync,
+    /// Each monitor's mode, place, and scale, as the person chose them.
+    pub(crate) layout: crate::layout::Layout,
     pub(crate) idle_inhibitors: crate::idle_inhibit::IdleInhibitors,
     /// The system's cursor images, for named shapes and the compositor's
     /// own pointer.
@@ -160,6 +162,7 @@ impl State {
             workspace: 1,
             controls: crate::control::Controls::default(),
             explicit_sync: crate::explicit_sync::ExplicitSync::default(),
+            layout: crate::layout::Layout::default(),
             idle_inhibitors: crate::idle_inhibit::IdleInhibitors::default(),
             cursor_theme: crate::xcursor::CursorTheme::none(),
             grab: None,

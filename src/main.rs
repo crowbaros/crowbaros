@@ -31,6 +31,10 @@ Warden registers for one compartment. All four of these are required:
                          Where the shell's control channel connects, from
                          the shell's user ID. Without it there is none.
 
+  --layout PATH          Where the layout of displays is kept: each
+                         monitor's mode, place, and scale. Without it, the
+                         layout lasts until the compositor stops.
+
   --backend tty          Where frames go: a virtual terminal, with the seat
                          from seatd. The default.
   --backend nested       A window on the host session, for development. Only
@@ -52,12 +56,14 @@ struct Args {
     parts: TrustedParts,
     backend: BackendKind,
     shell_control: Option<PathBuf>,
+    layout: Option<PathBuf>,
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
     let (mut shell_socket, mut shell_uid, mut warden_socket, mut warden_uid) = (None, None, None, None);
     let mut backend = BackendKind::Tty;
     let mut shell_control = None;
+    let mut layout = None;
     let mut rest = args;
     while let Some(flag) = rest.next() {
         let mut value = || rest.next().ok_or(format!("{flag} needs a value"));
@@ -68,6 +74,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--warden-socket" => warden_socket = Some(PathBuf::from(value()?)),
             "--warden-uid" => warden_uid = Some(uid(value()?)?),
             "--shell-control-socket" => shell_control = Some(PathBuf::from(value()?)),
+            "--layout" => layout = Some(PathBuf::from(value()?)),
             "--backend" => match value()?.as_str() {
                 "tty" => backend = BackendKind::Tty,
                 #[cfg(feature = "nested")]
@@ -89,6 +96,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         },
         backend,
         shell_control,
+        layout,
     })
 }
 
@@ -105,6 +113,10 @@ fn main() {
         crowbar_compositor::limits::raise_descriptor_limit();
         let mut state = State::new()?;
         state.use_cursor_theme_from_environment();
+        // The layout is read before any monitor is lit, which takes it.
+        if let Some(layout) = &args.layout {
+            state.keep_layout_in(layout);
+        }
         // Clients are accepted only once there is something to show them on.
         let name = match args.backend {
             BackendKind::Tty => {

@@ -38,4 +38,10 @@ pub trait Backend {
 
     /// A descriptor the backend watches with [`State::watch`] is ready.
     fn ready(&mut self, _state: &mut State, _source: u64) {}
+
+    /// Shows an output in another of its modes: width, height, and refresh
+    /// in millihertz.
+    fn set_mode(&mut self, _state: &mut State, _output: u64, _mode: (i32, i32, i32)) -> Result<(), String> {
+        Err("this backend shows each output in one mode".into())
+    }
 }

@@ -15,9 +15,18 @@
 //! <- {"reply":"ok"}
 //! -> {"op":"focus_window","id":"0x2"}
 //! <- {"reply":"ok"}
+//! -> {"op":"outputs"}
+//! <- {"reply":"outputs","outputs":[{"name":"HDMI-A-1","identity":"DEL DELL U2723QE 8GZGCP3","width":3840,"height":2160,"refresh":60000,"x":0,"y":0,"scale":150,"modes":[{"width":3840,"height":2160,"refresh":60000}]}]}
+//! -> {"op":"configure_output","name":"HDMI-A-1","width":2560,"height":1440,"refresh":59951,"x":0,"y":0,"scale":120}
+//! <- {"reply":"ok"}
 //! -> {"op":"anything else"}
 //! <- {"reply":"error","message":"..."}
 //! ```
+//!
+//! `outputs` and `configure_output` are the shell's interface to the layout
+//! of displays (ADR 0020): a monitor's mode, place, and scale, the scale in
+//! 120ths as fractional scale counts. What `configure_output` sets is kept
+//! for the monitor (see `layout.rs`); a field it leaves out stays as it is.
 //!
 //! A request is at most [`MAX_LINE`] bytes. A connection that sends a longer
 //! one, or reads no replies until [`MAX_PENDING`] bytes wait for it, is
@@ -283,6 +292,10 @@ impl State {
                 self.focus_window(surface);
                 Ok(ok_reply())
             }),
+            "outputs" => only(&[], &request).map(|()| self.outputs_reply()),
+            "configure_output" => only(&["name", "width", "height", "refresh", "x", "y", "scale"], &request)
+                .and_then(|()| self.configure_output(&request))
+                .map(|()| ok_reply()),
             _ => Err(format!("no op {op:?}")),
         };
         result.unwrap_or_else(|message| error_reply(&message))
@@ -328,6 +341,94 @@ impl State {
             self.workspace,
             windows.join(",")
         )
+    }
+}
+
+impl State {
+    fn outputs_reply(&self) -> String {
+        let outputs: Vec<String> = self
+            .outputs
+            .iter()
+            .map(|output| {
+                let modes: Vec<String> = output
+                    .modes
+                    .iter()
+                    .map(|(width, height, refresh)| {
+                        format!("{{\"width\":{width},\"height\":{height},\"refresh\":{refresh}}}")
+                    })
+                    .collect();
+                format!(
+                    "{{\"name\":{},\"identity\":{},\"width\":{},\"height\":{},\"refresh\":{},\"x\":{},\"y\":{},\"scale\":{},\"modes\":[{}]}}",
+                    quote(&output.name),
+                    quote(&output.identity),
+                    output.size.0,
+                    output.size.1,
+                    output.refresh,
+                    output.position.0,
+                    output.position.1,
+                    output.scale_120,
+                    modes.join(",")
+                )
+            })
+            .collect();
+        format!("{{\"reply\":\"outputs\",\"outputs\":[{}]}}", outputs.join(","))
+    }
+
+    /// Sets what a request names of an output's mode, place, and scale, and
+    /// keeps the output's whole placement for its monitor.
+    fn configure_output(&mut self, request: &BTreeMap<String, Value>) -> Result<(), String> {
+        let name = match request.get("name") {
+            Some(Value::String(name)) => name.clone(),
+            _ => return Err("an output is named by its name".into()),
+        };
+        let mut fields = request.clone();
+        fields.remove("name");
+        let wanted = crate::layout::placement_of(&fields)?;
+        let Some(output) = self.outputs.iter().find(|output| output.name == name) else {
+            return Err(format!("no output {name:?}"));
+        };
+        let number = output.number;
+        if let Some(scale) = wanted.scale_120
+            && (!(120..=360).contains(&scale) || scale % 30 != 0)
+        {
+            return Err(format!("a scale is from 120 to 360 in steps of 30, not {scale}"));
+        }
+        if let Some((width, height, refresh)) = wanted.mode {
+            let known = output
+                .modes
+                .iter()
+                .find(|(w, h, r)| (*w, *h) == (width, height) && (refresh == 0 || *r == refresh))
+                .copied()
+                .ok_or_else(|| format!("{name} has no mode {width}x{height} at {refresh} mHz"))?;
+            if known != (output.size.0, output.size.1, output.refresh) {
+                let Some(mut backend) = self.backend.take() else {
+                    return Err("no backend to show the mode".into());
+                };
+                let result = backend.set_mode(self, number, known);
+                if self.backend.is_none() {
+                    self.backend = Some(backend);
+                }
+                result?;
+            }
+        }
+        if let Some(scale) = wanted.scale_120 {
+            self.set_output_scale(number, scale)?;
+        }
+        if let Some(position) = wanted.position {
+            self.set_output_position(number, position);
+        }
+        // What is kept is the output as it now is.
+        let Some(output) = self.outputs.iter().find(|output| output.number == number) else {
+            return Ok(());
+        };
+        let identity = output.identity.clone();
+        let placement = crate::layout::Placement {
+            mode: Some((output.size.0, output.size.1, output.refresh)),
+            position: Some(output.position),
+            scale_120: Some(output.scale_120),
+        };
+        self.layout.set(&identity, placement);
+        Ok(())
     }
 }
 

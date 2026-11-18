@@ -22,6 +22,11 @@ pub const OUTPUT_VERSION: u32 = 4;
 pub struct Output {
     pub number: u64,
     pub name: String,
+    /// What the layout is kept by: the monitor's identity, or its name
+    /// where the backend knows no other (see `layout.rs`).
+    pub identity: String,
+    /// The modes it can show: width, height, and refresh in millihertz.
+    pub modes: Vec<(i32, i32, i32)>,
     /// In pixels: its mode.
     pub size: (i32, i32),
     /// In millihertz.
@@ -79,6 +84,8 @@ impl State {
         self.outputs.push(Output {
             number,
             name: name.to_string(),
+            identity: name.to_string(),
+            modes: vec![(size.0, size.1, refresh)],
             size,
             refresh,
             position: (x, 0),
@@ -149,6 +156,76 @@ impl State {
         self.reshape_output(number, |output| output.size = size);
     }
 
+    /// An output now shows another mode: width, height, and refresh in
+    /// millihertz.
+    pub fn set_output_mode(&mut self, number: u64, mode: (i32, i32, i32)) {
+        self.reshape_output(number, |output| {
+            output.size = (mode.0, mode.1);
+            output.refresh = mode.2;
+        });
+    }
+
+    /// Names the monitor an output shows on, and the modes it can show, and
+    /// gives it the scale and place the layout keeps for it.
+    pub fn identify_output(&mut self, number: u64, identity: &str, modes: Vec<(i32, i32, i32)>) {
+        let Some(output) = self.outputs.iter_mut().find(|output| output.number == number) else {
+            return;
+        };
+        output.identity = identity.to_owned();
+        if !modes.is_empty() {
+            output.modes = modes;
+        }
+        let Some(placement) = self.layout.get(identity).cloned() else {
+            return;
+        };
+        if let Some(scale) = placement.scale_120
+            && let Err(error) = self.set_output_scale(number, scale)
+        {
+            crate::log::warning!("the layout's scale was not taken: {error}");
+        }
+        if let Some(position) = placement.position {
+            self.set_output_position(number, position);
+        }
+    }
+
+    /// The mode the layout keeps for a monitor, for a backend to light it
+    /// in.
+    pub fn saved_mode(&self, identity: &str) -> Option<(i32, i32, i32)> {
+        self.layout.get(identity)?.mode
+    }
+
+    /// Keeps the layout of displays in a file, and reads what it holds.
+    pub fn keep_layout_in(&mut self, path: &std::path::Path) {
+        self.layout = crate::layout::Layout::load(path);
+    }
+
+    /// Puts an output's top-left corner at a place on the desktop. The
+    /// others stay where they are.
+    pub fn set_output_position(&mut self, number: u64, position: (i32, i32)) {
+        let Some(output) = self.outputs.iter_mut().find(|output| output.number == number) else {
+            return;
+        };
+        if output.position == position {
+            return;
+        }
+        output.position = position;
+        let bound: Vec<(ClientId, u32)> = self
+            .clients
+            .iter()
+            .flat_map(|(id, client)| client.outputs_bound(number).into_iter().map(|object| (*id, object)))
+            .collect();
+        for (client, object) in bound {
+            self.output_bound(client, object, number);
+        }
+        self.rearrange(number);
+        let windows: Vec<_> = self.windows.iter().map(|window| window.surface).collect();
+        for surface in windows {
+            self.update_outputs_of(surface);
+        }
+        self.update_fractional_scales();
+        self.queue_redraw_all();
+    }
+
     /// Sets an output's scale, in 120ths: from 120 to 360 in steps of 30,
     /// as ADR 0020 allows. The desktop it covers changes as a resize's does.
     pub fn set_output_scale(&mut self, number: u64, scale_120: u32) -> Result<(), String> {
@@ -171,15 +248,12 @@ impl State {
         let Some(index) = self.outputs.iter().position(|output| output.number == number) else {
             return;
         };
-        let before = (
-            self.outputs[index].rect(),
-            self.outputs[index].size,
-            self.outputs[index].scale_120,
-        );
+        let shape = |output: &Output| (output.rect(), output.size, output.scale_120, output.refresh);
+        let before = shape(&self.outputs[index]);
         let old = before.0;
         change(&mut self.outputs[index]);
         let new = self.outputs[index].rect();
-        if (new, self.outputs[index].size, self.outputs[index].scale_120) == before {
+        if shape(&self.outputs[index]) == before {
             return;
         }
         let mut changed = vec![number];
