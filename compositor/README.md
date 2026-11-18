@@ -36,8 +36,8 @@ with it, so `git log` in Fulcrum shows every commit that touched this
 directory.
 
 The [spike](../lab/compositor-spike/README.md) that tested ADR 0015 is not the
-compositor. It stays in `lab/compositor-spike/` because the Alpha desktop check
-still runs it, and it is deleted when the compositor passes that check.
+compositor. The Alpha desktop check now passes on the compositor the pin names,
+and the desktop runs it, so the spike is deleted in a pull request of its own.
 
 ## The pin
 

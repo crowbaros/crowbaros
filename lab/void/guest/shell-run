@@ -5,6 +5,6 @@ install -d -o crowbar-shell -g crowbar-shell -m 0700 /run/user/1001
 chown crowbar-shell:crowbar-shell /home/crowbar-shell
 exec chpst -u crowbar-shell:crowbar-shell env -i \
   HOME=/home/crowbar-shell PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
-  XDG_RUNTIME_DIR=/run/user/1001 WAYLAND_DISPLAY=/run/crowbar-display/wayland-1 \
+  XDG_RUNTIME_DIR=/run/user/1001 WAYLAND_DISPLAY=/run/crowbar-trusted/compositor/wayland \
   CROWBAR_LAUNCH_SOCKET=/run/crowbar-launch/socket RUST_LOG=info \
   /usr/local/bin/crowbar-alpha-shell
