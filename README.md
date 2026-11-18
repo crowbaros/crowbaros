@@ -25,9 +25,10 @@ the CrowbarOS repository:
 
 ## Where it stands
 
-Milestone 1, the Wayland core, is done ([record](docs/wayland-core-2026-11-17.md)).
-Milestone 2, first light, is under way: Fulcrum shows windows on a virtual
-terminal. What is built:
+Milestones 1 and 2 are done: the Wayland core
+([record](docs/wayland-core-2026-11-17.md)) and first light
+([record](docs/first-light-2026-11-17.md)). Fulcrum shows windows on a virtual
+terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 
 - **`fulcrum-wire`**, the wire protocol: the codec, connections that pass
   descriptors beside the bytes, and Rust code generated from the protocol XML.
@@ -75,13 +76,14 @@ terminal. What is built:
 - **A headless backend** that draws each output with the CPU renderer, and
   `crowbar-probe`, the test client, on `fulcrum-wire`'s client side.
 
-The GLES renderer, GBM, damage tracking, and linux-dmabuf come with
-Milestone 3.
+Milestone 3 brings the GLES renderer, GBM buffers for the display, damage
+tracking, and linux-dmabuf. Until then `zwp_linux_dmabuf_v1` is created for no
+one, though the table's rows say who will be offered it.
 
-CrowbarOS still builds the Smithay-based compositor that Milestone 0 brought
-here: commit `d11400f`, tagged `smithay-baseline`. Its 57 tests and the 36
-checks of CrowbarOS's Void guest are the specification the new compositor
-must pass before CrowbarOS moves its pin.
+The Smithay-based compositor that Milestone 0 brought here is at commit
+`d11400f`, tagged `smithay-baseline`. Its 57 tests and CrowbarOS's Void guest
+check were the specification this one passed before CrowbarOS moved its pin
+to it.
 
 ## Layout
 
