@@ -11,4 +11,5 @@ pub mod gbm;
 pub mod gles;
 pub mod libinput;
 pub mod shm;
+pub mod syncobj;
 pub mod xkb;

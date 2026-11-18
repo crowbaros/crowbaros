@@ -8,7 +8,7 @@ description = "Fulcrum's bindings to the kernel and the C libraries it links. Th
 
 [dependencies]
 # Memory mappings and system calls.
-rustix = { workspace = true, features = ["mm", "fs"] }
+rustix = { workspace = true, features = ["mm", "fs", "event"] }
 # `sigaction` and `siginfo_t`, which rustix does not offer outside its
 # runtime interface. Not from the Smithay organization.
 libc = "0.2"

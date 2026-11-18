@@ -70,6 +70,10 @@ pub(crate) enum ObjectKind {
     FractionalScale(crate::surface::SurfaceId),
     Presentation,
     PresentationFeedback,
+    ExplicitSync,
+    /// A `wp_linux_drm_syncobj_surface_v1`, for its surface.
+    SyncobjSurface(crate::surface::SurfaceId),
+    SyncobjTimeline(crate::explicit_sync::TimelineId),
     /// The object of a global a test planted. Any request on it is a
     /// protocol error.
     Unimplemented,

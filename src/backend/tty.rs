@@ -322,6 +322,12 @@ pub fn init(state: &mut State) -> io::Result<()> {
         Some(stat) => state.offer_dmabuf(stat.st_rdev),
         None => log::warning!("no linux-dmabuf: the DRM device could not be named"),
     }
+    // Clients' timelines are imported on the display's device, whose
+    // syncobjs every driver on it shares.
+    match tty.device.fd().try_clone_to_owned() {
+        Ok(device) => state.offer_explicit_sync(device),
+        Err(error) => log::warning!("no explicit sync: {error}"),
+    }
     state.watch(tty.session.borrow().fd(), SOURCE_SESSION)?;
     state.watch(tty.device.fd(), SOURCE_DRM)?;
     state.watch(tty.input.fd(), SOURCE_INPUT)?;

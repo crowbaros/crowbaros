@@ -65,6 +65,9 @@ pub(crate) struct Pending {
     scale: Option<i32>,
     /// `wp_presentation.feedback` objects for this commit.
     pub(crate) presentation: Vec<u32>,
+    /// Explicit sync's points for this commit's buffer.
+    pub(crate) acquire: Option<crate::explicit_sync::Point>,
+    pub(crate) release: Option<crate::explicit_sync::Point>,
     /// `wp_viewport.set_source`: `Some(None)` unsets it.
     pub(crate) source: Option<Option<Crop>>,
     /// `wp_viewport.set_destination`: `Some(None)` unsets it.
@@ -81,8 +84,13 @@ pub(crate) struct Crop {
 }
 
 impl Pending {
+    /// The buffer this commit attaches: `Some(None)` detaches it.
+    pub(crate) fn attached(&self) -> Option<Option<BufferId>> {
+        self.buffer
+    }
+
     /// Newer state over older, as when a held commit is followed by another.
-    fn over(self, mut older: Pending) -> Pending {
+    pub(crate) fn over(self, mut older: Pending) -> Pending {
         if self.buffer.is_some() {
             older.buffer = self.buffer;
         }
@@ -92,6 +100,13 @@ impl Pending {
         older.damage.extend(self.damage);
         older.frames.extend(self.frames);
         older.presentation.extend(self.presentation);
+        // An older buffer never shown is done with: its release point is
+        // signalled as the newer one replaces it.
+        if self.release.is_some() {
+            State::signal_release(older.release.take());
+        }
+        older.acquire = self.acquire.or(older.acquire);
+        older.release = self.release.or(older.release);
         if self.opaque.is_some() {
             older.opaque = self.opaque;
         }
@@ -245,6 +260,8 @@ pub(crate) struct Surface {
     pub viewport: Option<u32>,
     /// Its `wp_fractional_scale_v1`, if it has one.
     pub fractional_scale: Option<u32>,
+    /// Its `wp_linux_drm_syncobj_surface_v1`, if it has one.
+    pub syncobj: Option<u32>,
 }
 
 impl State {
@@ -289,6 +306,7 @@ impl State {
                         entered: Vec::new(),
                         viewport: None,
                         fractional_scale: None,
+                        syncobj: None,
                     },
                 );
                 Ok(())
@@ -435,14 +453,9 @@ impl State {
                 self.surface_mut(id).pending.offset = Some((x, y));
             }
             wl_surface::Request::Commit => {
-                self.commit(id)?;
-                let root = self.root_of(id);
-                self.xdg_committed(root)?;
-                self.layer_committed(root)?;
-                // Counted once the role has the commit, so the one that maps
-                // a window counts.
-                self.count_commit(id);
-                self.queue_redraw_for(id);
+                if self.commit(id)? {
+                    self.finish_commit(id)?;
+                }
             }
             wl_surface::Request::GetRelease { .. } => {
                 return Err(fail(
@@ -479,8 +492,12 @@ impl State {
         false
     }
 
-    fn commit(&mut self, id: SurfaceId) -> Result<(), ProtocolError> {
+    /// A commit: held for the parent of a synchronized subsurface, or for
+    /// an acquire point not yet signalled (see `explicit_sync.rs`), or else
+    /// applied. False if it was held for its acquire point.
+    fn commit(&mut self, id: SurfaceId) -> Result<bool, ProtocolError> {
         let pending = std::mem::take(&mut self.surface_mut(id).pending);
+        self.check_points(id, &pending)?;
         let held = self.surface_mut(id).cached.take();
         let state = match held {
             Some(held) => pending.over(held),
@@ -488,14 +505,42 @@ impl State {
         };
         if self.is_synchronized(id) {
             self.surface_mut(id).cached = Some(state);
-            return Ok(());
+            return Ok(true);
         }
-        self.apply(id, state)
+        match self.hold_commit(id, state)? {
+            Some(state) => {
+                self.apply(id, state)?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// After a commit: its role takes it, and what shows it is drawn again.
+    pub(crate) fn finish_commit(&mut self, id: SurfaceId) -> Result<(), ProtocolError> {
+        let root = self.root_of(id);
+        self.xdg_committed(root)?;
+        self.layer_committed(root)?;
+        // Counted once the role has the commit, so the one that maps a
+        // window counts.
+        self.count_commit(id);
+        self.queue_redraw_for(id);
+        Ok(())
+    }
+
+    /// Applies a commit that was held for its acquire point.
+    pub(crate) fn apply_commit(&mut self, id: SurfaceId, state: Pending) -> Result<(), ProtocolError> {
+        self.apply(id, state)?;
+        self.finish_commit(id)
     }
 
     /// Makes committed state current, then the held state of each
     /// synchronized subsurface.
-    fn apply(&mut self, id: SurfaceId, state: Pending) -> Result<(), ProtocolError> {
+    fn apply(&mut self, id: SurfaceId, mut state: Pending) -> Result<(), ProtocolError> {
+        // The buffer is copied here, so the compositor is done with it once
+        // this commit is applied.
+        let release = state.release.take();
+        state.acquire = None;
         let surface = self.surfaces.get(&id).expect("an applied surface exists");
         let object = surface.object;
         let scale = state.scale.unwrap_or(surface.current.scale);
@@ -594,6 +639,7 @@ impl State {
         surface.current.transform = state.transform.unwrap_or(surface.current.transform);
         surface.current.scale = scale;
         surface.commits += 1;
+        State::signal_release(release);
         if !superseded.is_empty() {
             self.discard_feedback(feedback_client, superseded);
         }
@@ -776,6 +822,7 @@ impl State {
         if self.cursor_surface() == Some(id) {
             self.reset_cursor();
         }
+        self.forget_held(id);
         let Some(surface) = self.surfaces.remove(&id) else {
             return;
         };

@@ -42,6 +42,8 @@ pub enum Token {
     ControlListener,
     /// A control connection.
     Control(u64),
+    /// A surface's commit held for its acquire point.
+    Held(u64),
 }
 
 impl Token {
@@ -55,6 +57,7 @@ impl Token {
             Token::Backend(source) => (6, source),
             Token::ControlListener => (7, 0),
             Token::Control(id) => (8, id),
+            Token::Held(surface) => (9, surface),
         };
         debug_assert!(value < 1 << 56);
         (kind << 56) | value
@@ -71,6 +74,7 @@ impl Token {
             6 => Token::Backend(value),
             7 => Token::ControlListener,
             8 => Token::Control(value),
+            9 => Token::Held(value),
             _ => return None,
         })
     }

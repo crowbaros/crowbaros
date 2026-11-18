@@ -21,6 +21,7 @@ pub mod data_device;
 pub mod dmabuf;
 pub mod event_loop;
 mod evidence;
+mod explicit_sync;
 mod fractional_scale;
 pub mod geometry;
 mod globals;

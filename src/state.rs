@@ -8,6 +8,9 @@ use fulcrum_wire::{
     protocol::{
         fractional_scale_v1::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
         linux_dmabuf_v1::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1},
+        linux_drm_syncobj_v1::{
+            wp_linux_drm_syncobj_manager_v1, wp_linux_drm_syncobj_surface_v1, wp_linux_drm_syncobj_timeline_v1,
+        },
         presentation_time::{wp_presentation, wp_presentation_feedback},
         security_context_v1::{wp_security_context_manager_v1, wp_security_context_v1},
         viewporter::{wp_viewport, wp_viewporter},
@@ -96,6 +99,7 @@ pub struct State {
     /// The workspace showing.
     pub(crate) workspace: u32,
     pub(crate) controls: crate::control::Controls,
+    pub(crate) explicit_sync: crate::explicit_sync::ExplicitSync,
     /// What the pointer is doing to a window, if anything.
     pub(crate) grab: Option<crate::grabs::Grab>,
     /// Commits by window and layer, and when they were last reported.
@@ -149,6 +153,7 @@ impl State {
             seat: crate::seat::Seat::new(),
             workspace: 1,
             controls: crate::control::Controls::default(),
+            explicit_sync: crate::explicit_sync::ExplicitSync::default(),
             grab: None,
             commit_counts: std::collections::BTreeMap::new(),
             last_report: None,
@@ -237,6 +242,7 @@ impl State {
                 }
                 Token::ControlListener => self.accept_control(),
                 Token::Control(id) => self.control_ready(id, readiness),
+                Token::Held(surface) => self.release_held(surface),
                 Token::Backend(source) => {
                     if let Some(mut backend) = self.backend.take() {
                         backend.ready(self, source);
@@ -434,6 +440,9 @@ impl State {
             ObjectKind::BufferParams(params) => {
                 self.dmabufs.params.remove(params);
             }
+            ObjectKind::SyncobjTimeline(timeline) => {
+                self.explicit_sync.timelines.remove(timeline);
+            }
             _ => {}
         }
     }
@@ -562,6 +571,16 @@ impl State {
                 ObjectKind::Dmabuf => zwp_linux_dmabuf_v1::Request::decode(opcode, &mut args).map(Request::Dmabuf),
                 ObjectKind::BufferParams(params) => zwp_linux_buffer_params_v1::Request::decode(opcode, &mut args)
                     .map(|request| Request::BufferParams(*params, request)),
+                ObjectKind::ExplicitSync => {
+                    wp_linux_drm_syncobj_manager_v1::Request::decode(opcode, &mut args).map(Request::ExplicitSync)
+                }
+                ObjectKind::SyncobjSurface(surface) => {
+                    wp_linux_drm_syncobj_surface_v1::Request::decode(opcode, &mut args)
+                        .map(|request| Request::SyncobjSurface(*surface, request))
+                }
+                ObjectKind::SyncobjTimeline(_) => {
+                    wp_linux_drm_syncobj_timeline_v1::Request::decode(opcode, &mut args).map(Request::SyncobjTimeline)
+                }
                 ObjectKind::Presentation => {
                     wp_presentation::Request::decode(opcode, &mut args).map(Request::Presentation)
                 }
@@ -632,6 +651,11 @@ impl State {
             Request::BufferParams(params, request) => self.buffer_params_request(client_id, id, params, request)?,
             Request::DmabufFeedback(zwp_linux_dmabuf_feedback_v1::Request::Destroy) => {}
             Request::Presentation(request) => self.presentation_request(client_id, request)?,
+            Request::ExplicitSync(request) => self.explicit_sync_request(client_id, id, request)?,
+            Request::SyncobjSurface(surface, request) => {
+                self.syncobj_surface_request(client_id, id, surface, request)?
+            }
+            Request::SyncobjTimeline(wp_linux_drm_syncobj_timeline_v1::Request::Destroy) => {}
             Request::PresentationFeedback(request) => match request {},
             Request::FractionalScaleManager(request) => {
                 self.fractional_scale_manager_request(client_id, id, request)?
@@ -718,6 +742,9 @@ enum Request {
     FractionalScaleManager(wp_fractional_scale_manager_v1::Request),
     FractionalScale(SurfaceId, wp_fractional_scale_v1::Request),
     Presentation(wp_presentation::Request),
+    ExplicitSync(wp_linux_drm_syncobj_manager_v1::Request),
+    SyncobjSurface(SurfaceId, wp_linux_drm_syncobj_surface_v1::Request),
+    SyncobjTimeline(wp_linux_drm_syncobj_timeline_v1::Request),
     PresentationFeedback(wp_presentation_feedback::Request),
 }
 
