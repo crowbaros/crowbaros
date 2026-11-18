@@ -32,6 +32,13 @@ pub(crate) struct Window {
     pub location: (i32, i32),
     /// The workspace it is on, from 1 to 9.
     pub workspace: u32,
+    pub mode: crate::modes::Mode,
+    /// Where it floated, to go back to when it leaves its mode.
+    pub floating: Option<Rect>,
+    /// The size to tell it once, as it goes back to floating.
+    pub restore: Option<(i32, i32)>,
+    /// The rectangle its mode last gave it.
+    pub fitted: Option<Rect>,
 }
 
 impl State {
@@ -102,7 +109,7 @@ impl State {
 
     /// The output a new window opens on: the one the pointer is on, or the
     /// first.
-    fn output_for_new_window(&self) -> Option<u64> {
+    pub(crate) fn output_for_new_window(&self) -> Option<u64> {
         let (x, y) = (self.pointer.0 as i32, self.pointer.1 as i32);
         self.outputs
             .iter()
@@ -131,7 +138,28 @@ impl State {
                 surface,
                 location,
                 workspace: self.workspace,
+                mode: crate::modes::Mode::Floating,
+                floating: None,
+                restore: None,
+                fitted: None,
             });
+            // What the client asked for before it mapped.
+            let requests = &self.xdg[&surface].toplevel;
+            let mode = if requests.fullscreen {
+                crate::modes::Mode::Fullscreen
+            } else if requests.maximized {
+                crate::modes::Mode::Maximized
+            } else {
+                crate::modes::Mode::Floating
+            };
+            if let Some(rect) = self.mode_rect(output, mode)
+                && let Some(window) = self.windows.iter_mut().find(|window| window.surface == surface)
+            {
+                window.floating = Some(Rect::new(location.0, location.1, rect.width, rect.height));
+                window.mode = mode;
+                window.location = (rect.x, rect.y);
+                window.fitted = Some(rect);
+            }
             let client = self.surfaces[&surface].client;
             crate::log::debug!(
                 "window mapped client={client} app_id={} at={},{}",

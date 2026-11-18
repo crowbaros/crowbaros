@@ -8,7 +8,13 @@ use std::{collections::HashMap, io};
 
 use fulcrum_sys::gles::{Gles, Target, Texture};
 
-use crate::{State, geometry::Rect, image::Image, scene::Scene, surface::SurfaceId};
+use crate::{
+    State,
+    geometry::Rect,
+    image::Image,
+    scene::{Element, Scene},
+    surface::SurfaceId,
+};
 
 pub struct Renderer {
     gles: Gles,
@@ -32,23 +38,22 @@ impl Renderer {
     fn prepare(&mut self, state: &State, scene: &Scene) {
         self.textures.retain(|surface, _| state.surfaces.contains_key(surface));
         for element in &scene.elements {
-            let Some(surface) = state.surfaces.get(&element.surface) else {
+            let Element::Surface { surface: id, .. } = element else {
+                continue;
+            };
+            let Some(surface) = state.surfaces.get(id) else {
                 continue;
             };
             let Some(image) = &surface.current.content else {
                 continue;
             };
             let serial = surface.current.content_serial;
-            if self
-                .textures
-                .get(&element.surface)
-                .is_some_and(|(uploaded, _)| *uploaded == serial)
-            {
+            if self.textures.get(id).is_some_and(|(uploaded, _)| *uploaded == serial) {
                 continue;
             }
             match self.gles.upload(image.width, image.height, &image.pixels) {
                 Ok(texture) => {
-                    self.textures.insert(element.surface, (serial, texture));
+                    self.textures.insert(*id, (serial, texture));
                 }
                 Err(error) => crate::log::warning!("could not upload a surface: {error}"),
             }
@@ -63,22 +68,25 @@ impl Renderer {
         let mut frame = self.gles.frame(target);
         frame.clear(full, scene.background);
         for element in &scene.elements {
-            let (Some((_, texture)), Some(surface)) = (
-                self.textures.get(&element.surface),
-                state.surfaces.get(&element.surface),
-            ) else {
-                continue;
-            };
-            let rect = element.rect;
-            let destination = (rect.x, rect.y, rect.width, rect.height);
-            frame.draw(
-                texture,
-                surface.current.source_in_buffer(),
-                destination,
-                destination,
-                false,
-                1.0,
-            );
+            match element {
+                Element::Surface { surface: id, rect } => {
+                    let (Some((_, texture)), Some(surface)) = (self.textures.get(id), state.surfaces.get(id)) else {
+                        continue;
+                    };
+                    let destination = (rect.x, rect.y, rect.width, rect.height);
+                    frame.draw(
+                        texture,
+                        surface.current.source_in_buffer(),
+                        destination,
+                        destination,
+                        false,
+                        1.0,
+                    );
+                }
+                Element::Solid { rect, colour } => {
+                    frame.clear((rect.x, rect.y, rect.width, rect.height), *colour);
+                }
+            }
         }
         if let Some(pointer) = pointer {
             frame.clear(

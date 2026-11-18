@@ -27,6 +27,7 @@ mod json;
 mod layer;
 pub mod limits;
 pub mod log;
+pub mod modes;
 mod output;
 pub mod policy;
 mod redraw;
@@ -42,6 +43,7 @@ pub mod workspaces;
 mod xdg;
 
 pub use output::{OUTPUT_VERSION, Output};
+pub use scene::{FRAME_FOCUSED, FRAME_UNFOCUSED, FRAME_WIDTH};
 pub use seat::{REPEAT, SEAT_VERSION};
 pub use shm::MAX_POOL_SIZE;
 pub use state::State;

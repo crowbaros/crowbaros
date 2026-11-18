@@ -43,6 +43,11 @@ const MODIFIERS: [u32; 8] = [125, 126, 42, 54, 29, 97, 56, 100];
 /// The keys 1 and 9 of the top row.
 const KEY_1: u32 = 2;
 const KEY_9: u32 = 10;
+const KEY_F: u32 = 33;
+const KEY_UP: u32 = 103;
+const KEY_LEFT: u32 = 105;
+const KEY_RIGHT: u32 = 106;
+const KEY_DOWN: u32 = 108;
 
 pub(crate) struct Seat {
     keyboard: Option<Keyboard>,
@@ -373,9 +378,22 @@ impl State {
     /// | --- | --- |
     /// | Super+1 to Super+9 | Shows that workspace |
     /// | Super+Shift+1 to Super+Shift+9 | Moves the window with the keyboard there |
+    /// | Super+Up | Maximizes the window with the keyboard, or restores it |
+    /// | Super+F | Makes it fullscreen, or restores it |
+    /// | Super+Left, Super+Right | Snaps it to that half, or restores it |
+    /// | Super+Down | Restores it |
     ///
     /// Every other chord with Super is taken and does nothing yet.
     fn compositor_key(&mut self, key: u32, shift: bool) {
+        use crate::modes::Mode;
+        match key {
+            KEY_UP => return self.toggle_mode(Mode::Maximized),
+            KEY_F => return self.toggle_mode(Mode::Fullscreen),
+            KEY_LEFT => return self.toggle_mode(Mode::Left),
+            KEY_RIGHT => return self.toggle_mode(Mode::Right),
+            KEY_DOWN => return self.toggle_mode(Mode::Floating),
+            _ => {}
+        }
         if !(KEY_1..=KEY_9).contains(&key) {
             return;
         }
@@ -590,28 +608,45 @@ impl State {
                     .find_map(|surface| self.tree_hit(surface.surface, (surface.rect.x, surface.rect.y), point, 0))
             })
         };
-        let hit = layers([layer::OVERLAY, layer::TOP])
-            .or_else(|| {
-                self.popups.iter().rev().find_map(|popup| {
-                    if !self.xdg.get(popup).is_some_and(|xdg| xdg.mapped) {
-                        return None;
-                    }
-                    let corner = self.xdg_location(*popup, 0)?;
-                    let geometry = self.window_geometry(*popup);
-                    self.tree_hit(*popup, (corner.0 - geometry.x, corner.1 - geometry.y), point, 0)
-                })
+        // As drawn: a fullscreen window, and every window above it, are
+        // above the top layers, and each window's popups are with it.
+        let showing: Vec<&crate::windows::Window> = self
+            .windows
+            .iter()
+            .filter(|window| window.workspace == self.workspace)
+            .collect();
+        let split = showing
+            .iter()
+            .rposition(|window| window.mode == crate::modes::Mode::Fullscreen)
+            .unwrap_or(showing.len());
+        let (below, above) = showing.split_at(split);
+        let popup_hit = |of: &dyn Fn(Option<SurfaceId>) -> bool| {
+            self.popups.iter().rev().find_map(|popup| {
+                if !self.xdg.get(popup).is_some_and(|xdg| xdg.mapped) || !of(self.toplevel_of(*popup)) {
+                    return None;
+                }
+                let corner = self.xdg_location(*popup, 0)?;
+                let geometry = self.window_geometry(*popup);
+                self.tree_hit(*popup, (corner.0 - geometry.x, corner.1 - geometry.y), point, 0)
             })
-            .or_else(|| {
-                self.windows
-                    .iter()
-                    .rev()
-                    .filter(|window| window.workspace == self.workspace)
-                    .find_map(|window| {
-                        let geometry = self.window_geometry(window.surface);
-                        let origin = (window.location.0 - geometry.x, window.location.1 - geometry.y);
-                        self.tree_hit(window.surface, origin, point, 0)
-                    })
+        };
+        let windows_hit = |windows: &[&crate::windows::Window]| {
+            windows.iter().rev().find_map(|window| {
+                let geometry = self.window_geometry(window.surface);
+                let origin = (window.location.0 - geometry.x, window.location.1 - geometry.y);
+                self.tree_hit(window.surface, origin, point, 0)
             })
+        };
+        let among = |windows: &[&crate::windows::Window], toplevel: Option<SurfaceId>| {
+            windows.iter().any(|window| Some(window.surface) == toplevel)
+        };
+        let hit = popup_hit(&|toplevel| toplevel.is_none())
+            .or_else(|| layers([layer::OVERLAY, layer::OVERLAY]))
+            .or_else(|| popup_hit(&|toplevel| among(above, toplevel)))
+            .or_else(|| windows_hit(above))
+            .or_else(|| layers([layer::TOP, layer::TOP]))
+            .or_else(|| popup_hit(&|toplevel| among(below, toplevel)))
+            .or_else(|| windows_hit(below))
             .or_else(|| layers([layer::BOTTOM, layer::BACKGROUND]))?;
         Some((hit.0, (f64::from(hit.1.0), f64::from(hit.1.1))))
     }

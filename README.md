@@ -45,6 +45,16 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   positioners, `wl_surface.enter` and `leave`, and the protocol's errors. A
   new window opens inside the usable area of the output the pointer is on,
   offset from the last, and does not take the keyboard.
+- **Windows maximize, go fullscreen, and snap to a half** of their output, at
+  a client's request or by Super+Up, Super+F, and Super+Left or Right, and go
+  back to where and as they floated (ADR 0020). A maximized or snapped window
+  fills the room the shell's layers leave and fits it again when it changes.
+  A fullscreen window covers the bar and the dock, and nothing else the shell
+  draws.
+- **A frame around every window**, which no client can draw or cover: a thin
+  line whose colour shows which window has the keyboard. A fullscreen window
+  keeps its frame inside the output's edge. Its look is CrowbarOS issue 22's
+  to decide; until then, plain colours.
 - **Nine workspaces**, each spanning every output, one showing at a time
   (ADR 0020). A window on a hidden workspace is nowhere: not drawn, given no
   input, on no output, and without the keyboard. Every chord with Super
@@ -126,18 +136,19 @@ included, and the pin moves in a CrowbarOS pull request of its own.
 | `src/layer.rs` | The shell's layer surfaces and the room they reserve |
 | `src/seat.rs` | The keyboard and the pointer, who has them, and the compositor's Super chords |
 | `src/workspaces.rs` | The nine workspaces |
+| `src/modes.rs` | Maximized, fullscreen, and snapped windows |
 | `src/control.rs`, `src/json.rs` | The shell's control channel, and the flat JSON it speaks |
 | `src/data_device.rs` | The data device, which moves nothing between clients until slice 4 |
 | `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
 | `src/redraw.rs` | Drawing only on change |
 | `src/dmabuf.rs` | linux-dmabuf: feedback, params, and buffers made from dma-bufs |
-| `src/scene.rs` | What an output shows, back to front, for either renderer |
+| `src/scene.rs` | What an output shows, back to front, for either renderer, frames included |
 | `src/render.rs` | The GLES renderer's compositor half: a texture for each surface, kept until its content changes |
 | `src/backend/` | Where frames go: `tty.rs` (a virtual terminal), `session.rs` (Fulcrum's client of seatd), `uevent.rs` (hotplug from netlink), `nested.rs` (a window on a host session), and `headless.rs` (the tests) |
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `dl.rs` (libraries loaded at run time), `gles.rs` (EGL and GLES: the context, textures, targets, and draws), `gbm.rs`, `dmabuf.rs` (reading a dma-buf with the CPU), `drm.rs` (mode setting, dumb buffers, and framebuffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (the guarded mapping) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `outputs.rs` covers outputs that change size; `data_device.rs` and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `gles.rs` draws each scene with both renderers and compares them; `dmabuf.rs` covers linux-dmabuf; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `outputs.rs` covers outputs that change size; `data_device.rs` and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `gles.rs` draws each scene with both renderers and compares them; `dmabuf.rs` covers linux-dmabuf; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.

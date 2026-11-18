@@ -388,6 +388,8 @@ impl State {
             }
         }
         self.usable.insert(output, usable);
+        // A maximized or snapped window fills the room the layers leave.
+        self.refit_windows(output);
         let windows: Vec<SurfaceId> = self.windows.iter().map(|window| window.surface).collect();
         for surface in windows {
             self.update_outputs_of(surface);

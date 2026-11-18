@@ -433,10 +433,30 @@ impl State {
             xdg_toplevel::Request::SetMinSize { width, height } => {
                 self.xdg_mut(surface).toplevel.min_size = (width, height);
             }
-            xdg_toplevel::Request::SetMaximized => self.xdg_mut(surface).toplevel.maximized = true,
-            xdg_toplevel::Request::UnsetMaximized => self.xdg_mut(surface).toplevel.maximized = false,
-            xdg_toplevel::Request::SetFullscreen { .. } => self.xdg_mut(surface).toplevel.fullscreen = true,
-            xdg_toplevel::Request::UnsetFullscreen => self.xdg_mut(surface).toplevel.fullscreen = false,
+            xdg_toplevel::Request::SetMaximized => {
+                self.xdg_mut(surface).toplevel.maximized = true;
+                if self.mode_of(surface) != crate::modes::Mode::Fullscreen {
+                    self.set_mode(surface, crate::modes::Mode::Maximized);
+                }
+            }
+            xdg_toplevel::Request::UnsetMaximized => {
+                self.xdg_mut(surface).toplevel.maximized = false;
+                if self.mode_of(surface) == crate::modes::Mode::Maximized {
+                    self.set_mode(surface, crate::modes::Mode::Floating);
+                }
+            }
+            // The output a client names is not taken: it goes fullscreen on
+            // the output it is on.
+            xdg_toplevel::Request::SetFullscreen { .. } => {
+                self.xdg_mut(surface).toplevel.fullscreen = true;
+                self.set_mode(surface, crate::modes::Mode::Fullscreen);
+            }
+            xdg_toplevel::Request::UnsetFullscreen => {
+                self.xdg_mut(surface).toplevel.fullscreen = false;
+                if self.mode_of(surface) == crate::modes::Mode::Fullscreen {
+                    self.set_mode(surface, crate::modes::Mode::Floating);
+                }
+            }
             xdg_toplevel::Request::Resize { edges, .. } if edges > xdg_toplevel::resize_edge::BOTTOM_RIGHT => {
                 return Err(fail(xdg_toplevel::error::INVALID_RESIZE_EDGE, "an unknown edge"));
             }
@@ -580,6 +600,30 @@ impl State {
     pub(crate) fn configure(&mut self, surface: SurfaceId) {
         let serial = self.next_serial();
         let activated = self.keyboard_focus_surface() == Some(surface);
+        let size = if matches!(
+            self.xdg.get(&surface).map(|xdg| xdg.role),
+            Some(XdgRole::Toplevel { .. })
+        ) {
+            self.configure_size(surface)
+        } else {
+            (0, 0)
+        };
+        let mode = self.mode_of(surface);
+        let pending_mode = {
+            let requests = &self.xdg[&surface].toplevel;
+            match mode {
+                crate::modes::Mode::Floating if !self.windows.iter().any(|w| w.surface == surface) => {
+                    if requests.fullscreen {
+                        crate::modes::Mode::Fullscreen
+                    } else if requests.maximized {
+                        crate::modes::Mode::Maximized
+                    } else {
+                        mode
+                    }
+                }
+                _ => mode,
+            }
+        };
         let xdg = self.xdg_mut(surface);
         xdg.sent.push(serial);
         let (client, object, role) = (xdg.client, xdg.object, xdg.role);
@@ -590,24 +634,45 @@ impl State {
             XdgRole::Toplevel { object: toplevel } => {
                 let version = client.objects.get(&toplevel).map_or(1, |object| object.version);
                 let mut states = Vec::new();
+                let mut state = |value: u32| states.extend_from_slice(&value.to_ne_bytes());
+                use crate::modes::Mode;
+                use xdg_toplevel::state;
+                match pending_mode {
+                    Mode::Floating => {}
+                    Mode::Maximized => state(state::MAXIMIZED),
+                    Mode::Fullscreen => state(state::FULLSCREEN),
+                    // The tiled states came with version 2.
+                    Mode::Left | Mode::Right if version >= 2 => {
+                        let side = if pending_mode == Mode::Left {
+                            state::TILED_LEFT
+                        } else {
+                            state::TILED_RIGHT
+                        };
+                        for value in [side, state::TILED_TOP, state::TILED_BOTTOM] {
+                            state(value);
+                        }
+                    }
+                    Mode::Left | Mode::Right => state(state::MAXIMIZED),
+                }
                 if activated {
-                    states.extend_from_slice(&xdg_toplevel::state::ACTIVATED.to_ne_bytes());
+                    state(state::ACTIVATED);
                 }
                 if version >= 5 {
-                    // The window manager offers none of the optional
-                    // capabilities until issue 78 builds them.
-                    client.send(
-                        toplevel,
-                        xdg_toplevel::Event::WmCapabilities {
-                            capabilities: Vec::new(),
-                        },
-                    );
+                    // What a client may ask the window manager for.
+                    let capabilities: Vec<u8> = [
+                        xdg_toplevel::wm_capabilities::MAXIMIZE,
+                        xdg_toplevel::wm_capabilities::FULLSCREEN,
+                    ]
+                    .iter()
+                    .flat_map(|capability| capability.to_ne_bytes())
+                    .collect();
+                    client.send(toplevel, xdg_toplevel::Event::WmCapabilities { capabilities });
                 }
                 client.send(
                     toplevel,
                     xdg_toplevel::Event::Configure {
-                        width: 0,
-                        height: 0,
+                        width: size.0,
+                        height: size.1,
                         states,
                     },
                 );

@@ -44,7 +44,12 @@ fn a_window_opens_inside_the_usable_area_and_the_next_one_steps_down() {
         Some(BLUE),
         "the second window was not on top, 32 down"
     );
-    assert_eq!(screen.pixel(x - 1, y), Some(crowbar_compositor::BACKGROUND));
+    // The frame, then the background.
+    assert_eq!(screen.pixel(x - 1, y), Some(crowbar_compositor::FRAME_UNFOCUSED));
+    assert_eq!(
+        screen.pixel(x - crowbar_compositor::FRAME_WIDTH - 1, y),
+        Some(crowbar_compositor::BACKGROUND)
+    );
     assert_eq!(
         compositor.with(|state| state.window_rects()),
         [
