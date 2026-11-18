@@ -34,7 +34,7 @@ LISTENER = "/run/crowbar/compartment-1/wayland"
 # each frame it draws at the debug level.
 AS_COMPOSITOR = (f"chpst -u {COMPOSITOR}:{COMPOSITOR}:_seatd env HOME=/home/{COMPOSITOR} "
                  "XDG_RUNTIME_DIR=/run/user/1000 LIBSEAT_BACKEND=seatd "
-                 "RUST_LOG=warn,crowbar_compositor=debug")
+                 "FULCRUM_LOG=debug")
 AS_SHELL = f"chpst -u {SHELL}:{SHELL} env HOME=/home/{SHELL} WAYLAND_DISPLAY={SHELL_SOCKET}"
 AS_WARDEN = f"env WAYLAND_DISPLAY={WARDEN_SOCKET}"
 # A client's account: no group, and nothing in its environment but a home.
@@ -44,8 +44,8 @@ AS_CLIENT = f"{AS_APP} WAYLAND_DISPLAY={LISTENER}"
 # What each client is offered: the rows of ADR 0020's table, less the globals
 # the compositor does not create yet. Fulcrum's tests/table.rs holds the same
 # lists.
-COMPARTMENT = {"wl_compositor", "wl_output", "wl_seat", "wl_shm", "wl_subcompositor",
-               "wp_viewporter", "xdg_wm_base"}
+COMPARTMENT = {"wl_compositor", "wl_data_device_manager", "wl_output", "wl_seat", "wl_shm",
+               "wl_subcompositor", "wp_viewporter", "xdg_wm_base"}
 SHELL_ALSO = {"zwp_linux_dmabuf_v1", "zwlr_layer_shell_v1"}
 WARDEN = {"wp_security_context_manager_v1"}
 
@@ -195,7 +195,7 @@ def run_checks(ev, built):
     up = wait_for(ev, "the compositor", lambda: "compositor is up" in compositor_log())
     log = compositor_log()
     ev.check("the compositor starts on a TTY", up)
-    ev.check("the seat comes from libseat", "session opened through libseat" in log)
+    ev.check("the seat comes from seatd", "session opened through seatd" in log)
     ev.check("the display is a DRM device", "DRM device opened" in log)
     ev.check("the first output is up", "output connected name=Virtual-1" in log)
     who = ev.run("cat /sys/class/tty/tty0/active; ls -l /run/seatd.sock; "
@@ -381,6 +381,16 @@ def run_checks(ev, built):
     ev.log(f"screens: {guest.WORK}/compositor-{ev.stamp}-*.png")
 
     ev.log()
+    ev.log("== Void's own foot, a client of the compartment's listener")
+    ev.run(f"({AS_CLIENT} foot --working-directory=/home/{APP} sh -c 'echo foot on the CrowbarOS compositor; sleep 60' "
+           ">/tmp/foot.out 2>&1 &); sleep 3; cat /tmp/foot.out; true")
+    footing = ev.run("pgrep -x foot || echo 'foot is not running'", check=False)
+    ev.check("foot opens a window and keeps running",
+             "foot is not running" not in footing and "app_id=foot" in compositor_log())
+    qmp.screendump(guest.WORK / f"compositor-{ev.stamp}-4-foot.png", 0)
+    ev.run("pkill -x foot; true")
+
+    ev.log()
     ev.log("== the Warden stops the compartment and lets go of its listener")
     # Every process of the compartment ends, and with the stand-in the listener.
     ev.run("pkill -x crowbar-probe; sleep 1; true")
@@ -390,7 +400,7 @@ def run_checks(ev, built):
                      f"{AS_CLIENT} timeout 3 crowbar-probe globals 2>&1; echo exit $?", check=False)
     ev.check("the listener of a stopped compartment accepts nothing",
              "the socket is still there" in stopped
-             and "Could not find wayland compositor" in stopped and stopped.rstrip().endswith("exit 1"))
+             and "Connection refused" in stopped and stopped.rstrip().endswith("exit 1"))
 
 
 if __name__ == "__main__":
