@@ -12,7 +12,7 @@
 //! released at once, or, for a dma-buf the GPU imported, the buffer is held
 //! until other content replaces it (see `shm.rs`).
 
-use std::{borrow::Cow, rc::Rc};
+use std::{borrow::Cow, collections::VecDeque, rc::Rc};
 
 use fulcrum_sys::gles::Texture;
 
@@ -42,6 +42,9 @@ pub const MAX_SUBSURFACE_DEPTH: usize = 32;
 /// into one.
 const MAX_DAMAGE: usize = 64;
 
+/// How many commits' damage a surface keeps for the outputs that draw it.
+const DAMAGE_LOG: usize = 8;
+
 /// What a surface is for. A surface has at most one role in its life.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Role {
@@ -60,7 +63,9 @@ pub(crate) struct Pending {
     /// `Some(None)` attaches no buffer, which unmaps the surface.
     buffer: Option<Option<BufferId>>,
     offset: Option<(i32, i32)>,
+    /// Damage in surface coordinates, and in the buffer's pixels.
     damage: Vec<Rect>,
+    damage_buffer: Vec<Rect>,
     frames: Vec<u32>,
     opaque: Option<Option<Region>>,
     input: Option<Option<Region>>,
@@ -101,6 +106,7 @@ impl Pending {
             older.offset = self.offset;
         }
         older.damage.extend(self.damage);
+        older.damage_buffer.extend(self.damage_buffer);
         older.frames.extend(self.frames);
         older.presentation.extend(self.presentation);
         // An older buffer never shown is done with: its release point is
@@ -123,12 +129,17 @@ impl Pending {
         older
     }
 
-    fn damage(&mut self, rect: Rect) {
-        if self.damage.len() >= MAX_DAMAGE {
-            let all = self.damage.iter().fold(rect, |all, rect| all.union(rect));
-            self.damage = vec![all];
+    fn damage(&mut self, rect: Rect, in_buffer: bool) {
+        let list = if in_buffer {
+            &mut self.damage_buffer
         } else {
-            self.damage.push(rect);
+            &mut self.damage
+        };
+        if list.len() >= MAX_DAMAGE {
+            let all = list.iter().fold(rect, |all, rect| all.union(rect));
+            *list = vec![all];
+        } else {
+            list.push(rect);
         }
     }
 }
@@ -198,6 +209,9 @@ pub(crate) struct Current {
     /// Counts the times `content` was replaced, so a renderer knows when
     /// what it uploaded is stale.
     pub(crate) content_serial: u64,
+    /// What the last few commits damaged, in surface coordinates, each with
+    /// the count of commits it made: None for all of the surface.
+    pub(crate) damage_log: VecDeque<(u64, Option<Vec<Rect>>)>,
 }
 
 impl Default for Current {
@@ -214,6 +228,7 @@ impl Default for Current {
             source: None,
             destination: None,
             content_serial: 0,
+            damage_log: VecDeque::new(),
         }
     }
 }
@@ -313,6 +328,26 @@ pub(crate) struct Surface {
     pub fractional_sent: u32,
     /// Its `wp_linux_drm_syncobj_surface_v1`, if it has one.
     pub syncobj: Option<u32>,
+}
+
+impl Surface {
+    /// What its commits after the first `commits` damaged, in surface
+    /// coordinates. None for all of it: when a commit damaged all of it, or
+    /// when the log does not reach back that far.
+    pub(crate) fn damage_since(&self, commits: u64) -> Option<Vec<Rect>> {
+        if commits >= self.commits {
+            return Some(Vec::new());
+        }
+        let log = &self.current.damage_log;
+        if log.front().is_none_or(|(first, _)| *first > commits + 1) {
+            return None;
+        }
+        let mut damage = Vec::new();
+        for (_, rects) in log.iter().filter(|(made, _)| *made > commits) {
+            damage.extend(rects.as_ref()?.iter().copied());
+        }
+        Some(damage)
+    }
 }
 
 impl State {
@@ -466,9 +501,15 @@ impl State {
                     surface.pending.offset = Some((x, y));
                 }
             }
-            wl_surface::Request::Damage { x, y, width, height }
-            | wl_surface::Request::DamageBuffer { x, y, width, height } => {
-                self.surface_mut(id).pending.damage(Rect::new(x, y, width, height));
+            wl_surface::Request::Damage { x, y, width, height } => {
+                self.surface_mut(id)
+                    .pending
+                    .damage(Rect::new(x, y, width, height), false);
+            }
+            wl_surface::Request::DamageBuffer { x, y, width, height } => {
+                self.surface_mut(id)
+                    .pending
+                    .damage(Rect::new(x, y, width, height), true);
             }
             wl_surface::Request::Frame { callback } => {
                 let client = self.clients.get_mut(&client_id).expect("the client is dispatching");
@@ -593,7 +634,17 @@ impl State {
         // the GPU shows uncopied, once other content replaces it.
         let mut release = state.release.take();
         state.acquire = None;
+        let surface_damage = std::mem::take(&mut state.damage);
+        let buffer_damage = std::mem::take(&mut state.damage_buffer);
+        let attached = matches!(state.buffer, Some(Some(_)));
         let surface = self.surfaces.get(&id).expect("an applied surface exists");
+        // How it was shown, to tell whether this commit changes all of it.
+        let before = (
+            surface.current.content.is_some(),
+            surface.current.size(),
+            surface.current.scale,
+            surface.current.transform,
+        );
         let object = surface.object;
         let scale = state.scale.unwrap_or(surface.current.scale);
         let mut content = None;
@@ -710,6 +761,39 @@ impl State {
         surface.current.transform = state.transform.unwrap_or(surface.current.transform);
         surface.current.scale = scale;
         surface.commits += 1;
+        let after = (
+            surface.current.content.is_some(),
+            surface.current.size(),
+            surface.current.scale,
+            surface.current.transform,
+        );
+        let viewport = surface.current.source.is_some() || surface.current.destination.is_some();
+        // A new size, scale, or mapping changes all of it, and so does a new
+        // buffer that comes with no damage. Buffer damage is the buffer's
+        // pixels over its scale, or all of it under a viewport.
+        let whole = before != after
+            || (attached && surface_damage.is_empty() && buffer_damage.is_empty())
+            || (viewport && !buffer_damage.is_empty());
+        let damage = (!whole).then(|| {
+            let scale = surface.current.scale.max(1);
+            // Out to whole surface pixels: the near edges down, the far up.
+            let scale = i64::from(scale);
+            let down = |value: i64| value.div_euclid(scale) as i32;
+            let up = |value: i64| (value + scale - 1).div_euclid(scale) as i32;
+            let in_surface = buffer_damage.iter().map(|rect| {
+                let (x, y) = (i64::from(rect.x), i64::from(rect.y));
+                let (left, top) = (down(x), down(y));
+                let right = up(x + i64::from(rect.width));
+                let bottom = up(y + i64::from(rect.height));
+                Rect::new(left, top, right - left, bottom - top)
+            });
+            surface_damage.iter().copied().chain(in_surface).collect()
+        });
+        let commits = surface.commits;
+        surface.current.damage_log.push_back((commits, damage));
+        while surface.current.damage_log.len() > DAMAGE_LOG {
+            surface.current.damage_log.pop_front();
+        }
         State::signal_release(release);
         if !superseded.is_empty() {
             self.discard_feedback(feedback_client, superseded);

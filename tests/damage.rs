@@ -148,3 +148,63 @@ fn a_focus_change_redraws_both_frames() {
     assert!(!damage.is_empty());
     assert!(same(&drawn, &whole), "the frame drawn where it changed differs");
 }
+
+#[test]
+fn a_commit_that_damages_a_patch_redraws_that_patch_alone() {
+    let compositor = Compositor::start();
+    let (mut client, _listener) = compositor.compartment("c1");
+    let window = client
+        .open_toplevel("one", "test.one", (200, 100), 0xff80_0000)
+        .unwrap();
+    client.roundtrip().unwrap();
+    if next_frame(&compositor).is_none() {
+        eprintln!("no EGL: skipped");
+        return;
+    }
+    // The same window with a green patch, which the client damages alone.
+    let patch = Rect::new(20, 10, 30, 20);
+    let buffer = client
+        .painted_buffer(
+            (200, 100),
+            |x, y| {
+                if patch.contains(x, y) { 0xff00_8000 } else { 0xff80_0000 }
+            },
+        )
+        .unwrap();
+    client
+        .request(
+            window.surface,
+            fulcrum_wire::protocol::wayland::wl_surface::Request::Attach {
+                buffer: Some(fulcrum_wire::ObjectId(buffer.buffer)),
+                x: 0,
+                y: 0,
+            },
+        )
+        .unwrap();
+    client
+        .request(
+            window.surface,
+            fulcrum_wire::protocol::wayland::wl_surface::Request::DamageBuffer {
+                x: patch.x,
+                y: patch.y,
+                width: patch.width,
+                height: patch.height,
+            },
+        )
+        .unwrap();
+    client
+        .request(
+            window.surface,
+            fulcrum_wire::protocol::wayland::wl_surface::Request::Commit,
+        )
+        .unwrap();
+    client.roundtrip().unwrap();
+
+    let (drawn, damage, whole) = next_frame(&compositor).unwrap();
+
+    let at = compositor.with(|state| state.window_rects()[0]);
+    let expected = patch.translated(at.x, at.y);
+    assert_eq!(damage, [expected], "more than the patch was drawn");
+    assert!(same(&drawn, &whole), "the frame drawn where it changed differs");
+    assert_eq!(drawn.pixel(at.x + 25, at.y + 15), Some(0xff00_8000));
+}

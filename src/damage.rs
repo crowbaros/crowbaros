@@ -2,9 +2,11 @@
 //! renderer draws only that.
 //!
 //! A frame's damage comes from its scene beside the last one drawn. A
-//! surface that moved, appeared, went, or committed damages where it was and
-//! where it is; so does a frame that changed colour. Elements that changed
-//! places in the order damage both places. An output that changed size or
+//! surface that moved, appeared, or went damages where it was and where it
+//! is; so does a frame that changed colour. A surface that only committed
+//! damages what its commits damaged, as its client said, or all of it where
+//! the commits do not say (see `surface.rs`). Elements that changed places
+//! in the order damage both places. An output that changed size or
 //! background is damaged whole.
 //!
 //! A backend draws into a buffer that holds an older frame, as the frame
@@ -48,7 +50,7 @@ impl DamageTracker {
                     .iter()
                     .map(|element| (*element, commits_of(state, element)))
                     .collect();
-                !changed(last, &drawn).is_empty()
+                !changed(last, &drawn, &since(state)).is_empty()
             }
             _ => true,
         }
@@ -66,7 +68,7 @@ impl DamageTracker {
         let whole = Rect::new(0, 0, scene.size.0, scene.size.1);
         let frame = match &self.last {
             Some((size, background, last)) if *size == scene.size && *background == scene.background => {
-                changed(last, &drawn)
+                changed(last, &drawn, &since(state))
             }
             _ => vec![whole],
         };
@@ -95,23 +97,68 @@ fn rect_of(element: &Element) -> Rect {
     }
 }
 
+/// What a surface's commits damaged, in its own coordinates, with its size
+/// in them: None for all of it.
+type Damaged = Option<(Vec<Rect>, (i32, i32))>;
+
+/// A surface's damage since a count of its commits.
+type Since<'a> = &'a dyn Fn(crate::surface::SurfaceId, u64) -> Damaged;
+
+/// A surface's damage since a count of its commits, from the state.
+fn since(state: &State) -> impl Fn(crate::surface::SurfaceId, u64) -> Damaged + '_ {
+    |surface, commits| {
+        let surface = state.surfaces.get(&surface)?;
+        Some((surface.damage_since(commits)?, surface.current.size()))
+    }
+}
+
+/// A rectangle of a surface, `size` in its own units, where the surface is
+/// drawn into `rect`: scaled to it, rounded out, and cut to it.
+fn onto(damaged: &Rect, size: (i32, i32), rect: &Rect) -> Rect {
+    if size.0 <= 0 || size.1 <= 0 {
+        return *rect;
+    }
+    let (sx, sy) = (i64::from(rect.width), i64::from(rect.height));
+    let (w, h) = (i64::from(size.0), i64::from(size.1));
+    let down = |value: i64, scale: i64, of: i64| (value * scale).div_euclid(of);
+    let up = |value: i64, scale: i64, of: i64| (value * scale + of - 1).div_euclid(of);
+    let left = rect.x + down(i64::from(damaged.x), sx, w) as i32;
+    let top = rect.y + down(i64::from(damaged.y), sy, h) as i32;
+    let right = rect.x + up(i64::from(damaged.x) + i64::from(damaged.width), sx, w) as i32;
+    let bottom = rect.y + up(i64::from(damaged.y) + i64::from(damaged.height), sy, h) as i32;
+    Rect::new(left, top, right - left, bottom - top).intersection(rect)
+}
+
 /// Where two frames' elements differ.
-fn changed(old: &[Drawn], new: &[Drawn]) -> Vec<Rect> {
+fn changed(old: &[Drawn], new: &[Drawn], since: Since<'_>) -> Vec<Rect> {
     let mut damage = Vec::new();
-    // What is not exactly as it was: where it is, and where it was.
+    // What is not exactly as it was: where it is, and where it was. A
+    // surface where it was, that only committed, damages what it said.
     for drawn in new.iter().filter(|drawn| !old.contains(drawn)) {
+        let before = old.iter().find(|(element, _)| *element == drawn.0);
+        if let (Element::Surface { surface, rect }, Some((_, commits))) = (&drawn.0, before)
+            && let Some((rects, size)) = since(*surface, *commits)
+        {
+            damage.extend(rects.iter().map(|damaged| onto(damaged, size, rect)));
+            continue;
+        }
         damage.push(rect_of(&drawn.0));
     }
     for drawn in old.iter().filter(|drawn| !new.contains(drawn)) {
-        damage.push(rect_of(&drawn.0));
+        // One that is where it was was dealt with above.
+        if !new.iter().any(|(element, _)| *element == drawn.0) {
+            damage.push(rect_of(&drawn.0));
+        }
     }
-    // What is on both but in another place in the order.
-    let kept_old = old.iter().filter(|drawn| new.contains(drawn));
-    let kept_new = new.iter().filter(|drawn| old.contains(drawn));
+    // What is on both but in another place in the order, committed or not.
+    let elements = |drawn: &[Drawn]| drawn.iter().map(|(element, _)| *element).collect::<Vec<_>>();
+    let (old, new) = (elements(old), elements(new));
+    let kept_old = old.iter().filter(|element| new.contains(element));
+    let kept_new = new.iter().filter(|element| old.contains(element));
     for (before, after) in kept_old.zip(kept_new) {
         if before != after {
-            damage.push(rect_of(&before.0));
-            damage.push(rect_of(&after.0));
+            damage.push(rect_of(before));
+            damage.push(rect_of(after));
         }
     }
     damage
@@ -153,13 +200,52 @@ mod tests {
 
     const OUTPUT: Rect = Rect::new(0, 0, 1000, 1000);
 
+    /// Commits that do not say what they damaged.
+    fn whole_surfaces(_: u64, _: u64) -> Damaged {
+        None
+    }
+
+    #[test]
+    fn a_commit_that_says_what_it_damaged_damages_that_alone() {
+        let a = Rect::new(100, 100, 200, 100);
+        let since = |surface: u64, commits: u64| {
+            assert_eq!((surface, commits), (1, 4));
+            Some((vec![Rect::new(10, 20, 5, 5), Rect::new(190, 90, 50, 50)], (200, 100)))
+        };
+        let damage = changed(&[surface(1, a, 4)], &[surface(1, a, 6)], &since);
+        assert_eq!(
+            simplify(damage, OUTPUT),
+            [Rect::new(110, 120, 5, 5), Rect::new(290, 190, 10, 10)],
+            "inside the window, and cut to it"
+        );
+    }
+
+    #[test]
+    fn damage_on_a_scaled_output_covers_the_pixels_it_falls_on() {
+        // A 200x100 surface drawn into 300x150 pixels, at a scale of 1.5.
+        let rect = Rect::new(30, 30, 300, 150);
+        let since = |_: u64, _: u64| Some((vec![Rect::new(1, 1, 1, 1)], (200, 100)));
+        let damage = changed(&[surface(1, rect, 1)], &[surface(1, rect, 2)], &since);
+        assert_eq!(simplify(damage, OUTPUT), [Rect::new(31, 31, 2, 2)]);
+    }
+
+    #[test]
+    fn a_window_that_commits_as_it_is_raised_damages_where_it_overlaps() {
+        let a = Rect::new(0, 0, 100, 100);
+        let b = Rect::new(50, 50, 100, 100);
+        let nothing = |_: u64, _: u64| Some((Vec::new(), (100, 100)));
+        let old = [surface(1, a, 1), surface(2, b, 1)];
+        let new = [surface(2, b, 1), surface(1, a, 2)];
+        assert_eq!(simplify(changed(&old, &new, &nothing), OUTPUT), [a.union(&b)]);
+    }
+
     #[test]
     fn nothing_changed_is_no_damage() {
         let frame = [
             surface(1, Rect::new(0, 0, 10, 10), 3),
             solid(Rect::new(20, 20, 5, 5), 7),
         ];
-        assert!(changed(&frame, &frame).is_empty());
+        assert!(changed(&frame, &frame, &whole_surfaces).is_empty());
     }
 
     #[test]
@@ -168,14 +254,17 @@ mod tests {
         let b = Rect::new(300, 300, 100, 50);
         let old = [surface(1, a, 1), surface(2, b, 1)];
         let new = [surface(1, a, 1), surface(2, b, 2)];
-        assert_eq!(simplify(changed(&old, &new), OUTPUT), [b]);
+        assert_eq!(simplify(changed(&old, &new, &whole_surfaces), OUTPUT), [b]);
     }
 
     #[test]
     fn a_move_damages_where_it_was_and_where_it_is() {
         let from = Rect::new(10, 10, 100, 50);
         let to = Rect::new(500, 10, 100, 50);
-        let damage = simplify(changed(&[surface(1, from, 1)], &[surface(1, to, 1)]), OUTPUT);
+        let damage = simplify(
+            changed(&[surface(1, from, 1)], &[surface(1, to, 1)], &whole_surfaces),
+            OUTPUT,
+        );
         assert_eq!(damage.len(), 2);
         assert!(damage.contains(&from) && damage.contains(&to));
     }
@@ -183,7 +272,7 @@ mod tests {
     #[test]
     fn a_frame_that_changes_colour_is_damaged() {
         let rect = Rect::new(8, 8, 2, 100);
-        let damage = changed(&[solid(rect, 1)], &[solid(rect, 2)]);
+        let damage = changed(&[solid(rect, 1)], &[solid(rect, 2)], &whole_surfaces);
         assert_eq!(simplify(damage, OUTPUT), [rect]);
     }
 
@@ -193,7 +282,7 @@ mod tests {
         let b = Rect::new(50, 50, 100, 100);
         let old = [surface(1, a, 1), surface(2, b, 1)];
         let new = [surface(2, b, 1), surface(1, a, 1)];
-        assert_eq!(simplify(changed(&old, &new), OUTPUT), [a.union(&b)]);
+        assert_eq!(simplify(changed(&old, &new, &whole_surfaces), OUTPUT), [a.union(&b)]);
     }
 
     #[test]
