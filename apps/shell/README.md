@@ -33,6 +33,7 @@ historical behavior evidence, not a current Fedora workflow.
 - The bar and dock reserve 44 and 96 pixels through Wayland layer surfaces.
 - Applications search supports keyboard navigation; closing the launcher returns focus.
 - Workspace and window focus requests use the CrowbarOS control channel when supplied.
+- On that channel, Super tapped alone toggles the launcher, an app the shell launches takes the keyboard with its first window, and the bar and dock mark a window that wants attention. These messages are Fulcrum's proposal until a decision record settles them.
 - Saved Settings themes are read by the shell; it does not theme third-party apps.
 - Desktop-entry discovery honors XDG precedence, visibility, locale, and executable availability. Search text is never executed as a command.
 

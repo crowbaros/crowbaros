@@ -106,10 +106,22 @@ impl Render for Bar {
             "Connecting to the compositor…".into()
         };
         let clock = m.clock.clone();
+        // A workspace with a window that wants attention is marked, and
+        // shown past the first four.
+        let wanting: Vec<i32> = m
+            .snapshot
+            .clients
+            .iter()
+            .filter(|c| c.attention)
+            .map(|c| c.workspace.id)
+            .collect();
         let mut workspaces = vec![1, 2, 3, 4];
-        if active > 4 {
-            workspaces.push(active)
+        for id in std::iter::once(active).chain(wanting.iter().copied()) {
+            if id > 4 && !workspaces.contains(&id) {
+                workspaces.push(id)
+            }
         }
+        workspaces.sort();
         div()
             .size_full()
             .flex()
@@ -151,8 +163,11 @@ impl Render for Bar {
                     )
                     .child(div().flex().items_center().gap(px(4.)).children(
                         workspaces.into_iter().map(|id| {
+                            let attention = wanting.contains(&id);
                             div()
                                 .id(("workspace", id as usize))
+                                .border_b_2()
+                                .border_color(rgb(if attention { p.accent } else { p.canvas }))
                                 .w(px(28.))
                                 .h(px(28.))
                                 .flex()
@@ -255,9 +270,14 @@ impl Render for Dock {
                     .border_1()
                     .border_color(rgb(p.line))
                     .children(pins.into_iter().map(|(ic, label, id)| {
-                        let running = id
-                            .and_then(|id| apps.iter().find(|a| a.id == id))
-                            .is_some_and(|a| clients.iter().any(|c| a.matches_class(&c.class)));
+                        let app = id.and_then(|id| apps.iter().find(|a| a.id == id));
+                        let running =
+                            app.is_some_and(|a| clients.iter().any(|c| a.matches_class(&c.class)));
+                        let attention = app.is_some_and(|a| {
+                            clients
+                                .iter()
+                                .any(|c| c.attention && a.matches_class(&c.class))
+                        });
                         div()
                             .id(ic)
                             .w(px(84.))
@@ -274,10 +294,22 @@ impl Render for Dock {
                             .child(label)
                             .child(
                                 div()
-                                    .w(px(if running { 12. } else { 3. }))
+                                    .w(px(if attention {
+                                        20.
+                                    } else if running {
+                                        12.
+                                    } else {
+                                        3.
+                                    }))
                                     .h(px(2.))
                                     .rounded(px(1.))
-                                    .bg(rgb(if running { p.focus } else { p.canvas })),
+                                    .bg(rgb(if attention {
+                                        p.accent
+                                    } else if running {
+                                        p.focus
+                                    } else {
+                                        p.canvas
+                                    })),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(id) = id {
@@ -592,9 +624,11 @@ fn close_launcher(model: &Entity<Model>, cx: &mut App) {
 }
 fn toggle_launcher(model: Entity<Model>, cx: &mut App) {
     if model.read(cx).launcher.is_some() {
+        log::info!("SHELL launcher open=false");
         close_launcher(&model, cx);
         return;
     }
+    log::info!("SHELL launcher open=true");
     let apps = catalog::discover();
     model.update(cx, |m, _| m.apps = apps.clone());
     let model2 = model.clone();
@@ -660,6 +694,7 @@ fn main() -> anyhow::Result<()> {
     }
     session::connect();
     let (tx, rx) = mpsc::channel();
+    session::deliver_events_to(tx.clone());
     let _lock = session::server(tx.clone())?;
     let watcher = tx.clone();
     std::thread::spawn(move || {
@@ -672,7 +707,11 @@ fn main() -> anyhow::Result<()> {
                     break;
                 }
             }
-            std::thread::sleep(Duration::from_millis(700));
+            // Events, as Super tapped alone, are read sooner than snapshots.
+            for _ in 0..7 {
+                session::pump();
+                std::thread::sleep(Duration::from_millis(100));
+            }
         }
     });
     Application::new().with_assets(Assets).run(move |cx| {

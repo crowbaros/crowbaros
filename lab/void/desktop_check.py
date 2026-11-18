@@ -161,6 +161,17 @@ class Check:
         self.click(640, 908)  # Terminal dock entry, through the real shell launch path.
         terminal = self.wait('terminal launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
         self.check('Terminal launch through the shell', bool(terminal))
+        self.wait('launched window focus', lambda: self.snapshot()['active']['address'] == terminal['address'])
+        self.check('a window launched from the shell takes the keyboard',
+                   self.snapshot()['active']['address'] == terminal['address'])
+        shell_log = lambda: guest.ssh('cat /var/log/crowbar-shell.log', check=False).stdout
+        self.key('meta_l')
+        self.wait('Super opens the launcher', lambda: 'SHELL launcher open=true' in shell_log())
+        self.capture('01-launcher')
+        self.key('meta_l')
+        self.wait('Super closes the launcher', lambda: 'SHELL launcher open=false' in shell_log())
+        self.check('Super tapped alone opens and closes the launcher',
+                   'SHELL launcher open=true' in shell_log() and 'SHELL launcher open=false' in shell_log())
         self.click(728, 908)
         settings = self.wait('Settings launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'com.crowbaros.StudioSettings'), None))
         self.check('Settings launch through the shell', bool(settings))
