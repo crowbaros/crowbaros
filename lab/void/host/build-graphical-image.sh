@@ -33,12 +33,18 @@ chroot "$S" useradd -m -u 1001 crowbar-shell
 chroot "$S" useradd -m -u 1002 crowbar-app
 if [ "$DESKTOP" = 1 ]; then
   rm -f "$SV/agetty-tty2"
-  for service in compositor shell launcher; do
+  for service in compositor shell launcher unlock; do
     install -D -m 755 "$REPO_ROOT/lab/void/guest/$service-run" "$S/etc/sv/crowbar-$service/run"
     ln -sfn "/etc/sv/crowbar-$service" "$SV/crowbar-$service"
   done
   install -D -m 755 "$REPO_ROOT/lab/void/guest/alpha-launcher.py" "$S/usr/local/bin/crowbar-alpha-launcher"
   install -D -m 755 "$REPO_ROOT/lab/void/guest/alpha-shell.py" "$S/usr/local/bin/crowbar-alpha-shell"
+  install -D -m 755 "$REPO_ROOT/lab/void/guest/alpha-unlock.py" "$S/usr/local/bin/crowbar-alpha-unlock"
+  install -D -m 755 "$REPO_ROOT/lab/void/guest/zzz-lock" "$S/etc/zzz.d/suspend/50-crowbar-lock"
+  # The person's account, whose password unlocks the session: the lab's
+  # password is `crowbar`. It has no login shell or home to sign in to.
+  chroot "$S" useradd -M -u 1003 -s /bin/false crowbar-person
+  chroot "$S" usermod -p "$(chroot "$S" /usr/local/bin/crowbar-alpha-unlock hash crowbar)" crowbar-person
 fi
 
 for path in $BINARIES; do install -D -m 755 "$path" "$S/usr/local/bin/$(basename "$path")"; done

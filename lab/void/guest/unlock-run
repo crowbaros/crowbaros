@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+exec >>/var/log/crowbar-unlock.log 2>&1
+# Only the shell's group may enter the directory of the helper's socket; the
+# helper checks the shell's UID as well. It reaches the compositor's unlock
+# socket as root, which the compositor checks.
+install -d -o root -g crowbar-shell -m 0750 /run/crowbar-unlock
+exec /usr/local/bin/crowbar-alpha-unlock
