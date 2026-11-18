@@ -26,6 +26,7 @@ pub mod log;
 mod output;
 pub mod policy;
 mod redraw;
+mod seat;
 mod shm;
 mod state;
 mod surface;
@@ -33,6 +34,7 @@ mod windows;
 mod xdg;
 
 pub use output::{OUTPUT_VERSION, Output};
+pub use seat::{REPEAT, SEAT_VERSION};
 pub use shm::MAX_POOL_SIZE;
 pub use state::State;
 pub use surface::MAX_SUBSURFACE_DEPTH;

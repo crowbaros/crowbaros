@@ -716,6 +716,81 @@ impl Client {
     }
 }
 
+/// A keyboard event, as a client hears it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyEvent {
+    /// The keyboard came to a surface, with the keys already held.
+    Enter {
+        keys: Vec<u32>,
+    },
+    Leave,
+    Key {
+        key: u32,
+        pressed: bool,
+    },
+}
+
+impl Client {
+    /// Gets the seat's keyboard. Its events are read by [`Client::take_keys`].
+    pub fn listen_to_keyboard(&mut self) -> Result<u32, Error> {
+        let seat = self.bind(wayland::wl_seat::NAME, 7)?;
+        let keyboard = self.new_id(wayland::wl_keyboard::NAME);
+        self.request(seat, wayland::wl_seat::Request::GetKeyboard { id: keyboard })?;
+        self.roundtrip()?;
+        Ok(keyboard.0)
+    }
+
+    /// Gets the seat's pointer.
+    pub fn listen_to_pointer(&mut self) -> Result<u32, Error> {
+        let seat = self.bind(wayland::wl_seat::NAME, 7)?;
+        let pointer = self.new_id(wayland::wl_pointer::NAME);
+        self.request(seat, wayland::wl_seat::Request::GetPointer { id: pointer })?;
+        self.roundtrip()?;
+        Ok(pointer.0)
+    }
+
+    /// Every keyboard event that has arrived, taken.
+    pub fn take_keys(&mut self) -> Result<Vec<KeyEvent>, Error> {
+        self.roundtrip()?;
+        let mut keys = Vec::new();
+        let mut rest = VecDeque::new();
+        for event in std::mem::take(&mut self.events) {
+            if event.interface != "wl_keyboard" {
+                rest.push_back(event);
+                continue;
+            }
+            match (event.name, event.args.as_slice()) {
+                ("enter", [_, _, Arg::Array(held)]) => keys.push(KeyEvent::Enter {
+                    keys: held
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|chunk| u32::from_ne_bytes(*chunk))
+                        .collect(),
+                }),
+                ("leave", _) => keys.push(KeyEvent::Leave),
+                ("key", [_, _, Arg::Uint(key), Arg::Uint(state)]) => keys.push(KeyEvent::Key {
+                    key: *key,
+                    pressed: *state == wayland::wl_keyboard::key_state::PRESSED,
+                }),
+                _ => {}
+            }
+        }
+        self.events = rest;
+        Ok(keys)
+    }
+
+    /// Every pointer event's name that has arrived, taken.
+    pub fn take_pointer_events(&mut self) -> Result<Vec<Event>, Error> {
+        self.roundtrip()?;
+        let (pointer, rest): (VecDeque<Event>, VecDeque<Event>) = std::mem::take(&mut self.events)
+            .into_iter()
+            .partition(|event| event.interface == "wl_pointer");
+        self.events = rest;
+        Ok(pointer.into_iter().filter(|event| event.name != "frame").collect())
+    }
+}
+
 /// What to ask for when making a layer surface.
 #[derive(Clone, Copy, Debug)]
 pub struct LayerRequest<'a> {

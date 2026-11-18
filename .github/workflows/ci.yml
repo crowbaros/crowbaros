@@ -1,7 +1,7 @@
 name: CI
 
-# Fulcrum needs no system library yet: the rewrite has not reached input,
-# display, or rendering (docs/PLAN.md).
+# Fulcrum links only the C libraries ADR 0028 allows, and installs each as
+# the code that needs it lands.
 # A change to docs alone starts no run. Keep the two lists the same.
 on:
   pull_request:
@@ -36,6 +36,12 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt,clippy
           rustup default stable
+
+      # libxkbcommon, which the keyboard links (ADR 0028), and its keymaps.
+      - name: Install libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxkbcommon-dev xkb-data
 
       - name: Format
         run: cargo fmt --all --check

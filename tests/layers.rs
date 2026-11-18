@@ -292,3 +292,52 @@ fn a_layer_on_an_output_that_goes_is_closed() {
     shell.roundtrip().unwrap();
     assert!(shell.take_event(id.0, "closed").is_some());
 }
+
+/// The launcher is a layer surface that takes keys. A click on it gives it
+/// the keyboard, and a click on a layer that takes none does not.
+#[test]
+fn a_click_gives_the_keyboard_to_a_layer_only_if_the_layer_takes_keys() {
+    use crowbar_probe::KeyEvent;
+    const KEY_A: u32 = 30;
+    let compositor = Compositor::start();
+    let mut shell = compositor.shell();
+    shell.listen_to_keyboard().unwrap();
+    let mut layer = |name, anchor, keyboard| {
+        shell
+            .open_layer(
+                LayerRequest {
+                    namespace: name,
+                    layer: TOP_LAYER,
+                    anchor,
+                    size: (0, 44),
+                    exclusive_zone: 44,
+                    keyboard,
+                },
+                0xff20_4060,
+            )
+            .unwrap();
+    };
+    layer("test-bar", TOP | LEFT | RIGHT, 0);
+    layer("test-launcher", BOTTOM | LEFT | RIGHT, 2);
+
+    compositor.click(600, 20);
+    compositor.key(KEY_A, true);
+    compositor.key(KEY_A, false);
+    assert_eq!(
+        shell.take_keys().unwrap(),
+        [],
+        "a layer that takes no keys got the keyboard"
+    );
+
+    compositor.click(600, OUTPUT_SIZE.1 - 20);
+    compositor.key(KEY_A, true);
+    compositor.key(KEY_A, false);
+    let seen = shell.take_keys().unwrap();
+    assert!(
+        seen.contains(&KeyEvent::Key {
+            key: KEY_A,
+            pressed: true
+        }),
+        "{seen:?}"
+    );
+}

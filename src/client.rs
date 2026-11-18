@@ -51,6 +51,9 @@ pub(crate) enum ObjectKind {
     Toplevel(crate::surface::SurfaceId),
     Popup(crate::surface::SurfaceId),
     LayerShell,
+    Seat,
+    Keyboard,
+    Pointer,
     /// A `zwlr_layer_surface_v1`, for the surface it gives the role to.
     Layer(crate::surface::SurfaceId),
     /// A global's object whose requests this build does not carry out yet,

@@ -52,14 +52,19 @@ Milestone 2, first light, is under way. What is built:
   where windows open, background and bottom layers below the windows and top
   and overlay layers above, popups of layers, and a layer closed when its
   output goes.
+- **The seat**: one keyboard and one pointer. The keymap is compiled by
+  libxkbcommon and shared through a sealed memfd. The keyboard goes to the
+  window or key-taking layer the person clicks, and a click raises and
+  activates a window; a new window never takes it. The pointer follows what
+  is under it, by input region, and stays with its surface while a button is
+  held.
 - **Budgets** (CrowbarOS ADR 0029): one compartment cannot take the
   compositor's descriptors from the others.
 - **A headless backend** that draws each output with the CPU renderer, and
   `crowbar-probe`, the test client, on `fulcrum-wire`'s client side.
 
-Still to come in Milestone 2: the seat (keyboard and pointer),
-the GLES renderer, KMS, the seatd client, libinput, hotplug, and a nested
-backend. `wl_seat`, `wp_viewporter`, and `zwp_linux_dmabuf_v1` are advertised to the clients the table names, and a
+Still to come in Milestone 2: the GLES renderer, KMS, the seatd client, libinput, hotplug, and a nested
+backend. `wp_viewporter` and `zwp_linux_dmabuf_v1` are advertised to the clients the table names, and a
 request on one is a protocol error that says this build does not carry it
 out yet.
 
@@ -87,11 +92,12 @@ must pass before CrowbarOS moves its pin.
 | `src/limits.rs` | What one client, and one compartment, may make the compositor hold |
 | `src/xdg.rs`, `src/windows.rs` | xdg-shell, and where windows go and what each output shows |
 | `src/layer.rs` | The shell's layer surfaces and the room they reserve |
+| `src/seat.rs` | The keyboard and the pointer, and who has them |
 | `src/redraw.rs`, `src/backend/` | Drawing only on change, and where frames go: the headless backend so far |
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.
@@ -116,7 +122,9 @@ WAYLAND_DISPLAY=/path/to/warden-socket \
 
 ## Build and test
 
-Nothing here needs a system library yet.
+The keyboard links libxkbcommon, and its tests need the keymaps of
+xkeyboard-config (Arch: `libxkbcommon`; Debian and Ubuntu:
+`libxkbcommon-dev xkb-data`; Void: `libxkbcommon-devel`).
 
 ```sh
 cargo test --locked

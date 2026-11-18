@@ -58,10 +58,14 @@ pub(crate) struct LayerSurface {
 }
 
 impl LayerSurface {
-    /// Whether it takes the keyboard when clicked. The seat reads it.
-    #[allow(dead_code)]
+    /// Whether it takes the keyboard when clicked.
     pub fn takes_keys(&self) -> bool {
         self.current.keyboard != zwlr_layer_surface_v1::keyboard_interactivity::NONE
+    }
+
+    /// Which of the four layers it is in.
+    pub fn layer(&self) -> u32 {
+        self.current.layer
     }
 }
 

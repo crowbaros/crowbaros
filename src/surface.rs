@@ -606,6 +606,7 @@ impl State {
             .unwrap_or_default();
         self.forget_xdg(id);
         self.forget_layer(id);
+        self.drop_focus_from(id);
         self.unparent(id);
         for output in outputs {
             self.queue_redraw(output);

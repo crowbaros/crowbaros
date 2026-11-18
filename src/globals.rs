@@ -31,6 +31,7 @@ pub(crate) enum GlobalKind {
     Shm,
     XdgWmBase,
     LayerShell,
+    Seat,
     /// A global this build advertises before it carries out its requests.
     Unimplemented,
     /// A global a test added, of an interface Fulcrum may not even know.
@@ -198,6 +199,7 @@ impl State {
             GlobalKind::Shm => ObjectKind::Shm,
             GlobalKind::XdgWmBase => ObjectKind::XdgWmBase,
             GlobalKind::LayerShell => ObjectKind::LayerShell,
+            GlobalKind::Seat => ObjectKind::Seat,
             GlobalKind::Unimplemented => ObjectKind::Unimplemented,
             GlobalKind::Planted => {
                 self.planted_binds += 1;
@@ -209,6 +211,7 @@ impl State {
         match kind {
             GlobalKind::Output(output) => self.output_bound(client_id, id.id, output),
             GlobalKind::Shm => self.shm_bound(client_id, id.id),
+            GlobalKind::Seat => self.seat_bound(client_id, id.id),
             _ => {}
         }
         Ok(())

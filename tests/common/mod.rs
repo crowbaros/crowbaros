@@ -206,6 +206,23 @@ impl Compositor {
         self.with(move |state| state.pointer_moved(f64::from(x), f64::from(y)));
     }
 
+    /// A key goes down or up on the compositor's keyboard. `evdev` is the
+    /// `KEY_*` code from `linux/input-event-codes.h`.
+    pub fn key(&self, evdev: u32, pressed: bool) {
+        self.with(move |state| state.handle_key(evdev, pressed, 0));
+    }
+
+    /// The pointer moves to a place on the desktop, and its left button is
+    /// pressed and let go.
+    pub fn click(&self, x: i32, y: i32) {
+        const BTN_LEFT: u32 = 0x110;
+        self.pointer(x, y);
+        self.with(|state| {
+            state.pointer_button(BTN_LEFT, true, 0);
+            state.pointer_button(BTN_LEFT, false, 0);
+        });
+    }
+
     /// What an output shows now, drawn by the CPU renderer.
     pub fn screen(&self, output: usize) -> crowbar_compositor::image::Image {
         self.with(move |state| {

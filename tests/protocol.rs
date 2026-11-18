@@ -8,9 +8,12 @@ mod common;
 use common::{Compositor, OUTPUT_SIZE};
 use crowbar_probe::Client;
 use fulcrum_wire::{
-    Arg, ArgWriter, DynamicNewId, Header, NewId,
+    Arg, ArgWriter, DynamicNewId, Header, NewId, ObjectId,
     codec::MAX_MESSAGE_SIZE,
-    protocol::wayland::{wl_display, wl_output, wl_registry, wl_seat},
+    protocol::{
+        viewporter::wp_viewporter,
+        wayland::{wl_display, wl_output, wl_registry},
+    },
 };
 
 /// Sends a request and expects the compositor to refuse it with `code`.
@@ -173,10 +176,17 @@ fn a_bind_that_misnames_the_interface_or_its_version_is_refused() {
 fn a_request_this_build_does_not_carry_out_is_an_implementation_error() {
     let compositor = Compositor::start();
     let message = refused(&compositor, wl_display::error::IMPLEMENTATION, |client| {
-        let seat = client.bind(wl_seat::NAME, 1).unwrap();
-        let pointer = client.new_id("wl_pointer");
+        let viewporter = client.bind(wp_viewporter::NAME, 1).unwrap();
+        let surface = client.create_surface().unwrap();
+        let viewport = client.new_id("wp_viewport");
         client
-            .request(seat, wl_seat::Request::GetPointer { id: pointer })
+            .request(
+                viewporter,
+                wp_viewporter::Request::GetViewport {
+                    id: viewport,
+                    surface: ObjectId(surface),
+                },
+            )
             .unwrap();
     });
     assert!(message.contains("not carried out"), "{message}");

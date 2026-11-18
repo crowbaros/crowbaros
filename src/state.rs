@@ -8,8 +8,8 @@ use fulcrum_wire::{
     protocol::{
         security_context_v1::{wp_security_context_manager_v1, wp_security_context_v1},
         wayland::{
-            wl_buffer, wl_callback, wl_compositor, wl_display, wl_output, wl_region, wl_registry, wl_shm, wl_shm_pool,
-            wl_subcompositor, wl_subsurface, wl_surface,
+            wl_buffer, wl_callback, wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_region,
+            wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_subcompositor, wl_subsurface, wl_surface,
         },
         wlr_layer_shell_unstable_v1::{zwlr_layer_shell_v1, zwlr_layer_surface_v1},
         xdg_shell::{xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base},
@@ -85,6 +85,7 @@ pub struct State {
     pub(crate) layers: Vec<LayerSurface>,
     /// Each output's usable area, after its layers reserved their room.
     pub(crate) usable: HashMap<u64, crate::geometry::Rect>,
+    pub(crate) seat: crate::seat::Seat,
 }
 
 impl State {
@@ -127,6 +128,7 @@ impl State {
             start_time: std::time::Instant::now(),
             layers: Vec::new(),
             usable: HashMap::new(),
+            seat: crate::seat::Seat::new(),
         };
         state.add_table_globals();
         Ok(state)
@@ -151,9 +153,8 @@ impl State {
             crate::layer::LAYER_SHELL_VERSION,
             GlobalKind::LayerShell,
         );
-        for (info, version) in [(&wayland::wl_seat::INFO, 7), (&viewporter::wp_viewporter::INFO, 1)] {
-            self.add_global(info, version, GlobalKind::Unimplemented);
-        }
+        self.add_global(&wayland::wl_seat::INFO, crate::seat::SEAT_VERSION, GlobalKind::Seat);
+        self.add_global(&viewporter::wp_viewporter::INFO, 1, GlobalKind::Unimplemented);
     }
 
     /// Offers linux-dmabuf. The table still decides which clients see it.
@@ -226,22 +227,6 @@ impl State {
         self.backend = Some(Box::new(backend));
         self.queue_redraw_all();
     }
-
-    /// The pointer is now at this place on the desktop. Every output is
-    /// looked at again, for a backend that draws the pointer.
-    pub fn pointer_moved(&mut self, x: f64, y: f64) {
-        self.pointer = (x, y);
-        self.queue_redraw_all();
-    }
-
-    /// The surface that has the keyboard. None until the seat is built.
-    pub(crate) fn keyboard_focus_surface(&self) -> Option<SurfaceId> {
-        None
-    }
-
-    /// A surface that is going away gives up the keyboard. Nothing has it
-    /// until the seat is built.
-    pub(crate) fn drop_focus_from(&mut self, _surface: SurfaceId) {}
 
     /// Takes a lower descriptor limit than the process has, as a test does
     /// to reach the reserve without filling the process.
@@ -489,6 +474,9 @@ impl State {
                 ObjectKind::Popup(surface) => {
                     xdg_popup::Request::decode(opcode, &mut args).map(|request| Request::Popup(*surface, request))
                 }
+                ObjectKind::Seat => wl_seat::Request::decode(opcode, &mut args).map(Request::Seat),
+                ObjectKind::Keyboard => wl_keyboard::Request::decode(opcode, &mut args).map(Request::Keyboard),
+                ObjectKind::Pointer => wl_pointer::Request::decode(opcode, &mut args).map(Request::Pointer),
                 ObjectKind::LayerShell => {
                     zwlr_layer_shell_v1::Request::decode(opcode, &mut args).map(Request::LayerShell)
                 }
@@ -533,6 +521,9 @@ impl State {
             Request::Toplevel(surface, request) => self.toplevel_request(client_id, id, surface, request)?,
             Request::Popup(surface, request) => self.popup_request(id, surface, request)?,
             Request::LayerShell(request) => self.layer_shell_request(client_id, id, version, request)?,
+            Request::Seat(request) => self.seat_request(client_id, id, version, request)?,
+            Request::Keyboard(wl_keyboard::Request::Release) => {}
+            Request::Pointer(request) => self.pointer_request(client_id, request)?,
             Request::Layer(surface, request) => self.layer_surface_request(id, surface, request)?,
         }
         if destructor && let Some(client) = self.clients.get_mut(&client_id) {
@@ -598,6 +589,9 @@ enum Request {
     Toplevel(SurfaceId, xdg_toplevel::Request),
     Popup(SurfaceId, xdg_popup::Request),
     LayerShell(zwlr_layer_shell_v1::Request),
+    Seat(wl_seat::Request),
+    Keyboard(wl_keyboard::Request),
+    Pointer(wl_pointer::Request),
     Layer(SurfaceId, zwlr_layer_surface_v1::Request),
 }
 

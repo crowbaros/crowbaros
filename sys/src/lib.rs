@@ -5,3 +5,4 @@
 //! the wrapper holds.
 
 pub mod shm;
+pub mod xkb;
