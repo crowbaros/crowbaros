@@ -48,6 +48,23 @@ impl Rect {
         )
     }
 
+    /// The part both hold, which is empty where they do not meet.
+    pub fn intersection(&self, other: &Rect) -> Rect {
+        let left = i64::from(self.x).max(i64::from(other.x));
+        let top = i64::from(self.y).max(i64::from(other.y));
+        let right = (i64::from(self.x) + i64::from(self.width)).min(i64::from(other.x) + i64::from(other.width));
+        let bottom = (i64::from(self.y) + i64::from(self.height)).min(i64::from(other.y) + i64::from(other.height));
+        if self.is_empty() || other.is_empty() || right <= left || bottom <= top {
+            return Rect::default();
+        }
+        Rect::new(left as i32, top as i32, (right - left) as i32, (bottom - top) as i32)
+    }
+
+    /// Whether they share any point.
+    pub fn overlaps(&self, other: &Rect) -> bool {
+        !self.intersection(other).is_empty()
+    }
+
     pub fn translated(&self, dx: i32, dy: i32) -> Rect {
         Rect::new(
             self.x.saturating_add(dx),

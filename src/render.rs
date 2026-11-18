@@ -3,7 +3,8 @@
 //! GPU imported is its own texture, drawn where it is.
 //!
 //! Each draw waits until the GPU is done, so no buffer a client gets back
-//! is still being read.
+//! is still being read. A draw touches only the damage it is given (see
+//! `damage.rs`): the rest of the target keeps the frame it held.
 //!
 //! What to draw, and in what order, is the scene's (see `scene.rs`), the
 //! same scene the CPU renderer draws. The GPU calls are `fulcrum-sys`'s.
@@ -14,6 +15,7 @@ use fulcrum_sys::gles::{Gles, Target, Texture};
 
 use crate::{
     State,
+    damage::DamageTracker,
     geometry::Rect,
     image::Image,
     scene::{Element, Scene},
@@ -70,66 +72,96 @@ impl Renderer {
         }
     }
 
-    /// Draws a scene into a target, and the pointer as a white square where
-    /// `pointer` says, then waits until the GPU is done.
-    pub(crate) fn draw(&mut self, state: &State, scene: &Scene, target: &Target, pointer: Option<Rect>) {
+    /// Draws a scene into a target, only inside `damage`, then waits until
+    /// the GPU is done. Outside it, the target keeps what it held.
+    pub(crate) fn draw(&mut self, state: &State, scene: &Scene, target: &Target, damage: &[Rect]) {
         self.prepare(state, scene);
-        let full = (0, 0, target.width, target.height);
         let mut frame = self.gles.frame(target);
-        frame.clear(full, scene.background);
-        for element in &scene.elements {
-            match element {
-                Element::Surface { surface: id, rect } => {
-                    let Some(surface) = state.surfaces.get(id) else {
-                        continue;
-                    };
-                    let texture = match &surface.current.content {
-                        Some(Content::Gpu(gpu)) => &*gpu.texture,
-                        Some(Content::Copied(_)) => match self.textures.get(id) {
-                            Some((_, texture)) => texture,
+        for clip in damage {
+            let clip_box = (clip.x, clip.y, clip.width, clip.height);
+            frame.clear(clip_box, scene.background);
+            for element in &scene.elements {
+                match element {
+                    Element::Surface { surface: id, rect } => {
+                        if !rect.overlaps(clip) {
+                            continue;
+                        }
+                        let Some(surface) = state.surfaces.get(id) else {
+                            continue;
+                        };
+                        let texture = match &surface.current.content {
+                            Some(Content::Gpu(gpu)) => &*gpu.texture,
+                            Some(Content::Copied(_)) => match self.textures.get(id) {
+                                Some((_, texture)) => texture,
+                                None => continue,
+                            },
                             None => continue,
-                        },
-                        None => continue,
-                    };
-                    let destination = (rect.x, rect.y, rect.width, rect.height);
-                    frame.draw(
-                        texture,
-                        surface.current.source_in_buffer(),
-                        destination,
-                        destination,
-                        false,
-                        1.0,
-                    );
-                }
-                Element::Solid { rect, colour } => {
-                    frame.clear((rect.x, rect.y, rect.width, rect.height), *colour);
+                        };
+                        frame.draw(
+                            texture,
+                            surface.current.source_in_buffer(),
+                            (rect.x, rect.y, rect.width, rect.height),
+                            clip_box,
+                            false,
+                            1.0,
+                        );
+                    }
+                    Element::Solid { rect, colour } => {
+                        let inside = rect.intersection(clip);
+                        frame.clear((inside.x, inside.y, inside.width, inside.height), *colour);
+                    }
                 }
             }
         }
-        if let Some(pointer) = pointer {
-            frame.clear(
-                (pointer.x, pointer.y, pointer.width, pointer.height),
-                crate::backend::POINTER_COLOUR,
-            );
-        }
         frame.finish();
+    }
+
+    /// Draws a scene whole into a target of its own and reads it back, for
+    /// a display the GPU cannot draw into.
+    pub(crate) fn draw_to_image(&mut self, state: &State, scene: &Scene) -> io::Result<Image> {
+        let target = self.gles.offscreen(scene.size.0, scene.size.1)?;
+        self.draw(state, scene, &target, &[Rect::new(0, 0, scene.size.0, scene.size.1)]);
+        Ok(self.read(&target))
+    }
+
+    fn read(&self, target: &Target) -> Image {
+        let frame = self.gles.frame(target);
+        let pixels = frame.read((0, 0, target.width, target.height));
+        frame.finish();
+        Image {
+            width: target.width,
+            height: target.height,
+            pixels,
+        }
     }
 }
 
-impl Renderer {
-    /// Draws a scene into a target of its own and reads it back, for a
-    /// display the GPU cannot draw into.
-    pub(crate) fn draw_to_image(&mut self, state: &State, scene: &Scene) -> io::Result<Image> {
-        let target = self.gles.offscreen(scene.size.0, scene.size.1)?;
-        self.draw(state, scene, &target, None);
-        let frame = self.gles.frame(&target);
-        let pixels = frame.read((0, 0, scene.size.0, scene.size.1));
-        frame.finish();
-        Ok(Image {
-            width: scene.size.0,
-            height: scene.size.1,
-            pixels,
-        })
+/// An output the GLES renderer draws into one target of its own, frame
+/// after frame, only where it changed. For the tests, which hold each frame
+/// beside one drawn whole.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct OffscreenOutput {
+    target: Option<Target>,
+    tracker: DamageTracker,
+}
+
+impl OffscreenOutput {
+    /// Draws the output's next frame where it changed, and reads it back
+    /// with the damage that was drawn.
+    pub fn draw(&mut self, state: &State, output: u64, renderer: &mut Renderer) -> io::Result<(Image, Vec<Rect>)> {
+        let scene = state.scene(output).ok_or_else(|| io::Error::other("no such output"))?;
+        let fits = self
+            .target
+            .as_ref()
+            .is_some_and(|target| (target.width, target.height) == scene.size);
+        if !fits {
+            self.target = Some(renderer.gles.offscreen(scene.size.0, scene.size.1)?);
+        }
+        let target = self.target.as_ref().expect("made above");
+        let damage = self.tracker.damage(state, &scene, if fits { 1 } else { 0 });
+        renderer.draw(state, &scene, target, &damage);
+        Ok((renderer.read(target), damage))
     }
 }
 

@@ -16,6 +16,9 @@
 //! compositor draws the pointer itself (see [`draw_pointer`]): a TTY has no
 //! cursor of its own.
 //!
+//! The GPU draws into a GBM buffer only what changed since the frame that
+//! buffer holds (see `damage.rs`). After a switch back, it draws all of it.
+//!
 //! When the person switches to another virtual terminal, seatd takes the
 //! devices back. The compositor stops drawing and reading input until it is
 //! switched back to, and then sets every mode again.
@@ -42,6 +45,7 @@ use crate::{
         session::{Session, SessionEvent},
         uevent::Uevents,
     },
+    damage::DamageTracker,
     geometry::Rect,
     log,
     render::Renderer,
@@ -95,6 +99,10 @@ struct Monitor {
     /// The next commit must set the mode, as after a switch back.
     needs_modeset: bool,
     flip_pending: bool,
+    /// What each frame changed, for the GPU to draw only that.
+    damage: DamageTracker,
+    /// How many frames have been drawn.
+    frames: u64,
 }
 
 /// A monitor's two buffers: the one it shows, and the one drawn next.
@@ -111,6 +119,8 @@ struct GpuBuffer {
     target: Target,
     _buffer: gbm::Buffer,
     framebuffer: u32,
+    /// The frame it holds, by the monitor's count: none until drawn.
+    holds: Option<u64>,
 }
 
 /// The GPU, where it draws the monitors' frames.
@@ -169,6 +179,7 @@ impl Gpu {
                 target,
                 _buffer: buffer,
                 framebuffer,
+                holds: None,
             })
         };
         let first = make()?;
@@ -488,6 +499,8 @@ impl Tty {
             front: 1,
             needs_modeset: true,
             flip_pending: false,
+            damage: DamageTracker::default(),
+            frames: 0,
         })
     }
 
@@ -625,8 +638,18 @@ impl Backend for Tty {
                 let (Some(scene), Some(gpu)) = (state.scene_with_cursor(output), self.gpu.as_mut()) else {
                     return Drawn::Nothing;
                 };
-                gpu.renderer.draw(state, &scene, &buffers[back].target, None);
-                buffers[back].framebuffer
+                // The back buffer holds an older frame: only what changed
+                // since is drawn. After a switch back, all of it is.
+                let buffer = &mut buffers[back];
+                let age = match buffer.holds {
+                    Some(held) if !monitor.needs_modeset => (monitor.frames + 1 - held) as usize,
+                    _ => 0,
+                };
+                let damage = monitor.damage.damage(state, &scene, age);
+                gpu.renderer.draw(state, &scene, &buffer.target, &damage);
+                monitor.frames += 1;
+                buffer.holds = Some(monitor.frames);
+                buffer.framebuffer
             }
         };
         let (width, height) = (u64::from(monitor.mode.hdisplay), u64::from(monitor.mode.vdisplay));

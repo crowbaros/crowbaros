@@ -126,8 +126,10 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   are drawn by the GPU into GBM buffers the display scans out. Where they do
   not, or `FULCRUM_RENDERER=cpu` says so, the CPU renderer draws into dumb
   buffers. Both draw the same scene: what each output shows, back to front.
-  EGL, GLES, and GBM are loaded at run time, so building Fulcrum needs none of
-  them.
+  The GPU draws only what changed: each frame's scene beside the last one
+  gives its damage, and a buffer is brought up to date with the damage of
+  every frame since it was last drawn. EGL, GLES, and GBM are loaded at run
+  time, so building Fulcrum needs none of them.
 - **The nested backend**, for development: the desktop in a window on a host
   session. Only in a build with `--features nested`, which Base never is.
 - **A headless backend** that draws each output with the CPU renderer, and
@@ -175,12 +177,13 @@ place since [crowbaros#198](https://github.com/crowbaros/crowbaros/pull/198)
 | `src/evidence.rs` | The line it logs for the checks that run it: commits by window and layer, and frames drawn |
 | `src/dmabuf.rs` | linux-dmabuf: feedback, params, and buffers made from dma-bufs |
 | `src/scene.rs` | What an output shows, back to front, for either renderer, frames included |
-| `src/render.rs` | The GLES renderer's compositor half: a texture for each surface, kept until its content changes |
+| `src/render.rs` | The GLES renderer's compositor half: a texture for each surface, kept until its content changes, and a scene drawn inside its damage |
+| `src/damage.rs` | What changed on an output from one frame to the next, and what a buffer of a given age must draw |
 | `src/backend/` | Where frames go: `tty.rs` (a virtual terminal), `session.rs` (Fulcrum's client of seatd), `uevent.rs` (hotplug from netlink), `nested.rs` (a window on a host session), and `headless.rs` (the tests) |
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `dl.rs` (libraries loaded at run time), `gles.rs` (EGL and GLES: the context, textures, targets, and draws), `gbm.rs`, `dmabuf.rs` (telling a dma-buf from other files, and reading one with the CPU), `syncobj.rs` (DRM timelines), `drm.rs` (mode setting, dumb buffers, and framebuffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (the guarded mapping) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `outputs.rs` covers outputs that change size; `data_device.rs` and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `dmabuf.rs` covers linux-dmabuf; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `outputs.rs` covers outputs that change size; `data_device.rs` and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `dmabuf.rs` covers linux-dmabuf; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.
