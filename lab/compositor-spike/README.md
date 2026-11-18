@@ -3,7 +3,8 @@
 **This is the [spike](https://github.com/crowbaros/crowbaros/issues/3), not the
 compositor.** It was written to test
 [ADR 0015](../../docs/adr/0015-our-own-compositor-on-smithay.md), and its code is
-throwaway. The compositor is in [`compositor/`](../../compositor/README.md).
+throwaway. The compositor is built in Fulcrum, at the commit
+[`compositor/`](../../compositor/README.md) pins.
 
 The spike is kept here for one reason: the Alpha desktop check still runs it
 ([ADR 0020](../../docs/adr/0020-the-first-compositor-is-small-on-purpose.md)).

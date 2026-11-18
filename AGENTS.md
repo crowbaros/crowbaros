@@ -48,7 +48,7 @@ working with coding agents. This file is the standard both sides hold.
 | Change touches | Run | Show |
 | --- | --- | --- |
 | How Base is built, booted, or rolled back; `lab/void/` | `lab/void/void_lab.py milestone` | The evidence log it writes |
-| `compositor/` | `lab/void/compositor_guest.py check` | The evidence log it writes |
+| `compositor/fulcrum.json`, or a Fulcrum change before it is pinned | `lab/void/compositor_guest.py check`, as [`compositor/`](compositor/README.md) says | The evidence log it writes |
 | `apps/` | The app's Void build and run steps in its README | Before and after captures; a short recording for motion |
 
 ## Releases

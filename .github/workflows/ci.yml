@@ -87,12 +87,15 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sudo -E
         run: cargo test --locked -p crowbar-sandbox --test compartments -- --ignored
 
-  # The compositor, and the spike that the Alpha desktop still runs (ADR 0020).
+  # The spike that the Alpha desktop still runs (ADR 0020). The compositor is
+  # built and tested by Fulcrum's own CI, and by the Void guest check at the
+  # commit compositor/fulcrum.json pins (ADR 0027). test_fulcrum_pin.py, in the
+  # job above, checks that the pin names a full commit.
   compositor:
     name: Compositor (${{ matrix.project }})
     strategy:
       matrix:
-        project: [compositor, lab/compositor-spike]
+        project: [lab/compositor-spike]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
@@ -124,11 +127,6 @@ jobs:
       - name: Test
         run: cargo test --locked
 
-      # The backend for a window on a host session is left out of the
-      # compositor by default, so nothing above builds it.
-      - name: Lint the nested backend
-        if: matrix.project == 'compositor'
-        run: cargo clippy --all-targets --locked --features nested -- -D warnings
 
   shell:
     name: Interface (${{ matrix.project }})

@@ -34,7 +34,7 @@ The evidence is in the [compositor research](../research/compositor-smithay.md).
 - The look in [`DESIGN.md`](../../DESIGN.md) carries over: the apps draw their own content, and the bar, dock, launcher, and wallpaper stay layer surfaces. Effects the compositor would draw, such as blur or window animation, are ours to write if the design later asks for them.
 - X11 apps run through a separate bridge process per app, or not at all. No X server is shared.
 - NVIDIA is a cost, not a barrier. The proprietary driver needs a glibc Base and Void's nonfree repository. Known problems on Smithay compositors with NVIDIA are an open flicker bug and a freeze seen with the GPUI version we pin; the second may force a change of GPUI version.
-- The compositor lives in [`compositor/`](../../compositor/README.md), as its own Cargo project outside the root workspace.
+- The compositor lives in [`compositor/`](../../compositor/README.md), as its own Cargo project outside the root workspace. [ADR 0027](0027-the-compositor-is-built-in-its-own-repository.md) moves it to a repository of its own, Fulcrum, and Base pins one commit.
 - The Void lab's graphical guest runs this compositor. The Fedora lab is removed when it does.
 - The compositor is no longer an open question in the vision.
 

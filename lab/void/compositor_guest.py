@@ -8,10 +8,11 @@ The guest is a plain Void root on Btrfs, booted straight from its kernel. It
 is not built through the apply engine and has no generations. Its desktop
 runs on a TTY under runit, without systemd or a host compositor.
 
-There are two images. The plain one holds the compositor in `compositor/` and
-its probe, for `check`. The desktop one holds the Alpha desktop: the shell,
-Studio Settings, and the compositor spike in `lab/compositor-spike/`, which
-the Alpha desktop runs until the compositor passes `desktop-check` (ADR 0020).
+There are two images. The plain one holds the compositor and its probe, for
+`check`. They are built from the Fulcrum revision that `compositor/fulcrum.json`
+pins (ADR 0027). The desktop one holds the Alpha desktop: the shell, Studio
+Settings, and the compositor spike in `lab/compositor-spike/`, which the Alpha
+desktop runs until the compositor passes `desktop-check` (ADR 0020).
 
     compositor_guest.py rootfs     install the guest root and the build root (rootless)
     compositor_guest.py build      build and test in Void what an image holds (--desktop for the desktop image)
@@ -24,6 +25,11 @@ the Alpha desktop runs until the compositor passes `desktop-check` (ADR 0020).
     compositor_guest.py check      build, make the disk, boot, run every compositor check, and write an evidence log
     compositor_guest.py desktop-check   the Alpha desktop smoke check, in a fresh guest
 
+To build a Fulcrum commit that is not pinned yet, name it and the clone that
+holds it. The evidence log says that the build is not the pinned one:
+
+    FULCRUM_REPOSITORY=../fulcrum FULCRUM_REVISION=<full commit ID> compositor_guest.py check
+
 QEMU needs the virtio-gpu device. Where the distribution splits it into its
 own package (Arch: qemu-hw-display-virtio-gpu-pci), install that, or point
 QEMU_MODULE_DIR at a directory that holds the modules.
@@ -32,12 +38,15 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import socket
 import struct
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 
 import void_lab
@@ -55,10 +64,16 @@ PIDFILE = WORK / "qemu.pid"
 QMP_SOCK = WORK / "qmp.sock"
 SERIAL_LOG = WORK / "serial.log"
 VNC = [WORK / "vnc0.sock", WORK / "vnc1.sock"]
+# The compositor is built in its own repository, Fulcrum (ADR 0027). The lab
+# fetches the pinned commit into a bare repository of its own, and exports the
+# commit's tree, not a working copy, to a directory named for the commit.
+PIN = ROOT / "compositor/fulcrum.json"
+FULCRUM_GIT = ROOT / ".lab/fulcrum.git"
+FULCRUM_TREES = ROOT / ".lab/fulcrum"
 # Both compositors build a `crowbar-compositor` and a `crowbar-probe`, so the
 # compositor builds in a part of the target directory of its own. The spike
 # and the apps stay where the desktop image has always built them.
-COMPOSITOR = ("compositor", "compositor")
+COMPOSITOR_PART = "compositor"
 SPIKE = ("lab/compositor-spike", "")
 APPS = [("apps/shell", ""), ("apps/studio-settings", "")]
 COMPOSITOR_BINARIES = ["crowbar-compositor", "crowbar-probe"]
@@ -90,15 +105,81 @@ def rootfs(force=False):
         install_root(target, packages, log_name)
 
 
+def fulcrum_pin(environ=None):
+    """The Fulcrum commit to build and where to fetch it.
+
+    The pin decides both, unless FULCRUM_REVISION or FULCRUM_REPOSITORY is set.
+    Either way the revision is a full commit ID, so a branch that moves cannot
+    change what is built.
+    """
+    environ = os.environ if environ is None else environ
+    pin = json.loads(PIN.read_text())
+    revision = environ.get("FULCRUM_REVISION") or pin["revision"]
+    repository = environ.get("FULCRUM_REPOSITORY") or pin["repository"]
+    for name, value in (("pinned revision", pin["revision"]), ("revision", revision)):
+        if not re.fullmatch(r"[0-9a-f]{40}", value):
+            raise SystemExit(f"The Fulcrum {name} must be a full commit ID, not {value!r}")
+    if Path(repository).exists():
+        repository = str(Path(repository).resolve())
+    return {"revision": revision, "repository": repository,
+            "pinned_revision": pin["revision"], "pinned": revision == pin["revision"]}
+
+
+def has_commit(git_dir, revision):
+    return subprocess.run(["git", "--git-dir", str(git_dir), "cat-file", "-e", f"{revision}^{{commit}}"],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def fulcrum_source(pin=None, git_dir=None, trees=None):
+    """The tree of the Fulcrum commit, exported once to a directory of its own.
+
+    Nothing from a working copy reaches the build: the commit is fetched into
+    the lab's bare repository and its tree is written out with `git archive`.
+    A directory that exists was written in full, because it is renamed into
+    place only after the export finishes.
+    """
+    pin = pin or fulcrum_pin()
+    git_dir = git_dir or FULCRUM_GIT
+    trees = trees or FULCRUM_TREES
+    revision = pin["revision"]
+    tree = trees / revision
+    if tree.is_dir():
+        return tree
+    if not git_dir.exists():
+        run("git", "init", "-q", "--bare", git_dir)
+    if not has_commit(git_dir, revision):
+        fetch = ["git", "--git-dir", git_dir, "fetch", "-q", "--no-tags", pin["repository"]]
+        # Fetch the commit itself. A host that refuses that gets asked for its
+        # branches and tags, which must then hold the commit.
+        print("+", shlex.join(str(a) for a in fetch + [revision]), flush=True)
+        if subprocess.run([str(a) for a in fetch + [revision]]).returncode != 0:
+            run(*fetch, "+refs/heads/*:refs/fulcrum/heads/*", "+refs/tags/*:refs/fulcrum/tags/*")
+        if not has_commit(git_dir, revision):
+            raise SystemExit(f"{pin['repository']} has no commit {revision}")
+    trees.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=trees, prefix=f".{revision}.") as partial:
+        with tempfile.TemporaryFile() as archive:
+            subprocess.run(["git", "--git-dir", str(git_dir), "archive", "--format=tar", revision],
+                           stdout=archive, check=True)
+            archive.seek(0)
+            with tarfile.open(fileobj=archive) as tar:
+                tar.extractall(Path(partial) / "tree", filter="data")
+        (Path(partial) / "tree").rename(tree)
+    print(f"Exported Fulcrum {revision} to {tree}")
+    return tree
+
+
 def projects(desktop):
     """What an image is built from: each project and its part of the target directory."""
-    return [SPIKE, *APPS] if desktop else [COMPOSITOR]
+    if desktop:
+        return [SPIKE, *APPS]
+    return [(fulcrum_source().relative_to(ROOT).as_posix(), COMPOSITOR_PART)]
 
 
 def binaries(desktop):
     """The programs an image holds, and where the build leaves each."""
-    compositor = SPIKE if desktop else COMPOSITOR
-    built = {name: TARGET / compositor[1] / "release" / name for name in COMPOSITOR_BINARIES}
+    part = SPIKE[1] if desktop else COMPOSITOR_PART
+    built = {name: TARGET / part / "release" / name for name in COMPOSITOR_BINARIES}
     if desktop:
         built.update({name: TARGET / "release" / name for name in APP_BINARIES})
     return built
@@ -114,13 +195,14 @@ def build(desktop=False):
         rootfs()
     if desktop:
         run(sys.executable, ROOT / "apps/shell/packaging/prepare-gpui.py")
-    for project, _ in projects(desktop):
+    built_from = projects(desktop)
+    for project, _ in built_from:
         run("cargo", "fetch", "--locked", "--target", "x86_64-unknown-linux-gnu",
             "--manifest-path", ROOT / project / "Cargo.toml")
     TARGET.mkdir(parents=True, exist_ok=True)
     cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
     env = dict(os.environ, B=str(BUILD_ROOT), SRC=str(ROOT), TARGET=str(TARGET),
-               PROJECTS=" ".join(f"{project}:{part}" for project, part in projects(desktop)),
+               PROJECTS=" ".join(f"{project}:{part}" for project, part in built_from),
                CARGO_REGISTRY=str(cargo_home / "registry"), CARGO_GIT=str(cargo_home / "git"))
     run("unshare", "-r", "-m", "sh", LAB / "host/build-compositor.sh", env=env)
     for name, path in binaries(desktop).items():
