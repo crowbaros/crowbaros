@@ -15,8 +15,12 @@
 //!
 //! ADR 0020 has the broker end it, when the person has authenticated, and
 //! the compositor start locked. The broker is archived with CrowbarOS's
-//! substrate vision, so until a record says what replaces it, the shell's
-//! request ends it, and the compositor starts unlocked. These, the lock
+//! substrate vision. Until a record says what replaces it, an unlock
+//! authority stands in: a privileged part of Base, at a socket and user ID
+//! of its own (`--unlock-socket`, `--unlock-uid`), that checks the person's
+//! proof and says `unlock`. Once there is one, the shell's word is not
+//! enough, and the compositor can start locked (`--start-locked`). Without
+//! one, the shell's request ends it, and the compositor starts unlocked. These, the lock
 //! screen's namespace, and the `lock` and `unlock` messages are Fulcrum's
 //! proposal (see `control.rs`).
 

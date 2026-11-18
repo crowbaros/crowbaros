@@ -33,7 +33,16 @@ Warden registers for one compartment. All four of these are required:
 
   --lock-after SECONDS   Locks the session after this long without input,
                          unless a shown surface inhibits idle. Without it,
-                         only the shell and Super+L lock it.
+                         only the shell and the confirm chord lock it.
+
+  --unlock-socket PATH   Where the unlock authority connects, from
+  --unlock-uid UID       --unlock-uid alone. With it, only the authority
+                         unlocks the session, after the confirm chord: the
+                         shell's word is not enough. Without it, the shell's
+                         request unlocks.
+
+  --start-locked         Starts with the session locked. It needs the unlock
+                         authority.
 
   --layout PATH          Where the layout of displays is kept: each
                          monitor's mode, place, and scale. Without it, the
@@ -62,6 +71,8 @@ struct Args {
     shell_control: Option<PathBuf>,
     layout: Option<PathBuf>,
     lock_after: Option<std::time::Duration>,
+    unlock: Option<TrustedPart>,
+    start_locked: bool,
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -70,6 +81,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut shell_control = None;
     let mut layout = None;
     let mut lock_after = None;
+    let (mut unlock_socket, mut unlock_uid) = (None, None);
+    let mut start_locked = false;
     let mut rest = args;
     while let Some(flag) = rest.next() {
         let mut value = || rest.next().ok_or(format!("{flag} needs a value"));
@@ -81,6 +94,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--warden-uid" => warden_uid = Some(uid(value()?)?),
             "--shell-control-socket" => shell_control = Some(PathBuf::from(value()?)),
             "--layout" => layout = Some(PathBuf::from(value()?)),
+            "--unlock-socket" => unlock_socket = Some(PathBuf::from(value()?)),
+            "--unlock-uid" => unlock_uid = Some(uid(value()?)?),
+            "--start-locked" => start_locked = true,
             "--lock-after" => {
                 let text = value()?;
                 let seconds = text
@@ -104,6 +120,14 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         (Some(socket), Some(uid)) => Ok(TrustedPart { socket, uid }),
         _ => Err(format!("--{name}-socket and --{name}-uid are required\n\n{USAGE}")),
     };
+    let unlock = match (unlock_socket, unlock_uid) {
+        (Some(socket), Some(uid)) => Some(TrustedPart { socket, uid }),
+        (None, None) => None,
+        _ => return Err(format!("--unlock-socket and --unlock-uid come together\n\n{USAGE}")),
+    };
+    if start_locked && unlock.is_none() {
+        return Err(format!("--start-locked needs the unlock authority\n\n{USAGE}"));
+    }
     Ok(Args {
         parts: TrustedParts {
             shell: part(shell_socket, shell_uid, "shell")?,
@@ -113,6 +137,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         shell_control,
         layout,
         lock_after,
+        unlock,
+        start_locked,
     })
 }
 
@@ -134,6 +160,9 @@ fn main() {
             state.keep_layout_in(layout);
         }
         state.lock_after_idle(args.lock_after);
+        if args.start_locked {
+            state.lock("start");
+        }
         // Clients are accepted only once there is something to show them on.
         let name = match args.backend {
             BackendKind::Tty => {
@@ -149,6 +178,9 @@ fn main() {
         state.listen(&args.parts)?;
         if let Some(socket) = &args.shell_control {
             state.listen_for_control(socket, args.parts.shell.uid)?;
+        }
+        if let Some(authority) = &args.unlock {
+            state.listen_for_unlock_authority(&authority.socket, authority.uid)?;
         }
         log::write(Level::Info, format_args!("compositor is up backend={name}"));
         state.run()
@@ -214,6 +246,24 @@ mod tests {
         let mut args = PARTS.to_vec();
         args.extend(["--backend", "tty"]);
         assert_eq!(parse(&args).map(|args| args.backend), Ok(BackendKind::Tty));
+    }
+
+    /// The unlock authority is a socket and a user ID together, and starting
+    /// locked needs it: otherwise nothing could unlock but the shell's word.
+    #[test]
+    fn starting_locked_needs_the_whole_unlock_authority() {
+        let with = |extra: &[&'static str]| {
+            let mut args = PARTS.to_vec();
+            args.extend_from_slice(extra);
+            parse(&args)
+        };
+        assert!(with(&["--start-locked"]).is_err());
+        assert!(with(&["--unlock-socket", "/run/unlock"]).is_err());
+        assert!(with(&["--unlock-uid", "0"]).is_err());
+        let args = with(&["--unlock-socket", "/run/unlock", "--unlock-uid", "0", "--start-locked"]).unwrap();
+        assert!(args.start_locked);
+        let authority = args.unlock.unwrap();
+        assert_eq!((authority.socket, authority.uid), (PathBuf::from("/run/unlock"), 0));
     }
 
     /// The nested backend makes the compositor a client of another display.

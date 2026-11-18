@@ -278,7 +278,8 @@ impl State {
                         job(self);
                     }
                 }
-                Token::ControlListener => self.accept_control(),
+                Token::ControlListener => self.accept_control(false),
+                Token::AuthorityListener => self.accept_control(true),
                 Token::Control(id) => self.control_ready(id, readiness),
                 Token::Held(surface) => self.release_held(surface),
                 Token::Backend(source) => {

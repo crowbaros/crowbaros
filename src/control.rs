@@ -44,8 +44,10 @@
 //! confirm chord, and the idle timer change it too (see `lock.rs`).
 //! `unlock_entry` says the confirm chord opened the unlock entry, before
 //! which `unlock` is refused. The snapshot has `locked` and `unlock_entry`.
-//! These are Fulcrum's proposal until a
-//! CrowbarOS record decides them.
+//! Where an unlock authority listens, the shell's `unlock` is refused: the
+//! authority has a socket of its own, checked against its user ID, where it
+//! may send `lock` and `unlock`, and nothing else, and hears no events.
+//! These are Fulcrum's proposal until a CrowbarOS record decides them.
 //!
 //! `outputs` and `configure_output` are the shell's interface to the layout
 //! of displays (ADR 0020): a monitor's mode, place, and scale, the scale in
@@ -96,6 +98,9 @@ pub(crate) struct ControlListener {
 }
 
 pub(crate) struct ControlConnection {
+    /// The unlock authority's connection, not the shell's: it may lock and
+    /// unlock, and nothing else, and hears no events.
+    authority: bool,
     stream: UnixStream,
     input: Vec<u8>,
     output: Vec<u8>,
@@ -106,6 +111,8 @@ pub(crate) struct ControlConnection {
 #[derive(Default)]
 pub(crate) struct Controls {
     listener: Option<ControlListener>,
+    /// The unlock authority's listener, where one is named.
+    authority: Option<ControlListener>,
     connections: HashMap<u64, ControlConnection>,
     next: u64,
 }
@@ -126,22 +133,31 @@ impl State {
     /// Listens for the shell's control channel at `socket`, from the user ID
     /// `uid` alone.
     pub fn listen_for_control(&mut self, socket: &Path, uid: u32) -> io::Result<()> {
-        match fs::remove_file(socket) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-        let listener = UnixListener::bind(socket)?;
-        fs::set_permissions(socket, fs::Permissions::from_mode(0o660))?;
-        listener.set_nonblocking(true)?;
+        let listener = control_listener(socket)?;
         self.event_loop.add(listener.as_fd(), Token::ControlListener, false)?;
         self.controls.listener = Some(ControlListener { listener, uid });
         Ok(())
     }
 
-    pub(crate) fn accept_control(&mut self) {
+    /// Listens for the unlock authority at `socket`, from the user ID `uid`
+    /// alone. Once it does, only the authority unlocks the session: the
+    /// shell's word is not enough (ADR 0020, see `lock.rs`).
+    pub fn listen_for_unlock_authority(&mut self, socket: &Path, uid: u32) -> io::Result<()> {
+        let listener = control_listener(socket)?;
+        self.event_loop.add(listener.as_fd(), Token::AuthorityListener, false)?;
+        self.controls.authority = Some(ControlListener { listener, uid });
+        Ok(())
+    }
+
+    pub(crate) fn accept_control(&mut self, authority: bool) {
+        let part = if authority { "unlock authority" } else { "shell control" };
         loop {
-            let Some(control) = &self.controls.listener else {
+            let listening = if authority {
+                &self.controls.authority
+            } else {
+                &self.controls.listener
+            };
+            let Some(control) = listening else {
                 return;
             };
             let (stream, _) = match control.listener.accept() {
@@ -155,7 +171,7 @@ impl State {
             match peer_uid(&stream) {
                 Ok(peer) if peer == control.uid => {}
                 Ok(peer) => {
-                    log::warning!("refused a peer with the wrong user ID {peer} (shell control)");
+                    log::warning!("refused a peer with the wrong user ID {peer} ({part})");
                     continue;
                 }
                 Err(error) => {
@@ -163,8 +179,14 @@ impl State {
                     continue;
                 }
             }
-            if self.controls.connections.len() >= MAX_CONNECTIONS {
-                log::warning!("refused a control connection: the shell holds {MAX_CONNECTIONS}");
+            let held = self
+                .controls
+                .connections
+                .values()
+                .filter(|connection| connection.authority == authority)
+                .count();
+            if held >= MAX_CONNECTIONS {
+                log::warning!("refused a {part} connection: it holds {MAX_CONNECTIONS}");
                 continue;
             }
             if stream.set_nonblocking(true).is_err() {
@@ -175,10 +197,11 @@ impl State {
             if self.event_loop.add(stream.as_fd(), Token::Control(id), false).is_err() {
                 continue;
             }
-            log::info!("shell control connected id={id}");
+            log::info!("{part} connected id={id}");
             self.controls.connections.insert(
                 id,
                 ControlConnection {
+                    authority,
                     stream,
                     input: Vec::new(),
                     output: Vec::new(),
@@ -227,7 +250,13 @@ impl State {
                 close = true;
                 break;
             }
+            let authority = self
+                .controls
+                .connections
+                .get(&id)
+                .is_some_and(|connection| connection.authority);
             let reply = match std::str::from_utf8(&line) {
+                Ok(text) if authority => self.authority_request(text.trim_end()),
                 Ok(text) => self.control_request(text.trim_end()),
                 Err(_) => error_reply("the request is not UTF-8"),
             };
@@ -244,10 +273,49 @@ impl State {
         }
     }
 
-    /// Sends an event to every control connection: a line with no reply.
+    /// A request on the unlock authority's connection: `lock`, or `unlock`
+    /// once the confirm chord opened the unlock entry.
+    fn authority_request(&mut self, line: &str) -> String {
+        let op = match parse_object(line) {
+            Ok(request) if request.len() == 1 => match request.get("op") {
+                Some(Value::String(op)) => op.clone(),
+                _ => return error_reply("a request names its op, and nothing else"),
+            },
+            Ok(_) => return error_reply("a request names its op, and nothing else"),
+            Err(error) => return error_reply(&format!("not a request: {error}")),
+        };
+        let result = match op.as_str() {
+            "lock" => {
+                self.lock("authority");
+                Ok(())
+            }
+            "unlock" => self.unlock_after_chord(),
+            _ => Err(format!("the unlock authority may lock and unlock, and not {op:?}")),
+        };
+        result.map_or_else(|message| error_reply(&message), |()| ok_reply())
+    }
+
+    /// Unlocks the session, if the confirm chord opened the unlock entry:
+    /// ADR 0020's unlock begins with it.
+    fn unlock_after_chord(&mut self) -> Result<(), String> {
+        if self.locked() && !self.unlock_entry_open() {
+            return Err("unlock begins with the confirm chord".into());
+        }
+        self.unlock();
+        Ok(())
+    }
+
+    /// Sends an event to every shell control connection: a line with no
+    /// reply. The unlock authority hears none.
     pub(crate) fn control_event(&mut self, name: &str) {
         let line = format!("{{\"event\":{}}}\n", quote(name));
-        let ids: Vec<u64> = self.controls.connections.keys().copied().collect();
+        let ids: Vec<u64> = self
+            .controls
+            .connections
+            .iter()
+            .filter(|(_, connection)| !connection.authority)
+            .map(|(id, _)| *id)
+            .collect();
         for id in ids {
             if let Some(connection) = self.controls.connections.get_mut(&id) {
                 connection.output.extend_from_slice(line.as_bytes());
@@ -339,10 +407,10 @@ impl State {
                 ok_reply()
             }),
             "unlock" => only(&[], &request).and_then(|()| {
-                if self.locked() && !self.unlock_entry_open() {
-                    return Err("unlock begins with the confirm chord".into());
+                if self.controls.authority.is_some() {
+                    return Err("the shell's word is not enough: the unlock authority unlocks".into());
                 }
-                self.unlock();
+                self.unlock_after_chord()?;
                 Ok(ok_reply())
             }),
             "launching" => only(&[], &request).map(|()| {
@@ -489,6 +557,20 @@ impl State {
         self.layout.set(&identity, placement);
         Ok(())
     }
+}
+
+/// A listening socket at a path, which it replaces, that the owner and the
+/// group may connect to.
+fn control_listener(socket: &Path) -> io::Result<UnixListener> {
+    match fs::remove_file(socket) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let listener = UnixListener::bind(socket)?;
+    fs::set_permissions(socket, fs::Permissions::from_mode(0o660))?;
+    listener.set_nonblocking(true)?;
+    Ok(listener)
 }
 
 fn ok_reply() -> String {

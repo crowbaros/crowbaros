@@ -44,6 +44,8 @@ pub enum Token {
     Control(u64),
     /// A surface's commit held for its acquire point.
     Held(u64),
+    /// The unlock authority's listener (see `lock.rs`).
+    AuthorityListener,
 }
 
 impl Token {
@@ -58,6 +60,7 @@ impl Token {
             Token::ControlListener => (7, 0),
             Token::Control(id) => (8, id),
             Token::Held(surface) => (9, surface),
+            Token::AuthorityListener => (10, 0),
         };
         debug_assert!(value < 1 << 56);
         (kind << 56) | value
@@ -75,6 +78,7 @@ impl Token {
             7 => Token::ControlListener,
             8 => Token::Control(value),
             9 => Token::Held(value),
+            10 => Token::AuthorityListener,
             _ => return None,
         })
     }

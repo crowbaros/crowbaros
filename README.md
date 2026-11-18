@@ -135,8 +135,12 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   idle. Locked, the chord opens the unlock entry: until it does, the lock
   screen hears no key but the modifiers, and the shell may not unlock. Locked, the shell's lock screen (its layer surface of namespace
   `crowbaros-lock`) is all that is drawn, every other display is blank, and
-  input goes to it alone. The shell's `unlock` ends it, in the place of the
-  broker that ADR 0020 has end it: Fulcrum's proposal until a record decides.
+  input goes to it alone. In the place of the broker that ADR 0020 has end
+  it, an unlock authority ends it: a part of Base at `--unlock-socket`,
+  checked against `--unlock-uid`, that checks the person's proof and says
+  `unlock`. With one, the shell's `unlock` is refused, and `--start-locked`
+  starts the session locked; without one, the shell's `unlock` ends it.
+  Fulcrum's proposal until a record decides.
 - **Idle inhibit**: a surface that is shown, drawn on an output on the
   workspace the person is on, keeps that output from going idle. One that is
   hidden or gone does not. Idle itself comes with Milestone 8, which reads
