@@ -3,6 +3,7 @@
 //! Every protocol Fulcrum speaks, generated from `protocols/`.
 
 pub mod fractional_scale_v1;
+pub mod idle_inhibit_unstable_v1;
 pub mod linux_dmabuf_v1;
 pub mod linux_drm_syncobj_v1;
 pub mod presentation_time;
@@ -18,6 +19,8 @@ use crate::codec::InterfaceInfo;
 pub static INTERFACES: &[&InterfaceInfo] = &[
     &fractional_scale_v1::wp_fractional_scale_manager_v1::INFO,
     &fractional_scale_v1::wp_fractional_scale_v1::INFO,
+    &idle_inhibit_unstable_v1::zwp_idle_inhibit_manager_v1::INFO,
+    &idle_inhibit_unstable_v1::zwp_idle_inhibitor_v1::INFO,
     &linux_dmabuf_v1::zwp_linux_dmabuf_v1::INFO,
     &linux_dmabuf_v1::zwp_linux_buffer_params_v1::INFO,
     &linux_dmabuf_v1::zwp_linux_dmabuf_feedback_v1::INFO,
@@ -83,6 +86,10 @@ pub fn reencode(
         ("wp_fractional_scale_manager_v1", false) => fractional_scale_v1::wp_fractional_scale_manager_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_fractional_scale_v1", true) => fractional_scale_v1::wp_fractional_scale_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_fractional_scale_v1", false) => fractional_scale_v1::wp_fractional_scale_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("zwp_idle_inhibit_manager_v1", true) => idle_inhibit_unstable_v1::zwp_idle_inhibit_manager_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("zwp_idle_inhibit_manager_v1", false) => idle_inhibit_unstable_v1::zwp_idle_inhibit_manager_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("zwp_idle_inhibitor_v1", true) => idle_inhibit_unstable_v1::zwp_idle_inhibitor_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("zwp_idle_inhibitor_v1", false) => idle_inhibit_unstable_v1::zwp_idle_inhibitor_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("zwp_linux_dmabuf_v1", true) => linux_dmabuf_v1::zwp_linux_dmabuf_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("zwp_linux_dmabuf_v1", false) => linux_dmabuf_v1::zwp_linux_dmabuf_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("zwp_linux_buffer_params_v1", true) => linux_dmabuf_v1::zwp_linux_buffer_params_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),

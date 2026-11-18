@@ -68,6 +68,8 @@ pub(crate) enum ObjectKind {
     FractionalScaleManager,
     /// A `wp_fractional_scale_v1`, for its surface.
     FractionalScale(crate::surface::SurfaceId),
+    IdleInhibitManager,
+    IdleInhibitor(crate::idle_inhibit::InhibitorId),
     Presentation,
     PresentationFeedback,
     ExplicitSync,

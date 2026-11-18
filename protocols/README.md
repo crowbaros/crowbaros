@@ -14,6 +14,7 @@ in its `<copyright>` element. `fulcrum-codegen` turns them into
 | `linux-drm-syncobj-v1.xml` | wayland-protocols 1.49, `staging/linux-drm-syncobj/` |
 | `presentation-time.xml` | wayland-protocols 1.49, `stable/presentation-time/` |
 | `security-context-v1.xml` | wayland-protocols 1.49, `staging/security-context/` |
+| `idle-inhibit-unstable-v1.xml` | wayland-protocols 1.49, `unstable/idle-inhibit/` |
 | `wlr-layer-shell-unstable-v1.xml` | [wlr-protocols](https://gitlab.freedesktop.org/wlroots/wlr-protocols) `1106a4a1c57562ddd438c547da4c0d6dc150d624`, `unstable/` |
 
 Speaking a protocol is not offering it. CrowbarOS's ADR 0020 decides which

@@ -7,6 +7,7 @@ use fulcrum_wire::{
     ArgReader, ConnectionError, DecodeError, Incoming,
     protocol::{
         fractional_scale_v1::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
+        idle_inhibit_unstable_v1::{zwp_idle_inhibit_manager_v1, zwp_idle_inhibitor_v1},
         linux_dmabuf_v1::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1},
         linux_drm_syncobj_v1::{
             wp_linux_drm_syncobj_manager_v1, wp_linux_drm_syncobj_surface_v1, wp_linux_drm_syncobj_timeline_v1,
@@ -100,6 +101,7 @@ pub struct State {
     pub(crate) workspace: u32,
     pub(crate) controls: crate::control::Controls,
     pub(crate) explicit_sync: crate::explicit_sync::ExplicitSync,
+    pub(crate) idle_inhibitors: crate::idle_inhibit::IdleInhibitors,
     /// What the pointer is doing to a window, if anything.
     pub(crate) grab: Option<crate::grabs::Grab>,
     /// Commits by window and layer, and when they were last reported.
@@ -154,6 +156,7 @@ impl State {
             workspace: 1,
             controls: crate::control::Controls::default(),
             explicit_sync: crate::explicit_sync::ExplicitSync::default(),
+            idle_inhibitors: crate::idle_inhibit::IdleInhibitors::default(),
             grab: None,
             commit_counts: std::collections::BTreeMap::new(),
             last_report: None,
@@ -203,6 +206,11 @@ impl State {
             &viewporter::wp_viewporter::INFO,
             crate::viewporter::VIEWPORTER_VERSION,
             GlobalKind::Viewporter,
+        );
+        self.add_global(
+            &zwp_idle_inhibit_manager_v1::INFO,
+            crate::idle_inhibit::IDLE_INHIBIT_VERSION,
+            GlobalKind::IdleInhibitManager,
         );
     }
 
@@ -443,6 +451,7 @@ impl State {
             ObjectKind::SyncobjTimeline(timeline) => {
                 self.explicit_sync.timelines.remove(timeline);
             }
+            ObjectKind::IdleInhibitor(inhibitor) => self.forget_inhibitor(*inhibitor),
             _ => {}
         }
     }
@@ -593,6 +602,11 @@ impl State {
                 }
                 ObjectKind::FractionalScale(surface) => wp_fractional_scale_v1::Request::decode(opcode, &mut args)
                     .map(|request| Request::FractionalScale(*surface, request)),
+                ObjectKind::IdleInhibitManager => {
+                    zwp_idle_inhibit_manager_v1::Request::decode(opcode, &mut args).map(Request::IdleInhibitManager)
+                }
+                ObjectKind::IdleInhibitor(inhibitor) => zwp_idle_inhibitor_v1::Request::decode(opcode, &mut args)
+                    .map(|request| Request::IdleInhibitor(*inhibitor, request)),
                 ObjectKind::DmabufFeedback => {
                     zwp_linux_dmabuf_feedback_v1::Request::decode(opcode, &mut args).map(Request::DmabufFeedback)
                 }
@@ -662,6 +676,10 @@ impl State {
             }
             Request::FractionalScale(surface, wp_fractional_scale_v1::Request::Destroy) => {
                 self.forget_fractional_scale(surface);
+            }
+            Request::IdleInhibitManager(request) => self.idle_inhibit_manager_request(client_id, request)?,
+            Request::IdleInhibitor(inhibitor, zwp_idle_inhibitor_v1::Request::Destroy) => {
+                self.forget_inhibitor(inhibitor);
             }
         }
         if destructor && let Some(client) = self.clients.get_mut(&client_id) {
@@ -741,6 +759,8 @@ enum Request {
     DmabufFeedback(zwp_linux_dmabuf_feedback_v1::Request),
     FractionalScaleManager(wp_fractional_scale_manager_v1::Request),
     FractionalScale(SurfaceId, wp_fractional_scale_v1::Request),
+    IdleInhibitManager(zwp_idle_inhibit_manager_v1::Request),
+    IdleInhibitor(crate::idle_inhibit::InhibitorId, zwp_idle_inhibitor_v1::Request),
     Presentation(wp_presentation::Request),
     ExplicitSync(wp_linux_drm_syncobj_manager_v1::Request),
     SyncobjSurface(SurfaceId, wp_linux_drm_syncobj_surface_v1::Request),

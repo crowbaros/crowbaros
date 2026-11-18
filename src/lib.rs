@@ -28,6 +28,7 @@ pub mod geometry;
 mod globals;
 mod grabs;
 pub mod identity;
+mod idle_inhibit;
 pub mod image;
 mod json;
 mod layer;
