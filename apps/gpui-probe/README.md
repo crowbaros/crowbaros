@@ -16,9 +16,8 @@ cargo test --release --locked
 target/release/crowbaros-gpui-probe --version
 ```
 
-Run the binary as an ordinary user inside a development Wayland session, or
-pass its absolute path to the `--spawn` option of the
-[compositor spike](../../lab/compositor-spike/README.md). Rendering needs
+Run the binary as an ordinary user inside a development Wayland session.
+Rendering needs
 a working Vulkan driver. The probe is optional and is not installed by the
 current graphical guest builder.
 

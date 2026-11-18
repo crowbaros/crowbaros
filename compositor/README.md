@@ -35,9 +35,9 @@ test it. Through commit 30fadd8 the compositor's code was here. Its history move
 with it, so `git log` in Fulcrum shows every commit that touched this
 directory.
 
-The [spike](../lab/compositor-spike/README.md) that tested ADR 0015 is not the
-compositor. The Alpha desktop check now passes on the compositor the pin names,
-and the desktop runs it, so the spike is deleted in a pull request of its own.
+The [spike](https://github.com/crowbaros/crowbaros/tree/substrate-final/lab/compositor-spike) that tested ADR 0015 was never the compositor. It was
+deleted once the Alpha desktop check passed on the compositor the pin names,
+and it is at the `substrate-final` tag.
 
 ## The pin
 

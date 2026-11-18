@@ -38,7 +38,7 @@ The substrate vision before it is archived, and its code is at the
 | --- | --- |
 | [`apps/`](apps/) | The GPUI interfaces: desktop shell, Studio Settings, and the GPUI probe |
 | [`compositor/`](compositor/) | The Fulcrum commit that Base builds as its Wayland compositor, and where the code lives |
-| [`lab/`](lab/) | The Void lab for the compositor and the Alpha desktop, and the compositor spike, which nothing runs now |
+| [`lab/`](lab/) | The Void lab for the compositor and the Alpha desktop |
 | [`docs/VISION.md`](docs/VISION.md), [`docs/LESSONS.md`](docs/LESSONS.md) | The vision, and what the earlier plans taught us |
 | [`docs/adr/`](docs/adr/) | Decision records |
 | [`docs/research/`](docs/research/) | Prior-art research and compositor records |
@@ -55,8 +55,8 @@ lab/void/compositor_guest.py check          # the compositor in a Void VM
 lab/void/compositor_guest.py desktop-check  # the Alpha desktop in a fresh Void VM
 ```
 
-The GPUI apps and the compositor spike are separate Cargo projects with their
-own pinned dependencies. See [`apps/`](apps/README.md) for how to build and run
+The GPUI apps are separate Cargo projects with their own pinned
+dependencies. See [`apps/`](apps/README.md) for how to build and run
 them.
 
 ## Working in this repository

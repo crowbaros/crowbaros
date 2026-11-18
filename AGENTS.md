@@ -51,7 +51,7 @@ sides hold.
 | Change touches | Run | Show |
 | --- | --- | --- |
 | The graphical guest in `lab/void/` | `lab/void/compositor_guest.py check` | The evidence log it writes |
-| The Alpha desktop: `lab/compositor-spike/`, or how `lab/void/` runs the shell | `lab/void/compositor_guest.py desktop-check` | The run's `desktop.log` and `results.json` |
+| The Alpha desktop: how `lab/void/` runs the compositor, the shell, or the apps | `lab/void/compositor_guest.py desktop-check` | The run's `desktop.log` and `results.json` |
 | `compositor/fulcrum.json`, or a Fulcrum change before it is pinned | `lab/void/compositor_guest.py check`, as [`compositor/`](compositor/README.md) says | The evidence log it writes |
 | `apps/` | The app's Void build and run steps in its README | Before and after captures; a short recording for motion |
 

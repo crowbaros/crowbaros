@@ -113,10 +113,10 @@ impl Adapter for Hyprland {
 
 /// The shell's end of the compositor's control channel.
 ///
-/// The CrowbarOS compositor starts the shell and hands it a connected socket
-/// in `CROWBAR_SHELL_CONTROL_FD`. The wire format is one JSON object per
-/// line: a request gets one reply, and the compositor may send events at any
-/// time. See `lab/compositor-spike/src/control.rs`.
+/// The shell's wrapper connects to the compositor's control channel and hands
+/// the shell the socket in `CROWBAR_SHELL_CONTROL_FD`. The wire format is one
+/// JSON object per line: a request gets one reply, and the compositor may
+/// send events at any time. See Fulcrum's `src/control.rs`.
 pub struct Compositor {
     /// The read and write halves of the socket. `None` once an exchange has
     /// failed.

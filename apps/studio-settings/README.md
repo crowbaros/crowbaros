@@ -20,9 +20,8 @@ target/release/crowbaros-studio-settings --version
 Run the [full desktop smoke command](../../lab/void/README.md#full-desktop-smoke-check)
 and launch Settings from its shell. The Alpha launcher supplies
 `CROWBAR_SESSION=alpha-no-animations`, selecting persistence without Hyprland.
-For a same-user rendering experiment, pass the binary to the `--spawn` option
-of the [compositor spike](../../lab/compositor-spike/README.md) with that
-environment value. It has also rendered on
+For a same-user rendering experiment, run it in a development Wayland session
+with that environment value. It has also rendered on
 [Void/NVIDIA](../../docs/research/compositor-nvidia-2026-11-15.md). The earlier
 [Settings validation](../../docs/development/studio-settings-validation-2026-11-14.md)
 is retained as dated evidence.

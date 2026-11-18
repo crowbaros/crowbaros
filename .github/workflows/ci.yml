@@ -26,6 +26,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The compositor is built and tested by Fulcrum's own CI, and by the Void
+  # guest check at the commit compositor/fulcrum.json pins (ADR 0027).
+  # test_fulcrum_pin.py checks that the pin names a full commit.
   check:
     name: Lab scripts
     runs-on: ubuntu-24.04
@@ -38,47 +41,6 @@ jobs:
         run: |
           python3 -m py_compile lab/void/*.py lab/void/guest/*.py
           python3 -m unittest discover -s lab/void -p "test_*.py"
-
-  # The spike that the Alpha desktop still runs. The compositor is built and
-  # tested by Fulcrum's own CI, and by the Void guest check at the commit
-  # compositor/fulcrum.json pins (ADR 0027). test_fulcrum_pin.py, in the job
-  # above, checks that the pin names a full commit.
-  compositor:
-    name: Compositor (${{ matrix.project }})
-    strategy:
-      matrix:
-        project: [lab/compositor-spike]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: ${{ matrix.project }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy
-          rustup default stable
-
-      # The libraries Smithay's TTY backend links. The tests need no display.
-      - name: Install libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends pkg-config \
-            libseat-dev libinput-dev libudev-dev libxkbcommon-dev \
-            libgbm-dev libdrm-dev libwayland-dev libegl1-mesa-dev
-
-      - name: Format
-        run: cargo fmt --all --check
-
-      - name: Lint
-        run: cargo clippy --all-targets --locked -- -D warnings
-
-      - name: Test
-        run: cargo test --locked
-
 
   shell:
     name: Interface (${{ matrix.project }})

@@ -65,7 +65,6 @@ not a build dependency):
 
 ```sh
 python3 apps/shell/packaging/prepare-gpui.py
-cargo build --release --locked --manifest-path lab/compositor-spike/Cargo.toml
 cargo build --release --locked --manifest-path apps/shell/Cargo.toml
 cargo test --release --locked --manifest-path apps/shell/Cargo.toml
 cargo build --release --locked --manifest-path apps/studio-settings/Cargo.toml
@@ -77,19 +76,22 @@ backport. It is portable build tooling and stays in `apps/shell/packaging/`.
 Cargo downloads require access to the pinned dependency sources on a cold build.
 Tests are headless; they do not establish correct GUI behavior or session recovery.
 
-The Alpha desktop runs the [compositor spike](../../lab/compositor-spike/README.md).
-The [compositor](../../compositor/README.md) does not run the shell yet: it has
-no public socket, and the shell's protocol is
-[#71](https://github.com/crowbaros/crowbaros/issues/71).
+The Alpha desktop runs the [compositor](../../compositor/README.md) Base pins.
 
 For a same-user rendering experiment inside an existing **development** Wayland
-session, start the spike nested (paths assume the default Cargo target
-directories). This does not exercise the separate Alpha identities or launcher:
+session, run Fulcrum's nested backend from a Fulcrum checkout, register a
+compartment with its stand-in for the Warden, and start an app on that
+compartment's listener. This does not exercise the separate Alpha identities
+or launcher:
 
 ```sh
-CROWBAR_SESSION=alpha-no-animations lab/compositor-spike/target/release/crowbar-compositor \
-  --shell "$PWD/apps/shell/target/release/crowbaros-shell" \
-  --spawn "$PWD/apps/studio-settings/target/release/crowbaros-studio-settings"
+# In Fulcrum:
+cargo run --release --features nested -- --backend nested \
+  --shell-socket /tmp/fulcrum/shell --shell-uid "$(id -u)" \
+  --warden-socket /tmp/fulcrum/warden --warden-uid "$(id -u)"
+# Then:
+WAYLAND_DISPLAY=/tmp/fulcrum/warden crowbar-probe warden dev.settings dev-1 /tmp/fulcrum/apps \
+  env CROWBAR_SESSION=alpha-no-animations "$PWD/apps/studio-settings/target/release/crowbaros-studio-settings"
 ```
 
 For a dedicated Void TTY, use the operator-led procedure and prerequisites in
