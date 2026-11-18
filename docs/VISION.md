@@ -3,7 +3,7 @@
 **Status:** draft by Jim Martin, November 17, 2026, for Jason Alexander's review.
 It replaces the [substrate vision](archive/substrate-vision/README.md), which
 replaced the [Fedora blueprint](archive/fedora-blueprint/README.md). The decision
-is [ADR 0029](adr/0029-crowbaros-starts-again-with-an-agent-at-the-persons-side.md).
+is [ADR 0030](adr/0030-crowbaros-starts-again-with-an-agent-at-the-persons-side.md).
 What the earlier plans taught us is in [LESSONS.md](LESSONS.md). Terms are in
 the [glossary](../GLOSSARY.md).
 

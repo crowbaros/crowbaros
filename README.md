@@ -20,7 +20,7 @@ anywhere, and out of the way until the person asks.
 ## Status
 
 CrowbarOS started again on November 17, 2026
-([ADR 0029](docs/adr/0029-crowbaros-starts-again-with-an-agent-at-the-persons-side.md)).
+([ADR 0030](docs/adr/0030-crowbaros-starts-again-with-an-agent-at-the-persons-side.md)).
 The substrate vision before it is archived, and its code is at the
 [`substrate-final`](https://github.com/crowbaros/crowbaros/tree/substrate-final) tag.
 

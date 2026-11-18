@@ -20,13 +20,14 @@ compositor must do, in its decision records:
 | CrowbarOS owns its compositor | [ADR 0015](../docs/adr/0015-our-own-compositor-on-smithay.md) |
 | It is built in its own repository, and Base pins one commit | [ADR 0027](../docs/adr/0027-the-compositor-is-built-in-its-own-repository.md) |
 | It is written from the ground up, with Smithay as its reference | [ADR 0028](../docs/adr/0028-the-compositor-is-written-from-the-ground-up.md) |
-| The substrate vision ends, and these three stand | [ADR 0029](../docs/adr/0029-crowbaros-starts-again-with-an-agent-at-the-persons-side.md) |
+| The substrate vision ends, and these three stand | [ADR 0030](../docs/adr/0030-crowbaros-starts-again-with-an-agent-at-the-persons-side.md) |
 
 Who the compositor's clients are, what each is offered, and its slices were
 decided in ADRs [0016](../docs/archive/substrate-vision/adr/0016-the-warden-starts-every-compartment.md),
 [0020](../docs/archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md),
 [0022](../docs/archive/substrate-vision/adr/0022-the-compositor-is-built-beside-milestone-2.md),
-and [0023](../docs/archive/substrate-vision/adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md),
+[0023](../docs/archive/substrate-vision/adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md),
+and [0029](../docs/archive/substrate-vision/adr/0029-each-compartment-has-a-budget-in-the-compositor.md),
 now archived. They bind until a new record says what the compositor offers the
 shell and the Agent.
 
