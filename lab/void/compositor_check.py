@@ -45,8 +45,8 @@ AS_CLIENT = f"{AS_APP} WAYLAND_DISPLAY={LISTENER}"
 # the compositor does not create yet. Fulcrum's tests/table.rs holds the same
 # lists.
 COMPARTMENT = {"wl_compositor", "wl_data_device_manager", "wl_output", "wl_seat", "wl_shm",
-               "wl_subcompositor", "wp_fractional_scale_manager_v1", "wp_presentation",
-               "wp_viewporter", "xdg_wm_base"}
+               "wl_subcompositor", "wp_cursor_shape_manager_v1", "wp_fractional_scale_manager_v1",
+               "wp_presentation", "wp_viewporter", "xdg_wm_base", "zwp_idle_inhibit_manager_v1"}
 # The shell is offered a compartment-with-the-GPU's row too (ADR 0023), so
 # explicit sync where the display's device has timeline syncobjs, as the
 # guest's does.
