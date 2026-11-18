@@ -80,6 +80,9 @@ pub enum TimerKey {
     RetryTrusted(usize),
     /// Listen again on a compartment's listener that could not accept.
     RetryCompartment(u64),
+    /// One frame time after the draw with this number on this output, for a
+    /// backend that does not hear when the display shows a frame.
+    FrameWait(u64, u64),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

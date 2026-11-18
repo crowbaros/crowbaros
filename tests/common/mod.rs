@@ -25,6 +25,8 @@ use crowbar_probe::{self as probe, Client, CompartmentListener};
 
 /// The test output.
 pub const OUTPUT_SIZE: (i32, i32) = (1280, 800);
+/// One frame on the test output, which runs at 60 Hz.
+pub const FRAME: std::time::Duration = std::time::Duration::from_millis(17);
 
 pub struct Compositor {
     /// A directory of this compositor's own. It holds the two trusted
@@ -99,6 +101,7 @@ impl Compositor {
             crowbar_compositor::log::set_level(crowbar_compositor::log::Level::Error);
             let mut state = State::new().unwrap();
             state.add_output("TEST-1", OUTPUT_SIZE, 60_000);
+            state.set_backend(crowbar_compositor::backend::headless::Headless::default());
             state.offer_dmabuf();
             state.listen(&listen_on).unwrap();
             ready_tx.send(state.remote()).unwrap();
@@ -172,6 +175,43 @@ impl Compositor {
     /// How many clients the compositor holds.
     pub fn client_count(&self) -> usize {
         self.with(|state| state.client_count())
+    }
+
+    /// Frames that reached the display, and times the compositor looked for
+    /// something to draw.
+    pub fn drawing(&self) -> (u64, u64) {
+        self.with(|state| state.drawing())
+    }
+
+    /// Waits until the compositor has stopped drawing: no frame and no look
+    /// for one in several frame times. A compositor that never stops fails
+    /// the test.
+    pub fn wait_until_still(&self) -> (u64, u64) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let before = self.drawing();
+            std::thread::sleep(FRAME * 6);
+            if self.drawing() == before {
+                return before;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the compositor is still drawing after ten seconds with nothing changing"
+            );
+        }
+    }
+
+    /// The pointer moves to a place on the desktop.
+    pub fn pointer(&self, x: i32, y: i32) {
+        self.with(move |state| state.pointer_moved(f64::from(x), f64::from(y)));
+    }
+
+    /// What an output shows now, drawn by the CPU renderer.
+    pub fn screen(&self, output: usize) -> crowbar_compositor::image::Image {
+        self.with(move |state| {
+            let number = state.outputs()[output].number;
+            state.render_output(number).unwrap()
+        })
     }
 }
 

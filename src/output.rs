@@ -23,6 +23,16 @@ pub struct Output {
     pub position: (i32, i32),
     pub scale: i32,
     pub global: u32,
+    pub(crate) redraw: crate::redraw::Redraw,
+    /// How many times it was drawn, or looked at for drawing.
+    pub(crate) draws: u64,
+}
+
+impl Output {
+    /// The rectangle it covers on the desktop.
+    pub fn rect(&self) -> crate::geometry::Rect {
+        crate::geometry::Rect::new(self.position.0, self.position.1, self.size.0, self.size.1)
+    }
 }
 
 impl State {
@@ -50,7 +60,10 @@ impl State {
             position: (x, 0),
             scale: 1,
             global,
+            redraw: crate::redraw::Redraw::Idle,
+            draws: 0,
         });
+        self.queue_redraw(number);
         number
     }
 
@@ -61,6 +74,27 @@ impl State {
         };
         let output = self.outputs.remove(index);
         self.remove_global(output.global);
+        // A window that is then on no output moves to the first one left.
+        if let Some(first) = self.outputs.first().map(|output| output.number) {
+            let area = self.usable_area(first);
+            let bounds: Vec<_> = self.outputs.iter().map(Output::rect).collect();
+            for window in &mut self.windows {
+                if !bounds
+                    .iter()
+                    .any(|rect| rect.contains(window.location.0, window.location.1))
+                {
+                    window.location = (
+                        area.x + crate::windows::NEW_WINDOW_OFFSET.0,
+                        area.y + crate::windows::NEW_WINDOW_OFFSET.1,
+                    );
+                }
+            }
+        }
+        let windows: Vec<_> = self.windows.iter().map(|window| window.surface).collect();
+        for surface in windows {
+            self.update_outputs_of(surface);
+        }
+        self.queue_redraw_all();
     }
 
     /// A client bound an output: tells it what the output is.

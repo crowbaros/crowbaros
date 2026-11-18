@@ -104,6 +104,15 @@ pub struct Client {
     closed: bool,
     /// Globals this end bound once for its helpers.
     bound: HashMap<&'static str, u32>,
+    /// Frame callbacks asked for and not yet answered.
+    frame_callbacks: std::collections::HashSet<u32>,
+    /// How many frame callbacks the compositor has answered.
+    pub frames_done: u32,
+    /// The `xdg_surface`s that have been configured.
+    configured: std::collections::HashSet<u32>,
+    /// The size each toplevel's last configure gave, where zero means the
+    /// client chooses.
+    toplevel_size: HashMap<u32, (i32, i32)>,
 }
 
 impl Client {
@@ -122,6 +131,10 @@ impl Client {
             done: Vec::new(),
             closed: false,
             bound: HashMap::new(),
+            frame_callbacks: Default::default(),
+            frames_done: 0,
+            configured: Default::default(),
+            toplevel_size: HashMap::new(),
         };
         let registry = client.new_id(wl_registry::NAME);
         client.registry = registry.0;
@@ -265,7 +278,27 @@ impl Client {
             ("wl_registry", "global_remove", [Arg::Uint(name)]) if event.object == self.registry => {
                 self.globals.retain(|global| global.name != *name);
             }
-            ("wl_callback", "done", _) => self.done.push(event.object),
+            ("wl_callback", "done", _) => {
+                if self.frame_callbacks.remove(&event.object) {
+                    self.frames_done += 1;
+                }
+                self.done.push(event.object);
+            }
+            // A client acknowledges every configure, as a real one does
+            // before it draws.
+            ("xdg_surface", "configure", [Arg::Uint(serial)]) => {
+                let (object, serial) = (event.object, *serial);
+                let _ = self.request(
+                    object,
+                    fulcrum_wire::protocol::xdg_shell::xdg_surface::Request::AckConfigure { serial },
+                );
+                self.configured.insert(object);
+                self.events.push_back(event);
+            }
+            ("xdg_toplevel", "configure", [Arg::Int(width), Arg::Int(height), _]) => {
+                self.toplevel_size.insert(event.object, (*width, *height));
+                self.events.push_back(event);
+            }
             _ => self.events.push_back(event),
         }
     }
@@ -572,6 +605,100 @@ impl Client {
             .iter()
             .position(|event| event.object == object && event.name == name)?;
         self.events.remove(at)
+    }
+}
+
+/// A window: its surface, its `xdg_surface`, and its `xdg_toplevel`.
+#[derive(Clone, Copy, Debug)]
+pub struct Toplevel {
+    pub surface: u32,
+    pub xdg_surface: u32,
+    pub toplevel: u32,
+}
+
+impl Client {
+    fn wm_base(&mut self) -> Result<u32, Error> {
+        use fulcrum_wire::protocol::xdg_shell::xdg_wm_base;
+        if let Some(id) = self.bound.get(xdg_wm_base::NAME) {
+            return Ok(*id);
+        }
+        let id = self.bind(xdg_wm_base::NAME, 6)?;
+        self.bound.insert(xdg_wm_base::NAME, id);
+        Ok(id)
+    }
+
+    /// Opens a window, as a client does: role, title, an empty commit, the
+    /// configure, then a buffer of one colour.
+    pub fn open_toplevel(&mut self, title: &str, app_id: &str, size: (i32, i32), argb: u32) -> Result<Toplevel, Error> {
+        use fulcrum_wire::protocol::xdg_shell::{xdg_surface, xdg_toplevel, xdg_wm_base};
+        let wm_base = self.wm_base()?;
+        let surface = self.create_surface()?;
+        let xdg = self.new_id(xdg_surface::NAME);
+        self.request(
+            wm_base,
+            xdg_wm_base::Request::GetXdgSurface {
+                id: xdg,
+                surface: fulcrum_wire::ObjectId(surface),
+            },
+        )?;
+        let toplevel = self.new_id(xdg_toplevel::NAME);
+        self.request(xdg.0, xdg_surface::Request::GetToplevel { id: toplevel })?;
+        self.request(toplevel.0, xdg_toplevel::Request::SetTitle { title: title.into() })?;
+        self.request(toplevel.0, xdg_toplevel::Request::SetAppId { app_id: app_id.into() })?;
+        self.request(surface, wayland::wl_surface::Request::Commit)?;
+        self.wait_until(|client| client.configured.contains(&xdg.0))?;
+        let window = Toplevel {
+            surface,
+            xdg_surface: xdg.0,
+            toplevel: toplevel.0,
+        };
+        self.redraw(&window, size, argb)?;
+        Ok(window)
+    }
+
+    /// Draws a window again, at the size its configure gave or else at
+    /// `fallback`, and waits for the compositor to have it.
+    pub fn redraw(&mut self, window: &Toplevel, fallback: (i32, i32), argb: u32) -> Result<(), Error> {
+        let size = match self.toplevel_size.get(&window.toplevel).copied() {
+            Some((0, _)) | Some((_, 0)) | None => fallback,
+            Some(given) => given,
+        };
+        let buffer = self.shm_buffer(size, argb)?;
+        self.show(window.surface, Some(&buffer))?;
+        self.roundtrip()
+    }
+
+    /// Asks for a frame callback and commits with nothing changed.
+    pub fn commit_unchanged(&mut self, surface: u32) -> Result<(), Error> {
+        let callback = self.new_id("wl_callback");
+        self.frame_callbacks.insert(callback.0);
+        self.request(surface, wayland::wl_surface::Request::Frame { callback })?;
+        self.request(surface, wayland::wl_surface::Request::Commit)
+    }
+
+    /// A desynchronized subsurface of one colour on a window, shown.
+    pub fn open_subsurface(&mut self, window: &Toplevel, size: (i32, i32), argb: u32) -> Result<u32, Error> {
+        let surface = self.create_surface()?;
+        let subsurface = self.subsurface(surface, window.surface)?;
+        self.request(subsurface, wayland::wl_subsurface::Request::SetDesync)?;
+        let buffer = self.shm_buffer(size, argb)?;
+        self.show(surface, Some(&buffer))?;
+        self.request(window.surface, wayland::wl_surface::Request::Commit)?;
+        self.roundtrip()?;
+        Ok(surface)
+    }
+
+    /// Reads whatever has arrived, waiting at most `timeout` for something.
+    pub fn wait_for_events(&mut self, timeout: Duration) -> Result<(), Error> {
+        let deadline = Instant::now() + timeout;
+        if !self.read()? {
+            self.wait_readable(deadline)?;
+            self.read()?;
+        }
+        if let Some(error) = &self.error {
+            return Err(error.clone().into());
+        }
+        Ok(())
     }
 }
 

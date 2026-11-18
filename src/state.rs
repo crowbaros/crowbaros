@@ -11,10 +11,12 @@ use fulcrum_wire::{
             wl_buffer, wl_callback, wl_compositor, wl_display, wl_output, wl_region, wl_registry, wl_shm, wl_shm_pool,
             wl_subcompositor, wl_subsurface, wl_surface,
         },
+        xdg_shell::{xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base},
     },
 };
 
 use crate::{
+    backend::Backend,
     client::{Client, ClientId, ObjectKind, ProtocolError},
     connections::{CompartmentListener, TrustedListener},
     event_loop::{EventLoop, Readiness, Remote, TimerKey, Token},
@@ -25,6 +27,8 @@ use crate::{
     output::Output,
     shm::{Buffer, BufferId, Pool, PoolId},
     surface::{RegionId, Surface, SurfaceId},
+    windows::Window,
+    xdg::{Positioner, PositionerId, XdgSurface},
 };
 
 /// How many times one client's socket is read in one turn of the loop,
@@ -60,6 +64,21 @@ pub struct State {
     pub(crate) descriptor_limit: usize,
     /// How many times a listener could not accept.
     pub(crate) failed_accepts: u64,
+    pub(crate) xdg: HashMap<SurfaceId, XdgSurface>,
+    pub(crate) positioners: HashMap<PositionerId, Positioner>,
+    /// Mapped windows, bottom to top.
+    pub(crate) windows: Vec<Window>,
+    /// Popups, in the order they were made.
+    pub(crate) popups: Vec<SurfaceId>,
+    pub(crate) serial_counter: u32,
+    /// Where the pointer is on the desktop.
+    pub(crate) pointer: (f64, f64),
+    pub(crate) backend: Option<Box<dyn Backend>>,
+    /// Outputs whose draw is queued for the end of this turn.
+    pub(crate) draws_due: Vec<u64>,
+    pub(crate) frames_drawn: u64,
+    pub(crate) draw_passes: u64,
+    pub(crate) start_time: std::time::Instant,
 }
 
 impl State {
@@ -89,6 +108,17 @@ impl State {
             next_resource: 0,
             descriptor_limit: crate::limits::descriptor_limit(),
             failed_accepts: 0,
+            xdg: HashMap::new(),
+            positioners: HashMap::new(),
+            windows: Vec::new(),
+            popups: Vec::new(),
+            serial_counter: 0,
+            pointer: (0.0, 0.0),
+            backend: None,
+            draws_due: Vec::new(),
+            frames_drawn: 0,
+            draw_passes: 0,
+            start_time: std::time::Instant::now(),
         };
         state.add_table_globals();
         Ok(state)
@@ -103,9 +133,13 @@ impl State {
         self.add_global(&wayland::wl_compositor::INFO, 6, GlobalKind::Compositor);
         self.add_global(&wayland::wl_subcompositor::INFO, 1, GlobalKind::Subcompositor);
         self.add_global(&wayland::wl_shm::INFO, 2, GlobalKind::Shm);
+        self.add_global(
+            &xdg_shell::xdg_wm_base::INFO,
+            crate::xdg::XDG_WM_BASE_VERSION,
+            GlobalKind::XdgWmBase,
+        );
         for (info, version) in [
             (&wayland::wl_seat::INFO, 7),
-            (&xdg_shell::xdg_wm_base::INFO, 6),
             (&viewporter::wp_viewporter::INFO, 1),
             (&layer::zwlr_layer_shell_v1::INFO, 4),
         ] {
@@ -159,9 +193,17 @@ impl State {
             match timer {
                 TimerKey::RetryTrusted(index) => self.retry_trusted(index),
                 TimerKey::RetryCompartment(number) => self.retry_compartment(number),
+                TimerKey::FrameWait(output, draw) => self.wait_over(output, Some(draw)),
             }
         }
+        self.run_due_draws();
+        // Flushing lets go of clients that are done, and a client that goes
+        // can take a window with it: draw that before the loop sleeps.
         self.flush_clients();
+        if !self.draws_due.is_empty() {
+            self.run_due_draws();
+            self.flush_clients();
+        }
         Ok(())
     }
 
@@ -169,6 +211,28 @@ impl State {
     pub fn client_count(&self) -> usize {
         self.clients.len()
     }
+
+    /// Sets where frames go. Without a backend nothing is drawn.
+    pub fn set_backend(&mut self, backend: impl Backend + 'static) {
+        self.backend = Some(Box::new(backend));
+        self.queue_redraw_all();
+    }
+
+    /// The pointer is now at this place on the desktop. Every output is
+    /// looked at again, for a backend that draws the pointer.
+    pub fn pointer_moved(&mut self, x: f64, y: f64) {
+        self.pointer = (x, y);
+        self.queue_redraw_all();
+    }
+
+    /// The surface that has the keyboard. None until the seat is built.
+    pub(crate) fn keyboard_focus_surface(&self) -> Option<SurfaceId> {
+        None
+    }
+
+    /// A surface that is going away gives up the keyboard. Nothing has it
+    /// until the seat is built.
+    pub(crate) fn drop_focus_from(&mut self, _surface: SurfaceId) {}
 
     /// Takes a lower descriptor limit than the process has, as a test does
     /// to reach the reserve without filling the process.
@@ -301,6 +365,10 @@ impl State {
             }
             ObjectKind::Pool(pool) => self.forget_pool(*pool),
             ObjectKind::Buffer(buffer) => self.forget_buffer(*buffer),
+            ObjectKind::Positioner(positioner) => {
+                self.positioners.remove(positioner);
+            }
+            ObjectKind::XdgSurface(surface) => self.forget_xdg(*surface),
             _ => {}
         }
     }
@@ -400,6 +468,17 @@ impl State {
                 ObjectKind::Buffer(buffer) => {
                     wl_buffer::Request::decode(opcode, &mut args).map(|request| Request::Buffer(*buffer, request))
                 }
+                ObjectKind::XdgWmBase => xdg_wm_base::Request::decode(opcode, &mut args).map(Request::WmBase),
+                ObjectKind::Positioner(positioner) => xdg_positioner::Request::decode(opcode, &mut args)
+                    .map(|request| Request::Positioner(*positioner, request)),
+                ObjectKind::XdgSurface(surface) => xdg_surface::Request::decode(opcode, &mut args)
+                    .map(|request| Request::XdgSurface(*surface, request)),
+                ObjectKind::Toplevel(surface) => {
+                    xdg_toplevel::Request::decode(opcode, &mut args).map(|request| Request::Toplevel(*surface, request))
+                }
+                ObjectKind::Popup(surface) => {
+                    xdg_popup::Request::decode(opcode, &mut args).map(|request| Request::Popup(*surface, request))
+                }
                 ObjectKind::Unimplemented => {
                     *client.conn.fds() = fds;
                     return Err(ProtocolError {
@@ -431,6 +510,13 @@ impl State {
             Request::Shm(request) => self.shm_request(client_id, id, request)?,
             Request::Pool(pool, request) => self.pool_request(client_id, id, pool, request)?,
             Request::Buffer(buffer, wl_buffer::Request::Destroy) => self.forget_buffer(buffer),
+            Request::WmBase(request) => self.wm_base_request(client_id, id, version, request)?,
+            Request::Positioner(positioner, request) => self.positioner_request(id, positioner, request)?,
+            Request::XdgSurface(surface, request) => {
+                self.xdg_surface_request(client_id, id, version, surface, request)?;
+            }
+            Request::Toplevel(surface, request) => self.toplevel_request(client_id, id, surface, request)?,
+            Request::Popup(surface, request) => self.popup_request(id, surface, request)?,
         }
         if destructor && let Some(client) = self.clients.get_mut(&client_id) {
             client.destroy(id);
@@ -489,6 +575,11 @@ enum Request {
     Shm(wl_shm::Request),
     Pool(PoolId, wl_shm_pool::Request),
     Buffer(BufferId, wl_buffer::Request),
+    WmBase(xdg_wm_base::Request),
+    Positioner(PositionerId, xdg_positioner::Request),
+    XdgSurface(SurfaceId, xdg_surface::Request),
+    Toplevel(SurfaceId, xdg_toplevel::Request),
+    Popup(SurfaceId, xdg_popup::Request),
 }
 
 impl From<ConnectionError> for ProtocolError {

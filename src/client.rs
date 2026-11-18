@@ -44,6 +44,12 @@ pub(crate) enum ObjectKind {
     Shm,
     Pool(crate::shm::PoolId),
     Buffer(crate::shm::BufferId),
+    XdgWmBase,
+    Positioner(crate::xdg::PositionerId),
+    /// An `xdg_surface`, for the surface it is made for.
+    XdgSurface(crate::surface::SurfaceId),
+    Toplevel(crate::surface::SurfaceId),
+    Popup(crate::surface::SurfaceId),
     /// A global's object whose requests this build does not carry out yet,
     /// or a global a test planted. Any request on it is a protocol error.
     Unimplemented,
@@ -183,6 +189,15 @@ impl Client {
         if self.objects.remove(&id).is_some() && id < SERVER_ID_START {
             self.send(1, wl_display::Event::DeleteId { id });
         }
+    }
+
+    /// The client's `wl_output` objects for one output.
+    pub fn outputs_bound(&self, output: u64) -> Vec<u32> {
+        self.objects
+            .iter()
+            .filter(|(_, object)| matches!(object.kind, ObjectKind::Output(number) if number == output))
+            .map(|(id, _)| *id)
+            .collect()
     }
 
     /// The IDs of this client's registries.

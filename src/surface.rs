@@ -41,6 +41,8 @@ const MAX_DAMAGE: usize = 64;
 pub(crate) enum Role {
     None,
     Subsurface,
+    Toplevel,
+    Popup,
 }
 
 /// Requests since the last commit.
@@ -148,6 +150,8 @@ pub(crate) struct Surface {
     pub sync: bool,
     /// How many commits have been applied: for tests, and for redraws.
     pub commits: u64,
+    /// The outputs it is on, as its client was last told.
+    pub entered: Vec<u64>,
 }
 
 impl State {
@@ -189,6 +193,7 @@ impl State {
                         pending_position: None,
                         sync: true,
                         commits: 0,
+                        entered: Vec::new(),
                     },
                 );
                 Ok(())
@@ -334,7 +339,13 @@ impl State {
             wl_surface::Request::Offset { x, y } => {
                 self.surface_mut(id).pending.offset = Some((x, y));
             }
-            wl_surface::Request::Commit => self.commit(id)?,
+            wl_surface::Request::Commit => {
+                self.commit(id)?;
+                let root = self.root_of(id);
+                self.xdg_committed(root)?;
+                self.layer_committed(root)?;
+                self.queue_redraw_for(id);
+            }
             wl_surface::Request::GetRelease { .. } => {
                 return Err(fail(
                     fulcrum_wire::protocol::wayland::wl_display::error::IMPLEMENTATION,
@@ -587,7 +598,17 @@ impl State {
     /// callbacks are destroyed too; `tell` says whether its client is still
     /// there to hear of it.
     pub(crate) fn destroy_surface(&mut self, id: SurfaceId, tell: bool) {
+        let outputs = self
+            .surfaces
+            .get(&self.root_of(id))
+            .map(|root| root.entered.clone())
+            .unwrap_or_default();
+        self.forget_xdg(id);
+        self.forget_layer(id);
         self.unparent(id);
+        for output in outputs {
+            self.queue_redraw(output);
+        }
         let Some(surface) = self.surfaces.remove(&id) else {
             return;
         };
@@ -618,6 +639,11 @@ impl State {
         Some(image)
     }
 
+    /// What a surface's tree covers, with its root surface's corner at `at`.
+    pub(crate) fn tree_bounds_at(&self, id: SurfaceId, at: (i32, i32)) -> Option<Rect> {
+        self.tree_bounds(id, at, 0)
+    }
+
     fn tree_bounds(&self, id: SurfaceId, at: (i32, i32), depth: usize) -> Option<Rect> {
         let surface = self.surfaces.get(&id)?;
         surface.current.content.as_ref()?;
@@ -637,7 +663,7 @@ impl State {
         Some(bounds)
     }
 
-    fn draw_tree(&self, id: SurfaceId, at: (i32, i32), image: &mut Image, depth: usize) {
+    pub(crate) fn draw_tree(&self, id: SurfaceId, at: (i32, i32), image: &mut Image, depth: usize) {
         let Some(surface) = self.surfaces.get(&id) else {
             return;
         };
