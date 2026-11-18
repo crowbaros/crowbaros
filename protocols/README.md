@@ -10,6 +10,7 @@ in its `<copyright>` element. `fulcrum-codegen` turns them into
 | `xdg-shell.xml` | [wayland-protocols](https://gitlab.freedesktop.org/wayland/wayland-protocols) 1.49, `stable/xdg-shell/` |
 | `viewporter.xml` | wayland-protocols 1.49, `stable/viewporter/` |
 | `linux-dmabuf-v1.xml` | wayland-protocols 1.49, `stable/linux-dmabuf/` |
+| `fractional-scale-v1.xml` | wayland-protocols 1.49, `staging/fractional-scale/` |
 | `security-context-v1.xml` | wayland-protocols 1.49, `staging/security-context/` |
 | `wlr-layer-shell-unstable-v1.xml` | [wlr-protocols](https://gitlab.freedesktop.org/wlroots/wlr-protocols) `1106a4a1c57562ddd438c547da4c0d6dc150d624`, `unstable/` |
 

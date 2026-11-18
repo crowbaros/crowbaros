@@ -65,6 +65,9 @@ pub(crate) enum ObjectKind {
     Dmabuf,
     BufferParams(crate::dmabuf::ParamsId),
     DmabufFeedback,
+    FractionalScaleManager,
+    /// A `wp_fractional_scale_v1`, for its surface.
+    FractionalScale(crate::surface::SurfaceId),
     /// The object of a global a test planted. Any request on it is a
     /// protocol error.
     Unimplemented,

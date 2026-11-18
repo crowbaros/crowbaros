@@ -35,6 +35,7 @@ pub(crate) enum GlobalKind {
     DataDeviceManager,
     Viewporter,
     Dmabuf,
+    FractionalScaleManager,
     /// A global a test added, of an interface Fulcrum may not even know.
     Planted,
 }
@@ -204,6 +205,7 @@ impl State {
             GlobalKind::DataDeviceManager => ObjectKind::DataDeviceManager,
             GlobalKind::Viewporter => ObjectKind::Viewporter,
             GlobalKind::Dmabuf => ObjectKind::Dmabuf,
+            GlobalKind::FractionalScaleManager => ObjectKind::FractionalScaleManager,
             GlobalKind::Planted => {
                 self.planted_binds += 1;
                 ObjectKind::Unimplemented

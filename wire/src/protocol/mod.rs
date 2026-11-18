@@ -2,6 +2,7 @@
 
 //! Every protocol Fulcrum speaks, generated from `protocols/`.
 
+pub mod fractional_scale_v1;
 pub mod linux_dmabuf_v1;
 pub mod security_context_v1;
 pub mod viewporter;
@@ -13,6 +14,8 @@ use crate::codec::InterfaceInfo;
 
 /// Every interface of every protocol.
 pub static INTERFACES: &[&InterfaceInfo] = &[
+    &fractional_scale_v1::wp_fractional_scale_manager_v1::INFO,
+    &fractional_scale_v1::wp_fractional_scale_v1::INFO,
     &linux_dmabuf_v1::zwp_linux_dmabuf_v1::INFO,
     &linux_dmabuf_v1::zwp_linux_buffer_params_v1::INFO,
     &linux_dmabuf_v1::zwp_linux_dmabuf_feedback_v1::INFO,
@@ -69,6 +72,10 @@ pub fn reencode(
 ) -> Option<Result<crate::codec::ArgWriter, crate::codec::DecodeError>> {
     let mut out = crate::codec::ArgWriter::default();
     let decoded = match (interface, request) {
+        ("wp_fractional_scale_manager_v1", true) => fractional_scale_v1::wp_fractional_scale_manager_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("wp_fractional_scale_manager_v1", false) => fractional_scale_v1::wp_fractional_scale_manager_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("wp_fractional_scale_v1", true) => fractional_scale_v1::wp_fractional_scale_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
+        ("wp_fractional_scale_v1", false) => fractional_scale_v1::wp_fractional_scale_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("zwp_linux_dmabuf_v1", true) => linux_dmabuf_v1::zwp_linux_dmabuf_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("zwp_linux_dmabuf_v1", false) => linux_dmabuf_v1::zwp_linux_dmabuf_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("zwp_linux_buffer_params_v1", true) => linux_dmabuf_v1::zwp_linux_buffer_params_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),

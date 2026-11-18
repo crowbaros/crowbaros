@@ -235,6 +235,8 @@ pub(crate) struct Surface {
     pub entered: Vec<u64>,
     /// Its `wp_viewport`, if it has one.
     pub viewport: Option<u32>,
+    /// Its `wp_fractional_scale_v1`, if it has one.
+    pub fractional_scale: Option<u32>,
 }
 
 impl State {
@@ -278,6 +280,7 @@ impl State {
                         commits: 0,
                         entered: Vec::new(),
                         viewport: None,
+                        fractional_scale: None,
                     },
                 );
                 Ok(())

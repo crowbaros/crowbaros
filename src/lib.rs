@@ -20,6 +20,7 @@ pub mod data_device;
 pub mod dmabuf;
 pub mod event_loop;
 mod evidence;
+mod fractional_scale;
 pub mod geometry;
 mod globals;
 mod grabs;

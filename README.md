@@ -90,6 +90,8 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   same guarded mapping as shared memory. The shell and a compartment whose
   needs include the GPU are offered it (ADR 0020, ADR 0023). The GPU's own
   import of tiled buffers, without a copy, comes later in Milestone 3.
+- **Fractional scale**: a surface hears the scale it should draw at, 120ths
+  of its output's scale of 1, until displays get their own scale.
 - **The data device**, with nothing moving between clients until slice 4
   (Milestone 6): a selection is offered to no other client, and a drag is
   cancelled as it starts. `foot` will not start without it.
@@ -146,6 +148,7 @@ included, and the pin moves in a CrowbarOS pull request of its own.
 | `src/control.rs`, `src/json.rs` | The shell's control channel, and the flat JSON it speaks |
 | `src/data_device.rs` | The data device, which moves nothing between clients until slice 4 |
 | `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
+| `src/fractional_scale.rs` | The scale a surface should draw at |
 | `src/redraw.rs` | Drawing only on change |
 | `src/evidence.rs` | The line it logs for the checks that run it: commits by window and layer, and frames drawn |
 | `src/dmabuf.rs` | linux-dmabuf: feedback, params, and buffers made from dma-bufs |

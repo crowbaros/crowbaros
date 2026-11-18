@@ -6,6 +6,7 @@ use std::{borrow::Cow, collections::HashMap, io, os::fd::AsFd, sync::Weak, time:
 use fulcrum_wire::{
     ArgReader, ConnectionError, DecodeError, Incoming,
     protocol::{
+        fractional_scale_v1::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
         linux_dmabuf_v1::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1},
         security_context_v1::{wp_security_context_manager_v1, wp_security_context_v1},
         viewporter::{wp_viewport, wp_viewporter},
@@ -181,6 +182,11 @@ impl State {
             &wayland::wl_data_device_manager::INFO,
             crate::data_device::DATA_DEVICE_MANAGER_VERSION,
             GlobalKind::DataDeviceManager,
+        );
+        self.add_global(
+            &fulcrum_wire::protocol::fractional_scale_v1::wp_fractional_scale_manager_v1::INFO,
+            crate::fractional_scale::FRACTIONAL_SCALE_VERSION,
+            GlobalKind::FractionalScaleManager,
         );
         self.add_global(
             &viewporter::wp_viewporter::INFO,
@@ -550,6 +556,12 @@ impl State {
                 ObjectKind::Dmabuf => zwp_linux_dmabuf_v1::Request::decode(opcode, &mut args).map(Request::Dmabuf),
                 ObjectKind::BufferParams(params) => zwp_linux_buffer_params_v1::Request::decode(opcode, &mut args)
                     .map(|request| Request::BufferParams(*params, request)),
+                ObjectKind::FractionalScaleManager => {
+                    wp_fractional_scale_manager_v1::Request::decode(opcode, &mut args)
+                        .map(Request::FractionalScaleManager)
+                }
+                ObjectKind::FractionalScale(surface) => wp_fractional_scale_v1::Request::decode(opcode, &mut args)
+                    .map(|request| Request::FractionalScale(*surface, request)),
                 ObjectKind::DmabufFeedback => {
                     zwp_linux_dmabuf_feedback_v1::Request::decode(opcode, &mut args).map(Request::DmabufFeedback)
                 }
@@ -607,6 +619,12 @@ impl State {
             Request::Dmabuf(request) => self.dmabuf_request(client_id, id, version, request)?,
             Request::BufferParams(params, request) => self.buffer_params_request(client_id, id, params, request)?,
             Request::DmabufFeedback(zwp_linux_dmabuf_feedback_v1::Request::Destroy) => {}
+            Request::FractionalScaleManager(request) => {
+                self.fractional_scale_manager_request(client_id, id, request)?
+            }
+            Request::FractionalScale(surface, wp_fractional_scale_v1::Request::Destroy) => {
+                self.forget_fractional_scale(surface);
+            }
         }
         if destructor && let Some(client) = self.clients.get_mut(&client_id) {
             client.destroy(id);
@@ -683,6 +701,8 @@ enum Request {
     Dmabuf(zwp_linux_dmabuf_v1::Request),
     BufferParams(crate::dmabuf::ParamsId, zwp_linux_buffer_params_v1::Request),
     DmabufFeedback(zwp_linux_dmabuf_feedback_v1::Request),
+    FractionalScaleManager(wp_fractional_scale_manager_v1::Request),
+    FractionalScale(SurfaceId, wp_fractional_scale_v1::Request),
 }
 
 impl From<ConnectionError> for ProtocolError {
