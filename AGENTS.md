@@ -19,6 +19,22 @@ This file covers what differs here.
 - Keep the binary named `crowbar-compositor` until CrowbarOS's services change
   in a pull request of their own.
 
+## Dependencies
+
+These hold from Milestone 1 on, when the Smithay-based baseline leaves `main`
+([the plan](docs/PLAN.md)):
+
+- **No crate from the Smithay organization**: not `smithay`, the `wayland-rs`
+  crates, `drm`, `gbm`, `input`, `calloop`, or `libseat`. A test fails if one
+  appears in `Cargo.lock`.
+- **The only C libraries are Mesa's EGL, GLES, and GBM, libinput, and
+  libxkbcommon.** Adding another needs a CrowbarOS decision record.
+- **`unsafe` code lives in `sys/` alone.** Every other crate forbids it.
+- **Smithay and Otto are MIT.** Their code may be adapted, with attribution in
+  `LICENSE-smithay.txt` or a file like it. niri, COSMIC, Pinnacle, and Jay are
+  GPL-3.0: read them for ideas, and copy nothing.
+- A new crate of any kind needs a reason in the pull request that adds it.
+
 ## Branches and pull requests
 
 - `main` changes only through a pull request from a short-lived branch, squash

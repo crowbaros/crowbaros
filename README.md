@@ -1,10 +1,17 @@
 # Fulcrum
 
-Fulcrum is the CrowbarOS Wayland compositor, written in Rust on
-[Smithay](https://github.com/Smithay/smithay). It is part of CrowbarOS Base
-and part of what CrowbarOS trusts. It builds one program, `crowbar-compositor`,
-and a test client, `crowbar-probe`. [The plan](docs/PLAN.md) says how it grows
-into the compositor that runs the CrowbarOS desktop.
+Fulcrum is the CrowbarOS Wayland compositor, written from the ground up in
+Rust. It is part of CrowbarOS Base and part of what CrowbarOS trusts. It builds
+one program, `crowbar-compositor`, and a test client, `crowbar-probe`.
+[The plan](docs/PLAN.md) says how it is built: Fulcrum writes its own wire
+protocol, event loop, display, input, rendering, and window management code.
+[Smithay](https://github.com/Smithay/smithay) is the reference, not a
+dependency.
+
+**The code on `main` today is still the Smithay-based baseline** that
+Milestone 0 brought over from CrowbarOS, and CrowbarOS builds it at commit
+`d11400f`. Milestone 1 replaces it. Until then, the rest of this README
+describes the baseline.
 
 CrowbarOS decides what the compositor must do. Fulcrum builds it. Its decision
 records stay in the CrowbarOS repository:
