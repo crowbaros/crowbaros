@@ -8,10 +8,13 @@
 //! the frame's wait.
 //!
 //! The buffers are the GPU's where it can: GBM buffers the display scans out,
-//! drawn by the GLES renderer. Where GBM or EGL is missing, or the GPU cannot
-//! draw into a buffer the display shows, they are dumb buffers drawn by the
-//! CPU renderer. `FULCRUM_RENDERER=cpu` asks for the CPU renderer. The compositor draws the pointer itself (see
-//! [`draw_pointer`]): a TTY has no cursor of its own.
+//! drawn by the GLES renderer. Where GBM or EGL is missing, they are dumb
+//! buffers drawn by the CPU renderer. `FULCRUM_RENDERER=cpu` asks for the CPU
+//! renderer. Where the GPU cannot draw into a buffer one display shows, that
+//! display gets dumb buffers too, and the GPU draws its frame to the side
+//! for the CPU to copy: the GPU alone can show the dma-bufs it imported. The
+//! compositor draws the pointer itself (see [`draw_pointer`]): a TTY has no
+//! cursor of its own.
 //!
 //! When the person switches to another virtual terminal, seatd takes the
 //! devices back. The compositor stops drawing and reading input until it is
@@ -318,8 +321,13 @@ pub fn init(state: &mut State) -> io::Result<()> {
         .as_ref()
         .and_then(|gpu| gpu.renderer.gles().render_node())
         .and_then(|path| rustix::fs::stat(&path).ok());
+    // The GPU imports clients' dma-bufs where it draws the monitors; or else
+    // the CPU copies them.
     match render_node.or_else(|| rustix::fs::fstat(tty.device.fd()).ok()) {
-        Some(stat) => state.offer_dmabuf(stat.st_rdev),
+        Some(stat) => match &tty.gpu {
+            Some(gpu) => state.offer_dmabuf_on_gpu(stat.st_rdev, gpu.renderer.gles().clone()),
+            None => state.offer_dmabuf(stat.st_rdev),
+        },
         None => log::warning!("no linux-dmabuf: the DRM device could not be named"),
     }
     // Clients' timelines are imported on the display's device, whose
@@ -599,7 +607,15 @@ impl Backend for Tty {
         // compositor.
         let framebuffer = match &mut monitor.buffers {
             Buffers::Dumb(buffers) => {
-                let Some(image) = state.render_output_with_cursor(output) else {
+                // Where there is a GPU, it draws what only it can show, as a
+                // client's dma-buf, and the CPU copies its frame.
+                let image = match self.gpu.as_mut() {
+                    Some(gpu) => state
+                        .scene_with_cursor(output)
+                        .and_then(|scene| gpu.renderer.draw_to_image(state, &scene).ok()),
+                    None => state.render_output_with_cursor(output),
+                };
+                let Some(image) = image else {
                     return Drawn::Nothing;
                 };
                 buffers[back].write(&image.pixels, image.width as u32);

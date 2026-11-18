@@ -9,9 +9,12 @@
 //! follow.
 //!
 //! When a buffer is committed, its pixels are copied and the buffer is
-//! released at once (see `shm.rs`).
+//! released at once, or, for a dma-buf the GPU imported, the buffer is held
+//! until other content replaces it (see `shm.rs`).
 
-use std::borrow::Cow;
+use std::{borrow::Cow, rc::Rc};
+
+use fulcrum_sys::gles::Texture;
 
 use fulcrum_wire::{
     ObjectId,
@@ -130,11 +133,54 @@ impl Pending {
     }
 }
 
+/// What a surface shows.
+#[derive(Debug)]
+pub(crate) enum Content {
+    /// Pixels copied from the buffer at its commit.
+    Copied(Image),
+    /// A dma-buf the GPU draws from where it is.
+    Gpu(GpuContent),
+}
+
+/// A dma-buf a surface shows uncopied, which the compositor holds until
+/// other content replaces it.
+pub(crate) struct GpuContent {
+    pub texture: Rc<Texture>,
+    pub size: (i32, i32),
+    pub buffer: BufferId,
+    /// Explicit sync's release point, signalled when it is let go.
+    pub release: Option<crate::explicit_sync::Point>,
+}
+
+impl std::fmt::Debug for GpuContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GpuContent({}x{}, buffer {})", self.size.0, self.size.1, self.buffer)
+    }
+}
+
+impl Content {
+    /// Its size in the buffer's pixels.
+    pub(crate) fn size(&self) -> (i32, i32) {
+        match self {
+            Content::Copied(image) => (image.width, image.height),
+            Content::Gpu(gpu) => gpu.size,
+        }
+    }
+
+    /// Its pixels, where the CPU has them.
+    pub(crate) fn image(&self) -> Option<&Image> {
+        match self {
+            Content::Copied(image) => Some(image),
+            Content::Gpu(_) => None,
+        }
+    }
+}
+
 /// The state the compositor shows.
 #[derive(Debug)]
 pub(crate) struct Current {
-    /// The committed buffer's pixels. None means the surface is unmapped.
-    pub content: Option<Image>,
+    /// What the committed buffer shows. None means the surface is unmapped.
+    pub content: Option<Content>,
     /// Frame callbacks waiting for the surface to be drawn.
     pub frames: Vec<u32>,
     /// Presentation feedback waiting for the surface to be drawn.
@@ -176,22 +222,24 @@ impl Current {
     /// The size in surface coordinates: the viewport's destination, or the
     /// size of its crop, or else the buffer's over its scale.
     pub fn size(&self) -> (i32, i32) {
-        let Some(image) = &self.content else {
+        let Some(content) = &self.content else {
             return (0, 0);
         };
+        let (width, height) = content.size();
         match (self.destination, self.source) {
             (Some(size), _) => size,
             (None, Some(crop)) => (crop.width as i32, crop.height as i32),
-            (None, None) => (image.width / self.scale, image.height / self.scale),
+            (None, None) => (width / self.scale, height / self.scale),
         }
     }
 
     /// The part of the buffer that is shown, in the buffer's pixels: the
     /// viewport's crop at the buffer's scale, or all of it.
     pub(crate) fn source_in_buffer(&self) -> (f32, f32, f32, f32) {
-        let Some(image) = &self.content else {
+        let Some(content) = &self.content else {
             return (0.0, 0.0, 0.0, 0.0);
         };
+        let (width, height) = content.size();
         match self.source {
             Some(crop) => {
                 let scale = self.scale as f32;
@@ -202,14 +250,15 @@ impl Current {
                     crop.height as f32 * scale,
                 )
             }
-            None => (0.0, 0.0, image.width as f32, image.height as f32),
+            None => (0.0, 0.0, width as f32, height as f32),
         }
     }
 
     /// The pixels as they are shown: cropped and scaled by the viewport and
-    /// the buffer scale, the size of [`Current::size`].
+    /// the buffer scale, the size of [`Current::size`]. None where only the
+    /// GPU has them.
     pub(crate) fn shown(&self) -> Option<Cow<'_, Image>> {
-        let image = self.content.as_ref()?;
+        let image = self.content.as_ref()?.image()?;
         if self.scale == 1 && self.source.is_none() && self.destination.is_none() {
             return Some(Cow::Borrowed(image));
         }
@@ -537,9 +586,9 @@ impl State {
     /// Makes committed state current, then the held state of each
     /// synchronized subsurface.
     fn apply(&mut self, id: SurfaceId, mut state: Pending) -> Result<(), ProtocolError> {
-        // The buffer is copied here, so the compositor is done with it once
-        // this commit is applied.
-        let release = state.release.take();
+        // A buffer copied here is done with once this commit is applied; one
+        // the GPU shows uncopied, once other content replaces it.
+        let mut release = state.release.take();
         state.acquire = None;
         let surface = self.surfaces.get(&id).expect("an applied surface exists");
         let object = surface.object;
@@ -559,16 +608,24 @@ impl State {
                     // The copy is budgeted before it is made.
                     let held = &self.surfaces[&id];
                     let replaced = pixel_bytes(held.current.content.as_ref());
-                    let bytes = (width.max(0) as usize)
-                        .saturating_mul(height.max(0) as usize)
-                        .saturating_mul(4);
+                    let bytes = if self.on_gpu(buffer) {
+                        0
+                    } else {
+                        (width.max(0) as usize)
+                            .saturating_mul(height.max(0) as usize)
+                            .saturating_mul(4)
+                    };
                     self.may_hold_pixels(held.client, replaced, bytes)
                         .map_err(|over| ProtocolError {
                             object: 1,
                             code: fulcrum_wire::protocol::wayland::wl_display::error::NO_MEMORY,
                             message: format!("wl_surface#{object} cannot show its buffer: {over}"),
                         })?;
-                    Some(self.import_buffer(buffer)?)
+                    let mut content = self.take_content(buffer)?;
+                    if let Content::Gpu(gpu) = &mut content {
+                        gpu.release = release.take();
+                    }
+                    Some(content)
                 }
                 None => None,
             });
@@ -580,32 +637,42 @@ impl State {
             Some(content) => content.as_ref(),
             None => surface.current.content.as_ref(),
         };
-        if let (Some(image), Some(crop)) = (shown, source) {
-            let viewport = surface.viewport.unwrap_or(object);
-            let (width, height) = (
-                f64::from(image.width) / f64::from(scale),
-                f64::from(image.height) / f64::from(scale),
-            );
-            if crop.x + crop.width > width || crop.y + crop.height > height {
-                return Err(ProtocolError {
-                    object: viewport,
-                    code: wp_viewport::error::OUT_OF_BUFFER,
-                    message: format!(
-                        "the source {}x{} at {},{} is outside the {width}x{height} buffer",
-                        crop.width, crop.height, crop.x, crop.y
-                    ),
-                });
+        let refused = match (shown, source) {
+            (Some(shown), Some(crop)) => {
+                let viewport = surface.viewport.unwrap_or(object);
+                let (width, height) = shown.size();
+                let (width, height) = (
+                    f64::from(width) / f64::from(scale),
+                    f64::from(height) / f64::from(scale),
+                );
+                if crop.x + crop.width > width || crop.y + crop.height > height {
+                    Some(ProtocolError {
+                        object: viewport,
+                        code: wp_viewport::error::OUT_OF_BUFFER,
+                        message: format!(
+                            "the source {}x{} at {},{} is outside the {width}x{height} buffer",
+                            crop.width, crop.height, crop.x, crop.y
+                        ),
+                    })
+                } else if destination.is_none() && (crop.width.fract() != 0.0 || crop.height.fract() != 0.0) {
+                    Some(ProtocolError {
+                        object: viewport,
+                        code: wp_viewport::error::BAD_SIZE,
+                        message: format!(
+                            "a source of {}x{} needs a destination size, as it is not whole",
+                            crop.width, crop.height
+                        ),
+                    })
+                } else {
+                    None
+                }
             }
-            if destination.is_none() && (crop.width.fract() != 0.0 || crop.height.fract() != 0.0) {
-                return Err(ProtocolError {
-                    object: viewport,
-                    code: wp_viewport::error::BAD_SIZE,
-                    message: format!(
-                        "a source of {}x{} needs a destination size, as it is not whole",
-                        crop.width, crop.height
-                    ),
-                });
-            }
+            _ => None,
+        };
+        if let Some(error) = refused {
+            // A buffer the GPU shows was taken for this commit: it goes back.
+            self.let_go(content.flatten());
+            return Err(error);
         }
         let surface = self.surface_mut(id);
         surface.current.source = source;
@@ -615,12 +682,13 @@ impl State {
                 pixel_bytes(surface.current.content.as_ref()),
                 pixel_bytes(content.as_ref()),
             );
-            surface.current.content = content;
+            let old = std::mem::replace(&mut surface.current.content, content);
             surface.current.content_serial += 1;
             let client_id = surface.client;
             if let Some(client) = self.clients.get_mut(&client_id) {
                 client.pixel_bytes = client.pixel_bytes.saturating_sub(replaced) + bytes;
             }
+            self.let_go(old);
         }
         let surface = self.surface_mut(id);
         if let Some(offset) = state.offset {
@@ -823,7 +891,7 @@ impl State {
             self.reset_cursor();
         }
         self.forget_held(id);
-        let Some(surface) = self.surfaces.remove(&id) else {
+        let Some(mut surface) = self.surfaces.remove(&id) else {
             return;
         };
         if let Some(client) = self.clients.get_mut(&surface.client) {
@@ -831,6 +899,7 @@ impl State {
                 .pixel_bytes
                 .saturating_sub(pixel_bytes(surface.current.content.as_ref()));
         }
+        self.let_go(surface.current.content.take());
         if tell {
             // Content of a surface that is gone will not be shown.
             let feedback: Vec<u32> = surface
@@ -959,7 +1028,10 @@ impl State {
     }
 }
 
-/// The bytes the compositor holds for a surface's pixels.
-fn pixel_bytes(content: Option<&Image>) -> usize {
-    content.map_or(0, |image| image.pixels.len() * 4)
+/// The bytes the compositor holds for a surface's pixels. A dma-buf the GPU
+/// shows holds none.
+fn pixel_bytes(content: Option<&Content>) -> usize {
+    content
+        .and_then(Content::image)
+        .map_or(0, |image| image.pixels.len() * 4)
 }

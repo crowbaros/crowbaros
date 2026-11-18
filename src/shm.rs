@@ -5,16 +5,20 @@
 //! at once, so the client may draw into it again. Every read of the pool goes
 //! through `fulcrum-sys`'s guarded mapping: a client that truncates its file
 //! gets a protocol error, and the compositor goes on.
+//!
+//! A dma-buf the GPU imported is not copied: the surface shows it where it
+//! is, and the compositor releases it once other content replaces it.
 
-use std::{borrow::Cow, os::fd::OwnedFd};
+use std::{borrow::Cow, os::fd::OwnedFd, rc::Rc};
 
-use fulcrum_sys::shm::Mapping;
+use fulcrum_sys::{gles::Texture, shm::Mapping};
 use fulcrum_wire::protocol::wayland::{wl_buffer, wl_shm, wl_shm_pool};
 
 use crate::{
     State,
     client::{ClientId, ObjectKind, ProtocolError},
     image::{Image, format},
+    surface::{Content, GpuContent},
 };
 
 /// The largest pool, in bytes. A pool is address space until its client
@@ -40,8 +44,10 @@ pub(crate) struct Pool {
 pub(crate) enum Source {
     /// A region of a shared-memory pool.
     Pool(PoolId),
-    /// A dma-buf of its own, mapped (see `dmabuf.rs`).
+    /// A dma-buf of its own that the CPU copies, mapped (see `dmabuf.rs`).
     Dmabuf { mapping: Mapping, fd: OwnedFd },
+    /// A dma-buf the GPU imported, which it draws from where it is.
+    Gpu(Rc<Texture>),
 }
 
 pub(crate) struct Buffer {
@@ -53,6 +59,9 @@ pub(crate) struct Buffer {
     height: i32,
     stride: i32,
     format: u32,
+    /// How many surfaces' contents show it, uncopied. It is released when
+    /// none does.
+    held: usize,
 }
 
 impl Pool {
@@ -81,6 +90,7 @@ impl Buffer {
             height: size.1,
             stride,
             format,
+            held: 0,
         }
     }
 
@@ -275,9 +285,11 @@ impl State {
         }
     }
 
-    /// Copies a committed buffer's pixels, and releases the buffer. A pool
-    /// whose file the client truncated is a protocol error on the buffer.
-    pub(crate) fn import_buffer(&mut self, buffer_id: BufferId) -> Result<Image, ProtocolError> {
+    /// What a committed buffer shows. Pixels are copied and the buffer is
+    /// released at once; a dma-buf the GPU imported is held, uncopied, until
+    /// [`State::let_go`]. A pool whose file the client truncated is a
+    /// protocol error on the buffer.
+    pub(crate) fn take_content(&mut self, buffer_id: BufferId) -> Result<Content, ProtocolError> {
         let buffer = self.buffers.get_mut(&buffer_id).expect("a committed buffer exists");
         let (client_id, object) = (buffer.client, buffer.object);
         let (offset, width, height, stride, format) =
@@ -296,6 +308,15 @@ impl State {
                 fulcrum_sys::dmabuf::end_read(std::os::fd::AsFd::as_fd(fd));
                 read
             }
+            Source::Gpu(texture) => {
+                buffer.held += 1;
+                return Ok(Content::Gpu(GpuContent {
+                    texture: texture.clone(),
+                    size: (width, height),
+                    buffer: buffer_id,
+                    release: None,
+                }));
+            }
         };
         let image = read.map_err(|truncated| ProtocolError {
             object,
@@ -305,7 +326,34 @@ impl State {
         if let Some(client) = self.clients.get_mut(&client_id) {
             client.send(object, wl_buffer::Event::Release);
         }
-        Ok(image)
+        Ok(Content::Copied(image))
+    }
+
+    /// Content a surface no longer shows. A dma-buf it held is done with:
+    /// its release point is signalled, and the buffer is released once no
+    /// surface shows it.
+    pub(crate) fn let_go(&mut self, content: Option<Content>) {
+        let Some(Content::Gpu(gpu)) = content else {
+            return;
+        };
+        State::signal_release(gpu.release);
+        let Some(buffer) = self.buffers.get_mut(&gpu.buffer) else {
+            return;
+        };
+        buffer.held = buffer.held.saturating_sub(1);
+        if buffer.held == 0
+            && let Some(client) = self.clients.get_mut(&buffer.client)
+        {
+            client.send(buffer.object, wl_buffer::Event::Release);
+        }
+    }
+
+    /// Whether a buffer is shown without a copy, so that showing it costs no
+    /// pixels of the client's budget.
+    pub(crate) fn on_gpu(&self, buffer: BufferId) -> bool {
+        self.buffers
+            .get(&buffer)
+            .is_some_and(|buffer| matches!(buffer.source, Source::Gpu(_)))
     }
 
     pub(crate) fn buffer_size(&self, buffer: BufferId) -> Option<(i32, i32)> {

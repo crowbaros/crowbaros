@@ -2,11 +2,17 @@
 //! client of a GPU does. Version 4: what the compositor takes is told in
 //! feedback, as a table of formats and modifiers in sealed shared memory.
 //!
-//! The compositor takes single-plane `XR24` and `AR24` buffers laid out in
-//! rows (the `LINEAR` modifier), maps them, and copies their pixels at each
-//! commit as it copies shared memory, through the same guarded mapping. Every
-//! client of a GPU can make such a buffer. Importing tiled buffers into the
-//! GPU without a copy comes with the GLES renderer's import.
+//! Where the GLES renderer draws the outputs, it imports a client's dma-buf
+//! as a texture when the buffer is made, in whatever format and layout EGL
+//! takes, and draws from it where it is. A surface that shows it holds the
+//! buffer until other content replaces it (see `shm.rs`). Only a real
+//! dma-buf goes to the import (see `fulcrum_sys::dmabuf::is_dmabuf`).
+//!
+//! Where the GPU has not imported it, the compositor takes single-plane
+//! `XR24` and `AR24` buffers laid out in rows (the `LINEAR` modifier), maps
+//! them, and copies their pixels at each commit as it copies shared memory,
+//! through the same guarded mapping. Every client of a GPU can make such a
+//! buffer.
 //!
 //! The table (ADR 0020's, with ADR 0023's) decides who is offered it: the
 //! shell, and a compartment whose needs include the GPU.
@@ -16,9 +22,13 @@ use std::{
     collections::HashMap,
     io::{Seek, SeekFrom},
     os::fd::{AsFd, OwnedFd},
+    rc::Rc,
 };
 
-use fulcrum_sys::shm::Mapping;
+use fulcrum_sys::{
+    gles::{self, DmabufPlane, Gles},
+    shm::Mapping,
+};
 use fulcrum_wire::{
     NewId,
     protocol::{
@@ -47,8 +57,13 @@ pub const FOURCC_ARGB8888: u32 = fourcc(b"AR24");
 /// Rows, with no tiling.
 pub const MODIFIER_LINEAR: u64 = 0;
 
-/// What the compositor takes, in the order of the format table.
+/// What the compositor takes with no GPU's import, first in the format
+/// table. The CPU copies them.
 pub const FORMATS: [(u32, u64); 2] = [(FOURCC_XRGB8888, MODIFIER_LINEAR), (FOURCC_ARGB8888, MODIFIER_LINEAR)];
+
+/// The most entries the format table holds: a tranche names them by 16-bit
+/// index.
+const MAX_FORMATS: usize = 1 << 16;
 
 pub(crate) type ParamsId = u64;
 
@@ -73,15 +88,55 @@ pub(crate) struct Dmabufs {
     next: ParamsId,
     /// The format table, sealed, and its size.
     table: Option<(OwnedFd, u32)>,
+    /// What the table lists, in its order.
+    formats: Vec<(u32, u64)>,
     /// The `dev_t` of the device clients should allocate on.
     device: u64,
+    /// The GPU that imports dma-bufs: the renderer's.
+    gpu: Option<Gles>,
+    /// For the tests, whose machines have no dma-bufs to make: memfds go to
+    /// the GPU's import too.
+    import_memfds: bool,
+}
+
+/// A buffer made from params: where its pixels are, and the first plane's
+/// layout, which the CPU's copy reads.
+struct Made {
+    buffer: crate::shm::BufferId,
+    source: Source,
+    offset: u32,
+    stride: u32,
 }
 
 impl State {
     /// Offers linux-dmabuf, with `device` as the `dev_t` of the DRM device
-    /// clients should allocate on. The table still decides who sees it.
+    /// clients should allocate on, and buffers the CPU copies. The table still
+    /// decides who sees it. Once offered, a second offer does nothing.
     pub fn offer_dmabuf(&mut self, device: u64) {
-        let table = match format_table() {
+        self.offer_dmabuf_with(device, FORMATS.to_vec(), None);
+    }
+
+    /// Offers linux-dmabuf with the GPU's own import: every format and
+    /// layout EGL imports, shown without a copy. The renderer that draws the
+    /// outputs must draw with `gles` or a clone of it, whose context the
+    /// textures belong to.
+    pub fn offer_dmabuf_on_gpu(&mut self, device: u64, gles: Gles) {
+        let mut formats = FORMATS.to_vec();
+        for format in gles.dmabuf_formats() {
+            let entry = (format.format, format.modifier);
+            if !formats.contains(&entry) && formats.len() < MAX_FORMATS {
+                formats.push(entry);
+            }
+        }
+        crate::log::info!("linux-dmabuf imported by the GPU formats={}", formats.len());
+        self.offer_dmabuf_with(device, formats, Some(gles));
+    }
+
+    fn offer_dmabuf_with(&mut self, device: u64, formats: Vec<(u32, u64)>, gpu: Option<Gles>) {
+        if self.dmabufs.table.is_some() {
+            return;
+        }
+        let table = match format_table(&formats) {
             Ok(table) => table,
             Err(error) => {
                 crate::log::warning!("no linux-dmabuf: the format table could not be made: {error}");
@@ -89,8 +144,23 @@ impl State {
             }
         };
         self.dmabufs.table = Some(table);
+        self.dmabufs.formats = formats;
         self.dmabufs.device = device;
+        self.dmabufs.gpu = gpu;
         self.add_global(&zwp_linux_dmabuf_v1::INFO, DMABUF_VERSION, GlobalKind::Dmabuf);
+    }
+
+    /// The GPU that imports dma-bufs, for a test's renderer to draw with.
+    #[doc(hidden)]
+    pub fn dmabuf_gpu(&self) -> Option<Gles> {
+        self.dmabufs.gpu.clone()
+    }
+
+    /// Lets memfds go to the GPU's import, as the tests' stand-ins for
+    /// dma-bufs. Never in the compositor itself: see the module's comment.
+    #[doc(hidden)]
+    pub fn import_memfds_for_tests(&mut self) {
+        self.dmabufs.import_memfds = true;
     }
 
     pub(crate) fn dmabuf_request(
@@ -143,7 +213,9 @@ impl State {
         let Ok(fd) = fd else {
             return Ok(());
         };
-        let indices: Vec<u8> = (0..FORMATS.len() as u16).flat_map(u16::to_ne_bytes).collect();
+        let indices: Vec<u8> = (0..self.dmabufs.formats.len())
+            .flat_map(|index| (index as u16).to_ne_bytes())
+            .collect();
         client.send(id.0, zwp_linux_dmabuf_feedback_v1::Event::FormatTable { fd, size });
         client.send(
             id.0,
@@ -213,17 +285,17 @@ impl State {
                 height,
                 format,
                 flags,
-            } => match self.make_dmabuf_buffer(client_id, object, params_id, width, height, format, flags)? {
-                Some((buffer, mapping, plane)) => {
+            } => match self.make_dmabuf_buffer(object, params_id, width, height, format, flags)? {
+                Some(made) => {
                     let client = self.clients.get_mut(&client_id).expect("the client is dispatching");
                     let id = client.create_server_object(
                         Cow::Borrowed(wl_buffer::NAME),
                         Some(&wl_buffer::INFO),
                         1,
-                        ObjectKind::Buffer(buffer),
+                        ObjectKind::Buffer(made.buffer),
                     )?;
                     client.send(object, zwp_linux_buffer_params_v1::Event::Created { buffer: NewId(id) });
-                    self.add_dmabuf_buffer(client_id, id, buffer, mapping, plane, width, height, format);
+                    self.add_dmabuf_buffer(client_id, id, made, (width, height), format);
                 }
                 None => {
                     let client = self.clients.get_mut(&client_id).expect("the client is dispatching");
@@ -236,17 +308,17 @@ impl State {
                 height,
                 format,
                 flags,
-            } => match self.make_dmabuf_buffer(client_id, object, params_id, width, height, format, flags)? {
-                Some((buffer, mapping, plane)) => {
+            } => match self.make_dmabuf_buffer(object, params_id, width, height, format, flags)? {
+                Some(made) => {
                     let client = self.clients.get_mut(&client_id).expect("the client is dispatching");
                     client.create(
                         buffer_id,
                         Cow::Borrowed(wl_buffer::NAME),
                         Some(&wl_buffer::INFO),
                         1,
-                        ObjectKind::Buffer(buffer),
+                        ObjectKind::Buffer(made.buffer),
                     )?;
-                    self.add_dmabuf_buffer(client_id, buffer_id.0, buffer, mapping, plane, width, height, format);
+                    self.add_dmabuf_buffer(client_id, buffer_id.0, made, (width, height), format);
                 }
                 None => {
                     return Err(fail(
@@ -262,21 +334,21 @@ impl State {
         Ok(())
     }
 
-    /// Checks what the params describe, and maps it. A protocol error for
-    /// what the protocol forbids; `None` for a buffer that is valid but that
-    /// the compositor cannot show.
-    #[allow(clippy::too_many_arguments)]
+    /// Checks what the params describe, and makes the buffer: imported by
+    /// the GPU where it takes it, or else mapped for the CPU to copy. A
+    /// protocol error for what the protocol forbids; `None` for a buffer
+    /// that is valid but that the compositor cannot show.
     fn make_dmabuf_buffer(
         &mut self,
-        client_id: ClientId,
         object: u32,
         params_id: ParamsId,
         width: i32,
         height: i32,
         fourcc: u32,
         flags: u32,
-    ) -> Result<Option<(crate::shm::BufferId, Mapping, Plane)>, ProtocolError> {
+    ) -> Result<Option<Made>, ProtocolError> {
         let fail = |code, message: String| ProtocolError { object, code, message };
+        let on_gpu = self.dmabufs.gpu.is_some();
         let params = self.dmabufs.params.get_mut(&params_id).expect("checked by the caller");
         if params.used {
             return Err(fail(
@@ -285,18 +357,21 @@ impl State {
             ));
         }
         params.used = true;
-        if !FORMATS.iter().any(|(known, _)| *known == fourcc) {
+        if !self.dmabufs.formats.iter().any(|(known, _)| *known == fourcc) {
             return Err(fail(
                 zwp_linux_buffer_params_v1::error::INVALID_FORMAT,
                 format!("format {fourcc:#010x} is not in the format table"),
             ));
         }
-        // One plane, as both formats have.
+        // Planes from the first, with no gaps. How many a format has in a
+        // layout is the GPU's to say; with no GPU's import, both formats
+        // have one.
         let added = params.planes.iter().filter(|plane| plane.is_some()).count();
-        if params.planes[0].is_none() || added != 1 {
+        let leading = params.planes.iter().take_while(|plane| plane.is_some()).count();
+        if leading == 0 || leading != added || (!on_gpu && added != 1) {
             return Err(fail(
                 zwp_linux_buffer_params_v1::error::INCOMPLETE,
-                format!("the format has one plane, and {added} were added"),
+                format!("{added} planes were added, not from the first in order, or not as the format has them"),
             ));
         }
         if width <= 0 || height <= 0 {
@@ -305,57 +380,116 @@ impl State {
                 format!("a buffer of {width}x{height}"),
             ));
         }
-        let plane = params.planes[0].take().expect("checked above");
-        let size = file_size(&plane.fd);
-        let end = (i64::from(plane.stride) >= i64::from(width) * 4)
-            .then(|| i64::from(plane.offset) + i64::from(plane.stride) * i64::from(height));
-        if end.is_none_or(|end| size.is_none_or(|size| end as u64 > size)) {
+        let planes: Vec<Plane> = params.planes.iter_mut().filter_map(Option::take).collect();
+        let modifier = planes[0].modifier;
+        if planes.iter().any(|plane| plane.modifier != modifier) {
             return Err(fail(
-                zwp_linux_buffer_params_v1::error::OUT_OF_BOUNDS,
-                format!(
-                    "{width}x{height} at offset {} with stride {} is outside the dma-buf",
-                    plane.offset, plane.stride
-                ),
+                zwp_linux_buffer_params_v1::error::INVALID_FORMAT,
+                "the planes have different modifiers".into(),
             ));
         }
-        // Flags change how the buffer is read, which the copy does not do;
-        // and a tiled buffer cannot be read in rows.
-        if flags != 0 || plane.modifier != MODIFIER_LINEAR {
+        for (index, plane) in planes.iter().enumerate() {
+            let size = file_size(&plane.fd);
+            let rows = if index == 0 { i64::from(height) } else { 1 };
+            let end = i64::from(plane.offset) + i64::from(plane.stride) * rows;
+            // The CPU's copy reads whole rows of four bytes a pixel.
+            let short_rows = !on_gpu && i64::from(plane.stride) < i64::from(width) * 4;
+            if short_rows || size.is_none_or(|size| end as u64 > size) {
+                return Err(fail(
+                    zwp_linux_buffer_params_v1::error::OUT_OF_BOUNDS,
+                    format!(
+                        "plane {index} of {width}x{height} at offset {} with stride {} is outside the dma-buf",
+                        plane.offset, plane.stride
+                    ),
+                ));
+            }
+        }
+        // Flags change how the buffer is read, which neither import does.
+        if flags != 0 {
             return Ok(None);
         }
-        let Ok(mapping) = Mapping::new(plane.fd.as_fd(), size.unwrap_or(0) as usize) else {
+        if let Some(texture) = self.import_on_gpu(&planes, width, height, fourcc, modifier) {
+            return Ok(Some(Made {
+                buffer: self.next_resource(),
+                source: Source::Gpu(Rc::new(texture)),
+                offset: planes[0].offset,
+                stride: planes[0].stride,
+            }));
+        }
+        // The CPU's copy: one plane of rows, in a format it reads.
+        let readable = FORMATS.contains(&(fourcc, modifier))
+            && planes.len() == 1
+            && i64::from(planes[0].stride) >= i64::from(width) * 4;
+        if !readable {
+            return Ok(None);
+        }
+        let plane = planes.into_iter().next().expect("one plane");
+        let size = file_size(&plane.fd).unwrap_or(0) as usize;
+        let Ok(mapping) = Mapping::new(plane.fd.as_fd(), size) else {
             return Ok(None);
         };
-        let _ = client_id;
-        Ok(Some((self.next_resource(), mapping, plane)))
+        Ok(Some(Made {
+            buffer: self.next_resource(),
+            source: Source::Dmabuf { mapping, fd: plane.fd },
+            offset: plane.offset,
+            stride: plane.stride,
+        }))
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn add_dmabuf_buffer(
-        &mut self,
-        client_id: ClientId,
-        object: u32,
-        buffer: crate::shm::BufferId,
-        mapping: Mapping,
-        plane: Plane,
+    /// The GPU's texture of a dma-buf, where there is a GPU's import and it
+    /// takes the buffer.
+    fn import_on_gpu(
+        &self,
+        planes: &[Plane],
         width: i32,
         height: i32,
         fourcc: u32,
-    ) {
+        modifier: u64,
+    ) -> Option<gles::Texture> {
+        let gles = self.dmabufs.gpu.as_ref()?;
+        let real = planes
+            .iter()
+            .all(|plane| fulcrum_sys::dmabuf::is_dmabuf(plane.fd.as_fd()));
+        if !real && !self.dmabufs.import_memfds {
+            return None;
+        }
+        let planes = planes
+            .iter()
+            .map(|plane| {
+                Some(DmabufPlane {
+                    fd: plane.fd.try_clone().ok()?,
+                    offset: plane.offset,
+                    stride: plane.stride,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let dmabuf = gles::Dmabuf {
+            width,
+            height,
+            format: fourcc,
+            modifier,
+            planes,
+        };
+        gles.import(&dmabuf)
+            .map_err(|error| crate::log::debug!("the GPU did not import a dma-buf: {error}"))
+            .ok()
+    }
+
+    fn add_dmabuf_buffer(&mut self, client_id: ClientId, object: u32, made: Made, size: (i32, i32), fourcc: u32) {
         let format = if fourcc == FOURCC_ARGB8888 {
             format::ARGB8888
         } else {
             format::XRGB8888
         };
         self.buffers.insert(
-            buffer,
+            made.buffer,
             Buffer::new(
                 client_id,
                 object,
-                Source::Dmabuf { mapping, fd: plane.fd },
-                plane.offset as usize,
-                (width, height),
-                plane.stride as i32,
+                made.source,
+                made.offset as usize,
+                size,
+                made.stride as i32,
                 format,
             ),
         );
@@ -378,9 +512,9 @@ fn file_size(fd: &OwnedFd) -> Option<u64> {
 
 /// The format table: for each entry, a format, four bytes of padding, and a
 /// modifier. Sealed, so a client can only read it.
-fn format_table() -> std::io::Result<(OwnedFd, u32)> {
+fn format_table(formats: &[(u32, u64)]) -> std::io::Result<(OwnedFd, u32)> {
     use rustix::fs::{MemfdFlags, SealFlags};
-    let bytes: Vec<u8> = FORMATS
+    let bytes: Vec<u8> = formats
         .iter()
         .flat_map(|(format, modifier)| {
             let mut entry = Vec::with_capacity(16);

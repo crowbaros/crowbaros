@@ -90,11 +90,15 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   is under it, by input region, and stays with its surface while a button is
   held.
 - **linux-dmabuf**, version 4: feedback names the GPU's device and a sealed
-  table of what the compositor takes, single-plane `XR24` and `AR24` laid out
-  in rows. Those buffers are mapped and copied at each commit, through the
-  same guarded mapping as shared memory. The shell and a compartment whose
-  needs include the GPU are offered it (ADR 0020, ADR 0023). The GPU's own
-  import of tiled buffers, without a copy, comes later in Milestone 3.
+  table of what the compositor takes. Where the GLES renderer draws, the
+  table is every format and layout EGL imports, tiled ones included. The GPU
+  imports such a buffer when it is made and draws from it where it is, with
+  no copy, and the compositor holds it until other content replaces it. Only
+  a real dma-buf reaches the import. Elsewhere, or where the GPU refuses a
+  buffer, single-plane `XR24` and `AR24` laid out in rows are mapped and
+  copied at each commit, through the same guarded mapping as shared memory.
+  The shell and a compartment whose needs include the GPU are offered it
+  (ADR 0020, ADR 0023).
 - **Presentation time**: a client learns when its content was shown, on
   which output, and the refresh, so it can pace itself. A page flip's time
   is the kernel's, on the monotonic clock, with the display's vertical blank
@@ -104,7 +108,8 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 - **Explicit sync**: a commit with a dma-buf waits, without blocking the
   compositor, until its acquire point on the client's timeline is signalled,
   and the compositor signals its release point when it is done with the
-  buffer. Drivers without implicit sync, as NVIDIA's, need it. It is offered
+  buffer: at once for a copy, and when other content replaces it for a
+  buffer the GPU draws where it is. Drivers without implicit sync, as NVIDIA's, need it. It is offered
   where the display's device has timeline syncobjs.
 - **The data device**, with nothing moving between clients until slice 4
   (Milestone 6): a selection is offered to no other client, and a drag is
@@ -172,10 +177,10 @@ place since [crowbaros#198](https://github.com/crowbaros/crowbaros/pull/198)
 | `src/scene.rs` | What an output shows, back to front, for either renderer, frames included |
 | `src/render.rs` | The GLES renderer's compositor half: a texture for each surface, kept until its content changes |
 | `src/backend/` | Where frames go: `tty.rs` (a virtual terminal), `session.rs` (Fulcrum's client of seatd), `uevent.rs` (hotplug from netlink), `nested.rs` (a window on a host session), and `headless.rs` (the tests) |
-| `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `dl.rs` (libraries loaded at run time), `gles.rs` (EGL and GLES: the context, textures, targets, and draws), `gbm.rs`, `dmabuf.rs` (reading a dma-buf with the CPU), `syncobj.rs` (DRM timelines), `drm.rs` (mode setting, dumb buffers, and framebuffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (the guarded mapping) |
+| `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `dl.rs` (libraries loaded at run time), `gles.rs` (EGL and GLES: the context, textures, targets, and draws), `gbm.rs`, `dmabuf.rs` (telling a dma-buf from other files, and reading one with the CPU), `syncobj.rs` (DRM timelines), `drm.rs` (mode setting, dumb buffers, and framebuffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (the guarded mapping) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `outputs.rs` covers outputs that change size; `data_device.rs` and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `dmabuf.rs` covers linux-dmabuf; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `outputs.rs` covers outputs that change size; `data_device.rs` and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `dmabuf.rs` covers linux-dmabuf; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.

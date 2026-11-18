@@ -1,5 +1,9 @@
 //! The GLES renderer's compositor half: a texture for each surface, kept
-//! until its content changes, and a scene drawn into a target.
+//! until its content changes, and a scene drawn into a target. A dma-buf the
+//! GPU imported is its own texture, drawn where it is.
+//!
+//! Each draw waits until the GPU is done, so no buffer a client gets back
+//! is still being read.
 //!
 //! What to draw, and in what order, is the scene's (see `scene.rs`), the
 //! same scene the CPU renderer draws. The GPU calls are `fulcrum-sys`'s.
@@ -13,12 +17,13 @@ use crate::{
     geometry::Rect,
     image::Image,
     scene::{Element, Scene},
-    surface::SurfaceId,
+    surface::{Content, SurfaceId},
 };
 
 pub struct Renderer {
     gles: Gles,
-    /// Each surface's texture, with the content serial it was uploaded at.
+    /// Each surface's texture of copied pixels, with the content serial it
+    /// was uploaded at.
     textures: HashMap<SurfaceId, (u64, Texture)>,
 }
 
@@ -36,7 +41,12 @@ impl Renderer {
 
     /// Uploads what each element of the scene shows, where it changed.
     fn prepare(&mut self, state: &State, scene: &Scene) {
-        self.textures.retain(|surface, _| state.surfaces.contains_key(surface));
+        self.textures.retain(|surface, _| {
+            state
+                .surfaces
+                .get(surface)
+                .is_some_and(|surface| matches!(surface.current.content, Some(Content::Copied(_))))
+        });
         for element in &scene.elements {
             let Element::Surface { surface: id, .. } = element else {
                 continue;
@@ -44,7 +54,7 @@ impl Renderer {
             let Some(surface) = state.surfaces.get(id) else {
                 continue;
             };
-            let Some(image) = &surface.current.content else {
+            let Some(Content::Copied(image)) = &surface.current.content else {
                 continue;
             };
             let serial = surface.current.content_serial;
@@ -70,8 +80,16 @@ impl Renderer {
         for element in &scene.elements {
             match element {
                 Element::Surface { surface: id, rect } => {
-                    let (Some((_, texture)), Some(surface)) = (self.textures.get(id), state.surfaces.get(id)) else {
+                    let Some(surface) = state.surfaces.get(id) else {
                         continue;
+                    };
+                    let texture = match &surface.current.content {
+                        Some(Content::Gpu(gpu)) => &*gpu.texture,
+                        Some(Content::Copied(_)) => match self.textures.get(id) {
+                            Some((_, texture)) => texture,
+                            None => continue,
+                        },
+                        None => continue,
                     };
                     let destination = (rect.x, rect.y, rect.width, rect.height);
                     frame.draw(
@@ -98,20 +116,28 @@ impl Renderer {
     }
 }
 
+impl Renderer {
+    /// Draws a scene into a target of its own and reads it back, for a
+    /// display the GPU cannot draw into.
+    pub(crate) fn draw_to_image(&mut self, state: &State, scene: &Scene) -> io::Result<Image> {
+        let target = self.gles.offscreen(scene.size.0, scene.size.1)?;
+        self.draw(state, scene, &target, None);
+        let frame = self.gles.frame(&target);
+        let pixels = frame.read((0, 0, scene.size.0, scene.size.1));
+        frame.finish();
+        Ok(Image {
+            width: scene.size.0,
+            height: scene.size.1,
+            pixels,
+        })
+    }
+}
+
 /// Draws an output with the GLES renderer into a target of its own and
 /// reads it back. For the tests, which hold the CPU renderer's frame beside
 /// it.
 #[doc(hidden)]
 pub fn render_output_offscreen(state: &State, output: u64, renderer: &mut Renderer) -> io::Result<Image> {
     let scene = state.scene(output).ok_or_else(|| io::Error::other("no such output"))?;
-    let target = renderer.gles.offscreen(scene.size.0, scene.size.1)?;
-    renderer.draw(state, &scene, &target, None);
-    let frame = renderer.gles.frame(&target);
-    let pixels = frame.read((0, 0, scene.size.0, scene.size.1));
-    frame.finish();
-    Ok(Image {
-        width: scene.size.0,
-        height: scene.size.1,
-        pixels,
-    })
+    renderer.draw_to_image(state, &scene)
 }

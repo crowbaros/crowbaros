@@ -6,9 +6,10 @@
 //!
 //! A commit whose acquire point is not signalled yet is held, not waited for:
 //! the kernel wakes an eventfd at that point, and the event loop applies the
-//! commit then. A later commit is held behind it, and merges over it. The
-//! compositor copies a dma-buf at the commit (see `dmabuf.rs`), so it is done
-//! with the buffer then, and signals the release point at once.
+//! commit then. A later commit is held behind it, and merges over it. A
+//! dma-buf the compositor copies at the commit is done with then, and its
+//! release point is signalled at once; one the GPU shows uncopied, when other
+//! content replaces it (see `dmabuf.rs`).
 //!
 //! The table offers it to a compartment whose needs include the GPU, and to
 //! the shell (ADR 0020, ADR 0023).
@@ -224,7 +225,7 @@ impl State {
                 let dmabuf = self
                     .buffers
                     .get(&buffer)
-                    .is_some_and(|buffer| matches!(buffer.source, Source::Dmabuf { .. }));
+                    .is_some_and(|buffer| matches!(buffer.source, Source::Dmabuf { .. } | Source::Gpu(_)));
                 if !dmabuf {
                     return Err(fail(error::UNSUPPORTED_BUFFER, "explicit sync is for dma-bufs"));
                 }
@@ -304,10 +305,12 @@ impl State {
         }
     }
 
-    /// A surface is gone: a commit it held goes with it.
+    /// A surface is gone: a commit it held goes with it, and its buffer is
+    /// done with.
     pub(crate) fn forget_held(&mut self, id: SurfaceId) {
-        if let Some(held) = self.explicit_sync.held.remove(&id) {
+        if let Some(mut held) = self.explicit_sync.held.remove(&id) {
             self.event_loop.remove(held.event.as_fd());
+            State::signal_release(held.state.release.take());
         }
     }
 }

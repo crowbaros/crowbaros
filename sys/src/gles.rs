@@ -335,7 +335,9 @@ impl Drop for Inner {
     }
 }
 
-/// An EGL display and a GLES 2 context on it, current on this thread.
+/// An EGL display and a GLES 2 context on it, current on this thread. A
+/// clone is the same context, so textures one imports another draws.
+#[derive(Clone)]
 pub struct Gles(Rc<Inner>);
 
 /// One plane of a dma-buf.
@@ -558,7 +560,9 @@ impl Gles {
         None
     }
 
-    /// Every dma-buf format and modifier EGL imports.
+    /// Every dma-buf format and modifier EGL imports and this context can
+    /// draw: one EGL samples only as an external texture is left out where GL
+    /// has none.
     pub fn dmabuf_formats(&self) -> Vec<DmabufFormat> {
         let (Some(queries), Some(_)) = (&self.0.dmabuf_queries, &self.0.images) else {
             return Vec::new();
@@ -614,6 +618,8 @@ impl Gles {
         for format in &all {
             known.insert((format.format, format.modifier), format.external_only);
         }
+        let external = self.0.external.is_some();
+        all.retain(|format| external || !format.external_only);
         all
     }
 
@@ -1208,5 +1214,125 @@ mod tests {
         assert_eq!(read[5], 0xffff_ffff);
         assert_eq!(read[10], 0xffff_ffff);
         assert_eq!(read[15], 0xff00_0000);
+    }
+
+    const XRGB8888: u32 = u32::from_le_bytes(*b"XR24");
+
+    /// Reads back what a texture shows, drawn opaque onto 8x8.
+    fn shown(gles: &Gles, texture: &Texture) -> Vec<u32> {
+        let target = gles.offscreen(8, 8).unwrap();
+        let mut frame = gles.frame(&target);
+        frame.clear((0, 0, 8, 8), 0xff00_0000);
+        let size = (texture.width as f32, texture.height as f32);
+        frame.draw(
+            texture,
+            (0.0, 0.0, size.0, size.1),
+            (0, 0, 8, 8),
+            (0, 0, 8, 8),
+            true,
+            1.0,
+        );
+        let read = frame.read((0, 0, 8, 8));
+        frame.finish();
+        read
+    }
+
+    #[test]
+    fn a_linear_dma_buf_in_shared_memory_shows_its_own_colours() {
+        let Some(gles) = gles() else { return };
+        let supported = gles
+            .dmabuf_formats()
+            .iter()
+            .any(|format| format.format == XRGB8888 && format.modifier == 0);
+        if !supported {
+            eprintln!("EGL imports no linear XR24 dma-bufs: skipped");
+            return;
+        }
+        let fd = rustix::fs::memfd_create("dmabuf", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
+        let bytes: Vec<u8> = std::iter::repeat_n(0xff20_40c0u32.to_le_bytes(), 8 * 8)
+            .flatten()
+            .collect();
+        rustix::io::write(&fd, &bytes).unwrap();
+        let dmabuf = Dmabuf {
+            width: 8,
+            height: 8,
+            format: XRGB8888,
+            modifier: 0,
+            planes: vec![DmabufPlane {
+                fd,
+                offset: 0,
+                stride: 32,
+            }],
+        };
+        let texture = match gles.import(&dmabuf) {
+            Ok(texture) => texture,
+            Err(error) => {
+                eprintln!("EGL takes no memfd as a dma-buf: skipped ({error})");
+                return;
+            }
+        };
+        assert_eq!(shown(&gles, &texture)[9], 0xff20_40c0);
+    }
+
+    /// A render node's GPU, through GBM.
+    fn gpu() -> Option<(gbm::Device, Gles)> {
+        let path = std::fs::read_dir("/dev/dri")
+            .ok()?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .find(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("renderD"))
+            })?;
+        let fd: OwnedFd = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .ok()?
+            .into();
+        let device = gbm::Device::new(fd).ok()?;
+        let gles = Gles::on_gbm(&device).ok()?;
+        Some((device, gles))
+    }
+
+    #[test]
+    fn a_buffer_in_the_gpus_own_layout_shows_what_was_drawn_into_it() {
+        let Some((device, gles)) = gpu() else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        let modifiers: Vec<u64> = gles
+            .dmabuf_formats()
+            .iter()
+            .filter(|format| format.format == XRGB8888 && !format.external_only)
+            .map(|format| format.modifier)
+            .collect();
+        let buffer = device
+            .create_buffer(8, 8, XRGB8888, &modifiers, gbm::USE_RENDERING)
+            .unwrap();
+        let dmabuf = || Dmabuf {
+            width: 8,
+            height: 8,
+            format: XRGB8888,
+            modifier: buffer.modifier(),
+            planes: buffer
+                .planes()
+                .iter()
+                .enumerate()
+                .map(|(index, plane)| DmabufPlane {
+                    fd: buffer.export(index).unwrap(),
+                    offset: plane.offset,
+                    stride: plane.stride,
+                })
+                .collect(),
+        };
+        eprintln!("modifier {:#x}, {} planes", buffer.modifier(), buffer.planes().len());
+        let target = gles.target(&dmabuf()).unwrap();
+        let mut frame = gles.frame(&target);
+        frame.clear((0, 0, 8, 8), 0xff20_40c0);
+        frame.finish();
+
+        let texture = gles.import(&dmabuf()).unwrap();
+
+        assert_eq!(shown(&gles, &texture)[9], 0xff20_40c0);
     }
 }
