@@ -26,9 +26,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The compositor is built and tested by Fulcrum's own CI, and by the Void
-  # guest check at the commit compositor/fulcrum.json pins (ADR 0027).
-  # test_fulcrum_pin.py checks that the pin names a full commit.
+  # The compositor has a workflow of its own, compositor.yml (ADR 0031).
   check:
     name: Lab scripts
     runs-on: ubuntu-24.04

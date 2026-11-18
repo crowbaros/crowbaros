@@ -19,7 +19,7 @@ The CrowbarOS Wayland compositor. It draws every surface, delivers all input, an
 _Avoid_: Window manager
 
 **Fulcrum**:
-The repository where the compositor is built. Base builds one commit of it.
+The name of the CrowbarOS compositor, the way Mutter or KWin names theirs. Its code is in `compositor/`.
 
 **Shell**:
 The bar, launcher, dock, and wallpaper the person works in, drawn as layer surfaces.

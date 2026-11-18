@@ -27,7 +27,7 @@ help or by hand.
 | Part | What it is |
 | --- | --- |
 | Base | Void Linux, with runit and xbps, kept small |
-| Compositor | Ours: a Wayland compositor built in [Fulcrum](../compositor/README.md), written from the ground up with Smithay as its reference ([ADR 0015](adr/0015-our-own-compositor-on-smithay.md), [ADR 0027](adr/0027-the-compositor-is-built-in-its-own-repository.md), [ADR 0028](adr/0028-the-compositor-is-written-from-the-ground-up.md)) |
+| Compositor | Ours: a Wayland compositor named [Fulcrum](../compositor/README.md), written from the ground up with Smithay as its reference ([ADR 0015](adr/0015-our-own-compositor-on-smithay.md), [ADR 0028](adr/0028-the-compositor-is-written-from-the-ground-up.md), [ADR 0031](adr/0031-the-compositor-is-built-in-this-repository-again.md)) |
 | Shell | The bar, launcher, dock, and wallpaper, from Jason Alexander's [design system](../DESIGN.md) and [shell](../apps/shell/README.md) |
 | Default apps | A handful. [Studio Settings](../apps/studio-settings/README.md) is the first. Which others is open |
 | The Agent | Running from boot, one gesture away |

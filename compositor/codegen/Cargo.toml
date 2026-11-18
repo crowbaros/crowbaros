@@ -1,0 +1,11 @@
+[package]
+name = "fulcrum-codegen"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Writes fulcrum-wire's protocol code from the XML in protocols/. A development tool, never part of Base."
+
+[[bin]]
+name = "fulcrum-codegen"
+path = "src/main.rs"

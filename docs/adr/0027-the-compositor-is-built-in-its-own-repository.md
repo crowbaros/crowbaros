@@ -1,6 +1,6 @@
 # The compositor is built in its own repository, and Base pins one commit
 
-**Status:** accepted on November 17, 2026, by Jason Alexander, who merged it before Jim Martin had reviewed it.
+**Status:** replaced by [ADR 0031](0031-the-compositor-is-built-in-this-repository-again.md) on November 18, 2026. Accepted on November 17, 2026, by Jason Alexander, who merged it before Jim Martin had reviewed it.
 
 [ADR 0015](0015-our-own-compositor-on-smithay.md) put the compositor in `compositor/`, as a Cargo project of its own outside the root workspace. [ADR 0020](../archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md) started it clean there, and slice 1 is built. Five slices remain, and then the work after a first release: input methods, window sharing, more layouts, and more hardware. This record moves the code to a repository of its own, named Fulcrum. Everything else in ADRs 0015, 0016, 0020, 0022, and 0023 stands.
 

@@ -1,0 +1,71 @@
+name: Compositor
+
+# Fulcrum, the compositor in compositor/, is its own Cargo project with its own
+# job (ADR 0031). It runs when the compositor's code changes, not for its docs.
+# Fulcrum links only the C libraries ADR 0028 allows, and installs each as
+# the code that needs it lands.
+on:
+  pull_request:
+    paths:
+      - "compositor/**"
+      - "!compositor/**.md"
+      - "!compositor/docs/**"
+      - ".github/workflows/compositor.yml"
+  push:
+    branches: [main]
+    paths:
+      - "compositor/**"
+      - "!compositor/**.md"
+      - "!compositor/docs/**"
+      - ".github/workflows/compositor.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compositor-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  compositor:
+    name: Compositor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: compositor
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      # libxkbcommon and libinput, which Fulcrum links (ADR 0028), and the
+      # keymaps. Mesa's EGL, GLES, and GBM, which it loads at run time, and
+      # Mesa's software renderer, so the GLES tests draw without a GPU.
+      - name: Install libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxkbcommon-dev xkb-data libinput-dev \
+            libegl1 libegl-mesa0 libgles2 libgbm1 libgl1-mesa-dri
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # The nested backend, which Base never builds.
+      - name: Lint the nested build
+        run: cargo clippy --all-targets --features nested --locked -- -D warnings
+
+      # Includes the check that the generated protocol code matches the XML,
+      # and that no crate from the Smithay organization is in Cargo.lock.
+      - name: Test
+        run: cargo test --locked
+
+      - name: Test the nested build
+        run: cargo test --locked --features nested

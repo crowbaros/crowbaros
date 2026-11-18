@@ -33,18 +33,12 @@ on a virtual terminal, with seatd as the seat manager and no systemd.
 ```sh
 lab/void/compositor_guest.py check   # build, boot, run every check, record evidence
 lab/void/compositor_guest.py --help
-
-# A Fulcrum commit that is not pinned yet, from a local clone
-FULCRUM_REPOSITORY=../fulcrum FULCRUM_REVISION=<full commit ID> lab/void/compositor_guest.py check
 ```
 
-The compositor is built in Fulcrum, its own repository
-([ADR 0027](../../docs/adr/0027-the-compositor-is-built-in-its-own-repository.md)).
-`check` fetches the commit that `compositor/fulcrum.json` pins into
-`.lab/fulcrum.git`, and writes the commit's tree, not a working copy, to
-`.lab/fulcrum/<commit>/`. It builds and tests that tree inside a Void build
+`check` builds and tests the compositor, Fulcrum, from `compositor/`
+([ADR 0031](../../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)) inside a Void build
 root, so the binary links Void's own libraries. The evidence log names the
-CrowbarOS and Fulcrum commits, and says when the Fulcrum one is not pinned. It then boots the guest and drives it from outside:
+commit, and says when the build had changes that were not committed. It then boots the guest and drives it from outside:
 keys and the pointer through QEMU, and a second monitor plugged into QEMU's
 second virtio-gpu connector. Every pull request that touches the compositor
 runs it ([ADR 0022](../../docs/archive/substrate-vision/adr/0022-the-compositor-is-built-beside-milestone-2.md)).
@@ -84,11 +78,9 @@ From the repository root:
 python3 lab/void/compositor_guest.py desktop-check
 ```
 
-This builds and tests the compositor at the Fulcrum commit
-[`compositor/`](../../compositor/README.md) pins, the shell, and Settings in
-Void, creates a fresh guest image, exercises the desktop, and powers off the
-test guest. To try a Fulcrum commit that is not pinned yet, set
-`FULCRUM_REPOSITORY` and `FULCRUM_REVISION` as for `check`. Every
+This builds and tests the [compositor](../../compositor/README.md), the
+shell, and Settings in Void, creates a fresh guest image, exercises the
+desktop, and powers off the test guest. Every
 run gets a new directory in `.lab/void-desktop-checks/`, its own SSH port, key,
 and Unix VNC sockets. It never stops or replaces `.lab/void-graphical/disk.raw`.
 Do not use the `check` or `desktop` command against a preserved preview:
