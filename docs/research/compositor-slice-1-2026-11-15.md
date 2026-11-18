@@ -6,7 +6,7 @@ built, and every check that was run passed.** A clean compositor in
 connected, offers each one only its row of the protocol table, and draws only
 when something changed. It does not run the desktop yet. The Alpha desktop
 still runs the spike, which moved to
-[`lab/compositor-spike/`](../../lab/compositor-spike/README.md).
+[`lab/compositor-spike/`](https://github.com/crowbaros/crowbaros/tree/substrate-final/lab/compositor-spike/README.md).
 
 This is the record for [issue 49](https://github.com/crowbaros/crowbaros/issues/49),
 slice 1 of [ADR 0020](../archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md).

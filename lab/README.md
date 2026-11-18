@@ -3,7 +3,6 @@
 | Lab | Purpose | State |
 | --- | --- | --- |
 | [void/](void/README.md) | Compositor and integrated Alpha desktop checks on Void/runit/seatd | Active |
-| [compositor-spike/](compositor-spike/README.md) | The spike that tested ADR 0015. The Alpha desktop check runs it until the [compositor](../compositor/README.md) passes that check | Kept, not developed. Deleted then |
 
 The [Fedora workflow](../docs/archive/fedora-workflow/README.md) is archived.
 The substrate vision's Base generations lab and its

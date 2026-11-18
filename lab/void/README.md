@@ -61,7 +61,7 @@ It checks what each of the three is offered, the attacks that the decision
 records give slice 1, that a new window does not take the keyboard, that a
 still desktop draws no frames, and a monitor plugged in while it runs. The
 [slice 1 record](../../docs/research/compositor-slice-1-2026-11-15.md) holds a
-run. The run of the [spike](../compositor-spike/README.md) is in the
+run. The run of the [spike](https://github.com/crowbaros/crowbaros/tree/substrate-final/lab/compositor-spike) is in the
 [spike record](../../docs/research/compositor-spike-2026-11-15.md).
 
 Four things to know:
