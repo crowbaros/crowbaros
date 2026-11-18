@@ -156,6 +156,26 @@ impl State {
         }
     }
 
+    /// A surface tree's elements, as for the cursor.
+    pub(crate) fn push_tree_public(&self, id: SurfaceId, at: (i32, i32), elements: &mut Vec<Element>) {
+        self.push_tree(id, at, elements, 0);
+    }
+
+    /// What an output shows, with the pointer's image above it, for a
+    /// backend that draws the pointer.
+    pub(crate) fn scene_with_cursor(&self, number: u64) -> Option<Scene> {
+        let mut scene = self.scene(number)?;
+        let cursor = self.cursor_elements(number, &scene);
+        scene.elements.extend(cursor);
+        Some(scene)
+    }
+
+    /// An output's frame with the pointer, drawn by the CPU renderer.
+    pub fn render_output_with_cursor(&self, number: u64) -> Option<Image> {
+        let scene = self.scene_with_cursor(number)?;
+        Some(self.draw_scene(&scene))
+    }
+
     /// A surface and its subsurfaces, in their stacking order, with the
     /// surface's corner at `at`. A surface that shows nothing hides its
     /// subsurfaces too.

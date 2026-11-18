@@ -35,7 +35,7 @@ use fulcrum_wire::{
 
 use crate::{
     State,
-    backend::{Backend, Drawn, draw_pointer},
+    backend::{Backend, Drawn},
     log,
 };
 
@@ -578,10 +578,9 @@ impl Nested {
     }
 
     fn show(&mut self, state: &State, output: u64) -> io::Result<Drawn> {
-        let Some(mut image) = state.render_output(output) else {
+        let Some(image) = state.render_output_with_cursor(output) else {
             return Ok(Drawn::Nothing);
         };
-        draw_pointer(state, output, &mut image);
         if (image.width, image.height) != self.size {
             return Ok(Drawn::Nothing);
         }

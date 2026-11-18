@@ -35,7 +35,7 @@ use fulcrum_sys::{
 use crate::{
     State,
     backend::{
-        Backend, Drawn, draw_pointer, pointer_rect,
+        Backend, Drawn,
         session::{Session, SessionEvent},
         uevent::Uevents,
     },
@@ -593,19 +593,17 @@ impl Backend for Tty {
         // compositor.
         let framebuffer = match &mut monitor.buffers {
             Buffers::Dumb(buffers) => {
-                let Some(mut image) = state.render_output(output) else {
+                let Some(image) = state.render_output_with_cursor(output) else {
                     return Drawn::Nothing;
                 };
-                draw_pointer(state, output, &mut image);
                 buffers[back].write(&image.pixels, image.width as u32);
                 buffers[back].framebuffer
             }
             Buffers::Gpu(buffers) => {
-                let (Some(scene), Some(gpu)) = (state.scene(output), self.gpu.as_mut()) else {
+                let (Some(scene), Some(gpu)) = (state.scene_with_cursor(output), self.gpu.as_mut()) else {
                     return Drawn::Nothing;
                 };
-                gpu.renderer
-                    .draw(state, &scene, &buffers[back].target, pointer_rect(state, output));
+                gpu.renderer.draw(state, &scene, &buffers[back].target, None);
                 buffers[back].framebuffer
             }
         };

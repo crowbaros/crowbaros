@@ -24,7 +24,7 @@ use crate::{
     State,
     client::{ClientId, ObjectKind, ProtocolError},
     log,
-    surface::SurfaceId,
+    surface::{Role, SurfaceId},
 };
 
 /// The `wl_seat` version Fulcrum offers.
@@ -64,6 +64,8 @@ pub(crate) struct Seat {
     /// Keys the compositor took: pressed with Super held. Their releases are
     /// taken too, and no client ever hears of them.
     withheld: Vec<u32>,
+    /// The image a client set, if it has the pointer and set one.
+    pub(crate) cursor: Option<crate::cursor::Cursor>,
 }
 
 impl Seat {
@@ -81,6 +83,7 @@ impl Seat {
             pointer_focus: None,
             keys: Vec::new(),
             withheld: Vec::new(),
+            cursor: None,
             buttons: Vec::new(),
         }
     }
@@ -186,14 +189,54 @@ impl State {
 
     pub(crate) fn pointer_request(
         &mut self,
-        _client_id: ClientId,
+        client_id: ClientId,
+        object: u32,
         request: wl_pointer::Request,
     ) -> Result<(), ProtocolError> {
-        match request {
-            // Cursor images are drawn with Milestone 3, clipped so that they
-            // cover no frame (ADR 0020).
-            wl_pointer::Request::SetCursor { .. } | wl_pointer::Request::Release => Ok(()),
+        let wl_pointer::Request::SetCursor {
+            surface,
+            hotspot_x,
+            hotspot_y,
+            ..
+        } = request
+        else {
+            return Ok(());
+        };
+        // Only the client whose surface the pointer is on sets its image.
+        let focused = self
+            .seat
+            .pointer_focus
+            .and_then(|(focus, _)| self.surfaces.get(&focus))
+            .is_some_and(|focus| focus.client == client_id);
+        if !focused {
+            return Ok(());
         }
+        let cursor = match surface {
+            None => crate::cursor::Cursor::Hidden,
+            Some(surface) => {
+                let id = self
+                    .surface_of(client_id, surface)
+                    .expect("the dispatch checked the argument's interface");
+                let role = self.surfaces[&id].role;
+                if role != Role::None && role != Role::Cursor {
+                    return Err(ProtocolError {
+                        object,
+                        code: wl_pointer::error::ROLE,
+                        message: format!("wl_surface#{} already has a role", surface.0),
+                    });
+                }
+                if let Some(state) = self.surfaces.get_mut(&id) {
+                    state.role = Role::Cursor;
+                }
+                crate::cursor::Cursor::Surface {
+                    surface: id,
+                    hotspot: (hotspot_x, hotspot_y),
+                }
+            }
+        };
+        self.seat.cursor = Some(cursor);
+        self.queue_redraw_all();
+        Ok(())
     }
 
     /// The objects of one kind a client holds.
@@ -488,6 +531,8 @@ impl State {
         };
         let old = self.seat.pointer_focus;
         if old.map(|(surface, _)| surface) != under.map(|(surface, _)| surface) {
+            // A client's image is its own: the next client sets its own.
+            self.reset_cursor();
             if let Some((old_surface, _)) = old {
                 self.send_pointer(old_surface, |serial, surface| wl_pointer::Event::Leave {
                     serial,

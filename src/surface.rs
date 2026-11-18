@@ -47,6 +47,8 @@ pub(crate) enum Role {
     Toplevel,
     Popup,
     Layer,
+    /// The pointer's image.
+    Cursor,
 }
 
 /// Requests since the last commit.
@@ -770,6 +772,9 @@ impl State {
         self.unparent(id);
         for output in outputs {
             self.queue_redraw(output);
+        }
+        if self.cursor_surface() == Some(id) {
+            self.reset_cursor();
         }
         let Some(surface) = self.surfaces.remove(&id) else {
             return;

@@ -621,7 +621,7 @@ impl State {
             Request::LayerShell(request) => self.layer_shell_request(client_id, id, version, request)?,
             Request::Seat(request) => self.seat_request(client_id, id, version, request)?,
             Request::Keyboard(wl_keyboard::Request::Release) => {}
-            Request::Pointer(request) => self.pointer_request(client_id, request)?,
+            Request::Pointer(request) => self.pointer_request(client_id, id, request)?,
             Request::Layer(surface, request) => self.layer_surface_request(id, surface, request)?,
             Request::DataDeviceManager(request) => self.data_device_manager_request(client_id, version, request)?,
             Request::DataSource(source, request) => self.data_source_request(client_id, id, source, request)?,

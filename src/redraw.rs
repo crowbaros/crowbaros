@@ -58,6 +58,11 @@ impl State {
     /// before, and the ones that show it now.
     pub(crate) fn queue_redraw_for(&mut self, surface: SurfaceId) {
         let root = self.root_of(surface);
+        if self.cursor_surface() == Some(root) {
+            // The pointer's image changed, wherever the pointer is.
+            self.queue_redraw_all();
+            return;
+        }
         let before = self
             .surfaces
             .get(&root)
@@ -173,7 +178,13 @@ impl State {
             .filter(|surface| self.surfaces.get(surface).and_then(|s| s.entered.first()) == Some(&number))
             .collect();
         let mut every = Vec::new();
-        for root in shown {
+        let pointer_here = self
+            .outputs
+            .iter()
+            .find(|output| output.number == number)
+            .is_some_and(|output| output.rect().contains(self.pointer.0 as i32, self.pointer.1 as i32));
+        let cursor = self.cursor_surface().filter(|_| pointer_here);
+        for root in shown.into_iter().chain(cursor) {
             for surface in self.surfaces_of_window(root) {
                 every.push(surface);
                 let Some(state) = self.surfaces.get_mut(&surface) else {

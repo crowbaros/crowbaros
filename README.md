@@ -78,6 +78,10 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   where windows open, background and bottom layers below the windows and top
   and overlay layers above, popups of layers, and a layer closed when its
   output goes.
+- **The pointer's image**: a client's cursor surface, set while the pointer
+  is on one of its surfaces, or else the compositor's own. It is drawn above
+  everything at its hotspot, and clipped so that it covers no frame
+  (ADR 0020).
 - **The seat**: one keyboard and one pointer. The keymap is compiled by
   libxkbcommon and shared through a sealed memfd. The keyboard goes to the
   window or key-taking layer the person clicks, and a click raises and
@@ -145,6 +149,7 @@ included, and the pin moves in a CrowbarOS pull request of its own.
 | `src/limits.rs` | What one client, and one compartment, may make the compositor hold |
 | `src/xdg.rs`, `src/windows.rs` | xdg-shell, and where windows go and what each output shows |
 | `src/layer.rs` | The shell's layer surfaces and the room they reserve |
+| `src/cursor.rs` | The pointer's image |
 | `src/seat.rs` | The keyboard and the pointer, who has them, and the compositor's Super chords |
 | `src/workspaces.rs` | The nine workspaces |
 | `src/modes.rs` | Maximized, fullscreen, and snapped windows |
