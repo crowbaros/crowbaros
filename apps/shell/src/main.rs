@@ -43,6 +43,8 @@ struct Model {
     preferences: Preferences,
     launcher: Option<WindowHandle<Launcher>>,
     lock: Option<WindowHandle<LockScreen>>,
+    /// The confirm chord opened the lock screen's unlock entry.
+    unlock_entry: bool,
     apps: Vec<AppEntry>,
     tx: Sender<session::Event>,
     clock: String,
@@ -694,9 +696,10 @@ fn toggle_launcher(model: Entity<Model>, cx: &mut App) {
     }
 }
 /// The lock screen: shown while the compositor has the session locked, and
-/// all it shows (ADR 0020). Unlock, its button or Enter, asks the compositor
-/// to unlock, in the place of the broker: Fulcrum's proposal until a record
-/// decides. What the person proves, and how, is issues 87 and 100.
+/// all it shows (ADR 0020). Unlock begins with the confirm chord,
+/// Ctrl+Alt+Enter, which opens its entry; then its button or Enter asks the
+/// compositor to unlock, in the place of the broker: Fulcrum's proposal until
+/// a record decides. What the person proves, and how, is issues 87 and 100.
 struct LockScreen {
     model: Entity<Model>,
     focus: FocusHandle,
@@ -706,11 +709,21 @@ impl Render for LockScreen {
         let m = self.model.read(cx);
         let p = m.palette();
         let clock = m.clock.clone();
+        let entry = m.unlock_entry;
+        let prompt = if entry {
+            "Press Enter to unlock"
+        } else {
+            "Press Ctrl+Alt+Enter to unlock"
+        };
         div()
             .size_full()
             .track_focus(&self.focus)
             .key_context("Lock")
-            .on_action(|_: &Unlock, _, _| session::lock(false))
+            .on_action(move |_: &Unlock, _, _| {
+                if entry {
+                    session::lock(false)
+                }
+            })
             .flex()
             .flex_col()
             .items_center()
@@ -725,10 +738,11 @@ impl Render for LockScreen {
                     .font_weight(FontWeight::BOLD)
                     .child(clock),
             )
-            .child(div().text_size(px(15.)).text_color(rgb(0x9a9a9a)).child("Locked"))
+            .child(div().text_size(px(15.)).text_color(rgb(0x9a9a9a)).child(prompt))
             .child(
                 div()
                     .id("unlock")
+                    .when(!entry, |d| d.invisible())
                     .px(px(20.))
                     .py(px(10.))
                     .rounded(px(10.))
@@ -736,7 +750,11 @@ impl Render for LockScreen {
                     .text_color(rgb(p.on_accent))
                     .cursor_pointer()
                     .child("Unlock")
-                    .on_click(|_, _, _| session::lock(false)),
+                    .on_click(move |_, _, _| {
+                        if entry {
+                            session::lock(false)
+                        }
+                    }),
             )
     }
 }
@@ -847,6 +865,7 @@ fn main() -> anyhow::Result<()> {
             },
             launcher: None,
             lock: None,
+            unlock_entry: false,
             apps: catalog::discover(),
             tx,
             clock: chrono::Local::now().format("%a %b %-d   %H:%M").to_string(),
@@ -915,13 +934,25 @@ fn main() -> anyhow::Result<()> {
                                     // A shell that starts while locked shows
                                     // the lock screen too.
                                     let locked = s.locked;
-                                    model.update(cx, |m, _| m.snapshot = s);
+                                    let entry = s.unlock_entry;
+                                    model.update(cx, |m, _| {
+                                        m.snapshot = s;
+                                        m.unlock_entry = entry;
+                                    });
                                     if locked != model.read(cx).lock.is_some() {
                                         set_lock_screen(&model, locked, cx);
                                     }
                                     refresh = true
                                 }
-                                session::Event::Lock(locked) => set_lock_screen(&model, locked, cx),
+                                session::Event::Lock(locked) => {
+                                    model.update(cx, |m, _| m.unlock_entry = false);
+                                    set_lock_screen(&model, locked, cx)
+                                }
+                                session::Event::UnlockEntry => {
+                                    log::info!("SHELL lock entry=open");
+                                    model.update(cx, |m, _| m.unlock_entry = true);
+                                    refresh = true
+                                }
                                 session::Event::Launch(result) => {
                                     if let Some(w) = model.read(cx).launcher {
                                         match result {
