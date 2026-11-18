@@ -96,6 +96,9 @@ pub struct State {
     pub(crate) controls: crate::control::Controls,
     /// What the pointer is doing to a window, if anything.
     pub(crate) grab: Option<crate::grabs::Grab>,
+    /// Commits by window and layer, and when they were last reported.
+    pub(crate) commit_counts: std::collections::BTreeMap<String, u64>,
+    pub(crate) last_report: Option<std::time::Instant>,
     pub(crate) data: crate::data_device::DataDevices,
     pub(crate) dmabufs: crate::dmabuf::Dmabufs,
 }
@@ -145,6 +148,8 @@ impl State {
             workspace: 1,
             controls: crate::control::Controls::default(),
             grab: None,
+            commit_counts: std::collections::BTreeMap::new(),
+            last_report: None,
             data: crate::data_device::DataDevices::default(),
             dmabufs: crate::dmabuf::Dmabufs::default(),
         };

@@ -428,6 +428,9 @@ impl State {
                 let root = self.root_of(id);
                 self.xdg_committed(root)?;
                 self.layer_committed(root)?;
+                // Counted once the role has the commit, so the one that maps
+                // a window counts.
+                self.count_commit(id);
                 self.queue_redraw_for(id);
             }
             wl_surface::Request::GetRelease { .. } => {

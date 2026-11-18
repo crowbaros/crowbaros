@@ -147,6 +147,7 @@ included, and the pin moves in a CrowbarOS pull request of its own.
 | `src/data_device.rs` | The data device, which moves nothing between clients until slice 4 |
 | `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
 | `src/redraw.rs` | Drawing only on change |
+| `src/evidence.rs` | The line it logs for the checks that run it: commits by window and layer, and frames drawn |
 | `src/dmabuf.rs` | linux-dmabuf: feedback, params, and buffers made from dma-bufs |
 | `src/scene.rs` | What an output shows, back to front, for either renderer, frames included |
 | `src/render.rs` | The GLES renderer's compositor half: a texture for each surface, kept until its content changes |

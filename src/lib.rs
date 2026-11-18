@@ -19,6 +19,7 @@ pub mod control;
 pub mod data_device;
 pub mod dmabuf;
 pub mod event_loop;
+mod evidence;
 pub mod geometry;
 mod globals;
 mod grabs;
