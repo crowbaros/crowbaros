@@ -531,10 +531,17 @@ impl Client {
 
     /// A buffer of one colour, premultiplied ARGB8888, in a pool of its own.
     pub fn shm_buffer(&mut self, size: (i32, i32), argb: u32) -> Result<ShmBuffer, Error> {
+        self.painted_buffer(size, |_, _| argb)
+    }
+
+    /// A buffer whose pixel at each `x, y` is `paint(x, y)`, premultiplied
+    /// ARGB8888, in a pool of its own.
+    pub fn painted_buffer(&mut self, size: (i32, i32), paint: impl Fn(i32, i32) -> u32) -> Result<ShmBuffer, Error> {
         let shm = self.shm()?;
         let (width, height) = size;
-        let bytes: Vec<u8> = std::iter::repeat_n(argb.to_le_bytes(), (width * height) as usize)
-            .flatten()
+        let bytes: Vec<u8> = (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .flat_map(|(x, y)| paint(x, y).to_le_bytes())
             .collect();
         let file = rustix::fs::memfd_create("crowbar-probe", rustix::fs::MemfdFlags::CLOEXEC)?;
         rustix::fs::ftruncate(&file, bytes.len() as u64)?;

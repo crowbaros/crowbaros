@@ -15,6 +15,7 @@
 pub mod backend;
 mod client;
 pub mod connections;
+pub mod data_device;
 pub mod event_loop;
 pub mod geometry;
 mod globals;
@@ -30,6 +31,7 @@ mod seat;
 mod shm;
 mod state;
 mod surface;
+mod viewporter;
 mod windows;
 mod xdg;
 

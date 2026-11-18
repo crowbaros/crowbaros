@@ -8,10 +8,10 @@ mod common;
 use common::{Compositor, OUTPUT_SIZE};
 use crowbar_probe::Client;
 use fulcrum_wire::{
-    Arg, ArgWriter, DynamicNewId, Header, NewId, ObjectId,
+    Arg, ArgWriter, DynamicNewId, Header, NewId,
     codec::MAX_MESSAGE_SIZE,
     protocol::{
-        viewporter::wp_viewporter,
+        linux_dmabuf_v1::zwp_linux_dmabuf_v1,
         wayland::{wl_display, wl_output, wl_registry},
     },
 };
@@ -171,25 +171,23 @@ fn a_bind_that_misnames_the_interface_or_its_version_is_refused() {
 }
 
 /// A global this build advertises but does not carry out yet says so, and
-/// never pretends to work.
+/// never pretends to work. The tests offer linux-dmabuf, which the shell may
+/// bind, before Milestone 3 carries it out.
 #[test]
 fn a_request_this_build_does_not_carry_out_is_an_implementation_error() {
     let compositor = Compositor::start();
-    let message = refused(&compositor, wl_display::error::IMPLEMENTATION, |client| {
-        let viewporter = client.bind(wp_viewporter::NAME, 1).unwrap();
-        let surface = client.create_surface().unwrap();
-        let viewport = client.new_id("wp_viewport");
-        client
-            .request(
-                viewporter,
-                wp_viewporter::Request::GetViewport {
-                    id: viewport,
-                    surface: ObjectId(surface),
-                },
-            )
-            .unwrap();
-    });
-    assert!(message.contains("not carried out"), "{message}");
+    let mut shell = compositor.shell();
+    let dmabuf = shell.bind(zwp_linux_dmabuf_v1::NAME, 4).unwrap();
+    let params = shell.new_id("zwp_linux_buffer_params_v1");
+    shell
+        .request(dmabuf, zwp_linux_dmabuf_v1::Request::CreateParams { params_id: params })
+        .unwrap();
+
+    assert!(shell.roundtrip().is_err(), "the compositor accepted it");
+    let error = shell.error.clone().expect("a protocol error, not a closed socket");
+    assert_eq!(error.code, wl_display::error::IMPLEMENTATION, "{error:?}");
+    assert!(error.message.contains("not carried out"), "{error:?}");
+    compositor.warden().roundtrip().unwrap();
 }
 
 /// A client that sends requests and reads no answers fills its queue, and

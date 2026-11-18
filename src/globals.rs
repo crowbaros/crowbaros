@@ -32,6 +32,8 @@ pub(crate) enum GlobalKind {
     XdgWmBase,
     LayerShell,
     Seat,
+    DataDeviceManager,
+    Viewporter,
     /// A global this build advertises before it carries out its requests.
     Unimplemented,
     /// A global a test added, of an interface Fulcrum may not even know.
@@ -200,6 +202,8 @@ impl State {
             GlobalKind::XdgWmBase => ObjectKind::XdgWmBase,
             GlobalKind::LayerShell => ObjectKind::LayerShell,
             GlobalKind::Seat => ObjectKind::Seat,
+            GlobalKind::DataDeviceManager => ObjectKind::DataDeviceManager,
+            GlobalKind::Viewporter => ObjectKind::Viewporter,
             GlobalKind::Unimplemented => ObjectKind::Unimplemented,
             GlobalKind::Planted => {
                 self.planted_binds += 1;

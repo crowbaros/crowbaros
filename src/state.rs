@@ -7,9 +7,11 @@ use fulcrum_wire::{
     ArgReader, ConnectionError, DecodeError, Incoming,
     protocol::{
         security_context_v1::{wp_security_context_manager_v1, wp_security_context_v1},
+        viewporter::{wp_viewport, wp_viewporter},
         wayland::{
-            wl_buffer, wl_callback, wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_region,
-            wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_subcompositor, wl_subsurface, wl_surface,
+            wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_source, wl_display,
+            wl_keyboard, wl_output, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_subcompositor,
+            wl_subsurface, wl_surface,
         },
         wlr_layer_shell_unstable_v1::{zwlr_layer_shell_v1, zwlr_layer_surface_v1},
         xdg_shell::{xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base},
@@ -86,6 +88,7 @@ pub struct State {
     /// Each output's usable area, after its layers reserved their room.
     pub(crate) usable: HashMap<u64, crate::geometry::Rect>,
     pub(crate) seat: crate::seat::Seat,
+    pub(crate) data: crate::data_device::DataDevices,
 }
 
 impl State {
@@ -129,6 +132,7 @@ impl State {
             layers: Vec::new(),
             usable: HashMap::new(),
             seat: crate::seat::Seat::new(),
+            data: crate::data_device::DataDevices::default(),
         };
         state.add_table_globals();
         Ok(state)
@@ -154,7 +158,16 @@ impl State {
             GlobalKind::LayerShell,
         );
         self.add_global(&wayland::wl_seat::INFO, crate::seat::SEAT_VERSION, GlobalKind::Seat);
-        self.add_global(&viewporter::wp_viewporter::INFO, 1, GlobalKind::Unimplemented);
+        self.add_global(
+            &wayland::wl_data_device_manager::INFO,
+            crate::data_device::DATA_DEVICE_MANAGER_VERSION,
+            GlobalKind::DataDeviceManager,
+        );
+        self.add_global(
+            &viewporter::wp_viewporter::INFO,
+            crate::viewporter::VIEWPORTER_VERSION,
+            GlobalKind::Viewporter,
+        );
     }
 
     /// Offers linux-dmabuf. The table still decides which clients see it.
@@ -383,6 +396,7 @@ impl State {
             }
             ObjectKind::XdgSurface(surface) => self.forget_xdg(*surface),
             ObjectKind::Layer(surface) => self.forget_layer(*surface),
+            ObjectKind::DataSource(source) => self.forget_source(*source),
             _ => {}
         }
     }
@@ -501,6 +515,16 @@ impl State {
                 }
                 ObjectKind::Layer(surface) => zwlr_layer_surface_v1::Request::decode(opcode, &mut args)
                     .map(|request| Request::Layer(*surface, request)),
+                ObjectKind::DataDeviceManager => {
+                    wl_data_device_manager::Request::decode(opcode, &mut args).map(Request::DataDeviceManager)
+                }
+                ObjectKind::DataSource(source) => wl_data_source::Request::decode(opcode, &mut args)
+                    .map(|request| Request::DataSource(*source, request)),
+                ObjectKind::DataDevice => wl_data_device::Request::decode(opcode, &mut args).map(Request::DataDevice),
+                ObjectKind::Viewporter => wp_viewporter::Request::decode(opcode, &mut args).map(Request::Viewporter),
+                ObjectKind::Viewport(surface) => {
+                    wp_viewport::Request::decode(opcode, &mut args).map(|request| Request::Viewport(*surface, request))
+                }
                 ObjectKind::Unimplemented => {
                     *client.conn.fds() = fds;
                     return Err(ProtocolError {
@@ -544,6 +568,11 @@ impl State {
             Request::Keyboard(wl_keyboard::Request::Release) => {}
             Request::Pointer(request) => self.pointer_request(client_id, request)?,
             Request::Layer(surface, request) => self.layer_surface_request(id, surface, request)?,
+            Request::DataDeviceManager(request) => self.data_device_manager_request(client_id, version, request)?,
+            Request::DataSource(source, request) => self.data_source_request(client_id, id, source, request)?,
+            Request::DataDevice(request) => self.data_device_request(client_id, id, request)?,
+            Request::Viewporter(request) => self.viewporter_request(client_id, id, request)?,
+            Request::Viewport(surface, request) => self.viewport_request(id, surface, request)?,
         }
         if destructor && let Some(client) = self.clients.get_mut(&client_id) {
             client.destroy(id);
@@ -612,6 +641,11 @@ enum Request {
     Keyboard(wl_keyboard::Request),
     Pointer(wl_pointer::Request),
     Layer(SurfaceId, zwlr_layer_surface_v1::Request),
+    DataDeviceManager(wl_data_device_manager::Request),
+    DataSource(crate::data_device::SourceId, wl_data_source::Request),
+    DataDevice(wl_data_device::Request),
+    Viewporter(wp_viewporter::Request),
+    Viewport(SurfaceId, wp_viewport::Request),
 }
 
 impl From<ConnectionError> for ProtocolError {

@@ -56,6 +56,12 @@ pub(crate) enum ObjectKind {
     Pointer,
     /// A `zwlr_layer_surface_v1`, for the surface it gives the role to.
     Layer(crate::surface::SurfaceId),
+    DataDeviceManager,
+    DataSource(crate::data_device::SourceId),
+    DataDevice,
+    Viewporter,
+    /// A `wp_viewport`, for the surface it crops and scales.
+    Viewport(crate::surface::SurfaceId),
     /// A global's object whose requests this build does not carry out yet,
     /// or a global a test planted. Any request on it is a protocol error.
     Unimplemented,

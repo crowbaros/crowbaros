@@ -117,6 +117,13 @@ impl State {
             let step = 32 * (self.windows.len() as i32 % 8);
             let location = (area.x + NEW_WINDOW_OFFSET.0 + step, area.y + NEW_WINDOW_OFFSET.1 + step);
             self.windows.push(Window { surface, location });
+            let client = self.surfaces[&surface].client;
+            crate::log::debug!(
+                "window mapped client={client} app_id={} at={},{}",
+                self.xdg[&surface].toplevel.app_id,
+                location.0,
+                location.1
+            );
         }
         self.update_outputs_of(surface);
         self.queue_redraw_for(surface);

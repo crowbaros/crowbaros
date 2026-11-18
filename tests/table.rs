@@ -7,8 +7,9 @@ mod common;
 use common::Compositor;
 
 /// What every compartment with a Wayland listener is offered.
-const COMPARTMENT: [&str; 7] = [
+const COMPARTMENT: [&str; 8] = [
     "wl_compositor",
+    "wl_data_device_manager",
     "wl_output",
     "wl_seat",
     "wl_shm",

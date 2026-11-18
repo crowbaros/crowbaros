@@ -15,7 +15,10 @@ use std::borrow::Cow;
 
 use fulcrum_wire::{
     ObjectId,
-    protocol::wayland::{wl_callback, wl_compositor, wl_region, wl_subcompositor, wl_subsurface, wl_surface},
+    protocol::{
+        viewporter::wp_viewport,
+        wayland::{wl_callback, wl_compositor, wl_region, wl_subcompositor, wl_subsurface, wl_surface},
+    },
 };
 
 use crate::{
@@ -58,6 +61,19 @@ pub(crate) struct Pending {
     input: Option<Option<Region>>,
     transform: Option<i32>,
     scale: Option<i32>,
+    /// `wp_viewport.set_source`: `Some(None)` unsets it.
+    pub(crate) source: Option<Option<Crop>>,
+    /// `wp_viewport.set_destination`: `Some(None)` unsets it.
+    pub(crate) destination: Option<Option<(i32, i32)>>,
+}
+
+/// The part of a buffer a viewport shows, in surface coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Crop {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 impl Pending {
@@ -79,6 +95,8 @@ impl Pending {
         }
         older.transform = self.transform.or(older.transform);
         older.scale = self.scale.or(older.scale);
+        older.source = self.source.or(older.source);
+        older.destination = self.destination.or(older.destination);
         older
     }
 
@@ -106,6 +124,9 @@ pub(crate) struct Current {
     /// The last `wl_surface.offset`, or the offset given to `attach`. A role
     /// reads it.
     pub offset: (i32, i32),
+    /// The viewport's crop and the size it scales to.
+    pub(crate) source: Option<Crop>,
+    pub(crate) destination: Option<(i32, i32)>,
 }
 
 impl Default for Current {
@@ -118,16 +139,51 @@ impl Default for Current {
             transform: 0,
             scale: 1,
             offset: (0, 0),
+            source: None,
+            destination: None,
         }
     }
 }
 
 impl Current {
-    /// The size in surface coordinates: the buffer's, over its scale.
+    /// The size in surface coordinates: the viewport's destination, or the
+    /// size of its crop, or else the buffer's over its scale.
     pub fn size(&self) -> (i32, i32) {
-        self.content
-            .as_ref()
-            .map_or((0, 0), |image| (image.width / self.scale, image.height / self.scale))
+        let Some(image) = &self.content else {
+            return (0, 0);
+        };
+        match (self.destination, self.source) {
+            (Some(size), _) => size,
+            (None, Some(crop)) => (crop.width as i32, crop.height as i32),
+            (None, None) => (image.width / self.scale, image.height / self.scale),
+        }
+    }
+
+    /// The pixels as they are shown: cropped and scaled by the viewport and
+    /// the buffer scale, the size of [`Current::size`].
+    pub(crate) fn shown(&self) -> Option<Cow<'_, Image>> {
+        let image = self.content.as_ref()?;
+        if self.scale == 1 && self.source.is_none() && self.destination.is_none() {
+            return Some(Cow::Borrowed(image));
+        }
+        let scale = f64::from(self.scale);
+        let crop = self.source.unwrap_or(Crop {
+            x: 0.0,
+            y: 0.0,
+            width: f64::from(image.width) / scale,
+            height: f64::from(image.height) / scale,
+        });
+        let (width, height) = self.size();
+        let mut out = Image::new(width, height);
+        for y in 0..height {
+            // Each pixel takes the buffer's pixel at its top-left corner.
+            let from_y = ((crop.y + f64::from(y) * crop.height / f64::from(height)) * scale) as i32;
+            for x in 0..width {
+                let from_x = ((crop.x + f64::from(x) * crop.width / f64::from(width)) * scale) as i32;
+                out.pixels[(y * width + x) as usize] = image.pixel(from_x, from_y).unwrap_or(0);
+            }
+        }
+        Some(Cow::Owned(out))
     }
 }
 
@@ -153,6 +209,8 @@ pub(crate) struct Surface {
     pub commits: u64,
     /// The outputs it is on, as its client was last told.
     pub entered: Vec<u64>,
+    /// Its `wp_viewport`, if it has one.
+    pub viewport: Option<u32>,
 }
 
 impl State {
@@ -195,6 +253,7 @@ impl State {
                         sync: true,
                         commits: 0,
                         entered: Vec::new(),
+                        viewport: None,
                     },
                 );
                 Ok(())
@@ -263,7 +322,7 @@ impl State {
         }
     }
 
-    fn surface_of(&self, client_id: ClientId, object: ObjectId) -> Option<SurfaceId> {
+    pub(crate) fn surface_of(&self, client_id: ClientId, object: ObjectId) -> Option<SurfaceId> {
         match self.clients.get(&client_id)?.objects.get(&object.0)?.kind {
             ObjectKind::Surface(surface) => Some(surface),
             _ => None,
@@ -419,7 +478,43 @@ impl State {
                 None => None,
             });
         }
+        let surface = self.surfaces.get(&id).expect("an applied surface exists");
+        let source = state.source.unwrap_or(surface.current.source);
+        let destination = state.destination.unwrap_or(surface.current.destination);
+        let shown = match &content {
+            Some(content) => content.as_ref(),
+            None => surface.current.content.as_ref(),
+        };
+        if let (Some(image), Some(crop)) = (shown, source) {
+            let viewport = surface.viewport.unwrap_or(object);
+            let (width, height) = (
+                f64::from(image.width) / f64::from(scale),
+                f64::from(image.height) / f64::from(scale),
+            );
+            if crop.x + crop.width > width || crop.y + crop.height > height {
+                return Err(ProtocolError {
+                    object: viewport,
+                    code: wp_viewport::error::OUT_OF_BUFFER,
+                    message: format!(
+                        "the source {}x{} at {},{} is outside the {width}x{height} buffer",
+                        crop.width, crop.height, crop.x, crop.y
+                    ),
+                });
+            }
+            if destination.is_none() && (crop.width.fract() != 0.0 || crop.height.fract() != 0.0) {
+                return Err(ProtocolError {
+                    object: viewport,
+                    code: wp_viewport::error::BAD_SIZE,
+                    message: format!(
+                        "a source of {}x{} needs a destination size, as it is not whole",
+                        crop.width, crop.height
+                    ),
+                });
+            }
+        }
         let surface = self.surface_mut(id);
+        surface.current.source = source;
+        surface.current.destination = destination;
         if let Some(content) = content {
             surface.current.content = content;
         }
@@ -669,19 +764,14 @@ impl State {
         let Some(surface) = self.surfaces.get(&id) else {
             return;
         };
-        let Some(content) = &surface.current.content else {
+        if surface.current.content.is_none() {
             return;
-        };
+        }
         for member in &surface.stack {
             if *member == id {
-                let scaled;
-                let drawn = if surface.current.scale > 1 {
-                    scaled = downscale(content, surface.current.scale);
-                    &scaled
-                } else {
-                    content
-                };
-                image.draw(drawn, at);
+                if let Some(shown) = surface.current.shown() {
+                    image.draw(&shown, at);
+                }
             } else if depth < MAX_SUBSURFACE_DEPTH
                 && let Some(child) = self.surfaces.get(member)
             {
@@ -733,15 +823,4 @@ impl State {
         roots.sort_by_key(|(id, _)| **id);
         roots.into_iter().map(|(_, surface)| surface.commits).collect()
     }
-}
-
-/// Every `factor`-th pixel of an image, for a buffer scale above 1.
-fn downscale(image: &Image, factor: i32) -> Image {
-    let mut out = Image::new(image.width / factor, image.height / factor);
-    for y in 0..out.height {
-        for x in 0..out.width {
-            out.pixels[(y * out.width + x) as usize] = image.pixel(x * factor, y * factor).unwrap_or(0);
-        }
-    }
-    out
 }

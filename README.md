@@ -38,8 +38,8 @@ terminal. What is built:
   offers it (ADR 0020). A client that breaks the protocol gets
   `wl_display.error` and is disconnected, and everyone else is served.
 - **Surfaces and shared memory**, with double-buffered state, held commits for
-  synchronized subsurfaces, and pools read through `fulcrum-sys`'s
-  `SIGBUS`-guarded mapping.
+  synchronized subsurfaces, `wp_viewporter`'s crop and scale, and pools read
+  through `fulcrum-sys`'s `SIGBUS`-guarded mapping.
 - **xdg-shell windows and popups**: the configure handshake, window geometry,
   positioners, `wl_surface.enter` and `leave`, and the protocol's errors. A
   new window opens inside the usable area of the output the pointer is on,
@@ -59,6 +59,9 @@ terminal. What is built:
   activates a window; a new window never takes it. The pointer follows what
   is under it, by input region, and stays with its surface while a button is
   held.
+- **The data device**, with nothing moving between clients until slice 4
+  (Milestone 6): a selection is offered to no other client, and a drag is
+  cancelled as it starts. `foot` will not start without it.
 - **Budgets** (CrowbarOS ADR 0029): one compartment cannot take the
   compositor's descriptors from the others.
 - **The TTY backend**: the seat from seatd, through Fulcrum's own client of
@@ -69,10 +72,8 @@ terminal. What is built:
 - **A headless backend** that draws each output with the CPU renderer, and
   `crowbar-probe`, the test client, on `fulcrum-wire`'s client side.
 
-Still to come in Milestone 2: the nested backend. `wp_viewporter` is
-advertised to the clients the table names, and a request on it is a protocol
-error that says this build does not carry it out yet. The GLES renderer, GBM,
-and linux-dmabuf come with Milestone 3.
+Still to come in Milestone 2: the nested backend. The GLES renderer, GBM, and
+linux-dmabuf come with Milestone 3.
 
 CrowbarOS still builds the Smithay-based compositor that Milestone 0 brought
 here: commit `d11400f`, tagged `smithay-baseline`. Its 57 tests and the 36
@@ -99,12 +100,14 @@ must pass before CrowbarOS moves its pin.
 | `src/xdg.rs`, `src/windows.rs` | xdg-shell, and where windows go and what each output shows |
 | `src/layer.rs` | The shell's layer surfaces and the room they reserve |
 | `src/seat.rs` | The keyboard and the pointer, and who has them |
+| `src/data_device.rs` | The data device, which moves nothing between clients until slice 4 |
+| `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
 | `src/redraw.rs` | Drawing only on change |
 | `src/backend/` | Where frames go: `tty.rs` (a virtual terminal), `session.rs` (Fulcrum's client of seatd), `uevent.rs` (hotplug from netlink), and `headless.rs` (the tests) |
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `drm.rs` (mode setting and dumb buffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (the guarded mapping) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `data_device.rs` and `viewporter.rs` cover those protocols; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate from the Smithay organization enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.
