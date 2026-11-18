@@ -2,7 +2,7 @@
 //! its own. What it holds is what was recorded there, and nothing else
 //! changes it.
 
-use crowbar_authority::{Authority, AuthorityStore, Change, Error, Holder, Party, Rule, Status};
+use crowbar_authority::{Authority, AuthorityStore, Change, Error, Grant, Holder, Party, Rule, Status};
 use crowbar_capability::{Cost, EffectLimits};
 use crowbar_labels::{Category, Label, Site};
 
@@ -174,6 +174,43 @@ fn a_rule_stored_with_no_cap_has_none_and_is_stored_the_same_way_again() {
     assert_eq!(rule, sync_rule());
     assert_eq!(rule.cap, None);
     assert_eq!(serde_json::to_value(&rule).expect("written"), stored);
+}
+
+#[test]
+fn a_standing_grant_keeps_the_label_its_approval_showed_after_the_store_is_opened_again() {
+    let dir = Scratch::new();
+    let mut store = AuthorityStore::create(dir.path()).expect("made");
+    // "Morning Pages may read and write your writing", which the approval
+    // showed as personal.
+    let shown = Grant {
+        shows: Some(Label::Personal),
+        ..writing_grant()
+    };
+    let id = store.grant(shown.clone(), NOW).expect("recorded");
+    drop(store);
+
+    let authority = Authority::load(dir.path()).expect("loaded");
+    assert_eq!(
+        authority.grants(&morning_pages()).collect::<Vec<_>>(),
+        vec![(id, &shown)]
+    );
+}
+
+#[test]
+fn a_grant_stored_with_no_label_shown_has_none_and_is_stored_the_same_way_again() {
+    // A grant as it was stored before a grant could say what it showed.
+    let stored = serde_json::json!({
+        "holder": {"tool": "morning-pages"},
+        "resource": {"data": ["writing/journal.md"]},
+        "rights": ["read", "write"],
+        "limits": {},
+        "reason": "Keeps your morning pages.",
+    });
+
+    let grant: Grant = serde_json::from_value(stored.clone()).expect("read");
+    assert_eq!(grant, writing_grant());
+    assert_eq!(grant.shows, None);
+    assert_eq!(serde_json::to_value(&grant).expect("written"), stored);
 }
 
 #[test]

@@ -1,6 +1,6 @@
 # Installed software comes from a pinned catalog, and dev tools run in a workbench
 
-**Status:** accepted on November 15, 2026, by Jim Martin, at the end of the design session on installing software and dev tooling.
+**Status:** accepted on November 15, 2026, by Jim Martin, at the end of the design session on installing software and dev tooling. Revised on November 17, 2026, by Jim Martin: an approval clears the hosts it lists for what it approves, up to the label it showed ([issue 189](https://github.com/crowbaros/crowbaros/issues/189)).
 
 Installing software must be painless in CrowbarOS, and dev tools are the hardest case: they read and write a project all day, run each other, reach package registries and model APIs, and need root inside their own world. The vision made installed software first-class but gave it no way to arrive. This record says where installed software comes from, how dev tools run, and how installed software writes, reaches the network, and holds a login. It also fills the "later record" that [ADR 0016](0016-the-warden-starts-every-compartment.md) leaves open for a wide compartment's network and writes. T3 Code, a desktop app that runs coding agents, is the worked example and the first acceptance test.
 
@@ -32,7 +32,7 @@ There is no standing developer mode. When the person wants something opened up, 
 
 - **Two ways in, one approval.** The person asks the Agent ("install T3 Code"), or picks the app in the catalog screen the shell draws. Both end at the same trusted approval screen, which shows the app's needs in fixed words. Then the install goes through fork, preview, promote ([ADR 0007](0007-fork-verify-promote.md)).
 - **The approval is a signature, and a list takes one.** An app's needs are standing authority, so its approval is a signature ([ADR 0026](0026-asks-wait-and-take-one-of-three-answers.md)). Several apps the person chose, such as the fifteen they want on a new machine, are shown in full, each with its needs, and take one signature.
-- **The approval is the app's standing grant and standing rule.** Using what the approval screen showed never asks ([ADR 0011](0011-task-principals.md)).
+- **The approval is the app's standing grant and standing rule.** Using what the approval screen showed never asks ([ADR 0011](0011-task-principals.md)). The approval also clears the hosts it lists, for that app alone, up to the label the screen showed the app holding. An app that comes to hold more than that is refused at every site until the person approves again ([ADR 0021](0021-the-gate-decides-from-metadata-and-counts-from-the-ledger.md)). The same holds for a workbench and its profile.
 - **An update that asks for nothing new goes live by itself.** The person sets a standing rule once: an update to an installed app is promoted without asking when it asks for no new access and its checks pass in a fork. An update that asks for more waits for the person. This is the one standing exception to "one confirmation promotes", and the ledger records each promote it makes.
 
 ## The workbench
@@ -103,7 +103,7 @@ A wide compartment reaches the network the same way, with every destination gran
 - **[ADR 0007](0007-fork-verify-promote.md)** names two kinds of writer, and the standing rule that promotes updates which ask for nothing new.
 - **[ADR 0011](0011-task-principals.md)** gains what a workbench's standing grants bind to.
 - **[ADR 0016](0016-the-warden-starts-every-compartment.md)** gains blocks of user IDs, broker connections in the plural, the full GPU need, `/dev/kvm` as a need, and workbenches in its lists. Its "later record" points here. [Issue 144](https://github.com/crowbaros/crowbaros/issues/144) keeps only how a wide compartment's windows are marked and its attacks.
-- A wide compartment's label and mark follow [ADR 0008](0008-private-values-stay-out-of-the-agent-context.md) unchanged: it is at the label of everything it reads, and it reaches only parties cleared for that.
+- A wide compartment's label and mark follow [ADR 0008](0008-private-values-stay-out-of-the-agent-context.md) unchanged: it is at the label of everything it reads, and it reaches only parties cleared for that. Its approval or profile clears a site for it, up to the label it showed (ADR 0021).
 - Attack 17 in ADR 0016, the four things a wide compartment never gets, also runs against a workbench that holds every need.
 - One workbench reaches the compositor as one identity. A rule on focus, clipboard, or capture for one principal treats T3 Code and the editor beside it as one.
 - Catalog apps expect `xdg-desktop-portal` and a session bus. Both run inside the compartment (ADR 0016), the portal talks to the broker, and the shell draws the chooser. This is work for issues [63](https://github.com/crowbaros/crowbaros/issues/63) and [112](https://github.com/crowbaros/crowbaros/issues/112).

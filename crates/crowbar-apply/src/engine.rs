@@ -711,6 +711,7 @@ fstype = "ext4"
             rights: Rights::from([Right::Read, Right::Write]),
             limits: EffectLimits::new(),
             reason: "Keeps your morning pages.".into(),
+            shows: None,
         }
     }
 

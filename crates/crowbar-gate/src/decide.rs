@@ -60,8 +60,11 @@ const HOUR: u64 = 3_600;
 ///    are at or above the join of its objects' origins. An object with no
 ///    record is the unknown row.
 /// 5. **The clearance, on egress**: the caller's compartment's whole label
-///    is at or below the party's clearance. With no authority to read, no
-///    party is cleared above public.
+///    is at or below the party's clearance. For installed software or a
+///    workbench reaching a site, the most its approval showed it holding
+///    counts as well: an approval clears a site for what it approves, and
+///    for nothing else. With no authority to read, no party is cleared
+///    above public.
 /// 6. **The undo boundary**: an egress, and a use the boundary table does
 ///    not list as inside, crosses. A crossing needs a standing grant and a
 ///    standing rule the caller holds, within their limits, with the rule
@@ -262,7 +265,7 @@ fn use_of(
     }
 
     if let Some(party) = party {
-        let clearance = authority.map_or(Label::Public, |authority| authority.clearance(party));
+        let clearance = clearance_for(authority, caller, party, now);
         if !caller.compartment.label_mark().label().is_at_most(&clearance) {
             return Err(Refuse::with(GateRule::Clearance, Limit::Clearance(clearance)));
         }
@@ -313,6 +316,31 @@ pub(crate) fn over_cap(usage: &Usage, operation: &Operation<'_>, now: Time) -> A
         },
         held: held_under(usage, operation.caller.principal, now),
     }
+}
+
+/// Check 5: the highest label `caller`'s compartment may hold when it
+/// reaches `party`. That is the party's clearance. For installed software
+/// or a workbench reaching a site, it is joined with the most its approval
+/// showed it holding: the approval was the person's signature on that, and
+/// it clears a site for what it approves and for nothing else (ADR 0017).
+/// Whether it may reach this site with no ask is check 6. A grant that was
+/// revoked or has ended shows nothing. With no authority to read, no party
+/// is cleared above public.
+fn clearance_for(authority: Option<&Authority>, caller: &Caller<'_>, party: &Party, now: Time) -> Label {
+    let Some(authority) = authority else {
+        return Label::Public;
+    };
+    let clearance = authority.clearance(party);
+    let holder = match (caller.principal, party) {
+        (Principal::Installed(name), Party::Site(_)) => Holder::Installed(name.clone()),
+        (Principal::Workbench(name), Party::Site(_)) => Holder::Workbench(name.clone()),
+        _ => return clearance,
+    };
+    authority
+        .grants(&holder)
+        .filter(|(_, grant)| grant.limits.ended_by(now).is_none())
+        .filter_map(|(_, grant)| grant.shows.as_ref())
+        .fold(clearance, |cleared, shown| cleared.join(shown))
 }
 
 /// Whether an egress to `party` crosses on authority the person already

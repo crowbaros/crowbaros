@@ -41,6 +41,7 @@ fn grant() -> Grant {
         rights: Rights::from([Right::Write]),
         limits: EffectLimits::new(),
         reason: "Pays your electric bill.".to_string(),
+        shows: None,
     }
 }
 

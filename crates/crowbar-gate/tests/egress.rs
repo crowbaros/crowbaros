@@ -4,14 +4,18 @@
 //! a compartment that holds only public data and no login reaching a host
 //! on the open internet. Every other crossing still needs a standing grant
 //! and a standing rule, or it asks.
+//!
+//! An approval also clears a site for the installed software or the
+//! workbench it approves, up to the label it showed, and for nothing else
+//! (ADR 0021).
 
 use crowbar_authority::{Authority, Change, Grant, Holder, Party, Rule, StandingId};
 use crowbar_capability::{EffectLimits, Principal, Rate, Resource, Right, Rights};
 use crowbar_gate::{Act, Answer, Ask, AskWhy, Caller, Decision, GateRule, Limit, Operation, Presented};
-use crowbar_labels::{Compartment, Fetch, Label, LabelMark, Origin, Site};
+use crowbar_labels::{Category, Compartment, Fetch, Label, LabelMark, Labeled, MarkSource, ObjectId, Origin, Site};
 
 mod common;
-use common::{Bench, NOW, allowed, asked, by, handle, personal, refused, task, using};
+use common::{Bench, NOW, allowed, asked, at, by, handle, later, personal, refused, task, using};
 
 fn provider() -> Party {
     Party::ModelProvider("provider.example".to_string())
@@ -293,15 +297,20 @@ fn sync_host() -> Site {
 }
 
 /// What the editor's approval screen showed, as the authority record keeps
-/// it: it may connect to its sync host, which is cleared for the personal
-/// files in its view.
+/// it: it opens and saves the person's documents, which the screen showed
+/// as personal, and it may connect to its sync host. The approval sets no
+/// clearance: a site stays cleared for public data.
 fn the_editors_approval() -> Vec<Change> {
     let holder = Holder::Installed("editor".to_string());
     vec![
-        Change::ClearanceSet {
-            party: Party::Site(sync_host()),
-            clearance: Label::Personal,
-        },
+        Change::Granted(Grant {
+            holder: holder.clone(),
+            resource: Resource::Data([ObjectId::new("documents/essay.txt")].into()),
+            rights: Rights::from([Right::Read, Right::Write]),
+            limits: EffectLimits::new(),
+            reason: "Opens and saves your documents.".to_string(),
+            shows: Some(Label::Personal),
+        }),
         Change::Granted(Grant {
             holder: holder.clone(),
             resource: Resource::Endpoint {
@@ -311,6 +320,7 @@ fn the_editors_approval() -> Vec<Change> {
             rights: Rights::from([Right::Connect]),
             limits: EffectLimits::new(),
             reason: "Syncs your settings.".to_string(),
+            shows: None,
         }),
         Change::RuleAdded(Rule {
             holder,
@@ -322,25 +332,89 @@ fn the_editors_approval() -> Vec<Change> {
     ]
 }
 
-/// The ids of the grant and the rule `holder` holds, in that order.
-fn standing(authority: &Authority, holder: &Holder) -> Vec<StandingId> {
-    let grants = authority.grants(holder).map(|(id, _)| id);
+/// The ids of the grant on `host` and the rule that `holder` holds, in that
+/// order: what a connection to a host its approval lists goes under.
+fn standing(authority: &Authority, holder: &Holder, host: &Site) -> Vec<StandingId> {
+    let grants = authority
+        .grants(holder)
+        .filter(|(_, grant)| matches!(&grant.resource, Resource::Endpoint { host: named, .. } if named == host))
+        .map(|(id, _)| id);
     grants.chain(authority.rules(holder).map(|(id, _)| id)).collect()
 }
 
 #[test]
 fn installed_software_reaches_what_its_approval_showed_without_asking() {
     let mut bench = Bench::with(the_editors_approval());
-    // Its view holds the person's files, so its compartment is personal.
+    // Its view holds the person's files, so its compartment is personal,
+    // and the person has cleared its sync host for nothing.
     let compartment = Compartment::fixed([&personal()]);
-    let under = standing(
-        bench.authority.as_ref().expect("read"),
-        &Holder::Installed("editor".to_string()),
-    );
+    let authority = bench.authority.as_ref().expect("read");
+    assert_eq!(authority.clearance(&Party::Site(sync_host())), Label::Public);
+    let under = standing(authority, &Holder::Installed("editor".to_string()), &sync_host());
     assert_eq!(under.len(), 2);
     assert_eq!(
         connect(&mut bench, &editor(), &compartment, Login::None, sync_host()),
         Decision::Allowed { under }
+    );
+}
+
+#[test]
+fn an_approval_clears_a_host_for_what_it_approves_and_for_nothing_else() {
+    let mut bench = Bench::with(the_editors_approval());
+    // Each holds what the editor holds, and connects to the editor's host.
+    let compartment = Compartment::fixed([&personal()]);
+    let others = [
+        task("backup"),
+        Principal::Tool("editor".to_string()),
+        Principal::Agent,
+        Principal::Workbench("editor".to_string()),
+        Principal::Installed("notes".to_string()),
+    ];
+    for other in others {
+        assert_eq!(
+            connect(&mut bench, &other, &compartment, Login::None, sync_host()),
+            refused(GateRule::Clearance, Limit::Clearance(Label::Public)),
+            "{other:?}"
+        );
+    }
+}
+
+/// A health summary: the person's own words, made private.
+fn a_health_summary() -> LabelMark {
+    Labeled::from_origin((), &Origin::Typed)
+        .raise(&Label::private(Category::Health))
+        .label_mark()
+        .clone()
+}
+
+#[test]
+fn installed_software_that_holds_more_than_its_approval_showed_is_refused_at_any_host() {
+    // The approval showed personal documents. A task has since written a
+    // private health summary into them, so the editor's view now holds it.
+    let mut bench = Bench::with(the_editors_approval());
+    let compartment = Compartment::fixed([&personal(), &a_health_summary()]);
+    for host in [sync_host(), news()] {
+        assert_eq!(
+            connect(&mut bench, &editor(), &compartment, Login::None, host),
+            refused(GateRule::Clearance, Limit::Clearance(Label::Personal))
+        );
+    }
+}
+
+#[test]
+fn installed_software_holding_the_persons_files_asks_for_a_signature_at_a_host_its_approval_did_not_show() {
+    // Attack A32, as it will usually be met: the editor holds what its
+    // approval showed, and the host is not one the approval lists. It is
+    // asked, and not refused: a yes would add the host to the approval.
+    let mut bench = Bench::with(the_editors_approval());
+    let compartment = Compartment::fixed([&personal()]);
+    assert_eq!(
+        connect(&mut bench, &editor(), &compartment, Login::None, news()),
+        Decision::Asked(Ask {
+            why: AskWhy::Crosses,
+            answer: Answer::Signature,
+            held: None
+        })
     );
 }
 
@@ -376,6 +450,171 @@ fn a_tool_and_the_agent_holding_only_public_data_still_ask_before_reaching_a_hos
             asked(AskWhy::Crosses)
         );
     }
+}
+
+fn ledger_workbench() -> Principal {
+    Principal::Workbench("ledger".to_string())
+}
+
+fn registry() -> Site {
+    Site::new("registry.example")
+}
+
+/// A file of the ledger project: the person's own words, made private.
+fn a_ledger_file() -> LabelMark {
+    Labeled::from_origin((), &Origin::Typed)
+        .raise(&Label::private(Category::Finance))
+        .label_mark()
+        .clone()
+}
+
+/// The profile of the workbench for a private project, as the authority
+/// record keeps it: it works on the project's files, which the profile
+/// showed as private finance data, and it may connect to the package
+/// registry. Its rule is for the mark a workbench always carries.
+fn the_ledger_profile() -> Vec<Change> {
+    let holder = Holder::Workbench("ledger".to_string());
+    vec![
+        Change::Granted(Grant {
+            holder: holder.clone(),
+            resource: Resource::Data([ObjectId::new("projects/ledger/ledger.txt")].into()),
+            rights: Rights::from([Right::Read, Right::Write]),
+            limits: EffectLimits::new(),
+            reason: "Works on the files of your ledger project.".to_string(),
+            shows: Some(Label::private(Category::Finance)),
+        }),
+        Change::Granted(Grant {
+            holder: holder.clone(),
+            resource: Resource::Endpoint {
+                host: registry(),
+                port: 443,
+            },
+            rights: Rights::from([Right::Connect]),
+            limits: EffectLimits::new(),
+            reason: "Fetches packages from the registry.".to_string(),
+            shows: None,
+        }),
+        Change::RuleAdded(Rule {
+            holder,
+            operation: "http.get".to_string(),
+            limits: EffectLimits::new().rate(Rate::per(600, 3_600)),
+            sources: [MarkSource::Workbench].into(),
+            cap: None,
+        }),
+    ]
+}
+
+#[test]
+fn a_workbench_for_a_private_project_reaches_a_site_on_its_profile_without_asking() {
+    let mut bench = Bench::with(the_ledger_profile());
+    let compartment = Compartment::workbench([&a_ledger_file()]);
+    assert_eq!(compartment.label_mark().label(), &Label::private(Category::Finance));
+    let authority = bench.authority.as_ref().expect("read");
+    assert_eq!(authority.clearance(&Party::Site(registry())), Label::Public);
+    let under = standing(authority, &Holder::Workbench("ledger".to_string()), &registry());
+    assert_eq!(under.len(), 2);
+    assert_eq!(
+        connect(&mut bench, &ledger_workbench(), &compartment, Login::None, registry()),
+        Decision::Allowed { under }
+    );
+}
+
+#[test]
+fn a_workbench_for_a_private_project_asks_each_time_it_connects_to_a_host_not_on_its_profile() {
+    // Attack A31, at the gate. The workbench holds what its profile
+    // showed, so it is asked, and not refused. A yes adds the host for
+    // that run only (ADR 0017), and the gate keeps nothing of it: after
+    // the workbench stops and starts again, the same connection asks.
+    let mut bench = Bench::with(the_ledger_profile());
+    let first_run = Compartment::workbench([&a_ledger_file()]);
+    assert_eq!(
+        connect(&mut bench, &ledger_workbench(), &first_run, Login::None, news()),
+        asked(AskWhy::Crosses)
+    );
+    bench.gate.ask_closed(&ledger_workbench(), later(60)).expect("recorded");
+
+    let second_run = Compartment::workbench([&a_ledger_file()]);
+    assert_eq!(
+        connect(&mut bench, &ledger_workbench(), &second_run, Login::None, news()),
+        asked(AskWhy::Crosses)
+    );
+}
+
+#[test]
+fn a_workbench_that_holds_more_than_its_profile_showed_is_refused_at_any_host() {
+    // The profile showed finance data. The workbench's view also holds a
+    // health summary, which no one approved it to hold.
+    let mut bench = Bench::with(the_ledger_profile());
+    let compartment = Compartment::workbench([&a_ledger_file(), &a_health_summary()]);
+    for host in [registry(), news()] {
+        assert_eq!(
+            connect(&mut bench, &ledger_workbench(), &compartment, Login::None, host),
+            refused(GateRule::Clearance, Limit::Clearance(Label::private(Category::Finance)))
+        );
+    }
+}
+
+#[test]
+fn revoking_what_an_approval_showed_takes_back_what_it_cleared() {
+    let holder = Holder::Installed("editor".to_string());
+    let approved = Bench::with(the_editors_approval());
+    let (documents, _) = approved
+        .authority
+        .as_ref()
+        .expect("read")
+        .grants(&holder)
+        .find(|(_, grant)| grant.shows.is_some())
+        .expect("the approval showed the documents");
+
+    let mut changes = the_editors_approval();
+    changes.push(Change::Revoked(documents));
+    let mut bench = Bench::with(changes);
+    let compartment = Compartment::fixed([&personal()]);
+    assert_eq!(
+        connect(&mut bench, &editor(), &compartment, Login::None, sync_host()),
+        refused(GateRule::Clearance, Limit::Clearance(Label::Public))
+    );
+}
+
+#[test]
+fn a_grant_that_has_ended_shows_nothing() {
+    // The documents were approved until a time that has passed.
+    let mut changes = the_editors_approval();
+    let Change::Granted(documents) = &mut changes[0] else {
+        panic!("the approval starts with the grant on the documents");
+    };
+    assert!(documents.shows.is_some());
+    documents.limits = EffectLimits::new().until(at(9_000));
+    let mut bench = Bench::with(changes);
+    let compartment = Compartment::fixed([&personal()]);
+    assert_eq!(
+        connect(&mut bench, &editor(), &compartment, Login::None, sync_host()),
+        refused(GateRule::Clearance, Limit::Clearance(Label::Public))
+    );
+}
+
+#[test]
+fn an_approval_does_not_raise_a_model_providers_clearance() {
+    // A model provider is cleared by the person for each category (ADR
+    // 0008). The ledger project's profile showed finance data, and the
+    // provider is cleared for personal.
+    let mut bench = Bench::with(the_ledger_profile());
+    let compartment = Compartment::workbench([&a_ledger_file()]);
+    assert_eq!(
+        model_request(&mut bench, &ledger_workbench(), &compartment),
+        refused(GateRule::Clearance, Limit::Clearance(Label::Personal))
+    );
+}
+
+#[test]
+fn with_no_authority_to_read_an_approval_clears_nothing() {
+    // The person may have revoked the approval, so nothing is read from it.
+    let mut bench = Bench::without_authority();
+    let compartment = Compartment::fixed([&personal()]);
+    assert_eq!(
+        connect(&mut bench, &editor(), &compartment, Login::None, sync_host()),
+        refused(GateRule::Clearance, Limit::Clearance(Label::Public))
+    );
 }
 
 #[test]
