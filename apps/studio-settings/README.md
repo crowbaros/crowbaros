@@ -46,8 +46,10 @@ helper are not Void startup hooks; production adapter cleanup is tracked in
 | Escape | Cancel the close confirmation |
 | Drag title bar | Request a move; maximize/restore is tracked in #36 |
 
-`src/settings.rs` owns model/storage, `src/session.rs` owns compositor integration,
-`src/theme.rs` maps brand tokens, and `src/main.rs` presents the surface.
+`src/settings.rs` owns model/storage, `src/session.rs` owns motion integration,
+`src/displays.rs` connects to Fulcrum's bounded display bridge (`CROWBAR_DISPLAY_SOCKET`)
+to inspect and configure outputs, `src/theme.rs` maps brand tokens, and `src/main.rs`
+presents the surface.
 Preferences are schema 1 JSON at `$XDG_CONFIG_HOME/crowbaros/appearance.json`
 (falling back to `~/.config/crowbaros/appearance.json`). New files are mode 0600.
 Unknown/malformed data is rejected. Save locks, checks for external changes,

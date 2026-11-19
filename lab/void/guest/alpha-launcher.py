@@ -76,6 +76,7 @@ def app_environment(account):
                 XDG_CURRENT_DESKTOP='CrowbarOS', XDG_SESSION_TYPE='wayland',
                 WAYLAND_DISPLAY=APPS_LISTENER,
                 XCURSOR_THEME='Vanilla-DMZ', XCURSOR_SIZE='24',
+                CROWBAR_DISPLAY_SOCKET='/run/crowbar-displays/socket',
                 CROWBAR_SESSION='alpha-no-animations', RUST_LOG='info')
 
 

@@ -270,6 +270,7 @@ class Check:
         self.check('Settings relaunch restores saved appearance', self.preferences() == saved)
         self.identities()
         self.socket_refusals()
+        self.display_bridge()
         before = self.run('pgrep -x crowbaros-shell; pgrep -x foot').splitlines()
         self.run('sv restart crowbar-shell')
         self.ready()
@@ -296,6 +297,18 @@ class Check:
         self.wait('Settings after reboot', lambda: any(c['class'] == settings['class'] for c in self.snapshot()['clients']))
         self.check('post-reboot session uses the same built binaries', self.run('sha256sum /usr/local/bin/crowbaros-studio-settings').startswith(built['crowbaros-studio-settings']))
         self.capture('04-restored-after-reboot')
+        # Open the Displays page in Studio Settings (sidebar button 2 at x=136, y=204)
+        self.click(136, 204)
+        self.wait('Settings Displays page loads outputs', lambda: 'STUDIO event=displays-loaded count=' in self.app_log()[log_offset:])
+        self.check('Settings Displays page loads live outputs from Fulcrum',
+                   bool(re.search(r'STUDIO event=displays-loaded count=[1-9]', self.app_log()[log_offset:])))
+        self.capture('05-settings-displays-light')
+        # Preview Dark appearance, then view Displays page in Dark theme too
+        self.click(136, 156)
+        self.click(320, 350)
+        self.wait('Dark preview before Displays capture', lambda: 'event=preview theme=Dark' in self.app_log()[log_offset:])
+        self.click(136, 204)
+        self.capture('06-settings-displays-dark')
 
     def identities(self):
         report = json.loads(self.python("""
@@ -358,6 +371,48 @@ print(json.dumps(results))
             self.check('trusted sockets reject the app UID even with paths exposed', refused == [True] * len(paths))
         finally:
             self.python('import os; modes=' + repr(modes) + '; [os.chmod(p,m) for p,m in modes.items()]')
+
+    def display_bridge(self):
+        code = """
+import json, socket
+def ask(req):
+ s = socket.socket(socket.AF_UNIX); s.settimeout(3)
+ try:
+  s.connect('/run/crowbar-displays/socket')
+  s.sendall((json.dumps(req) + '\\n').encode())
+  buf = b''
+  while not buf.endswith(b'\\n'):
+   chunk = s.recv(4096)
+   if not chunk: break
+   buf += chunk
+  return json.loads(buf.decode())
+ finally:
+  s.close()
+snap = ask({'op': 'snapshot'})
+lock = ask({'op': 'lock'})
+before = ask({'op': 'outputs'})
+name = before['outputs'][0]['name']
+orig_scale = before['outputs'][0]['scale']
+scaled = ask({'op': 'configure_output', 'name': name, 'scale': 150})
+mid = ask({'op': 'outputs'})
+restored = ask({'op': 'configure_output', 'name': name, 'scale': orig_scale})
+after = ask({'op': 'outputs'})
+print(json.dumps({
+ 'snap_refused': snap.get('reply') == 'error',
+ 'lock_refused': lock.get('reply') == 'error',
+ 'has_outputs': before.get('reply') == 'outputs' and len(before.get('outputs', [])) >= 1,
+ 'scaled_ok': scaled.get('reply') == 'ok' and mid['outputs'][0]['scale'] == 150,
+ 'restored_ok': restored.get('reply') == 'ok' and after['outputs'][0]['scale'] == orig_scale,
+}))
+"""
+        report = json.loads(self.python(code, 'crowbar-app'))
+        self.check('display bridge refuses non-display compositor ops from app UID',
+                   report['snap_refused'] and report['lock_refused'])
+        self.check('display bridge serves outputs and applies scale changes',
+                   report['has_outputs'] and report['scaled_ok'] and report['restored_ok'])
+        layout = self.run('cat /home/crowbar-compositor/layout || true')
+        self.check('compositor persists output placement to layout file',
+                   bool(layout.strip()) and 'scale' in layout)
 
 
 def main():

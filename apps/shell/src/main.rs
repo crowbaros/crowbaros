@@ -1624,6 +1624,7 @@ fn main() -> anyhow::Result<()> {
     let (tx, rx) = mpsc::channel();
     session::deliver_events_to(tx.clone());
     let _lock = session::server(tx.clone())?;
+    session::start_display_bridge();
     let watcher = tx.clone();
     std::thread::spawn(move || {
         let mut last = None;

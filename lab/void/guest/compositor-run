@@ -23,5 +23,6 @@ exec openvt -c 2 -s -f -w -- chpst -u crowbar-compositor:crowbar-compositor:_sea
   --shell-control-socket /run/crowbar-trusted/compositor/control \
   --warden-socket /run/crowbar-trusted/warden/wayland --warden-uid 0 \
   --unlock-socket /run/crowbar-trusted/unlock/compositor --unlock-uid 0 \
+  --layout /home/crowbar-compositor/layout \
   --start-locked \
   >>/var/log/crowbar-compositor.log 2>&1'
