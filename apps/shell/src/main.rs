@@ -26,6 +26,9 @@ impl AssetSource for Assets {
             "close" => include_bytes!("../assets/close.svg"),
             "arrow" => include_bytes!("../assets/arrow.svg"),
             "user" => include_bytes!("../assets/user.svg"),
+            "mark-micro" => include_bytes!("../assets/mark-micro.png"),
+            "mark-dark" => include_bytes!("../assets/mark-dark.png"),
+            "mark-frost" => include_bytes!("../assets/mark-frost.png"),
             "logo-horizontal-primary" => include_bytes!("../assets/logo-horizontal-primary.png"),
             "logo-horizontal-frost" => include_bytes!("../assets/logo-horizontal-frost.png"),
             _ => return Ok(None),
@@ -48,6 +51,20 @@ fn asset(name: &str) -> PathBuf {
             .join(name)
     }
 }
+const BAR_HEIGHT: f32 = 24.;
+const DOCK_WIDTH: f32 = 180.;
+const DOCK_HEIGHT: f32 = 48.;
+
+fn bar_mark_asset(preferences: &Preferences) -> &'static str {
+    if preferences.studio {
+        "mark-frost"
+    } else if matches!(preferences.theme, theme::Theme::Dark) {
+        "mark-micro"
+    } else {
+        "mark-dark"
+    }
+}
+
 struct ClockDisplay {
     bar: String,
     lock_time: String,
@@ -57,7 +74,7 @@ impl ClockDisplay {
     fn now() -> Self {
         let now = chrono::Local::now();
         Self {
-            bar: now.format("%a %b %-d   %H:%M").to_string(),
+            bar: now.format("%a, %b %-d · %H:%M").to_string(),
             lock_time: now.format("%H:%M").to_string(),
             lock_date: now.format("%A, %B %-d").to_string(),
         }
@@ -127,13 +144,12 @@ impl Render for Bar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let m = self.model.read(cx);
         let p = m.palette();
+        let mark = ImageSource::Resource(Resource::Embedded(
+            bar_mark_asset(&m.preferences).into(),
+        ));
         let active = m.snapshot.workspace;
         let title = if m.snapshot.connected {
-            if m.snapshot.active.title.is_empty() {
-                "Desktop".into()
-            } else {
-                m.snapshot.active.title.clone()
-            }
+            m.snapshot.active.title.clone()
         } else {
             "Connecting to the compositor…".into()
         };
@@ -158,107 +174,128 @@ impl Render for Bar {
             .size_full()
             .flex()
             .items_center()
-            .justify_between()
-            .px(px(16.))
-            .gap(px(24.))
+            .px(px(10.))
+            .gap(px(12.))
             .font_family("Manrope")
-            .text_size(px(13.))
+            .text_size(px(11.5))
             .text_color(rgb(p.text))
             .bg(rgb(p.canvas))
             .border_b_1()
             .border_color(rgb(p.line))
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
                     .items_center()
-                    .gap(px(20.))
+                    .gap(px(8.))
                     .child(
                         div()
                             .id("applications")
+                            .w(px(24.))
+                            .h(px(18.))
                             .flex()
                             .items_center()
-                            .gap(px(8.))
-                            .px(px(8.))
-                            .h(px(36.))
-                            .rounded(px(8.))
+                            .justify_center()
+                            .rounded(px(4.))
                             .cursor_pointer()
                             .hover(move |s| s.bg(rgb(p.surface)))
-                            .child(img(asset("mark.png")).size(px(23.)))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child("Applications"),
-                            )
+                            .child(img(mark).size(px(15.)).object_fit(ObjectFit::Contain))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 toggle_launcher(this.model.clone(), cx)
                             })),
                     )
-                    .child(div().flex().items_center().gap(px(4.)).children(
+                    .child(div().w(px(1.)).h(px(10.)).bg(rgb(p.line)))
+                    .child(div().flex().items_center().gap(px(2.)).children(
                         workspaces.into_iter().map(|id| {
                             let attention = wanting.contains(&id);
+                            let selected = active == id;
                             div()
                                 .id(("workspace", id as usize))
                                 .border_b_2()
-                                .border_color(rgb(if attention { p.accent } else { p.canvas }))
-                                .w(px(28.))
-                                .h(px(28.))
+                                .border_color(rgb(if attention && !selected {
+                                    p.accent
+                                } else if selected {
+                                    p.accent
+                                } else {
+                                    p.canvas
+                                }))
+                                .w(px(18.))
+                                .h(px(17.))
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .rounded(px(6.))
+                                .rounded(px(4.))
                                 .cursor_pointer()
-                                .bg(rgb(if active == id { p.accent } else { p.canvas }))
-                                .text_color(rgb(if active == id { p.on_accent } else { p.muted }))
+                                .text_size(px(11.))
+                                .when(selected, |d| d.font_weight(FontWeight::SEMIBOLD))
+                                .bg(rgb(if selected { p.accent } else { p.canvas }))
+                                .text_color(rgb(if selected { p.on_accent } else { p.muted }))
                                 .hover(move |s| {
-                                    s.bg(rgb(if active == id { p.accent } else { p.surface }))
+                                    s.bg(rgb(if selected { p.accent } else { p.surface }))
                                 })
                                 .child(id.to_string())
                                 .on_click(move |_, _, _| session::workspace(id))
                         }),
-                    )),
+                    ))
+                    .when(!title.is_empty(), |d| {
+                        d.child(div().w(px(1.)).h(px(10.)).bg(rgb(p.line))).child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(11.5))
+                                .text_color(rgb(p.muted))
+                                .text_ellipsis()
+                                .child(title),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(px(11.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(p.text))
+                    .child(clock),
             )
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_color(rgb(p.muted))
-                    .text_ellipsis()
-                    .child(title),
-            )
-            .child(
-                div()
                     .flex()
                     .items_center()
-                    .gap(px(18.))
-                    .child(clock)
+                    .justify_end()
+                    .gap(px(4.))
                     .child(
                         div()
                             .id("lock")
-                            .size(px(32.))
+                            .w(px(22.))
+                            .h(px(18.))
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded(px(8.))
+                            .rounded(px(4.))
                             .cursor_pointer()
                             .hover(move |s| s.bg(rgb(p.surface)))
-                            .child(icon("lock", p.muted, 19.))
+                            .child(icon("lock", p.muted, 13.5))
                             .on_click(|_, _, _| session::lock(true)),
                     )
                     .child(
-                    div()
-                        .id("settings")
-                        .size(px(32.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(8.))
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(rgb(p.surface)))
-                        .child(icon("settings", p.muted, 19.))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            activate_pin(&this.model, "com.crowbaros.StudioSettings.desktop", cx)
-                        })),
-                ),
+                        div()
+                            .id("settings")
+                            .w(px(22.))
+                            .h(px(18.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(4.))
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(rgb(p.surface)))
+                            .child(icon("settings", p.muted, 13.5))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                activate_pin(&this.model, "com.crowbaros.StudioSettings.desktop", cx)
+                            })),
+                    ),
             )
     }
 }
@@ -286,40 +323,36 @@ impl Render for Dock {
         let p = m.palette();
         let apps = m.apps.clone();
         let clients = m.snapshot.clients.clone();
-        let mut pins = vec![("apps", "Applications", None)];
+        let mut pins = vec![("apps", None)];
         if apps.iter().any(|a| a.id == "foot.desktop") {
-            pins.push(("terminal", "Terminal", Some("foot.desktop")))
+            pins.push(("terminal", Some("foot.desktop")))
         }
         if apps
             .iter()
             .any(|a| a.id == "com.crowbaros.StudioSettings.desktop")
         {
-            pins.push((
-                "settings",
-                "Settings",
-                Some("com.crowbaros.StudioSettings.desktop"),
-            ))
+            pins.push(("settings", Some("com.crowbaros.StudioSettings.desktop")))
         }
         div()
             .size_full()
             .flex()
-            .items_start()
+            .items_end()
             .justify_center()
-            .pt(px(4.))
+            .pb(px(6.))
             .font_family("Manrope")
-            .text_size(px(11.))
             .text_color(rgb(p.text))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(4.))
-                    .p(px(7.))
-                    .rounded(px(16.))
+                    .px(px(5.))
+                    .py(px(4.))
+                    .rounded(px(11.))
                     .bg(rgb(p.canvas))
                     .border_1()
                     .border_color(rgb(p.line))
-                    .children(pins.into_iter().map(|(ic, label, id)| {
+                    .children(pins.into_iter().map(|(ic, id)| {
                         let app = id.and_then(|id| apps.iter().find(|a| a.id == id));
                         let running =
                             app.is_some_and(|a| clients.iter().any(|c| a.matches_class(&c.class)));
@@ -330,36 +363,31 @@ impl Render for Dock {
                         });
                         div()
                             .id(ic)
-                            .w(px(84.))
-                            .h(px(64.))
+                            .w(px(36.))
+                            .h(px(28.))
                             .flex()
                             .flex_col()
                             .items_center()
                             .justify_center()
-                            .gap(px(4.))
-                            .rounded(px(10.))
+                            .gap(px(3.))
+                            .rounded(px(7.))
                             .cursor_pointer()
+                            .when(running, |d| d.bg(rgb(p.surface)))
                             .hover(move |s| s.bg(rgb(p.surface)))
-                            .child(icon(ic, if running { p.focus } else { p.text }, 25.))
-                            .child(label)
+                            .child(icon(ic, if running { p.focus } else { p.text }, 17.))
                             .child(
                                 div()
                                     .w(px(if attention {
-                                        20.
+                                        14.
                                     } else if running {
-                                        12.
+                                        8.
                                     } else {
-                                        3.
+                                        8.
                                     }))
                                     .h(px(2.))
                                     .rounded(px(1.))
-                                    .bg(rgb(if attention {
-                                        p.accent
-                                    } else if running {
-                                        p.focus
-                                    } else {
-                                        p.canvas
-                                    })),
+                                    .when(attention, |d| d.bg(rgb(p.accent)))
+                                    .when(!attention && running, |d| d.bg(rgb(p.focus))),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(id) = id {
@@ -1435,8 +1463,8 @@ fn main() -> anyhow::Result<()> {
                 Layer::Top,
                 Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
                 0.,
-                44.,
-                Some(44.),
+                BAR_HEIGHT,
+                Some(BAR_HEIGHT),
                 KeyboardInteractivity::None,
             ),
             |_, cx| {
@@ -1451,9 +1479,9 @@ fn main() -> anyhow::Result<()> {
                 "dock",
                 Layer::Top,
                 Anchor::BOTTOM,
-                286.,
-                96.,
-                Some(96.),
+                DOCK_WIDTH,
+                DOCK_HEIGHT,
+                Some(DOCK_HEIGHT),
                 KeyboardInteractivity::None,
             ),
             |_, cx| {
@@ -1569,8 +1597,8 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod lock_tests {
     use super::{
-        Assets, LockLayout, MAX_VISIBLE_DOTS, nightwatch_size, person_label_from,
-        visible_password_dots,
+        Assets, LockLayout, MAX_VISIBLE_DOTS, Preferences, bar_mark_asset, nightwatch_size,
+        person_label_from, theme::Theme, visible_password_dots,
     };
     use gpui::AssetSource;
 
@@ -1644,9 +1672,43 @@ mod lock_tests {
     #[test]
     fn embedded_lock_assets_load() {
         let assets = Assets;
-        for name in ["user", "logo-horizontal-primary", "logo-horizontal-frost"] {
+        for name in [
+            "user",
+            "mark-micro",
+            "mark-dark",
+            "mark-frost",
+            "logo-horizontal-primary",
+            "logo-horizontal-frost",
+        ] {
             let bytes = assets.load(name).unwrap();
             assert!(bytes.is_some_and(|b| !b.is_empty()), "missing asset {name}");
         }
+    }
+
+    #[test]
+    fn bar_mark_matches_theme_and_studio_override() {
+        assert_eq!(bar_mark_asset(&Preferences::default()), "mark-micro");
+        assert_eq!(
+            bar_mark_asset(&Preferences {
+                theme: Theme::Light,
+                ..Default::default()
+            }),
+            "mark-dark"
+        );
+        assert_eq!(
+            bar_mark_asset(&Preferences {
+                theme: Theme::WarmPaper,
+                ..Default::default()
+            }),
+            "mark-dark"
+        );
+        assert_eq!(
+            bar_mark_asset(&Preferences {
+                theme: Theme::Light,
+                studio: true,
+                ..Default::default()
+            }),
+            "mark-frost"
+        );
     }
 }

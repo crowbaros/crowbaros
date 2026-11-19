@@ -33,7 +33,7 @@ historical behavior evidence, not a current Fedora workflow.
 
 ## Current behavior and limits
 
-- The bar and dock reserve 44 and 96 pixels through Wayland layer surfaces.
+- The bar and dock reserve 24 and 48 pixels through Wayland layer surfaces.
 - Applications search supports keyboard navigation; closing the launcher returns focus.
 - Workspace and window focus requests use the CrowbarOS control channel when supplied.
 - On that channel, Super tapped alone toggles the launcher, an app the shell launches takes the keyboard with its first window, and the bar and dock mark a window that wants attention. While the compositor has the session locked, the shell shows its lock screen, which waits for the confirm chord, Ctrl+Alt+Enter; the bar's lock button locks it. Where `CROWBAR_UNLOCK_SOCKET` names an unlock helper, as in the Alpha session, the lock screen then takes the person's password and sends it to the helper, which checks it and tells the compositor to unlock; a wrong one shows "Wrong password". Without one, its Unlock button or Enter asks the compositor to unlock. These messages, and the helper, are Fulcrum's proposal until a decision record settles them.
