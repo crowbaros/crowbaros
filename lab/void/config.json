@@ -29,6 +29,8 @@
       "vulkan-loader",
       "mesa-vulkan-lavapipe",
       "foot",
+      "chromium",
+      "dejavu-fonts-ttf",
       "xcursor-vanilla-dmz",
       "dbus",
       "glib",
@@ -53,7 +55,7 @@
       "patch"
     ],
     "root_label": "crowbar-gfx",
-    "root_gib": 6,
+    "root_gib": 8,
     "memory_mib": 4096,
     "vcpus": 4,
     "ssh_port": 22231,

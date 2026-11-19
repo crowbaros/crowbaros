@@ -1,0 +1,11 @@
+#!/bin/sh
+# CrowbarOS default Chromium wrapper: runs natively on Fulcrum Wayland
+# without XWayland, first-run nags, or missing Google API key infobars.
+export GOOGLE_API_KEY="no"
+export GOOGLE_DEFAULT_CLIENT_ID="no"
+export GOOGLE_DEFAULT_CLIENT_SECRET="no"
+exec /usr/bin/chromium \
+  --ozone-platform=wayland \
+  --no-first-run \
+  --no-default-browser-check \
+  "$@"

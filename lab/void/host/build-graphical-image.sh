@@ -61,6 +61,11 @@ if [ -x "$S/usr/bin/fc-cache" ]; then
   chroot "$S" fc-cache -f
 fi
 install -D -m 644 "$REPO_ROOT/lab/void/guest/foot.ini" "$S/etc/xdg/foot/foot.ini"
+install -D -m 755 "$REPO_ROOT/lab/void/guest/chromium-wrapper" "$S/usr/local/bin/chromium"
+install -D -m 644 "$REPO_ROOT/lab/void/guest/mimeapps.list" "$S/etc/xdg/mimeapps.list"
+if [ -f "$S/usr/share/applications/chromium.desktop" ]; then
+  sed -i 's|^Exec=\(/usr/bin/\)\?chromium\b|Exec=/usr/local/bin/chromium|g' "$S/usr/share/applications/chromium.desktop"
+fi
 cat > "$S/usr/share/icons/default/index.theme" <<'CURSOR'
 [Icon Theme]
 Inherits=Vanilla-DMZ

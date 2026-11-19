@@ -22,6 +22,8 @@ impl AppEntry {
     pub fn icon(&self) -> &'static str {
         if self.id.contains("StudioSettings") {
             "settings"
+        } else if self.id.contains("chromium") || self.id.contains("browser") {
+            "browser"
         } else if self.id.contains("foot")
             || self.id.contains("kitty")
             || self.id.contains("ghostty")
@@ -37,7 +39,9 @@ impl AppEntry {
                 || self
                     .id
                     .trim_end_matches(".desktop")
-                    .eq_ignore_ascii_case(class))
+                    .eq_ignore_ascii_case(class)
+                || (self.id.eq_ignore_ascii_case("chromium.desktop")
+                    && class.eq_ignore_ascii_case("chromium-browser")))
     }
 }
 
@@ -262,5 +266,20 @@ mod tests {
         b.description = "studio settings".into();
         assert_eq!(ranked(&[b, a], "studio settings"), vec![1, 0]);
         assert!(ranked(&[], "missing").is_empty());
+    }
+    #[test]
+    fn chromium_uses_browser_icon_and_matches_wayland_app_ids() {
+        let entry = parse(
+            "chromium.desktop".into(),
+            "/usr/share/applications/chromium.desktop".into(),
+            "[Desktop Entry]\nType=Application\nName=Chromium\nExec=chromium %U\nStartupWMClass=chromium\n",
+            "en_US",
+        )
+        .unwrap();
+        assert_eq!(entry.icon(), "browser");
+        assert!(entry.matches_class("chromium"));
+        assert!(entry.matches_class("Chromium"));
+        assert!(entry.matches_class("chromium-browser"));
+        assert!(!entry.matches_class("foot"));
     }
 }
