@@ -453,8 +453,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.parse_args()
-    # What booting the image needs, before the build spends its time.
-    void_base.preflight(vm=True)
+    # What building and booting the image need, before the build spends its time.
+    void_base.preflight(vm=True, build=True)
     configure()
     check = Check()
     check.log(f'Evidence and new guest disk: {guest.WORK}')

@@ -202,13 +202,17 @@ def compile_desktop(force):
     The host's Cargo registry and git checkouts are bound in, so the build runs
     offline from the crates the lockfiles name. The build root and the target
     directory are kept, so the next build starts from them."""
-    install(BUILD_ROOT, CFG["build_packages"], "Void build root", force)
+    install(BUILD_ROOT, CFG["build_packages"], "Void build root", force,
+            missing=lambda: None if (BUILD_ROOT / "usr/bin/cargo").exists() else "no cargo")
     run(sys.executable, ROOT / "apps/shell/packaging/prepare-gpui.py")
     for project, _ in PROJECTS:
         run("cargo", "fetch", "--locked", "--target", "x86_64-unknown-linux-gnu",
             "--manifest-path", ROOT / project / "Cargo.toml")
     TARGET.mkdir(parents=True, exist_ok=True)
     cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
+    # The build binds both in. Cargo makes `git` only for a git dependency.
+    for cache in ("registry", "git"):
+        (cargo_home / cache).mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, B=str(BUILD_ROOT), SRC=str(ROOT), TARGET=str(TARGET),
                PROJECTS=" ".join(f"{project}:{part}" for project, part in PROJECTS),
                CARGO_REGISTRY=str(cargo_home / "registry"), CARGO_GIT=str(cargo_home / "git"))
@@ -227,9 +231,8 @@ def build(force=False):
                PUBKEY=str(KEY) + ".pub", HOSTNAME=CFG["hostname"],
                ROOT_LABEL=CFG["root_label"], ESP_LABEL=CFG["esp_label"],
                ESP_MIB=str(CFG["esp_mib"]), ROOT_GIB=str(CFG["root_gib"]),
-               DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT),
-               BINARIES=" ".join(str(path) for path in binaries().values()))
-    run(*userns(), "sh", HERE / "host/image.sh", env=env)
+               DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT))
+    run(*userns(), "sh", HERE / "host/image.sh", *binaries().values(), env=env)
 
 
 def running():
@@ -365,6 +368,9 @@ CHECKS = [
     ("runit is PID 1", "cat /proc/1/comm", lambda out: out.strip() == "runit"),
     ("services are up", "sv status /var/service/*",
      lambda out: all(f"run: /var/service/{s}:" in out for s in ("sshd", "dhcpcd", "agetty-ttyS0"))),
+    ("SSH takes keys and no passwords", "sshd -T | grep -E '^(passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication) '",
+     lambda out: {"passwordauthentication no", "kbdinteractiveauthentication no",
+                  "pubkeyauthentication yes"} <= set(out.splitlines())),
     ("network has an address", "ip -4 -o addr show scope global",
      lambda out: "inet " in out),
     ("packages keep their groups", "stat -c '%G %n' /usr/bin/wall /var/db/dhcpcd",
@@ -378,6 +384,7 @@ def check():
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True,
                           capture_output=True).stdout.strip()
+    preflight(vm=True, build=True)
     build(force=False)
     to_login = boot()
     lines = [f"CrowbarOS base boot check, {stamp}, commit {head}",

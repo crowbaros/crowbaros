@@ -27,7 +27,7 @@ The substrate vision before it is archived, and its code is at the
 | --- | --- |
 | Base | Being rebuilt as plain Void with the desktop on it, built without root, booted under UEFI, in [`base/`](base/) |
 | Compositor | Our own ([ADR 0015](docs/adr/0015-our-own-compositor-on-smithay.md)), named Fulcrum, built in [`compositor/`](compositor/) ([ADR 0031](docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)), written from the ground up with Smithay as its reference ([ADR 0028](docs/adr/0028-the-compositor-is-written-from-the-ground-up.md)). The desktop runs on it |
-| Shell and Studio Settings | An Alpha session on Void with separate runit services, saved appearance, and 37 passing desktop checks. [Record](docs/development/void-desktop-smoke-2026-11-15.md), [apps](apps/) |
+| Shell and Studio Settings | The desktop on Base, with separate runit services and saved appearance, booted under UEFI by the desktop check. [Record](docs/development/void-desktop-smoke-2026-11-15.md), [apps](apps/) |
 | Brand and design system | Approved. [Brand kit](docs/branding/), [DESIGN.md](DESIGN.md) |
 | The Agent | Not started. See the [vision](docs/VISION.md#the-agent) |
 

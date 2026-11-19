@@ -21,7 +21,7 @@ base/void_base.py stop           # power off
 | Desktop | Fulcrum (`compositor/`), the shell, and Studio Settings, built and tested in a Void build root of their own so they link Void's libraries, in `/usr/local/bin`. Their runit services and helpers are in [`desktop/`](desktop/) |
 | Disk | GPT. An ESP holds a standalone GRUB at `\EFI\BOOT\BOOTX64.EFI`, the path any UEFI firmware boots without a boot entry. The root is Btrfs, labelled `crowbaros-root` |
 | Boot | GRUB finds the root by label and reads `/boot/grub/grub.cfg` there. The kernel and initramfs are the ones xbps built |
-| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `seatd`, and the desktop's four: the compositor on virtual terminal 2, the shell, the launcher, and the unlock helper. Root logs in over SSH with a key made for the lab, and has no password |
+| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `seatd`, and the desktop's four: the compositor on virtual terminal 2, the shell, the launcher, and the unlock helper. Root logs in over SSH with a key made for the lab, and has no password. SSH takes keys only |
 
 The VM is QEMU with KVM, OVMF firmware, virtio disk and network, SSH
 forwarded to `127.0.0.1:22240`, and for the desktop a virtio GPU, keyboard, and
@@ -81,8 +81,8 @@ of the configured packages finished.
 serial console and for SSH, and then checks in the guest: that it is Void, that
 the running kernel is the one in the boot menu, that the root is the Btrfs
 volume and writable, that it booted under UEFI, the hostname, that runit is
-PID 1, that `sshd`, `dhcpcd`, and the serial getty run, that the network has an
-address, that packages kept their groups, and that the kernel logged nothing
+PID 1, that `sshd`, `dhcpcd`, and the serial getty run, that SSH takes keys and
+no passwords, that the network has an address, that packages kept their groups, and that the kernel logged nothing
 critical.
 
 The desktop has its own check, which boots a copy of this image under UEFI and

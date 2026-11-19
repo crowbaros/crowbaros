@@ -21,8 +21,8 @@ comes from the pinned catalog in [ADR 0017](../docs/archive/substrate-vision/adr
 and starts through the Warden; Tools run through the broker.
 
 The [Void desktop smoke command](../lab/void/README.md#the-desktop-check)
-builds and exercises the compositor, shell, and Settings in a fresh guest,
-preserving development VMs. Separate runit services and UIDs follow ADR 0016's
+builds Base's image with the compositor, shell, and Studio Settings, and
+exercises them on a copy of it, preserving development VMs. Separate runit services and UIDs follow ADR 0016's
 temporary Alpha rules. The [acceptance record](../docs/development/void-desktop-smoke-2026-11-15.md)
 covers launch, focus, workspaces, saved appearance, restart, and reboot.
 The apps have also rendered on [Void hardware](../docs/research/compositor-nvidia-2026-11-15.md).

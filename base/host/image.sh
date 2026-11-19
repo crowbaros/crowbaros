@@ -7,7 +7,8 @@
 #   p2  Btrfs, label $ROOT_LABEL: the Void root; GRUB reads /boot/grub/grub.cfg here
 #
 # Inputs: ROOTFS WORK OUT PUBKEY HOSTNAME ROOT_LABEL ESP_LABEL ESP_MIB ROOT_GIB,
-# and for the desktop DESKTOP (base/desktop), REPO_ROOT, and BINARIES (paths)
+# and for the desktop DESKTOP (base/desktop) and REPO_ROOT. Its arguments are
+# the desktop's programs.
 set -eu
 R="$WORK/staging"
 rm -rf "$R" "$WORK/esp.img" "$WORK/root.img"
@@ -34,6 +35,8 @@ SV="$R/etc/runit/runsvdir/default"
 for s in agetty-ttyS0 dhcpcd sshd; do ln -sfn "/etc/sv/$s" "$SV/$s"; done
 install -d -m 700 "$R/root/.ssh"
 install -m 600 "$PUBKEY" "$R/root/.ssh/authorized_keys"
+# SSH by key alone: the person's account has a password, and it is not for SSH.
+printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' > "$R/etc/ssh/sshd_config.d/10-crowbaros.conf"
 
 # The desktop. Four accounts: the compositor, which alone is in `_seatd`; the
 # shell; one for every app; and the person's, whose password unlocks the
@@ -57,7 +60,7 @@ install -D -m 755 "$DESKTOP/unlock.py" "$R/usr/local/bin/crowbar-unlock"
 install -D -m 755 "$DESKTOP/zzz-lock" "$R/etc/zzz.d/suspend/50-crowbar-lock"
 HASH=$(chroot "$R" /usr/local/bin/crowbar-unlock hash crowbar)
 chroot "$R" usermod -p "$HASH" crowbar-person
-for path in $BINARIES; do install -D -m 755 "$path" "$R/usr/local/bin/$(basename "$path")"; done
+for path in "$@"; do install -D -m 755 "$path" "$R/usr/local/bin/$(basename "$path")"; done
 install -d "$R/usr/share/crowbaros-shell" "$R/usr/share/applications" "$R/usr/share/fonts/crowbaros" "$R/usr/share/icons/default"
 install -m 644 "$REPO_ROOT/apps/shell/assets/wallpaper.png" "$REPO_ROOT/apps/shell/assets/nightwatch.png" "$REPO_ROOT/apps/shell/assets/mark.png" "$REPO_ROOT/apps/shell/assets/quiet-signal.png" "$R/usr/share/crowbaros-shell/"
 install -m 644 "$REPO_ROOT/apps/studio-settings/packaging/com.crowbaros.StudioSettings.desktop" "$R/usr/share/applications/"

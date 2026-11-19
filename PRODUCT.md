@@ -32,7 +32,7 @@ subset drawn by a trusted engine.
 
 The GPUI apps run in the [Void Alpha desktop lab](lab/void/README.md), with
 separate compositor, shell, and app users under the temporary rules of ADR 0016.
-The integrated smoke command uses a fresh guest and preserves development VMs.
+The desktop check boots a copy of Base's image and preserves development VMs.
 Fedora workflow tooling is archived; use the [Void guide](docs/development/local-vms.md).
 Hardware graphics evidence and broader device qualification are recorded separately.
 
