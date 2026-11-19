@@ -28,6 +28,14 @@ _Avoid_: Desktop environment
 **Default apps**:
 The handful of apps CrowbarOS installs. Studio Settings is the first.
 
+**Desktop**:
+The compositor, the shell, and the apps running on Base: what the person sees and works in.
+_Avoid_: Alpha desktop, session
+
+**The person's account**:
+The one account on the machine that belongs to the person. It has their home, its password unlocks the desktop, and apps run as it.
+_Avoid_: `crowbar-person`, app user
+
 ## The Agent
 
 **Agent**:
