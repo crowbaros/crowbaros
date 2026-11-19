@@ -49,7 +49,7 @@ fi
 
 for path in $BINARIES; do install -D -m 755 "$path" "$S/usr/local/bin/$(basename "$path")"; done
 install -d "$S/usr/share/crowbaros-shell" "$S/usr/share/applications"
-install -m 644 "$REPO_ROOT/apps/shell/assets/wallpaper.png" "$REPO_ROOT/apps/shell/assets/mark.png" "$S/usr/share/crowbaros-shell/"
+install -m 644 "$REPO_ROOT/apps/shell/assets/wallpaper.png" "$REPO_ROOT/apps/shell/assets/nightwatch.png" "$REPO_ROOT/apps/shell/assets/mark.png" "$S/usr/share/crowbaros-shell/"
 install -m 644 "$REPO_ROOT/apps/studio-settings/packaging/com.crowbaros.StudioSettings.desktop" "$S/usr/share/applications/"
 
 rm -f "$OUT"
