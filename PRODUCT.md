@@ -30,7 +30,7 @@ interfaces. The compositor is our own, built on Smithay
 interface description is an open question: a new vocabulary drawn by GPUI, or a constrained web
 subset drawn by a trusted engine.
 
-The GPUI apps run in the [Void Alpha desktop lab](lab/void/README.md), with
+The GPUI apps run on [Base](base/README.md), with
 separate compositor, shell, and app users under the temporary rules of ADR 0016.
 The desktop check boots a copy of Base's image and preserves development VMs.
 Fedora workflow tooling is archived; use the [Void guide](docs/development/local-vms.md).
