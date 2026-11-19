@@ -48,9 +48,24 @@ if [ "$DESKTOP" = 1 ]; then
 fi
 
 for path in $BINARIES; do install -D -m 755 "$path" "$S/usr/local/bin/$(basename "$path")"; done
-install -d "$S/usr/share/crowbaros-shell" "$S/usr/share/applications"
+install -d "$S/usr/share/crowbaros-shell" "$S/usr/share/applications" "$S/usr/share/fonts/crowbaros" "$S/usr/share/icons/default"
 install -m 644 "$REPO_ROOT/apps/shell/assets/wallpaper.png" "$REPO_ROOT/apps/shell/assets/nightwatch.png" "$REPO_ROOT/apps/shell/assets/mark.png" "$S/usr/share/crowbaros-shell/"
+if [ -f "$REPO_ROOT/apps/shell/assets/quiet-signal.png" ]; then
+  install -m 644 "$REPO_ROOT/apps/shell/assets/quiet-signal.png" "$S/usr/share/crowbaros-shell/quiet-signal.png"
+else
+  install -m 644 "$REPO_ROOT/docs/branding/crowbaros-brand-kit/wallpapers/quiet-signal-4k.png" "$S/usr/share/crowbaros-shell/quiet-signal.png"
+fi
 install -m 644 "$REPO_ROOT/apps/studio-settings/packaging/com.crowbaros.StudioSettings.desktop" "$S/usr/share/applications/"
+install -m 644 "$REPO_ROOT/apps/shell/fonts/IBMPlexMono-Regular.ttf" "$REPO_ROOT"/apps/shell/fonts/Manrope-*.ttf "$S/usr/share/fonts/crowbaros/"
+if [ -x "$S/usr/bin/fc-cache" ]; then
+  chroot "$S" fc-cache -f
+fi
+install -D -m 644 "$REPO_ROOT/lab/void/guest/foot.ini" "$S/etc/xdg/foot/foot.ini"
+cat > "$S/usr/share/icons/default/index.theme" <<'CURSOR'
+[Icon Theme]
+Inherits=Vanilla-DMZ
+CURSOR
+chmod 644 "$S/usr/share/icons/default/index.theme"
 
 rm -f "$OUT"
 truncate -s "${ROOT_GIB}G" "$OUT"

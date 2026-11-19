@@ -6,6 +6,7 @@ chown crowbar-shell:crowbar-shell /home/crowbar-shell
 exec chpst -u crowbar-shell:crowbar-shell env -i \
   HOME=/home/crowbar-shell PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
   XDG_RUNTIME_DIR=/run/user/1001 WAYLAND_DISPLAY=/run/crowbar-trusted/compositor/wayland \
+  XCURSOR_THEME=Vanilla-DMZ XCURSOR_SIZE=24 \
   CROWBAR_LAUNCH_SOCKET=/run/crowbar-launch/socket \
   CROWBAR_UNLOCK_SOCKET=/run/crowbar-unlock/socket RUST_LOG=info \
   /usr/local/bin/crowbar-alpha-shell
