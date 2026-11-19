@@ -6,7 +6,7 @@ mod common;
 use std::path::PathBuf;
 
 use common::Compositor;
-use crowbar_compositor::{image::Image, xcursor_file_for_tests};
+use crowbar_compositor::{backend::POINTER_COLOUR, image::Image, xcursor_file_for_tests};
 use crowbar_probe::{Client, Toplevel};
 use fulcrum_wire::{
     ObjectId,
@@ -15,7 +15,6 @@ use fulcrum_wire::{
 
 use wp_cursor_shape_device_v1::shape;
 
-const WHITE: u32 = 0xffff_ffff;
 const ARROW: u32 = 0xff10_2030;
 const TEXT: u32 = 0xff40_5060;
 const GREEN: u32 = 0xff20_c020;
@@ -146,7 +145,7 @@ fn with_no_theme_a_shape_is_the_compositors_square() {
     set_shape(&mut client, device, shape::TEXT);
     client.roundtrip().unwrap();
 
-    assert_eq!(screen(&compositor).pixel(105, 105), Some(WHITE));
+    assert_eq!(screen(&compositor).pixel(105, 105), Some(POINTER_COLOUR));
 }
 
 #[test]

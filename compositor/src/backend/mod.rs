@@ -16,7 +16,8 @@ use crate::State;
 /// The side of the square drawn where the pointer is, when no client has
 /// set an image for it (see `cursor.rs`).
 pub const POINTER_SIZE: i32 = 12;
-pub const POINTER_COLOUR: u32 = 0xffff_ffff;
+/// The fallback pointer square colour: CrowbarOS Nullkeel Frost (`#D8E5EC`).
+pub const POINTER_COLOUR: u32 = 0xffd8_e5ec;
 
 /// What became of one request to draw an output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

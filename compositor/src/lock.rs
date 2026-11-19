@@ -31,8 +31,9 @@ use crate::{State, event_loop::TimerKey, identity::Identity, log, surface::Surfa
 /// The namespace of the shell's layer surface that is its lock screen.
 pub const LOCK_NAMESPACE: &str = "crowbaros-lock";
 
-/// What a locked display shows where no lock screen is.
-pub const LOCKED_BACKGROUND: u32 = 0xff00_0000;
+/// What a locked display shows where no lock screen is: Nightwatch Void ground
+/// (`#030B13`), matching the lock screen's wallpaper edge.
+pub const LOCKED_BACKGROUND: u32 = 0xff03_0b13;
 
 #[derive(Debug)]
 pub(crate) struct Lock {

@@ -25,8 +25,9 @@ use crate::{
 /// How far inside the usable area of an output a new window is put.
 pub const NEW_WINDOW_OFFSET: (i32, i32) = (48, 48);
 
-/// The colour behind everything, until the shell's wallpaper covers it.
-pub const BACKGROUND: u32 = 0xff1a_1a1a;
+/// The colour behind everything, until the shell's wallpaper covers it:
+/// CrowbarOS Nullkeel Void (`#080D12`).
+pub const BACKGROUND: u32 = 0xff08_0d12;
 
 pub(crate) struct Window {
     pub surface: SurfaceId,
