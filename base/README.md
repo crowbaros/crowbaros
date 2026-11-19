@@ -17,7 +17,7 @@ base/void_base.py stop           # power off
 
 | Part | What it is |
 | --- | --- |
-| Packages | `base-minimal`, `linux`, `btrfs-progs`, `grub-x86_64-efi`, `mtools`, `openssh`, `dhcpcd`, `iproute2`, and what the desktop needs: `seatd`, Mesa with lavapipe, Wayland, `foot`, `python3`, and others, from Void's `current` repository ([`config.json`](config.json)) |
+| Packages | `base-minimal`, `linux`, `btrfs-progs`, `grub-x86_64-efi`, `mtools`, `openssh`, `dhcpcd`, `iproute2`, and what the desktop needs: `seatd`, Mesa with lavapipe, Wayland, `foot`, Chromium, `python3`, and others, from Void's `current` repository ([`config.json`](config.json)) |
 | Desktop | Fulcrum (`compositor/`), the shell, and Studio Settings, built and tested in a Void build root of their own so they link Void's libraries, in `/usr/local/bin`. Their runit services and helpers are in [`desktop/`](desktop/) |
 | Disk | GPT. An ESP holds a standalone GRUB at `\EFI\BOOT\BOOTX64.EFI`, the path any UEFI firmware boots without a boot entry. The root is Btrfs, labelled `crowbaros-root` |
 | Boot | GRUB finds the root by label and reads `/boot/grub/grub.cfg` there. The kernel and initramfs are the ones xbps built |
