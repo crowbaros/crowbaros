@@ -55,7 +55,8 @@ install -D -m 755 "$DESKTOP/launcher.py" "$R/usr/local/bin/crowbar-launcher"
 install -D -m 755 "$DESKTOP/shell-connect.py" "$R/usr/local/bin/crowbar-shell-connect"
 install -D -m 755 "$DESKTOP/unlock.py" "$R/usr/local/bin/crowbar-unlock"
 install -D -m 755 "$DESKTOP/zzz-lock" "$R/etc/zzz.d/suspend/50-crowbar-lock"
-chroot "$R" usermod -p "$(chroot "$R" /usr/local/bin/crowbar-unlock hash crowbar)" crowbar-person
+HASH=$(chroot "$R" /usr/local/bin/crowbar-unlock hash crowbar)
+chroot "$R" usermod -p "$HASH" crowbar-person
 for path in $BINARIES; do install -D -m 755 "$path" "$R/usr/local/bin/$(basename "$path")"; done
 install -d "$R/usr/share/crowbaros-shell" "$R/usr/share/applications" "$R/usr/share/fonts/crowbaros" "$R/usr/share/icons/default"
 install -m 644 "$REPO_ROOT/apps/shell/assets/wallpaper.png" "$REPO_ROOT/apps/shell/assets/nightwatch.png" "$REPO_ROOT/apps/shell/assets/mark.png" "$REPO_ROOT/apps/shell/assets/quiet-signal.png" "$R/usr/share/crowbaros-shell/"

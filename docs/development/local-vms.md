@@ -28,14 +28,15 @@ To validate the desktop without replacing an existing VM:
 
 ```sh
 rtk python3 lab/void/compositor_guest.py desktop-check
-# Optional: reuse only the provisioned build root and Cargo target cache.
-rtk python3 lab/void/compositor_guest.py desktop-check --build-cache .lab/void-graphical
 ```
 
-Each run creates its own root, disk, SSH key/port, and Unix VNC sockets, retains
-logs/screenshots/results, and powers off its guest. The cache option never
-selects the development disk. Do not build concurrently against the same cache.
-See the [lab guide](../../lab/void/README.md#full-desktop-smoke-check) for prerequisites
+It builds Base's image with `base/void_base.py build`, which keeps its Void
+roots and Cargo target in `.lab/base/` as a cache. Each run then boots its own
+copy of the image under UEFI, with its own firmware variables, SSH port, and
+Unix VNC sockets, retains logs/screenshots/results, and powers off its guest.
+It never selects Base's disk or the lab's development disk. Do not build
+concurrently: runs share Base's build directory.
+See the [lab guide](../../lab/void/README.md#the-desktop-check) for prerequisites
 and diagnostics. Credentials and disks stay out of published evidence.
 
 For a **disposable checkout with no existing VM state**, the compositor check
