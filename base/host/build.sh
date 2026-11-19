@@ -1,7 +1,8 @@
 #!/bin/sh
-# Build a compositor and the GPUI apps against Void's own libraries, inside the Void build
-# root. Runs as fake root in a user and mount namespace (`unshare -r -m`), so
-# nothing here needs sudo and no mount outlives the script.
+# Build and test the desktop (Fulcrum and the GPUI apps) against Void's own
+# libraries, inside the Void build root. Runs as fake root in a user and mount
+# namespace (`unshare -r -m`), so nothing here needs sudo and no mount outlives
+# the script.
 # Inputs: B (build root), SRC (repository root), TARGET (cargo target dir),
 # PROJECTS (what to build: `path:subdir` for each, where `subdir` is the part
 # of TARGET that project builds in, or nothing for TARGET itself),

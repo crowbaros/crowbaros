@@ -52,7 +52,7 @@ sides hold.
 | --- | --- | --- |
 | How Base is built or booted: `base/` | `base/void_base.py check` | The `.lab/base/boot-<time>.log` it writes |
 | The graphical guest in `lab/void/` | `lab/void/compositor_guest.py check` | The evidence log it writes |
-| The Alpha desktop: how `lab/void/` runs the compositor, the shell, or the apps | `lab/void/compositor_guest.py desktop-check` | The run's `desktop.log` and `results.json` |
+| The desktop: how `base/` builds or runs the compositor, the shell, or the apps, or the desktop check in `lab/void/` | `lab/void/compositor_guest.py desktop-check` | The run's `desktop.log` and `results.json` |
 | How the compositor serves clients: [`compositor/`](compositor/README.md) | `lab/void/compositor_guest.py check` | The evidence log it writes |
 | `apps/` | The app's Void build and run steps in its README | Before and after captures; a short recording for motion |
 

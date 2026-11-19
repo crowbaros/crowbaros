@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Root stand-in for the broker's unlock in the disposable Alpha lab.
+"""Root stand-in for the broker's unlock in the desktop on Base.
 
 ADR 0020 has the broker end a locked session once the person has
 authenticated. The broker is archived with the substrate vision, so until a
@@ -14,8 +14,8 @@ confirm chord. The helper checks it against the person's account in
 The compositor still refuses unless the confirm chord opened the unlock entry.
 A wrong password costs a pause before the next one is heard, one at a time.
 
-`crowbar-alpha-unlock lock` asks the compositor to lock, as the suspend hook
-does. `crowbar-alpha-unlock hash PASSWORD` prints a hash for /etc/shadow, as
+`crowbar-unlock lock` asks the compositor to lock, as the suspend hook
+does. `crowbar-unlock hash PASSWORD` prints a hash for /etc/shadow, as
 the image build sets the lab's password.
 
 Not the production broker: one account, one password, no record.
@@ -132,17 +132,17 @@ def main(args):
     if args == ['lock']:
         error = tell_compositor('lock')
         if error:
-            sys.exit(f'crowbar-alpha-unlock: {error}')
+            sys.exit(f'crowbar-unlock: {error}')
     elif len(args) == 2 and args[0] == 'hash':
         salt = libcrypt.crypt_gensalt(b'$6$', 0, None, 0)
         hashed = salt and libcrypt.crypt(args[1].encode(), salt)
         if not hashed:
-            sys.exit('crowbar-alpha-unlock: libcrypt made no hash')
+            sys.exit('crowbar-unlock: libcrypt made no hash')
         print(hashed.decode())
     elif not args:
         serve()
     else:
-        sys.exit('usage: crowbar-alpha-unlock [lock | hash PASSWORD]')
+        sys.exit('usage: crowbar-unlock [lock | hash PASSWORD]')
 
 
 if __name__ == '__main__':

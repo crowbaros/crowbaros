@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Root stand-in for the Warden in the disposable Alpha lab (ADR 0016).
+"""Root stand-in for the Warden in the desktop on Base (ADR 0016).
 
 Not the production broker/Warden: all apps share one UID and one compartment.
 The compositor has no public socket, so the launcher registers that

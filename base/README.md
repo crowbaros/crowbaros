@@ -1,13 +1,13 @@
 # The CrowbarOS base
 
-Plain Void Linux, built without root and booted under UEFI. This is the first
-step of the rebuild: a base that boots, before anything is built on it. It has no apply engine, no generations, and no
-desktop.
+Plain Void Linux with the desktop on it, built without root and booted under
+UEFI. The desktop is Fulcrum, the shell, and Studio Settings, as the lab ran
+them. It has no apply engine and no generations.
 
 ```sh
 base/void_base.py check          # build, boot, check, record a log, power off
-base/void_base.py build          # install the Void root and write the boot disk
-base/void_base.py boot           # boot a fresh copy of the disk (--window to watch it)
+base/void_base.py build          # install the Void roots, build the desktop, write the boot disk
+base/void_base.py boot           # boot a fresh copy of the disk (--window to see the desktop)
 base/void_base.py ssh [CMD]      # a root shell, or one command
 base/void_base.py console        # the serial console (Ctrl-] to leave)
 base/void_base.py stop           # power off
@@ -17,19 +17,23 @@ base/void_base.py stop           # power off
 
 | Part | What it is |
 | --- | --- |
-| Packages | `base-minimal`, `linux`, `btrfs-progs`, `grub-x86_64-efi`, `mtools`, `openssh`, `dhcpcd`, `iproute2`, from Void's `current` repository ([`config.json`](config.json)) |
+| Packages | `base-minimal`, `linux`, `btrfs-progs`, `grub-x86_64-efi`, `mtools`, `openssh`, `dhcpcd`, `iproute2`, and what the desktop needs: `seatd`, Mesa with lavapipe, Wayland, `foot`, Chromium, `python3`, and others, from Void's `current` repository ([`config.json`](config.json)) |
+| Desktop | Fulcrum (`compositor/`), the shell, and Studio Settings, built and tested in a Void build root of their own so they link Void's libraries, in `/usr/local/bin`. Their runit services and helpers are in [`desktop/`](desktop/) |
 | Disk | GPT. An ESP holds a standalone GRUB at `\EFI\BOOT\BOOTX64.EFI`, the path any UEFI firmware boots without a boot entry. The root is Btrfs, labelled `crowbaros-root` |
 | Boot | GRUB finds the root by label and reads `/boot/grub/grub.cfg` there. The kernel and initramfs are the ones xbps built |
-| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, and `sshd`. Root logs in over SSH with a key made for the lab, and has no password |
+| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `seatd`, and the desktop's four: the compositor on virtual terminal 2, the shell, the launcher, and the unlock helper. Root logs in over SSH with a key made for the lab, and has no password. SSH takes keys only |
 
-The VM is QEMU with KVM, OVMF firmware, virtio disk and network, and SSH
-forwarded to `127.0.0.1:22240`.
+The VM is QEMU with KVM, OVMF firmware, virtio disk and network, SSH
+forwarded to `127.0.0.1:22240`, and for the desktop a virtio GPU, keyboard, and
+tablet, with no VGA card.
 
 ## Where things go
 
 - Downloads: `~/.cache/crowbaros/void`, shared with `lab/void/`. The static xbps
   is pinned by SHA-256 and refused if it does not match.
-- The root, the disks, the SSH key, and boot logs: `.lab/base/`, outside git.
+- The root, the build root, the Cargo target, the disks, the SSH key, and boot
+  logs: `.lab/base/`, outside git. The build root and the target are kept, so
+  the next build starts from them.
 - `check` writes `.lab/base/boot-<time>.log`, with every check, what it ran, and
   the serial console from GRUB to power-off.
 
@@ -45,6 +49,7 @@ Because of that mapping, some files under `.lab/base/rootfs` belong to IDs
 other than yours. Remove it with `base/void_base.py build --force`, which
 deletes it inside the namespace, or with
 `unshare --map-root-user --map-users=1:<start>:<count> --map-groups=1:<start>:<count> rm -rf .lab/base/rootfs`.
+The same goes for `.lab/base/buildroot`.
 
 ## What the host needs
 
@@ -55,16 +60,20 @@ sudo pacman -S --needed qemu-desktop edk2-ovmf btrfs-progs dosfstools socat
 ```
 
 `util-linux`, `shadow`, `curl`, and `openssh` are already there. `qemu-base`
-also works, but `boot --window` needs the GTK display that `qemu-desktop` has.
+also works with `qemu-hw-display-virtio-gpu-pci`, but `boot --window` needs the
+GTK display that `qemu-desktop` has. Where QEMU's virtio-gpu device is not
+installed, set `QEMU_MODULE_DIR` to a directory that holds it. The desktop is
+built with Cargo, and its crates are fetched and GPUI is patched on the host:
+install Rust through `rustup`, and `patch`. Only `build` needs them.
 You also need read and write access to `/dev/kvm`, and a range of subordinate
 IDs in `/etc/subuid` and `/etc/subgid` (Arch gives every new user one). `build`
 and `boot` check for all of this first, and name what is missing.
 
-The first `build` on a machine downloads about 850 MB of packages, which took
-under two minutes on a fast connection. It shows the install as it goes, and
-keeps a copy in `.lab/base/rootfs.log`. If a build stops partway, the next
-`build` installs the root again: it uses a root only after an install of the
-configured packages finished.
+The first `build` on a machine downloads the packages for both roots, and
+compiles the desktop. It shows each install as it goes, and keeps a copy in
+`.lab/base/rootfs.log` and `.lab/base/buildroot.log`. If a build stops partway,
+the next `build` installs that root again: it uses a root only after an install
+of the configured packages finished.
 
 ## What it checks
 
@@ -72,9 +81,48 @@ configured packages finished.
 serial console and for SSH, and then checks in the guest: that it is Void, that
 the running kernel is the one in the boot menu, that the root is the Btrfs
 volume and writable, that it booted under UEFI, the hostname, that runit is
-PID 1, that `sshd`, `dhcpcd`, and the serial getty run, that the network has an
-address, that packages kept their groups, and that the kernel logged nothing
+PID 1, that `sshd`, `dhcpcd`, and the serial getty run, that SSH takes keys and
+no passwords, that the network has an address, that packages kept their groups, and that the kernel logged nothing
 critical.
+
+The desktop has its own check, which boots a copy of this image under UEFI and
+drives the desktop as a person would:
+
+```sh
+lab/void/compositor_guest.py desktop-check
+```
+
+See the [lab's README](../lab/void/README.md#the-desktop-check).
+
+## The desktop's accounts
+
+The desktop runs as the lab ran it, under the temporary rules of
+[ADR 0016](../docs/archive/substrate-vision/adr/0016-the-warden-starts-every-compartment.md).
+Later tickets of Milestone 2 replace them.
+
+- `crowbar-compositor` (UID 1000) owns the seat and is the only `_seatd` member.
+- `crowbar-shell` (UID 1001) is a separate runit service. Its two compositor
+  sockets check its kernel UID; neither service launches the other.
+- `crowbar-app` (UID 1002) runs installed desktop entries through a root
+  launcher, `desktop/launcher.py`, with no inherited trusted descriptors or
+  supplementary groups, a fixed environment, and `no_new_privs`. Only the shell
+  UID may ask it to launch.
+- `crowbar-person` (UID 1003) is the person's account. It has no login shell
+  and no home. Its password, `crowbar` in the lab, unlocks the desktop.
+- `crowbar-unlock` is a root service, `desktop/unlock.py`. The compositor
+  starts locked and listens for it at a socket only root may use. After the
+  confirm chord, the lock screen sends the person's password to the helper,
+  which checks it against `/etc/shadow` and only then tells the compositor to
+  unlock. zzz's suspend hook locks the desktop through the same helper.
+
+This is not the production Warden or principal isolation. Apps share one user
+and can reach one another. The launcher registers one compartment for every
+app through the compositor's Warden socket, with `crowbar-probe warden`, and
+starts each app on that compartment's listener. The shell reads saved
+appearance through a bounded, read-only request to the launcher, and Studio
+Settings keeps its preferences in the app user's home. The compositor has no
+animations, so Studio Settings saves the motion preference and says it has no
+effect here.
 
 ## Not yet
 
@@ -83,4 +131,4 @@ critical.
 - Kernel updates in the guest. Void's kernel hook would rewrite
   `/boot/grub/grub.cfg` with `update-grub`, and that path is untested.
 - The initramfs is dracut's generic one, about 200 MB.
-- No users besides root, no locale or time zone, and no installer.
+- No locale or time zone, and no installer. The person's account has no home.

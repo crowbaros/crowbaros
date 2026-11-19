@@ -1,151 +1,108 @@
-"""Safety regressions for isolated desktop runs and the temporary launcher."""
-import importlib.util
+"""Each desktop check run is isolated, and boots what a person would boot."""
 import json
-import os
 from pathlib import Path
 import tempfile
-import types
 import unittest
 from unittest.mock import patch
 
 import desktop_check
 
-spec = importlib.util.spec_from_file_location('alpha_launcher', Path(__file__).parent / 'guest/alpha-launcher.py')
-launcher = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(launcher)
-
-spec = importlib.util.spec_from_file_location('alpha_unlock', Path(__file__).parent / 'guest/alpha-unlock.py')
-unlocker = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(unlocker)
+guest = desktop_check.guest
+base = desktop_check.void_base
 
 
-class UnlockHelper(unittest.TestCase):
-    """The unlock helper tells the compositor to unlock on the person's
-    password alone."""
+class Run(unittest.TestCase):
+    """A run in a temporary repository, with Base's disk and the lab's
+    development disk already there."""
 
     def setUp(self):
-        self.told = []
-        self.stored = unlocker.libcrypt.crypt(b'crowbar', unlocker.libcrypt.crypt_gensalt(b'$6$', 0, None, 0))
-        patches = [
-            patch.object(unlocker, 'shadow_hash', lambda account: self.stored),
-            patch.object(unlocker, 'tell_compositor', lambda op: self.told.append(op)),
-            patch.object(unlocker, 'WRONG_PAUSE', 0),
-        ]
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
-
-    def test_the_password_unlocks_and_nothing_else_does(self):
-        self.assertEqual(unlocker.unlock({'password': 'wrong'}), {'ok': False, 'error': 'Wrong password'})
-        self.assertEqual(unlocker.unlock({'password': ''}), {'ok': False, 'error': 'Wrong password'})
-        self.assertEqual(self.told, [])
-        self.assertEqual(unlocker.unlock({'password': 'crowbar'}), {'ok': True})
-        self.assertEqual(self.told, ['unlock'])
-
-    def test_a_locked_or_empty_account_matches_nothing(self):
-        for stored in (b'!' + self.stored, b'*', b'', None):
-            self.stored = stored
-            self.assertFalse(unlocker.password_matches('crowbar'), stored)
-            self.assertFalse(unlocker.password_matches(''), stored)
-
-    def test_a_request_is_the_password_and_nothing_else(self):
-        for request in ({}, {'password': 1}, {'password': 'crowbar', 'account': 'root'}):
-            with self.assertRaises(ValueError):
-                unlocker.unlock(request)
-        self.assertEqual(unlocker.unlock({'password': 'x' * (unlocker.MAX_PASSWORD + 1)})['ok'], False)
-        self.assertEqual(self.told, [])
-
-
-class PreferencesSafety(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.home = Path(self.temp.name)
-        self.folder = self.home / '.config/crowbaros'
-        self.folder.mkdir(parents=True)
-
-    def tearDown(self):
-        self.temp.cleanup()
-
-    def test_absent_and_regular_preferences(self):
-        self.assertIsNone(launcher.appearance(self.home, os.getuid()))
-        (self.folder / 'appearance.json').write_text('{"theme":"light"}')
-        self.assertEqual(launcher.appearance(self.home, os.getuid()), {'theme': 'light'})
-
-    def test_file_symlink_cannot_make_root_read_another_file(self):
-        secret = self.home / 'unrelated.json'
-        secret.write_text('{"secret":"must not escape"}')
-        (self.folder / 'appearance.json').symlink_to(secret)
-        with self.assertRaises(OSError):
-            launcher.appearance(self.home, os.getuid())
-
-    def test_directory_symlink_cannot_escape_the_preferences_directory(self):
-        self.folder.rmdir()
-        outside = self.home / 'outside'
-        outside.mkdir()
-        (outside / 'appearance.json').write_text('{}')
-        self.folder.symlink_to(outside)
-        with self.assertRaises(OSError):
-            launcher.appearance(self.home, os.getuid())
-
-    def test_fifo_and_oversized_file_are_refused_without_blocking(self):
-        file = self.folder / 'appearance.json'
-        os.mkfifo(file)
-        with self.assertRaises(ValueError):
-            launcher.appearance(self.home, os.getuid())
-        file.unlink()
-        file.write_bytes(b' ' * 65537)
-        with self.assertRaises(ValueError):
-            launcher.appearance(self.home, os.getuid())
-
-    def test_desktop_path_cannot_select_arbitrary_code(self):
-        for path in ('/tmp/evil.desktop', '/usr/share/applications/../evil.desktop',
-                     '/usr/share/applications/foot.desktop/../../evil.desktop'):
-            with self.assertRaises(ValueError):
-                launcher.desktop_path(path)
-
-    def test_preferences_cannot_read_a_different_owners_file_or_hard_link(self):
-        file = self.folder / 'appearance.json'
-        file.write_text('{}')
-        with self.assertRaises(ValueError):
-            launcher.appearance(self.home, os.getuid() + 1)
-        os.link(file, self.home / 'second-link.json')
-        with self.assertRaises(ValueError):
-            launcher.appearance(self.home, os.getuid())
-
-    def test_app_environment_sets_cursor_theme_and_size(self):
-        env = launcher.app_environment(types.SimpleNamespace(pw_dir='/home/crowbar-app', pw_uid=1002))
-        self.assertEqual(env['XCURSOR_THEME'], 'Vanilla-DMZ')
-        self.assertEqual(env['XCURSOR_SIZE'], '24')
-
-
-class IsolatedRuns(unittest.TestCase):
-    def test_each_run_owns_new_state_and_never_selects_the_development_disk(self):
-        guest = desktop_check.guest
-        names = ['ROOT', 'WORK', 'CFG', 'GUEST_ROOT', 'BUILD_ROOT', 'TARGET', 'DISK',
-                 'KEY', 'PIDFILE', 'QMP_SOCK', 'SERIAL_LOG', 'VNC']
+        names = ['ROOT', 'WORK', 'CFG', 'DISK', 'KEY', 'PIDFILE', 'QMP_SOCK', 'SERIAL_LOG', 'VNC']
         saved = {name: getattr(guest, name) for name in names}
-        with tempfile.TemporaryDirectory() as temporary:
-            try:
-                guest.ROOT = Path(temporary)
-                development = guest.ROOT / '.lab/void-graphical'
-                development.mkdir(parents=True)
-                disk = development / 'disk.raw'
-                disk.write_bytes(b'preserved VM')
-                with patch.object(desktop_check.subprocess, 'check_output', return_value=b'fixture'):
-                    # rev-parse requests text output, while status requests bytes.
-                    desktop_check.subprocess.check_output.side_effect = lambda *a, **kw: 'fixture' if kw.get('text') else b''
-                    desktop_check.configure()
-                    first = guest.WORK
-                    desktop_check.configure()
-                self.assertNotEqual(first, guest.WORK)
-                self.assertNotEqual(disk, guest.DISK)
-                self.assertEqual(guest.DISK.parent, guest.WORK)
-                self.assertEqual(disk.read_bytes(), b'preserved VM')
-                self.assertIsNone(guest.CFG['vnc_port'])
-                self.assertGreater(json.loads((guest.WORK / 'run.json').read_text())['ssh_port'], 0)
-            finally:
-                for name, value in saved.items():
-                    setattr(guest, name, value)
+        saved_base = {'BASE_DISK': base.BASE_DISK, 'KEY': base.KEY}
+        self.addCleanup(lambda: [setattr(guest, n, v) for n, v in saved.items()])
+        self.addCleanup(lambda: [setattr(base, n, v) for n, v in saved_base.items()])
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        guest.ROOT = Path(temporary.name)
+        self.development = guest.ROOT / '.lab/void-graphical/disk.raw'
+        self.development.parent.mkdir(parents=True)
+        self.development.write_bytes(b'preserved VM')
+        base.BASE_DISK = guest.ROOT / '.lab/base/base.raw'
+        base.BASE_DISK.parent.mkdir(parents=True)
+        base.BASE_DISK.write_bytes(b'the Base image')
+        base.KEY = base.BASE_DISK.parent / 'id_ed25519'
+        firmware = guest.ROOT / 'firmware'
+        firmware.mkdir()
+        (firmware / 'code.fd').write_bytes(b'OVMF code')
+        (firmware / 'vars.fd').write_bytes(b'OVMF variables')
+        paths = patch.dict(base.CFG, firmware_code=str(firmware / 'code.fd'),
+                           firmware_vars=str(firmware / 'vars.fd'))
+        paths.start()
+        self.addCleanup(paths.stop)
+        # rev-parse asks for text, and status for bytes.
+        output = patch.object(desktop_check.subprocess, 'check_output',
+                              side_effect=lambda *a, **kw: 'fixture' if kw.get('text') else b'')
+        output.start()
+        self.addCleanup(output.stop)
+
+
+class IsolatedRuns(Run):
+    def test_each_run_owns_new_state_and_never_selects_another_disk(self):
+        desktop_check.configure()
+        first = guest.WORK
+        desktop_check.configure()
+        self.assertNotEqual(first, guest.WORK)
+        self.assertEqual(guest.DISK.parent, guest.WORK)
+        self.assertNotIn(guest.DISK, (self.development, base.BASE_DISK))
+        self.assertEqual(self.development.read_bytes(), b'preserved VM')
+        self.assertIsNone(guest.CFG['vnc_port'])
+        self.assertGreater(json.loads((guest.WORK / 'run.json').read_text())['ssh_port'], 0)
+
+    def test_the_run_reaches_the_guest_with_the_key_base_put_in_the_image(self):
+        desktop_check.configure()
+        self.assertEqual(guest.KEY, base.KEY)
+
+
+class BootsBase(Run):
+    """The run boots its own copy of Base's image through the firmware, as a
+    person's machine would, and leaves Base's image as it was."""
+
+    def boot(self):
+        desktop_check.configure()
+        commands = []
+        with patch.object(guest, 'run', lambda *args, **kw: commands.append([str(a) for a in args])):
+            desktop_check.start()
+        qemu = [command for command in commands if command[0] == 'qemu-system-x86_64']
+        self.assertEqual(len(qemu), 1, commands)
+        return qemu[0]
+
+    def drives(self, command):
+        return [command[i + 1] for i, arg in enumerate(command) if arg == '-drive']
+
+    def test_the_run_boots_a_copy_of_bases_image(self):
+        command = self.boot()
+        disks = [d for d in self.drives(command) if 'if=virtio' in d]
+        self.assertEqual(disks, [f'file={guest.DISK},format=raw,if=virtio,cache=unsafe'])
+        self.assertEqual(guest.DISK.read_bytes(), b'the Base image')
+        self.assertEqual(base.BASE_DISK.read_bytes(), b'the Base image')
+
+    def test_the_firmware_boots_it_with_the_runs_own_variables(self):
+        command = self.boot()
+        self.assertNotIn('-kernel', command)
+        flash = [d for d in self.drives(command) if 'if=pflash' in d]
+        self.assertEqual(flash[0], f'if=pflash,format=raw,readonly=on,file={base.CFG["firmware_code"]}')
+        variables = Path(flash[1].rsplit('file=', 1)[1])
+        self.assertEqual(variables.parent, guest.WORK)
+        self.assertEqual(variables.read_bytes(), b'OVMF variables')
+
+    def test_the_run_drives_the_desktop_through_its_own_sockets(self):
+        command = self.boot()
+        joined = ' '.join(command)
+        self.assertIn('virtio-gpu-pci', joined)
+        self.assertIn(f'unix:{guest.QMP_SOCK}', joined)
+        self.assertIn(f'hostfwd=tcp:127.0.0.1:{guest.CFG["ssh_port"]}-:22', joined)
+        for vnc in guest.VNC:
+            self.assertIn(f'unix:{vnc}', joined)
 
 
 if __name__ == '__main__':

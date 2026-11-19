@@ -1,7 +1,7 @@
 # Interface development on Void
 
 Use the [Void development guide](local-vms.md) for current build/run commands
-and the fresh-guest [desktop smoke check](../../lab/void/README.md#full-desktop-smoke-check).
+and the [desktop check](../../lab/void/README.md#the-desktop-check).
 The [Fedora workflow](../archive/fedora-workflow/README.md) is archived.
 
 | Page | Purpose |
