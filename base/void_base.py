@@ -368,9 +368,10 @@ CHECKS = [
     ("runit is PID 1", "cat /proc/1/comm", lambda out: out.strip() == "runit"),
     ("services are up", "sv status /var/service/*",
      lambda out: all(f"run: /var/service/{s}:" in out for s in ("sshd", "dhcpcd", "agetty-ttyS0"))),
-    ("SSH takes keys and no passwords", "sshd -T | grep -E '^(passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication) '",
+    # sshd -T names each setting in lowercase or, in newer releases, as written.
+    ("SSH takes keys and no passwords", "sshd -T | grep -iE '^(passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication) '",
      lambda out: {"passwordauthentication no", "kbdinteractiveauthentication no",
-                  "pubkeyauthentication yes"} <= set(out.splitlines())),
+                  "pubkeyauthentication yes"} <= set(out.lower().splitlines())),
     ("network has an address", "ip -4 -o addr show scope global",
      lambda out: "inet " in out),
     ("packages keep their groups", "stat -c '%G %n' /usr/bin/wall /var/db/dhcpcd",
