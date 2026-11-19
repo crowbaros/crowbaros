@@ -1,6 +1,6 @@
 # Fulcrum serves the shell and the person's apps, and has no compartments
 
-**Status:** proposed on November 18, 2026, by Jim Martin.
+**Status:** accepted on November 18, 2026, by Jim Martin and Jason Alexander. Proposed on November 18 by Jim Martin.
 
 Fulcrum was built to the substrate vision's records: a Warden that registers a listener for each compartment, a broker that ends a lock and records transfers, and a table of what each compartment is offered. [ADR 0030](0030-crowbaros-starts-again-with-an-agent-at-the-persons-side.md) archived those records and let them bind the compositor "until a new record says what the compositor offers the shell and the Agent". This is that record, for the shell and the apps. It is written from the [vision](../VISION.md), which needs three things of the compositor: no app can pass for the shell, the compositor owns the summon gesture, and a yes comes from the person's own hand. What the compositor offers the Agent is Milestone 3's to decide.
 
@@ -27,5 +27,6 @@ Fulcrum was built to the substrate vision's records: a Warden that registers a l
 
 - Any app from Void's repository runs on the desktop as it is, with no launcher stand-in or registration.
 - An app can read what another app copied, and every app can use the GPU. The [lessons](../LESSONS.md) say what to reach for if the Agent's reach makes that a real risk.
+- Without the confirm chord before the password, a fullscreen app could imitate the lock screen while the desktop is unlocked and collect the password. Fulcrum's frame, which every window gets and no client can cover, is the defence. Milestone 3 may revisit this when it decides what the chord does.
 - Fulcrum's plan and README are rewritten against the vision. Its milestones that waited on the broker, asks, transfers between compartments, and the record of each unlock, are dropped, not waiting.
 - The compositor check stops checking what a compartment is offered, and checks instead that an app at the ordinary socket is refused layer shell and the control channel.
