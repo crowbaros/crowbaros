@@ -54,6 +54,7 @@ fn asset(name: &str) -> PathBuf {
 const BAR_HEIGHT: f32 = 24.;
 const DOCK_WIDTH: f32 = 180.;
 const DOCK_HEIGHT: f32 = 48.;
+const DOCK_LAYER_HEIGHT: f32 = 76.;
 
 fn bar_mark_asset(preferences: &Preferences) -> &'static str {
     if preferences.studio {
@@ -62,6 +63,66 @@ fn bar_mark_asset(preferences: &Preferences) -> &'static str {
         "mark-micro"
     } else {
         "mark-dark"
+    }
+}
+
+fn background_asset(preferences: &Preferences) -> Option<&'static str> {
+    if preferences.studio {
+        return None;
+    }
+    Some(match preferences.wallpaper {
+        theme::Wallpaper::SignalFeather => "wallpaper.png",
+        theme::Wallpaper::Nightwatch => "nightwatch.png",
+        theme::Wallpaper::QuietSignal => "quiet-signal.png",
+    })
+}
+
+fn occupied_workspaces(clients: &[session::Client]) -> Vec<i32> {
+    let mut ids: Vec<i32> = clients
+        .iter()
+        .map(|c| c.workspace.id)
+        .filter(|id| *id > 0)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+fn bar_workspaces(active: i32, clients: &[session::Client]) -> Vec<i32> {
+    let mut workspaces = vec![1, 2, 3, 4];
+    for id in std::iter::once(active).chain(clients.iter().map(|c| c.workspace.id)) {
+        if id > 4 && !workspaces.contains(&id) {
+            workspaces.push(id);
+        }
+    }
+    workspaces.sort();
+    workspaces
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DockPinState {
+    Idle,
+    Running { attention: bool },
+    Focused { attention: bool },
+}
+
+fn dock_pin_state(app: Option<&AppEntry>, snapshot: &session::Snapshot) -> DockPinState {
+    let Some(app) = app else {
+        return DockPinState::Idle;
+    };
+    let running = snapshot.clients.iter().any(|c| app.matches_class(&c.class));
+    let focused = app.matches_class(&snapshot.active.class);
+    if !running && !focused {
+        return DockPinState::Idle;
+    }
+    let attention = snapshot
+        .clients
+        .iter()
+        .any(|c| c.attention && app.matches_class(&c.class));
+    if focused {
+        DockPinState::Focused { attention }
+    } else {
+        DockPinState::Running { attention }
     }
 }
 
@@ -127,14 +188,45 @@ fn layer(
         ..Default::default()
     }
 }
-struct Background;
+struct Background {
+    model: Entity<Model>,
+}
 impl Render for Background {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().bg(rgb(0x080d12)).child(
-            img(asset("wallpaper.png"))
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let m = self.model.read(cx);
+        let p = m.palette();
+        let Some(file) = background_asset(&m.preferences) else {
+            return div().size_full().bg(rgb(p.canvas));
+        };
+        match m.preferences.wallpaper {
+            theme::Wallpaper::Nightwatch => {
+                let vp = window.viewport_size();
+                let vp_w: f32 = vp.width.into();
+                let vp_h: f32 = vp.height.into();
+                let artwork = match nightwatch_size(vp_w, vp_h) {
+                    Some((bg_w, bg_h)) => img(asset(file))
+                        .absolute()
+                        .top_0()
+                        .right_0()
+                        .w(px(bg_w))
+                        .h(px(bg_h))
+                        .object_fit(ObjectFit::Fill),
+                    None => img(asset(file))
+                        .size_full()
+                        .object_fit(ObjectFit::Cover),
+                };
+                div()
+                    .relative()
+                    .size_full()
+                    .overflow_hidden()
+                    .bg(rgb(LOCK_GROUND))
+                    .child(artwork)
+            }
+            theme::Wallpaper::SignalFeather | theme::Wallpaper::QuietSignal => div()
                 .size_full()
-                .object_fit(ObjectFit::Cover),
-        )
+                .bg(rgb(LOCK_VOID))
+                .child(img(asset(file)).size_full().object_fit(ObjectFit::Cover)),
+        }
     }
 }
 struct Bar {
@@ -154,8 +246,9 @@ impl Render for Bar {
             "Connecting to the compositor…".into()
         };
         let clock = m.clock.clone();
+        let occupied = occupied_workspaces(&m.snapshot.clients);
         // A workspace with a window that wants attention is marked, and
-        // shown past the first four.
+        // occupied or active workspaces are shown past the first four.
         let wanting: Vec<i32> = m
             .snapshot
             .clients
@@ -163,13 +256,7 @@ impl Render for Bar {
             .filter(|c| c.attention)
             .map(|c| c.workspace.id)
             .collect();
-        let mut workspaces = vec![1, 2, 3, 4];
-        for id in std::iter::once(active).chain(wanting.iter().copied()) {
-            if id > 4 && !workspaces.contains(&id) {
-                workspaces.push(id)
-            }
-        }
-        workspaces.sort();
+        let workspaces = bar_workspaces(active, &m.snapshot.clients);
         div()
             .size_full()
             .flex()
@@ -208,18 +295,18 @@ impl Render for Bar {
                     .child(div().w(px(1.)).h(px(10.)).bg(rgb(p.line)))
                     .child(div().flex().items_center().gap(px(2.)).children(
                         workspaces.into_iter().map(|id| {
+                            let has_windows = occupied.contains(&id);
                             let attention = wanting.contains(&id);
                             let selected = active == id;
                             div()
                                 .id(("workspace", id as usize))
+                                .relative()
                                 .border_b_2()
-                                .border_color(rgb(if attention && !selected {
-                                    p.accent
-                                } else if selected {
-                                    p.accent
+                                .border_color(if attention || selected {
+                                    rgb(p.accent)
                                 } else {
-                                    p.canvas
-                                }))
+                                    rgba(0x00000000)
+                                })
                                 .w(px(18.))
                                 .h(px(17.))
                                 .flex()
@@ -230,11 +317,34 @@ impl Render for Bar {
                                 .text_size(px(11.))
                                 .when(selected, |d| d.font_weight(FontWeight::SEMIBOLD))
                                 .bg(rgb(if selected { p.accent } else { p.canvas }))
-                                .text_color(rgb(if selected { p.on_accent } else { p.muted }))
+                                .text_color(rgb(if selected {
+                                    p.on_accent
+                                } else if has_windows {
+                                    p.text
+                                } else {
+                                    p.muted
+                                }))
                                 .hover(move |s| {
                                     s.bg(rgb(if selected { p.accent } else { p.surface }))
                                 })
                                 .child(id.to_string())
+                                .when(has_windows && !selected && !attention, |d| {
+                                    d.child(
+                                        div()
+                                            .absolute()
+                                            .left_0()
+                                            .right_0()
+                                            .bottom(px(0.))
+                                            .flex()
+                                            .justify_center()
+                                            .child(
+                                                div()
+                                                    .size(px(3.))
+                                                    .rounded_full()
+                                                    .bg(rgb(p.muted)),
+                                            ),
+                                    )
+                                })
                                 .on_click(move |_, _, _| session::workspace(id))
                         }),
                     ))
@@ -301,6 +411,7 @@ impl Render for Bar {
 }
 struct Dock {
     model: Entity<Model>,
+    hovered: Option<&'static str>,
 }
 fn activate_pin(model: &Entity<Model>, id: &str, cx: &mut App) {
     let m = model.read(cx);
@@ -322,25 +433,47 @@ impl Render for Dock {
         let m = self.model.read(cx);
         let p = m.palette();
         let apps = m.apps.clone();
-        let clients = m.snapshot.clients.clone();
-        let mut pins = vec![("apps", None)];
+        let snapshot = m.snapshot.clone();
+        let hovered = self.hovered;
+        let mut pins: Vec<(&'static str, &'static str, Option<&'static str>)> =
+            vec![("apps", "Applications", None)];
         if apps.iter().any(|a| a.id == "foot.desktop") {
-            pins.push(("terminal", Some("foot.desktop")))
+            pins.push(("terminal", "Terminal", Some("foot.desktop")))
         }
         if apps
             .iter()
             .any(|a| a.id == "com.crowbaros.StudioSettings.desktop")
         {
-            pins.push(("settings", Some("com.crowbaros.StudioSettings.desktop")))
+            pins.push((
+                "settings",
+                "Settings",
+                Some("com.crowbaros.StudioSettings.desktop"),
+            ))
         }
         div()
             .size_full()
             .flex()
-            .items_end()
-            .justify_center()
+            .flex_col()
+            .items_center()
+            .justify_end()
+            .gap(px(5.))
             .pb(px(6.))
             .font_family("Manrope")
             .text_color(rgb(p.text))
+            .when_some(hovered, |d, label| {
+                d.child(
+                    div()
+                        .px(px(8.))
+                        .py(px(3.))
+                        .rounded(px(6.))
+                        .bg(rgb(p.canvas))
+                        .border_1()
+                        .border_color(rgb(p.line))
+                        .text_size(px(11.))
+                        .text_color(rgb(p.text))
+                        .child(label),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -352,15 +485,50 @@ impl Render for Dock {
                     .bg(rgb(p.canvas))
                     .border_1()
                     .border_color(rgb(p.line))
-                    .children(pins.into_iter().map(|(ic, id)| {
+                    .children(pins.into_iter().map(|(ic, label, id)| {
                         let app = id.and_then(|id| apps.iter().find(|a| a.id == id));
-                        let running =
-                            app.is_some_and(|a| clients.iter().any(|c| a.matches_class(&c.class)));
-                        let attention = app.is_some_and(|a| {
-                            clients
-                                .iter()
-                                .any(|c| c.attention && a.matches_class(&c.class))
-                        });
+                        let state = dock_pin_state(app, &snapshot);
+                        let is_hovered = hovered == Some(label);
+                        let is_focused = matches!(state, DockPinState::Focused { .. });
+                        let icon_color = match state {
+                            DockPinState::Focused { .. } => p.focus,
+                            DockPinState::Running { .. } => p.text,
+                            DockPinState::Idle => {
+                                if is_hovered {
+                                    p.text
+                                } else {
+                                    p.muted
+                                }
+                            }
+                        };
+                        let indicator = div()
+                            .h(px(4.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .map(|slot| match state {
+                                DockPinState::Focused { attention } => slot.child(
+                                    div()
+                                        .w(px(12.))
+                                        .h(px(2.))
+                                        .rounded(px(1.))
+                                        .bg(rgb(if attention { p.accent } else { p.focus })),
+                                ),
+                                DockPinState::Running { attention: true } => slot.child(
+                                    div()
+                                        .w(px(12.))
+                                        .h(px(2.))
+                                        .rounded(px(1.))
+                                        .bg(rgb(p.accent)),
+                                ),
+                                DockPinState::Running { attention: false } => slot.child(
+                                    div()
+                                        .size(px(4.))
+                                        .rounded_full()
+                                        .bg(rgb(p.muted)),
+                                ),
+                                DockPinState::Idle => slot,
+                            });
                         div()
                             .id(ic)
                             .w(px(36.))
@@ -369,26 +537,26 @@ impl Render for Dock {
                             .flex_col()
                             .items_center()
                             .justify_center()
-                            .gap(px(3.))
+                            .gap(px(2.))
                             .rounded(px(7.))
                             .cursor_pointer()
-                            .when(running, |d| d.bg(rgb(p.surface)))
+                            .when(is_focused, |d| d.bg(rgb(p.surface)))
                             .hover(move |s| s.bg(rgb(p.surface)))
-                            .child(icon(ic, if running { p.focus } else { p.text }, 17.))
-                            .child(
-                                div()
-                                    .w(px(if attention {
-                                        14.
-                                    } else if running {
-                                        8.
-                                    } else {
-                                        8.
-                                    }))
-                                    .h(px(2.))
-                                    .rounded(px(1.))
-                                    .when(attention, |d| d.bg(rgb(p.accent)))
-                                    .when(!attention && running, |d| d.bg(rgb(p.focus))),
-                            )
+                            .child(icon(ic, icon_color, 17.))
+                            .child(indicator)
+                            .on_hover(cx.listener(move |this, entered: &bool, _, cx| {
+                                let next = if *entered {
+                                    Some(label)
+                                } else if this.hovered == Some(label) {
+                                    None
+                                } else {
+                                    this.hovered
+                                };
+                                if this.hovered != next {
+                                    this.hovered = next;
+                                    cx.notify();
+                                }
+                            }))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(id) = id {
                                     activate_pin(&this.model, id, cx)
@@ -452,6 +620,19 @@ impl Launcher {
         }
     }
 }
+fn palette_keycap(label: &'static str, p: Palette) -> Div {
+    div()
+        .px(px(6.))
+        .py(px(1.))
+        .rounded(px(4.))
+        .bg(rgb(p.surface))
+        .border_1()
+        .border_color(rgb(p.line))
+        .text_size(px(10.5))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(p.text))
+        .child(label)
+}
 impl Render for Launcher {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.model.read(cx).palette();
@@ -465,12 +646,13 @@ impl Render for Launcher {
             .id("launcher-backdrop")
             .size_full()
             .flex()
+            .items_start()
             .justify_center()
-            .pt(px(72.))
+            .pt(px(56.))
             .bg(rgba(0x080d1280))
             .font_family("Manrope")
             .text_color(rgb(p.text))
-            .text_size(px(14.))
+            .text_size(px(13.))
             .key_context("Launcher")
             .on_action(cx.listener(|this, _: &Next, _, cx| this.step(1, cx)))
             .on_action(cx.listener(|this, _: &Previous, _, cx| this.step(-1, cx)))
@@ -483,12 +665,11 @@ impl Render for Launcher {
             .child(
                 div()
                     .id("launcher-panel")
-                    .w(px(640.))
-                    .h(px(578.))
+                    .w(px(520.))
                     .mx(px(24.))
                     .flex()
                     .flex_col()
-                    .rounded(px(16.))
+                    .rounded(px(12.))
                     .bg(rgb(p.canvas))
                     .border_1()
                     .border_color(rgb(p.line))
@@ -496,66 +677,51 @@ impl Render for Launcher {
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
                         div()
+                            .h(px(46.))
+                            .px(px(16.))
                             .flex()
                             .items_center()
-                            .justify_between()
-                            .px(px(24.))
-                            .pt(px(20.))
-                            .pb(px(12.))
-                            .child(
-                                div()
-                                    .text_size(px(24.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .child("Applications"),
-                            )
+                            .gap(px(10.))
+                            .border_b_1()
+                            .border_color(rgb(p.line))
+                            .child(icon("search", p.muted, 18.))
+                            .child(div().flex_1().min_w_0().child(self.input.clone()))
                             .child(
                                 div()
                                     .id("close-launcher")
-                                    .size(px(32.))
-                                    .rounded(px(8.))
+                                    .size(px(26.))
+                                    .rounded(px(6.))
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .cursor_pointer()
                                     .hover(move |s| s.bg(rgb(p.surface)))
-                                    .child(icon("close", p.muted, 18.))
+                                    .child(icon("close", p.muted, 14.))
                                     .on_click(cx.listener(|this, _, w, cx| this.close(w, cx))),
                             ),
                     )
                     .child(
                         div()
+                            .py(px(6.))
+                            .px(px(8.))
                             .flex()
-                            .items_center()
-                            .gap(px(12.))
-                            .mx(px(24.))
-                            .mb(px(16.))
-                            .px(px(12.))
-                            .h(px(52.))
-                            .rounded(px(10.))
-                            .bg(rgb(p.surface))
-                            .border_1()
-                            .border_color(rgb(p.focus))
-                            .child(icon("search", p.muted, 22.))
-                            .child(div().flex_1().min_w_0().child(self.input.clone())),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .px(px(12.))
+                            .flex_col()
+                            .gap(px(2.))
                             .when(total == 0, |d| {
                                 d.child(
                                     div()
-                                        .px(px(20.))
-                                        .pt(px(42.))
+                                        .px(px(12.))
+                                        .py(px(20.))
                                         .child(
                                             div()
-                                                .text_size(px(18.))
+                                                .text_size(px(14.))
                                                 .font_weight(FontWeight::SEMIBOLD)
                                                 .child("No applications found"),
                                         )
                                         .child(
                                             div()
-                                                .mt(px(8.))
+                                                .mt(px(4.))
+                                                .text_size(px(12.))
                                                 .text_color(rgb(p.muted))
                                                 .child("Try a shorter name or clear your search."),
                                         ),
@@ -563,57 +729,78 @@ impl Render for Launcher {
                             })
                             .children(results.into_iter().enumerate().skip(offset).take(6).map(
                                 |(index, app)| {
+                                    let is_selected = index == selected;
                                     div()
                                         .id(("result", index))
-                                        .h(px(56.))
-                                        .px(px(12.))
+                                        .relative()
+                                        .h(px(44.))
+                                        .pl(px(10.))
+                                        .pr(px(12.))
                                         .flex()
                                         .items_center()
-                                        .gap(px(14.))
-                                        .rounded(px(8.))
-                                        .bg(rgb(if index == selected {
+                                        .gap(px(10.))
+                                        .rounded(px(7.))
+                                        .overflow_hidden()
+                                        .bg(rgb(if is_selected {
                                             p.surface
                                         } else {
                                             p.canvas
                                         }))
                                         .cursor_pointer()
                                         .hover(move |s| s.bg(rgb(p.surface)))
+                                        .when(is_selected, |d| {
+                                            d.child(
+                                                div()
+                                                    .absolute()
+                                                    .left_0()
+                                                    .top(px(6.))
+                                                    .bottom(px(6.))
+                                                    .w(px(2.))
+                                                    .rounded_full()
+                                                    .bg(rgb(p.focus)),
+                                            )
+                                        })
                                         .child(
                                             div()
-                                                .size(px(36.))
+                                                .size(px(28.))
                                                 .flex()
                                                 .items_center()
                                                 .justify_center()
                                                 .child(icon(
                                                     app.icon(),
-                                                    if index == selected {
-                                                        p.focus
-                                                    } else {
-                                                        p.muted
-                                                    },
-                                                    24.,
+                                                    if is_selected { p.focus } else { p.muted },
+                                                    20.,
                                                 )),
                                         )
                                         .child(
                                             div()
                                                 .flex_1()
                                                 .min_w_0()
+                                                .flex()
+                                                .flex_col()
+                                                .justify_center()
                                                 .child(
                                                     div()
+                                                        .text_size(px(13.))
+                                                        .line_height(px(17.))
                                                         .font_weight(FontWeight::SEMIBOLD)
+                                                        .text_color(rgb(p.text))
                                                         .text_ellipsis()
                                                         .child(app.name),
                                                 )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(12.))
-                                                        .text_color(rgb(p.muted))
-                                                        .text_ellipsis()
-                                                        .child(app.description),
-                                                ),
+                                                .when(!app.description.is_empty(), |d| {
+                                                    d.child(
+                                                        div()
+                                                            .text_size(px(11.5))
+                                                            .line_height(px(15.))
+                                                            .text_color(rgb(p.muted))
+                                                            .text_ellipsis()
+                                                            .child(app.description),
+                                                    )
+                                                }),
                                         )
-                                        .when(index == selected, |d| {
-                                            d.child(icon("arrow", p.focus, 18.))
+                                        .when(is_selected, |d| {
+                                            d.child(icon("arrow", p.focus, 15.))
                                         })
                                         .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                             if this.selected != index {
@@ -631,66 +818,113 @@ impl Render for Launcher {
                     .when(self.error.is_some(), |d| {
                         d.child(
                             div()
-                                .px(px(24.))
-                                .py(px(8.))
-                                .text_size(px(12.))
+                                .px(px(16.))
+                                .py(px(6.))
+                                .text_size(px(11.5))
                                 .text_color(rgb(p.text))
                                 .child(self.error.clone().unwrap_or_default()),
                         )
                     })
                     .child(
                         div()
-                            .h(px(44.))
-                            .px(px(24.))
+                            .h(px(34.))
+                            .px(px(16.))
                             .flex()
                             .items_center()
                             .justify_between()
                             .border_t_1()
                             .border_color(rgb(p.line))
-                            .text_size(px(12.))
+                            .text_size(px(11.))
                             .text_color(rgb(p.muted))
-                            .child(if busy {
-                                "Opening application…".into()
-                            } else {
-                                if total > 6 {
-                                    format!("{}–{} of {total}", offset + 1, (offset + 6).min(total))
-                                } else {
-                                    format!("{total} applications")
-                                }
-                            })
-                            .when(total > 6, |d| {
-                                d.child(
-                                    div()
-                                        .flex()
-                                        .gap(px(10.))
-                                        .child(
-                                            div()
-                                                .id("previous-page")
-                                                .cursor_pointer()
-                                                .px(px(4.))
-                                                .py(px(8.))
-                                                .child("Previous")
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.selected = this.selected.saturating_sub(6);
-                                                    cx.notify();
-                                                })),
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(10.))
+                                    .child(if busy {
+                                        "Opening application…".into()
+                                    } else if total > 6 {
+                                        format!(
+                                            "{}–{} of {total}",
+                                            offset + 1,
+                                            (offset + 6).min(total)
                                         )
-                                        .child(
+                                    } else if total == 1 {
+                                        "1 application".into()
+                                    } else {
+                                        format!("{total} applications")
+                                    })
+                                    .when(total > 6, |d| {
+                                        d.child(
                                             div()
-                                                .id("next-page")
-                                                .cursor_pointer()
-                                                .px(px(4.))
-                                                .py(px(8.))
-                                                .child("Next")
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.selected =
-                                                        (this.selected + 6).min(total - 1);
-                                                    cx.notify();
-                                                })),
-                                        ),
-                                )
-                            })
-                            .child("↑ ↓  choose     Enter  open     Esc  close"),
+                                                .flex()
+                                                .items_center()
+                                                .gap(px(6.))
+                                                .child(
+                                                    div()
+                                                        .id("previous-page")
+                                                        .cursor_pointer()
+                                                        .px(px(4.))
+                                                        .py(px(2.))
+                                                        .rounded(px(4.))
+                                                        .hover(move |s| s.bg(rgb(p.surface)))
+                                                        .child("Prev")
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.selected =
+                                                                this.selected.saturating_sub(6);
+                                                            cx.notify();
+                                                        })),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .id("next-page")
+                                                        .cursor_pointer()
+                                                        .px(px(4.))
+                                                        .py(px(2.))
+                                                        .rounded(px(4.))
+                                                        .hover(move |s| s.bg(rgb(p.surface)))
+                                                        .child("Next")
+                                                        .on_click(cx.listener(
+                                                            move |this, _, _, cx| {
+                                                                this.selected = (this.selected + 6)
+                                                                    .min(total - 1);
+                                                                cx.notify();
+                                                            },
+                                                        )),
+                                                ),
+                                        )
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(10.))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(4.))
+                                            .child(palette_keycap("↑ ↓", p))
+                                            .child("choose"),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(4.))
+                                            .child(palette_keycap("Enter", p))
+                                            .child("open"),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(4.))
+                                            .child(palette_keycap("Esc", p))
+                                            .child("close"),
+                                    ),
+                            ),
                     ),
             )
     }
@@ -1431,7 +1665,11 @@ fn main() -> anyhow::Result<()> {
             snapshot: Default::default(),
             preferences: {
                 let preferences = Preferences::load().unwrap_or_default();
-                log::info!("SHELL appearance theme={:?}", preferences.theme);
+                log::info!(
+                    "SHELL appearance theme={:?} wallpaper={:?}",
+                    preferences.theme,
+                    preferences.wallpaper
+                );
                 preferences
             },
             launcher: None,
@@ -1454,7 +1692,11 @@ fn main() -> anyhow::Result<()> {
                 Some(-1.),
                 KeyboardInteractivity::None,
             ),
-            |_, cx| cx.new(|_| Background),
+            |_, cx| {
+                cx.new(|_| Background {
+                    model: model.clone(),
+                })
+            },
         )
         .expect("Wallpaper layer");
         cx.open_window(
@@ -1480,13 +1722,14 @@ fn main() -> anyhow::Result<()> {
                 Layer::Top,
                 Anchor::BOTTOM,
                 DOCK_WIDTH,
-                DOCK_HEIGHT,
+                DOCK_LAYER_HEIGHT,
                 Some(DOCK_HEIGHT),
                 KeyboardInteractivity::None,
             ),
             |_, cx| {
                 cx.new(|_| Dock {
                     model: model.clone(),
+                    hovered: None,
                 })
             },
         )
@@ -1572,7 +1815,11 @@ fn main() -> anyhow::Result<()> {
                                 }
                                 if let Some(prefs) = prefs {
                                     if prefs != m.preferences {
-                                        log::info!("SHELL appearance theme={:?}", prefs.theme);
+                                        log::info!(
+                                            "SHELL appearance theme={:?} wallpaper={:?}",
+                                            prefs.theme,
+                                            prefs.wallpaper
+                                        );
                                         m.preferences = prefs;
                                         refresh = true
                                     }
@@ -1597,10 +1844,14 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod lock_tests {
     use super::{
-        Assets, LockLayout, MAX_VISIBLE_DOTS, Preferences, bar_mark_asset, nightwatch_size,
-        person_label_from, theme::Theme, visible_password_dots,
+        AppEntry, Assets, DockPinState, LockLayout, MAX_VISIBLE_DOTS, Preferences, asset,
+        background_asset, bar_mark_asset, bar_workspaces, dock_pin_state, nightwatch_size,
+        occupied_workspaces, person_label_from, session,
+        theme::{Theme, Wallpaper},
+        visible_password_dots,
     };
     use gpui::AssetSource;
+    use std::path::PathBuf;
 
     #[test]
     fn lock_layout_matches_brand_proportions_at_1600x900() {
@@ -1710,5 +1961,144 @@ mod lock_tests {
             }),
             "mark-frost"
         );
+    }
+
+    #[test]
+    fn background_asset_follows_wallpaper_and_studio_neutral_canvas() {
+        assert_eq!(
+            background_asset(&Preferences::default()),
+            Some("wallpaper.png")
+        );
+        assert_eq!(
+            background_asset(&Preferences {
+                wallpaper: Wallpaper::Nightwatch,
+                ..Default::default()
+            }),
+            Some("nightwatch.png")
+        );
+        assert_eq!(
+            background_asset(&Preferences {
+                wallpaper: Wallpaper::QuietSignal,
+                ..Default::default()
+            }),
+            Some("quiet-signal.png")
+        );
+        assert_eq!(
+            background_asset(&Preferences {
+                wallpaper: Wallpaper::QuietSignal,
+                studio: true,
+                ..Default::default()
+            }),
+            None
+        );
+        assert!(asset("quiet-signal.png").is_file());
+    }
+
+    #[test]
+    fn occupied_workspaces_deduplicates_and_bar_includes_extra_workspaces() {
+        let client = |addr: &str, ws: i32, attention: bool| session::Client {
+            address: addr.into(),
+            class: "foot".into(),
+            title: "Terminal".into(),
+            workspace: session::Workspace { id: ws },
+            attention,
+        };
+        assert!(occupied_workspaces(&[]).is_empty());
+        assert_eq!(bar_workspaces(1, &[]), vec![1, 2, 3, 4]);
+
+        let clients = vec![
+            client("0x1", 3, false),
+            client("0x2", 1, false),
+            client("0x3", 3, false),
+            client("0x4", 6, false),
+            client("0x5", 0, false),
+        ];
+        assert_eq!(occupied_workspaces(&clients), vec![1, 3, 6]);
+        assert_eq!(bar_workspaces(2, &clients), vec![1, 2, 3, 4, 6]);
+        assert_eq!(bar_workspaces(5, &clients), vec![1, 2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn dock_pin_state_distinguishes_idle_backgrounded_focused_and_attention() {
+        let foot = AppEntry {
+            id: "foot.desktop".into(),
+            name: "Terminal".into(),
+            description: "Wayland terminal".into(),
+            path: PathBuf::from("/usr/share/applications/foot.desktop"),
+            wm_class: "foot".into(),
+            keywords: String::new(),
+        };
+        let settings = AppEntry {
+            id: "com.crowbaros.StudioSettings.desktop".into(),
+            name: "Settings".into(),
+            description: "Appearance".into(),
+            path: PathBuf::from("/usr/share/applications/com.crowbaros.StudioSettings.desktop"),
+            wm_class: "com.crowbaros.StudioSettings".into(),
+            keywords: String::new(),
+        };
+        let foot_client = session::Client {
+            address: "0x1".into(),
+            class: "foot".into(),
+            title: "Terminal".into(),
+            workspace: session::Workspace { id: 1 },
+            attention: false,
+        };
+        let settings_client = session::Client {
+            address: "0x2".into(),
+            class: "com.crowbaros.StudioSettings".into(),
+            title: "Settings".into(),
+            workspace: session::Workspace { id: 1 },
+            attention: false,
+        };
+
+        let empty = session::Snapshot::default();
+        assert_eq!(dock_pin_state(None, &empty), DockPinState::Idle);
+        assert_eq!(dock_pin_state(Some(&foot), &empty), DockPinState::Idle);
+
+        let focused_foot = session::Snapshot {
+            workspace: 1,
+            clients: vec![foot_client.clone(), settings_client.clone()],
+            active: foot_client.clone(),
+            connected: true,
+            locked: false,
+            unlock_entry: false,
+        };
+        assert_eq!(
+            dock_pin_state(Some(&foot), &focused_foot),
+            DockPinState::Focused { attention: false }
+        );
+        assert_eq!(
+            dock_pin_state(Some(&settings), &focused_foot),
+            DockPinState::Running { attention: false }
+        );
+
+        let mut urgent_settings = settings_client.clone();
+        urgent_settings.attention = true;
+        let urgent_snapshot = session::Snapshot {
+            workspace: 1,
+            clients: vec![foot_client.clone(), urgent_settings],
+            active: foot_client,
+            connected: true,
+            locked: false,
+            unlock_entry: false,
+        };
+        assert_eq!(
+            dock_pin_state(Some(&settings), &urgent_snapshot),
+            DockPinState::Running { attention: true }
+        );
+
+        let no_active = session::Snapshot {
+            workspace: 2,
+            clients: vec![settings_client],
+            active: session::Client::default(),
+            connected: true,
+            locked: false,
+            unlock_entry: false,
+        };
+        assert_eq!(
+            dock_pin_state(Some(&settings), &no_active),
+            DockPinState::Running { attention: false }
+        );
+        assert_eq!(dock_pin_state(Some(&foot), &no_active), DockPinState::Idle);
     }
 }

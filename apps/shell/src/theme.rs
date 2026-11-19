@@ -8,12 +8,22 @@ pub enum Theme {
     Light,
     WarmPaper,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Wallpaper {
+    #[default]
+    SignalFeather,
+    Nightwatch,
+    QuietSignal,
+}
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Preferences {
     pub schema_version: u32,
     pub theme: Theme,
     pub studio: bool,
     pub reduced_motion: bool,
+    #[serde(default)]
+    pub wallpaper: Wallpaper,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -22,6 +32,7 @@ impl Default for Preferences {
             theme: Theme::Dark,
             studio: false,
             reduced_motion: false,
+            wallpaper: Wallpaper::default(),
         }
     }
 }
@@ -109,5 +120,53 @@ impl Palette {
 impl Default for Palette {
     fn default() -> Self {
         Self::for_preferences(&Preferences::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wallpaper_deserializes_kebab_case_variants() {
+        assert_eq!(
+            serde_json::from_str::<Wallpaper>("\"signal-feather\"").unwrap(),
+            Wallpaper::SignalFeather
+        );
+        assert_eq!(
+            serde_json::from_str::<Wallpaper>("\"nightwatch\"").unwrap(),
+            Wallpaper::Nightwatch
+        );
+        assert_eq!(
+            serde_json::from_str::<Wallpaper>("\"quiet-signal\"").unwrap(),
+            Wallpaper::QuietSignal
+        );
+        assert_eq!(Wallpaper::default(), Wallpaper::SignalFeather);
+    }
+
+    #[test]
+    fn preferences_without_wallpaper_field_loads_with_default() {
+        let legacy = r#"{"schema_version":1,"theme":"light","studio":false,"reduced_motion":true}"#;
+        let prefs: Preferences = serde_json::from_str(legacy).unwrap();
+        assert_eq!(
+            prefs,
+            Preferences {
+                schema_version: 1,
+                theme: Theme::Light,
+                studio: false,
+                reduced_motion: true,
+                wallpaper: Wallpaper::SignalFeather,
+            }
+        );
+    }
+
+    #[test]
+    fn preferences_with_wallpaper_field_loads_selected_wallpaper() {
+        let json = r#"{"schema_version":1,"theme":"warm-paper","studio":true,"reduced_motion":false,"wallpaper":"quiet-signal"}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        assert_eq!(prefs.theme, Theme::WarmPaper);
+        assert!(prefs.studio);
+        assert_eq!(prefs.wallpaper, Wallpaper::QuietSignal);
+        assert_eq!(Palette::for_preferences(&prefs).canvas, 0x111111);
     }
 }
