@@ -17,7 +17,7 @@ cargo test --release --locked
 target/release/crowbaros-studio-settings --version
 ```
 
-Run the [full desktop smoke command](../../lab/void/README.md#full-desktop-smoke-check)
+Run the [full desktop smoke command](../../lab/void/README.md#the-desktop-check)
 and launch Settings from its shell. The Alpha launcher supplies
 `CROWBAR_SESSION=alpha-no-animations`, selecting persistence without Hyprland.
 For a same-user rendering experiment, run it in a development Wayland session

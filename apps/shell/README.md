@@ -20,7 +20,7 @@ The sources are not rustfmt-clean, and CI runs `cargo test` only. Do not run
 `cargo fmt` here: it reformats files a change does not touch.
 
 GPUI 0.2.2 uses the existing verified [layer-shell backport](patches/README.md).
-Use the [full desktop smoke command](../../lab/void/README.md#full-desktop-smoke-check)
+Use the [full desktop smoke command](../../lab/void/README.md#the-desktop-check)
 to build and run the separate runit services in a fresh guest. The Alpha shell
 service connects to the compositor's UID-checked private Wayland and control
 sockets. The guide also describes a nested, same-user rendering experiment;

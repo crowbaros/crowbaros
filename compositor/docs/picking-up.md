@@ -35,7 +35,7 @@ Milestone 8's exit check restarts the compositor during a session. The session m
 - **Fulcrum's own checks:** the commands under the README's [Build and test](../README.md#build-and-test). CI runs the same. The GL tests draw with llvmpipe in CI. Run them locally with `LIBGL_ALWAYS_SOFTWARE=1` as well as on your GPU.
 - **CrowbarOS's guest checks,** from the repository's root, one at a time, since they share the guest's ports and work directory:
   - `lab/void/compositor_guest.py check` builds `compositor/`, runs its tests in the Void guest, and checks what the compositor serves. It takes about 3 minutes.
-  - `lab/void/compositor_guest.py desktop-check --build-cache .lab/void-graphical` runs the whole Alpha desktop in a fresh guest. It takes 4 to 8 minutes, and rebuilds GPUI the first time.
+  - `lab/void/compositor_guest.py desktop-check` builds Base's image and runs the whole Alpha desktop on a copy of it, booted under UEFI. It takes 4 to 8 minutes, and rebuilds GPUI the first time.
   - Evidence (logs, screenshots, `results.json`) lands under `.lab/`. Attach the log to the pull request.
 - **The Alpha desktop's lock:** it starts locked. Press Ctrl+Alt+Enter, then type the lab account's password, `crowbar` (the account is `crowbar-person`), and press Enter.
 

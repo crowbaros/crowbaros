@@ -84,12 +84,16 @@ NEEDS = [
     ("unshare", "util-linux"), ("newuidmap", "shadow"), ("curl", "curl"),
     ("mkfs.btrfs", "btrfs-progs"), ("mkfs.vfat", "dosfstools"), ("sfdisk", "util-linux"),
     ("qemu-system-x86_64", "qemu-base or qemu-desktop"), ("ssh", "openssh"),
-    ("ssh-keygen", "openssh"), ("cargo", "rustup or rust"),
+    ("ssh-keygen", "openssh"),
 ]
+# What building the desktop needs besides: Cargo fetches its crates on the
+# host, and GPUI's preparation patches its source there.
+BUILD_NEEDS = [("cargo", "rustup or rust"), ("patch", "patch")]
 
 
-def preflight(vm=False):
-    missing = [f"{tool} (package {pkg})" for tool, pkg in NEEDS if not shutil.which(tool)]
+def preflight(vm=False, build=False):
+    needs = NEEDS + (BUILD_NEEDS if build else [])
+    missing = [f"{tool} (package {pkg})" for tool, pkg in needs if not shutil.which(tool)]
     if vm:
         missing += [f"{path} (package edk2-ovmf)"
                     for path in (CFG["firmware_code"], CFG["firmware_vars"])
@@ -149,12 +153,13 @@ def fetch():
     return target
 
 
-def install(target, packages, what, force):
+def install(target, packages, what, force, missing=lambda: None):
     """Install a Void root of these packages at `target`.
 
     A root counts as installed only once an install of these packages from
-    this repository finished. A root left by a failed or interrupted install,
-    or one built from other packages, is installed again."""
+    this repository finished, and `missing` names nothing the root lacks. A
+    root left by a failed or interrupted install, or one built from other
+    packages, is installed again."""
     wanted = json.dumps({"repository": CFG["void_repository"], "packages": packages})
     done = target.with_name(target.name + ".done")
     if not force and target.exists() and done.exists() and done.read_text() == wanted:
@@ -174,15 +179,15 @@ def install(target, packages, what, force):
           f"time, this downloads them into {CACHE / 'packages'}.", flush=True)
     if run_shown(*userns(), "sh", HERE / "host/rootfs.sh", log=log, env=env) != 0:
         raise SystemExit(f"Installing the {what} failed; the output is in {log}")
+    if lack := missing():
+        raise SystemExit(f"The {what} has {lack} after the install; see {log}")
     done.write_text(wanted)
     print(f"Installed the {what} at {target} (log: {log})")
 
 
 def rootfs(force):
-    install(ROOTFS, CFG["packages"], "Void root", force)
-    if not any((ROOTFS / "boot").glob("vmlinuz-*")):
-        raise SystemExit(f"The Void root has no kernel in /boot after the install; see "
-                         f"{WORK / 'rootfs.log'}")
+    install(ROOTFS, CFG["packages"], "Void root", force,
+            missing=lambda: None if any((ROOTFS / "boot").glob("vmlinuz-*")) else "no kernel in /boot")
 
 
 def binaries():
@@ -213,7 +218,7 @@ def compile_desktop(force):
 
 
 def build(force=False):
-    preflight()
+    preflight(build=True)
     rootfs(force)
     compile_desktop(force)
     if not KEY.exists():

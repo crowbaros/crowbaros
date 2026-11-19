@@ -9,8 +9,8 @@ scripts, RPM recipes, and session hooks are no longer active entry points.
 | Environment | Current capability | State directory |
 | --- | --- | --- |
 | [Graphical lab](../../lab/void/README.md) | The compositor on a TTY, checked with a stand-in for the Warden; software rendering | `.lab/void-graphical/` |
-| Isolated desktop smoke | Fresh guest per run; launch/focus/workspaces, Save/Undo, restart/reboot, identity checks | `.lab/void-desktop-checks/<run>/` |
-| Existing desktop preview | A previously prepared VM may already be running | Preserve its disk and recorded configuration |
+| [Base](../../base/README.md) | The desktop on Base's image; `base/void_base.py boot --window` shows it | `.lab/base/` |
+| Desktop check | A copy of Base's image per run, booted under UEFI; launch/focus/workspaces, Save/Undo, restart/reboot, identity checks | `.lab/void-desktop-checks/<run>/` |
 
 The [desktop acceptance record](void-desktop-smoke-2026-11-15.md) covers the
 integrated Alpha services and saved appearance. They follow ADR 0016's temporary
@@ -46,7 +46,7 @@ builds or replaces its configured image:
 rtk python3 lab/void/compositor_guest.py check
 ```
 
-Do not use `image`, `check`, or `desktop` to reopen a preserved development VM:
+Do not use `image` or `check` to reopen a preserved development VM:
 they build or replace lab state. Keep its `.lab/` files and its viewer/connection
 settings. The lab supports only one run at a time at its configured paths.
 

@@ -63,8 +63,8 @@ sudo pacman -S --needed qemu-desktop edk2-ovmf btrfs-progs dosfstools socat
 also works with `qemu-hw-display-virtio-gpu-pci`, but `boot --window` needs the
 GTK display that `qemu-desktop` has. Where QEMU's virtio-gpu device is not
 installed, set `QEMU_MODULE_DIR` to a directory that holds it. The desktop is
-built with Cargo, and its crates are fetched on the host: install Rust through
-`rustup`.
+built with Cargo, and its crates are fetched and GPUI is patched on the host:
+install Rust through `rustup`, and `patch`. Only `build` needs them.
 You also need read and write access to `/dev/kvm`, and a range of subordinate
 IDs in `/etc/subuid` and `/etc/subgid` (Arch gives every new user one). `build`
 and `boot` check for all of this first, and name what is missing.
