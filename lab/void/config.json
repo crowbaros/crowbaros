@@ -29,6 +29,7 @@
       "vulkan-loader",
       "mesa-vulkan-lavapipe",
       "foot",
+      "xcursor-vanilla-dmz",
       "dbus",
       "glib",
       "python3"

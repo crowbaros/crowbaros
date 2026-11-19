@@ -17,6 +17,7 @@ chown crowbar-compositor:crowbar-compositor /home/crowbar-compositor
 test -S /run/seatd.sock || exit 1
 exec openvt -c 2 -s -f -w -- chpst -u crowbar-compositor:crowbar-compositor:_seatd env -i \
   HOME=/home/crowbar-compositor PATH=/usr/local/bin:/usr/bin:/bin FULCRUM_LOG=info \
+  XCURSOR_THEME=Vanilla-DMZ XCURSOR_SIZE=24 \
   sh -c 'exec crowbar-compositor --backend tty \
   --shell-socket /run/crowbar-trusted/compositor/wayland --shell-uid 1001 \
   --shell-control-socket /run/crowbar-trusted/compositor/control \

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import types
 import unittest
 from unittest.mock import patch
 
@@ -110,6 +111,11 @@ class PreferencesSafety(unittest.TestCase):
         os.link(file, self.home / 'second-link.json')
         with self.assertRaises(ValueError):
             launcher.appearance(self.home, os.getuid())
+
+    def test_app_environment_sets_cursor_theme_and_size(self):
+        env = launcher.app_environment(types.SimpleNamespace(pw_dir='/home/crowbar-app', pw_uid=1002))
+        self.assertEqual(env['XCURSOR_THEME'], 'Vanilla-DMZ')
+        self.assertEqual(env['XCURSOR_SIZE'], '24')
 
 
 class IsolatedRuns(unittest.TestCase):

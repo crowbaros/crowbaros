@@ -4,11 +4,10 @@
 mod common;
 
 use common::Compositor;
-use crowbar_compositor::{FRAME_UNFOCUSED, image::Image};
+use crowbar_compositor::{FRAME_UNFOCUSED, backend::POINTER_COLOUR, image::Image};
 use crowbar_probe::{Client, Toplevel};
 use fulcrum_wire::{ObjectId, protocol::wayland::wl_pointer};
 
-const WHITE: u32 = 0xffff_ffff;
 const RED: u32 = 0xffc0_2020;
 const GREEN: u32 = 0xff20_c020;
 
@@ -54,8 +53,8 @@ fn the_compositor_draws_its_own_pointer_where_no_client_set_one() {
 
     let screen = screen(&compositor);
 
-    assert_eq!(screen.pixel(305, 305), Some(WHITE));
-    assert_ne!(screen.pixel(320, 320), Some(WHITE));
+    assert_eq!(screen.pixel(305, 305), Some(POINTER_COLOUR));
+    assert_ne!(screen.pixel(320, 320), Some(POINTER_COLOUR));
 }
 
 #[test]
@@ -82,7 +81,7 @@ fn a_client_without_the_pointer_cannot_set_its_image() {
 
     set_cursor(&mut client, pointer, RED);
 
-    assert_eq!(screen(&compositor).pixel(605, 605), Some(WHITE));
+    assert_eq!(screen(&compositor).pixel(605, 605), Some(POINTER_COLOUR));
 }
 
 #[test]
@@ -112,7 +111,7 @@ fn a_null_surface_hides_the_pointer_until_it_leaves() {
 
     assert_eq!(
         screen(&compositor).pixel(605, 605),
-        Some(WHITE),
+        Some(POINTER_COLOUR),
         "the compositor's image did not come back"
     );
 }

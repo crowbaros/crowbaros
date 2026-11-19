@@ -20,11 +20,10 @@ use crate::{
 /// The width of the frame the compositor draws around every window, in
 /// pixels (ADR 0020).
 pub const FRAME_WIDTH: i32 = 2;
-/// The frame of the window that holds the keyboard. Its look is issue 22's
-/// to decide; until then, a plain colour.
-pub const FRAME_FOCUSED: u32 = 0xff4d_90fe;
-/// The frame of every other window.
-pub const FRAME_UNFOCUSED: u32 = 0xff3a_3a3a;
+/// The frame of the window that holds the keyboard: CrowbarOS Nullkeel Ice (`#49D7E8`).
+pub const FRAME_FOCUSED: u32 = 0xff49_d7e8;
+/// The frame of every other window: CrowbarOS Nullkeel Dark Line (`#364957`).
+pub const FRAME_UNFOCUSED: u32 = 0xff36_4957;
 
 /// One thing an output shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -313,4 +312,19 @@ fn frame_inside(rect: Rect) -> [Rect; 4] {
             rect.height - 2 * width,
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FRAME_FOCUSED, FRAME_UNFOCUSED};
+    use crate::{backend::POINTER_COLOUR, lock::LOCKED_BACKGROUND, windows::BACKGROUND};
+
+    #[test]
+    fn nullkeel_palette_colours() {
+        assert_eq!(FRAME_FOCUSED, 0xff49_d7e8);
+        assert_eq!(FRAME_UNFOCUSED, 0xff36_4957);
+        assert_eq!(LOCKED_BACKGROUND, 0xff03_0b13);
+        assert_eq!(BACKGROUND, 0xff08_0d12);
+        assert_eq!(POINTER_COLOUR, 0xffd8_e5ec);
+    }
 }

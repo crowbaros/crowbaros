@@ -10,11 +10,11 @@ use std::{
 };
 
 use common::{Compositor, another_uid, own_uid};
+use crowbar_compositor::lock::LOCKED_BACKGROUND;
 use crowbar_probe::{Client, KeyEvent, LayerRequest};
 
 const RED: u32 = 0xffc0_2020;
 const BLUE: u32 = 0xff20_20c0;
-const BLACK: u32 = 0xff00_0000;
 const KEY_A: u32 = 30;
 const KEY_L: u32 = 38;
 const KEY_2: u32 = 3;
@@ -114,7 +114,11 @@ fn locked_the_lock_screen_is_all_that_shows_and_all_that_hears() {
     control.send(r#"{"op":"lock"}"#);
     assert_eq!(control.line(), r#"{"event":"locked"}"#);
     assert_eq!(control.line(), r#"{"reply":"ok"}"#);
-    assert_eq!(compositor.screen(0).pixel(60, 60), Some(BLACK), "the window shows");
+    assert_eq!(
+        compositor.screen(0).pixel(60, 60),
+        Some(LOCKED_BACKGROUND),
+        "the window shows"
+    );
 
     let mut shell = compositor.shell();
     lock_screen(&mut shell);
@@ -176,7 +180,7 @@ fn super_l_locks_and_nothing_else_draws_on_another_display() {
     assert_eq!(compositor.screen(0).pixel(60, 60), Some(BLUE));
     let other = compositor.screen(1);
     assert!(
-        other.pixels.iter().all(|pixel| *pixel == BLACK),
+        other.pixels.iter().all(|pixel| *pixel == LOCKED_BACKGROUND),
         "the other display is not blank"
     );
 
@@ -328,7 +332,11 @@ fn a_session_started_locked_shows_and_gives_nothing_before_the_lock_screen() {
     client.roundtrip().unwrap();
 
     assert!(pressed(&mut client).is_empty(), "a window heard a key before unlock");
-    assert_eq!(compositor.screen(0).pixel(60, 60), Some(BLACK), "the window shows");
+    assert_eq!(
+        compositor.screen(0).pixel(60, 60),
+        Some(LOCKED_BACKGROUND),
+        "the window shows"
+    );
     let mut shell = compositor.shell();
     lock_screen(&mut shell);
     assert_eq!(compositor.screen(0).pixel(60, 60), Some(BLUE));
