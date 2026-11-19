@@ -4,11 +4,12 @@ mod settings;
 mod theme;
 
 use gpui::{
-    App, Application, Bounds, Context, Div, FocusHandle, FontWeight, KeyBinding, Stateful,
-    TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, size,
+    App, Application, Bounds, Context, Div, FocusHandle, FontWeight, KeyBinding, ObjectFit,
+    Stateful, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, img, prelude::*,
+    px, rgb, size,
 };
-use settings::{Preferences, Store, Theme};
-use std::borrow::Cow;
+use settings::{Preferences, Store, Theme, Wallpaper};
+use std::{borrow::Cow, path::PathBuf};
 use theme::Palette;
 
 actions!(
@@ -16,9 +17,50 @@ actions!(
     [Next, Previous, Save, Undo, Reload, Quit, CancelClose]
 );
 
+const CONTROL_APPEARANCE: usize = 0;
+const CONTROL_ABOUT: usize = 1;
+const CONTROL_THEME_FIRST: usize = 2;
+const CONTROL_WALLPAPER_FIRST: usize = 5;
+const CONTROL_STUDIO: usize = 8;
+const CONTROL_REDUCED_MOTION: usize = 9;
+const CONTROL_UNDO: usize = 10;
+const CONTROL_SAVE: usize = 11;
+const CONTROL_RELOAD: usize = 12;
+const CONTROL_CLOSE: usize = 13;
+const CONTROL_KEEP_EDITING: usize = 14;
+const CONTROL_DISCARD_CLOSE: usize = 15;
+const CONTROL_COUNT: usize = 16;
+
+fn wallpaper_path(wallpaper: Wallpaper) -> Option<PathBuf> {
+    let installed = PathBuf::from("/usr/share/crowbaros-shell").join(wallpaper.asset_name());
+    if installed.is_file() {
+        return Some(installed);
+    }
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let shell_asset = manifest_dir
+        .join("../shell/assets")
+        .join(wallpaper.asset_name());
+    if shell_asset.is_file() {
+        return Some(shell_asset);
+    }
+    let brand_kit_name = match wallpaper {
+        Wallpaper::SignalFeather => "signal-feather.png",
+        Wallpaper::Nightwatch => "nightwatch.png",
+        Wallpaper::QuietSignal => "quiet-signal-4k.png",
+    };
+    let brand_kit = manifest_dir
+        .join("../../docs/branding/crowbaros-brand-kit/wallpapers")
+        .join(brand_kit_name);
+    if brand_kit.is_file() {
+        return Some(brand_kit);
+    }
+    None
+}
+
 struct Settings {
     root: FocusHandle,
     controls: Vec<FocusHandle>,
+    wallpaper_paths: [Option<PathBuf>; 3],
     store: Store,
     saved: Option<Preferences>,
     draft: Preferences,
@@ -33,23 +75,25 @@ struct Settings {
 impl Settings {
     fn new(store: Store, window: &mut Window, cx: &mut Context<Self>) -> Self {
         window.set_window_title("Studio Settings");
-        let controls: Vec<_> = (0..13)
+        let controls: Vec<_> = (0..CONTROL_COUNT as isize)
             .map(|i| cx.focus_handle().tab_index(i).tab_stop(true))
             .collect();
-        window.focus(&controls[2]);
+        window.focus(&controls[CONTROL_THEME_FIRST]);
         let loaded = store.load();
         let error = loaded.as_ref().err().cloned();
         let saved = loaded.unwrap_or_default();
         let draft = saved.clone().unwrap_or_default();
         log::info!(
-            "STUDIO event=opened theme={:?} studio={} reduced_motion={}",
+            "STUDIO event=opened theme={:?} studio={} reduced_motion={} wallpaper={:?}",
             draft.theme,
             draft.studio,
-            draft.reduced_motion
+            draft.reduced_motion,
+            draft.wallpaper
         );
         Self {
             root: cx.focus_handle(),
             controls,
+            wallpaper_paths: Wallpaper::ALL.map(wallpaper_path),
             store,
             saved,
             draft,
@@ -71,10 +115,11 @@ impl Settings {
             self.error = None;
         }
         log::info!(
-            "STUDIO event=preview theme={:?} studio={} reduced_motion={}",
+            "STUDIO event=preview theme={:?} studio={} reduced_motion={} wallpaper={:?}",
             self.draft.theme,
             self.draft.studio,
-            self.draft.reduced_motion
+            self.draft.reduced_motion,
+            self.draft.wallpaper
         );
         cx.notify();
     }
@@ -101,10 +146,11 @@ impl Settings {
                 match result {
                     Ok(()) => {
                         log::info!(
-                            "STUDIO event=saved theme={:?} studio={} reduced_motion={}",
+                            "STUDIO event=saved theme={:?} studio={} reduced_motion={} wallpaper={:?}",
                             draft.theme,
                             draft.studio,
-                            draft.reduced_motion
+                            draft.reduced_motion,
+                            draft.wallpaper
                         );
                         this.saved = Some(draft);
                         this.status = "Saved.".into();
@@ -160,7 +206,7 @@ impl Settings {
         }
         if self.dirty() && self.draft != self.saved.clone().unwrap_or_default() {
             self.confirming_close = true;
-            window.focus(&self.controls[11]);
+            window.focus(&self.controls[CONTROL_KEEP_EDITING]);
             cx.notify();
         } else {
             cx.quit();
@@ -217,10 +263,11 @@ impl Settings {
             studio: self.draft.studio,
             ..Preferences::default()
         });
-        let focus = self.controls[index + 2].is_focused(window);
+        let control = CONTROL_THEME_FIRST + index;
+        let focus = self.controls[control].is_focused(window);
         div()
             .id(("theme", index))
-            .track_focus(&self.controls[index + 2])
+            .track_focus(&self.controls[control])
             .flex_1()
             .min_w(px(0.))
             .flex()
@@ -278,6 +325,7 @@ impl Settings {
                     .flex()
                     .justify_between()
                     .items_center()
+                    .gap_1()
                     .text_size(px(13.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(theme.label())
@@ -292,8 +340,95 @@ impl Settings {
                 if this.busy {
                     return;
                 }
-                window.focus(&this.controls[index + 2]);
+                window.focus(&this.controls[control]);
                 this.draft.theme = theme;
+                this.changed(cx);
+            }))
+    }
+    fn wallpaper_choice(
+        &self,
+        index: usize,
+        wallpaper: Wallpaper,
+        p: Palette,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let selected = self.draft.wallpaper == wallpaper;
+        let control = CONTROL_WALLPAPER_FIRST + index;
+        let focus = self.controls[control].is_focused(window);
+        let preview = if self.draft.studio {
+            div()
+                .h(px(72.))
+                .rounded(px(6.))
+                .bg(rgb(p.canvas))
+                .p_2()
+                .flex()
+                .flex_col()
+                .justify_between()
+                .items_center()
+                .child(div().w_full().h(px(5.)).rounded(px(2.)).bg(rgb(p.surface)))
+                .child(
+                    div()
+                        .text_size(px(10.))
+                        .text_color(rgb(p.muted))
+                        .child("Neutral canvas"),
+                )
+                .child(div().w(px(28.)).h(px(4.)).rounded_full().bg(rgb(p.line)))
+        } else {
+            let mut box_div = div()
+                .h(px(72.))
+                .rounded(px(6.))
+                .overflow_hidden()
+                .bg(rgb(0x080d12));
+            if let Some(path) = self.wallpaper_paths[index].clone() {
+                box_div = box_div.child(
+                    img(path)
+                        .size_full()
+                        .rounded(px(6.))
+                        .object_fit(ObjectFit::Cover),
+                );
+            }
+            box_div
+        };
+        div()
+            .id(("wallpaper", index))
+            .track_focus(&self.controls[control])
+            .flex_1()
+            .min_w(px(0.))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_3()
+            .rounded(px(12.))
+            .border_2()
+            .border_color(rgb(if focus || selected { p.focus } else { p.line }))
+            .when(focus, |d| d.border_dashed())
+            .bg(rgb(p.surface))
+            .cursor_pointer()
+            .hover(|s| s.opacity(0.86))
+            .child(preview)
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_center()
+                    .gap_1()
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(wallpaper.label())
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .text_color(rgb(p.muted))
+                            .child(if selected { "Selected" } else { "" }),
+                    ),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if this.busy {
+                    return;
+                }
+                window.focus(&this.controls[control]);
+                this.draft.wallpaper = wallpaper;
                 this.changed(cx);
             }))
     }
@@ -371,7 +506,7 @@ impl Settings {
                     return;
                 }
                 window.focus(&this.controls[index]);
-                if index == 5 {
+                if index == CONTROL_STUDIO {
                     this.draft.studio = !this.draft.studio;
                 } else {
                     this.draft.reduced_motion = !this.draft.reduced_motion;
@@ -390,12 +525,20 @@ impl Settings {
                 .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(if self.draft.studio{
                     "Studio Mode is showing neutral grays. Your selected mode is kept for later."
                 }else{"Previewed here immediately. Save to remember your choice."})))
+            .child(div().flex().flex_col().gap_3()
+                .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child("Wallpaper"))
+                .child(div().flex().gap_3().children(Wallpaper::ALL.into_iter().enumerate().map(|(i,w)|self.wallpaper_choice(i,w,p,window,cx))))
+                .when(self.draft.studio, |d| {
+                    d.child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(
+                        "Studio Mode uses a neutral canvas. Your selected wallpaper is kept for later.",
+                    ))
+                }))
             .child(div().flex().flex_col().border_t_1().border_b_1().border_color(rgb(p.line))
-                .child(self.toggle(5,"Studio Mode","Use neutral grays for visual work. This does not calibrate your display.",self.draft.studio,p,window,cx))
+                .child(self.toggle(CONTROL_STUDIO,"Studio Mode","Use neutral grays for visual work. This does not calibrate your display.",self.draft.studio,p,window,cx))
                 .child(div().h(px(1.)).bg(rgb(p.line)))
-                .child(self.toggle(6,if session::is_alpha() { "Reduced motion preference" } else { "Reduced motion" },if session::is_alpha() { "Saved for compatible desktops. This desktop has no animations." } else { "Turn off desktop window and workspace animations when you save." },self.draft.reduced_motion,p,window,cx)))
+                .child(self.toggle(CONTROL_REDUCED_MOTION,if session::is_alpha() { "Reduced motion preference" } else { "Reduced motion" },if session::is_alpha() { "Saved for compatible desktops. This desktop has no animations." } else { "Turn off desktop window and workspace animations when you save." },self.draft.reduced_motion,p,window,cx)))
             .child(div().text_size(px(12.)).text_color(rgb(p.muted))
-                .child(if session::is_alpha() { "Saved appearance also styles the shell. Other applications keep their own themes." } else { "Appearance currently styles Studio Settings. Reduced motion applies to your Hyprland desktop and is restored at login." }))
+                .child(if session::is_alpha() { "Saved appearance and wallpaper also apply to the shell. Other applications keep their own themes." } else { "Appearance currently styles Studio Settings. Reduced motion applies to your Hyprland desktop and is restored at login." }))
     }
     fn about(&self, p: Palette) -> Div {
         div().flex().flex_col().gap_5()
@@ -403,7 +546,7 @@ impl Settings {
             .child(div().text_size(px(14.)).child("Your workspace, with room to make it your own."))
             .child(div().flex().flex_col().gap_3().text_size(px(13.)).text_color(rgb(p.muted))
                 .child("Preview your appearance, then save it for your next session. Available motion controls depend on your desktop." )
-                .child("Themes currently apply to this app. Desktop-wide styling, display controls, wallpaper and other settings will follow.")
+                .child("Saved appearance and wallpaper apply to the shell. Display controls, desktop-wide styling, and other settings will follow.")
                 .child("Keyboard: Tab and Shift+Tab move focus. Enter or Space activates a control. Ctrl+S saves; Ctrl+Z undoes the preview; Ctrl+Q closes."))
             .child(div().border_t_1().border_color(rgb(p.line)).pt_5().flex().flex_col().gap_2()
                 .child(div().text_size(px(13.)).child("CrowbarOS · Studio Settings 0.1.3"))
@@ -442,7 +585,7 @@ impl Render for Settings {
             }))
             .on_action(cx.listener(|this, _: &CancelClose, window, cx| {
                 this.confirming_close = false;
-                window.focus(&this.controls[8]);
+                window.focus(&this.controls[CONTROL_SAVE]);
                 cx.notify();
             }))
             .size_full()
@@ -476,7 +619,7 @@ impl Render for Settings {
                             .child("Studio Settings"),
                     )
                     .child(
-                        self.button(10, "Close", p, window, false, !self.busy)
+                        self.button(CONTROL_CLOSE, "Close", p, window, false, !self.busy)
                             .h(px(30.))
                             .on_click(cx.listener(|this, _, w, cx| this.quit(&Quit, w, cx))),
                     ),
@@ -498,18 +641,25 @@ impl Render for Settings {
                             .flex_col()
                             .gap_2()
                             .child(
-                                self.button(0, "Appearance", p, window, !self.about, true)
-                                    .on_click(cx.listener(|this, _, w, cx| {
-                                        this.about = false;
-                                        w.focus(&this.controls[0]);
-                                        cx.notify();
-                                    })),
+                                self.button(
+                                    CONTROL_APPEARANCE,
+                                    "Appearance",
+                                    p,
+                                    window,
+                                    !self.about,
+                                    true,
+                                )
+                                .on_click(cx.listener(|this, _, w, cx| {
+                                    this.about = false;
+                                    w.focus(&this.controls[CONTROL_APPEARANCE]);
+                                    cx.notify();
+                                })),
                             )
                             .child(
-                                self.button(1, "About", p, window, self.about, true)
+                                self.button(CONTROL_ABOUT, "About", p, window, self.about, true)
                                     .on_click(cx.listener(|this, _, w, cx| {
                                         this.about = true;
-                                        w.focus(&this.controls[1]);
+                                        w.focus(&this.controls[CONTROL_ABOUT]);
                                         cx.notify();
                                     })),
                             )
@@ -560,7 +710,7 @@ impl Render for Settings {
                                         )
                                         .child(
                                             self.button(
-                                                9,
+                                                CONTROL_RELOAD,
                                                 "Reload saved",
                                                 p,
                                                 window,
@@ -599,16 +749,23 @@ impl Render for Settings {
                                     )
                                     .when(self.confirming_close, |d| {
                                         d.child(
-                                            self.button(11, "Keep editing", p, window, false, true)
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.confirming_close = false;
-                                                    window.focus(&this.controls[8]);
-                                                    cx.notify();
-                                                })),
+                                            self.button(
+                                                CONTROL_KEEP_EDITING,
+                                                "Keep editing",
+                                                p,
+                                                window,
+                                                false,
+                                                true,
+                                            )
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.confirming_close = false;
+                                                window.focus(&this.controls[CONTROL_SAVE]);
+                                                cx.notify();
+                                            })),
                                         )
                                         .child(
                                             self.button(
-                                                12,
+                                                CONTROL_DISCARD_CLOSE,
                                                 "Discard & close",
                                                 p,
                                                 window,
@@ -621,7 +778,7 @@ impl Render for Settings {
                                     .when(!self.confirming_close, |d| {
                                         d.child(
                                             self.button(
-                                                7,
+                                                CONTROL_UNDO,
                                                 "Undo",
                                                 p,
                                                 window,
@@ -636,7 +793,7 @@ impl Render for Settings {
                                         )
                                         .child(
                                             self.button(
-                                                8,
+                                                CONTROL_SAVE,
                                                 if self.busy {
                                                     "Saving…"
                                                 } else {
@@ -749,7 +906,7 @@ fn main() {
                         }
                         if this.dirty() && this.draft != this.saved.clone().unwrap_or_default() {
                             this.confirming_close = true;
-                            window.focus(&this.controls[11]);
+                            window.focus(&this.controls[CONTROL_KEEP_EDITING]);
                             cx.notify();
                             false
                         } else {
@@ -764,4 +921,40 @@ fn main() {
         .expect("Wayland window must open");
         cx.activate(true);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn control_tab_order_preserves_theme_indices_and_shifts_remaining() {
+        assert_eq!(CONTROL_APPEARANCE, 0);
+        assert_eq!(CONTROL_ABOUT, 1);
+        assert_eq!(CONTROL_THEME_FIRST, 2);
+        assert_eq!(CONTROL_THEME_FIRST + Theme::ALL.len(), CONTROL_WALLPAPER_FIRST);
+        assert_eq!(CONTROL_WALLPAPER_FIRST, 5);
+        assert_eq!(
+            CONTROL_WALLPAPER_FIRST + Wallpaper::ALL.len(),
+            CONTROL_STUDIO
+        );
+        assert_eq!(CONTROL_STUDIO, 8);
+        assert_eq!(CONTROL_REDUCED_MOTION, 9);
+        assert_eq!(CONTROL_UNDO, 10);
+        assert_eq!(CONTROL_SAVE, 11);
+        assert_eq!(CONTROL_RELOAD, 12);
+        assert_eq!(CONTROL_CLOSE, 13);
+        assert_eq!(CONTROL_KEEP_EDITING, 14);
+        assert_eq!(CONTROL_DISCARD_CLOSE, 15);
+        assert_eq!(CONTROL_COUNT, 16);
+    }
+
+    #[test]
+    fn wallpaper_paths_resolve_in_checkout() {
+        for wallpaper in Wallpaper::ALL {
+            let path = wallpaper_path(wallpaper)
+                .unwrap_or_else(|| panic!("expected preview asset for {wallpaper:?}"));
+            assert!(path.is_file(), "resolved path must exist: {}", path.display());
+        }
+    }
 }

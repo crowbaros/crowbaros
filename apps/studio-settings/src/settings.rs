@@ -29,11 +29,40 @@ impl Theme {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Wallpaper {
+    #[default]
+    SignalFeather,
+    Nightwatch,
+    QuietSignal,
+}
+
+impl Wallpaper {
+    pub const ALL: [Self; 3] = [Self::SignalFeather, Self::Nightwatch, Self::QuietSignal];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::SignalFeather => "Signal Feather",
+            Self::Nightwatch => "Nightwatch",
+            Self::QuietSignal => "Quiet Signal",
+        }
+    }
+    pub fn asset_name(self) -> &'static str {
+        match self {
+            Self::SignalFeather => "wallpaper.png",
+            Self::Nightwatch => "nightwatch.png",
+            Self::QuietSignal => "quiet-signal.png",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Preferences {
     pub schema_version: u32,
     pub theme: Theme,
+    #[serde(default)]
+    pub wallpaper: Wallpaper,
     pub studio: bool,
     pub reduced_motion: bool,
 }
@@ -43,6 +72,7 @@ impl Default for Preferences {
         Self {
             schema_version: 1,
             theme: Theme::Dark,
+            wallpaper: Wallpaper::SignalFeather,
             studio: false,
             reduced_motion: true,
         }
@@ -343,5 +373,95 @@ mod tests {
         );
         assert!(!motion.reduced.get());
         assert_eq!(motion.calls.get(), 2);
+    }
+
+    #[test]
+    fn wallpaper_roundtrip_and_labels() {
+        let f = Fixture::new();
+        let motion = Fake {
+            reduced: Cell::new(true),
+            fail: false,
+        };
+        let expected_meta = [
+            (
+                Wallpaper::SignalFeather,
+                "signal-feather",
+                "Signal Feather",
+                "wallpaper.png",
+            ),
+            (
+                Wallpaper::Nightwatch,
+                "nightwatch",
+                "Nightwatch",
+                "nightwatch.png",
+            ),
+            (
+                Wallpaper::QuietSignal,
+                "quiet-signal",
+                "Quiet Signal",
+                "quiet-signal.png",
+            ),
+        ];
+        assert_eq!(Wallpaper::ALL.len(), expected_meta.len());
+        let mut previous = None;
+        for (wallpaper, serialized, label, asset) in expected_meta {
+            assert_eq!(wallpaper.label(), label);
+            assert_eq!(wallpaper.asset_name(), asset);
+            let prefs = Preferences {
+                wallpaper,
+                ..Preferences::default()
+            };
+            f.0.save(&prefs, &previous, &motion).unwrap();
+            let raw = fs::read_to_string(&f.0.path).unwrap();
+            assert!(
+                raw.contains(&format!("\"wallpaper\": \"{serialized}\"")),
+                "expected {serialized} in {raw}"
+            );
+            assert_eq!(f.0.load().unwrap(), Some(prefs.clone()));
+            previous = Some(prefs);
+        }
+    }
+
+    #[test]
+    fn loads_schema_one_without_wallpaper_and_rejects_unknown_fields() {
+        let f = Fixture::new();
+        fs::create_dir_all(f.0.path.parent().unwrap()).unwrap();
+        let legacy = r#"{
+  "schema_version": 1,
+  "theme": "light",
+  "studio": false,
+  "reduced_motion": true
+}"#;
+        fs::write(&f.0.path, legacy).unwrap();
+        assert_eq!(
+            f.0.load().unwrap(),
+            Some(Preferences {
+                schema_version: 1,
+                theme: Theme::Light,
+                wallpaper: Wallpaper::SignalFeather,
+                studio: false,
+                reduced_motion: true,
+            })
+        );
+
+        let with_unknown = r#"{
+  "schema_version": 1,
+  "theme": "dark",
+  "studio": false,
+  "reduced_motion": true,
+  "unexpected": 1
+}"#;
+        fs::write(&f.0.path, with_unknown).unwrap();
+        assert!(f.0.load().unwrap_err().contains("invalid"));
+
+        let with_bad_wallpaper = r#"{
+  "schema_version": 1,
+  "theme": "dark",
+  "wallpaper": "nonexistent",
+  "studio": false,
+  "reduced_motion": true
+}"#;
+        fs::write(&f.0.path, with_bad_wallpaper).unwrap();
+        assert!(f.0.load().unwrap_err().contains("invalid"));
     }
 }
