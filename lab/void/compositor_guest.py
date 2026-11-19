@@ -1,28 +1,26 @@
 #!/usr/bin/env python3
-"""The Void lab's graphical guest: a compositor, and for the desktop the shell and Studio Settings.
+"""The Void lab's graphical guest, for the compositor check, and the desktop check's command.
 
 Stdlib only, no sudo. It shares the static xbps and the package cache with
 void_lab.py. Its own files live in <repo>/.lab/void-graphical (outside git).
 
 The guest is a plain Void root on Btrfs, booted straight from its kernel. It
-is not built through the apply engine and has no generations. Its desktop
+is not built through the apply engine and has no generations. The compositor
 runs on a TTY under runit, without systemd or a host compositor.
 
-There are two images. The plain one holds the compositor and its probe, for
-`check`. They are built from `compositor/` (ADR 0031). The desktop one holds the Alpha desktop on that compositor:
-the shell and Studio Settings, with a stand-in for the Warden that registers
-one compartment for the apps (ADR 0016).
+The image holds the compositor, Fulcrum, and its probe, built from
+`compositor/` (ADR 0031) with Base's build script. The desktop runs on Base's
+image instead: see base/README.md, and desktop_check.py for its check.
 
     compositor_guest.py rootfs     install the guest root and the build root (rootless)
-    compositor_guest.py build      build and test in Void what an image holds (--desktop for the desktop image)
-    compositor_guest.py image      make the guest disk (--desktop for the desktop image)
+    compositor_guest.py build      build and test the compositor in Void
+    compositor_guest.py image      make the guest disk
     compositor_guest.py start      boot the guest
     compositor_guest.py view       open its graphical console
-    compositor_guest.py desktop    build a desktop image, boot it, and open its console
     compositor_guest.py ssh CMD    run a command in the guest as root
     compositor_guest.py stop       power the guest off
     compositor_guest.py check      build, make the disk, boot, run every compositor check, and write an evidence log
-    compositor_guest.py desktop-check   the Alpha desktop smoke check, in a fresh guest
+    compositor_guest.py desktop-check   the desktop check, on a copy of Base's image booted under UEFI
 
 QEMU needs the virtio-gpu device. Where the distribution splits it into its
 own package (Arch: qemu-hw-display-virtio-gpu-pci), install that, or point
@@ -57,12 +55,11 @@ SERIAL_LOG = WORK / "serial.log"
 VNC = [WORK / "vnc0.sock", WORK / "vnc1.sock"]
 # The compositor, Fulcrum, is built from this repository (ADR 0031).
 COMPOSITOR = "compositor"
-# The compositor builds in a part of the target directory of its own. The
-# apps stay where the desktop image has always built them.
+# The compositor builds in a part of the target directory of its own.
 COMPOSITOR_PART = "compositor"
-APPS = [("apps/shell", ""), ("apps/studio-settings", "")]
 COMPOSITOR_BINARIES = ["crowbar-compositor", "crowbar-probe"]
-APP_BINARIES = ["crowbaros-shell", "crowbaros-studio-settings"]
+# Base's script builds and tests a project in a Void build root.
+BUILD_SCRIPT = ROOT / "base/host/build.sh"
 
 run = void_lab.run
 
@@ -90,54 +87,38 @@ def rootfs(force=False):
         install_root(target, packages, log_name)
 
 
-def projects(desktop):
-    """What an image is built from: each project and its part of the target directory.
-
-    Both images hold the compositor. The desktop one adds the shell and Studio
-    Settings."""
-    compositor = (COMPOSITOR, COMPOSITOR_PART)
-    return [compositor, *APPS] if desktop else [compositor]
+def binaries():
+    """The programs the image holds, and where the build leaves each."""
+    return {name: TARGET / COMPOSITOR_PART / "release" / name for name in COMPOSITOR_BINARIES}
 
 
-def binaries(desktop):
-    """The programs an image holds, and where the build leaves each."""
-    built = {name: TARGET / COMPOSITOR_PART / "release" / name for name in COMPOSITOR_BINARIES}
-    if desktop:
-        built.update({name: TARGET / "release" / name for name in APP_BINARIES})
-    return built
-
-
-def build(desktop=False):
-    """Builds and tests what an image holds against Void's libraries, inside the build root.
+def build():
+    """Builds and tests the compositor against Void's libraries, inside the build root.
 
     The host's Cargo registry and git checkouts are bound in read-write so the
     build runs offline from the crates the lockfile already names.
     """
     if not BUILD_ROOT.exists():
         rootfs()
-    if desktop:
-        run(sys.executable, ROOT / "apps/shell/packaging/prepare-gpui.py")
-    built_from = projects(desktop)
-    for project, _ in built_from:
-        run("cargo", "fetch", "--locked", "--target", "x86_64-unknown-linux-gnu",
-            "--manifest-path", ROOT / project / "Cargo.toml")
+    run("cargo", "fetch", "--locked", "--target", "x86_64-unknown-linux-gnu",
+        "--manifest-path", ROOT / COMPOSITOR / "Cargo.toml")
     TARGET.mkdir(parents=True, exist_ok=True)
     cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
     env = dict(os.environ, B=str(BUILD_ROOT), SRC=str(ROOT), TARGET=str(TARGET),
-               PROJECTS=" ".join(f"{project}:{part}" for project, part in built_from),
+               PROJECTS=f"{COMPOSITOR}:{COMPOSITOR_PART}",
                CARGO_REGISTRY=str(cargo_home / "registry"), CARGO_GIT=str(cargo_home / "git"))
-    run("unshare", "-r", "-m", "sh", LAB / "host/build-compositor.sh", env=env)
-    for name, path in binaries(desktop).items():
+    run("unshare", "-r", "-m", "sh", BUILD_SCRIPT, env=env)
+    for name, path in binaries().items():
         print(f"{path}: sha256 {void_lab.sha256(path)}")
 
 
-def image(desktop=False):
+def image():
     if running():
         raise SystemExit("Stop the graphical guest before rebuilding its disk")
     if not GUEST_ROOT.exists():
         rootfs()
-    if not all(path.exists() for path in binaries(desktop).values()):
-        build(desktop)
+    if not all(path.exists() for path in binaries().values()):
+        build()
     if not KEY.exists():
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "crowbar-void-graphical", "-f", KEY)
     if DISK.exists():
@@ -145,9 +126,9 @@ def image(desktop=False):
         run("cp", "--reflink=auto", "--sparse=always", DISK, backup)
         print(f"Preserved the previous guest disk at {backup}")
     env = dict(os.environ, ROOTFS=str(GUEST_ROOT), WORK=str(WORK), OUT=str(DISK),
-               BINARIES=" ".join(str(path) for path in binaries(desktop).values()),
+               BINARIES=" ".join(str(path) for path in binaries().values()),
                PUBKEY=str(KEY) + ".pub", ROOT_LABEL=CFG["root_label"], ROOT_GIB=str(CFG["root_gib"]),
-               REPO_ROOT=str(ROOT), DESKTOP="1" if desktop else "0")
+               REPO_ROOT=str(ROOT))
     run("unshare", "-r", "sh", LAB / "host/build-graphical-image.sh", env=env)
 
 
@@ -348,37 +329,27 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("rootfs").add_argument("--force", action="store_true")
-    sub.add_parser("build").add_argument("--desktop", action="store_true")
-    sub.add_parser("image").add_argument("--desktop", action="store_true")
+    sub.add_parser("build")
+    sub.add_parser("image")
     sub.add_parser("start")
     sub.add_parser("view")
-    sub.add_parser("desktop")
     sub.add_parser("stop")
     sub.add_parser("ssh").add_argument("guest_command", nargs=argparse.REMAINDER)
     sub.add_parser("check")
-    sub.add_parser("desktop-check").add_argument("--build-cache", type=Path)
+    sub.add_parser("desktop-check")
     args = parser.parse_args()
     if args.command == "rootfs":
         rootfs(args.force)
     elif args.command == "build":
-        build(args.desktop)
+        build()
     elif args.command == "image":
-        image(args.desktop)
+        image()
     elif args.command == "start":
         start()
         wait_ssh()
     elif args.command == "stop":
         stop()
     elif args.command == "view":
-        view()
-    elif args.command == "desktop":
-        if running():
-            raise SystemExit("The graphical guest is running; stop it before rebuilding the desktop")
-        rootfs()
-        build(desktop=True)
-        image(desktop=True)
-        start()
-        wait_ssh()
         view()
     elif args.command == "ssh":
         result = ssh(shlex.join(args.guest_command) or "true", check=False)
@@ -387,7 +358,7 @@ def main():
         sys.exit(result.returncode)
     elif args.command == "desktop-check":
         import desktop_check
-        sys.argv = [sys.argv[0]] + (["--build-cache", str(args.build_cache)] if args.build_cache else [])
+        sys.argv = [sys.argv[0]]
         sys.exit(desktop_check.main())
     elif args.command == "check":
         import compositor_check

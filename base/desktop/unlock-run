@@ -5,4 +5,4 @@ exec >>/var/log/crowbar-unlock.log 2>&1
 # helper checks the shell's UID as well. It reaches the compositor's unlock
 # socket as root, which the compositor checks.
 install -d -o root -g crowbar-shell -m 0750 /run/crowbar-unlock
-exec /usr/local/bin/crowbar-alpha-unlock
+exec /usr/local/bin/crowbar-unlock

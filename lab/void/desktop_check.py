@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""Fresh, isolated Alpha desktop smoke test; never uses the development disk.
+"""The desktop check: Base's image, booted under UEFI, driven as a person would.
 
-Run: python3 lab/void/desktop_check.py [--build-cache .lab/void-graphical]
-The optional cache reuses only buildroot/target, never rootfs/disk/key/sockets.
-Every run owns a new directory under .lab/void-desktop-checks, its own SSH port,
-and Unix VNC sockets. Failure leaves logs, screenshots, and the disk in place.
+Run: python3 lab/void/compositor_guest.py desktop-check
+It builds the image with Base's one command, `base/void_base.py build`, which
+keeps its Void roots and Cargo target in .lab/base as a cache. Every run then
+owns a new directory under .lab/void-desktop-checks, with its own copy of the
+disk, firmware variables, SSH port, and Unix VNC and QMP sockets. It boots that
+copy through the firmware and GRUB, as a person's machine would, and never
+touches Base's own disk or the lab's. Failure leaves logs, screenshots, and the
+disk in place.
 """
 import argparse
-import contextlib
 import json
-import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -21,33 +24,48 @@ import time
 
 import compositor_guest as guest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'base'))
+import void_base  # noqa: E402
 
-def configure(cache=None):
+
+def configure():
     base = guest.ROOT / '.lab/void-desktop-checks'
     base.mkdir(parents=True, exist_ok=True)
     guest.WORK = Path(tempfile.mkdtemp(prefix=time.strftime('%Y%m%dT%H%M%S-'), dir=base))
     for name, path in {
-        'GUEST_ROOT': 'rootfs', 'BUILD_ROOT': 'buildroot', 'TARGET': 'target',
-        'DISK': 'disk.raw', 'KEY': 'id_ed25519', 'PIDFILE': 'qemu.pid',
-        'QMP_SOCK': 'qmp.sock', 'SERIAL_LOG': 'serial.log',
+        'DISK': 'disk.raw', 'PIDFILE': 'qemu.pid', 'QMP_SOCK': 'qmp.sock', 'SERIAL_LOG': 'serial.log',
     }.items():
         setattr(guest, name, guest.WORK / path)
     guest.VNC = [guest.WORK / f'vnc{n}.sock' for n in range(2)]
-    if cache:
-        cache = Path(cache).resolve(strict=True)
-        if not (cache / 'buildroot/usr/bin/cargo').exists():
-            raise ValueError('Build cache must contain a provisioned Void buildroot')
-        guest.BUILD_ROOT, guest.TARGET = cache / 'buildroot', cache / 'target'
+    # The key Base's build put in the image for root.
+    guest.KEY = void_base.KEY
     with socket.socket() as free_port:
         free_port.bind(('127.0.0.1', 0))
         port = free_port.getsockname()[1]
     guest.CFG = dict(guest.CFG, ssh_port=port, vnc_port=None)
     (guest.WORK / 'run.json').write_text(json.dumps({
-        'workspace': str(guest.WORK), 'ssh_port': port,
-        'build_root': str(guest.BUILD_ROOT), 'target': str(guest.TARGET),
+        'workspace': str(guest.WORK), 'ssh_port': port, 'image': str(void_base.BASE_DISK),
         'revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=guest.ROOT, text=True).strip(),
         'dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=guest.ROOT)),
     }, indent=2) + '\n')
+
+
+def start():
+    """Boots this run's own copy of Base's image through the firmware."""
+    for path in (guest.QMP_SOCK, guest.PIDFILE, *guest.VNC):
+        path.unlink(missing_ok=True)
+    subprocess.run(['cp', '--reflink=auto', '--sparse=always', void_base.BASE_DISK, guest.DISK],
+                   check=True)
+    nvram = guest.WORK / 'nvram.fd'
+    shutil.copyfile(void_base.CFG['firmware_vars'], nvram)
+    guest.run(*void_base.qemu('crowbaros-desktop-check', guest.DISK, nvram, guest.CFG['ssh_port']),
+              # A VNC server per connector. A VNC client that sets a desktop
+              # size on the second one plugs the second monitor in.
+              '-vnc', f'unix:{guest.VNC[0]},display=gpu0,head=0',
+              '-vnc', f'unix:{guest.VNC[1]},display=gpu0,head=1',
+              '-qmp', f'unix:{guest.QMP_SOCK},server=on,wait=off',
+              '-chardev', f'file,id=ser0,path={guest.SERIAL_LOG}', '-serial', 'chardev:ser0',
+              '-display', 'none', '-daemonize', '-pidfile', guest.PIDFILE)
 
 
 class Check:
@@ -432,28 +450,21 @@ print(json.dumps({
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--build-cache', type=Path)
-    args = parser.parse_args()
-    configure(args.build_cache)
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.parse_args()
+    configure()
     check = Check()
     check.log(f'Evidence and new guest disk: {guest.WORK}')
     try:
-        with (guest.WORK / 'build.log').open('w') as log:
-            # subprocess output is sent explicitly; Python progress is captured too.
-            original_run = guest.run
-            def logged_run(*arguments, **kwargs):
-                kwargs.setdefault('stdout', log)
-                kwargs.setdefault('stderr', subprocess.STDOUT)
-                return original_run(*arguments, **kwargs)
-            guest.run = logged_run
-            with contextlib.redirect_stdout(log):
-                guest.rootfs()
-                guest.build(desktop=True)
-                guest.image(desktop=True)
-            guest.run = original_run
-        built = {name: guest.void_lab.sha256(path) for name, path in guest.binaries(desktop=True).items()}
-        guest.start()
+        build_log = guest.WORK / 'build.log'
+        check.log(f'Building the image with Base\'s build; its output goes to {build_log}')
+        with build_log.open('w') as log:
+            if subprocess.run([sys.executable, void_base.HERE / 'void_base.py', 'build'],
+                              stdout=log, stderr=subprocess.STDOUT).returncode:
+                raise RuntimeError(f'Base\'s build failed; see {build_log}')
+        built = {name: void_base.sha256(path) for name, path in void_base.binaries().items()}
+        start()
         guest.wait_ssh()
         check.checks(built)
     except Exception as error:

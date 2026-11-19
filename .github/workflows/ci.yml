@@ -37,7 +37,8 @@ jobs:
 
       - name: Lab scripts compile and pass their tests
         run: |
-          python3 -m py_compile base/*.py lab/void/*.py lab/void/guest/*.py
+          python3 -m py_compile base/*.py base/desktop/*.py lab/void/*.py
+          python3 -m unittest discover -s base -p "test_*.py"
           python3 -m unittest discover -s lab/void -p "test_*.py"
 
   shell:

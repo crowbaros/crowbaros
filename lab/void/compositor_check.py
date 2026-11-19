@@ -128,7 +128,7 @@ def main():
     guest.build()
     guest.image()
     built = {}
-    for name, path in guest.binaries(desktop=False).items():
+    for name, path in guest.binaries().items():
         built[name] = guest.void_lab.sha256(path)
         ev.log(f"binary {name}: sha256 {built[name]} (built and tested in the Void build root)")
     guest.start()

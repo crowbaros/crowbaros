@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""The CrowbarOS base: plain Void Linux, built rootless and booted under UEFI.
+"""The CrowbarOS base: plain Void Linux and the desktop, built rootless and booted under UEFI.
 
 Stdlib only, no sudo. Root-owned work happens inside `unshare -r` user
 namespaces. Downloads are shared with the earlier lab in ~/.cache/crowbaros/void;
-the root, the disk, VM runtime files, and boot logs live in <repo>/.lab/base.
+the roots, the build, the disk, VM runtime files, and boot logs live in
+<repo>/.lab/base.
 
-    void_base.py build [--force]   install the Void root and write the boot disk
+The desktop (Fulcrum, the shell, and Studio Settings) is built and tested in a
+Void build root of its own, so it links Void's own libraries, and goes into the
+image with its runit services from desktop/.
+
+    void_base.py build [--force]   install the Void roots, build the desktop, and write the boot disk
     void_base.py boot [--window]   boot a fresh copy of the disk and wait for it
     void_base.py ssh [CMD]         run a command in the guest as root
     void_base.py console           attach to the guest's serial console
@@ -32,6 +37,8 @@ CFG = json.loads((HERE / "config.json").read_text())
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "crowbaros/void"
 WORK = ROOT / ".lab/base"
 ROOTFS = WORK / "rootfs"
+BUILD_ROOT = WORK / "buildroot"
+TARGET = WORK / "target"
 BASE_DISK = WORK / "base.raw"
 DISK = WORK / "disk.raw"
 NVRAM = WORK / "nvram.fd"
@@ -40,6 +47,13 @@ SERIAL_SOCK = WORK / "serial.sock"
 SERIAL_LOG = WORK / "serial.log"
 MONITOR_SOCK = WORK / "monitor.sock"
 PIDFILE = WORK / "qemu.pid"
+# What the desktop is built from: each Cargo project, and the part of the
+# target directory it builds in. The two apps share theirs.
+PROJECTS = [("compositor", "compositor"), ("apps/shell", ""), ("apps/studio-settings", "")]
+# The programs the image holds, and the project each comes from. The probe is
+# Fulcrum's test client.
+PROGRAMS = {"crowbar-compositor": "compositor", "crowbar-probe": "compositor",
+            "crowbaros-shell": "apps/shell", "crowbaros-studio-settings": "apps/studio-settings"}
 
 
 def run(*args, **kwargs):
@@ -70,7 +84,7 @@ NEEDS = [
     ("unshare", "util-linux"), ("newuidmap", "shadow"), ("curl", "curl"),
     ("mkfs.btrfs", "btrfs-progs"), ("mkfs.vfat", "dosfstools"), ("sfdisk", "util-linux"),
     ("qemu-system-x86_64", "qemu-base or qemu-desktop"), ("ssh", "openssh"),
-    ("ssh-keygen", "openssh"),
+    ("ssh-keygen", "openssh"), ("cargo", "rustup or rust"),
 ]
 
 
@@ -82,6 +96,10 @@ def preflight(vm=False):
                     if not Path(path).exists()]
         if not os.access("/dev/kvm", os.R_OK | os.W_OK):
             missing.append("read and write access to /dev/kvm (is KVM on, and are you in the kvm group?)")
+        if shutil.which("qemu-system-x86_64") and '"virtio-gpu-pci"' not in subprocess.run(
+                ["qemu-system-x86_64", "-device", "help"], text=True, capture_output=True).stdout:
+            missing.append("QEMU's virtio-gpu-pci device (package qemu-hw-display-virtio-gpu-pci, "
+                           "or set QEMU_MODULE_DIR to a directory that holds it)")
     if missing:
         raise SystemExit("This host is missing:\n  " + "\n  ".join(missing))
 
@@ -131,44 +149,81 @@ def fetch():
     return target
 
 
-def rootfs(force):
-    # The root counts as installed only once an install of these packages from
-    # this repository finished. A root left by a failed or interrupted install,
-    # or one built from other packages, is installed again.
-    wanted = json.dumps({"repository": CFG["void_repository"], "packages": CFG["packages"]})
-    done = WORK / "rootfs.done"
-    if not force and ROOTFS.exists() and done.exists() and done.read_text() == wanted:
-        print(f"Using the Void root at {ROOTFS} (pass --force to install it again)")
+def install(target, packages, what, force):
+    """Install a Void root of these packages at `target`.
+
+    A root counts as installed only once an install of these packages from
+    this repository finished. A root left by a failed or interrupted install,
+    or one built from other packages, is installed again."""
+    wanted = json.dumps({"repository": CFG["void_repository"], "packages": packages})
+    done = target.with_name(target.name + ".done")
+    if not force and target.exists() and done.exists() and done.read_text() == wanted:
+        print(f"Using the {what} at {target} (pass --force to install it again)")
         return
-    if ROOTFS.exists() and not force:
-        print(f"The Void root at {ROOTFS} is not a finished install of these packages; "
+    if target.exists() and not force:
+        print(f"The {what} at {target} is not a finished install of these packages; "
               "installing it again")
     xbps = fetch()
     WORK.mkdir(parents=True, exist_ok=True)
     done.unlink(missing_ok=True)
-    env = dict(os.environ, XBPS=str(xbps / "usr/bin"), ROOTFS=str(ROOTFS),
+    env = dict(os.environ, XBPS=str(xbps / "usr/bin"), ROOTFS=str(target),
                REPO=CFG["void_repository"], KEYS=str(xbps / "var/db/xbps/keys"),
-               PKGCACHE=str(CACHE / "packages"), PACKAGES=" ".join(CFG["packages"]))
-    log = WORK / "rootfs.log"
-    print(f"Installing {len(CFG['packages'])} packages and what they depend on. The first "
-          f"time, this downloads about 850 MB into {CACHE / 'packages'}.", flush=True)
+               PKGCACHE=str(CACHE / "packages"), PACKAGES=" ".join(packages))
+    log = target.with_name(target.name + ".log")
+    print(f"Installing the {what}: {len(packages)} packages and what they depend on. The first "
+          f"time, this downloads them into {CACHE / 'packages'}.", flush=True)
     if run_shown(*userns(), "sh", HERE / "host/rootfs.sh", log=log, env=env) != 0:
-        raise SystemExit(f"Installing the Void root failed; the output is in {log}")
-    if not any((ROOTFS / "boot").glob("vmlinuz-*")):
-        raise SystemExit(f"The Void root has no kernel in /boot after the install; see {log}")
+        raise SystemExit(f"Installing the {what} failed; the output is in {log}")
     done.write_text(wanted)
-    print(f"Installed the Void root at {ROOTFS} (log: {log})")
+    print(f"Installed the {what} at {target} (log: {log})")
+
+
+def rootfs(force):
+    install(ROOTFS, CFG["packages"], "Void root", force)
+    if not any((ROOTFS / "boot").glob("vmlinuz-*")):
+        raise SystemExit(f"The Void root has no kernel in /boot after the install; see "
+                         f"{WORK / 'rootfs.log'}")
+
+
+def binaries():
+    """The desktop's programs, and where the build leaves each."""
+    parts = dict(PROJECTS)
+    return {name: TARGET / parts[project] / "release" / name for name, project in PROGRAMS.items()}
+
+
+def compile_desktop(force):
+    """Build and test the desktop in the Void build root, against Void's libraries.
+
+    The host's Cargo registry and git checkouts are bound in, so the build runs
+    offline from the crates the lockfiles name. The build root and the target
+    directory are kept, so the next build starts from them."""
+    install(BUILD_ROOT, CFG["build_packages"], "Void build root", force)
+    run(sys.executable, ROOT / "apps/shell/packaging/prepare-gpui.py")
+    for project, _ in PROJECTS:
+        run("cargo", "fetch", "--locked", "--target", "x86_64-unknown-linux-gnu",
+            "--manifest-path", ROOT / project / "Cargo.toml")
+    TARGET.mkdir(parents=True, exist_ok=True)
+    cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
+    env = dict(os.environ, B=str(BUILD_ROOT), SRC=str(ROOT), TARGET=str(TARGET),
+               PROJECTS=" ".join(f"{project}:{part}" for project, part in PROJECTS),
+               CARGO_REGISTRY=str(cargo_home / "registry"), CARGO_GIT=str(cargo_home / "git"))
+    run(*userns(), "--mount", "sh", HERE / "host/build.sh", env=env)
+    for name, path in binaries().items():
+        print(f"{name}: sha256 {sha256(path)}")
 
 
 def build(force=False):
     preflight()
     rootfs(force)
+    compile_desktop(force)
     if not KEY.exists():
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "crowbaros-base", "-f", KEY)
     env = dict(os.environ, ROOTFS=str(ROOTFS), WORK=str(WORK), OUT=str(BASE_DISK),
                PUBKEY=str(KEY) + ".pub", HOSTNAME=CFG["hostname"],
                ROOT_LABEL=CFG["root_label"], ESP_LABEL=CFG["esp_label"],
-               ESP_MIB=str(CFG["esp_mib"]), ROOT_GIB=str(CFG["root_gib"]))
+               ESP_MIB=str(CFG["esp_mib"]), ROOT_GIB=str(CFG["root_gib"]),
+               DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT),
+               BINARIES=" ".join(str(path) for path in binaries().values()))
     run(*userns(), "sh", HERE / "host/image.sh", env=env)
 
 
@@ -178,6 +233,24 @@ def running():
         return True
     except (FileNotFoundError, ProcessLookupError, ValueError):
         return False
+
+
+def qemu(name, disk, nvram, ssh_port):
+    """The VM an image boots in: UEFI firmware with its own variables, KVM, a
+    virtio disk and network with SSH forwarded, and for the desktop a virtio
+    GPU with two connectors (the second starts unplugged), a keyboard, and a
+    tablet. There is no VGA card: it would be a second DRM device, and the
+    primary one. Add the serial port, a control socket, and a display."""
+    return ["qemu-system-x86_64", "-name", name,
+            "-machine", "q35,accel=kvm", "-cpu", "host",
+            "-m", str(CFG["memory_mib"]), "-smp", str(CFG["vcpus"]),
+            "-drive", f"if=pflash,format=raw,readonly=on,file={CFG['firmware_code']}",
+            "-drive", f"if=pflash,format=raw,file={nvram}",
+            "-drive", f"file={disk},format=raw,if=virtio,cache=unsafe",
+            "-netdev", f"user,id=n0,hostfwd=tcp:127.0.0.1:{ssh_port}-:22",
+            "-device", "virtio-net-pci,netdev=n0",
+            "-vga", "none", "-device", "virtio-gpu-pci,id=gpu0,max_outputs=2,xres=1280,yres=960",
+            "-device", "virtio-keyboard-pci", "-device", "virtio-tablet-pci"]
 
 
 def launch(window):
@@ -193,14 +266,7 @@ def launch(window):
     for path in (SERIAL_SOCK, SERIAL_LOG, MONITOR_SOCK, PIDFILE, WORK / "known_hosts"):
         path.unlink(missing_ok=True)
     display = ["-display", "gtk"] if window else ["-display", "none"]
-    run("qemu-system-x86_64", "-name", "crowbaros-base",
-        "-machine", "q35,accel=kvm", "-cpu", "host",
-        "-m", str(CFG["memory_mib"]), "-smp", str(CFG["vcpus"]),
-        "-drive", f"if=pflash,format=raw,readonly=on,file={CFG['firmware_code']}",
-        "-drive", f"if=pflash,format=raw,file={NVRAM}",
-        "-drive", f"file={DISK},format=raw,if=virtio,cache=unsafe",
-        "-netdev", f"user,id=n0,hostfwd=tcp:127.0.0.1:{CFG['ssh_port']}-:22",
-        "-device", "virtio-net-pci,netdev=n0",
+    run(*qemu("crowbaros-base", DISK, NVRAM, CFG["ssh_port"]),
         "-chardev", f"socket,id=ser0,path={SERIAL_SOCK},server=on,wait=off,logfile={SERIAL_LOG}",
         "-serial", "chardev:ser0",
         "-monitor", f"unix:{MONITOR_SOCK},server=on,wait=off",
@@ -336,7 +402,7 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("build").add_argument("--force", action="store_true",
-                                         help="install the Void root again")
+                                         help="install the Void roots again")
     sub.add_parser("boot").add_argument("--window", action="store_true",
                                         help="also show the guest's screen in a window")
     sub.add_parser("ssh").add_argument("command", nargs=argparse.REMAINDER)
