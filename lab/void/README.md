@@ -79,7 +79,7 @@ lab/void/compositor_guest.py desktop-check
 
 This builds Base's image with Base's own command, `base/void_base.py build`,
 which builds and tests the [compositor](../../compositor/README.md), the shell,
-and Settings in Void. Base keeps its Void roots and Cargo target in
+and Studio Settings in Void. Base keeps its Void roots and Cargo target in
 `.lab/base/`, so a second run starts from them. The check then boots a copy of
 that image under UEFI, through the firmware and GRUB, as a person's machine
 would, exercises the desktop, and powers the guest off. Every run gets a new

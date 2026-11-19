@@ -115,6 +115,15 @@ Later tickets of Milestone 2 replace them.
   which checks it against `/etc/shadow` and only then tells the compositor to
   unlock. zzz's suspend hook locks the desktop through the same helper.
 
+This is not the production Warden or principal isolation. Apps share one user
+and can reach one another. The launcher registers one compartment for every
+app through the compositor's Warden socket, with `crowbar-probe warden`, and
+starts each app on that compartment's listener. The shell reads saved
+appearance through a bounded, read-only request to the launcher, and Studio
+Settings keeps its preferences in the app user's home. The compositor has no
+animations, so Studio Settings saves the motion preference and says it has no
+effect here.
+
 ## Not yet
 
 - Real hardware. The disk has only what a VM needs: no firmware packages, no
