@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: MIT
+mod displays;
 mod session;
 mod settings;
 mod theme;
 
+use displays::{
+    DisplayError, DisplayMode, OutputDraft, OutputInfo, RelativeSide, SCALES, arrange_relative,
+    dedup_sorted_modes, format_refresh, format_scale, logical_size, project_diagram,
+};
 use gpui::{
     App, Application, Bounds, Context, Div, FocusHandle, FontWeight, KeyBinding, ObjectFit,
     Stateful, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, img, prelude::*,
@@ -29,7 +34,16 @@ const CONTROL_RELOAD: usize = 12;
 const CONTROL_CLOSE: usize = 13;
 const CONTROL_KEEP_EDITING: usize = 14;
 const CONTROL_DISCARD_CLOSE: usize = 15;
-const CONTROL_COUNT: usize = 16;
+const CONTROL_DISPLAYS: usize = 16;
+const CONTROL_DISPLAY_REFRESH: usize = 17;
+const CONTROL_COUNT: usize = 18;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Appearance,
+    Displays,
+    About,
+}
 
 fn wallpaper_path(wallpaper: Wallpaper) -> Option<PathBuf> {
     let installed = PathBuf::from("/usr/share/crowbaros-shell").join(wallpaper.asset_name());
@@ -67,9 +81,17 @@ struct Settings {
     load_error: bool,
     error: Option<String>,
     busy: bool,
-    about: bool,
+    page: Page,
     status: String,
     confirming_close: bool,
+    outputs: Vec<OutputInfo>,
+    display_drafts: Vec<OutputDraft>,
+    selected_display: usize,
+    displays_loaded: bool,
+    displays_loading: bool,
+    displays_unavailable: Option<String>,
+    display_error: Option<String>,
+    display_status: String,
 }
 
 impl Settings {
@@ -100,13 +122,33 @@ impl Settings {
             load_error: error.is_some(),
             error,
             busy: false,
-            about: false,
+            page: Page::Appearance,
             status: "".into(),
             confirming_close: false,
+            outputs: Vec::new(),
+            display_drafts: Vec::new(),
+            selected_display: 0,
+            displays_loaded: false,
+            displays_loading: false,
+            displays_unavailable: None,
+            display_error: None,
+            display_status: "".into(),
         }
     }
-    fn dirty(&self) -> bool {
+    fn appearance_dirty(&self) -> bool {
         self.saved.as_ref() != Some(&self.draft)
+    }
+    fn displays_dirty(&self) -> bool {
+        self.outputs.len() == self.display_drafts.len()
+            && self
+                .outputs
+                .iter()
+                .zip(&self.display_drafts)
+                .any(|(live, draft)| !draft.matches_output(live))
+    }
+    fn has_unsaved_edits(&self) -> bool {
+        (self.appearance_dirty() && self.draft != self.saved.clone().unwrap_or_default())
+            || self.displays_dirty()
     }
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.status.clear();
@@ -123,8 +165,119 @@ impl Settings {
         );
         cx.notify();
     }
+    fn display_changed(&mut self, cx: &mut Context<Self>) {
+        self.display_status.clear();
+        self.display_error = None;
+        self.confirming_close = false;
+        cx.notify();
+    }
+    fn refresh_displays(&mut self, cx: &mut Context<Self>) {
+        if self.displays_loading || self.busy {
+            return;
+        }
+        self.displays_loading = true;
+        self.display_error = None;
+        cx.notify();
+        let previous_name = self
+            .outputs
+            .get(self.selected_display)
+            .map(|o| o.name.clone());
+        let task = cx.background_executor().spawn(async move { displays::fetch_outputs() });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.displays_loading = false;
+                this.displays_loaded = true;
+                match result {
+                    Ok(outputs) => {
+                        let next_selected = previous_name
+                            .as_deref()
+                            .and_then(|name| outputs.iter().position(|o| o.name == name))
+                            .unwrap_or(0);
+                        this.display_drafts = outputs.iter().map(OutputDraft::from_output).collect();
+                        this.outputs = outputs;
+                        this.selected_display = next_selected;
+                        this.displays_unavailable = None;
+                        this.display_error = None;
+                        log::info!(
+                            "STUDIO event=displays-loaded count={}",
+                            this.outputs.len()
+                        );
+                    }
+                    Err(DisplayError::Unavailable(message)) => {
+                        this.outputs.clear();
+                        this.display_drafts.clear();
+                        this.selected_display = 0;
+                        this.displays_unavailable = Some(message);
+                        this.display_error = None;
+                    }
+                    Err(DisplayError::Failed(message)) => {
+                        log::warn!("STUDIO event=displays-load-failed {message}");
+                        this.displays_unavailable = None;
+                        this.display_error = Some(message);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+    fn apply_displays(&mut self, cx: &mut Context<Self>) {
+        if self.busy || self.displays_loading || !self.displays_dirty() {
+            return;
+        }
+        self.busy = true;
+        self.display_error = None;
+        self.display_status = "Applying…".into();
+        cx.notify();
+        let live = self.outputs.clone();
+        let drafts = self.display_drafts.clone();
+        let previous_name = self
+            .outputs
+            .get(self.selected_display)
+            .map(|o| o.name.clone());
+        let task = cx.background_executor().spawn(async move {
+            let applied = displays::apply_changes(&live, &drafts)?;
+            let refreshed = displays::fetch_outputs()?;
+            Ok::<_, DisplayError>((applied, refreshed))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.busy = false;
+                match result {
+                    Ok((applied, refreshed)) => {
+                        let next_selected = previous_name
+                            .as_deref()
+                            .and_then(|name| refreshed.iter().position(|o| o.name == name))
+                            .unwrap_or(0);
+                        this.display_drafts =
+                            refreshed.iter().map(OutputDraft::from_output).collect();
+                        this.outputs = refreshed;
+                        this.selected_display = next_selected;
+                        this.displays_unavailable = None;
+                        this.display_error = None;
+                        this.display_status = "Display settings applied.".into();
+                        this.confirming_close = false;
+                        log::info!("STUDIO event=display-applied outputs={}", applied.join(","));
+                    }
+                    Err(error) => {
+                        log::warn!("STUDIO event=display-apply-failed {}", error.message());
+                        this.display_error = Some(error.message().to_string());
+                        this.display_status = "Display changes not applied.".into();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
     fn save(&mut self, _: &Save, _: &mut Window, cx: &mut Context<Self>) {
-        if self.busy || self.load_error || !self.dirty() {
+        if self.page == Page::Displays {
+            self.apply_displays(cx);
+            return;
+        }
+        if self.busy || self.load_error || !self.appearance_dirty() {
             return;
         }
         self.busy = true;
@@ -171,6 +324,15 @@ impl Settings {
         if self.busy {
             return;
         }
+        if self.page == Page::Displays {
+            self.display_drafts = self.outputs.iter().map(OutputDraft::from_output).collect();
+            self.display_status = "Display changes reset.".into();
+            self.display_error = None;
+            self.confirming_close = false;
+            log::info!("STUDIO event=display-undo");
+            cx.notify();
+            return;
+        }
         self.draft = self.saved.clone().unwrap_or_default();
         self.status = "Preview reset.".into();
         self.confirming_close = false;
@@ -182,6 +344,10 @@ impl Settings {
     }
     fn reload(&mut self, _: &Reload, _: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
+            return;
+        }
+        if self.page == Page::Displays {
+            self.refresh_displays(cx);
             return;
         }
         match self.store.load() {
@@ -204,7 +370,7 @@ impl Settings {
         if self.busy {
             return;
         }
-        if self.dirty() && self.draft != self.saved.clone().unwrap_or_default() {
+        if self.has_unsaved_edits() {
             self.confirming_close = true;
             window.focus(&self.controls[CONTROL_KEEP_EDITING]);
             cx.notify();
@@ -540,14 +706,532 @@ impl Settings {
             .child(div().text_size(px(12.)).text_color(rgb(p.muted))
                 .child(if session::is_alpha() { "Saved appearance and wallpaper also apply to the shell. Other applications keep their own themes." } else { "Appearance currently styles Studio Settings. Reduced motion applies to your Hyprland desktop and is restored at login." }))
     }
+    fn displays(&self, p: Palette, window: &Window, cx: &Context<Self>) -> Div {
+        let mut page = div().flex().flex_col().gap_4().child(
+            div()
+                .flex()
+                .items_start()
+                .justify_between()
+                .gap_4()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_size(px(28.))
+                                .font_weight(FontWeight::BOLD)
+                                .child("Displays"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .text_color(rgb(p.muted))
+                                .child("Resolution, scale, and layout for connected monitors."),
+                        ),
+                )
+                .child(
+                    self.button(
+                        CONTROL_DISPLAY_REFRESH,
+                        if self.displays_loading {
+                            "Refreshing…"
+                        } else {
+                            "Refresh"
+                        },
+                        p,
+                        window,
+                        false,
+                        !self.displays_loading && !self.busy,
+                    )
+                    .h(px(34.))
+                    .px_3()
+                    .on_click(cx.listener(|this, _, w, cx| {
+                        w.focus(&this.controls[CONTROL_DISPLAY_REFRESH]);
+                        this.refresh_displays(cx);
+                    })),
+                ),
+        );
+
+        if self.displays_loading && !self.displays_loaded {
+            return page.child(
+                div()
+                    .p_5()
+                    .rounded(px(12.))
+                    .bg(rgb(p.surface))
+                    .border_1()
+                    .border_color(rgb(p.line))
+                    .text_size(px(13.))
+                    .text_color(rgb(p.muted))
+                    .child("Reading connected displays…"),
+            );
+        }
+
+        if let Some(reason) = &self.displays_unavailable {
+            return page.child(
+                div()
+                    .p_5()
+                    .rounded(px(12.))
+                    .bg(rgb(p.surface))
+                    .border_1()
+                    .border_color(rgb(p.line))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Display controls unavailable"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(rgb(p.muted))
+                            .child(reason.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(p.muted))
+                            .child("Sign into a Fulcrum session to adjust resolution, scale, and monitor layout."),
+                    ),
+            );
+        }
+
+        if self.outputs.is_empty() {
+            return page.child(
+                div()
+                    .p_5()
+                    .rounded(px(12.))
+                    .bg(rgb(p.surface))
+                    .border_1()
+                    .border_color(rgb(p.line))
+                    .text_size(px(13.))
+                    .text_color(rgb(p.muted))
+                    .child("No displays reported by Fulcrum."),
+            );
+        }
+
+        let selected = self.selected_display.min(self.outputs.len() - 1);
+        let stage_w = 540.0f32;
+        let stage_h = 114.0f32;
+        let rects = project_diagram(&self.display_drafts, stage_w, stage_h, 10.0);
+
+        // Arrangement canvas
+        let mut stage = div().w(px(stage_w)).h(px(stage_h)).relative();
+        for (i, ((output, draft), rect)) in self
+            .outputs
+            .iter()
+            .zip(&self.display_drafts)
+            .zip(rects)
+            .enumerate()
+        {
+            let is_selected = i == selected;
+            let (lw, lh) = logical_size(draft.width, draft.height, draft.scale);
+            let modified = !draft.matches_output(output);
+            stage = stage.child(
+                div()
+                    .id(("display-node", i))
+                    .absolute()
+                    .left(px(rect.x))
+                    .top(px(rect.y))
+                    .w(px(rect.width))
+                    .h(px(rect.height))
+                    .rounded(px(8.))
+                    .border_2()
+                    .border_color(rgb(if is_selected { p.focus } else { p.line }))
+                    .bg(rgb(p.canvas))
+                    .px_2()
+                    .py_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(2.))
+                    .overflow_hidden()
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.9))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(if is_selected { p.text } else { p.muted }))
+                            .child(output.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .font_family("IBM Plex Mono")
+                            .text_size(px(10.))
+                            .text_color(rgb(p.muted))
+                            .child(format!("{lw}×{lh}")),
+                    )
+                    .child(
+                        div()
+                            .font_family("IBM Plex Mono")
+                            .text_size(px(10.))
+                            .text_color(rgb(if modified { p.accent } else { p.muted }))
+                            .child(format_scale(draft.scale)),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.selected_display = i;
+                        cx.notify();
+                    })),
+            );
+        }
+
+        let mut arrangement = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Arrangement"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(p.muted))
+                            .child(if self.outputs.len() == 1 {
+                                "1 display connected".to_string()
+                            } else {
+                                format!("{} displays connected · click a display to configure", self.outputs.len())
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .h(px(126.))
+                    .rounded(px(12.))
+                    .bg(rgb(p.surface))
+                    .border_1()
+                    .border_color(rgb(p.line))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .overflow_hidden()
+                    .child(stage),
+            );
+
+        if self.outputs.len() >= 2 {
+            let anchor_idx = if selected == 0 { 1 } else { 0 };
+            let anchor_name = self.outputs[anchor_idx].name.clone();
+            let selected_name = self.outputs[selected].name.clone();
+            arrangement = arrangement.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(p.muted))
+                            .child(format!("Place {selected_name} relative to {anchor_name}")),
+                    )
+                    .child(div().flex().gap_2().children(
+                        RelativeSide::ALL.into_iter().enumerate().map(|(si, side)| {
+                            div()
+                                .id(("display-side", si))
+                                .h(px(30.))
+                                .px_3()
+                                .rounded(px(8.))
+                                .border_1()
+                                .border_color(rgb(p.line))
+                                .bg(rgb(p.surface))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_size(px(12.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(p.text))
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.85))
+                                .child(side.label())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if this.busy {
+                                        return;
+                                    }
+                                    let idx = this
+                                        .selected_display
+                                        .min(this.display_drafts.len().saturating_sub(1));
+                                    arrange_relative(&mut this.display_drafts, idx, side);
+                                    this.display_changed(cx);
+                                }))
+                        }),
+                    )),
+            );
+        }
+
+        page = page.child(arrangement);
+
+        // Selected display summary
+        let output = &self.outputs[selected];
+        let draft = &self.display_drafts[selected];
+        let (lw, lh) = logical_size(draft.width, draft.height, draft.scale);
+        let modified = !draft.matches_output(output);
+        let identity_text = if output.identity.trim().is_empty() {
+            "Connected display".to_string()
+        } else {
+            output.identity.clone()
+        };
+
+        page = page.child(
+            div()
+                .px_4()
+                .py_3()
+                .rounded(px(12.))
+                .bg(rgb(p.surface))
+                .border_1()
+                .border_color(rgb(p.line))
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_3()
+                                .child(
+                                    div()
+                                        .text_size(px(14.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(output.name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .font_family("IBM Plex Mono")
+                                        .text_size(px(11.))
+                                        .text_color(rgb(p.muted))
+                                        .child(identity_text),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .px_2()
+                                .py(px(2.))
+                                .rounded(px(6.))
+                                .bg(rgb(if modified { p.accent } else { p.canvas }))
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(if modified { p.on_accent } else { p.muted }))
+                                .child(if modified { "Pending" } else { "Active" }),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_4()
+                        .font_family("IBM Plex Mono")
+                        .text_size(px(11.))
+                        .text_color(rgb(p.text))
+                        .child(format!(
+                            "Mode: {}×{} @ {}",
+                            draft.width,
+                            draft.height,
+                            format_refresh(draft.refresh)
+                        ))
+                        .child(format!("Logical: {lw}×{lh}"))
+                        .child(format!("Position: ({}, {})", draft.x, draft.y)),
+                ),
+        );
+
+        // Scale picker
+        let current_scale = draft.scale;
+        page = page.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_size(px(14.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Scale"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(rgb(p.muted))
+                                .child("Interface size in 25% steps"),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .children(SCALES.into_iter().enumerate().map(|(si, scale)| {
+                            let is_active = current_scale == scale;
+                            div()
+                                .id(("display-scale", si))
+                                .h(px(32.))
+                                .px_3()
+                                .rounded(px(10.))
+                                .border_2()
+                                .border_color(rgb(if is_active { p.accent } else { p.line }))
+                                .bg(rgb(if is_active { p.accent } else { p.surface }))
+                                .text_color(rgb(if is_active { p.on_accent } else { p.text }))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_size(px(12.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.86))
+                                .child(format_scale(scale))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if this.busy {
+                                        return;
+                                    }
+                                    if let Some(d) = this.display_drafts.get_mut(selected) {
+                                        d.scale = scale;
+                                        this.display_changed(cx);
+                                    }
+                                }))
+                        })),
+                ),
+        );
+
+        // Resolution & refresh picker
+        let current_mode = draft.mode();
+        let live_mode = DisplayMode {
+            width: output.width,
+            height: output.height,
+            refresh: output.refresh,
+        };
+        let modes = dedup_sorted_modes(&output.modes, current_mode);
+        let mut mode_list = div()
+            .rounded(px(12.))
+            .border_1()
+            .border_color(rgb(p.line))
+            .bg(rgb(p.surface))
+            .overflow_hidden()
+            .flex()
+            .flex_col();
+
+        for (mi, mode) in modes.into_iter().enumerate() {
+            let is_selected = mode == current_mode;
+            let is_live = mode == live_mode;
+            mode_list = mode_list.child(
+                div()
+                    .id(("display-mode", mi))
+                    .px_4()
+                    .py_3()
+                    .when(mi > 0, |d| d.border_t_1().border_color(rgb(p.line)))
+                    .when(is_selected, |d| d.bg(rgb(p.canvas)))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.88))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .font_weight(if is_selected {
+                                        FontWeight::BOLD
+                                    } else {
+                                        FontWeight::SEMIBOLD
+                                    })
+                                    .child(format!("{} × {}", mode.width, mode.height)),
+                            )
+                            .child(
+                                div()
+                                    .font_family("IBM Plex Mono")
+                                    .text_size(px(12.))
+                                    .text_color(rgb(p.muted))
+                                    .child(format_refresh(mode.refresh)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .when(is_selected, |d| {
+                                d.child(div().size(px(7.)).rounded_full().bg(rgb(p.accent)))
+                            })
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(if is_selected { p.text } else { p.muted }))
+                                    .child(if is_selected {
+                                        "Selected"
+                                    } else if is_live {
+                                        "Current"
+                                    } else {
+                                        ""
+                                    }),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.busy {
+                            return;
+                        }
+                        if let Some(d) = this.display_drafts.get_mut(selected) {
+                            d.width = mode.width;
+                            d.height = mode.height;
+                            d.refresh = mode.refresh;
+                            this.display_changed(cx);
+                        }
+                    })),
+            );
+        }
+
+        page.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("Resolution & refresh rate"),
+                )
+                .child(mode_list),
+        )
+        .child(
+            div()
+                .text_size(px(12.))
+                .text_color(rgb(p.muted))
+                .child("Applied display settings take effect immediately and are remembered for this monitor across sessions."),
+        )
+    }
     fn about(&self, p: Palette) -> Div {
         div().flex().flex_col().gap_5()
             .child(div().text_size(px(28.)).font_weight(FontWeight::BOLD).child("Studio Settings"))
             .child(div().text_size(px(14.)).child("Your workspace, with room to make it your own."))
             .child(div().flex().flex_col().gap_3().text_size(px(13.)).text_color(rgb(p.muted))
-                .child("Preview your appearance, then save it for your next session. Available motion controls depend on your desktop." )
-                .child("Saved appearance and wallpaper apply to the shell. Display controls, desktop-wide styling, and other settings will follow.")
-                .child("Keyboard: Tab and Shift+Tab move focus. Enter or Space activates a control. Ctrl+S saves; Ctrl+Z undoes the preview; Ctrl+Q closes."))
+                .child("Preview your appearance, then save it for your next session. Configure monitor resolution, fractional scale, and layout on the Displays page.")
+                .child("Saved appearance and wallpaper apply to the shell. Display settings apply directly through Fulcrum and persist for each monitor.")
+                .child("Keyboard: Tab and Shift+Tab move focus. Enter or Space activates a control. Ctrl+S saves or applies; Ctrl+Z undoes; Ctrl+Q closes."))
             .child(div().border_t_1().border_color(rgb(p.line)).pt_5().flex().flex_col().gap_2()
                 .child(div().text_size(px(13.)).child("CrowbarOS · Studio Settings 0.1.3"))
                 .child(div().font_family("IBM Plex Mono").text_size(px(11.)).text_color(rgb(p.muted)).child("Rust / GPUI 0.2.2 / Wayland")))
@@ -557,13 +1241,51 @@ impl Settings {
 impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Palette::for_preferences(&self.draft);
-        let can_save = self.dirty() && !self.load_error && !self.busy;
-        let status = if !self.status.is_empty() {
+        let on_displays = self.page == Page::Displays;
+        let active_dirty = if on_displays {
+            self.displays_dirty()
+        } else {
+            self.appearance_dirty()
+        };
+        let can_primary = if on_displays {
+            self.displays_dirty() && !self.busy && !self.displays_loading
+        } else {
+            self.appearance_dirty() && !self.load_error && !self.busy
+        };
+        let active_error = if on_displays {
+            self.display_error.clone()
+        } else {
+            self.error.clone()
+        };
+        let status = if on_displays {
+            if !self.display_status.is_empty() {
+                self.display_status.clone()
+            } else if self.displays_unavailable.is_some() {
+                "Display controls unavailable".into()
+            } else if self.displays_dirty() {
+                "Pending display changes · not applied".into()
+            } else if self.displays_loading {
+                "Reading displays…".into()
+            } else {
+                "Display settings up to date".into()
+            }
+        } else if !self.status.is_empty() {
             self.status.clone()
-        } else if self.dirty() {
+        } else if self.appearance_dirty() {
             "Preview · not saved".into()
         } else {
             "All changes saved".into()
+        };
+        let primary_label = if on_displays {
+            if self.busy {
+                "Applying…"
+            } else {
+                "Apply changes"
+            }
+        } else if self.busy {
+            "Saving…"
+        } else {
+            "Save changes"
         };
         div()
             .id("studio-settings")
@@ -646,22 +1368,47 @@ impl Render for Settings {
                                     "Appearance",
                                     p,
                                     window,
-                                    !self.about,
+                                    self.page == Page::Appearance,
                                     true,
                                 )
                                 .on_click(cx.listener(|this, _, w, cx| {
-                                    this.about = false;
+                                    this.page = Page::Appearance;
                                     w.focus(&this.controls[CONTROL_APPEARANCE]);
                                     cx.notify();
                                 })),
                             )
                             .child(
-                                self.button(CONTROL_ABOUT, "About", p, window, self.about, true)
-                                    .on_click(cx.listener(|this, _, w, cx| {
-                                        this.about = true;
-                                        w.focus(&this.controls[CONTROL_ABOUT]);
-                                        cx.notify();
-                                    })),
+                                self.button(
+                                    CONTROL_DISPLAYS,
+                                    "Displays",
+                                    p,
+                                    window,
+                                    self.page == Page::Displays,
+                                    true,
+                                )
+                                .on_click(cx.listener(|this, _, w, cx| {
+                                    this.page = Page::Displays;
+                                    w.focus(&this.controls[CONTROL_DISPLAYS]);
+                                    if !this.displays_loaded && !this.displays_loading {
+                                        this.refresh_displays(cx);
+                                    }
+                                    cx.notify();
+                                })),
+                            )
+                            .child(
+                                self.button(
+                                    CONTROL_ABOUT,
+                                    "About",
+                                    p,
+                                    window,
+                                    self.page == Page::About,
+                                    true,
+                                )
+                                .on_click(cx.listener(|this, _, w, cx| {
+                                    this.page = Page::About;
+                                    w.focus(&this.controls[CONTROL_ABOUT]);
+                                    cx.notify();
+                                })),
                             )
                             .child(div().flex_1())
                             .child(
@@ -684,13 +1431,13 @@ impl Render for Settings {
                                     .min_h(px(0.))
                                     .overflow_y_scroll()
                                     .p_6()
-                                    .child(if self.about {
-                                        self.about(p)
-                                    } else {
-                                        self.appearance(p, window, cx)
+                                    .child(match self.page {
+                                        Page::Appearance => self.appearance(p, window, cx),
+                                        Page::Displays => self.displays(p, window, cx),
+                                        Page::About => self.about(p),
                                     }),
                             )
-                            .when(self.error.is_some(), |d| {
+                            .when(active_error.is_some(), |d| {
                                 d.child(
                                     div()
                                         .px_6()
@@ -706,16 +1453,20 @@ impl Render for Settings {
                                                 .flex_1()
                                                 .min_w(px(0.))
                                                 .text_size(px(12.))
-                                                .child(self.error.clone().unwrap_or_default()),
+                                                .child(active_error.clone().unwrap_or_default()),
                                         )
                                         .child(
                                             self.button(
                                                 CONTROL_RELOAD,
-                                                "Reload saved",
+                                                if on_displays {
+                                                    "Refresh"
+                                                } else {
+                                                    "Reload saved"
+                                                },
                                                 p,
                                                 window,
                                                 false,
-                                                !self.busy,
+                                                !self.busy && !self.displays_loading,
                                             )
                                             .flex_shrink_0()
                                             .on_click(
@@ -783,7 +1534,7 @@ impl Render for Settings {
                                                 p,
                                                 window,
                                                 false,
-                                                self.dirty() && !self.busy,
+                                                active_dirty && !self.busy,
                                             )
                                             .on_click(
                                                 cx.listener(|this, _, w, cx| {
@@ -794,15 +1545,11 @@ impl Render for Settings {
                                         .child(
                                             self.button(
                                                 CONTROL_SAVE,
-                                                if self.busy {
-                                                    "Saving…"
-                                                } else {
-                                                    "Save changes"
-                                                },
+                                                primary_label,
                                                 p,
                                                 window,
                                                 true,
-                                                can_save,
+                                                can_primary,
                                             )
                                             .on_click(
                                                 cx.listener(|this, _, w, cx| {
@@ -904,7 +1651,7 @@ fn main() {
                         if this.busy {
                             return false;
                         }
-                        if this.dirty() && this.draft != this.saved.clone().unwrap_or_default() {
+                        if this.has_unsaved_edits() {
                             this.confirming_close = true;
                             window.focus(&this.controls[CONTROL_KEEP_EDITING]);
                             cx.notify();
@@ -946,7 +1693,9 @@ mod tests {
         assert_eq!(CONTROL_CLOSE, 13);
         assert_eq!(CONTROL_KEEP_EDITING, 14);
         assert_eq!(CONTROL_DISCARD_CLOSE, 15);
-        assert_eq!(CONTROL_COUNT, 16);
+        assert_eq!(CONTROL_DISPLAYS, 16);
+        assert_eq!(CONTROL_DISPLAY_REFRESH, 17);
+        assert_eq!(CONTROL_COUNT, 18);
     }
 
     #[test]

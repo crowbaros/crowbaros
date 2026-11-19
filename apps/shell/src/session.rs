@@ -74,6 +74,14 @@ pub trait Adapter: Send + Sync {
     fn lock(&self, _locked: bool) -> Result<()> {
         bail!("This compositor does not lock")
     }
+    /// Lists connected displays and their modes, positions, and scales.
+    fn outputs(&self) -> Result<serde_json::Value> {
+        bail!("This compositor does not report display outputs")
+    }
+    /// Applies a display's mode, position, or scale.
+    fn configure_output(&self, _request: serde_json::Value) -> Result<()> {
+        bail!("This compositor does not configure display outputs")
+    }
 }
 
 /// Where the compositor's events go: the shell's own event channel.
@@ -367,6 +375,14 @@ impl Adapter for Compositor {
         self.request(serde_json::json!({ "op": op })).map(drop)
     }
 
+    fn outputs(&self) -> Result<serde_json::Value> {
+        self.request(serde_json::json!({ "op": "outputs" }))
+    }
+
+    fn configure_output(&self, request: serde_json::Value) -> Result<()> {
+        self.request(request).map(drop)
+    }
+
     fn pump(&self) {
         let Ok(mut lines) = self.lines.lock() else {
             return;
@@ -646,21 +662,129 @@ pub fn server(tx: Sender<Event>) -> Result<File> {
     });
     Ok(lock)
 }
-fn same_user(stream: &UnixStream) -> bool {
+fn peer_uid(stream: &UnixStream) -> Option<u32> {
     use std::os::fd::AsRawFd;
     // SO_PEERCRED is supplied by the kernel, not by the request.
     unsafe {
         let mut peer: libc::ucred = std::mem::zeroed();
         let mut size = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-        libc::getsockopt(
+        (libc::getsockopt(
             stream.as_raw_fd(),
             libc::SOL_SOCKET,
             libc::SO_PEERCRED,
             (&mut peer as *mut libc::ucred).cast(),
             &mut size,
-        ) == 0
-            && peer.uid == libc::geteuid()
+        ) == 0)
+            .then_some(peer.uid)
     }
+}
+fn same_user(stream: &UnixStream) -> bool {
+    let uid = unsafe { libc::geteuid() };
+    peer_uid(stream) == Some(uid)
+}
+
+/// Validates and handles one JSON request on the display-settings bridge.
+/// Only `outputs` and `configure_output` cross this boundary; window,
+/// workspace, launcher, and lock operations are always refused.
+fn handle_display_request(line: &str, adapter: &dyn Adapter) -> serde_json::Value {
+    let err = |msg: &str| serde_json::json!({ "reply": "error", "message": msg });
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(line) else {
+        return err("Display request must be a JSON object");
+    };
+    let Some(op) = map.get("op").and_then(|v| v.as_str()) else {
+        return err("Display request must name its op");
+    };
+    match op {
+        "outputs" => {
+            if map.len() != 1 {
+                return err("outputs takes no additional fields");
+            }
+            match adapter.outputs() {
+                Ok(reply) => reply,
+                Err(e) => err(&e.to_string()),
+            }
+        }
+        "configure_output" => {
+            const ALLOWED: &[&str] = &["op", "name", "width", "height", "refresh", "x", "y", "scale"];
+            if let Some(extra) = map.keys().find(|k| !ALLOWED.contains(&k.as_str())) {
+                return err(&format!("configure_output takes no field {extra:?}"));
+            }
+            let Some(name) = map.get("name").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) else {
+                return err("configure_output requires a non-empty output name");
+            };
+            let mut clean = serde_json::Map::new();
+            clean.insert("op".into(), serde_json::Value::String("configure_output".into()));
+            clean.insert("name".into(), serde_json::Value::String(name.into()));
+            for field in ["width", "height", "refresh", "x", "y", "scale"] {
+                if let Some(val) = map.get(field) {
+                    if let Some(n) = val.as_i64() {
+                        clean.insert(field.into(), serde_json::Value::Number(n.into()));
+                    } else {
+                        return err(&format!("{field} must be a whole number"));
+                    }
+                }
+            }
+            match adapter.configure_output(serde_json::Value::Object(clean)) {
+                Ok(()) => serde_json::json!({ "reply": "ok" }),
+                Err(e) => err(&e.to_string()),
+            }
+        }
+        _ => err("Only outputs and configure_output are allowed"),
+    }
+}
+
+/// Exposes a strictly bounded Unix socket (`CROWBAR_DISPLAY_SOCKET`) that lets
+/// Studio Settings inspect and configure displays via Fulcrum without giving
+/// any app access to the shell's control channel.
+pub fn start_display_bridge() {
+    let Some(path) = std::env::var_os("CROWBAR_DISPLAY_SOCKET").map(PathBuf::from) else {
+        return;
+    };
+    let allowed_uid = std::env::var("CROWBAR_DISPLAY_UID")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok());
+    let self_uid = unsafe { libc::geteuid() };
+    let _ = fs::remove_file(&path);
+    let listener = match UnixListener::bind(&path) {
+        Ok(l) => l,
+        Err(e) => {
+            log::warn!("Display bridge {}: {e}", path.display());
+            return;
+        }
+    };
+    if let Err(e) = fs::set_permissions(&path, fs::Permissions::from_mode(0o660)) {
+        log::warn!("Display bridge permissions {}: {e}", path.display());
+        return;
+    }
+    log::info!("SHELL display-bridge listening={}", path.display());
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let Some(uid) = peer_uid(&stream) else {
+                continue;
+            };
+            let allowed = uid == self_uid || allowed_uid == Some(uid);
+            if !allowed {
+                log::warn!("SHELL display-bridge refused uid={uid}");
+                continue;
+            }
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+            let mut line = String::new();
+            let reply = match BufReader::new(&stream).take(4097).read_line(&mut line) {
+                Ok(n) if n > 0 && line.len() <= 4096 && line.ends_with('\n') => {
+                    match connection() {
+                        Ok(adapter) => handle_display_request(line.trim_end(), adapter),
+                        Err(e) => serde_json::json!({ "reply": "error", "message": e.to_string() }),
+                    }
+                }
+                _ => serde_json::json!({ "reply": "error", "message": "Invalid or oversized display request" }),
+            };
+            if let Ok(mut bytes) = serde_json::to_vec(&reply) {
+                bytes.push(b'\n');
+                let _ = (&stream).write_all(&bytes);
+            }
+        }
+    });
 }
 
 pub fn start_session() -> Result<()> {
@@ -1084,5 +1208,49 @@ mod tests {
         let _peer_end = peer.join().unwrap();
 
         assert!(compositor.focus_window("0x1").is_err());
+    }
+
+    #[test]
+    fn display_bridge_forwards_outputs_and_configure_output_and_refuses_everything_else() {
+        let outputs_reply = concat!(
+            r#"{"reply":"outputs","outputs":[{"name":"Virtual-1","identity":"QEMU","#,
+            r#""width":1280,"height":960,"refresh":60000,"x":0,"y":0,"scale":120,"#,
+            r#""modes":[{"width":1280,"height":960,"refresh":60000}]}]}"#,
+            "\n"
+        );
+        let (compositor, peer) = scripted(vec![
+            (r#"{"op":"outputs"}"#, outputs_reply),
+            (
+                r#"{"name":"Virtual-1","op":"configure_output","scale":150}"#,
+                "{\"reply\":\"ok\"}\n",
+            ),
+        ]);
+
+        let listed = handle_display_request(r#"{"op":"outputs"}"#, &compositor);
+        assert_eq!(listed["reply"], "outputs");
+        assert_eq!(listed["outputs"][0]["name"], "Virtual-1");
+
+        let configured = handle_display_request(
+            r#"{"op":"configure_output","name":"Virtual-1","scale":150}"#,
+            &compositor,
+        );
+        assert_eq!(configured["reply"], "ok");
+
+        for disallowed in [
+            r#"{"op":"snapshot"}"#,
+            r#"{"op":"lock"}"#,
+            r#"{"op":"unlock"}"#,
+            r#"{"op":"focus_workspace","id":2}"#,
+            r#"{"op":"focus_window","id":"0x1"}"#,
+            r#"{"op":"outputs","extra":1}"#,
+            r#"{"op":"configure_output","name":"Virtual-1","evil":true}"#,
+            r#"{"op":"configure_output","name":"","scale":120}"#,
+            r#"{"op":"configure_output","name":"Virtual-1","scale":"120"}"#,
+        ] {
+            let reply = handle_display_request(disallowed, &compositor);
+            assert_eq!(reply["reply"], "error", "expected refusal for {disallowed}");
+        }
+
+        peer.join().unwrap();
     }
 }
