@@ -251,6 +251,36 @@ class Account(BuildFixture):
                 void_base.build()
         self.assertEqual(self.commands, [])
 
+    def test_the_account_files_ssh_keys_reach_the_image_one_per_line(self):
+        keys = ['ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ96oqWr9ruQ7W jim@tower',
+                'ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY=',
+                'sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29t key']
+        self.write_account(name='jim', password_hash=self.HASH, ssh_keys=keys)
+        env, _ = self.build()
+        self.assertEqual(env['PERSON_SSH_KEYS'].splitlines(), keys)
+        self.assertTrue(env['PERSON_SSH_KEYS'].endswith('\n'))
+
+    def test_an_account_with_no_ssh_keys_gets_only_the_builds_key(self):
+        # image.sh writes the build's key for the person whatever the file says.
+        for account in [dict(name='jim', password_hash=self.HASH), None]:
+            if account:
+                self.write_account(**account)
+            else:
+                void_base.ACCOUNT_FILE.unlink()
+            env, _ = self.build()
+            self.assertEqual(env['PERSON_SSH_KEYS'], '')
+            self.assertTrue(env['PUBKEY'].endswith('id_ed25519.pub'))
+
+    def test_ssh_keys_that_would_do_more_than_let_a_key_in_are_refused(self):
+        good = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ96oqWr9ruQ7W'
+        for keys in ['ssh-ed25519 AAAA', [good + '\nssh-rsa AAAA'], [good + ' a\nb'],
+                     ['command="sh" ' + good], ['AAAAC3NzaC1lZDI1NTE5AAAAIJ96'],
+                     ['ssh-dss AAAAB3NzaC1kc3M='], [''], [42], [good, None]]:
+            self.write_account(name='jim', password_hash=self.HASH, ssh_keys=keys)
+            with self.assertRaises(SystemExit, msg=keys):
+                void_base.build()
+        self.assertEqual(self.commands, [])
+
     def test_a_name_the_image_already_has_is_refused_before_anything_is_built(self):
         for name in ('root', 'sshd', '_seatd', 'netdev'):
             self.write_account(name=name, password_hash=self.HASH)
@@ -263,6 +293,19 @@ class Account(BuildFixture):
         for hashed in ('$6$rounds=5000$saltsalt$' + 'a/b.' * 21 + 'xy',
                        '$y$j9T$saltsaltsaltsalt$' + 'A' * 43):
             self.assertTrue(void_base.PASSWORD_HASH.fullmatch(hashed), hashed)
+
+
+class PersonSshCheck(unittest.TestCase):
+    """Base's check logs in as the person, with the build's key, not as root."""
+
+    def test_the_check_runs_as_the_lab_account_and_wants_its_uid(self):
+        [(command, ok)] = [(command, ok) for _, command, ok, *person in void_base.CHECKS if person]
+        self.assertTrue(ok(f'{void_base.PERSON_UID}\n'))
+        self.assertFalse(ok('0\n'))
+        with patch('subprocess.run') as run:
+            void_base.ssh(command, user=void_base.LAB_ACCOUNT['name'])
+        self.assertIn('crowbar@127.0.0.1', run.call_args.args[0])
+        self.assertNotIn('root@127.0.0.1', run.call_args.args[0])
 
 
 class EarlyCpio(unittest.TestCase):
@@ -328,7 +371,7 @@ class SshCheck(unittest.TestCase):
     """Base's check reads sshd's settings as sshd -T prints them."""
 
     def setUp(self):
-        self.passes = dict((name, ok) for name, _, ok in void_base.CHECKS)['SSH takes keys and no passwords']
+        self.passes = dict((name, ok) for name, _, ok, *_ in void_base.CHECKS)['SSH takes keys and no passwords']
 
     def test_keys_only_passes_in_either_case(self):
         self.assertTrue(self.passes('PasswordAuthentication no\nKbdInteractiveAuthentication no\n'
@@ -346,7 +389,7 @@ class NvidiaCheck(unittest.TestCase):
     with no NVIDIA card, left unloaded."""
 
     def setUp(self):
-        checks = dict((name, ok) for name, _, ok in void_base.CHECKS)
+        checks = dict((name, ok) for name, _, ok, *_ in void_base.CHECKS)
         self.cmdline = checks["kernel command line carries NVIDIA's settings"]
         self.module = checks["NVIDIA's module is built, and not loaded without an NVIDIA card"]
 
