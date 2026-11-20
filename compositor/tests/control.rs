@@ -36,18 +36,14 @@ impl Control {
     }
 }
 
-/// A compartment's client with one window, listening to its keyboard.
-fn window(
-    compositor: &Compositor,
-    compartment: &str,
-    app_id: &str,
-) -> (crowbar_probe::Client, crowbar_probe::CompartmentListener) {
-    let (mut client, listener) = compositor.compartment(compartment);
+/// An app with one window, listening to its keyboard.
+fn window(compositor: &Compositor, app_id: &str) -> crowbar_probe::Client {
+    let mut client = compositor.app();
     client.listen_to_keyboard().unwrap();
     client
         .open_toplevel(&format!("{app_id} \"title\""), app_id, (200, 100), 0xffc0_2020)
         .unwrap();
-    (client, listener)
+    client
 }
 
 /// The window IDs a snapshot lists, in order.
@@ -67,8 +63,8 @@ fn a_snapshot_lists_every_window_and_the_one_with_the_keyboard() {
         control.ask(r#"{"op":"snapshot"}"#),
         r#"{"reply":"snapshot","workspace":1,"active":null,"locked":false,"unlock_entry":false,"windows":[]}"#
     );
-    let (_first, _a) = window(&compositor, "c1", "test.first");
-    let (_second, _b) = window(&compositor, "c2", "test.second");
+    let _first = window(&compositor, "test.first");
+    let _second = window(&compositor, "test.second");
 
     let snapshot = control.ask(r#"{"op":"snapshot"}"#);
     let ids = ids(&snapshot);
@@ -78,8 +74,8 @@ fn a_snapshot_lists_every_window_and_the_one_with_the_keyboard() {
         "{snapshot}"
     );
     assert!(
-        snapshot.contains(r#""active":null"#),
-        "a new window takes no keyboard: {snapshot}"
+        snapshot.contains(&format!(r#""active":"{}""#, ids[1])),
+        "the newest window has the keyboard: {snapshot}"
     );
 
     compositor.click(60, 60);
@@ -91,7 +87,7 @@ fn a_snapshot_lists_every_window_and_the_one_with_the_keyboard() {
 fn the_shell_shows_a_workspace() {
     let compositor = Compositor::start();
     let mut control = Control::connect(&compositor);
-    let (_client, _listener) = window(&compositor, "c1", "test.one");
+    let _client = window(&compositor, "test.one");
 
     assert_eq!(control.ask(r#"{"op":"focus_workspace","id":2}"#), r#"{"reply":"ok"}"#);
 
@@ -108,7 +104,7 @@ fn the_shell_shows_a_workspace() {
 fn the_shell_focuses_a_window_on_another_workspace() {
     let compositor = Compositor::start();
     let mut control = Control::connect(&compositor);
-    let (mut client, _listener) = window(&compositor, "c1", "test.one");
+    let mut client = window(&compositor, "test.one");
     let id = ids(&control.ask(r#"{"op":"snapshot"}"#)).remove(0);
     control.ask(r#"{"op":"focus_workspace","id":3}"#);
     client.take_keys().unwrap();
@@ -223,13 +219,18 @@ fn super_tapped_alone_asks_the_shell_for_its_launcher() {
     );
 }
 
+/// A window that maps while the session is locked does not get the
+/// keyboard, and wants attention until it has it.
 #[test]
-fn a_window_that_opens_without_the_keyboard_wants_attention_until_it_has_it() {
+fn a_window_that_opens_while_locked_wants_attention_until_it_has_it() {
     let compositor = Compositor::start();
-    let mut control = Control::connect(&compositor);
-    let (_client, _listener) = window(&compositor, "c1", "test.quiet");
+    compositor.with(|state| state.lock("test"));
+    let _client = window(&compositor, "test.quiet");
+    compositor.with(|state| state.unlock());
 
+    let mut control = Control::connect(&compositor);
     let snapshot = control.ask(r#"{"op":"snapshot"}"#);
+    assert!(snapshot.contains(r#""active":null"#), "{snapshot}");
     assert!(snapshot.contains(r#""attention":true"#), "{snapshot}");
 
     compositor.click(60, 60);
@@ -237,25 +238,24 @@ fn a_window_that_opens_without_the_keyboard_wants_attention_until_it_has_it() {
     assert!(snapshot.contains(r#""attention":false"#), "{snapshot}");
 }
 
+/// Every new window opens above and takes the keyboard, as on any desktop,
+/// whether or not the shell said it launched an app. `launching` is still
+/// answered.
 #[test]
-fn the_first_window_after_the_shell_launches_an_app_takes_the_keyboard() {
+fn a_new_window_takes_the_keyboard() {
     let compositor = Compositor::start();
     let mut control = Control::connect(&compositor);
-    let (_first, _one) = window(&compositor, "c1", "test.before");
+    let _first = window(&compositor, "test.first");
     let snapshot = control.ask(r#"{"op":"snapshot"}"#);
-    assert!(
-        snapshot.contains(r#""active":null"#),
-        "a window took the keyboard unasked: {snapshot}"
-    );
+    let first = ids(&snapshot)[0].clone();
+    assert!(snapshot.contains(&format!(r#""active":"{first}""#)), "{snapshot}");
 
+    let _second = window(&compositor, "test.second");
     assert_eq!(control.ask(r#"{"op":"launching"}"#), r#"{"reply":"ok"}"#);
-    let (_launched, _two) = window(&compositor, "c2", "test.launched");
-    let (_after, _three) = window(&compositor, "c3", "test.after");
+    let _third = window(&compositor, "test.third");
 
     let snapshot = control.ask(r#"{"op":"snapshot"}"#);
-    let launched = ids(&snapshot)[1].clone();
-    assert!(snapshot.contains(&format!(r#""active":"{launched}""#)), "{snapshot}");
-    // The one launch gave the keyboard once: the window after wants
-    // attention.
-    assert!(snapshot.ends_with(r#""workspace":1,"attention":true}]}"#), "{snapshot}");
+    let third = ids(&snapshot)[2].clone();
+    assert!(snapshot.contains(&format!(r#""active":"{third}""#)), "{snapshot}");
+    assert!(!snapshot.contains(r#""attention":true"#), "{snapshot}");
 }

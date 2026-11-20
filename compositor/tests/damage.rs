@@ -46,7 +46,7 @@ fn same(drawn: &Image, whole: &Image) -> bool {
 #[test]
 fn a_commit_damages_its_window_alone_and_the_frame_is_whole() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let first = client
         .open_toplevel("one", "test.one", (200, 100), 0xff80_0000)
         .unwrap();
@@ -72,7 +72,7 @@ fn a_commit_damages_its_window_alone_and_the_frame_is_whole() {
 #[test]
 fn a_window_that_goes_damages_where_it_was() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let _below = client
         .open_toplevel("below", "test.below", (300, 200), 0xff80_0000)
         .unwrap();
@@ -105,7 +105,7 @@ fn a_window_that_goes_damages_where_it_was() {
 #[test]
 fn a_still_output_has_no_damage() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let _window = client
         .open_toplevel("still", "test.still", (200, 100), 0xff80_0000)
         .unwrap();
@@ -124,7 +124,7 @@ fn a_still_output_has_no_damage() {
 #[test]
 fn a_focus_change_redraws_both_frames() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let _first = client
         .open_toplevel("one", "test.one", (200, 100), 0xff80_0000)
         .unwrap();
@@ -152,7 +152,7 @@ fn a_focus_change_redraws_both_frames() {
 #[test]
 fn a_commit_that_damages_a_patch_redraws_that_patch_alone() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client
         .open_toplevel("one", "test.one", (200, 100), 0xff80_0000)
         .unwrap();

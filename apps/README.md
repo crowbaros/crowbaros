@@ -16,22 +16,18 @@ separate Cargo project. The shell's verified GPUI layer-shell backport and
 `packaging/prepare-gpui.py` remain active; the RPM recipes and systemd/Hyprland
 startup hooks are in the [workflow archive](../docs/archive/fedora-workflow/README.md).
 Portable desktop entries and icons remain beside the source.
-The `.desktop` launcher is Alpha scaffolding. Production installed software
-comes from the pinned catalog in [ADR 0017](../docs/archive/substrate-vision/adr/0017-a-pinned-catalog-and-workbenches.md)
-and starts through the Warden; Tools run through the broker.
+The shell launches desktop entries, and the launcher service starts each as
+the person's account, as on any desktop
+([ADR 0032](../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md)).
 
 The [Void desktop smoke command](../lab/void/README.md#the-desktop-check)
 builds Base's image with the compositor, shell, and Studio Settings, and
-exercises them on a copy of it, preserving development VMs. Separate runit services and UIDs follow ADR 0016's
-temporary Alpha rules. The [acceptance record](../docs/development/void-desktop-smoke-2026-11-15.md)
+exercises them on a copy of it, preserving development VMs. The compositor and
+the shell run as service accounts of their own, and every app as the person. The [acceptance record](../docs/development/void-desktop-smoke-2026-11-15.md)
 covers launch, focus, workspaces, saved appearance, restart, and reboot.
 The apps have also rendered on [Void hardware](../docs/research/compositor-nvidia-2026-11-15.md).
 
 The Alpha path does not call the retained Hyprland or systemd adapters. Their
 removal and replacement with production shell/Settings IPC are bounded by
 [#71](https://github.com/crowbaros/crowbaros/issues/71). The old hooks are archived
-and are not installed. Production compartment isolation remains separate work.
-
-Trusted asks, declarative Tool UI, powerbox, preview/promote, point-and-say,
-task visibility, emergency stop, and recovery are still roadmap work. See the
-[vision](../docs/archive/substrate-vision/VISION.md). Retiring packaging does not implement those features.
+and are not installed.

@@ -17,15 +17,16 @@ use crowbar_compositor::{
 const USAGE: &str = "\
 crowbar-compositor: the CrowbarOS Wayland compositor.
 
-It has no public socket. The shell and the Warden each connect to a path
-socket of their own, and the compositor accepts a peer only if the kernel
-reports that part's user ID. Every other client comes through a listener the
-Warden registers for one compartment. All four of these are required:
+It has two kinds of client, the shell and the person's apps, and each
+connects to a path socket of its own. The compositor accepts a peer only if
+the kernel reports the user ID given for that socket. All four of these are
+required:
 
   --shell-socket PATH    Where the shell connects.
   --shell-uid UID        The user ID the shell runs as.
-  --warden-socket PATH   Where the Warden connects.
-  --warden-uid UID       The user ID the Warden runs as.
+  --apps-socket PATH     Where every app connects. Base links it into the
+                         person's runtime directory for their apps to find.
+  --apps-uid UID         The person's user ID, which every app runs as.
 
   --shell-control-socket PATH
                          Where the shell's control channel connects, from
@@ -76,7 +77,7 @@ struct Args {
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
-    let (mut shell_socket, mut shell_uid, mut warden_socket, mut warden_uid) = (None, None, None, None);
+    let (mut shell_socket, mut shell_uid, mut apps_socket, mut apps_uid) = (None, None, None, None);
     let mut backend = BackendKind::Tty;
     let mut shell_control = None;
     let mut layout = None;
@@ -90,8 +91,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         match flag.as_str() {
             "--shell-socket" => shell_socket = Some(PathBuf::from(value()?)),
             "--shell-uid" => shell_uid = Some(uid(value()?)?),
-            "--warden-socket" => warden_socket = Some(PathBuf::from(value()?)),
-            "--warden-uid" => warden_uid = Some(uid(value()?)?),
+            "--apps-socket" => apps_socket = Some(PathBuf::from(value()?)),
+            "--apps-uid" => apps_uid = Some(uid(value()?)?),
             "--shell-control-socket" => shell_control = Some(PathBuf::from(value()?)),
             "--layout" => layout = Some(PathBuf::from(value()?)),
             "--unlock-socket" => unlock_socket = Some(PathBuf::from(value()?)),
@@ -131,7 +132,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
     Ok(Args {
         parts: TrustedParts {
             shell: part(shell_socket, shell_uid, "shell")?,
-            warden: part(warden_socket, warden_uid, "warden")?,
+            apps: part(apps_socket, apps_uid, "apps")?,
         },
         backend,
         shell_control,
@@ -204,23 +205,23 @@ mod tests {
         "/run/crowbar/shell/wayland",
         "--shell-uid",
         "901",
-        "--warden-socket",
-        "/run/crowbar/warden/wayland",
-        "--warden-uid",
-        "0",
+        "--apps-socket",
+        "/run/crowbar-apps/wayland-0",
+        "--apps-uid",
+        "1003",
     ];
 
     #[test]
-    fn both_trusted_parts_are_read_from_the_command_line() {
+    fn both_sockets_are_read_from_the_command_line() {
         let args = parse(&PARTS).unwrap();
         assert_eq!(args.parts.shell.socket, PathBuf::from("/run/crowbar/shell/wayland"));
         assert_eq!(args.parts.shell.uid, 901);
-        assert_eq!(args.parts.warden.socket, PathBuf::from("/run/crowbar/warden/wayland"));
-        assert_eq!(args.parts.warden.uid, 0);
+        assert_eq!(args.parts.apps.socket, PathBuf::from("/run/crowbar-apps/wayland-0"));
+        assert_eq!(args.parts.apps.uid, 1003);
     }
 
     #[test]
-    fn the_compositor_does_not_start_without_both_trusted_parts() {
+    fn the_compositor_does_not_start_without_both_sockets() {
         for missing in 0..4 {
             let mut args = PARTS.to_vec();
             args.drain(missing * 2..missing * 2 + 2);
@@ -228,9 +229,8 @@ mod tests {
         }
     }
 
-    /// Each opened a way in that ADR 0016 closes: a program the compositor
-    /// starts, a socket any process can find, or a backend that is not a
-    /// TTY.
+    /// Each would open another way in: a program the compositor starts, a
+    /// socket with no user ID checked, or a backend that is not a TTY.
     #[test]
     fn no_flag_starts_a_client_opens_a_socket_or_picks_another_backend() {
         for flag in ["--spawn", "--shell", "--shell-service", "--socket", "--public-socket"] {

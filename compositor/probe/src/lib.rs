@@ -1,6 +1,6 @@
 //! Wayland clients for looking at the compositor from outside, on the client
-//! side of `fulcrum-wire`, and the stand-in for the Warden. Never part of
-//! Base.
+//! side of `fulcrum-wire`. Base's image carries the `crowbar-probe` binary
+//! for its desktop check, as an app like any other.
 //!
 //! What the probe sees is what any client sees: a socket, the globals the
 //! registry advertises, and the events and errors that come back. Events are
@@ -9,13 +9,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod apps;
+
 use std::{
     collections::{HashMap, VecDeque},
     io,
-    os::{
-        fd::{AsFd, OwnedFd},
-        unix::net::{UnixListener, UnixStream},
-    },
+    os::{fd::OwnedFd, unix::net::UnixStream},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -24,7 +23,6 @@ use fulcrum_wire::{
     Arg, ArgReader, Connection, ConnectionError, DynamicNewId, Encode, NewId,
     protocol::{
         self,
-        security_context_v1::{wp_security_context_manager_v1, wp_security_context_v1},
         wayland::{self, wl_display, wl_registry},
     },
 };
@@ -146,8 +144,8 @@ impl Client {
         Ok(client)
     }
 
-    /// Connects to the socket at `path`. A socket that nothing accepts on,
-    /// such as a stopped compartment's, refuses the connection.
+    /// Connects to the socket at `path`. A socket that nothing accepts on
+    /// refuses the connection.
     pub fn connect(path: &Path) -> Result<Self, Error> {
         let stream = connect(path).map_err(|error| format!("could not connect to {}: {error}", path.display()))?;
         Self::new(stream)
@@ -443,62 +441,6 @@ impl Client {
             Err(error) => Err(error),
         }
     }
-
-    /// Registers a listener for one compartment, as the Warden does. With a
-    /// principal ID or compartment ID of `None`, that field is never set.
-    pub fn register_compartment(
-        &mut self,
-        path: &Path,
-        principal: Option<&str>,
-        compartment: Option<&str>,
-    ) -> Result<CompartmentListener, Error> {
-        let manager = self.bind(wp_security_context_manager_v1::NAME, 1)?;
-        let _ = std::fs::remove_file(path);
-        let listener = UnixListener::bind(path)?;
-        let (close_read, close_write) = rustix::pipe::pipe_with(rustix::pipe::PipeFlags::CLOEXEC)?;
-        let context = self.new_id(wp_security_context_v1::NAME);
-        self.request(
-            manager,
-            wp_security_context_manager_v1::Request::CreateListener {
-                id: context,
-                listen_fd: listener.as_fd().try_clone_to_owned()?,
-                close_fd: close_read,
-            },
-        )?;
-        self.request(
-            context.0,
-            wp_security_context_v1::Request::SetSandboxEngine {
-                name: "org.crowbaros.warden".into(),
-            },
-        )?;
-        if let Some(principal) = principal {
-            self.request(
-                context.0,
-                wp_security_context_v1::Request::SetAppId {
-                    app_id: principal.into(),
-                },
-            )?;
-        }
-        if let Some(compartment) = compartment {
-            self.request(
-                context.0,
-                wp_security_context_v1::Request::SetInstanceId {
-                    instance_id: compartment.into(),
-                },
-            )?;
-        }
-        self.request(context.0, wp_security_context_v1::Request::Commit)?;
-        self.request(context.0, wp_security_context_v1::Request::Destroy)?;
-        self.roundtrip()?;
-        // The compositor holds the listener now. With this end's copy gone, a
-        // listener the compositor refused, or later lets go of, refuses
-        // every connection at once.
-        drop(listener);
-        Ok(CompartmentListener {
-            path: path.to_path_buf(),
-            close: Some(close_write),
-        })
-    }
 }
 
 /// A buffer in shared memory that this end made and drew into.
@@ -663,6 +605,20 @@ impl Client {
     /// Opens a window, as a client does: role, title, an empty commit, the
     /// configure, then a buffer of one colour.
     pub fn open_toplevel(&mut self, title: &str, app_id: &str, size: (i32, i32), argb: u32) -> Result<Toplevel, Error> {
+        self.open_toplevel_maximized(title, app_id, size, argb, false)
+    }
+
+    /// Opens a window as [`Client::open_toplevel`] does, and with `maximized`
+    /// asks for it maximized before its first commit, so that its first
+    /// configure gives it the usable area.
+    pub fn open_toplevel_maximized(
+        &mut self,
+        title: &str,
+        app_id: &str,
+        size: (i32, i32),
+        argb: u32,
+        maximized: bool,
+    ) -> Result<Toplevel, Error> {
         use fulcrum_wire::protocol::xdg_shell::{xdg_surface, xdg_toplevel, xdg_wm_base};
         let wm_base = self.wm_base()?;
         let surface = self.create_surface()?;
@@ -678,6 +634,9 @@ impl Client {
         self.request(xdg.0, xdg_surface::Request::GetToplevel { id: toplevel })?;
         self.request(toplevel.0, xdg_toplevel::Request::SetTitle { title: title.into() })?;
         self.request(toplevel.0, xdg_toplevel::Request::SetAppId { app_id: app_id.into() })?;
+        if maximized {
+            self.request(toplevel.0, xdg_toplevel::Request::SetMaximized)?;
+        }
         self.request(surface, wayland::wl_surface::Request::Commit)?;
         self.wait_until(|client| client.configured.contains(&xdg.0))?;
         let window = Toplevel {
@@ -923,26 +882,4 @@ pub fn guess_everywhere(
 ) -> Result<Vec<u32>, Error> {
     let last = connect()?.last_global() + past;
     guess_up_to(connect, interface, last)
-}
-
-/// A compartment's listening socket, registered with the compositor. Clients
-/// that connect to `path` belong to that compartment. Dropping this tells
-/// the compositor to stop accepting them.
-pub struct CompartmentListener {
-    pub path: PathBuf,
-    close: Option<OwnedFd>,
-}
-
-impl CompartmentListener {
-    /// Tells the compositor to stop accepting, and keeps the socket file.
-    pub fn close(&mut self) {
-        self.close.take();
-    }
-}
-
-impl Drop for CompartmentListener {
-    fn drop(&mut self) {
-        self.close.take();
-        let _ = std::fs::remove_file(&self.path);
-    }
 }

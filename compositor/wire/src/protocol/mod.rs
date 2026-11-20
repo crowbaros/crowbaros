@@ -9,7 +9,6 @@ pub mod linux_dmabuf_v1;
 pub mod linux_drm_syncobj_v1;
 pub mod presentation_time;
 pub mod primary_selection_unstable_v1;
-pub mod security_context_v1;
 pub mod viewporter;
 pub mod wayland;
 pub mod wlr_layer_shell_unstable_v1;
@@ -37,8 +36,6 @@ pub static INTERFACES: &[&InterfaceInfo] = &[
     &primary_selection_unstable_v1::zwp_primary_selection_device_v1::INFO,
     &primary_selection_unstable_v1::zwp_primary_selection_offer_v1::INFO,
     &primary_selection_unstable_v1::zwp_primary_selection_source_v1::INFO,
-    &security_context_v1::wp_security_context_manager_v1::INFO,
-    &security_context_v1::wp_security_context_v1::INFO,
     &viewporter::wp_viewporter::INFO,
     &viewporter::wp_viewport::INFO,
     &wayland::wl_display::INFO,
@@ -126,10 +123,6 @@ pub fn reencode(
         ("zwp_primary_selection_offer_v1", false) => primary_selection_unstable_v1::zwp_primary_selection_offer_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("zwp_primary_selection_source_v1", true) => primary_selection_unstable_v1::zwp_primary_selection_source_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("zwp_primary_selection_source_v1", false) => primary_selection_unstable_v1::zwp_primary_selection_source_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
-        ("wp_security_context_manager_v1", true) => security_context_v1::wp_security_context_manager_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
-        ("wp_security_context_manager_v1", false) => security_context_v1::wp_security_context_manager_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
-        ("wp_security_context_v1", true) => security_context_v1::wp_security_context_v1::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
-        ("wp_security_context_v1", false) => security_context_v1::wp_security_context_v1::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_viewporter", true) => viewporter::wp_viewporter::Request::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_viewporter", false) => viewporter::wp_viewporter::Event::decode(opcode, args).map(|message| message.encode(&mut out)),
         ("wp_viewport", true) => viewporter::wp_viewport::Request::decode(opcode, args).map(|message| message.encode(&mut out)),

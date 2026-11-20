@@ -1,12 +1,11 @@
-//! The primary selection, under the clipboard's rules (ADR 0020): inside
-//! one compartment it moves as apps expect, and between compartments not at
-//! all before slice 4.
+//! The primary selection, under the clipboard's rules (ADR 0032): it moves
+//! between the shell and every app.
 
 mod common;
 
 use std::io::{Read, Write};
 
-use common::{Compositor, connect};
+use common::Compositor;
 use crowbar_probe::Client;
 use fulcrum_wire::{
     Arg, ObjectId,
@@ -90,11 +89,10 @@ fn last_selection(client: &mut Client, device: u32) -> Option<(u32, Vec<String>)
 }
 
 #[test]
-fn a_primary_selection_is_pasted_inside_one_compartment() {
+fn a_primary_selection_made_in_one_app_is_pasted_in_another() {
     let compositor = Compositor::start();
-    let listener = compositor.register("test.principal", "c1");
-    let mut selector = connect(&listener.path).unwrap();
-    let mut paster = connect(&listener.path).unwrap();
+    let mut selector = compositor.app();
+    let mut paster = compositor.app();
     let (manager, selector_device) = device(&mut selector);
     let (_, paster_device) = device(&mut paster);
     selector
@@ -141,31 +139,35 @@ fn a_primary_selection_is_pasted_inside_one_compartment() {
     assert!(last_selection(&mut paster, paster_device).is_none());
 }
 
+/// The shell and the apps share one primary selection, both ways.
 #[test]
-fn a_primary_selection_is_offered_to_no_client_of_another_compartment() {
+fn the_shell_and_an_app_share_one_primary_selection_both_ways() {
     let compositor = Compositor::start();
-    let (mut selector, _first) = compositor.compartment("c1");
-    let (mut other, _second) = compositor.compartment("c2");
-    let (manager, selector_device) = device(&mut selector);
-    let (_, other_device) = device(&mut other);
-    other
-        .open_toplevel("other", "test.other", (300, 200), 0xffff_ffff)
+    let mut app = compositor.app();
+    let mut shell = compositor.shell();
+    let (app_manager, app_device) = device(&mut app);
+    let (shell_manager, shell_device) = device(&mut shell);
+    // The app's window at 48,48, and the shell's above it at 80,80.
+    app.open_toplevel("app", "test.app", (300, 200), 0xffff_0000).unwrap();
+    shell
+        .open_toplevel("shell", "test.shell", (300, 200), 0xffff_ffff)
         .unwrap();
-    let source = select(&mut selector, manager, selector_device, "text/plain");
 
+    // The shell's window took the keyboard as it opened, so it is offered
+    // what the app selects at once.
+    let from_app = select(&mut app, app_manager, app_device, "text/plain");
+    let (_, mime_types) = last_selection(&mut shell, shell_device).expect("the shell is offered it");
+    assert_eq!(mime_types, ["text/plain"]);
+
+    // The shell selects, which replaces the app's selection, and the app is
+    // offered it when it has the keyboard.
+    select(&mut shell, shell_manager, shell_device, "text/html");
+    app.roundtrip().unwrap();
+    assert!(
+        app.take_event(from_app, "cancelled").is_some(),
+        "the app's selection was not replaced"
+    );
     compositor.click(60, 60);
-
-    assert!(last_selection(&mut other, other_device).is_none());
-    assert!(
-        other
-            .events
-            .iter()
-            .all(|event| event.interface != zwp_primary_selection_offer_v1::NAME),
-        "an offer reached another compartment"
-    );
-    selector.roundtrip().unwrap();
-    assert!(
-        selector.take_event(source, "cancelled").is_none(),
-        "the selection stands"
-    );
+    let (_, mime_types) = last_selection(&mut app, app_device).expect("the app is offered it");
+    assert_eq!(mime_types, ["text/html"]);
 }

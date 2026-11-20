@@ -1,9 +1,9 @@
 //! Runs the compositor inside the test process, on a thread of its own, and
 //! hands out real client connections to it.
 //!
-//! Clients connect the two ways the compositor allows (ADR 0016): to a
-//! trusted part's path socket, or through a listener that a stand-in for the
-//! Warden registers. There is no other way in to give a test.
+//! Clients connect the two ways the compositor allows (ADR 0032): to the
+//! shell's socket, or to the apps' socket. There is no other way in to give
+//! a test.
 #![allow(dead_code)]
 
 use std::{
@@ -21,7 +21,7 @@ use crowbar_compositor::{
     connections::{TrustedPart, TrustedParts},
     event_loop::Remote,
 };
-use crowbar_probe::{self as probe, Client, CompartmentListener};
+use crowbar_probe::{self as probe, Client};
 
 /// The `dev_t` the test compositor names as its GPU: `/dev/dri/renderD128`,
 /// major 226 and minor 128.
@@ -33,15 +33,15 @@ pub const OUTPUT_SIZE: (i32, i32) = (1280, 800);
 pub const FRAME: std::time::Duration = std::time::Duration::from_millis(17);
 
 pub struct Compositor {
-    /// A directory of this compositor's own. It holds the two trusted
-    /// sockets and the listeners the tests register.
+    /// A directory of this compositor's own. It holds the shell's socket,
+    /// the apps' socket, and the control channel's.
     pub dir: PathBuf,
     pub parts: TrustedParts,
     remote: Remote<State>,
     thread: Option<JoinHandle<()>>,
 }
 
-/// This process's user ID. In a test it plays the shell and the Warden.
+/// This process's user ID. In a test it plays the shell and the person.
 pub fn own_uid() -> u32 {
     rustix::process::getuid().as_raw()
 }
@@ -73,21 +73,22 @@ fn base_dir() -> PathBuf {
 static RUNNING: Mutex<u32> = Mutex::new(0);
 
 impl Compositor {
-    /// A compositor that takes this process for both the shell and the Warden.
+    /// A compositor that takes this process for both the shell and the
+    /// person.
     pub fn start() -> Self {
         Self::start_trusting(own_uid(), own_uid())
     }
 
-    /// A compositor that takes these user IDs for the shell and the Warden.
-    pub fn start_trusting(shell_uid: u32, warden_uid: u32) -> Self {
-        Self::start_with(shell_uid, warden_uid, |state| {
+    /// A compositor that takes these user IDs for the shell and the person.
+    pub fn start_trusting(shell_uid: u32, apps_uid: u32) -> Self {
+        Self::start_with(shell_uid, apps_uid, |state| {
             state.add_output("TEST-1", OUTPUT_SIZE, 60_000);
             state.set_backend(crowbar_compositor::backend::headless::Headless::default());
         })
     }
 
     /// A compositor whose outputs and backend `setup` gives it.
-    pub fn start_with(shell_uid: u32, warden_uid: u32, setup: impl FnOnce(&mut State) + Send + 'static) -> Self {
+    pub fn start_with(shell_uid: u32, apps_uid: u32, setup: impl FnOnce(&mut State) + Send + 'static) -> Self {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let dir = base_dir().join(format!("compositor-{}", NEXT.fetch_add(1, Ordering::Relaxed)));
         {
@@ -101,9 +102,9 @@ impl Compositor {
                 socket: dir.join("shell"),
                 uid: shell_uid,
             },
-            warden: TrustedPart {
-                socket: dir.join("warden"),
-                uid: warden_uid,
+            apps: TrustedPart {
+                socket: dir.join("apps"),
+                uid: apps_uid,
             },
         };
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -148,41 +149,14 @@ impl Compositor {
         self.try_shell().expect("the compositor refused the shell")
     }
 
-    /// Connects to the Warden's socket.
-    pub fn try_warden(&self) -> Result<Client, probe::Error> {
-        Client::connect(&self.parts.warden.socket)
+    /// Connects to the apps' socket.
+    pub fn try_app(&self) -> Result<Client, probe::Error> {
+        Client::connect(&self.parts.apps.socket)
     }
 
-    /// A stand-in for the Warden: a client of the Warden's socket.
-    pub fn warden(&self) -> Client {
-        self.try_warden().expect("the compositor refused the Warden")
-    }
-
-    /// Where a compartment's listener goes.
-    pub fn listener_path(&self, compartment: &str) -> PathBuf {
-        self.dir.join(format!("compartment-{compartment}"))
-    }
-
-    /// The stand-in for the Warden registers a listener for one compartment.
-    pub fn register(&self, principal: &str, compartment: &str) -> CompartmentListener {
-        self.warden()
-            .register_compartment(&self.listener_path(compartment), Some(principal), Some(compartment))
-            .unwrap()
-    }
-
-    /// A client inside a new compartment whose needs do not include the GPU.
-    pub fn compartment(&self, compartment: &str) -> (Client, CompartmentListener) {
-        let listener = self.register("test.principal", compartment);
-        (connect(&listener.path).unwrap(), listener)
-    }
-
-    /// A client inside a new compartment whose needs include the GPU. The
-    /// test says so in place of the broker.
-    pub fn compartment_with_gpu(&self, compartment: &str) -> (Client, CompartmentListener) {
-        let listener = self.register("test.principal", compartment);
-        let id = compartment.to_owned();
-        self.with(move |state| state.compartment(&id).unwrap().record_gpu_need().unwrap());
-        (connect(&listener.path).unwrap(), listener)
+    /// An app: a client of the apps' socket.
+    pub fn app(&self) -> Client {
+        self.try_app().expect("the compositor refused an app")
     }
 
     /// How many clients the compositor holds.

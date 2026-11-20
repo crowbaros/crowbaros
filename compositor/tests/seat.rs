@@ -18,20 +18,14 @@ const RED: u32 = 0xffff_0000;
 const BLUE: u32 = 0xff00_00ff;
 const BTN_LEFT: u32 = 0x110;
 
-fn next() -> u32 {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static NEXT: AtomicU32 = AtomicU32::new(0);
-    NEXT.fetch_add(1, Ordering::Relaxed)
-}
-
-fn client(compositor: &Compositor) -> (Client, crowbar_probe::CompartmentListener) {
-    compositor.compartment(&format!("s{}", next()))
+fn client(compositor: &Compositor) -> Client {
+    compositor.app()
 }
 
 #[test]
 fn a_keyboard_is_given_the_keymap_and_the_repeat_rate() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let keyboard = client.listen_to_keyboard().unwrap();
     let keymap = client.take_event(keyboard, "keymap").expect("no keymap");
     let [Arg::Uint(1), Arg::Fd(file), Arg::Uint(size)] = keymap.args.as_slice() else {
@@ -48,7 +42,7 @@ fn a_keyboard_is_given_the_keymap_and_the_repeat_rate() {
 #[test]
 fn shift_is_sent_as_a_modifier() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let keyboard = client.listen_to_keyboard().unwrap();
     client.open_toplevel("mods", "test.mods", (100, 100), WHITE).unwrap();
     compositor.click(60, 60);
@@ -64,7 +58,7 @@ fn shift_is_sent_as_a_modifier() {
 #[test]
 fn the_pointer_enters_moves_in_and_leaves_a_window_in_its_own_coordinates() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     client.listen_to_pointer().unwrap();
     let window = client.open_toplevel("ptr", "test.ptr", (100, 100), WHITE).unwrap();
 
@@ -87,7 +81,7 @@ fn the_pointer_enters_moves_in_and_leaves_a_window_in_its_own_coordinates() {
 #[test]
 fn a_held_button_keeps_the_pointer_with_its_surface() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     client.listen_to_pointer().unwrap();
     client.open_toplevel("grab", "test.grab", (100, 100), WHITE).unwrap();
     compositor.pointer(60, 60);
@@ -106,7 +100,7 @@ fn a_held_button_keeps_the_pointer_with_its_surface() {
 #[test]
 fn a_click_raises_a_window_and_activates_it() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let first = client.open_toplevel("first", "test.first", (100, 100), RED).unwrap();
     let second = client.open_toplevel("second", "test.second", (100, 100), BLUE).unwrap();
     compositor.wait_until_still();
@@ -153,7 +147,7 @@ fn a_click_raises_a_window_and_activates_it() {
 #[test]
 fn an_empty_input_region_lets_the_click_through() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let keyboard = client.listen_to_keyboard().unwrap();
     let below = client.open_toplevel("below", "test.below", (300, 300), RED).unwrap();
     let above = client.open_toplevel("above", "test.above", (300, 300), BLUE).unwrap();
@@ -182,7 +176,7 @@ fn an_empty_input_region_lets_the_click_through() {
 #[test]
 fn a_seat_with_no_touch_device_refuses_one() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let seat = client.bind(wl_seat::NAME, 7).unwrap();
     client.roundtrip().unwrap();
     let capabilities = client.take_event(seat, "capabilities").expect("no capabilities");

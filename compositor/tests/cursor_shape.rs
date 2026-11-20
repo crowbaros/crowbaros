@@ -55,8 +55,8 @@ fn screen(compositor: &Compositor) -> Image {
 
 /// A client with a window at 48,48 of 200x100, its pointer, and a cursor
 /// shape device for it.
-fn window(compositor: &Compositor) -> (Client, Toplevel, u32, crowbar_probe::CompartmentListener) {
-    let (mut client, listener) = compositor.compartment("c1");
+fn window(compositor: &Compositor) -> (Client, Toplevel, u32) {
+    let mut client = compositor.app();
     let pointer = client.listen_to_pointer().unwrap();
     let window = client.open_toplevel("app", "test.app", (200, 100), GREEN).unwrap();
     let manager = client.bind(wp_cursor_shape_manager_v1::NAME, 2).unwrap();
@@ -71,7 +71,7 @@ fn window(compositor: &Compositor) -> (Client, Toplevel, u32, crowbar_probe::Com
         )
         .unwrap();
     client.roundtrip().unwrap();
-    (client, window, device.0, listener)
+    (client, window, device.0)
 }
 
 fn set_shape(client: &mut Client, device: u32, shape: u32) {
@@ -100,7 +100,7 @@ fn the_compositor_draws_the_themes_arrow_as_its_own_pointer() {
 #[test]
 fn a_shape_the_client_names_is_drawn_while_the_pointer_is_on_it() {
     let (compositor, dir) = themed();
-    let (mut client, _window, device, _listener) = window(&compositor);
+    let (mut client, _window, device) = window(&compositor);
     compositor.pointer(100, 100);
     client.roundtrip().unwrap();
 
@@ -124,7 +124,7 @@ fn a_shape_the_client_names_is_drawn_while_the_pointer_is_on_it() {
 #[test]
 fn a_client_the_pointer_is_not_on_cannot_name_the_shape() {
     let (compositor, dir) = themed();
-    let (mut client, _window, device, _listener) = window(&compositor);
+    let (mut client, _window, device) = window(&compositor);
     compositor.pointer(600, 600);
     client.roundtrip().unwrap();
 
@@ -138,7 +138,7 @@ fn a_client_the_pointer_is_not_on_cannot_name_the_shape() {
 #[test]
 fn with_no_theme_a_shape_is_the_compositors_square() {
     let compositor = Compositor::start();
-    let (mut client, _window, device, _listener) = window(&compositor);
+    let (mut client, _window, device) = window(&compositor);
     compositor.pointer(100, 100);
     client.roundtrip().unwrap();
 
@@ -152,7 +152,7 @@ fn with_no_theme_a_shape_is_the_compositors_square() {
 fn a_shape_that_is_not_one_is_refused() {
     for (version, bad) in [(2, 0), (2, shape::ALL_RESIZE + 1), (1, shape::DND_ASK)] {
         let compositor = Compositor::start();
-        let (mut client, _listener) = compositor.compartment("c1");
+        let mut client = compositor.app();
         let pointer = client.listen_to_pointer().unwrap();
         let manager = client.bind(wp_cursor_shape_manager_v1::NAME, version).unwrap();
         let device = client.new_id(wp_cursor_shape_device_v1::NAME);
@@ -181,7 +181,7 @@ fn a_shape_that_is_not_one_is_refused() {
 #[test]
 fn the_gpu_draws_a_shape_as_the_cpu_does() {
     let (compositor, dir) = themed();
-    let (mut client, _window, device, _listener) = window(&compositor);
+    let (mut client, _window, device) = window(&compositor);
     compositor.pointer(100, 100);
     client.roundtrip().unwrap();
     set_shape(&mut client, device, shape::TEXT);

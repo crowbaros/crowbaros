@@ -1,7 +1,7 @@
 //! The compositor: its event loop, its clients, and how each request reaches
 //! the code that carries it out.
 
-use std::{borrow::Cow, collections::HashMap, io, os::fd::AsFd, sync::Weak, time::Duration};
+use std::{borrow::Cow, collections::HashMap, io, os::fd::AsFd, time::Duration};
 
 use fulcrum_wire::{
     ArgReader, ConnectionError, DecodeError, Incoming,
@@ -18,7 +18,6 @@ use fulcrum_wire::{
             zwp_primary_selection_device_manager_v1, zwp_primary_selection_device_v1, zwp_primary_selection_offer_v1,
             zwp_primary_selection_source_v1,
         },
-        security_context_v1::{wp_security_context_manager_v1, wp_security_context_v1},
         viewporter::{wp_viewport, wp_viewporter},
         wayland::{
             wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
@@ -33,11 +32,10 @@ use fulcrum_wire::{
 use crate::{
     backend::Backend,
     client::{Client, ClientId, ObjectKind, ProtocolError},
-    connections::{CompartmentListener, TrustedListener},
+    connections::PathListener,
     event_loop::{EventLoop, Readiness, Remote, TimerKey, Token},
     geometry::Region,
     globals::{GlobalKind, Globals},
-    identity::Compartment,
     layer::LayerSurface,
     log,
     output::Output,
@@ -59,12 +57,8 @@ pub struct State {
     pub(crate) clients: HashMap<ClientId, Client>,
     pub(crate) next_client: ClientId,
     pub(crate) globals: Globals,
-    pub(crate) trusted: Vec<TrustedListener>,
-    pub(crate) listeners: HashMap<u64, CompartmentListener>,
-    pub(crate) next_listener: u64,
-    /// The compartments whose listeners the Warden registered. An entry is
-    /// dead once its listener is closed and its last client is gone.
-    pub(crate) compartment_ids: Vec<Weak<Compartment>>,
+    /// The shell's socket and the apps' socket.
+    pub(crate) listeners: Vec<PathListener>,
     pub(crate) outputs: Vec<Output>,
     pub(crate) next_output: u64,
     pub(crate) planted_binds: usize,
@@ -110,9 +104,6 @@ pub struct State {
     pub(crate) layout: crate::layout::Layout,
     pub(crate) primary: crate::primary_selection::PrimarySelections,
     pub(crate) lock: crate::lock::Lock,
-    /// When the shell last said the person launched an app, until a window
-    /// takes the keyboard for it.
-    pub(crate) launching: Option<std::time::Instant>,
     pub(crate) idle_inhibitors: crate::idle_inhibit::IdleInhibitors,
     /// The system's cursor images, for named shapes and the compositor's
     /// own pointer.
@@ -138,10 +129,7 @@ impl State {
             clients: HashMap::new(),
             next_client: 0,
             globals: Globals::default(),
-            trusted: Vec::new(),
-            listeners: HashMap::new(),
-            next_listener: 0,
-            compartment_ids: Vec::new(),
+            listeners: Vec::new(),
             outputs: Vec::new(),
             next_output: 0,
             planted_binds: 0,
@@ -174,7 +162,6 @@ impl State {
             layout: crate::layout::Layout::default(),
             primary: crate::primary_selection::PrimarySelections::default(),
             lock: crate::lock::Lock::default(),
-            launching: None,
             idle_inhibitors: crate::idle_inhibit::IdleInhibitors::default(),
             cursor_theme: crate::xcursor::CursorTheme::none(),
             grab: None,
@@ -269,10 +256,8 @@ impl State {
         self.serial = self.serial.wrapping_add(1);
         for (token, readiness) in ready {
             match token {
-                Token::TrustedListener(index) => self.accept_trusted(index),
+                Token::Listener(index) => self.accept(index),
                 Token::Client(id) => self.client_ready(id, readiness),
-                Token::CompartmentListener(number) => self.accept_compartment(number),
-                Token::CompartmentClose(number) => self.close_compartment(number),
                 Token::Waker => {
                     for job in self.remote.take() {
                         job(self);
@@ -294,8 +279,7 @@ impl State {
         }
         for timer in timers {
             match timer {
-                TimerKey::RetryTrusted(index) => self.retry_trusted(index),
-                TimerKey::RetryCompartment(number) => self.retry_compartment(number),
+                TimerKey::RetryListener(index) => self.retry_listener(index),
                 TimerKey::FrameWait(output, draw) => self.wait_over(output, Some(draw)),
                 TimerKey::IdleLock => self.idle_timer(),
             }
@@ -314,6 +298,11 @@ impl State {
     /// How many clients are connected.
     pub fn client_count(&self) -> usize {
         self.clients.len()
+    }
+
+    /// Who each connected client is.
+    pub fn client_identities(&self) -> Vec<crate::identity::Identity> {
+        self.clients.values().map(|client| client.identity).collect()
     }
 
     /// Watches a descriptor for the backend. When it is readable, the
@@ -369,13 +358,6 @@ impl State {
                         client.fail(&error);
                         // What arrived before the close is still read.
                     }
-                }
-                if self.over_descriptor_budget(id)
-                    && let Some(client) = self.clients.get_mut(&id)
-                {
-                    log::warning!("client {id}: its compartment holds too many descriptors; disconnecting it");
-                    client.doomed = true;
-                    break;
                 }
                 self.take_messages(id);
                 if self.clients.get(&id).is_none_or(|client| client.doomed) {
@@ -560,13 +542,6 @@ impl State {
                 ObjectKind::Registry => wl_registry::Request::decode(opcode, &mut args).map(Request::Registry),
                 ObjectKind::Callback => wl_callback::Request::decode(opcode, &mut args).map(Request::Callback),
                 ObjectKind::Output(_) => wl_output::Request::decode(opcode, &mut args).map(Request::Output),
-                ObjectKind::SecurityContextManager => {
-                    wp_security_context_manager_v1::Request::decode(opcode, &mut args)
-                        .map(Request::SecurityContextManager)
-                }
-                ObjectKind::SecurityContext(_) => {
-                    wp_security_context_v1::Request::decode(opcode, &mut args).map(Request::SecurityContext)
-                }
                 ObjectKind::Compositor => wl_compositor::Request::decode(opcode, &mut args).map(Request::Compositor),
                 ObjectKind::Surface(surface) => {
                     wl_surface::Request::decode(opcode, &mut args).map(|request| Request::Surface(*surface, request))
@@ -691,8 +666,6 @@ impl State {
             }
             Request::Callback(request) => match request {},
             Request::Output(wl_output::Request::Release) => {}
-            Request::SecurityContextManager(request) => self.security_context_manager_request(client_id, request)?,
-            Request::SecurityContext(request) => self.security_context_request(client_id, id, request)?,
             Request::Compositor(request) => self.compositor_request(client_id, version, request)?,
             Request::Surface(surface, request) => self.surface_request(client_id, id, version, surface, request)?,
             Request::Region(region, request) => self.region_request(id, region, request)?,
@@ -795,8 +768,6 @@ enum Request {
     Registry(wl_registry::Request),
     Callback(wl_callback::Request),
     Output(wl_output::Request),
-    SecurityContextManager(wp_security_context_manager_v1::Request),
-    SecurityContext(wp_security_context_v1::Request),
     Compositor(wl_compositor::Request),
     Surface(SurfaceId, wl_surface::Request),
     Region(RegionId, wl_region::Request),

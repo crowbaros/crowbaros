@@ -62,7 +62,7 @@ fn the_nested_desktop_is_a_window_on_the_host() {
 fn a_client_of_the_nested_compositor_shows_on_the_host_and_hears_its_keys() {
     let host = Compositor::start();
     let nested = nested_in(&host);
-    let (mut client, _listener) = nested.compartment("c1");
+    let mut client = nested.app();
     client.listen_to_keyboard().unwrap();
     client
         .open_toplevel("inner", "test.inner", (300, 200), 0xff20_60a0)

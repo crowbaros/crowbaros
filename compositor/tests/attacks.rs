@@ -5,7 +5,7 @@ mod common;
 
 use common::{Compositor, another_uid, connect, own_uid, runtime_dir};
 use crowbar_compositor::policy;
-use crowbar_probe::{Client, CompartmentListener, Guess};
+use crowbar_probe::{Client, Guess};
 
 /// Adds one inert global of each listed interface, and returns the names.
 fn plant(compositor: &Compositor, interfaces: &[&'static str]) -> Vec<&'static str> {
@@ -28,28 +28,17 @@ type Connect<'a> = Box<dyn Fn() -> Client + 'a>;
 /// Every kind of client there is.
 struct EveryClient<'a> {
     compositor: &'a Compositor,
-    plain: CompartmentListener,
-    with_gpu: CompartmentListener,
 }
 
 impl<'a> EveryClient<'a> {
     fn of(compositor: &'a Compositor) -> Self {
-        EveryClient {
-            compositor,
-            plain: compositor.compartment("plain").1,
-            with_gpu: compositor.compartment_with_gpu("with-gpu").1,
-        }
+        EveryClient { compositor }
     }
 
     fn each(&self) -> Vec<(&'static str, Connect<'_>)> {
         vec![
             ("the shell", Box::new(|| self.compositor.shell())),
-            ("the Warden", Box::new(|| self.compositor.warden())),
-            ("a compartment", Box::new(|| connect(&self.plain.path).unwrap())),
-            (
-                "a compartment with the GPU",
-                Box::new(|| connect(&self.with_gpu.path).unwrap()),
-            ),
+            ("an app", Box::new(|| self.compositor.app())),
         ]
     }
 }
@@ -69,93 +58,92 @@ fn last_number(compositor: &Compositor) -> u32 {
     compositor.shell().last_global()
 }
 
-/// ADR 0020, attack 1: a client asks for every global in the "Nobody" row,
-/// and for one the table has no row for. None is offered.
+/// An app asks for each global it is refused: layer shell, session lock,
+/// and security contexts. None is offered, and none is bound by guessing
+/// its number. The shell is offered all but security contexts.
 ///
-/// The compositor creates none of these globals, so the test adds one of
-/// each. Then the table is what refuses them.
+/// The compositor creates session lock and security contexts not at all,
+/// so the test adds one of each. Then the policy is what refuses them.
 #[test]
-fn adr_0020_attack_1_no_client_gets_a_global_from_the_nobody_row_or_one_with_no_row() {
+fn an_app_gets_no_global_it_is_refused_by_asking_or_guessing() {
     let compositor = Compositor::start();
     let before = compositor.shell().last_global();
-    let nobody = plant(&compositor, policy::NOBODY);
-    // The spike offered the first of these. The table has no row for either.
-    let no_row = plant(
-        &compositor,
-        &["zxdg_output_manager_v1", "wp_single_pixel_buffer_manager_v1"],
-    );
+    let refused = plant(&compositor, policy::APPS_REFUSED);
     let last = last_number(&compositor);
-    // The guesses below reach the number of every planted global.
-    let planted = u32::try_from(nobody.len() + no_row.len()).unwrap();
+    let planted = u32::try_from(refused.len()).unwrap();
     assert!(
         last > before + planted,
         "the planted globals have numbers past {last}, where the guesses stop"
     );
 
-    let clients = EveryClient::of(&compositor);
-    for (who, connect) in clients.each() {
-        let offered = connect().interfaces();
-        for interface in nobody.iter().chain(&no_row) {
-            assert!(
-                !offered.iter().any(|name| name == interface),
-                "{who} was offered {interface}"
-            );
-            assert_eq!(
-                guess_up_to(&*connect, interface, last),
-                [0; 0],
-                "{who} bound {interface} by guessing its number"
-            );
-        }
+    let app = || compositor.app();
+    let offered = app().interfaces();
+    for interface in &refused {
+        assert!(
+            !offered.iter().any(|name| name == interface),
+            "an app was offered {interface}"
+        );
+        assert_eq!(
+            guess_up_to(&app, interface, last),
+            [0; 0],
+            "an app bound {interface} by guessing its number"
+        );
     }
-    assert_eq!(
-        planted_binds(&compositor),
-        0,
-        "a client bound a global nobody is offered"
-    );
+    assert_eq!(planted_binds(&compositor), 0, "an app bound a global it is refused");
+
+    let shell = compositor.shell().interfaces();
+    for interface in &refused {
+        let offered = shell.iter().any(|name| name == interface);
+        assert_eq!(
+            offered,
+            !policy::SHELL_REFUSED.contains(interface),
+            "the shell and {interface}"
+        );
+    }
 }
 
-/// The test above passes only if a planted global can be bound at all. This
-/// one has a row, and the client the row names binds it by the same guess.
+/// A global the compositor gains later is offered to every kind of client,
+/// and each binds it by the same guess an app makes above. So the test
+/// above passes because the policy refuses, not because a planted global
+/// cannot be bound.
 #[test]
-fn a_planted_global_with_a_row_is_bound_by_the_client_the_row_names() {
+fn a_global_the_compositor_gains_later_is_bound_by_every_client() {
     let compositor = Compositor::start();
-    let (before, _listener) = compositor.compartment("before");
-    let cursor_shape = plant(&compositor, &["wp_cursor_shape_manager_v1"])[0];
-    let listener = compositor.register("test.principal", "after");
-    let warden = || compositor.warden();
-    // A client that connected first was not told about the new global, so
-    // for that client its number is one to guess.
+    let befores: Vec<(&str, Client)> = vec![("the shell", compositor.shell()), ("an app", compositor.app())];
+    let later = plant(&compositor, &["a_global_the_compositor_gains_later"])[0];
     let last = last_number(&compositor);
-    let numbers = before.unadvertised(last);
 
-    let bound: Vec<u32> = numbers
-        .iter()
-        .copied()
-        .filter(|&name| connect(&listener.path).unwrap().guess(name, cursor_shape, 1).unwrap() == Guess::Bound)
-        .collect();
-
-    assert_eq!(bound.len(), 1, "the compartment did not bind the global its row offers");
-    assert_eq!(planted_binds(&compositor), 1);
-    assert_eq!(
-        guess_up_to(&warden, cursor_shape, last),
-        [0; 0],
-        "the Warden bound a compartment's global"
-    );
+    let clients = EveryClient::of(&compositor);
+    for ((who, connect), (_, before)) in clients.each().into_iter().zip(&befores) {
+        assert!(
+            connect().interfaces().iter().any(|name| name == later),
+            "{who} was not offered {later}"
+        );
+        // A client that connected first was not told about the new global,
+        // so for that client its number is one to guess.
+        let bound = before
+            .unadvertised(last)
+            .into_iter()
+            .filter(|&name| connect().guess(name, later, 1).unwrap() == Guess::Bound)
+            .count();
+        assert_eq!(bound, 1, "{who} did not bind {later} at its one number");
+    }
 }
 
-/// ADR 0016, attack 11: a compartment with no listener looks for any Wayland
-/// socket. It finds none.
+/// A program that is neither the shell nor the person looks for any Wayland
+/// socket. It finds none it can use.
 ///
-/// The compositor makes three sockets: the shell's and the Warden's Wayland
-/// sockets and the shell's control channel. Each refuses a peer by its user
-/// ID.
-/// Here neither trusted part has this process's user ID, so this process is
-/// in the place of that compartment, and it is given both paths on purpose.
+/// The compositor makes three sockets: the shell's, the apps', and the
+/// shell's control channel. Each refuses a peer by its user ID. Here neither
+/// the shell nor the person has this process's user ID, and this process is
+/// given every path on purpose.
 #[test]
-fn adr_0016_attack_11_a_compartment_with_no_listener_finds_no_wayland_socket() {
+fn a_program_that_is_neither_the_shell_nor_the_person_finds_no_wayland_socket() {
     let compositor = Compositor::start_trusting(another_uid(), another_uid());
 
-    // Nothing where a compositor with a public socket would put it.
+    // Nothing where a compositor with a public socket would put it: Base
+    // links the apps' socket into the person's runtime directory, not the
+    // compositor.
     let public: Vec<_> = std::fs::read_dir(runtime_dir()).unwrap().collect();
     assert!(public.is_empty(), "something was made in XDG_RUNTIME_DIR: {public:?}");
 
@@ -165,15 +153,11 @@ fn adr_0016_attack_11_a_compartment_with_no_listener_finds_no_wayland_socket() {
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
     made.sort();
-    assert_eq!(made, ["control", "shell", "warden"]);
+    assert_eq!(made, ["apps", "control", "shell"]);
 
     // None is a way in.
     let control = compositor.dir.join("control");
-    for socket in [
-        &compositor.parts.shell.socket,
-        &compositor.parts.warden.socket,
-        &control,
-    ] {
+    for socket in [&compositor.parts.shell.socket, &compositor.parts.apps.socket, &control] {
         assert!(
             connect(socket).is_err(),
             "{} accepted a peer with the wrong user ID",
@@ -182,74 +166,58 @@ fn adr_0016_attack_11_a_compartment_with_no_listener_finds_no_wayland_socket() {
     }
 }
 
-/// ADR 0016, attack 12: a client on a listener tries to bind the
-/// security-context manager, layer shell, and linux-dmabuf: the globals that
-/// exist and that another client is offered. The input and capture globals
-/// are in the "Nobody" row, and the test of ADR 0020's attack 1 covers them.
+/// An app tries to bind the real layer shell, which only the shell is
+/// offered: by asking, and by guessing its number.
 #[test]
-fn adr_0016_attack_12_a_client_on_a_listener_cannot_bind_what_the_trusted_parts_are_offered() {
+fn an_app_cannot_bind_layer_shell() {
     let compositor = Compositor::start();
-    let listener = compositor.register("test.principal", "c1");
-    let client = || connect(&listener.path).unwrap();
-    let number = |seen: &Client, interface: &str| {
-        seen.globals
+    let layer_shell = compositor
+        .shell()
+        .globals
+        .iter()
+        .find(|global| global.interface == "zwlr_layer_shell_v1")
+        .expect("the shell is offered layer shell")
+        .name;
+
+    assert!(
+        !compositor
+            .app()
+            .interfaces()
             .iter()
-            .find(|global| global.interface == interface)
-            .unwrap_or_else(|| panic!("{interface} is not offered where it should be"))
-            .name
-    };
-    let security_context = number(&compositor.warden(), "wp_security_context_manager_v1");
-    let layer_shell = number(&compositor.shell(), "zwlr_layer_shell_v1");
-    let dmabuf = number(&compositor.shell(), "zwp_linux_dmabuf_v1");
-
-    for (interface, name) in [
-        ("wp_security_context_manager_v1", security_context),
-        ("zwlr_layer_shell_v1", layer_shell),
-        ("zwp_linux_dmabuf_v1", dmabuf),
-    ] {
-        assert!(
-            !client().interfaces().iter().any(|offered| offered == interface),
-            "a compartment was offered {interface}"
-        );
-        // With its real number, which the client cannot learn but could guess.
-        assert_eq!(
-            client().guess(name, interface, 1).unwrap(),
-            Guess::Refused,
-            "a compartment bound {interface}"
-        );
-    }
+            .any(|offered| offered == "zwlr_layer_shell_v1"),
+        "an app was offered layer shell"
+    );
+    // With its real number, which the app cannot learn but could guess.
+    assert_eq!(
+        compositor.app().guess(layer_shell, "zwlr_layer_shell_v1", 1).unwrap(),
+        Guess::Refused,
+        "an app bound layer shell"
+    );
 }
 
-/// No compartment can register a security context (ADR 0016): a program
-/// that sandboxes its own children gets no weaker connection for them. The
-/// shell cannot either. The Warden alone is offered the manager.
+/// The shell's socket and its control channel are no use to the person's
+/// apps: an app that is handed their paths is refused on its user ID.
 #[test]
-fn only_the_warden_can_register_a_listener() {
-    let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
-    let mut shell = compositor.shell();
-
-    for (who, client) in [("a compartment", &mut client), ("the shell", &mut shell)] {
-        let nested = client.register_compartment(
-            &compositor.listener_path("nested"),
-            Some("test.principal"),
-            Some("nested"),
-        );
-        assert!(nested.is_err(), "{who} registered a listener");
-    }
-    assert!(compositor.with(|state| state.compartment("nested").is_none()));
-}
-
-/// A trusted part's socket is no use to a peer with another user ID, even
-/// one that was accepted somewhere else: a client of a compartment's
-/// listener that is handed the shell's path is refused there.
-#[test]
-fn a_peer_that_is_given_a_trusted_socket_is_refused_on_its_user_id() {
-    // This process is the Warden, so that it can make a compartment, and it
-    // is not the shell.
+fn an_app_that_is_given_the_shells_sockets_is_refused_on_its_user_id() {
+    // This process is the person, and not the shell.
     let compositor = Compositor::start_trusting(another_uid(), own_uid());
-    let (client, _listener) = compositor.compartment("c1");
+    let client = compositor.app();
     assert!(!client.interfaces().is_empty());
 
     assert!(connect(&compositor.parts.shell.socket).is_err());
+    let control = std::os::unix::net::UnixStream::connect(compositor.dir.join("control")).unwrap();
+    assert!(
+        closed_at_once(control),
+        "the control channel kept a peer without the shell's user ID"
+    );
+}
+
+/// Whether the other end closes a stream without a word.
+fn closed_at_once(mut stream: std::os::unix::net::UnixStream) -> bool {
+    use std::io::Read;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    let mut byte = [0u8; 1];
+    matches!(stream.read(&mut byte), Ok(0))
 }

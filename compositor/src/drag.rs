@@ -10,7 +10,7 @@ use fulcrum_wire::{
 use crate::{
     State,
     client::{ClientId, ObjectKind, ProtocolError},
-    data_device::{EVERY_ACTION, Group, Offer, OfferId, SourceId},
+    data_device::{EVERY_ACTION, Offer, OfferId, SourceId},
     surface::{Role, SurfaceId},
 };
 
@@ -24,7 +24,6 @@ pub(crate) struct DragStart {
 #[derive(Debug)]
 pub(crate) struct Drag {
     client: ClientId,
-    group: Group,
     origin: SurfaceId,
     source: Option<SourceId>,
     icon: Option<SurfaceId>,
@@ -91,13 +90,12 @@ impl State {
             .source
             .map(|id| self.use_source(client, device, id))
             .transpose()?;
-        let group = self.group_of(client).filter(|_| {
-            !self.locked()
-                && self.data.drag.is_none()
-                && self.grab.is_none()
-                && self.has_drag_press(origin, request.serial)
-        });
-        let Some(group) = group else {
+        let starts = self.clients.contains_key(&client)
+            && !self.locked()
+            && self.data.drag.is_none()
+            && self.grab.is_none()
+            && self.has_drag_press(origin, request.serial);
+        if !starts {
             if let Some(source) = source {
                 self.send_source(source, 3, wl_data_source::Event::Cancelled);
             }
@@ -109,7 +107,6 @@ impl State {
         self.leave_pointer_focus();
         self.data.drag = Some(Drag {
             client,
-            group,
             origin,
             source,
             icon,
@@ -135,11 +132,7 @@ impl State {
         let (x, y) = self.pointer;
         let hit = self.surface_under(x, y).filter(|(surface, _)| {
             let client = self.surfaces[surface].client;
-            if drag.source.is_some() {
-                self.group_of(client).as_ref() == Some(&drag.group)
-            } else {
-                client == drag.client
-            }
+            drag.source.is_some() || client == drag.client
         });
         let old = drag.target;
         let source = drag.source;

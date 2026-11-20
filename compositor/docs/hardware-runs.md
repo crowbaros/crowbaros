@@ -28,7 +28,7 @@ CI and the Void guest check the rest, on llvmpipe and virtio-gpu, so these runs 
 - **Clients:**
   - `foot` for a plain client;
   - a GPU client for dma-bufs and explicit sync: `vkcube` (vulkan-tools), or `eglgears_wayland` (mesa-demos);
-  - `crowbar-probe`, from Fulcrum's build, which stands in for the Warden and lists globals.
+  - `crowbar-probe`, from Fulcrum's build, which lists globals and has apps that copy, paste, drag, and drop.
 - **A second way in:** ssh from another machine, or a second virtual terminal. Fulcrum holds the virtual terminal it runs on, and has no key to quit.
 
 ## Start it
@@ -42,15 +42,15 @@ mkdir -p -m 0700 $D
 FULCRUM_LOG=debug ./target/release/crowbar-compositor --backend tty \
   --shell-socket $D/shell --shell-uid $(id -u) \
   --shell-control-socket $D/control \
-  --warden-socket $D/warden --warden-uid $(id -u) \
+  --apps-socket $D/apps --apps-uid $(id -u) \
   --layout $D/layout 2> $D/compositor.log &
 ```
 
-You play both the shell and the Warden, so their user IDs are your own. The screen shows the background and the pointer as a white square, or the cursor theme's arrow if `XCURSOR_THEME` names one that is installed.
+You play both the shell and the person, so their user IDs are your own. The screen shows the background and the pointer as a white square, or the cursor theme's arrow if `XCURSOR_THEME` names one that is installed.
 
 ## Clients
 
-- **The shell's socket** offers what a compartment with the GPU is offered, and layer shell. Run the GPU clients there:
+- **The shell's socket** offers what an app is offered, and layer shell:
 
   ```sh
   WAYLAND_DISPLAY=$D/shell foot &
@@ -58,10 +58,12 @@ You play both the shell and the Warden, so their user IDs are your own. The scre
   WAYLAND_DISPLAY=$D/shell crowbar-probe globals
   ```
 
-- **A compartment:** the probe stands in for the Warden and registers one. It is offered no dma-bufs, since only the broker says a compartment needs the GPU:
+- **The apps' socket** offers what a Wayland app expects, the GPU's buffers included. Run the GPU clients here too:
 
   ```sh
-  WAYLAND_DISPLAY=$D/warden crowbar-probe warden test.principal c1 $D/c1 foot
+  WAYLAND_DISPLAY=$D/apps foot &
+  WAYLAND_DISPLAY=$D/apps vkcube --wsi wayland &
+  WAYLAND_DISPLAY=$D/apps crowbar-probe globals
   ```
 
 - **The control channel**, from another terminal or over ssh. Each line is one request:

@@ -4,7 +4,7 @@
 mod common;
 
 use common::Compositor;
-use crowbar_compositor::{FRAME_UNFOCUSED, backend::POINTER_COLOUR, image::Image};
+use crowbar_compositor::{FRAME_FOCUSED, backend::POINTER_COLOUR, image::Image};
 use crowbar_probe::{Client, Toplevel};
 use fulcrum_wire::{ObjectId, protocol::wayland::wl_pointer};
 
@@ -19,11 +19,11 @@ fn screen(compositor: &Compositor) -> Image {
 }
 
 /// A client with a window at 48,48 of 200x100, listening to its pointer.
-fn window(compositor: &Compositor, compartment: &str) -> (Client, Toplevel, u32, crowbar_probe::CompartmentListener) {
-    let (mut client, listener) = compositor.compartment(compartment);
+fn window(compositor: &Compositor) -> (Client, Toplevel, u32) {
+    let mut client = compositor.app();
     let pointer = client.listen_to_pointer().unwrap();
     let window = client.open_toplevel("app", "test.app", (200, 100), GREEN).unwrap();
-    (client, window, pointer, listener)
+    (client, window, pointer)
 }
 
 /// A cursor surface of 16x16 in one colour, set with a hotspot of 2,2.
@@ -60,7 +60,7 @@ fn the_compositor_draws_its_own_pointer_where_no_client_set_one() {
 #[test]
 fn the_client_with_the_pointer_sets_its_image_at_its_hotspot() {
     let compositor = Compositor::start();
-    let (mut client, _window, pointer, _listener) = window(&compositor, "c1");
+    let (mut client, _window, pointer) = window(&compositor);
     compositor.pointer(120, 90);
     client.take_pointer_events().unwrap();
 
@@ -76,7 +76,7 @@ fn the_client_with_the_pointer_sets_its_image_at_its_hotspot() {
 #[test]
 fn a_client_without_the_pointer_cannot_set_its_image() {
     let compositor = Compositor::start();
-    let (mut client, _window, pointer, _listener) = window(&compositor, "c1");
+    let (mut client, _window, pointer) = window(&compositor);
     compositor.pointer(600, 600);
 
     set_cursor(&mut client, pointer, RED);
@@ -87,7 +87,7 @@ fn a_client_without_the_pointer_cannot_set_its_image() {
 #[test]
 fn a_null_surface_hides_the_pointer_until_it_leaves() {
     let compositor = Compositor::start();
-    let (mut client, _window, pointer, _listener) = window(&compositor, "c1");
+    let (mut client, _window, pointer) = window(&compositor);
     compositor.pointer(120, 90);
     client
         .request(
@@ -119,7 +119,7 @@ fn a_null_surface_hides_the_pointer_until_it_leaves() {
 #[test]
 fn a_cursor_image_covers_no_frame() {
     let compositor = Compositor::start();
-    let (mut client, _window, pointer, _listener) = window(&compositor, "c1");
+    let (mut client, _window, pointer) = window(&compositor);
     // Just inside the window's left edge: the image's left part is over the
     // frame, at 46 and 47.
     compositor.pointer(52, 90);
@@ -129,7 +129,7 @@ fn a_cursor_image_covers_no_frame() {
 
     assert_eq!(
         screen.pixel(47, 92),
-        Some(FRAME_UNFOCUSED),
+        Some(FRAME_FOCUSED),
         "the cursor covered the frame"
     );
     assert_eq!(screen.pixel(50, 92), Some(RED));
@@ -138,7 +138,7 @@ fn a_cursor_image_covers_no_frame() {
 #[test]
 fn a_surface_with_another_role_cannot_be_the_cursor() {
     let compositor = Compositor::start();
-    let (mut client, window, pointer, _listener) = window(&compositor, "c1");
+    let (mut client, window, pointer) = window(&compositor);
     compositor.pointer(120, 90);
     client.roundtrip().unwrap();
 

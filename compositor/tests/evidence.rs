@@ -24,7 +24,7 @@ fn the_report_counts_commits_by_window_and_layer_and_the_frames_drawn() {
             0xff20_4060,
         )
         .unwrap();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client
         .open_toplevel("app", "com.crowbaros.StudioSettings", (100, 60), 0xffff_ffff)
         .unwrap();

@@ -25,9 +25,10 @@ for s in agetty-ttyS0 dhcpcd sshd seatd; do ln -sfn "/etc/sv/$s" "$SV/$s"; done
 install -d -m 700 "$S/root/.ssh"
 install -m 600 "$PUBKEY" "$S/root/.ssh/authorized_keys"
 
-# Three users, as ADR 0016 has them: the compositor, which alone is in
-# `_seatd`; the shell; and one for every client. The compositor check starts
-# what it needs itself.
+# Three users, as ADR 0032 has them: the compositor, which alone is in
+# `_seatd`; the shell; and crowbar-app, which stands in for the person whose
+# account every app runs as. The compositor check starts what it needs
+# itself.
 chroot "$S" useradd -m -u 1000 -G _seatd crowbar-compositor
 chroot "$S" useradd -m -u 1001 crowbar-shell
 chroot "$S" useradd -m -u 1002 crowbar-app

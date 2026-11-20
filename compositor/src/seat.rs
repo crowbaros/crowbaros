@@ -3,11 +3,10 @@
 //! - **The keyboard goes where the person clicks.** A click on a window gives
 //!   it the keyboard and raises it. A click on a layer surface that takes
 //!   keys gives the keyboard to it. A click on anything else leaves the
-//!   keyboard where it was. A new window takes the keyboard in two cases
-//!   only: its parent has it, or it is the first window after the shell says
-//!   the person launched an app (see `windows.rs`). Any other new window wants
-//!   attention, which the shell shows. When the window with the keyboard
-//!   goes, no other window is handed it.
+//!   keyboard where it was. A new window takes the keyboard, and a dialog
+//!   does when its parent has it (see `windows.rs`). A new window that does
+//!   not get it wants attention, which the shell shows. When the window with
+//!   the keyboard goes, no other window is handed it.
 //! - **The pointer goes to what is under it**, and stays with the surface a
 //!   button was pressed on until every button is let go.
 //! - **One keymap, compiled by libxkbcommon**, shared with every client
@@ -341,7 +340,7 @@ impl State {
         if let Some(new) = surface
             && let Some(client_id) = self.surfaces.get(&new).map(|s| s.client)
         {
-            // A client is offered its group's selection just before it
+            // A client is offered the selection just before it
             // gains the keyboard, as the data device's protocol says.
             self.offer_selection(client_id);
             self.offer_primary_selection(client_id);

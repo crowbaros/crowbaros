@@ -68,7 +68,7 @@ fn a_new_window_opens_below_the_bar() {
     let compositor = Compositor::start();
     let mut shell = compositor.shell();
     shell.open_layer(bar("test-bar"), 0xff20_4060).unwrap();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
 
     client
         .open_toplevel("app", "test.app", (300, 200), 0xffff_ffff)
@@ -96,7 +96,7 @@ fn background_layers_are_below_windows_and_overlays_above() {
             0xff11_2233,
         )
         .unwrap();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     client
         .open_toplevel("app", "test.app", (300, 200), 0xffff_ffff)
         .unwrap();

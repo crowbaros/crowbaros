@@ -1,12 +1,9 @@
 #!/usr/bin/python3
-"""Root stand-in for the broker's unlock in the desktop on Base.
+"""The desktop's unlock helper on Base.
 
-ADR 0020 has the broker end a locked session once the person has
-authenticated. The broker is archived with the substrate vision, so until a
-record says what replaces it, this helper is the compositor's unlock
-authority, as Fulcrum's proposal has it: the compositor listens for it at a
-socket of its own, checked against root's user ID, and once it does, the
-shell's word no longer unlocks.
+It is the compositor's unlock authority (ADR 0032): the compositor listens for
+it at a socket of its own, checked against root's user ID, and once it does,
+the shell's word no longer unlocks.
 
 The shell's lock screen sends the password the person typed, after the
 confirm chord. The helper checks it against the person's account, the one
@@ -18,8 +15,6 @@ A wrong password costs a pause before the next one is heard, one at a time.
 `crowbar-unlock lock` asks the compositor to lock, as the suspend hook
 does. `crowbar-unlock hash PASSWORD` prints a hash for /etc/shadow, as
 the image build sets the lab's password.
-
-Not the production broker: one account, one password, no record.
 """
 import ctypes
 import hmac

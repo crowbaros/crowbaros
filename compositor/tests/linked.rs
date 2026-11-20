@@ -91,8 +91,9 @@ fn the_binary_holds_no_smithay_or_wayland_rs_code() {
     }
 }
 
-/// The compositor has no public socket (ADR 0016). A compositor that made
-/// one would look for where to put it. The nested backend, which Base never
+/// The compositor looks for no socket of its own (ADR 0032): it is given
+/// the path of each, and Base links the apps' socket where apps look for it.
+/// A compositor that chose its own would look for where to put it. The nested backend, which Base never
 /// builds, looks for its host's socket the same way.
 #[cfg(not(feature = "nested"))]
 #[test]

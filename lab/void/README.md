@@ -42,17 +42,20 @@ keys and the pointer through QEMU, and a second monitor plugged into QEMU's
 second virtio-gpu connector. Every pull request that touches the compositor
 runs it ([ADR 0022](../../docs/archive/substrate-vision/adr/0022-the-compositor-is-built-beside-milestone-2.md)).
 
-The compositor has no public socket, so the check connects the two ways it
-allows ([ADR 0016](../../docs/archive/substrate-vision/adr/0016-the-warden-starts-every-compartment.md)):
+The compositor has two kinds of client, and the check connects each the way
+it allows ([ADR 0032](../../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md)):
 
 - The compositor runs as `crowbar-compositor`, the only member of `_seatd`.
-- `crowbar-shell` connects to the shell's socket.
-- A stand-in for the Warden runs as root, and registers a listener for one
-  compartment. `crowbar-app` is a client of that listener.
+- `crowbar-shell` connects to the shell's socket and its control channel.
+- `crowbar-app` stands in for the person, and runs every app at the apps'
+  socket.
 
-It checks what each of the three is offered, the attacks that the decision
-records give slice 1, that a new window does not take the keyboard, that a
-still desktop draws no frames, and a monitor plugged in while it runs. The
+It checks what the shell and an app are offered; that an app is refused
+layer shell, session lock, security contexts, the shell's socket, and the
+control channel; that only the person's user ID is served at the apps'
+socket, `/run/crowbar-apps/wayland-0`; that Void's own `foot` runs as an
+app; that a new window takes the keyboard; that a still
+desktop draws no frames; and a monitor plugged in while it runs. The
 [slice 1 record](../../docs/research/compositor-slice-1-2026-11-15.md) holds a
 run. The run of the [spike](https://github.com/crowbaros/crowbaros/tree/substrate-final/lab/compositor-spike) is in the
 [spike record](../../docs/research/compositor-spike-2026-11-15.md).
@@ -101,7 +104,10 @@ confirm chord, a wrong password, then the right one), launch, focus, workspaces,
 lock and unlock, the suspend hook's lock, Settings preview/Save/Undo, and
 relaunch. It checks saved appearance, and a file the person wrote in their
 home, after a clean reboot, service identities, linked libraries, binary hashes, render
-activity, shell restart, and refusal of app access to trusted sockets. An error
+activity, and shell restart. It checks that apps run as the person at the
+ordinary socket for apps, that copy and paste, the primary selection, and drag
+and drop work between two apps, and that the shell's sockets, its control
+channel, and the unlock helper refuse an app. An error
 returns nonzero and retains `desktop.log`, `results.json`, the build log,
 service/kernel diagnostics, screenshots, and the failed disk in that run's
 directory. The desktop's accounts and services are described in

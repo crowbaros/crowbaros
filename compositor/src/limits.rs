@@ -1,25 +1,20 @@
-//! What one client, and one compartment, may make the compositor hold.
+//! What one client may make the compositor hold.
 //!
 //! Every connection and every shared-memory pool costs the compositor a
-//! descriptor, and the process has a fixed number. Without limits one
-//! compartment could take them all, and the compositor would accept nothing
-//! more: not another compartment, not the shell, not the Warden (CrowbarOS
-//! issue 174). So:
+//! descriptor, and the process has a fixed number. Without limits the
+//! person's apps could take them all, and the compositor would accept
+//! nothing more, not even the shell (CrowbarOS issue 174). So:
 //!
-//! - **A reserve stays free for the trusted parts.** A compartment's client
-//!   is accepted, and a pool is made, only while more than [`RESERVE`]
-//!   descriptors are left. The shell and the Warden are accepted down to the
-//!   last one.
-//! - **Each compartment has a budget** of [`COMPARTMENT_CONNECTIONS`]
-//!   connections and [`COMPARTMENT_DESCRIPTORS`] descriptors in all:
-//!   connections, pools, dma-bufs, and descriptors a client sent that no
-//!   message has taken yet.
+//! - **A reserve stays free for the shell.** An app is accepted, and an
+//!   app's pool is made, only while more than [`RESERVE`] descriptors are
+//!   left. The shell is accepted down to the last one.
 //! - **Each client has a budget** of [`CLIENT_POOLS`] pools,
 //!   [`CLIENT_POOL_BYTES`] bytes of them mapped, and [`CLIENT_PIXEL_BYTES`]
 //!   bytes of pixels: the compositor copies each buffer a client commits,
-//!   and holds the copy until the next.
+//!   and holds the copy until the next. A connection holds at most
+//!   `fulcrum_wire::socket::MAX_FDS_IN` descriptors that no message has taken yet.
 //!
-//! A connection over its compartment's budget is refused: it is accepted and
+//! An app's connection past the reserve is refused: it is accepted and
 //! closed at once, so it waits in no queue. A pool or a commit over a budget
 //! is a protocol error that ends its client. Nothing over a budget harms
 //! another client.
@@ -32,20 +27,10 @@
 //! The compositor raises its own descriptor limit to the hard limit when it
 //! starts, so the budgets are a small part of what it has.
 
-use crate::{
-    State,
-    client::{ClientId, ObjectKind},
-    identity::{Compartment, Identity},
-    shm::Source,
-};
+use crate::{State, client::ClientId, identity::Identity, shm::Source};
 
-/// Descriptors kept free for the shell, the Warden, and the compositor's own
-/// work.
+/// Descriptors kept free for the shell and the compositor's own work.
 pub const RESERVE: usize = 64;
-/// Connections one compartment may hold open at once.
-pub const COMPARTMENT_CONNECTIONS: usize = 16;
-/// Descriptors one compartment may make the compositor hold.
-pub const COMPARTMENT_DESCRIPTORS: usize = 512;
 /// Shared-memory pools one client may hold.
 pub const CLIENT_POOLS: usize = 128;
 /// Bytes of shared-memory pools one client may hold mapped: address space,
@@ -80,8 +65,6 @@ pub fn raise_descriptor_limit() {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverBudget {
     Reserve,
-    Connections,
-    Descriptors,
     Pools,
     PoolBytes,
     PixelBytes,
@@ -91,10 +74,6 @@ impl std::fmt::Display for OverBudget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             OverBudget::Reserve => write!(f, "fewer than {RESERVE} descriptors are left"),
-            OverBudget::Connections => write!(f, "its compartment has {COMPARTMENT_CONNECTIONS} connections"),
-            OverBudget::Descriptors => {
-                write!(f, "its compartment holds {COMPARTMENT_DESCRIPTORS} descriptors")
-            }
             OverBudget::Pools => write!(f, "the client holds {CLIENT_POOLS} pools"),
             OverBudget::PoolBytes => write!(f, "the client holds {CLIENT_POOL_BYTES} bytes of shared memory"),
             OverBudget::PixelBytes => write!(f, "the client's surfaces hold {CLIENT_PIXEL_BYTES} bytes of pixels"),
@@ -108,7 +87,7 @@ impl State {
     pub fn descriptors_held(&self) -> usize {
         // The event loop's epoll and its waker.
         let own = 2;
-        let listeners = self.trusted.len() + 2 * self.listeners.len();
+        let listeners = self.listeners.len();
         let connections: usize = self.clients.values().map(|client| 1 + client.conn.queued_fds()).sum();
         let dmabufs = self
             .buffers
@@ -128,47 +107,10 @@ impl State {
         self.descriptor_limit.saturating_sub(self.descriptors_held())
     }
 
-    fn compartment_clients(&self, compartment: &Compartment) -> impl Iterator<Item = ClientId> + '_ {
-        let id = compartment.id().to_string();
-        self.clients.values().filter_map(move |client| match &client.identity {
-            Identity::Compartment(of) if of.id() == id => Some(client.id),
-            _ => None,
-        })
-    }
-
-    /// The descriptors one compartment makes the compositor hold.
-    pub(crate) fn compartment_descriptors(&self, compartment: &Compartment) -> usize {
-        self.compartment_clients(compartment)
-            .map(|id| {
-                let client = &self.clients[&id];
-                1 + client.conn.queued_fds()
-                    + client
-                        .objects
-                        .values()
-                        .map(|object| match object.kind {
-                            ObjectKind::Pool(_) => 1,
-                            ObjectKind::BufferParams(params) => self.params_descriptors(params),
-                            ObjectKind::Buffer(buffer) => self
-                                .buffers
-                                .get(&buffer)
-                                .map_or(0, |buffer| usize::from(matches!(buffer.source, Source::Dmabuf { .. }))),
-                            _ => 0,
-                        })
-                        .sum::<usize>()
-            })
-            .sum()
-    }
-
-    /// Whether one more connection may be accepted for a compartment.
-    pub(crate) fn may_connect(&self, compartment: &Compartment) -> Result<(), OverBudget> {
-        if self.descriptors_left() <= RESERVE {
+    /// Whether one more client with this identity may be accepted.
+    pub(crate) fn may_connect(&self, identity: Identity) -> Result<(), OverBudget> {
+        if identity == Identity::App && self.descriptors_left() <= RESERVE {
             return Err(OverBudget::Reserve);
-        }
-        if self.compartment_clients(compartment).count() >= COMPARTMENT_CONNECTIONS {
-            return Err(OverBudget::Connections);
-        }
-        if self.compartment_descriptors(compartment) >= COMPARTMENT_DESCRIPTORS {
-            return Err(OverBudget::Descriptors);
         }
         Ok(())
     }
@@ -178,8 +120,7 @@ impl State {
         let Some(client) = self.clients.get(&client_id) else {
             return Ok(());
         };
-        let trusted = !matches!(client.identity, Identity::Compartment(_));
-        if !trusted && self.descriptors_left() <= RESERVE {
+        if client.identity == Identity::App && self.descriptors_left() <= RESERVE {
             return Err(OverBudget::Reserve);
         }
         let pools: Vec<_> = self
@@ -193,11 +134,6 @@ impl State {
         }
         if pools.iter().sum::<usize>().saturating_add(bytes) > CLIENT_POOL_BYTES {
             return Err(OverBudget::PoolBytes);
-        }
-        if let Identity::Compartment(compartment) = &client.identity
-            && self.compartment_descriptors(compartment) >= COMPARTMENT_DESCRIPTORS
-        {
-            return Err(OverBudget::Descriptors);
         }
         Ok(())
     }
@@ -224,16 +160,5 @@ impl State {
             return Err(OverBudget::PoolBytes);
         }
         Ok(())
-    }
-
-    /// Whether a compartment's client holds more descriptors than its
-    /// compartment's budget, as by sending descriptors no message takes.
-    pub(crate) fn over_descriptor_budget(&self, client_id: ClientId) -> bool {
-        match self.clients.get(&client_id).map(|client| &client.identity) {
-            Some(Identity::Compartment(compartment)) => {
-                self.compartment_descriptors(compartment) > COMPARTMENT_DESCRIPTORS
-            }
-            _ => false,
-        }
     }
 }

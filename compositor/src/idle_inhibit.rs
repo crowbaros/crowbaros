@@ -5,8 +5,8 @@
 //! now, on the workspace the person is on. One whose surface is hidden,
 //! unmapped, or gone counts again once the surface is shown again. Idle
 //! itself, with blanking and locking, is Milestone 8's, and asks
-//! [`State::idle_inhibited`] then. The table offers it to every compartment
-//! and the shell (ADR 0020, ADR 0023).
+//! [`State::idle_inhibited`] then. The table offers it to every client
+//! (ADR 0032).
 
 use std::{borrow::Cow, collections::HashMap};
 

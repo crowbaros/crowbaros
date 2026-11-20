@@ -1,9 +1,12 @@
-//! Who a client is. The compositor decides it from how the connection was
-//! made, and from the user ID the kernel reports (ADR 0016).
+//! Who a client is. The compositor decides it from which socket the peer
+//! reached and from the user ID the kernel reports (ADR 0032).
 
 mod common;
 
-use common::{Compositor, another_uid, connect, own_uid};
+use std::os::unix::fs::PermissionsExt;
+
+use common::{Compositor, another_uid, own_uid};
+use crowbar_compositor::identity::Identity;
 
 #[test]
 fn the_shells_socket_takes_the_shells_user_id_and_refuses_any_other() {
@@ -18,140 +21,51 @@ fn the_shells_socket_takes_the_shells_user_id_and_refuses_any_other() {
 }
 
 #[test]
-fn the_wardens_socket_takes_the_wardens_user_id_and_refuses_any_other() {
+fn the_apps_socket_takes_the_persons_user_id_and_refuses_any_other() {
     let ours = Compositor::start_trusting(own_uid(), own_uid());
     let theirs = Compositor::start_trusting(own_uid(), another_uid());
 
-    assert!(ours.try_warden().is_ok());
+    assert!(ours.try_app().is_ok());
     assert!(
-        theirs.try_warden().is_err(),
-        "a peer without the Warden's user ID was accepted as the Warden"
+        theirs.try_app().is_err(),
+        "a peer without the person's user ID was accepted as an app"
     );
 }
 
-/// The two sockets are not interchangeable: which one a peer reached decides
-/// which trusted part it is.
+/// The owner and the group of each socket's directory may connect; the
+/// check that counts is the peer's user ID.
 #[test]
-fn the_socket_a_trusted_part_reached_says_which_part_it_is() {
+fn both_sockets_are_for_their_owner_and_group_alone() {
     let compositor = Compositor::start();
-
-    let shell = compositor.shell();
-    let warden = compositor.warden();
-
-    assert!(shell.interfaces().contains(&"zwlr_layer_shell_v1".to_string()));
-    assert!(
-        !shell
-            .interfaces()
-            .contains(&"wp_security_context_manager_v1".to_string())
-    );
-    assert_eq!(warden.interfaces(), ["wp_security_context_manager_v1"]);
-}
-
-/// The client of a compartment's listener belongs to that compartment, as
-/// the Warden named it.
-#[test]
-fn a_client_belongs_to_the_compartment_whose_listener_it_came_through() {
-    let compositor = Compositor::start();
-    let mail = compositor.register("org.example.Mail", "compartment-1");
-    let notes = compositor.register("org.example.Notes", "compartment-2");
-    let _a = connect(&mail.path).unwrap();
-    let _b = connect(&notes.path).unwrap();
-
-    let named = compositor.with(|state| {
-        ["compartment-1", "compartment-2"].map(|id| {
-            let compartment = state.compartment(id).unwrap();
-            (compartment.principal().to_string(), compartment.had_client())
-        })
-    });
-    assert_eq!(
-        named,
-        [
-            ("org.example.Mail".to_string(), true),
-            ("org.example.Notes".to_string(), true)
-        ]
-    );
-}
-
-#[test]
-fn a_listener_registered_without_a_principal_id_or_a_compartment_id_accepts_nothing() {
-    let compositor = Compositor::start();
-    let mut warden = compositor.warden();
-
-    for (name, principal, compartment) in [
-        ("no-principal", None, Some("compartment-7")),
-        ("no-compartment", Some("org.example.Mail"), None),
-        ("empty-principal", Some(""), Some("compartment-8")),
-        ("empty-compartment", Some("org.example.Mail"), Some("")),
-    ] {
-        let listener = warden
-            .register_compartment(&compositor.listener_path(name), principal, compartment)
-            .unwrap();
-        assert!(
-            connect(&listener.path).is_err(),
-            "{name}: a client with no identity was accepted"
-        );
+    for socket in [&compositor.parts.shell.socket, &compositor.parts.apps.socket] {
+        let mode = std::fs::metadata(socket).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o660, "{}", socket.display());
     }
 }
 
+/// The two sockets are not interchangeable: which one a peer reached decides
+/// whether it is the shell or an app, even when the shell and the person
+/// have one user ID.
 #[test]
-fn a_second_listener_for_a_live_compartment_accepts_nothing() {
+fn the_socket_a_client_reached_says_which_kind_of_client_it_is() {
     let compositor = Compositor::start();
-    let _first = compositor.register("org.example.Mail", "compartment-7");
 
-    let second = compositor
-        .warden()
-        .register_compartment(
-            &compositor.listener_path("again"),
-            Some("org.example.Notes"),
-            Some("compartment-7"),
-        )
-        .unwrap();
+    let shell = compositor.shell();
+    let app = compositor.app();
 
-    assert!(connect(&second.path).is_err());
+    assert!(shell.interfaces().contains(&"zwlr_layer_shell_v1".to_string()));
+    assert!(!app.interfaces().contains(&"zwlr_layer_shell_v1".to_string()));
+    let mut kinds = compositor.with(|state| state.client_identities());
+    kinds.sort_by_key(|identity| *identity == Identity::App);
+    assert_eq!(kinds, [Identity::Shell, Identity::App]);
 }
 
-/// The Warden stops a compartment and lets go of its listener.
+/// Every app shares the one socket, and each connection is a client of its
+/// own.
 #[test]
-fn the_listener_of_a_stopped_compartment_accepts_nothing() {
+fn many_apps_connect_at_the_one_socket() {
     let compositor = Compositor::start();
-    let mut listener = compositor.register("org.example.Mail", "compartment-7");
-    let path = listener.path.clone();
-    assert!(connect(&path).is_ok());
-
-    listener.close();
-
-    // The compositor learns of it on its next turn.
-    let refused = (0..200).any(|_| {
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        connect(&path).is_err()
-    });
-    assert!(
-        refused,
-        "the listener still accepted clients after the Warden let go of it"
-    );
-}
-
-/// The Warden's connection can end, as when it restarts, and the listeners
-/// it registered go on serving their compartments.
-#[test]
-fn a_listener_outlives_the_wardens_connection() {
-    let compositor = Compositor::start();
-    let listener = {
-        let mut warden = compositor.warden();
-        warden
-            .register_compartment(&compositor.listener_path("c1"), Some("p"), Some("c1"))
-            .unwrap()
-    };
-    assert!(connect(&listener.path).is_ok());
-}
-
-/// A GPU need recorded after the compartment's first client connected is
-/// refused: what a client is offered is fixed when it connects.
-#[test]
-fn the_gpu_need_cannot_widen_what_a_connected_client_was_offered() {
-    let compositor = Compositor::start();
-    let (client, _listener) = compositor.compartment("c1");
-    let refused = compositor.with(|state| state.compartment("c1").unwrap().record_gpu_need().is_err());
-    assert!(refused);
-    assert!(!client.interfaces().contains(&"zwp_linux_dmabuf_v1".to_string()));
+    let apps: Vec<_> = (0..4).map(|_| compositor.app()).collect();
+    assert_eq!(apps.len(), 4);
+    assert_eq!(compositor.client_count(), 4);
 }

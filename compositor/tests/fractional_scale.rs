@@ -25,7 +25,7 @@ fn get(client: &mut crowbar_probe::Client, manager: u32, surface: u32) -> u32 {
 #[test]
 fn a_surface_hears_it_should_draw_at_scale_one() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let manager = client.bind(wp_fractional_scale_manager_v1::NAME, 1).unwrap();
     let surface = client.create_surface().unwrap();
 
@@ -39,7 +39,7 @@ fn a_surface_hears_it_should_draw_at_scale_one() {
 #[test]
 fn a_surface_has_one_fractional_scale_at_a_time() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let manager = client.bind(wp_fractional_scale_manager_v1::NAME, 1).unwrap();
     let surface = client.create_surface().unwrap();
     let first = get(&mut client, manager, surface);

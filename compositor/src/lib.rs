@@ -1,12 +1,13 @@
 //! The CrowbarOS Wayland compositor, written from the ground up.
 //!
 //! - [`event_loop`] waits on `epoll` on one thread.
-//! - [`identity`] says who a client is. The compositor decides it when the
-//!   connection is made and never takes it from the client (ADR 0016).
+//! - [`identity`] says who a client is: the shell or an app. The compositor
+//!   decides it when the connection is made and never takes it from the
+//!   client (ADR 0032).
 //! - [`policy`] is the one table that says which client is offered which
-//!   global (ADR 0020).
-//! - [`connections`] is every way a client can connect. There is no public
-//!   socket.
+//!   global (ADR 0032).
+//! - [`connections`] is every way a client can connect: the shell's socket
+//!   and the apps' socket, each for one user ID.
 //!
 //! The wire protocol is `fulcrum-wire`. Nothing here holds `unsafe` code.
 

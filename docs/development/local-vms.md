@@ -8,13 +8,14 @@ scripts, RPM recipes, and session hooks are no longer active entry points.
 
 | Environment | Current capability | State directory |
 | --- | --- | --- |
-| [Graphical lab](../../lab/void/README.md) | The compositor on a TTY, checked with a stand-in for the Warden; software rendering | `.lab/void-graphical/` |
+| [Graphical lab](../../lab/void/README.md) | The compositor on a TTY, with the shell and an app at their own sockets; software rendering | `.lab/void-graphical/` |
 | [Base](../../base/README.md) | The desktop on Base's image; `base/void_base.py boot --window` shows it | `.lab/base/` |
 | Desktop check | A copy of Base's image per run, booted under UEFI; launch/focus/workspaces, Save/Undo, restart/reboot, identity checks | `.lab/void-desktop-checks/<run>/` |
 
 The [desktop acceptance record](void-desktop-smoke-2026-11-15.md) covers the
-integrated Alpha services and saved appearance. They follow ADR 0016's temporary
-three-user model; production Warden and compartment isolation remain separate.
+integrated desktop services and saved appearance as they were on that date.
+Today three accounts run the desktop, and every app runs as the person
+([ADR 0032](../adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md)).
 
 From the repository root, inspect the available commands or an already-running
 guest without rebuilding its disk:
@@ -80,19 +81,17 @@ Tests are headless; they do not establish correct GUI behavior or session recove
 The Alpha desktop runs the [compositor](../../compositor/README.md), Fulcrum.
 
 For a same-user rendering experiment inside an existing **development** Wayland
-session, run Fulcrum's nested backend, register a
-compartment with its stand-in for the Warden, and start an app on that
-compartment's listener. This does not exercise the separate Alpha identities
-or launcher:
+session, run Fulcrum's nested backend and start an app at its socket for apps.
+This does not exercise the desktop's separate accounts or its launcher:
 
 ```sh
 # From the repository root:
 cargo run --manifest-path compositor/Cargo.toml --release --features nested -- --backend nested \
   --shell-socket /tmp/fulcrum/shell --shell-uid "$(id -u)" \
-  --warden-socket /tmp/fulcrum/warden --warden-uid "$(id -u)"
+  --apps-socket /tmp/fulcrum/apps --apps-uid "$(id -u)"
 # Then:
-WAYLAND_DISPLAY=/tmp/fulcrum/warden crowbar-probe warden dev.settings dev-1 /tmp/fulcrum/apps \
-  env CROWBAR_SESSION=alpha-no-animations "$PWD/apps/studio-settings/target/release/crowbaros-studio-settings"
+WAYLAND_DISPLAY=/tmp/fulcrum/apps CROWBAR_SESSION=alpha-no-animations \
+  "$PWD/apps/studio-settings/target/release/crowbaros-studio-settings"
 ```
 
 For a dedicated Void TTY, use the operator-led procedure and prerequisites in
@@ -105,12 +104,10 @@ over a TTY/GPU used by another active session.
 | Existing source | Remaining task |
 | --- | --- |
 | Shell Hyprland/systemd fallback, Settings Hyprland adapter, and spike control protocol | [#71](https://github.com/crowbaros/crowbaros/issues/71): production IPC, adapter removal, and corresponding regressions |
-| Public ordinary Wayland socket and shared Alpha app UID | The compositor built with [#49](https://github.com/crowbaros/crowbaros/issues/49) has no public socket. The Alpha desktop keeps the spike's until it runs that compositor |
 
-The Alpha services do not use those legacy adapters. Apps launch through the
-root stand-in without inherited trusted descriptors or seat membership. Settings
-Save works without Hyprland, and the shell follows saved preferences. The
-compositor has no animations; the motion preference is stored for compatible
-sessions without claiming an effect here. Apps still share one UID and can reach
-one another, so this is not the production isolation boundary. Archived Fedora
-service files are not a supported alternative session.
+The desktop's services do not use those legacy adapters. The launcher starts
+apps as the person, at the compositor's ordinary socket for apps. Settings Save
+works without Hyprland, and the shell follows saved preferences. The compositor
+has no animations; the motion preference is stored for compatible sessions
+without claiming an effect here. Archived Fedora service files are not a
+supported alternative session.

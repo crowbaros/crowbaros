@@ -70,11 +70,9 @@ boot.
 ## Join Wi-Fi
 
 Wi-Fi is `iwd`, used from a terminal with `iwctl`. Your account is in the
-`netdev` group, which may use it. Apps do not run as your account yet, so use
-the console:
+`netdev` group, which may use it, and the desktop's terminal runs as you:
 
-1. Press Ctrl+Alt+F1 for the first console, and log in with your account's name
-   and password.
+1. Open the terminal from the dock or the launcher (tap Super).
 2. Find the Wi-Fi device, usually `wlan0`:
 
    ```sh
@@ -96,9 +94,10 @@ the console:
    ip -4 addr show wlan0
    ```
 
-5. Press Ctrl+Alt+F2 to go back to the desktop.
-
 `iwd` remembers the network and joins it again on every boot.
+
+The consoles work too: Ctrl+Alt+F1 for the first, where you log in with your
+account's name and password, and Ctrl+Alt+F2 back to the desktop.
 
 If `iwctl device list` shows no device, the machine's Wi-Fi may need firmware
 the image does not carry. `dmesg | grep -i firmware` names what the driver

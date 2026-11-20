@@ -50,9 +50,10 @@ These hold for every change ([the plan](docs/PLAN.md)):
 | `cargo run -p fulcrum-codegen` | A change to `protocols/`. Commit what it writes |
 | `lab/void/compositor_guest.py check`, from the repository's root | Every pull request that changes how the compositor serves clients ([ADR 0031](../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)). Attach the evidence log it writes |
 
-A bug fix comes with a test that fails without the fix. Offering a protocol
-global to a client takes a row in the policy table, a test of who is offered
-it, and the matching list in `lab/void/compositor_check.py`.
+A bug fix comes with a test that fails without the fix. Every client is
+offered a new protocol global unless `src/policy.rs` refuses it. Refusing one
+to a client takes an entry in that client's list there, a test of who is
+refused it, and the matching list in `lab/void/compositor_check.py`.
 
 ## Reaching Base
 

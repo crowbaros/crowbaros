@@ -15,11 +15,11 @@ const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 const COLOUR: u32 = 0xff30_c030;
 
-fn window(compositor: &Compositor) -> (Client, Toplevel, crowbar_probe::CompartmentListener) {
-    let (mut client, listener) = compositor.compartment("c1");
+fn window(compositor: &Compositor) -> (Client, Toplevel) {
+    let mut client = compositor.app();
     client.listen_to_pointer().unwrap();
     let window = client.open_toplevel("app", "test.app", (200, 100), COLOUR).unwrap();
-    (client, window, listener)
+    (client, window)
 }
 
 fn rect(compositor: &Compositor) -> Rect {
@@ -57,7 +57,7 @@ fn last_configure(client: &mut Client, window: &Toplevel) -> (i32, i32, Vec<u32>
 #[test]
 fn super_and_the_left_button_move_a_window_and_the_client_hears_no_button() {
     let compositor = Compositor::start();
-    let (mut client, _window, _listener) = window(&compositor);
+    let (mut client, _window) = window(&compositor);
     compositor.pointer(60, 60);
     client.take_pointer_events().unwrap();
 
@@ -78,7 +78,7 @@ fn super_and_the_left_button_move_a_window_and_the_client_hears_no_button() {
 #[test]
 fn a_client_moves_its_window_while_a_button_is_held_on_it() {
     let compositor = Compositor::start();
-    let (mut client, window, _listener) = window(&compositor);
+    let (mut client, window) = window(&compositor);
     let seat = client.bind(wl_seat::NAME, 7).unwrap();
     compositor.pointer(60, 60);
     button(&compositor, BTN_LEFT, true);
@@ -102,7 +102,7 @@ fn a_client_moves_its_window_while_a_button_is_held_on_it() {
 #[test]
 fn a_move_asked_for_with_no_button_held_does_nothing() {
     let compositor = Compositor::start();
-    let (mut client, window, _listener) = window(&compositor);
+    let (mut client, window) = window(&compositor);
     let seat = client.bind(wl_seat::NAME, 7).unwrap();
     compositor.pointer(60, 60);
 
@@ -124,7 +124,7 @@ fn a_move_asked_for_with_no_button_held_does_nothing() {
 #[test]
 fn super_and_the_right_button_resize_from_the_nearest_corner() {
     let compositor = Compositor::start();
-    let (mut client, window, _listener) = window(&compositor);
+    let (mut client, window) = window(&compositor);
     // The bottom-right quarter of a window at 48,48 of 200x100.
     compositor.pointer(200, 130);
 
@@ -146,7 +146,7 @@ fn super_and_the_right_button_resize_from_the_nearest_corner() {
 #[test]
 fn a_resize_from_the_left_keeps_the_right_edge_where_it_was() {
     let compositor = Compositor::start();
-    let (mut client, window, _listener) = window(&compositor);
+    let (mut client, window) = window(&compositor);
     let seat = client.bind(wl_seat::NAME, 7).unwrap();
     compositor.pointer(50, 100);
     button(&compositor, BTN_LEFT, true);
@@ -174,7 +174,7 @@ fn a_resize_from_the_left_keeps_the_right_edge_where_it_was() {
 #[test]
 fn a_resize_stays_within_the_size_the_client_can_take() {
     let compositor = Compositor::start();
-    let (mut client, window, _listener) = window(&compositor);
+    let (mut client, window) = window(&compositor);
     client
         .request(
             window.toplevel,
@@ -195,7 +195,7 @@ fn a_resize_stays_within_the_size_the_client_can_take() {
 #[test]
 fn moving_a_maximized_window_floats_it() {
     let compositor = Compositor::start();
-    let (mut client, window, _listener) = window(&compositor);
+    let (mut client, window) = window(&compositor);
     client
         .request(window.toplevel, xdg_toplevel::Request::SetMaximized)
         .unwrap();

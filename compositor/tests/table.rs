@@ -1,13 +1,15 @@
-//! The Wayland socket as a client sees it: which globals each client is
-//! offered. The lists are the rows of ADR 0020's table "What each client is
-//! offered", less the globals the compositor does not create yet.
+//! The Wayland sockets as a client sees them: which of the compositor's
+//! globals each kind of client is offered (ADR 0032). An app is offered
+//! every one but layer shell; the shell is offered them all.
 
 mod common;
 
 use common::Compositor;
 
-/// What every compartment with a Wayland listener is offered.
-const COMPARTMENT: [&str; 13] = [
+/// What every client is offered: every global the test compositor makes
+/// but layer shell. The test compositor names a GPU, so linux-dmabuf is among them; explicit sync
+/// needs a real render node.
+const EVERY_CLIENT: [&str; 14] = [
     "wl_compositor",
     "wl_data_device_manager",
     "wl_output",
@@ -20,6 +22,7 @@ const COMPARTMENT: [&str; 13] = [
     "wp_viewporter",
     "xdg_wm_base",
     "zwp_idle_inhibit_manager_v1",
+    "zwp_linux_dmabuf_v1",
     "zwp_primary_selection_device_manager_v1",
 ];
 
@@ -29,58 +32,39 @@ fn sorted(mut names: Vec<&'static str>) -> Vec<&'static str> {
 }
 
 #[test]
-fn a_compartment_is_offered_what_it_needs_to_show_a_window_and_no_more() {
+fn an_app_is_offered_what_a_wayland_app_expects_the_gpus_buffers_included() {
     let compositor = Compositor::start();
-    let (client, _listener) = compositor.compartment("c1");
+    let client = compositor.app();
 
-    assert_eq!(client.interfaces(), COMPARTMENT);
+    assert_eq!(client.interfaces(), EVERY_CLIENT);
 }
 
 #[test]
-fn a_compartment_whose_needs_include_the_gpu_is_also_offered_dmabuf() {
-    let compositor = Compositor::start();
-    let (with_gpu, _listener) = compositor.compartment_with_gpu("c1");
-    let (without, _listener) = compositor.compartment("c2");
-
-    let mut expected = COMPARTMENT.to_vec();
-    expected.push("zwp_linux_dmabuf_v1");
-    assert_eq!(with_gpu.interfaces(), sorted(expected));
-    assert_eq!(without.interfaces(), COMPARTMENT);
-}
-
-#[test]
-fn the_shell_is_also_offered_dmabuf_and_layer_shell() {
+fn the_shell_is_also_offered_layer_shell() {
     let compositor = Compositor::start();
     let shell = compositor.shell();
 
-    let mut expected = COMPARTMENT.to_vec();
-    expected.extend(["zwp_linux_dmabuf_v1", "zwlr_layer_shell_v1"]);
+    let mut expected = EVERY_CLIENT.to_vec();
+    expected.push("zwlr_layer_shell_v1");
     assert_eq!(shell.interfaces(), sorted(expected));
 }
 
-#[test]
-fn the_warden_is_offered_the_security_context_manager_and_nothing_else() {
-    let compositor = Compositor::start();
-    let warden = compositor.warden();
-
-    assert_eq!(warden.interfaces(), ["wp_security_context_manager_v1"]);
-}
-
-/// A second output is a new global. It goes to the clients the table gives
-/// outputs to, and not to the Warden.
+/// A second output is a new global. It goes to every client the policy
+/// offers outputs to, as it is made.
 #[test]
 fn a_global_made_while_clients_are_connected_still_passes_the_table() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
-    let mut warden = compositor.warden();
+    let mut client = compositor.app();
+    let mut shell = compositor.shell();
 
     compositor.with(|state| {
         state.add_output("TEST-2", (800, 600), 60_000);
     });
     client.roundtrip().unwrap();
-    warden.roundtrip().unwrap();
+    shell.roundtrip().unwrap();
 
     let outputs = |names: Vec<String>| names.iter().filter(|name| *name == "wl_output").count();
     assert_eq!(outputs(client.interfaces()), 2);
-    assert_eq!(warden.interfaces(), ["wp_security_context_manager_v1"]);
+    assert_eq!(outputs(shell.interfaces()), 2);
+    assert!(!client.interfaces().iter().any(|name| name == "zwlr_layer_shell_v1"));
 }

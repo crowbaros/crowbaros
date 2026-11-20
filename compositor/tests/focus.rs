@@ -1,4 +1,5 @@
-//! Which new window takes the keyboard (ADR 0020).
+//! Which new window takes the keyboard: every new window, and a dialog
+//! only when its parent has the keyboard.
 
 mod common;
 
@@ -9,12 +10,11 @@ use fulcrum_wire::{ObjectId, protocol::xdg_shell::xdg_toplevel};
 #[test]
 fn a_dialog_of_the_window_with_the_keyboard_takes_it() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     client.listen_to_keyboard().unwrap();
     let parent = client
         .open_toplevel("app", "test.app", (300, 200), 0xffc0_2020)
         .unwrap();
-    compositor.click(60, 60);
     client.take_keys().unwrap();
 
     // The parent is set before the dialog maps, as toolkits do.
@@ -34,12 +34,19 @@ fn a_dialog_of_the_window_with_the_keyboard_takes_it() {
 #[test]
 fn a_dialog_of_a_window_without_the_keyboard_does_not_take_it() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     client.listen_to_keyboard().unwrap();
     let parent = client
         .open_toplevel("app", "test.app", (300, 200), 0xffc0_2020)
         .unwrap();
-    client.take_keys().unwrap();
+    // Another app's window opens, and takes the keyboard from the parent.
+    let mut other = compositor.app();
+    other
+        .open_toplevel("other", "test.other", (300, 200), 0xff20_20c0)
+        .unwrap();
+    client.roundtrip().unwrap();
+    let keys = client.take_keys().unwrap();
+    assert_eq!(keys.last(), Some(&KeyEvent::Leave), "{keys:?}");
 
     open_child(&mut client, &parent);
 

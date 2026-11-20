@@ -18,14 +18,8 @@ fn images(compositor: &Compositor) -> Vec<crowbar_compositor::image::Image> {
     compositor.with(|state| state.render_root_surfaces())
 }
 
-fn client(compositor: &Compositor) -> (Client, crowbar_probe::CompartmentListener) {
-    compositor.compartment(&format!("c{}", next()))
-}
-
-fn next() -> u32 {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static NEXT: AtomicU32 = AtomicU32::new(0);
-    NEXT.fetch_add(1, Ordering::Relaxed)
+fn client(compositor: &Compositor) -> Client {
+    compositor.app()
 }
 
 /// The exit check of Milestone 1: a client's shared-memory pixels appear in
@@ -33,7 +27,7 @@ fn next() -> u32 {
 #[test]
 fn a_clients_pixels_are_what_the_compositor_draws() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let surface = client.create_surface().unwrap();
     let buffer = client.shm_buffer((4, 3), RED).unwrap();
     client.show(surface, Some(&buffer)).unwrap();
@@ -48,7 +42,7 @@ fn a_clients_pixels_are_what_the_compositor_draws() {
 #[test]
 fn nothing_changes_until_the_commit() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let surface = client.create_surface().unwrap();
     let buffer = client.shm_buffer((2, 2), RED).unwrap();
     client
@@ -74,7 +68,7 @@ fn nothing_changes_until_the_commit() {
 #[test]
 fn a_committed_buffer_is_released_and_later_drawing_waits_for_a_commit() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let surface = client.create_surface().unwrap();
     let buffer = client.shm_buffer((2, 1), RED).unwrap();
     client.show(surface, Some(&buffer)).unwrap();
@@ -94,7 +88,7 @@ fn a_committed_buffer_is_released_and_later_drawing_waits_for_a_commit() {
 #[test]
 fn attaching_no_buffer_unmaps() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let surface = client.create_surface().unwrap();
     let buffer = client.shm_buffer((2, 2), RED).unwrap();
     client.show(surface, Some(&buffer)).unwrap();
@@ -106,7 +100,7 @@ fn attaching_no_buffer_unmaps() {
 #[test]
 fn premultiplied_alpha_blends_a_subsurface_over_its_parent() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let parent = client.create_surface().unwrap();
     let child = client.create_surface().unwrap();
     let subsurface = client.subsurface(child, parent).unwrap();
@@ -128,7 +122,7 @@ fn premultiplied_alpha_blends_a_subsurface_over_its_parent() {
 #[test]
 fn a_synchronized_subsurface_waits_for_its_parent_and_a_desynchronized_one_does_not() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let parent = client.create_surface().unwrap();
     let child = client.create_surface().unwrap();
     let subsurface = client.subsurface(child, parent).unwrap();
@@ -159,7 +153,7 @@ fn a_synchronized_subsurface_waits_for_its_parent_and_a_desynchronized_one_does_
 #[test]
 fn set_desync_applies_the_held_state() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let parent = client.create_surface().unwrap();
     let child = client.create_surface().unwrap();
     let subsurface = client.subsurface(child, parent).unwrap();
@@ -175,7 +169,7 @@ fn set_desync_applies_the_held_state() {
 #[test]
 fn position_and_stacking_change_on_the_parents_commit() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let parent = client.create_surface().unwrap();
     let child = client.create_surface().unwrap();
     let subsurface = client.subsurface(child, parent).unwrap();
@@ -222,7 +216,7 @@ fn position_and_stacking_change_on_the_parents_commit() {
 
 /// Expects the compositor to refuse what `send` does with `code`.
 fn refused(compositor: &Compositor, code: u32, send: impl FnOnce(&mut Client)) -> String {
-    let (mut client, _listener) = client(compositor);
+    let mut client = client(compositor);
     send(&mut client);
     assert!(client.roundtrip().is_err(), "the compositor accepted it");
     let error = client.error.clone().expect("a protocol error");
@@ -359,7 +353,7 @@ fn an_object_of_the_wrong_interface_is_refused() {
 fn a_clients_surfaces_and_buffers_go_with_it() {
     let compositor = Compositor::start();
     {
-        let (mut client, _listener) = client(&compositor);
+        let mut client = client(&compositor);
         let parent = client.create_surface().unwrap();
         let child = client.create_surface().unwrap();
         client.subsurface(child, parent).unwrap();

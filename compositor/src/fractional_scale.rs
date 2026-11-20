@@ -3,8 +3,7 @@
 //!
 //! A surface's preferred scale is the largest of the scales of the outputs
 //! it is on, or 1 where it is on none, and it hears it again whenever that
-//! changes. The table offers it to every compartment and the shell (ADR 0020,
-//! ADR 0023).
+//! changes. The table offers it to every client (ADR 0032).
 
 use std::borrow::Cow;
 

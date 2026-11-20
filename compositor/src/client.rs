@@ -33,8 +33,6 @@ pub(crate) enum ObjectKind {
     /// they enter outputs.
     #[allow(dead_code)]
     Output(u64),
-    SecurityContextManager,
-    SecurityContext(Box<crate::connections::PendingContext>),
     Compositor,
     Surface(crate::surface::SurfaceId),
     Region(crate::surface::RegionId),

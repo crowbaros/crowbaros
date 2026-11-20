@@ -3,7 +3,7 @@
 //! window.
 //!
 //! It is a path socket of its own, checked against the shell's user ID as
-//! the shell's Wayland socket is (ADR 0016). The wire format is the spike's,
+//! the shell's Wayland socket is (ADR 0032). The wire format is the spike's,
 //! which the shell already speaks: one JSON object per line. Each request
 //! gets one reply. The set of requests is fixed, and none runs a command or
 //! loads code.
@@ -36,10 +36,10 @@
 //! no reply: `launcher` when the person taps Super alone, for the shell to
 //! open or close its launcher (ADR 0020's keys). A window that opened
 //! without the keyboard has `attention` in the snapshot until it gets it,
-//! for the bar to show (ADR 0020's focus). `launching` says the person just
-//! started an app from the shell: the next window a compartment maps within
-//! [`LAUNCH_FOCUS`] takes the keyboard, as the first window of a compartment
-//! the person started does. `lock` and `unlock` lock and unlock the session,
+//! for the bar to show. `launching` says the person just started an app
+//! from the shell. It changes nothing, since every new window takes the
+//! keyboard (see `windows.rs`), and is answered so that the shell's
+//! messages stay as they are. `lock` and `unlock` lock and unlock the session,
 //! and the events `locked` and `unlocked` say it changed, as Super+L, the
 //! confirm chord, and the idle timer change it too (see `lock.rs`).
 //! `unlock_entry` says the confirm chord opened the unlock entry, before
@@ -88,9 +88,6 @@ pub const MAX_LINE: usize = 4096;
 pub const MAX_PENDING: usize = 1024 * 1024;
 /// How many control connections the shell may hold at once.
 pub const MAX_CONNECTIONS: usize = 4;
-/// How long after the shell says it is launching an app its first window
-/// takes the keyboard.
-pub const LAUNCH_FOCUS: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub(crate) struct ControlListener {
     listener: UnixListener,
@@ -413,10 +410,7 @@ impl State {
                 self.unlock_after_chord()?;
                 Ok(ok_reply())
             }),
-            "launching" => only(&[], &request).map(|()| {
-                self.launching = Some(std::time::Instant::now());
-                ok_reply()
-            }),
+            "launching" => only(&[], &request).map(|()| ok_reply()),
             "configure_output" => only(&["name", "width", "height", "refresh", "x", "y", "scale"], &request)
                 .and_then(|()| self.configure_output(&request))
                 .map(|()| ok_reply()),

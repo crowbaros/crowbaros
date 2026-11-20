@@ -1,12 +1,11 @@
 //! The primary selection: `zwp_primary_selection_device_manager_v1`, what a
 //! person selects and pastes with the middle button.
 //!
-//! ADR 0020 offers it to every compartment under the clipboard's rules (see
-//! `data_device.rs`). Inside one compartment it works as apps expect: a
-//! client's primary selection is its group's, and the group's client that
-//! holds the keyboard is offered it, as it gains the keyboard and when the
-//! selection changes. Between compartments nothing crosses until slice 4,
-//! which ties each transfer to the person's act and the broker's record.
+//! Every client is offered it, under the clipboard's rules (see
+//! `data_device.rs`). It works between the shell and every app, as on any
+//! desktop: there is one primary selection, and the client that holds the
+//! keyboard is offered it, as it gains the keyboard and when the selection
+//! changes.
 
 use std::{borrow::Cow, collections::HashMap};
 
@@ -21,7 +20,7 @@ use fulcrum_wire::{
 use crate::{
     State,
     client::{ClientId, ObjectKind, ProtocolError},
-    data_device::{CLIENT_MIME_BYTES, CLIENT_OFFERS, Group, SOURCE_MIME_TYPES},
+    data_device::{CLIENT_MIME_BYTES, CLIENT_OFFERS, SOURCE_MIME_TYPES},
 };
 
 /// The `zwp_primary_selection_device_manager_v1` version Fulcrum offers.
@@ -40,8 +39,8 @@ pub(crate) struct PrimarySource {
 #[derive(Debug, Default)]
 pub(crate) struct PrimarySelections {
     sources: HashMap<PrimarySourceId, PrimarySource>,
-    /// Each group's primary selection.
-    selections: HashMap<Group, PrimarySourceId>,
+    /// The primary selection.
+    selection: Option<PrimarySourceId>,
     /// Each offer, and the source it offers.
     offers: HashMap<PrimaryOfferId, (ClientId, PrimarySourceId)>,
     next: u64,
@@ -145,22 +144,17 @@ impl State {
             return Ok(());
         };
         let new = source.and_then(|source| self.primary_source_of(client_id, source));
-        let Some(group) = self.group_of(client_id) else {
+        if !self.clients.contains_key(&client_id) {
             if let Some(new) = new {
                 self.cancel_primary_source(new);
             }
             return Ok(());
-        };
-        let old = match new {
-            Some(new) => self.primary.selections.insert(group.clone(), new),
-            None => self.primary.selections.remove(&group),
-        };
+        }
+        let old = std::mem::replace(&mut self.primary.selection, new);
         if let Some(old) = old.filter(|old| Some(*old) != new) {
             self.cancel_primary_source(old);
         }
-        if let Some(client_id) = self.keyboard_client()
-            && self.group_of(client_id).as_ref() == Some(&group)
-        {
+        if let Some(client_id) = self.keyboard_client() {
             self.offer_primary_selection(client_id);
         }
         Ok(())
@@ -199,7 +193,7 @@ impl State {
         Ok(())
     }
 
-    /// Offers a client its group's primary selection, or none, on each of its
+    /// Offers a client the primary selection, or none, on each of its
     /// primary selection devices.
     pub(crate) fn offer_primary_selection(&mut self, client_id: ClientId) {
         let devices: Vec<u32> = self.clients.get(&client_id).map_or(Vec::new(), |client| {
@@ -217,8 +211,8 @@ impl State {
 
     fn offer_primary_on(&mut self, client_id: ClientId, device: u32) {
         let source = self
-            .group_of(client_id)
-            .and_then(|group| self.primary.selections.get(&group).copied())
+            .primary
+            .selection
             .filter(|source| self.primary.sources.contains_key(source));
         let held = self
             .primary
@@ -273,25 +267,16 @@ impl State {
         }
     }
 
-    /// Lets go of a source, when it is destroyed or its client is gone. A
-    /// group whose selection it was has none, and its client with the
+    /// Lets go of a source, when it is destroyed or its client is gone. If
+    /// it was the primary selection there is none, and the client with the
     /// keyboard hears so.
     pub(crate) fn forget_primary_source(&mut self, source: PrimarySourceId) {
         if self.primary.sources.remove(&source).is_none() {
             return;
         }
-        let emptied: Vec<Group> = self
-            .primary
-            .selections
-            .iter()
-            .filter(|(_, selected)| **selected == source)
-            .map(|(group, _)| group.clone())
-            .collect();
-        for group in emptied {
-            self.primary.selections.remove(&group);
-            if let Some(client_id) = self.keyboard_client()
-                && self.group_of(client_id).as_ref() == Some(&group)
-            {
+        if self.primary.selection == Some(source) {
+            self.primary.selection = None;
+            if let Some(client_id) = self.keyboard_client() {
                 self.offer_primary_selection(client_id);
             }
         }
