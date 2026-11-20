@@ -34,9 +34,9 @@ class BaseBootChecks(unittest.TestCase):
 
     def test_base_checks_runs_every_check_in_void_base_with_the_right_user(self):
         sample = [
-            ('Void Linux', 'cat /etc/os-release', lambda out: 'ID=void' in out),
-            ('person ssh', 'id -u', lambda out: out.strip() == '1003', 'person'),
-            ('booted with UEFI', 'test -d /sys/firmware/efi && echo efi', lambda out: 'efi' in out),
+            ('Void Linux', 'root', 'cat /etc/os-release', lambda out: 'ID=void' in out),
+            ('person ssh', base.LAB_ACCOUNT['name'], 'id -u', lambda out: out.strip() == '1003'),
+            ('booted with UEFI', 'root', 'test -d /sys/firmware/efi && echo efi', lambda out: 'efi' in out),
         ]
 
         def responder(user, command):
@@ -47,7 +47,7 @@ class BaseBootChecks(unittest.TestCase):
             return 0, 'efi\n', ''
 
         vm, check = self.make_check(responder)
-        with patch.object(base, 'CHECKS', sample):
+        with patch.object(base, 'boot_checks', return_value=sample):
             check.base_checks()
         self.assertEqual(vm.calls, [
             ('root', 'cat /etc/os-release'),
@@ -64,10 +64,10 @@ class BaseBootChecks(unittest.TestCase):
 
     def test_base_checks_reports_every_check_even_when_one_fails(self):
         sample = [
-            ('first passes', 'cmd1', lambda out: out == 'ok'),
-            ('second fails on output', 'cmd2', lambda out: out == 'ok'),
-            ('third fails on exit', 'cmd3', lambda out: True),
-            ('fourth still runs', 'cmd4', lambda out: out == 'ok'),
+            ('first passes', 'root', 'cmd1', lambda out: out == 'ok'),
+            ('second fails on output', 'root', 'cmd2', lambda out: out == 'ok'),
+            ('third fails on exit', 'root', 'cmd3', lambda out: True),
+            ('fourth still runs', 'root', 'cmd4', lambda out: out == 'ok'),
         ]
 
         def responder(user, command):
@@ -78,7 +78,7 @@ class BaseBootChecks(unittest.TestCase):
             return 0, 'ok', ''
 
         vm, check = self.make_check(responder)
-        with patch.object(base, 'CHECKS', sample):
+        with patch.object(base, 'boot_checks', return_value=sample):
             with self.assertRaises(AssertionError) as error:
                 check.base_checks()
         self.assertEqual(

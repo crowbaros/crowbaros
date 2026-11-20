@@ -95,10 +95,12 @@ def build_base(log_path):
 class Guest:
     """One isolated UEFI VM run on a copy of Base's disk."""
 
-    def __init__(self, work, name, ssh_port):
+    def __init__(self, work, name, ssh_port, revision="", dirty=False):
         self.work = Path(work)
         self.name = name
         self.ssh_port = ssh_port
+        self.revision = revision
+        self.dirty = dirty
         self.disk = self.work / "disk.raw"
         self.nvram = self.work / "nvram.fd"
         self.pidfile = self.work / "qemu.pid"
@@ -116,15 +118,17 @@ class Guest:
         with socket.socket() as free_port:
             free_port.bind(("127.0.0.1", 0))
             port = free_port.getsockname()[1]
-        vm = cls(work, name, port)
+        revision = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=void_base.ROOT, text=True).strip()
+        dirty = bool(subprocess.check_output(
+            ["git", "status", "--porcelain"], cwd=void_base.ROOT))
+        vm = cls(work, name, port, revision=revision, dirty=dirty)
         (work / "run.json").write_text(json.dumps({
             "workspace": str(work),
             "ssh_port": port,
             "image": str(void_base.BASE_DISK),
-            "revision": subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=void_base.ROOT, text=True).strip(),
-            "dirty": bool(subprocess.check_output(
-                ["git", "status", "--porcelain"], cwd=void_base.ROOT)),
+            "revision": revision,
+            "dirty": dirty,
         }, indent=2) + "\n")
         return vm
 

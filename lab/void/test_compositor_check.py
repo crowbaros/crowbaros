@@ -1,6 +1,7 @@
 """The compositor check boots Base's image and clears its desktop services."""
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -12,8 +13,10 @@ base = guest.void_base
 
 
 class FakeGuest:
-    def __init__(self, work):
+    def __init__(self, work, revision='deadbeef', dirty=False):
         self.work = Path(work)
+        self.revision = revision
+        self.dirty = dirty
         self.commands = []
         self.started = False
         self.waited = False
@@ -54,7 +57,7 @@ class CompositorOnBase(unittest.TestCase):
         vm = FakeGuest(temporary.name)
         ev = compositor_check.Evidence(vm)
         self.addCleanup(ev.stream.close)
-        compositor_check.stop_desktop_services(ev, vm)
+        compositor_check.stop_desktop_services(ev)
         joined = '\n'.join(vm.commands)
         for service in ('crowbar-shell', 'crowbar-compositor', 'crowbar-launcher',
                         'crowbar-unlock', 'crowbar-ctrl-alt-del'):
@@ -69,11 +72,11 @@ class CompositorOnBase(unittest.TestCase):
     def test_main_builds_base_boots_isolated_run_and_stops_guest(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        vm = FakeGuest(temporary.name)
+        vm = FakeGuest(temporary.name, revision='abc1234', dirty=True)
         seen = {}
 
-        def fake_run_checks(ev, run_vm, built):
-            seen['vm'] = run_vm
+        def fake_run_checks(ev, built):
+            seen['vm'] = ev.vm
             seen['built'] = built
             ev.check('stub', True)
 
@@ -86,7 +89,7 @@ class CompositorOnBase(unittest.TestCase):
                     'crowbaros-studio-settings': 'ddd',
                 }) as build_base, \
                 patch.object(compositor_check, 'run_checks', side_effect=fake_run_checks), \
-                patch.object(compositor_check.sys, 'argv', ['compositor_check.py']):
+                patch.object(sys, 'argv', ['compositor_check.py']):
             code = compositor_check.main()
 
         self.assertEqual(code, 0)
@@ -98,6 +101,10 @@ class CompositorOnBase(unittest.TestCase):
         self.assertTrue(vm.stopped)
         self.assertEqual(seen['vm'], vm)
         self.assertEqual(seen['built'], {'crowbar-compositor': 'aaa', 'crowbar-probe': 'bbb'})
+        logs = list(vm.work.glob('compositor-*.log'))
+        self.assertEqual(len(logs), 1)
+        log = logs[0].read_text()
+        self.assertIn('CrowbarOS commit abc1234, with changes that are not committed', log)
 
 
 if __name__ == '__main__':

@@ -19,8 +19,6 @@ guest. Everything it runs and sees goes to an evidence log in
 """
 import argparse
 import re
-import subprocess
-import sys
 import time
 
 import guest
@@ -115,6 +113,9 @@ class Evidence:
         self.log(f"{'PASS' if ok else 'FAIL'}: {name}{' - ' + detail if detail else ''}")
         return ok
 
+    def compositor_log(self):
+        return self.vm.ssh("cat /tmp/compositor.log 2>/dev/null", check=False).stdout
+
 
 def wait_for(ev, what, probe, timeout=30):
     deadline = time.time() + timeout
@@ -127,9 +128,6 @@ def wait_for(ev, what, probe, timeout=30):
     return None
 
 
-def compositor_log(vm):
-    return vm.ssh("cat /tmp/compositor.log 2>/dev/null", check=False).stdout
-
 
 def interfaces(text):
     return set(re.findall(r"^interface: '([^']+)'", text, re.M))
@@ -140,9 +138,10 @@ def exactly(ev, who, seen, wanted):
              "differs in: " + ", ".join(sorted(seen ^ wanted)) if seen != wanted else "")
 
 
-def stop_desktop_services(ev, vm):
+def stop_desktop_services(ev):
     """Stop Base's boot-time desktop services and clear their runtime sockets,
     so this check starts Fulcrum alone on TTY 2 with debug logging."""
+    vm = ev.vm
     services = " ".join(DESKTOP_SERVICES)
     ev.run(f"sv down {services}")
     ev.run("pids=$(pidof crowbar-compositor crowbaros-shell 2>/dev/null || true); "
@@ -168,9 +167,8 @@ def main():
     vm = guest.Guest.create(guest.ROOT / ".lab/void-compositor-checks", "crowbaros-compositor-check")
     ev = Evidence(vm)
     ev.log("# The CrowbarOS compositor on a TTY in Base's image")
-    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=guest.ROOT, text=True).strip()
-    changed = subprocess.check_output(["git", "status", "--porcelain"], cwd=guest.ROOT, text=True).strip()
-    ev.log(f"CrowbarOS commit {commit}" + (", with changes that are not committed" if changed else ""))
+    ev.log(f"CrowbarOS commit {vm.revision}"
+           + (", with changes that are not committed" if vm.dirty else ""))
     ev.log(f"Evidence and new guest disk: {vm.work}")
     try:
         build_log = vm.work / "build.log"
@@ -181,14 +179,14 @@ def main():
             ev.log(f"binary {name}: sha256 {digest} (built and tested in Base's Void build root)")
         vm.start()
         vm.wait_ssh()
-        run_checks(ev, vm, built)
+        run_checks(ev, built)
     except Exception as error:  # noqa: BLE001 - record whatever stopped the run
         ev.check("the run finished", False, repr(error))
     finally:
         if vm.running():
             ev.log()
             ev.log("== compositor log, without the line for each frame")
-            for line in compositor_log(vm).splitlines():
+            for line in ev.compositor_log().splitlines():
                 if "frame drawn" not in line:
                     ev.log(f"    {line}")
             vm.stop()
@@ -200,7 +198,8 @@ def main():
     return 1 if failed else 0
 
 
-def run_checks(ev, vm, built):
+def run_checks(ev, built):
+    vm = ev.vm
     qmp = vm.qmp()
     try:
         ev.log()
@@ -227,7 +226,7 @@ def run_checks(ev, vm, built):
 
         ev.log()
         ev.log("== stop Base's boot-time desktop services and start Fulcrum on virtual terminal 2")
-        stop_desktop_services(ev, vm)
+        stop_desktop_services(ev)
         ev.run(f"install -d -o {COMPOSITOR} -g {COMPOSITOR} -m 700 /run/user/1000; "
                "install -d -m 755 /run/crowbar; "
                f"install -d -o {COMPOSITOR} -g {SHELL} -m 2750 {SHELL_DIR}; "
@@ -239,8 +238,8 @@ def run_checks(ev, vm, built):
                f"'echo /proc/$$/fd/* >/tmp/started-with; exec crowbar-compositor --backend tty --shell-socket {SHELL_SOCKET} --shell-uid {SHELL_UID} "
                f"--shell-control-socket {CONTROL_SOCKET} --apps-socket {APPS_SOCKET} --apps-uid {PERSON_UID} "
                ">/tmp/compositor.log 2>&1'")
-        up = wait_for(ev, "the compositor", lambda: "compositor is up" in compositor_log(vm))
-        log = compositor_log(vm)
+        up = wait_for(ev, "the compositor", lambda: "compositor is up" in ev.compositor_log())
+        log = ev.compositor_log()
         ev.check("the compositor starts on a TTY", up)
         ev.check("the seat comes from seatd", "session opened through seatd" in log)
         ev.check("the display is a DRM device", "DRM device opened" in log)
@@ -317,13 +316,13 @@ def run_checks(ev, vm, built):
         # check behind it: the peer's user ID, as the kernel reports it.
         try:
             ev.run(f"chmod o+rx {SHELL_DIR}; chmod o+rw {SHELL_SOCKET} {CONTROL_SOCKET}")
-            before = compositor_log(vm).count("refused a peer with the wrong user ID")
+            before = ev.compositor_log().count("refused a peer with the wrong user ID")
             given = ev.run(f"{AS_APP} WAYLAND_DISPLAY={SHELL_SOCKET} timeout 3 crowbar-probe globals 2>&1 "
                            "&& echo ANSWERED; echo asked", check=False)
             control = ev.run(f"{AS_APP} {ASK_CONTROL} 2>&1", check=False)
         finally:
             ev.run(f"chmod 2750 {SHELL_DIR}; chmod 660 {SHELL_SOCKET} {CONTROL_SOCKET}")
-        refused = compositor_log(vm).count("refused a peer with the wrong user ID") - before
+        refused = ev.compositor_log().count("refused a peer with the wrong user ID") - before
         ev.check("given the shell's socket on purpose, an app is refused on its user ID",
                  "ANSWERED" not in given and "asked" in given)
         ev.check("given the shell's control channel on purpose, an app is refused on its user ID",
@@ -333,13 +332,13 @@ def run_checks(ev, vm, built):
         # socket. Root can enter every directory; the shell's account is let in.
         try:
             ev.run(f"chmod o+rx {APPS_DIR}; chmod o+rw {APPS_SOCKET}")
-            before = compositor_log(vm).count("refused a peer with the wrong user ID")
+            before = ev.compositor_log().count("refused a peer with the wrong user ID")
             others = ev.run(f"for as in '' 'chpst -u {SHELL}:{SHELL}'; do $as env WAYLAND_DISPLAY={APPS_SOCKET} "
                             "timeout 3 crowbar-probe globals >/dev/null 2>&1 && echo ANSWERED \"$as\"; done; echo asked",
                             check=False)
         finally:
             ev.run(f"chmod 2750 {APPS_DIR}; chmod 660 {APPS_SOCKET}")
-        refused = compositor_log(vm).count("refused a peer with the wrong user ID") - before
+        refused = ev.compositor_log().count("refused a peer with the wrong user ID") - before
         ev.check("a peer that is not the person, root or the shell, is refused at the apps' socket",
                  "ANSWERED" not in others and "asked" in others and refused >= 2, f"the compositor logged {refused}")
 
@@ -412,17 +411,17 @@ def run_checks(ev, vm, built):
                "(python3 /tmp/second-keyboard.py >/tmp/second-keyboard.out 2>&1 &); true")
         ev.check("the compositor takes the second keyboard",
                  wait_for(ev, "the second keyboard",
-                          lambda: "input device added name=crowbar-second-keyboard" in compositor_log(vm)))
+                          lambda: "input device added name=crowbar-second-keyboard" in ev.compositor_log()))
         ev.run("chvt 1")
         ev.check("the session pauses for the console",
-                 wait_for(ev, "the pause", lambda: "the session is paused" in compositor_log(vm)))
+                 wait_for(ev, "the pause", lambda: "the session is paused" in ev.compositor_log()))
         ev.run("touch /tmp/unplug; for i in $(seq 50); do "
                "grep -q crowbar-second-keyboard /proc/bus/input/devices || break; sleep 0.1; done")
         ev.check("the second keyboard is unplugged while the console shows",
                  "crowbar-second-keyboard" not in ev.run("cat /proc/bus/input/devices"))
         ev.run("chvt 2")
         ev.check("the session comes back to the desktop",
-                 wait_for(ev, "the return", lambda: "the session is back" in compositor_log(vm)))
+                 wait_for(ev, "the return", lambda: "the session is back" in ev.compositor_log()))
         time.sleep(1)
         qmp.key("c", True)
         qmp.key("c", False)
@@ -468,9 +467,9 @@ def run_checks(ev, vm, built):
         ev.log("== plug a second monitor in")
         vm.plug_monitor(1, 1024, 768)
         plugged = wait_for(ev, "the second output",
-                           lambda: "output connected name=Virtual-2" in compositor_log(vm))
+                           lambda: "output connected name=Virtual-2" in ev.compositor_log())
         ev.check("the hotplug reaches the compositor through udev",
-                 "udev says the DRM device changed" in compositor_log(vm))
+                 "udev says the DRM device changed" in ev.compositor_log())
         ev.check("the second output comes up", plugged)
         outputs = ev.run(f"{AS_CLIENT} wayland-info | grep -A12 \"interface: 'wl_output'\" | grep -E \"name:|width:\"")
         ev.check("a client is told of both outputs",
@@ -484,11 +483,11 @@ def run_checks(ev, vm, built):
         ev.log("== Void's own foot, as an app at the apps' socket")
         ev.run(f"({AS_CLIENT} foot --working-directory=/home/{PERSON} sh -c 'echo foot on the CrowbarOS compositor; sleep 60' "
                ">/tmp/foot.out 2>&1 &); true")
-        wait_for(ev, "foot", lambda: "app_id=foot" in compositor_log(vm))
+        wait_for(ev, "foot", lambda: "app_id=foot" in ev.compositor_log())
         ev.run("cat /tmp/foot.out 2>/dev/null || true", check=False)
         footing = ev.run("pgrep -x foot || echo 'foot is not running'", check=False)
         ev.check("foot opens a window and keeps running",
-                 "foot is not running" not in footing and "app_id=foot" in compositor_log(vm))
+                 "foot is not running" not in footing and "app_id=foot" in ev.compositor_log())
         foot_uid = ev.run("ps -o uid= -C foot || true", check=False)
         ev.check("foot runs as the person's account", str(PERSON_UID) in foot_uid.split())
         qmp.screendump(vm.work / f"compositor-{ev.stamp}-4-foot.png", 0)

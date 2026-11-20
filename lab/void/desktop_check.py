@@ -142,11 +142,10 @@ class Check:
         return self.guest.ssh('cat /var/log/crowbar-apps.log', check=False).stdout
 
     def base_checks(self):
-        """Run every Base boot check from `void_base.CHECKS` and report each."""
+        """Run every Base boot check from `void_base.boot_checks()` and report each."""
         failed = []
-        for name, command, ok, *as_person in void_base.CHECKS:
-            user = void_base.LAB_ACCOUNT['name'] if as_person else 'root'
-            self.log(f'guest({user})$ {command}' if as_person else f'guest$ {command}')
+        for name, user, command, ok in void_base.boot_checks():
+            self.log(f'guest({user})$ {command}' if user != 'root' else f'guest$ {command}')
             result = self.guest.ssh(command, check=False, timeout=60, user=user)
             output = (result.stdout + result.stderr).rstrip()
             if output:

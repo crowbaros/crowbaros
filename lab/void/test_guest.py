@@ -47,10 +47,14 @@ class IsolatedRuns(GuestFixture):
         self.assertEqual(first.disk.parent, first.work)
         self.assertNotIn(first.disk, (self.base.BASE_DISK, self.base.DISK))
         self.assertEqual(first.key, self.base.KEY)
+        self.assertEqual(first.revision, 'fixture')
+        self.assertFalse(first.dirty)
         recorded = json.loads((first.work / 'run.json').read_text())
         self.assertEqual(recorded['workspace'], str(first.work))
         self.assertEqual(recorded['image'], str(self.base.BASE_DISK))
         self.assertEqual(recorded['ssh_port'], first.ssh_port)
+        self.assertEqual(recorded['revision'], first.revision)
+        self.assertEqual(recorded['dirty'], first.dirty)
         self.assertGreater(first.ssh_port, 0)
 
 
