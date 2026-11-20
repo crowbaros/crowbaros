@@ -7,6 +7,8 @@
 #   p2  Btrfs, label $ROOT_LABEL: the Void root; GRUB reads /boot/grub/grub.cfg here
 #
 # Inputs: ROOTFS WORK OUT PUBKEY HOSTNAME ROOT_LABEL ESP_LABEL ESP_MIB ROOT_GIB,
+# KVER (the kernel to boot, which void_base.py checked), KERNEL_ARGS (added to
+# the kernel's command line),
 # and for the desktop DESKTOP (base/desktop) and REPO_ROOT. Its arguments are
 # the desktop's programs.
 set -eu
@@ -17,12 +19,10 @@ rm -rf "$R/var/cache/xbps"
 mkdir -p "$R/var/cache/xbps"
 
 # The kernel and the initramfs that xbps built for it.
-ls "$R"/boot/vmlinuz-* >/dev/null 2>&1 || {
-  echo "no kernel in $ROOTFS/boot; install the root again with: base/void_base.py build --force" >&2
+test -f "$R/boot/vmlinuz-$KVER" || {
+  echo "no kernel $KVER in $ROOTFS/boot; install the root again with: base/void_base.py build --force" >&2
   exit 1
 }
-KERNEL=$(cd "$R/boot" && ls vmlinuz-* | sort -V | tail -n 1)
-KVER=${KERNEL#vmlinuz-}
 test -f "$R/boot/initramfs-$KVER.img" || { echo "no initramfs for kernel $KVER" >&2; exit 1; }
 
 # Identity, mounts, services, and access.
@@ -84,7 +84,7 @@ terminal_input console serial
 terminal_output console serial
 menuentry "CrowbarOS base (Void Linux, kernel $KVER)" {
     search --no-floppy --label $ROOT_LABEL --set=root
-    linux /boot/vmlinuz-$KVER root=LABEL=$ROOT_LABEL rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200
+    linux /boot/vmlinuz-$KVER root=LABEL=$ROOT_LABEL rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 $KERNEL_ARGS
     initrd /boot/initramfs-$KVER.img
 }
 GRUB
