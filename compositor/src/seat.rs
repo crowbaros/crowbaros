@@ -395,20 +395,13 @@ impl State {
             self.seat.withheld.retain(|held| *held != key);
             return;
         }
-        // The confirm chord, Ctrl+Alt+Enter (ADR 0020's lock): its Enter goes
-        // to no client, and Ctrl and Alt do, so a client may guess it was
-        // pressed. Unlocked, it locks the session; locked, it opens the lock
-        // screen's unlock entry. Asks, which it answers first, come with
-        // Milestone 4.
+        // The confirm chord, Ctrl+Alt+Enter, is kept for Milestone 3 to
+        // decide on: it does nothing yet, and its Enter goes to no client.
+        // Ctrl and Alt do, so a client may guess it was pressed.
         let held = |keys: &[u32; 2]| self.seat.keys.iter().any(|held| keys.contains(held));
         if pressed && ENTER.contains(&key) && held(&CTRL) && held(&ALT) {
             if !self.seat.withheld.contains(&key) {
                 self.seat.withheld.push(key);
-            }
-            if self.locked() {
-                self.open_unlock_entry();
-            } else {
-                self.lock("chord");
             }
             return;
         }
@@ -439,11 +432,6 @@ impl State {
         let Some(focus) = self.seat.keyboard_focus else {
             return;
         };
-        // Until the confirm chord opens its entry, the lock screen takes no
-        // text: it hears the modifiers alone.
-        if self.locked() && !self.unlock_entry_open() && !MODIFIERS.contains(&key) {
-            return;
-        }
         let Some(client_id) = self.surfaces.get(&focus).map(|surface| surface.client) else {
             return;
         };
