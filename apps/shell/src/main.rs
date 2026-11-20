@@ -1558,6 +1558,14 @@ impl Render for LockScreen {
             )
     }
 }
+/// Whether a snapshot puts the lock screen up or takes it down. One that did
+/// not reach the compositor says nothing about the lock: taken as unlocked,
+/// it would take the lock screen down while the compositor stays locked,
+/// and leave nothing on the screen.
+fn lock_screen_changes(snapshot: &session::Snapshot, showing: bool) -> bool {
+    snapshot.connected && snapshot.locked != showing
+}
+
 /// Shows the lock screen over every display, or takes it down.
 fn set_lock_screen(model: &Entity<Model>, locked: bool, cx: &mut App) {
     if !locked {
@@ -1628,7 +1636,15 @@ fn main() -> anyhow::Result<()> {
     std::thread::spawn(move || {
         let mut last = None;
         loop {
-            let snapshot = session::snapshot().unwrap_or_default();
+            let snapshot = match session::snapshot() {
+                Ok(snapshot) => snapshot,
+                Err(e) if session::closed() => {
+                    // The wrapper that runs the shell connects again.
+                    log::error!("SHELL exits: the compositor's control channel is closed: {e}");
+                    std::process::exit(1);
+                }
+                Err(_) => session::Snapshot::default(),
+            };
             if last.as_ref() != Some(&snapshot) {
                 last = Some(snapshot.clone());
                 if watcher.send(session::Event::Snapshot(snapshot)).is_err() {
@@ -1752,11 +1768,13 @@ fn main() -> anyhow::Result<()> {
                                     // the lock screen too.
                                     let locked = s.locked;
                                     let entry = s.unlock_entry;
+                                    let lock_changes =
+                                        lock_screen_changes(&s, model.read(cx).lock.is_some());
                                     model.update(cx, |m, _| {
                                         m.snapshot = s;
                                         m.unlock_entry = entry;
                                     });
-                                    if locked != model.read(cx).lock.is_some() {
+                                    if lock_changes {
                                         set_lock_screen(&model, locked, cx);
                                     }
                                     refresh = true
@@ -1846,12 +1864,32 @@ mod lock_tests {
     use super::{
         AppEntry, Assets, DockPinState, LockLayout, MAX_VISIBLE_DOTS, Preferences, asset,
         background_asset, bar_mark_asset, bar_workspaces, dock_pin_state, nightwatch_size,
-        occupied_workspaces, person_label_from, session,
+        lock_screen_changes, occupied_workspaces, person_label_from, session,
         theme::{Theme, Wallpaper},
         visible_password_dots,
     };
     use gpui::AssetSource;
     use std::path::PathBuf;
+
+    #[test]
+    fn a_snapshot_that_did_not_reach_the_compositor_leaves_the_lock_screen_alone() {
+        let failed = session::Snapshot::default();
+        assert!(!lock_screen_changes(&failed, true));
+        assert!(!lock_screen_changes(&failed, false));
+
+        let unlocked = session::Snapshot {
+            connected: true,
+            ..Default::default()
+        };
+        assert!(lock_screen_changes(&unlocked, true));
+        let locked = session::Snapshot {
+            connected: true,
+            locked: true,
+            ..Default::default()
+        };
+        assert!(lock_screen_changes(&locked, false));
+        assert!(!lock_screen_changes(&locked, true));
+    }
 
     #[test]
     fn lock_layout_matches_brand_proportions_at_1600x900() {
