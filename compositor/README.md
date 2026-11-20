@@ -38,7 +38,10 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 - **The server core**: an event loop on `epoll`; two path sockets, the
   shell's and the one every app connects to, each taking one user ID as the
   kernel reports it; and the registry, which advertises and binds a global
-  only if the policy table offers it (ADR 0032). A client that breaks the protocol gets
+  only if the policy offers it (ADR 0032). Each client is offered every
+  global the compositor has, less a short list: an app is refused layer
+  shell, session lock, and security contexts, and the shell security
+  contexts. A client that breaks the protocol gets
   `wl_display.error` and is disconnected, and everyone else is served.
 - **Surfaces and shared memory**, with double-buffered state, held commits for
   synchronized subsurfaces, `wp_viewporter`'s crop and scale, and pools read
@@ -47,8 +50,8 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 - **xdg-shell windows and popups**: the configure handshake, window geometry,
   positioners, `wl_surface.enter` and `leave`, and the protocol's errors. A
   new window opens inside the usable area of the output the pointer is on,
-  offset from the last, and does not take the keyboard unless its parent has
-  it, as a dialog does (ADR 0020).
+  offset from the last, opens above, and takes the keyboard, as on any
+  desktop. A dialog takes it only if its parent has it.
 - **Windows maximize, go fullscreen, and snap to a half** of their output, at
   a client's request or by Super+Up, Super+F, and Super+Left or Right, and go
   back to where and as they floated (ADR 0020). A maximized or snapped window
@@ -97,9 +100,10 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 - **The seat**: one keyboard and one pointer. The keymap is compiled by
   libxkbcommon and shared through a sealed memfd. The keyboard goes to the
   window or key-taking layer the person clicks, and a click raises and
-  activates a window. A new window takes it only where its parent has it,
-  or where it is the first after the shell says the person launched an app;
-  any other new window wants attention, which the shell's snapshot shows.
+  activates a window. A new window takes it, and a dialog does where its
+  parent has it. A new window that does not get it, as one that maps while
+  the session is locked, wants attention, which the shell's snapshot shows.
+  The shell's `launching` request is still answered, and changes nothing.
   The pointer follows what
   is under it, by input region, and stays with its surface while a button is
   held.
@@ -153,13 +157,11 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   buffer: at once for a copy, and when other content replaces it for a
   buffer the GPU draws where it is. Drivers without implicit sync, as NVIDIA's, need it. It is offered
   where the display's device has timeline syncobjs.
-- **The data device**: copy and paste work between all the person's apps,
-  as on any desktop (ADR 0032). An app's selection is every app's, and the
-  app that holds the keyboard is offered it, as it gains the keyboard and
-  when the selection changes; the shell's clients share one of their own.
-  The primary selection, which a middle click pastes, follows the same
-  rules. A drag from an app drops on any app, and one from the shell only on
-  the shell. A drag starts from a held pointer press, negotiates an action
+- **The data device**: copy and paste work between the shell and every app,
+  as on any desktop (ADR 0032). There is one selection, and the client that
+  holds the keyboard is offered it, as it gains the keyboard and when the
+  selection changes. The primary selection, which a middle click pastes,
+  follows the same rules. A drag drops on any client. A drag starts from a held pointer press, negotiates an action
   with its destination, and ends if the session locks or its source goes
   away. Any drag icon follows the pointer below trusted frames.
 - **Limits on each client** (ADR 0032): the apps cannot take the
@@ -190,7 +192,7 @@ The later milestones stand as far as CrowbarOS's records decide, and no run on r
 | 3 · Buffers and timing | Built, but not yet run on real GPUs |
 | 4 · Trusted shell session | The control channel and the confirm chord. Asks, arming, and the restart notice waited on the broker, and are dropped (ADR 0032) |
 | 5 · Working window manager | Built |
-| 6 · Clipboard and capture | Copy and paste, the primary selection, and drag and drop between all apps. Capture waits for a record |
+| 6 · Clipboard and capture | Copy and paste, the primary selection, and drag and drop between the shell and every app. Capture waits for a record |
 | 7 · Displays, input, and hardware | Scale, the layout of displays, and hotplug. Input devices' settings wait for a record; suspend and mixed scale wait for the hardware runs |
 | 8 · Lock and recovery | Lock, the idle timer, the confirm chord, starting locked, and unlock by the person's password through Base's helper, as a proposal. The broker's record of each unlock is dropped (ADR 0032) |
 | 9 · CrowbarOS cutover | The Alpha desktop, its GPUI shell and Studio Settings, runs on Fulcrum. The production interfaces wait for the records above |
@@ -212,7 +214,7 @@ and CrowbarOS has built it in the baseline's place since
 | `src/event_loop.rs` | One thread on `epoll`, with timers in the loop and a waker for other threads |
 | `src/connections.rs` | Every way a client can connect: the shell's socket and the apps' socket |
 | `src/identity.rs` | Who a client is: the shell or an app |
-| `src/policy.rs` | The one table that says which client is offered which global |
+| `src/policy.rs` | The one place that says which client is offered which global: the short list each kind of client is refused |
 | `src/globals.rs` | Globals and the registry |
 | `src/client.rs`, `src/state.rs` | Each client's objects, and how each request reaches the code that carries it out |
 | `src/surface.rs` | Surfaces, regions, and subsurfaces: double-buffered state, held commits, stacking |
@@ -229,7 +231,7 @@ and CrowbarOS has built it in the baseline's place since
 | `src/modes.rs` | Maximized, fullscreen, and snapped windows |
 | `src/grabs.rs` | Moving and resizing windows with the pointer |
 | `src/control.rs`, `src/json.rs` | The shell's control channel, and the flat JSON it speaks |
-| `src/data_device.rs` | Data sources and offers, and the clipboard the apps share |
+| `src/data_device.rs` | Data sources and offers, and the clipboard the shell and the apps share |
 | `src/drag.rs` | Drag targets, action negotiation, drop, and cancellation |
 | `src/primary_selection.rs` | The primary selection, under the clipboard's rules |
 | `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
@@ -250,7 +252,7 @@ and CrowbarOS has built it in the baseline's place since
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `dl.rs` (libraries loaded at run time), `gles.rs` (EGL and GLES: the context, textures, targets, and draws), `gbm.rs`, `dmabuf.rs` (telling a dma-buf from other files, and reading one with the CPU), `syncobj.rs` (DRM timelines), `drm.rs` (mode setting, dumb buffers, and framebuffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (copying client pixel rows) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients, and apps that copy, paste, drag, and drop (`probe/src/apps.rs`). Base's image carries it for its desktop check |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `cursor.rs` and `cursor_shape.rs` cover the pointer's image; `outputs.rs` covers outputs that change size; `data_device.rs`, `primary_selection.rs`, and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `scale.rs` covers outputs at other scales; `layout.rs` covers the layout of displays; `dmabuf.rs` covers linux-dmabuf; `idle_inhibit.rs` covers idle inhibit; `lock.rs` covers the locked session; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `probe_apps.rs` runs the probe's apps as the desktop check does; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate [the plan](docs/PLAN.md) rules out enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the limits on each client; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` covers who gets the keys, and `focus.rs` which new window takes them; `seat.rs` covers the pointer and activation; `cursor.rs` and `cursor_shape.rs` cover the pointer's image; `outputs.rs` covers outputs that change size; `data_device.rs`, `primary_selection.rs`, and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `scale.rs` covers outputs at other scales; `layout.rs` covers the layout of displays; `dmabuf.rs` covers linux-dmabuf; `idle_inhibit.rs` covers idle inhibit; `lock.rs` covers the locked session; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `probe_apps.rs` runs the probe's apps as the desktop check does; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate [the plan](docs/PLAN.md) rules out enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), [picking up the work](docs/picking-up.md), [how to run Fulcrum on real hardware](docs/hardware-runs.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.
@@ -263,7 +265,7 @@ virtual terminal, with seatd running and the compositor's user in its group:
 ```sh
 crowbar-compositor \
     --shell-socket /run/crowbar/compositor-shell/wayland --shell-uid 1001 \
-    --apps-socket /run/crowbar-person/wayland-0 --apps-uid 1003
+    --apps-socket /run/crowbar-apps/wayland-0 --apps-uid 1003
 ```
 
 Every app connects at the apps' socket, and the compositor accepts a peer

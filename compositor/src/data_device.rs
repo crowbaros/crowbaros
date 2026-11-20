@@ -2,14 +2,10 @@
 //! device, and the offers it makes.
 //!
 //! Every client is offered it (ADR 0032). Copy, paste, and drag and drop
-//! work between all the person's apps, as on any desktop: an app's
-//! selection is every app's, and is offered to the app that holds the
-//! keyboard, as it gains it and when the selection changes. A drag from an
-//! app can drop on any app. The person's act moves the data.
-//!
-//! The shell's clients share one selection of their own, and a drag from
-//! the shell drops only on the shell, so that nothing the person types into
-//! the shell reaches an app's clipboard, and no app's reaches the shell.
+//! work between the shell and every app, as on any desktop: there is one
+//! selection, offered to the client that holds the keyboard, as it gains it
+//! and when the selection changes. A drag can drop on any client. The
+//! person's act moves the data.
 
 use std::{borrow::Cow, collections::HashMap};
 
@@ -24,7 +20,6 @@ use crate::{
     State,
     client::{ClientId, ObjectKind, ProtocolError},
     drag::{Drag, DragOffer, DragStart},
-    identity::Identity,
 };
 
 /// Offers one client may hold at once. Past them it is offered nothing more
@@ -56,13 +51,6 @@ pub(crate) struct DataSource {
     pub used: bool,
 }
 
-/// Clients that share a selection: the shell's, or the person's apps.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Group {
-    Shell,
-    Apps,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct OfferId(pub u64);
 
@@ -79,8 +67,8 @@ pub(crate) struct Offer {
 pub(crate) struct DataDevices {
     pub sources: HashMap<SourceId, DataSource>,
     next_source: u64,
-    /// Each group's selection: the source one of its clients set last.
-    pub selections: HashMap<Group, SourceId>,
+    /// The selection: the source a client set last.
+    pub selection: Option<SourceId>,
     pub offers: HashMap<OfferId, Offer>,
     next_offer: u64,
     pub drag: Option<Drag>,
@@ -223,20 +211,17 @@ impl State {
                     }
                     None => None,
                 };
-                let Some(group) = self.group_of(client_id) else {
+                if !self.clients.contains_key(&client_id) {
                     if let Some(new) = new {
                         self.cancel_source(new);
                     }
                     return Ok(());
-                };
-                let old = match new {
-                    Some(new) => self.data.selections.insert(group, new),
-                    None => self.data.selections.remove(&group),
-                };
+                }
+                let old = std::mem::replace(&mut self.data.selection, new);
                 if let Some(old) = old.filter(|old| Some(*old) != new) {
                     self.cancel_source(old);
                 }
-                self.offer_selection_to_keyboard(&group);
+                self.offer_selection_to_keyboard();
             }
             wl_data_device::Request::StartDrag {
                 source,
@@ -311,34 +296,18 @@ impl State {
         }
     }
 
-    /// Lets go of a source, when it is destroyed or its client is gone. A
-    /// group whose selection it was has none, and its client with the
-    /// keyboard hears so.
+    /// Lets go of a source, when it is destroyed or its client is gone. If
+    /// it was the selection there is none, and the client with the keyboard
+    /// hears so.
     pub(crate) fn forget_source(&mut self, source: SourceId) {
         if self.data.sources.remove(&source).is_none() {
             return;
         }
         self.drag_source_destroyed(source);
-        let emptied: Vec<Group> = self
-            .data
-            .selections
-            .iter()
-            .filter(|(_, selected)| **selected == source)
-            .map(|(group, _)| *group)
-            .collect();
-        for group in emptied {
-            self.data.selections.remove(&group);
-            self.offer_selection_to_keyboard(&group);
+        if self.data.selection == Some(source) {
+            self.data.selection = None;
+            self.offer_selection_to_keyboard();
         }
-    }
-
-    /// The group a client shares a selection with, if it is still
-    /// connected.
-    pub(crate) fn group_of(&self, client_id: ClientId) -> Option<Group> {
-        Some(match self.clients.get(&client_id)?.identity {
-            Identity::Shell => Group::Shell,
-            Identity::App => Group::Apps,
-        })
     }
 
     /// The bytes of MIME types a client's data sources hold.
@@ -359,17 +328,15 @@ impl State {
             .map(|surface| surface.client)
     }
 
-    /// A group's selection changed: its client with the keyboard, if it has
-    /// one, is offered the new one.
-    fn offer_selection_to_keyboard(&mut self, group: &Group) {
-        if let Some(client_id) = self.keyboard_client()
-            && self.group_of(client_id).as_ref() == Some(group)
-        {
+    /// The selection changed: the client with the keyboard, if one has it,
+    /// is offered the new one.
+    fn offer_selection_to_keyboard(&mut self) {
+        if let Some(client_id) = self.keyboard_client() {
             self.offer_selection(client_id);
         }
     }
 
-    /// Offers a client its group's selection, or none, on each of its data
+    /// Offers a client the selection, or none, on each of its data
     /// devices: as it gains the keyboard, and when the selection changes
     /// while it holds it.
     pub(crate) fn offer_selection(&mut self, client_id: ClientId) {
@@ -388,8 +355,8 @@ impl State {
 
     fn offer_selection_on(&mut self, client_id: ClientId, device: u32) {
         let source = self
-            .group_of(client_id)
-            .and_then(|group| self.data.selections.get(&group).copied())
+            .data
+            .selection
             .filter(|source| self.data.sources.contains_key(source));
         let offer = source.and_then(|source| self.make_offer(client_id, device, source, None));
         if let Some(client) = self.clients.get_mut(&client_id) {

@@ -51,9 +51,10 @@ it allows ([ADR 0032](../../docs/adr/0032-fulcrum-serves-the-shell-and-the-perso
   socket.
 
 It checks what the shell and an app are offered; that an app is refused
-layer shell, the shell's socket, and the control channel; that only the
-person's user ID is served at the apps' socket; that Void's own `foot` runs
-as an app; that a new window does not take the keyboard; that a still
+layer shell, session lock, security contexts, the shell's socket, and the
+control channel; that only the person's user ID is served at the apps'
+socket, `/run/crowbar-apps/wayland-0`; that Void's own `foot` runs as an
+app; that a new window takes the keyboard; that a still
 desktop draws no frames; and a monitor plugged in while it runs. The
 [slice 1 record](../../docs/research/compositor-slice-1-2026-11-15.md) holds a
 run. The run of the [spike](https://github.com/crowbaros/crowbaros/tree/substrate-final/lab/compositor-spike) is in the
@@ -103,7 +104,10 @@ confirm chord, a wrong password, then the right one), launch, focus, workspaces,
 lock and unlock, the suspend hook's lock, Settings preview/Save/Undo, and
 relaunch. It checks saved appearance, and a file the person wrote in their
 home, after a clean reboot, service identities, linked libraries, binary hashes, render
-activity, shell restart, and refusal of app access to trusted sockets. An error
+activity, and shell restart. It checks that apps run as the person at the
+ordinary socket for apps, that copy and paste, the primary selection, and drag
+and drop work between two apps, and that the shell's sockets, its control
+channel, and the unlock helper refuse an app. An error
 returns nonzero and retains `desktop.log`, `results.json`, the build log,
 service/kernel diagnostics, screenshots, and the failed disk in that run's
 directory. The desktop's accounts and services are described in

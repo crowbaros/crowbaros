@@ -86,7 +86,7 @@ fn an_output_at_scale_two_covers_half_its_pixels_and_draws_at_all_of_them() {
     assert_eq!(screen.pixel(495, 295), Some(GREEN));
     assert_ne!(screen.pixel(497, 297), Some(GREEN));
     // Its frame of 2 is 4 pixels wide.
-    assert_eq!(screen.pixel(92, 120), Some(crowbar_compositor::FRAME_UNFOCUSED));
+    assert_eq!(screen.pixel(92, 120), Some(crowbar_compositor::FRAME_FOCUSED));
 }
 
 #[test]

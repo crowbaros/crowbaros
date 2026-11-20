@@ -3,11 +3,11 @@
 //!
 //! A new window opens on the workspace showing, on the output the pointer is
 //! on, inside the room the shell's layers leave, offset a little from the
-//! last. It takes the keyboard in ADR 0020's two cases: its parent has the
-//! keyboard, as a dialog's does, or it is the first window an app maps
-//! after the shell says the person launched an app (`launching`, see
-//! `control.rs`). Any other new window opens without the keyboard and wants
-//! attention, which the snapshot tells the shell, until it gets it. A window
+//! last. It opens above and takes the keyboard, as on any desktop. A dialog,
+//! a window with a parent, takes it only if its parent has it. A new window
+//! that does not get the keyboard, as one that maps while the session is
+//! locked, wants attention, which the snapshot tells the shell, until it
+//! gets it. A window
 //! on a workspace that is not showing is nowhere: it is not drawn, takes no
 //! input, and is on no output (see `workspaces.rs`).
 
@@ -180,56 +180,32 @@ impl State {
         }
         self.update_outputs_of(surface);
         self.queue_redraw_for(surface);
-        self.focus_new_child(surface);
-        self.focus_launched(surface);
-        // Any other new window opens without the keyboard, and wants
-        // attention until it has it.
+        self.focus_new_window(surface);
+        // A new window that did not get the keyboard wants attention until
+        // it has it.
         let focused = self.seat.keyboard_focus.map(|focus| self.root_of(focus)) == Some(surface);
         if let Some(window) = self.windows.iter_mut().find(|window| window.surface == surface) {
             window.attention = !focused;
         }
     }
 
-    /// The first window an app maps after the shell says the person
-    /// launched an app takes the keyboard, so that the app the person
-    /// started from the shell has it.
-    fn focus_launched(&mut self, surface: SurfaceId) {
-        let Some(asked) = self.launching else {
-            return;
-        };
-        if asked.elapsed() > crate::control::LAUNCH_FOCUS {
-            self.launching = None;
+    /// A new window opens above and takes the keyboard. A dialog, a window
+    /// with a parent, does so only if its parent has the keyboard, so that
+    /// it opens from the window the person is using. While the session is
+    /// locked, no new window does.
+    fn focus_new_window(&mut self, surface: SurfaceId) {
+        if self.locked() || !self.windows.iter().any(|window| window.surface == surface) {
             return;
         }
-        let from_app = self
-            .surfaces
-            .get(&surface)
-            .and_then(|surface| self.clients.get(&surface.client))
-            .is_some_and(|client| client.identity == Identity::App);
-        let new_window = self.windows.iter().any(|window| window.surface == surface)
-            && self.xdg.get(&surface).is_some_and(|xdg| xdg.toplevel.parent.is_none());
-        if from_app && new_window {
-            self.launching = None;
-            self.raise(surface);
-            self.set_keyboard_focus(Some(surface));
-        }
-    }
-
-    /// A new window takes the keyboard when its parent has it, as a dialog
-    /// opened from the window the person is using (ADR 0020). It also opens
-    /// above. No other new window takes the keyboard here: the other case,
-    /// the first window of an app the person just started from the shell,
-    /// needs the shell to say so.
-    fn focus_new_child(&mut self, surface: SurfaceId) {
-        let Some(parent) = self.xdg.get(&surface).and_then(|xdg| xdg.toplevel.parent) else {
-            return;
+        let takes = match self.xdg.get(&surface).and_then(|xdg| xdg.toplevel.parent) {
+            None => true,
+            Some(parent) => self
+                .seat
+                .keyboard_focus
+                .map(|focus| self.root_of(focus))
+                .is_some_and(|root| root == parent || self.toplevel_of(root) == Some(parent)),
         };
-        let parent_has_keyboard = self
-            .seat
-            .keyboard_focus
-            .map(|focus| self.root_of(focus))
-            .is_some_and(|root| root == parent || self.toplevel_of(root) == Some(parent));
-        if parent_has_keyboard && self.windows.iter().any(|window| window.surface == surface) {
+        if takes {
             self.raise(surface);
             self.set_keyboard_focus(Some(surface));
         }

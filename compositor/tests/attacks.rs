@@ -58,71 +58,76 @@ fn last_number(compositor: &Compositor) -> u32 {
     compositor.shell().last_global()
 }
 
-/// ADR 0020, attack 1: a client asks for every global in the "Nobody" row,
-/// and for one the table has no row for. None is offered.
+/// An app asks for each global it is refused: layer shell, session lock,
+/// and security contexts. None is offered, and none is bound by guessing
+/// its number. The shell is offered all but security contexts.
 ///
-/// The compositor creates none of these globals, so the test adds one of
-/// each. Then the table is what refuses them.
+/// The compositor creates session lock and security contexts not at all,
+/// so the test adds one of each. Then the policy is what refuses them.
 #[test]
-fn adr_0020_attack_1_no_client_gets_a_global_from_the_nobody_row_or_one_with_no_row() {
+fn an_app_gets_no_global_it_is_refused_by_asking_or_guessing() {
     let compositor = Compositor::start();
     let before = compositor.shell().last_global();
-    let nobody = plant(&compositor, policy::NOBODY);
-    // The spike offered the first of these. The table has no row for either.
-    let no_row = plant(
-        &compositor,
-        &["zxdg_output_manager_v1", "wp_single_pixel_buffer_manager_v1"],
-    );
+    let refused = plant(&compositor, policy::APPS_REFUSED);
     let last = last_number(&compositor);
-    // The guesses below reach the number of every planted global.
-    let planted = u32::try_from(nobody.len() + no_row.len()).unwrap();
+    let planted = u32::try_from(refused.len()).unwrap();
     assert!(
         last > before + planted,
         "the planted globals have numbers past {last}, where the guesses stop"
     );
 
-    let clients = EveryClient::of(&compositor);
-    for (who, connect) in clients.each() {
-        let offered = connect().interfaces();
-        for interface in nobody.iter().chain(&no_row) {
-            assert!(
-                !offered.iter().any(|name| name == interface),
-                "{who} was offered {interface}"
-            );
-            assert_eq!(
-                guess_up_to(&*connect, interface, last),
-                [0; 0],
-                "{who} bound {interface} by guessing its number"
-            );
-        }
+    let app = || compositor.app();
+    let offered = app().interfaces();
+    for interface in &refused {
+        assert!(
+            !offered.iter().any(|name| name == interface),
+            "an app was offered {interface}"
+        );
+        assert_eq!(
+            guess_up_to(&app, interface, last),
+            [0; 0],
+            "an app bound {interface} by guessing its number"
+        );
     }
-    assert_eq!(
-        planted_binds(&compositor),
-        0,
-        "a client bound a global nobody is offered"
-    );
+    assert_eq!(planted_binds(&compositor), 0, "an app bound a global it is refused");
+
+    let shell = compositor.shell().interfaces();
+    for interface in &refused {
+        let offered = shell.iter().any(|name| name == interface);
+        assert_eq!(
+            offered,
+            !policy::SHELL_REFUSED.contains(interface),
+            "the shell and {interface}"
+        );
+    }
 }
 
-/// The test above passes only if a planted global can be bound at all. This
-/// one has a row, and the client the row names binds it by the same guess.
+/// A global the compositor gains later is offered to every kind of client,
+/// and each binds it by the same guess an app makes above. So the test
+/// above passes because the policy refuses, not because a planted global
+/// cannot be bound.
 #[test]
-fn a_planted_global_with_a_row_is_bound_by_the_client_the_row_names() {
+fn a_global_the_compositor_gains_later_is_bound_by_every_client() {
     let compositor = Compositor::start();
-    let before = compositor.app();
-    let cursor_shape = plant(&compositor, &["wp_cursor_shape_manager_v1"])[0];
-    // A client that connected first was not told about the new global, so
-    // for that client its number is one to guess.
+    let befores: Vec<(&str, Client)> = vec![("the shell", compositor.shell()), ("an app", compositor.app())];
+    let later = plant(&compositor, &["a_global_the_compositor_gains_later"])[0];
     let last = last_number(&compositor);
-    let numbers = before.unadvertised(last);
 
-    let bound: Vec<u32> = numbers
-        .iter()
-        .copied()
-        .filter(|&name| compositor.app().guess(name, cursor_shape, 1).unwrap() == Guess::Bound)
-        .collect();
-
-    assert_eq!(bound.len(), 1, "the app did not bind the global its row offers");
-    assert_eq!(planted_binds(&compositor), 1);
+    let clients = EveryClient::of(&compositor);
+    for ((who, connect), (_, before)) in clients.each().into_iter().zip(&befores) {
+        assert!(
+            connect().interfaces().iter().any(|name| name == later),
+            "{who} was not offered {later}"
+        );
+        // A client that connected first was not told about the new global,
+        // so for that client its number is one to guess.
+        let bound = before
+            .unadvertised(last)
+            .into_iter()
+            .filter(|&name| connect().guess(name, later, 1).unwrap() == Guess::Bound)
+            .count();
+        assert_eq!(bound, 1, "{who} did not bind {later} at its one number");
+    }
 }
 
 /// A program that is neither the shell nor the person looks for any Wayland
@@ -161,9 +166,8 @@ fn a_program_that_is_neither_the_shell_nor_the_person_finds_no_wayland_socket() 
     }
 }
 
-/// An app tries to bind layer shell, which only the shell is offered: by
-/// asking, and by guessing its number. The input and capture globals are in
-/// the "Nobody" row, and the test above covers them.
+/// An app tries to bind the real layer shell, which only the shell is
+/// offered: by asking, and by guessing its number.
 #[test]
 fn an_app_cannot_bind_layer_shell() {
     let compositor = Compositor::start();

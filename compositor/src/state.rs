@@ -104,9 +104,6 @@ pub struct State {
     pub(crate) layout: crate::layout::Layout,
     pub(crate) primary: crate::primary_selection::PrimarySelections,
     pub(crate) lock: crate::lock::Lock,
-    /// When the shell last said the person launched an app, until a window
-    /// takes the keyboard for it.
-    pub(crate) launching: Option<std::time::Instant>,
     pub(crate) idle_inhibitors: crate::idle_inhibit::IdleInhibitors,
     /// The system's cursor images, for named shapes and the compositor's
     /// own pointer.
@@ -165,7 +162,6 @@ impl State {
             layout: crate::layout::Layout::default(),
             primary: crate::primary_selection::PrimarySelections::default(),
             lock: crate::lock::Lock::default(),
-            launching: None,
             idle_inhibitors: crate::idle_inhibit::IdleInhibitors::default(),
             cursor_theme: crate::xcursor::CursorTheme::none(),
             grab: None,

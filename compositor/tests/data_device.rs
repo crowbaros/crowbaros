@@ -1,5 +1,5 @@
-//! Copy and paste and drag and drop work between all the person's apps, and
-//! the shell's clipboard is its own (ADR 0032).
+//! Copy and paste and drag and drop work between the shell and every app,
+//! as on any desktop (ADR 0032).
 
 mod common;
 
@@ -88,27 +88,36 @@ fn seen(client: &mut Client, interface: &str) -> Vec<(u32, &'static str)> {
         .collect()
 }
 
+/// The shell and the apps share one selection: what an app copies is
+/// offered to the shell when it has the keyboard, and what the shell copies
+/// is offered to an app.
 #[test]
-fn an_apps_selection_is_not_offered_to_the_shell_even_with_the_keyboard() {
+fn the_shell_and_an_app_share_one_selection_both_ways() {
     let compositor = Compositor::start();
-    let mut copier = compositor.app();
-    let mut other = compositor.shell();
-    let (manager, device) = data_device(&mut copier);
-    let (_, other_device) = data_device(&mut other);
-    other
-        .open_toplevel("other", "test.other", (300, 200), 0xffff_ffff)
-        .unwrap();
+    // The app's window at 48,48, and the shell's above it at 80,80.
+    let mut pair = pair_of(compositor.app(), compositor.shell(), 3);
+    let (app, app_device) = (&mut pair.copier, pair.copier_device);
+    let copied = source(app, pair.copier_manager, &["text/plain;charset=utf-8"]);
+    set_selection(app, app_device, Some(copied));
+    app.roundtrip().unwrap();
 
-    let copied = source(&mut copier, manager, &["text/plain;charset=utf-8"]);
-    set_selection(&mut copier, device, Some(copied));
+    // The shell's window took the keyboard as it opened, so it is offered
+    // the app's selection at once.
+    let (_, mime_types) = last_selection(&mut pair.paster, pair.paster_device).expect("the shell is offered it");
+    assert_eq!(mime_types, ["text/plain;charset=utf-8"]);
+
+    // The shell copies, which replaces the app's selection.
+    let (shell_manager, _) = data_device(&mut pair.paster);
+    let from_shell = source(&mut pair.paster, shell_manager, &["text/uri-list"]);
+    set_selection(&mut pair.paster, pair.paster_device, Some(from_shell));
+    pair.paster.roundtrip().unwrap();
+    assert_eq!(seen(&mut pair.copier, "wl_data_source"), [(copied, "cancelled")]);
+
+    // A click gives the app's window the keyboard, and the shell's
+    // selection with it.
     compositor.click(60, 60);
-
-    // As it gains the keyboard it hears that it has no selection.
-    assert_eq!(seen(&mut other, "wl_data_device"), [(other_device, "selection")]);
-    assert!(last_selection(&mut other, other_device).is_none());
-    assert_eq!(seen(&mut other, "wl_data_offer"), []);
-    // The copier's selection stands: nothing cancelled it.
-    assert_eq!(seen(&mut copier, "wl_data_source"), []);
+    let (_, mime_types) = last_selection(&mut pair.copier, pair.copier_device).expect("the app is offered it");
+    assert_eq!(mime_types, ["text/uri-list"]);
 }
 
 #[test]
@@ -257,8 +266,11 @@ fn pair(compositor: &Compositor) -> Pair {
 }
 
 fn pair_for_target_version(compositor: &Compositor, target_version: u32) -> Pair {
-    let mut copier = compositor.app();
-    let mut paster = compositor.app();
+    pair_of(compositor.app(), compositor.app(), target_version)
+}
+
+/// A pair of any two clients, which may be the shell.
+fn pair_of(mut copier: Client, mut paster: Client, target_version: u32) -> Pair {
     let (copier_manager, copier_device) = data_device(&mut copier);
     let (_, paster_device) = data_device_version(&mut paster, target_version);
     let copying = copier
@@ -505,20 +517,45 @@ fn a_drop_with_ask_finishes_with_the_chosen_action() {
     assert_action(&mut pair.paster, offer, dnd_action::ASK);
 }
 
+/// A drag from an app drops on the shell, and a drag from the shell drops
+/// on an app.
 #[test]
-fn a_drop_on_the_shell_is_cancelled_without_an_offer() {
+fn a_drag_drops_on_the_shell_and_from_the_shell_on_an_app() {
+    for shell_drags in [false, true] {
+        let compositor = Compositor::start();
+        let mut pair = if shell_drags {
+            pair_of(compositor.shell(), compositor.app(), 3)
+        } else {
+            pair_of(compositor.app(), compositor.shell(), 3)
+        };
+        let dragged = pair.start_drag(&compositor, dnd_action::COPY, None);
+        let (serial, offer) = pair.drag_to_paster(&compositor);
+        accept_drag(&mut pair.paster, serial, offer);
+        offer_actions(&mut pair.paster, offer, dnd_action::COPY, dnd_action::COPY);
+        pair.paster.roundtrip().unwrap();
+
+        release_drag_button(&compositor);
+        pair.paster.roundtrip().unwrap();
+        pair.copier.roundtrip().unwrap();
+        assert!(
+            pair.paster.take_event(pair.paster_device, "drop").is_some(),
+            "no drop, shell drags: {shell_drags}"
+        );
+        assert!(pair.copier.take_event(dragged, "dnd_drop_performed").is_some());
+        assert!(pair.copier.take_event(dragged, "cancelled").is_none());
+    }
+}
+
+/// When the pointer leaves the target, its offer no longer reads, and a
+/// release over no target cancels the drag.
+#[test]
+fn an_offer_left_behind_reads_nothing_and_a_drop_on_nothing_is_cancelled() {
     let compositor = Compositor::start();
     let mut pair = pair(&compositor);
-    let mut other = compositor.shell();
-    let (_, other_device) = data_device(&mut other);
-    other
-        .open_toplevel("other", "test.other", (300, 200), 0xffff_ffff)
-        .unwrap();
-    other.roundtrip().unwrap();
 
     let dragged = pair.start_drag(&compositor, dnd_action::COPY, None);
     let (_, old_offer) = pair.drag_to_paster(&compositor);
-    compositor.pointer(400, 130);
+    compositor.pointer(1200, 700);
     pair.paster.roundtrip().unwrap();
     assert!(pair.paster.take_event(pair.paster_device, "leave").is_some());
     // Keeping the previous offer cannot let the old target continue
@@ -538,12 +575,6 @@ fn a_drop_on_the_shell_is_cancelled_without_an_offer() {
     assert!(pair.copier.take_event(dragged, "send").is_none());
 
     release_drag_button(&compositor);
-    assert!(
-        seen(&mut other, wl_data_device::NAME)
-            .iter()
-            .all(|(object, name)| *object != other_device
-                || !matches!(*name, "enter" | "motion" | "data_offer" | "drop"))
-    );
     pair.copier.roundtrip().unwrap();
     assert!(pair.copier.take_event(dragged, "cancelled").is_some());
 }

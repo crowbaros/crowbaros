@@ -25,7 +25,7 @@ SHELL_UID, APP_UID = 1001, 1002
 # own account can enter (ADR 0032). Base makes these. Here the check does.
 SHELL_SOCKET = "/run/crowbar/compositor-shell/wayland"
 CONTROL_SOCKET = "/run/crowbar/compositor-shell/control"
-APPS_SOCKET = "/run/crowbar-person/wayland-0"
+APPS_SOCKET = "/run/crowbar-apps/wayland-0"
 SHELL_DIR, APPS_DIR = SHELL_SOCKET.rsplit("/", 1)[0], APPS_SOCKET.rsplit("/", 1)[0]
 # LIBSEAT_BACKEND names the seat manager outright. Void builds libseat with an
 # elogind backend as well; this guest runs no elogind. The compositor logs
@@ -34,16 +34,18 @@ AS_COMPOSITOR = (f"chpst -u {COMPOSITOR}:{COMPOSITOR}:_seatd env HOME=/home/{COM
                  "XDG_RUNTIME_DIR=/run/user/1000 LIBSEAT_BACKEND=seatd "
                  "FULCRUM_LOG=debug")
 AS_SHELL = f"chpst -u {SHELL}:{SHELL} env HOME=/home/{SHELL} WAYLAND_DISPLAY={SHELL_SOCKET}"
-# The person's account, in place of the lab's person: no group but its own,
-# and nothing in its environment but a home.
+# The person's account, in place of the lab's person: in no group that
+# reaches the seat's devices, and nothing in its environment but a home.
 AS_APP = f"chpst -u {APP}:{APP} env HOME=/home/{APP}"
 AS_CLIENT = f"{AS_APP} WAYLAND_DISPLAY={APPS_SOCKET}"
 
-# What each client is offered: the rows of compositor/src/policy.rs, less the
-# globals the compositor does not create yet. compositor/tests/table.rs holds
-# the same lists. Every client is offered what a Wayland app expects, the
+# What each client is offered (compositor/src/policy.rs): every global the
+# compositor makes, less a short list. An app is refused layer shell, session
+# lock, and security contexts; the shell is refused security contexts. Of the
+# globals the compositor makes, an app is offered all but layer shell, the
 # GPU's buffers included: explicit sync where the display's device has
-# timeline syncobjs, as the guest's does.
+# timeline syncobjs, as the guest's does. compositor/tests/table.rs holds the
+# same lists.
 EVERY_CLIENT = {"wl_compositor", "wl_data_device_manager", "wl_output", "wl_seat", "wl_shm",
                 "wl_subcompositor", "wp_cursor_shape_manager_v1", "wp_fractional_scale_manager_v1",
                 "wp_presentation", "wp_viewporter", "xdg_wm_base", "zwp_idle_inhibit_manager_v1",
@@ -59,13 +61,13 @@ ASK_CONTROL = ("python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX
                f"s.connect(sys.argv[1]); s.sendall(bytes.fromhex(sys.argv[2])); "
                f"print(repr(s.makefile().readline()))' {CONTROL_SOCKET} {SNAPSHOT}")
 
-def nobody_row():
-    """The "Nobody" row of the table, read from the source of the compositor that was built."""
+def apps_refused():
+    """What an app is refused, read from the source of the compositor that was built."""
     source = (guest.ROOT / guest.COMPOSITOR / "src/policy.rs").read_text()
-    row = re.search(r"pub const NOBODY: &\[&str\] = &\[(.*?)\];", source, re.S)
+    row = re.search(r"pub const APPS_REFUSED: &\[&str\] = &\[(.*?)\];", source, re.S)
     names = re.findall(r'"([a-z0-9_]+)"', row.group(1)) if row else []
-    if len(names) < 20:
-        raise RuntimeError("could not read the Nobody row from compositor/src/policy.rs")
+    if set(names) != {"zwlr_layer_shell_v1", "ext_session_lock_manager_v1", "wp_security_context_manager_v1"}:
+        raise RuntimeError(f"compositor/src/policy.rs refuses apps {names}, not the three this check knows")
     return names
 
 
@@ -118,7 +120,7 @@ def interfaces(text):
 
 
 def exactly(ev, who, seen, wanted):
-    ev.check(f"{who} is offered exactly the table's list", seen == wanted,
+    ev.check(f"{who} is offered exactly the policy's list", seen == wanted,
              "differs in: " + ", ".join(sorted(seen ^ wanted)) if seen != wanted else "")
 
 
@@ -238,8 +240,8 @@ def run_checks(ev, built):
     # the account fails, and the failure to be a refusal.
     ev.run("modprobe uinput 2>&1; ls -l /dev/uinput /dev/input/ 2>&1", check=False)
     who = ev.run(f"{AS_APP} id", check=False)
-    ev.check("the app's account has no group but its own",
-             f"({APP})" in who and "_seatd" not in who and "input" not in who and "video" not in who)
+    ev.check("the app's account is in neither _seatd nor input",
+             f"({APP})" in who and "_seatd" not in who and "input" not in who)
     open_uinput = "sh -c 'test -c /dev/uinput && exec 3<>/dev/uinput && echo OPENED' 2>&1"
     as_root = ev.run(open_uinput, check=False)
     as_client = ev.run(f"{AS_APP} {open_uinput}", check=False)
@@ -314,10 +316,12 @@ def run_checks(ev, built):
     ev.log("== what an app at the apps' socket is offered, as the person's account")
     client = interfaces(ev.run(f"{AS_CLIENT} wayland-info | grep ^interface"))
     exactly(ev, "an app", client, APP_ROW)
+    ev.check("an app is offered all the shell is offered but layer shell", shell - SHELL_ALONE == client,
+             ", ".join(sorted((shell - SHELL_ALONE) ^ client)))
 
     ev.log()
-    ev.log("== an app asks for what only the shell, or nobody, is offered")
-    forbidden = nobody_row() + sorted(SHELL_ALONE)
+    ev.log("== an app asks for layer shell, session lock, and security contexts, which it is refused")
+    forbidden = apps_refused()
     ev.check("none of them is offered to it", not set(forbidden) & client,
              ", ".join(sorted(set(forbidden) & client)))
     guessed = ev.run(f"{AS_CLIENT} crowbar-probe guess " + " ".join(forbidden) + " 2>&1; echo exit $?", check=False)
@@ -336,7 +340,9 @@ def run_checks(ev, built):
     qmp.key("a", True)
     qmp.key("a", False)
     time.sleep(1)
-    ev.check("a new window does not take the keyboard", "key 30 " not in ev.run("cat /tmp/keylog-1.out"))
+    keylog = ev.run("cat /tmp/keylog-1.out")
+    ev.check("a new window takes the keyboard, and a plain key reaches it",
+             "enter held" in keylog and "key 30 pressed" in keylog and "key 30 released" in keylog)
     # The window opens at 48,48 and is 480 by 320. The output is 1280 by 960.
     qmp.pointer(200 / 1280, 200 / 960)
     qmp.click()
@@ -344,8 +350,8 @@ def run_checks(ev, built):
     qmp.key("b", False)
     time.sleep(1)
     keylog = ev.run("cat /tmp/keylog-1.out")
-    ev.check("a click gives the window the keyboard, and a plain key then reaches it",
-             "enter held" in keylog and "key 48 pressed" in keylog and "key 48 released" in keylog)
+    ev.check("a click on the window keeps the keyboard there, and a plain key reaches it",
+             "key 48 pressed" in keylog and "key 48 released" in keylog)
 
     ev.log()
     ev.log("== a still desktop draws no frames (ADR 0020)")

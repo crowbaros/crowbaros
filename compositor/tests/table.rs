@@ -1,13 +1,13 @@
-//! The Wayland sockets as a client sees them: which globals each kind of
-//! client is offered (ADR 0032), less the globals the compositor does not
-//! create yet.
+//! The Wayland sockets as a client sees them: which of the compositor's
+//! globals each kind of client is offered (ADR 0032). An app is offered
+//! every one but layer shell; the shell is offered them all.
 
 mod common;
 
 use common::Compositor;
 
-/// What every client is offered: what a Wayland app expects. The test
-/// compositor names a GPU, so linux-dmabuf is among them; explicit sync
+/// What every client is offered: every global the test compositor makes
+/// but layer shell. The test compositor names a GPU, so linux-dmabuf is among them; explicit sync
 /// needs a real render node.
 const EVERY_CLIENT: [&str; 14] = [
     "wl_compositor",
@@ -49,8 +49,8 @@ fn the_shell_is_also_offered_layer_shell() {
     assert_eq!(shell.interfaces(), sorted(expected));
 }
 
-/// A second output is a new global. It goes to every client the table gives
-/// outputs to, as it is made.
+/// A second output is a new global. It goes to every client the policy
+/// offers outputs to, as it is made.
 #[test]
 fn a_global_made_while_clients_are_connected_still_passes_the_table() {
     let compositor = Compositor::start();

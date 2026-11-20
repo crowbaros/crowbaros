@@ -68,16 +68,14 @@ fn super_with(compositor: &Compositor, key: u32) {
 #[test]
 fn text_copied_in_one_app_is_pasted_in_another_with_the_primary_selection() {
     let compositor = Compositor::start();
-    let (x, y) = middle();
 
+    // Each window takes the keyboard as it opens.
     let copier = Running::start(&compositor, Role::Copy("copied words".into()));
-    compositor.click(x, y);
     copier.says("focused");
     copier.says("copied");
 
-    // The paster's window opens above the copier's and takes the click.
+    // The paster's window opens above the copier's and takes the keyboard.
     let paster = Running::start(&compositor, Role::Paste);
-    compositor.click(x, y);
     paster.says("focused");
     paster.says("pasted clipboard=copied words");
     paster.says("pasted primary=copied words");
@@ -89,6 +87,8 @@ fn each_window_is_maximized_and_says_when_it_gains_the_keyboard_again() {
     let compositor = Compositor::start();
     let (x, y) = middle();
     let copier = Running::start(&compositor, Role::Copy("again".into()));
+    copier.says("focused");
+    copier.says("copied");
     let paster = Running::start(&compositor, Role::Paste);
     let classes = compositor.with(|state| {
         state
@@ -115,10 +115,16 @@ fn each_window_is_maximized_and_says_when_it_gains_the_keyboard_again() {
         );
     }
 
-    // The paster is above, and covers the copier.
-    compositor.click(x, y);
+    // Each new window took the keyboard as it opened: the copier copied,
+    // and the paster, which opened above it, pasted what it copied.
     paster.says("focused");
-    assert!(paster.is_quiet(), "the paster pasted with nothing copied");
+    paster.says("pasted clipboard=again");
+    paster.says("pasted primary=again");
+
+    // The paster covers the copier. A click on it, which has the keyboard
+    // already, gives nothing again.
+    compositor.click(x, y);
+    assert!(paster.is_quiet(), "the paster said something again");
     assert!(copier.is_quiet(), "the copier heard a click on the paster's window");
 }
 
@@ -134,8 +140,8 @@ fn text_dragged_from_one_app_is_dropped_on_another() {
     super_with(&compositor, KEY_LEFT);
 
     let dragger = Running::start(&compositor, Role::Drag("dragged words".into()));
-    // The click that gives it the keyboard is a press, so it starts a drag
-    // that the release ends with nowhere to drop.
+    // A click on it is a press, so it starts a drag that the release ends
+    // with nowhere to drop.
     compositor.click(x, y);
     dragger.says("focused");
     dragger.says("drag started");

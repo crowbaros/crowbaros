@@ -4,7 +4,7 @@
 mod common;
 
 use common::Compositor;
-use crowbar_compositor::{FRAME_UNFOCUSED, backend::POINTER_COLOUR, image::Image};
+use crowbar_compositor::{FRAME_FOCUSED, backend::POINTER_COLOUR, image::Image};
 use crowbar_probe::{Client, Toplevel};
 use fulcrum_wire::{ObjectId, protocol::wayland::wl_pointer};
 
@@ -129,7 +129,7 @@ fn a_cursor_image_covers_no_frame() {
 
     assert_eq!(
         screen.pixel(47, 92),
-        Some(FRAME_UNFOCUSED),
+        Some(FRAME_FOCUSED),
         "the cursor covered the frame"
     );
     assert_eq!(screen.pixel(50, 92), Some(RED));

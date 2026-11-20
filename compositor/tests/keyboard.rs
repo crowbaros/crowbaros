@@ -1,5 +1,5 @@
-//! Who gets the keys. Until issue 78 builds the two cases in which a new
-//! window takes the keyboard, no new window does. A click gives it.
+//! Who gets the keys. A new window takes the keyboard as it opens, and a
+//! click gives it.
 
 mod common;
 
@@ -30,20 +30,31 @@ fn client_with_window(compositor: &Compositor, title: &str) -> Client {
 }
 
 #[test]
-fn a_new_window_does_not_take_the_keyboard() {
+fn a_new_window_takes_the_keyboard() {
     let compositor = Compositor::start();
-    let mut client = client_with_window(&compositor, "c1");
+    let mut first = client_with_window(&compositor, "c1");
+    let mut second = client_with_window(&compositor, "c2");
+    first.roundtrip().unwrap();
 
     compositor.key(KEY_A, true);
     compositor.key(KEY_A, false);
 
-    assert_eq!(client.take_keys().unwrap(), []);
+    assert!(matches!(
+        first.take_keys().unwrap()[..],
+        [KeyEvent::Enter { .. }, .., KeyEvent::Leave]
+    ));
+    let seen = second.take_keys().unwrap();
+    assert!(matches!(seen[..], [KeyEvent::Enter { .. }, ..]), "{seen:?}");
+    assert_eq!(keys_only(seen), [(KEY_A, true), (KEY_A, false)]);
 }
 
 #[test]
 fn a_click_on_a_window_gives_it_the_keyboard() {
     let compositor = Compositor::start();
     let mut client = client_with_window(&compositor, "c1");
+    let _second = client_with_window(&compositor, "c2");
+    client.roundtrip().unwrap();
+    client.take_keys().unwrap();
 
     compositor.click(60, 60);
     compositor.key(KEY_A, true);
@@ -63,6 +74,7 @@ fn the_keys_go_to_the_window_that_was_clicked_and_to_no_other() {
     // lands where only one of them is.
     compositor.click(60, 60);
     first.take_keys().unwrap();
+    second.take_keys().unwrap();
 
     compositor.click(370, 270);
     compositor.key(KEY_A, true);
@@ -94,6 +106,7 @@ fn the_keyboard_of_a_window_that_closed_goes_to_no_other_window() {
     let mut second = client_with_window(&compositor, "c2");
     compositor.click(370, 270);
     assert!(matches!(second.take_keys().unwrap()[..], [KeyEvent::Enter { .. }, ..]));
+    first.take_keys().unwrap();
 
     drop(second);
     compositor.wait_until_still();

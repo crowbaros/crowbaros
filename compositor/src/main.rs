@@ -206,7 +206,7 @@ mod tests {
         "--shell-uid",
         "901",
         "--apps-socket",
-        "/run/crowbar-person/wayland-0",
+        "/run/crowbar-apps/wayland-0",
         "--apps-uid",
         "1003",
     ];
@@ -216,7 +216,7 @@ mod tests {
         let args = parse(&PARTS).unwrap();
         assert_eq!(args.parts.shell.socket, PathBuf::from("/run/crowbar/shell/wayland"));
         assert_eq!(args.parts.shell.uid, 901);
-        assert_eq!(args.parts.apps.socket, PathBuf::from("/run/crowbar-person/wayland-0"));
+        assert_eq!(args.parts.apps.socket, PathBuf::from("/run/crowbar-apps/wayland-0"));
         assert_eq!(args.parts.apps.uid, 1003);
     }
 
