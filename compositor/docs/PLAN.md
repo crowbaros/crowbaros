@@ -83,7 +83,7 @@ Owning the wire layer lets Fulcrum enforce the CrowbarOS decisions where message
   - the cursor plane (#33).
 
   Still to come: the real GPUs, the RTX 4090, Intel, and Surface rows, which [Running Fulcrum on real hardware](hardware-runs.md) says how to run. A fullscreen client on the primary plane is ruled out, because ADR 0020 keeps a fullscreen window's frame inside the display's edge. Overlay planes may come later.
-- **Milestone 4** has the shell's control channel (#17) and the confirm chord, which locks the session and opens the unlock entry (#46). Asks and their arming, the restart notice, and the broker's GPU-need declaration waited on the broker, and ADR 0032 drops them: every app is offered the GPU.
+- **Milestone 4** has the shell's control channel (#17) and the confirm chord (#46), which does nothing until Milestone 3 of the vision decides on it (crowbaros#223). Asks and their arming, the restart notice, and the broker's GPU-need declaration waited on the broker, and ADR 0032 drops them: every app is offered the GPU.
 - **Milestone 5** has:
   - workspaces and the shell's control channel (#17);
   - maximize, fullscreen, snap, and frames (#18);
@@ -96,9 +96,9 @@ Owning the wire layer lets Fulcrum enforce the CrowbarOS decisions where message
 - **Milestone 6** has copy and paste (#38), primary selection (#43), and drag and drop, between the shell and every app: one selection, one primary selection, and a drag that drops on any client. A drag takes an active pointer grab. Capture by the shell waits for a CrowbarOS record.
 - **Milestone 7** has each display's scale, 1 to 3 in quarters (#35), and the layout kept by each monitor's identity and set through the control channel (#39). Its wire format is Fulcrum's proposal until CrowbarOS's display settings take it up. Still to come: input devices' settings, and suspend and resume and mixed scale on the hardware rows.
 - **Milestone 8** has lock (#44, with the shell's half in [crowbaros#204](https://github.com/crowbaros/crowbaros/pull/204)) and the confirm chord's part (#46, [crowbaros#206](https://github.com/crowbaros/crowbaros/pull/206)), as a proposal:
-  - The shell's request, Super+L, Ctrl+Alt+Enter, and the idle timer lock the session.
-  - While it is locked, the shell's lock screen is all that shows and all that gets input, and it takes no text until the confirm chord opens its unlock entry.
-  - In the place of the broker ADR 0020 has end it, an unlock authority unlocks it (#49, with Base's half in [crowbaros#207](https://github.com/crowbaros/crowbaros/pull/207)). It is a root helper in Base, at a socket of its own, that checks the person's login password after the confirm chord. Once it listens, the shell's word is not enough.
+  - The shell's request, Super+L, and the idle timer lock the session.
+  - While it is locked, the shell's lock screen is all that shows and all that gets input, and it takes the person's password at once, with no chord first (crowbaros#223).
+  - In the place of the broker ADR 0020 has end it, an unlock authority unlocks it (#49, with Base's half in [crowbaros#207](https://github.com/crowbaros/crowbaros/pull/207)). It is a root helper in Base, at a socket of its own, that checks the person's login password. Once it listens, the shell's word is not enough.
   - Base starts the session locked, and zzz's suspend hook locks it through the helper before the machine sleeps.
 
   Still to come:
@@ -123,7 +123,7 @@ Milestones 1 and 2 are where this approach costs the most. They rebuild what Smi
 [ADR 0015](../../docs/adr/0015-our-own-compositor-on-smithay.md) says the compositor is built on Smithay, and ADR 0020 sets rules for bumping a Smithay pin. A new CrowbarOS record, ADR 0028, replaces both: Fulcrum is written from the ground up, with no crate from the Smithay organization and only the C libraries named above. Every other part of those records stands, including what each client is offered, the attacks the tests must refuse, and that no code is copied from GPL-3.0 compositors.
 
 Fulcrum's proposals wait for records. Each is built, tested, and passes CrowbarOS's checks, and the code marks each as a proposal:
-- the shell's messages on the control channel: the `launcher` event, `launching`, `attention` (#41), `lock`, `unlock`, `locked`, `unlocked` (#44), `unlock_entry` (#46), and the lock screen's namespace, `crowbaros-lock`;
+- the shell's messages on the control channel: the `launcher` event, `launching`, `attention` (#41), `lock`, `unlock`, `locked`, `unlocked` (#44), and the lock screen's namespace, `crowbaros-lock`;
 - the unlock authority, `--unlock-socket`, `--unlock-uid`, and `--start-locked`, with Base's password helper in the broker's place (#49, [crowbaros#207](https://github.com/crowbaros/crowbaros/pull/207));
 - the layout of displays on the control channel, `outputs` and `configure_output` (#39).
 

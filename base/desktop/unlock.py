@@ -5,11 +5,10 @@ It is the compositor's unlock authority (ADR 0032): the compositor listens for
 it at a socket of its own, checked against root's user ID, and once it does,
 the shell's word no longer unlocks.
 
-The shell's lock screen sends the password the person typed, after the
-confirm chord. The helper checks it against the person's account, the one
-with UID 1003, in /etc/shadow, through libcrypt, and only then tells the
+The shell's lock screen sends the password the person typed, with nothing
+before it. The helper checks it against the person's account, the one with
+UID 1003, in /etc/shadow, through libcrypt, and only then tells the
 compositor to unlock.
-The compositor still refuses unless the confirm chord opened the unlock entry.
 A wrong password costs a pause before the next one is heard, one at a time.
 
 `crowbar-unlock lock` asks the compositor to lock, as the suspend hook

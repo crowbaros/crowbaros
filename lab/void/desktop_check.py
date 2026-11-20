@@ -146,12 +146,8 @@ class Check:
         return self.python(code, 'crowbar-shell')
 
     def unlock(self, password='crowbar'):
-        """The confirm chord, then the person's password, as the lock screen
+        """The person's password, typed with nothing first, as the lock screen
         sends it to the unlock helper."""
-        opened = self.shell_log().count('SHELL lock entry=open')
-        self.key('ctrl', 'alt', 'ret')
-        self.wait('the confirm chord opens the unlock entry',
-                  lambda: self.shell_log().count('SHELL lock entry=open') > opened)
         self.type(password)
         self.key('ret')
 
@@ -222,7 +218,8 @@ class Check:
             self.check(name + ' linked libraries resolve', '=> /' in linked and 'not found' not in linked)
         shell_log = self.shell_log
         # The session starts locked, and only the unlock helper's word, on the
-        # person's password after the confirm chord, unlocks it.
+        # person's password, unlocks it. The lock screen takes the password
+        # at once, with no chord first.
         self.wait('the session starts locked', lambda: self.snapshot().get('locked') and 'SHELL lock open=true' in shell_log())
         self.capture('00-locked-at-boot')
         self.check('the session starts locked, behind the lock screen',
@@ -231,11 +228,11 @@ class Check:
         self.unlock('wrong')
         self.wait('a wrong password is answered', lambda: shell_log().count('SHELL unlock ok=false') > answered)
         self.capture('00-wrong-password')
-        self.check('a wrong password leaves the session locked', self.snapshot()['locked'])
+        self.check('the lock screen takes a password with no chord first, and a wrong one leaves the session locked',
+                   self.snapshot()['locked'])
         refused = self.shell_unlock()
         self.check("the shell's own word does not unlock", '"reply":"error"' in refused and self.snapshot()['locked'], refused.strip())
-        self.type('crowbar')
-        self.key('ret')
+        self.unlock()
         self.wait('the password unlocks', lambda: not self.snapshot().get('locked') and 'SHELL lock open=false' in shell_log())
         self.check("the person's password unlocks the session", 'SHELL unlock ok=true' in shell_log())
         self.capture('01-boot')
@@ -258,14 +255,21 @@ class Check:
         self.capture('01-locked')
         self.check('Super+L locks the session and shows the lock screen',
                    self.snapshot()['locked'] and 'SHELL lock open=true' in shell_log())
-        self.type('crowbar')
-        self.key('ret')
+        self.key('ctrl', 'alt', 'ret')
         time.sleep(1)
-        self.check('the lock screen takes no password before the confirm chord', self.snapshot()['locked'])
+        self.check('Ctrl+Alt+Enter does not unlock', self.snapshot()['locked'])
         self.unlock()
         self.wait('the password unlocks', lambda: not self.snapshot().get('locked'))
         self.check('the lock screen unlocks, and the window has the keyboard back',
                    self.snapshot()['active']['address'] == terminal['address'])
+        self.key('ctrl', 'alt', 'ret')
+        time.sleep(1)
+        self.check('Ctrl+Alt+Enter does not lock', not self.snapshot()['locked'])
+        self.click(1232, 12)  # The bar's lock button.
+        self.wait("the bar's lock button locks", lambda: self.snapshot().get('locked'))
+        self.check("the bar's lock button locks the session", self.snapshot()['locked'])
+        self.unlock()
+        self.wait('the password unlocks after the lock button', lambda: not self.snapshot().get('locked'))
         self.run('/etc/zzz.d/suspend/50-crowbar-lock')
         self.wait('the suspend hook locks', lambda: self.snapshot().get('locked'))
         self.check('the suspend hook locks the session before the machine sleeps', int(self.run("grep -c 'session locked by=authority' /var/log/crowbar-compositor.log || true").strip() or 0) > 0)

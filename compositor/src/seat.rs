@@ -395,9 +395,9 @@ impl State {
             self.seat.withheld.retain(|held| *held != key);
             return;
         }
-        // The confirm chord, Ctrl+Alt+Enter, is kept for Milestone 3 to
-        // decide on: it does nothing yet, and its Enter goes to no client.
-        // Ctrl and Alt do, so a client may guess it was pressed.
+        // The confirm chord, Ctrl+Alt+Enter, is kept for the vision's
+        // Milestone 3 to decide on: it does nothing yet. Its Enter goes to
+        // no client; Ctrl and Alt do, so a client may guess it was pressed.
         let held = |keys: &[u32; 2]| self.seat.keys.iter().any(|held| keys.contains(held));
         if pressed && ENTER.contains(&key) && held(&CTRL) && held(&ALT) {
             if !self.seat.withheld.contains(&key) {

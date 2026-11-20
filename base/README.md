@@ -165,8 +165,8 @@ says. Nothing in the desktop runs as root to start an app.
   SIGINT the kernel would. runit runs `/etc/runit/ctrlaltdel` and reboots, as
   from a console, even while the desktop is locked.
 - `crowbar-unlock` is a root service, `desktop/unlock.py`. The compositor
-  starts locked and listens for it at a socket only root may use. After the
-  confirm chord, the lock screen sends the person's password to the helper,
+  starts locked and listens for it at a socket only root may use. The lock
+  screen takes the person's password at once and sends it to the helper,
   which checks it against the account with UID 1003 in `/etc/shadow` and only
   then tells the compositor to unlock. zzz's suspend hook locks the desktop through the same helper.
 
