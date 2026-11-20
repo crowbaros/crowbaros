@@ -1,0 +1,8 @@
+#!/bin/sh
+# `reboot` and `poweroff` for the person: sudo runs Void's own, which only
+# root may, and asks no password for them (see sudoers). Root runs them as
+# they are.
+name=$(basename "$0")
+case $name in reboot | poweroff) ;; *) echo "$name: call me reboot or poweroff" >&2; exit 2 ;; esac
+if [ "$(id -u)" -eq 0 ]; then exec "/usr/bin/$name" "$@"; fi
+exec sudo -n "/usr/bin/$name" "$@"

@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+exec >>/var/log/crowbar-ctrl-alt-del.log 2>&1
+# Only the compositor's group may enter the directory of the socket, and the
+# service checks the compositor's UID as well.
+install -d -o root -g crowbar-compositor -m 0750 /run/crowbar-ctrl-alt-del
+exec /usr/local/bin/crowbar-ctrl-alt-del

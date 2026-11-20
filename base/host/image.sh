@@ -61,23 +61,33 @@ GROW
 
 # The desktop. Three accounts: the compositor, which alone is in `_seatd`; the
 # shell; and the person's, with a home and a login shell, in `netdev` to join
-# Wi-Fi, whose password unlocks the desktop and as whom every app runs. Its UID
-# is fixed, as the desktop's services find it by UID. runit starts the seat
-# manager, the compositor on virtual terminal 2 in place of its getty, the
-# shell, the launcher, as the person, and the unlock helper; see desktop/.
+# Wi-Fi and `wheel` for sudo, whose password unlocks the desktop and as whom
+# every app runs. Its UID is fixed, as the desktop's services find it by UID.
+# runit starts the seat manager, the compositor on virtual terminal 2 in place
+# of its getty, the shell, the launcher, as the person, the unlock helper, and
+# the service that reboots for Ctrl+Alt+Del; see desktop/.
 ln -sfn /etc/sv/seatd "$SV/seatd"
 rm -f "$SV/agetty-tty2"
 chroot "$R" useradd -m -u 1000 -G _seatd crowbar-compositor
 chroot "$R" useradd -m -u 1001 crowbar-shell
-chroot "$R" useradd -m -u "$PERSON_UID" -G netdev -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
-for service in compositor shell launcher unlock; do
+chroot "$R" useradd -m -u "$PERSON_UID" -G netdev,wheel -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
+for service in compositor shell launcher unlock ctrl-alt-del; do
   install -D -m 755 "$DESKTOP/$service-run" "$R/etc/sv/crowbar-$service/run"
   ln -sfn "/etc/sv/crowbar-$service" "$SV/crowbar-$service"
 done
 install -D -m 755 "$DESKTOP/launcher.py" "$R/usr/local/bin/crowbar-launcher"
 install -D -m 755 "$DESKTOP/shell-connect.py" "$R/usr/local/bin/crowbar-shell-connect"
 install -D -m 755 "$DESKTOP/unlock.py" "$R/usr/local/bin/crowbar-unlock"
+install -D -m 755 "$DESKTOP/ctrl-alt-del.py" "$R/usr/local/bin/crowbar-ctrl-alt-del"
 install -D -m 755 "$DESKTOP/zzz-lock" "$R/etc/zzz.d/suspend/50-crowbar-lock"
+# The person is in `wheel`, so sudo takes their password. Rebooting and powering
+# off take none, as on a desktop with logind: `reboot` and `poweroff` in
+# /usr/local/bin ask sudo for them.
+install -m 440 "$DESKTOP/sudoers" "$R/etc/sudoers.d/10-crowbaros"
+sed -i "s/@PERSON@/$PERSON/" "$R/etc/sudoers.d/10-crowbaros"
+install -D -m 755 "$DESKTOP/power" "$R/usr/local/bin/reboot"
+ln -sfn reboot "$R/usr/local/bin/poweroff"
+chroot "$R" visudo -cq
 HASH=$PERSON_PASSWORD_HASH
 if [ -z "$HASH" ]; then HASH=$(chroot "$R" /usr/local/bin/crowbar-unlock hash "$PERSON_PASSWORD"); fi
 chroot "$R" usermod -p "$HASH" "$PERSON"

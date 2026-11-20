@@ -10,6 +10,8 @@ exec >>/var/log/crowbar-compositor.log 2>&1
 # unlock helper, as root, reaches the compositor's unlock socket in a
 # directory no one else can enter; once it listens, only the helper's word
 # unlocks, and the session starts locked (Fulcrum's proposal).
+# Ctrl+Alt+Del, which the kernel never sees while the compositor reads the
+# keyboard, goes to a root service that reboots, as a console would.
 install -d -m 0755 /run/crowbar-trusted
 install -d -o crowbar-compositor -g crowbar-shell -m 2750 /run/crowbar-trusted/compositor
 PERSON_UID=1003
@@ -28,6 +30,7 @@ exec openvt -c 2 -s -f -w -- chpst -u crowbar-compositor:crowbar-compositor:_sea
   --shell-control-socket /run/crowbar-trusted/compositor/control \
   --apps-socket /run/crowbar-apps/wayland-0 --apps-uid 1003 \
   --unlock-socket /run/crowbar-trusted/unlock/compositor --unlock-uid 0 \
+  --ctrl-alt-del-socket /run/crowbar-ctrl-alt-del/socket \
   --layout /home/crowbar-compositor/layout \
   --start-locked \
   >>/var/log/crowbar-compositor.log 2>&1'

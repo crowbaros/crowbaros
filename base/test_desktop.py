@@ -1,4 +1,5 @@
-"""The desktop's helpers in the Base image: the launcher service and the unlock helper."""
+"""The desktop's helpers in the Base image: the launcher service, the unlock helper,
+and the service that reboots for Ctrl+Alt+Del."""
 import importlib.util
 import os
 from pathlib import Path
@@ -19,6 +20,7 @@ def load(name, file):
 
 launcher = load('launcher', 'launcher.py')
 unlocker = load('unlock', 'unlock.py')
+ctrl_alt_del = load('ctrl_alt_del', 'ctrl-alt-del.py')
 PERSON = types.SimpleNamespace(pw_name='alex', pw_dir='/home/alex', pw_uid=1003, pw_shell='/bin/bash')
 SHELL_UID = 1001
 
@@ -55,6 +57,30 @@ class LauncherRequests(unittest.TestCase):
                      b'{"op":"launch","desktop":"/usr/share/applications/foot.desktop","uid":0}\n',
                      b'x' * 5000 + b'\n'):
             self.assertFalse(launcher.answer(line, SHELL_UID, SHELL_UID, PERSON)['ok'], line[:40])
+
+
+
+class CtrlAltDel(unittest.TestCase):
+    """The service reboots when the compositor says Ctrl+Alt+Del, and for no one else."""
+
+    def said(self, data, peer):
+        import socket
+        ours, theirs = socket.socketpair()
+        with ours, theirs:
+            theirs.sendall(data)
+            theirs.shutdown(socket.SHUT_WR)
+            with patch.object(ctrl_alt_del, 'peer_uid', return_value=peer):
+                return ctrl_alt_del.heard(ours, 1000)
+
+    def test_the_compositor_saying_the_chord_is_heard(self):
+        self.assertTrue(self.said(b'ctrl-alt-del\n', 1000))
+
+    def test_anyone_else_or_anything_else_is_not(self):
+        self.assertFalse(self.said(b'ctrl-alt-del\n', 1003))
+        self.assertFalse(self.said(b'ctrl-alt-del\n', 1001))
+        self.assertFalse(self.said(b'reboot\n', 1000))
+        self.assertFalse(self.said(b'ctrl-alt-', 1000))
+        self.assertFalse(self.said(b'', 1000))
 
 
 class UnlockHelper(unittest.TestCase):

@@ -299,7 +299,8 @@ class PersonSshCheck(unittest.TestCase):
     """Base's check logs in as the person, with the build's key, not as root."""
 
     def test_the_check_runs_as_the_lab_account_and_wants_its_uid(self):
-        [(command, ok)] = [(command, ok) for _, command, ok, *person in void_base.CHECKS if person]
+        [(command, ok)] = [(command, ok) for name, command, ok, *person in void_base.CHECKS
+                           if person and name == "the person's account takes the build's key over SSH"]
         self.assertTrue(ok(f'{void_base.PERSON_UID}\n'))
         self.assertFalse(ok('0\n'))
         with patch('subprocess.run') as run:
@@ -380,6 +381,25 @@ class PersonCheck(unittest.TestCase):
         self.assertFalse(self.passes('crowbar:/home/crowbar:/bin/false\ncrowbar 700\n'))
         self.assertFalse(self.passes('crowbar:/home/crowbar:/bin/bash\n'))
         self.assertFalse(self.passes('crowbar:/home/crowbar:/bin/bash\nroot 755\n'))
+
+
+class RebootCheck(unittest.TestCase):
+    """Base's check finds that the person may reboot and power off."""
+
+    def setUp(self):
+        self.person = void_base.person_may_reboot
+
+    def test_wheel_and_both_commands_through_sudo_pass(self):
+        self.assertTrue(self.person('crowbar netdev wheel\n/usr/local/bin/reboot\n/usr/local/bin/poweroff\n'
+                                    '/usr/bin/reboot\n/usr/bin/poweroff\n'))
+
+    def test_voids_own_commands_or_no_wheel_fail(self):
+        # Void's own, found first, tell the person "access denied".
+        self.assertFalse(self.person('crowbar netdev wheel\n/usr/bin/reboot\n/usr/bin/poweroff\n'
+                                     '/usr/bin/reboot\n/usr/bin/poweroff\n'))
+        self.assertFalse(self.person('crowbar netdev\n/usr/local/bin/reboot\n/usr/local/bin/poweroff\n'
+                                     '/usr/bin/reboot\n/usr/bin/poweroff\n'))
+        self.assertFalse(self.person('crowbar netdev wheel\n/usr/local/bin/reboot\n/usr/local/bin/poweroff\n'))
 
 
 class SshCheck(unittest.TestCase):
