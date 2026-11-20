@@ -70,6 +70,11 @@ pub trait Adapter: Send + Sync {
     }
     /// Reads the events the compositor sent while no request was waiting.
     fn pump(&self) {}
+    /// The channel to the compositor is gone for good, and only a new
+    /// connection, from a shell started again, would talk to it.
+    fn closed(&self) -> bool {
+        false
+    }
     /// Asks the compositor to lock the session, or to unlock it.
     fn lock(&self, _locked: bool) -> Result<()> {
         bail!("This compositor does not lock")
@@ -228,9 +233,39 @@ impl Adapter for Hyprland {
 /// JSON object per line: a request gets one reply, and the compositor may
 /// send events at any time. See `compositor/src/control.rs`.
 pub struct Compositor {
-    /// The read and write halves of the socket. `None` once an exchange has
-    /// failed.
-    lines: Mutex<Option<(Lines, UnixStream)>>,
+    /// The socket. `None` once it has failed.
+    channel: Mutex<Option<Channel>>,
+}
+
+struct Channel {
+    reader: Lines,
+    writer: UnixStream,
+    /// Replies still to come to requests that gave up waiting for them.
+    /// Replies come in the order of the requests, so these are the next
+    /// ones read, and each is skipped.
+    owed: usize,
+}
+
+/// How an exchange failed.
+enum Failure {
+    /// The request was sent and its reply did not come in time. It will
+    /// come later, as the compositor can be busy for a moment, as when it
+    /// sets a display's mode on the way back from the console.
+    Late,
+    /// The channel cannot be trusted any more.
+    Broken(anyhow::Error),
+}
+
+impl From<anyhow::Error> for Failure {
+    fn from(error: anyhow::Error) -> Self {
+        Failure::Broken(error)
+    }
+}
+
+impl From<serde_json::Error> for Failure {
+    fn from(error: serde_json::Error) -> Self {
+        Failure::Broken(error.into())
+    }
 }
 
 impl Compositor {
@@ -238,13 +273,14 @@ impl Compositor {
         stream.set_read_timeout(Some(Duration::from_millis(500)))?;
         stream.set_write_timeout(Some(Duration::from_millis(500)))?;
         Ok(Self {
-            lines: Mutex::new(Some((
-                Lines {
+            channel: Mutex::new(Some(Channel {
+                reader: Lines {
                     stream: stream.try_clone()?,
                     pending: Vec::new(),
                 },
-                stream,
-            ))),
+                writer: stream,
+                owed: 0,
+            })),
         })
     }
 
@@ -266,43 +302,76 @@ impl Compositor {
         Self::new(stream)
     }
 
+    /// The most replies owed before the channel is given up: a compositor
+    /// that far behind is stuck.
+    const MAX_OWED: usize = 8;
+
     /// Sends one request and returns its reply. Events that arrive first are
     /// logged and skipped.
     ///
-    /// Requests carry no id. If the exchange fails part-way, for example
-    /// because the reply is late, the channel is closed for good: a late
-    /// reply must never be read as the answer to a later request.
+    /// Requests carry no id. A reply that does not come in time is owed, and
+    /// skipped when it comes, so that it is never read as the answer to a
+    /// later request. If the exchange fails any other way, the channel is
+    /// closed for good.
     fn request(&self, request: serde_json::Value) -> Result<serde_json::Value> {
-        let mut lines = self
-            .lines
+        let mut guard = self
+            .channel
             .lock()
             .map_err(|_| anyhow::anyhow!("Compositor channel failed"))?;
-        let (mut reader, mut writer) = lines.take().context("The compositor channel is closed")?;
-        let message = Self::exchange(&mut reader, &mut writer, request)?;
-        *lines = Some((reader, writer));
+        let channel = guard.as_mut().context("The compositor channel is closed")?;
+        let message = match channel.exchange(request) {
+            Ok(message) => message,
+            Err(Failure::Late) if channel.owed < Self::MAX_OWED => {
+                channel.owed += 1;
+                bail!("The compositor's reply is late")
+            }
+            Err(Failure::Late) => {
+                *guard = None;
+                bail!("The compositor has not replied to {} requests", Self::MAX_OWED + 1)
+            }
+            Err(Failure::Broken(error)) => {
+                *guard = None;
+                return Err(error);
+            }
+        };
         match message["reply"].as_str() {
             Some("error") => bail!("The compositor refused: {}", message["message"]),
             _ => Ok(message),
         }
     }
+}
 
-    fn exchange(
-        reader: &mut Lines,
-        writer: &mut UnixStream,
-        request: serde_json::Value,
-    ) -> Result<serde_json::Value> {
-        writer.write_all(format!("{request}\n").as_bytes())?;
+impl Channel {
+    fn exchange(&mut self, request: serde_json::Value) -> Result<serde_json::Value, Failure> {
+        // A write that fails may have sent part of the line.
+        self.writer
+            .write_all(format!("{request}\n").as_bytes())
+            .map_err(|error| Failure::Broken(error.into()))?;
         loop {
-            let line = reader.next()?;
+            let line = self.reader.next().map_err(|error| {
+                let late = error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                    matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    )
+                });
+                if late { Failure::Late } else { Failure::Broken(error) }
+            })?;
             let message: serde_json::Value = serde_json::from_str(&line)?;
             if let Some(event) = message.get("event") {
                 compositor_event(event);
                 continue;
             }
             if message["reply"].is_string() {
+                if self.owed > 0 {
+                    self.owed -= 1;
+                    continue;
+                }
                 return Ok(message);
             }
-            bail!("Unexpected message from the compositor")
+            return Err(Failure::Broken(anyhow::anyhow!(
+                "Unexpected message from the compositor"
+            )));
         }
     }
 }
@@ -384,22 +453,29 @@ impl Adapter for Compositor {
     }
 
     fn pump(&self) {
-        let Ok(mut lines) = self.lines.lock() else {
+        let Ok(mut guard) = self.channel.lock() else {
             return;
         };
-        let Some((reader, _)) = lines.as_mut() else {
+        let Some(channel) = guard.as_mut() else {
             return;
         };
-        for line in reader.waiting() {
+        for line in channel.reader.waiting() {
             match serde_json::from_str::<serde_json::Value>(&line) {
                 Ok(message) => {
                     if let Some(event) = message.get("event") {
                         compositor_event(event);
+                    } else if message["reply"].is_string() && channel.owed > 0 {
+                        // A late reply, come while no request waited.
+                        channel.owed -= 1;
                     }
                 }
                 Err(e) => log::warn!("Compositor: {e}"),
             }
         }
+    }
+
+    fn closed(&self) -> bool {
+        self.channel.lock().map_or(true, |channel| channel.is_none())
     }
 }
 
@@ -444,6 +520,12 @@ pub fn connect() {
 
 pub fn snapshot() -> Result<Snapshot> {
     connection()?.snapshot()
+}
+/// The compositor's control channel is gone for good. The shell cannot open
+/// another one itself: its wrapper connects, so the shell must be started
+/// again.
+pub fn closed() -> bool {
+    connection().is_ok_and(|connection| connection.closed())
 }
 /// Asks the compositor to lock the session, or to unlock it, as the person
 /// asks the shell. Unlocking is the shell's word, in the place of the broker
@@ -1189,7 +1271,34 @@ mod tests {
     /// Requests carry no id, so a reply that arrives after the shell stopped
     /// waiting must not be read as the answer to the next request.
     #[test]
-    fn after_a_late_reply_the_channel_fails_instead_of_answering_the_wrong_request() {
+    fn a_late_reply_is_skipped_and_the_next_request_gets_its_own() {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let peer = std::thread::spawn(move || {
+            let mut reader = BufReader::new(theirs.try_clone().unwrap());
+            let mut writer = theirs;
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            // Busy past the shell's wait, as on the way back from the console.
+            std::thread::sleep(Duration::from_millis(800));
+            writer.write_all(b"{\"reply\":\"error\",\"message\":\"the late one\"}\n").unwrap();
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            assert!(line.contains("focus_window"), "{line}");
+            writer.write_all(b"{\"reply\":\"ok\"}\n").unwrap();
+            writer
+        });
+        let compositor = Compositor::new(ours).unwrap();
+
+        let late = compositor.focus_workspace(1).unwrap_err();
+        assert!(late.to_string().contains("late"), "{late}");
+        // The late reply, a refusal, is not taken for this request's answer.
+        compositor.focus_window("0x1").unwrap();
+        assert!(!compositor.closed());
+        let _peer_end = peer.join().unwrap();
+    }
+
+    #[test]
+    fn a_late_reply_that_comes_while_no_request_waits_is_skipped_too() {
         let (ours, theirs) = UnixStream::pair().unwrap();
         let peer = std::thread::spawn(move || {
             let mut reader = BufReader::new(theirs.try_clone().unwrap());
@@ -1197,16 +1306,29 @@ mod tests {
             let mut line = String::new();
             reader.read_line(&mut line).unwrap();
             std::thread::sleep(Duration::from_millis(800));
-            // The shell may have closed the channel by now; either is fine.
-            let _ = writer.write_all(b"{\"reply\":\"ok\"}\n");
-            // Keep the peer's end open, so a next request could be written.
+            writer.write_all(b"{\"reply\":\"error\",\"message\":\"the late one\"}\n").unwrap();
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            writer.write_all(b"{\"reply\":\"ok\"}\n").unwrap();
             writer
         });
         let compositor = Compositor::new(ours).unwrap();
 
         assert!(compositor.focus_workspace(1).is_err());
+        std::thread::sleep(Duration::from_millis(500));
+        compositor.pump();
+        compositor.focus_window("0x1").unwrap();
         let _peer_end = peer.join().unwrap();
+    }
 
+    #[test]
+    fn a_channel_the_compositor_closed_is_closed_for_good() {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        drop(theirs);
+        let compositor = Compositor::new(ours).unwrap();
+
+        assert!(compositor.focus_workspace(1).is_err());
+        assert!(compositor.closed());
         assert!(compositor.focus_window("0x1").is_err());
     }
 
