@@ -7,6 +7,7 @@ them. It has no apply engine and no generations.
 ```sh
 base/void_base.py check          # build, boot, check, record a log, power off
 base/void_base.py build          # install the Void roots, build the desktop, write the boot disk
+                                 # (--lab-account to ignore your account file, as the checks do)
 base/void_base.py boot           # boot a fresh copy of the disk (--window to see the desktop)
 base/void_base.py ssh [CMD]      # a root shell, or one command
 base/void_base.py console        # the serial console (Ctrl-] to leave)
@@ -116,7 +117,8 @@ serial console and for SSH, and then checks in the guest: that it is Void, that
 the running kernel is the one in the boot menu, that the root is the Btrfs
 volume and writable, that it booted under UEFI, the hostname, that runit is
 PID 1, that `sshd`, `dhcpcd`, and the serial getty run, that SSH takes keys and
-no passwords, that the network has an address, that packages kept their groups, that the kernel's command line carries
+no passwords, that the person's account has a home it owns and a login
+shell, that the network has an address, that packages kept their groups, that the kernel's command line carries
 NVIDIA's settings, that NVIDIA's module is built for the running kernel and,
 with no NVIDIA card in the VM, not loaded, and that the kernel logged nothing
 critical.
@@ -143,13 +145,15 @@ Later tickets of Milestone 2 replace them.
   launcher, `desktop/launcher.py`, with no inherited trusted descriptors or
   supplementary groups, a fixed environment, and `no_new_privs`. Only the shell
   UID may ask it to launch.
-- `crowbar-person` (UID 1003) is the person's account. It has no login shell
-  and no home. Its password, `crowbar` in the lab, unlocks the desktop.
+- The person's account (UID 1003) has a home and a login shell, and its
+  password unlocks the desktop. Its name and password come from the account
+  file; see [The person's account](#the-persons-account). Apps do not run as
+  it yet.
 - `crowbar-unlock` is a root service, `desktop/unlock.py`. The compositor
   starts locked and listens for it at a socket only root may use. After the
   confirm chord, the lock screen sends the person's password to the helper,
-  which checks it against `/etc/shadow` and only then tells the compositor to
-  unlock. zzz's suspend hook locks the desktop through the same helper.
+  which checks it against the account with UID 1003 in `/etc/shadow` and only
+  then tells the compositor to unlock. zzz's suspend hook locks the desktop through the same helper.
 
 This is not the production Warden or principal isolation. Apps share one user
 and can reach one another. The launcher registers one compartment for every
@@ -160,6 +164,38 @@ Settings keeps its preferences in the app user's home. The compositor has no
 animations, so Studio Settings saves the motion preference and says it has no
 effect here.
 
+## The person's account
+
+Each image has one person's account, with UID 1003, a home in `/home`, and
+`bash` as its login shell. Its password unlocks the desktop and logs in on the
+consoles. SSH still takes keys only, and only for root.
+
+`build` reads the account from `base/account.json`, which git ignores:
+
+```json
+{"name": "jim", "password_hash": "<what openssl passwd -6 prints>", "full_name": "Jim Martin"}
+```
+
+- `name`: a lowercase account name of up to 32 characters, starting with a
+  letter or `_`. Not a name starting with `crowbar-`, and not a user or group
+  the image already has, such as `root` or `sshd`.
+- `password_hash`: the whole crypt hash, never the password itself. Print one
+  with `openssl passwd -6`, which asks for the password twice.
+- `full_name`: optional. The lock screen shows it in place of the name.
+
+The build refuses a file with anything else in it, a hash cut short, or a value
+that would break `/etc/passwd` or `/etc/shadow`, before it builds anything.
+
+With no account file, `build` makes the lab account, `crowbar`, whose password
+is `crowbar`. `build --lab-account` makes the lab account whatever the file
+says. Base's check and the desktop check build that way, so they type a
+password they know. Either way the build prints a warning: that password is in
+this repository, so such an image is for the lab alone.
+
+The checks write the same image, `.lab/base/base.raw`, that `build` writes. So
+after a check, build again before you write the image to a disk. The build's
+last line names the image's account.
+
 ## Not yet
 
 - Real hardware. Apart from NVIDIA's driver and its firmware, the disk has only
@@ -168,4 +204,4 @@ effect here.
 - Kernel updates in the guest. Void's kernel hook would rewrite
   `/boot/grub/grub.cfg` with `update-grub`, and that path is untested.
 - The initramfs is dracut's generic one, about 200 MB.
-- No locale or time zone, and no installer. The person's account has no home.
+- No locale or time zone, and no installer.

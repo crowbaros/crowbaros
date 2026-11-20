@@ -1168,11 +1168,6 @@ fn person_label_from(
     {
         return gecos_display_name(gecos).unwrap_or_else(|| (*name).to_string());
     }
-    if let Some((_, _, gecos)) = entries.iter().find(|(n, _, _)| *n == "crowbar-person") {
-        if let Some(display) = gecos_display_name(gecos) {
-            return display;
-        }
-    }
     "Person".into()
 }
 
@@ -1897,7 +1892,6 @@ mod lock_tests {
             "crowbar-compositor:x:1000:1000::/home/crowbar-compositor:/bin/sh\n",
             "crowbar-shell:x:1001:1001::/home/crowbar-shell:/bin/sh\n",
             "crowbar-app:x:1002:1002::/home/crowbar-app:/bin/sh\n",
-            "crowbar-person:x:1003:1003::/home/crowbar-person:/bin/false\n",
         );
         assert_eq!(
             person_label_from(Some("Alex"), Some("crowbar-shell"), Some(passwd)),
@@ -1907,7 +1901,13 @@ mod lock_tests {
             person_label_from(None, Some("crowbar-shell"), Some(passwd)),
             "Person"
         );
-        let with_human = format!("{passwd}jason:x:1004:1004:Jason Alexander,,,:/home/jason:/bin/bash\n");
+        // The lab account is a person's account, not a service account.
+        let with_lab = format!("{passwd}crowbar:x:1003:1003::/home/crowbar:/bin/bash\n");
+        assert_eq!(
+            person_label_from(None, Some("crowbar-shell"), Some(&with_lab)),
+            "crowbar"
+        );
+        let with_human = format!("{passwd}jason:x:1003:1003:Jason Alexander,,,:/home/jason:/bin/bash\n");
         assert_eq!(
             person_label_from(None, Some("crowbar-shell"), Some(&with_human)),
             "Jason Alexander"

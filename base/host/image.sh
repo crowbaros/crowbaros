@@ -9,8 +9,10 @@
 # Inputs: ROOTFS WORK OUT PUBKEY HOSTNAME ROOT_LABEL ESP_LABEL ESP_MIB ROOT_GIB,
 # KVER (the kernel to boot, which void_base.py checked), KERNEL_ARGS (added to
 # the kernel's command line),
-# and for the desktop DESKTOP (base/desktop) and REPO_ROOT. Its arguments are
-# the desktop's programs.
+# and for the desktop DESKTOP (base/desktop) and REPO_ROOT. The person's
+# account is PERSON_UID, PERSON, and PERSON_FULL_NAME, with PERSON_PASSWORD_HASH
+# from the account file or, for the lab account, PERSON_PASSWORD. Its arguments are the
+# desktop's programs.
 set -eu
 R="$WORK/staging"
 rm -rf "$R" "$WORK/esp.img" "$WORK/root.img"
@@ -39,9 +41,9 @@ install -m 600 "$PUBKEY" "$R/root/.ssh/authorized_keys"
 printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' > "$R/etc/ssh/sshd_config.d/10-crowbaros.conf"
 
 # The desktop. Four accounts: the compositor, which alone is in `_seatd`; the
-# shell; one for every app; and the person's, whose password unlocks the
-# desktop. In the lab it is `crowbar`. The person's account has no login shell
-# or home yet. runit starts the seat manager, the compositor on virtual
+# shell; one for every app; and the person's, with a home and a login shell,
+# whose password unlocks the desktop. Its UID is fixed, as the unlock helper
+# finds it by UID. runit starts the seat manager, the compositor on virtual
 # terminal 2 in place of its getty, the shell, the launcher, and the unlock
 # helper; see desktop/.
 ln -sfn /etc/sv/seatd "$SV/seatd"
@@ -49,7 +51,7 @@ rm -f "$SV/agetty-tty2"
 chroot "$R" useradd -m -u 1000 -G _seatd crowbar-compositor
 chroot "$R" useradd -m -u 1001 crowbar-shell
 chroot "$R" useradd -m -u 1002 crowbar-app
-chroot "$R" useradd -M -u 1003 -s /bin/false crowbar-person
+chroot "$R" useradd -m -u "$PERSON_UID" -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
 for service in compositor shell launcher unlock; do
   install -D -m 755 "$DESKTOP/$service-run" "$R/etc/sv/crowbar-$service/run"
   ln -sfn "/etc/sv/crowbar-$service" "$SV/crowbar-$service"
@@ -58,8 +60,9 @@ install -D -m 755 "$DESKTOP/launcher.py" "$R/usr/local/bin/crowbar-launcher"
 install -D -m 755 "$DESKTOP/shell-connect.py" "$R/usr/local/bin/crowbar-shell-connect"
 install -D -m 755 "$DESKTOP/unlock.py" "$R/usr/local/bin/crowbar-unlock"
 install -D -m 755 "$DESKTOP/zzz-lock" "$R/etc/zzz.d/suspend/50-crowbar-lock"
-HASH=$(chroot "$R" /usr/local/bin/crowbar-unlock hash crowbar)
-chroot "$R" usermod -p "$HASH" crowbar-person
+HASH=$PERSON_PASSWORD_HASH
+if [ -z "$HASH" ]; then HASH=$(chroot "$R" /usr/local/bin/crowbar-unlock hash "$PERSON_PASSWORD"); fi
+chroot "$R" usermod -p "$HASH" "$PERSON"
 for path in "$@"; do install -D -m 755 "$path" "$R/usr/local/bin/$(basename "$path")"; done
 install -d "$R/usr/share/crowbaros-shell" "$R/usr/share/applications" "$R/usr/share/fonts/crowbaros" "$R/usr/share/icons/default"
 install -m 644 "$REPO_ROOT/apps/shell/assets/wallpaper.png" "$REPO_ROOT/apps/shell/assets/nightwatch.png" "$REPO_ROOT/apps/shell/assets/mark.png" "$REPO_ROOT/apps/shell/assets/quiet-signal.png" "$R/usr/share/crowbaros-shell/"

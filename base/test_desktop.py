@@ -28,8 +28,10 @@ class UnlockHelper(unittest.TestCase):
     def setUp(self):
         self.told = []
         self.stored = unlocker.libcrypt.crypt(b'crowbar', unlocker.libcrypt.crypt_gensalt(b'$6$', 0, None, 0))
+        self.person = 'jim'
         patches = [
-            patch.object(unlocker, 'shadow_hash', lambda account: self.stored),
+            patch.object(unlocker, 'person_name', lambda: self.person),
+            patch.object(unlocker, 'shadow_hash', lambda account: self.stored if account == 'jim' else None),
             patch.object(unlocker, 'tell_compositor', lambda op: self.told.append(op)),
             patch.object(unlocker, 'WRONG_PAUSE', 0),
         ]
@@ -49,6 +51,15 @@ class UnlockHelper(unittest.TestCase):
             self.stored = stored
             self.assertFalse(unlocker.password_matches('crowbar'), stored)
             self.assertFalse(unlocker.password_matches(''), stored)
+
+    def test_an_account_from_the_account_file_does_not_take_the_lab_password(self):
+        self.stored = unlocker.libcrypt.crypt(b'their own', unlocker.libcrypt.crypt_gensalt(b'$6$', 0, None, 0))
+        self.assertEqual(unlocker.unlock({'password': 'crowbar'}), {'ok': False, 'error': 'Wrong password'})
+        self.assertEqual(unlocker.unlock({'password': 'their own'}), {'ok': True})
+
+    def test_with_no_person_account_nothing_matches(self):
+        self.person = None
+        self.assertFalse(unlocker.password_matches('crowbar'))
 
     def test_a_request_is_the_password_and_nothing_else(self):
         for request in ({}, {'password': 1}, {'password': 'crowbar', 'account': 'root'}):

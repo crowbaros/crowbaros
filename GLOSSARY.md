@@ -36,6 +36,12 @@ _Avoid_: Alpha desktop, session
 The one account on the machine that belongs to the person. It has their home, its password unlocks the desktop, and apps run as it.
 _Avoid_: `crowbar-person`, app user
 
+**Account file**:
+The file, kept out of git, that gives an image the person's account name and password hash when Base builds it.
+
+**Lab account**:
+The person's account an image gets with no account file, and the one the checks use. Its name and password are both `crowbar`, published in this repository, so an image with it is for the lab alone.
+
 ## The Agent
 
 **Agent**:
