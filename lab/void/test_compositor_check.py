@@ -59,6 +59,10 @@ class CompositorOnBase(unittest.TestCase):
         for service in ('crowbar-shell', 'crowbar-compositor', 'crowbar-launcher',
                         'crowbar-unlock', 'crowbar-ctrl-alt-del'):
             self.assertIn(service, joined)
+        # `crowbar-compositor` is longer than the kernel's 15-char comm name,
+        # so stopping it must find its PID with pidof rather than `pkill -x`.
+        self.assertIn('pidof crowbar-compositor', joined)
+        self.assertNotIn('pkill -x', joined)
         self.assertIn('/run/crowbar-trusted', joined)
         self.assertIn('/run/crowbar-apps', joined)
 

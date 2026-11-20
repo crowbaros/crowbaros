@@ -145,7 +145,8 @@ def stop_desktop_services(ev, vm):
     so this check starts Fulcrum alone on TTY 2 with debug logging."""
     services = " ".join(DESKTOP_SERVICES)
     ev.run(f"sv down {services}")
-    ev.run("pkill -x crowbaros-shell crowbar-compositor || true; "
+    ev.run("pids=$(pidof crowbar-compositor crowbaros-shell 2>/dev/null || true); "
+           "[ -n \"$pids\" ] && kill $pids || true; "
            "pkill -f '/usr/local/bin/crowbar-(shell-connect|launcher|unlock|ctrl-alt-del)' || true")
     stopped = wait_for(
         ev, "Base's desktop services to stop",
