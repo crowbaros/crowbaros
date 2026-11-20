@@ -25,11 +25,11 @@ unsafe extern "C" {
     fn libinput_path_create_context(interface: *const Interface, user_data: *mut c_void) -> *mut c_void;
     fn libinput_path_add_device(libinput: *mut c_void, path: *const c_char) -> *mut c_void;
     fn libinput_path_remove_device(device: *mut c_void);
+    fn libinput_device_ref(device: *mut c_void) -> *mut c_void;
+    fn libinput_device_unref(device: *mut c_void) -> *mut c_void;
     fn libinput_get_fd(libinput: *mut c_void) -> c_int;
     fn libinput_dispatch(libinput: *mut c_void) -> c_int;
     fn libinput_get_event(libinput: *mut c_void) -> *mut c_void;
-    fn libinput_suspend(libinput: *mut c_void);
-    fn libinput_resume(libinput: *mut c_void) -> c_int;
     fn libinput_unref(libinput: *mut c_void) -> *mut c_void;
     fn libinput_event_get_type(event: *mut c_void) -> c_int;
     fn libinput_event_destroy(event: *mut c_void);
@@ -125,7 +125,12 @@ pub struct Input {
     context: NonNull<c_void>,
     // Boxed twice so that the pointer libinput holds stays put.
     _opener: Box<Box<dyn Opener>>,
+    /// The devices libinput has, each with a reference held here, so that a
+    /// device libinput removes on its own, as when the seat takes it back,
+    /// is not freed before this hears of it.
     devices: Vec<(String, NonNull<c_void>)>,
+    /// Events read from libinput that `dispatch` has not returned yet.
+    pending: Vec<InputEvent>,
 }
 
 unsafe extern "C" fn open_restricted(path: *const c_char, flags: c_int, user_data: *mut c_void) -> c_int {
@@ -175,6 +180,7 @@ impl Input {
             context,
             _opener: opener,
             devices: Vec::new(),
+            pending: Vec::new(),
         })
     }
 
@@ -196,18 +202,27 @@ impl Input {
         let Some(device) = NonNull::new(device) else {
             return false;
         };
-        // SAFETY: the device is valid until it is removed.
-        let sysname = text(unsafe { libinput_device_get_sysname(device.as_ptr()) });
+        // SAFETY: a device libinput just added, kept alive by the reference
+        // taken here until `forget` drops it.
+        let sysname = unsafe {
+            libinput_device_ref(device.as_ptr());
+            text(libinput_device_get_sysname(device.as_ptr()))
+        };
         self.devices.push((sysname, device));
         true
     }
 
     /// Removes a device by its sysname, such as `event3`.
     pub fn remove_device(&mut self, sysname: &str) {
+        self.pump();
         if let Some(index) = self.devices.iter().position(|(name, _)| name == sysname) {
             let (_, device) = self.devices.remove(index);
-            // SAFETY: the device was added and not removed before.
-            unsafe { libinput_path_remove_device(device.as_ptr()) };
+            // SAFETY: a device libinput still has, as `pump` just read every
+            // removal it made; the reference held here is then dropped.
+            unsafe {
+                libinput_path_remove_device(device.as_ptr());
+                libinput_device_unref(device.as_ptr());
+            }
         }
     }
 
@@ -215,24 +230,35 @@ impl Input {
         self.devices.iter().any(|(name, _)| name == sysname)
     }
 
-    /// Closes every device, as when the session is switched away.
-    pub fn suspend(&mut self) {
-        // SAFETY: a valid context.
-        unsafe { libinput_suspend(self.context.as_ptr()) };
+    /// Removes and closes every device, as when the session is switched
+    /// away; the caller adds them again when it comes back.
+    ///
+    /// libinput's own suspend is not used: on resume it drops every device
+    /// if one of them is gone, as a keyboard unplugged while another virtual
+    /// terminal showed.
+    pub fn remove_all(&mut self) {
+        self.pump();
+        for (_, device) in self.devices.drain(..) {
+            // SAFETY: as in `remove_device`.
+            unsafe {
+                libinput_path_remove_device(device.as_ptr());
+                libinput_device_unref(device.as_ptr());
+            }
+        }
     }
 
-    /// Opens every device again.
-    pub fn resume(&mut self) {
-        // SAFETY: a valid context.
-        unsafe { libinput_resume(self.context.as_ptr()) };
-    }
-
-    /// Reads what the devices sent, and returns it.
+    /// Reads what the devices sent, and returns it with what was read before.
     pub fn dispatch(&mut self) -> Vec<InputEvent> {
+        self.pump();
+        std::mem::take(&mut self.pending)
+    }
+
+    /// Reads every event libinput has into `pending`, and forgets each device
+    /// libinput removed, whether asked to or on its own.
+    fn pump(&mut self) {
         let context = self.context.as_ptr();
         // SAFETY: a valid context.
         unsafe { libinput_dispatch(context) };
-        let mut events = Vec::new();
         loop {
             // SAFETY: a valid context; the event is destroyed below.
             let event = unsafe { libinput_get_event(context) };
@@ -242,13 +268,25 @@ impl Input {
             // SAFETY: every accessor below is called on an event of the type
             // it reads, while the event lives.
             unsafe {
+                if libinput_event_get_type(event) == EVENT_DEVICE_REMOVED {
+                    self.forget(libinput_event_get_device(event));
+                }
                 if let Some(read) = Self::read(event) {
-                    events.push(read);
+                    self.pending.push(read);
                 }
                 libinput_event_destroy(event);
             }
         }
-        events
+    }
+
+    /// Drops the reference held on a device libinput removed.
+    fn forget(&mut self, device: *mut c_void) {
+        if let Some(index) = self.devices.iter().position(|(_, kept)| kept.as_ptr() == device) {
+            let (_, device) = self.devices.remove(index);
+            // SAFETY: the reference taken in `add_device`; the event that
+            // names the device holds another until it is destroyed.
+            unsafe { libinput_device_unref(device.as_ptr()) };
+        }
     }
 
     /// # Safety
@@ -325,9 +363,15 @@ impl Input {
 
 impl Drop for Input {
     fn drop(&mut self) {
-        // SAFETY: the context is unreferenced once, and with it its devices;
-        // the opener it calls back into is dropped after this.
-        unsafe { libinput_unref(self.context.as_ptr()) };
+        // SAFETY: the references held here are dropped, then the context is
+        // unreferenced once, and with it its devices; the opener it calls
+        // back into is dropped after this.
+        unsafe {
+            for (_, device) in self.devices.drain(..) {
+                libinput_device_unref(device.as_ptr());
+            }
+            libinput_unref(self.context.as_ptr());
+        }
     }
 }
 

@@ -354,6 +354,44 @@ def run_checks(ev, built):
              "key 48 pressed" in keylog and "key 48 released" in keylog)
 
     ev.log()
+    ev.log("== to the console and back, while a second keyboard is unplugged")
+    # A second keyboard, made with uinput, that unplugs itself once
+    # /tmp/unplug exists. Unplugged while the console shows, it must not
+    # take the other keyboards with it when the desktop comes back.
+    ev.run("rm -f /tmp/unplug; cat >/tmp/second-keyboard.py <<'EOF'\n"
+           "import fcntl, os, struct, time\n"
+           "fd = os.open('/dev/uinput', os.O_WRONLY)\n"
+           "fcntl.ioctl(fd, 0x40045564, 1)  # UI_SET_EVBIT EV_KEY\n"
+           "fcntl.ioctl(fd, 0x40045565, 30)  # UI_SET_KEYBIT KEY_A\n"
+           "fcntl.ioctl(fd, 0x405c5503, struct.pack('HHHH80sI', 3, 1, 1, 1, b'crowbar-second-keyboard', 0))\n"
+           "fcntl.ioctl(fd, 0x5501)  # UI_DEV_CREATE\n"
+           "while not os.path.exists('/tmp/unplug'):\n"
+           "    time.sleep(0.1)\n"
+           "fcntl.ioctl(fd, 0x5502)  # UI_DEV_DESTROY\n"
+           "EOF\n"
+           "(python3 /tmp/second-keyboard.py >/tmp/second-keyboard.out 2>&1 &); true")
+    ev.check("the compositor takes the second keyboard",
+             wait_for(ev, "the second keyboard",
+                      lambda: "input device added name=crowbar-second-keyboard" in compositor_log()))
+    ev.run("chvt 1")
+    ev.check("the session pauses for the console",
+             wait_for(ev, "the pause", lambda: "the session is paused" in compositor_log()))
+    ev.run("touch /tmp/unplug; for i in $(seq 50); do "
+           "grep -q crowbar-second-keyboard /proc/bus/input/devices || break; sleep 0.1; done")
+    ev.check("the second keyboard is unplugged while the console shows",
+             "crowbar-second-keyboard" not in ev.run("cat /proc/bus/input/devices"))
+    ev.run("chvt 2")
+    ev.check("the session comes back to the desktop",
+             wait_for(ev, "the return", lambda: "the session is back" in compositor_log()))
+    time.sleep(1)
+    qmp.key("c", True)
+    qmp.key("c", False)
+    time.sleep(1)
+    keylog = ev.run("cat /tmp/keylog-1.out")
+    ev.check("back on the desktop, the keyboard that stayed still types into the window",
+             "key 46 pressed" in keylog and "key 46 released" in keylog)
+
+    ev.log()
     ev.log("== a still desktop draws no frames (ADR 0020)")
 
     def drawing():
