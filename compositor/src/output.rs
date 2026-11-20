@@ -165,9 +165,19 @@ impl State {
         });
     }
 
-    /// Names the monitor an output shows on, and the modes it can show, and
-    /// gives it the scale and place the layout keeps for it.
-    pub fn identify_output(&mut self, number: u64, identity: &str, modes: Vec<(i32, i32, i32)>) {
+    /// Names the monitor an output shows on, the modes it can show, and its
+    /// physical size in millimetres, where (0, 0) is none reported. It gives
+    /// the output the scale and place the layout keeps for the monitor, and
+    /// where the layout keeps no scale, one picked from its density (see
+    /// `default_scale.rs`). That one is not kept: only what the person sets
+    /// is.
+    pub fn identify_output(
+        &mut self,
+        number: u64,
+        identity: &str,
+        modes: Vec<(i32, i32, i32)>,
+        physical_mm: (u32, u32),
+    ) {
         let Some(output) = self.outputs.iter_mut().find(|output| output.number == number) else {
             return;
         };
@@ -175,13 +185,24 @@ impl State {
         if !modes.is_empty() {
             output.modes = modes;
         }
-        let Some(placement) = self.layout.get(identity).cloned() else {
-            return;
-        };
-        if let Some(scale) = placement.scale_120
-            && let Err(error) = self.set_output_scale(number, scale)
-        {
-            crate::log::warning!("the layout's scale was not taken: {error}");
+        let name = output.name.clone();
+        let default = crate::default_scale::default_scale_120(output.size, physical_mm);
+        let placement = self.layout.get(identity).cloned().unwrap_or_default();
+        let mut kept = false;
+        if let Some(scale) = placement.scale_120 {
+            match self.set_output_scale(number, scale) {
+                Ok(()) => kept = true,
+                Err(error) => crate::log::warning!("the layout's scale was not taken: {error}"),
+            }
+        }
+        if !kept {
+            // Always a scale `set_output_scale` takes.
+            let _ = self.set_output_scale(number, default);
+            crate::log::info!(
+                "output scale from its density name={name} scale={default} physical={}x{}mm",
+                physical_mm.0,
+                physical_mm.1
+            );
         }
         if let Some(position) = placement.position {
             self.set_output_position(number, position);

@@ -13,8 +13,9 @@
 //! ```
 //!
 //! A monitor it does not name takes its preferred mode, the place to the
-//! right of the others, and a scale of 1. A line that cannot be read is
-//! left out, and the rest still apply.
+//! right of the others, and a scale picked from its density (see
+//! `default_scale.rs`), which is not kept here. A line that cannot be read
+//! is left out, and the rest still apply.
 
 use std::{
     collections::BTreeMap,

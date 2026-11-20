@@ -84,6 +84,7 @@ In `$D/compositor.log`, near the start:
 
 - `renderer=gles gpu=…` with the machine's GPU. `renderer=cpu` means GBM or EGL did not load, and the runs show nothing about the GPU.
 - `linux-dmabuf imported by the GPU formats=N`: N is in the tens on a real GPU.
+- `output scale from its density name=… scale=… physical=…mm`, for each monitor the layout does not name. The physical size should be the display's own, and the scale one you can read at: 120 is 1, 180 is 1.5.
 - `output connected name=… size=… refresh=… pointer=cursor-plane`, for each monitor. `pointer=frame` means the display offered no cursor plane, or refused one: a line saying so follows.
 - `no explicit sync` must **not** appear on NVIDIA.
 

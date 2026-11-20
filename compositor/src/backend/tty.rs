@@ -712,7 +712,7 @@ impl Tty {
                 )
             })
             .collect();
-        state.identify_output(output, identity, modes);
+        state.identify_output(output, identity, modes, connector.mm_size);
         let pointer = if cursor.is_some() { "cursor-plane" } else { "frame" };
         log::info!("output connected name={name} size={width}x{height} refresh={refresh} pointer={pointer}");
         Ok(Monitor {

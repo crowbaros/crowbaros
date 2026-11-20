@@ -21,6 +21,7 @@ mod cursor;
 mod cursor_shape;
 mod damage;
 pub mod data_device;
+mod default_scale;
 pub mod dmabuf;
 mod drag;
 mod edid;
