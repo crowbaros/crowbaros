@@ -598,6 +598,15 @@ CHECKS = [
     # Logged in as the person, not as root: the build's key reaches their account too.
     ("the person's account takes the build's key over SSH", "id -u",
      lambda out: out.strip() == str(PERSON_UID), "person"),
+    # A service's message and a kernel message, each with a mark of its own,
+    # reach the system's log on the root.
+    ("the system's log keeps services' and the kernel's messages",
+     "m=crowbar-check-$$; logger -t crowbar-check \"$m-service\"; echo \"$m-kernel\" > /dev/kmsg; "
+     "for i in $(seq 50); do "
+     "grep -rqs \"$m-service\" /var/log/socklog && grep -qs \"$m-kernel\" /var/log/socklog/kernel/current && break; "
+     "sleep 0.2; done; "
+     "grep -rhs \"$m-\" /var/log/socklog | sed 's/.*crowbar-check-[0-9]*-//' | sort -u",
+     lambda out: {"service", "kernel"} <= set(out.split())),
     ("network has an address", "ip -4 -o addr show scope global",
      lambda out: "inet " in out),
     ("packages keep their groups", "stat -c '%G %n' /usr/bin/wall /var/db/dhcpcd",
