@@ -80,7 +80,7 @@ fn windows_and_the_shells_bar_look_the_same_on_the_gpu() {
             0xff20_4060,
         )
         .unwrap();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     client
         .open_toplevel("one", "test.one", (300, 200), 0xffc0_3030)
         .unwrap();
@@ -95,7 +95,7 @@ fn windows_and_the_shells_bar_look_the_same_on_the_gpu() {
 #[test]
 fn a_translucent_subsurface_blends_the_same_on_the_gpu() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client
         .open_toplevel("window", "test.blend", (300, 200), 0xff00_00c0)
         .unwrap();
@@ -132,7 +132,7 @@ fn both_kept(compositor: &Compositor) -> Option<(Image, Image)> {
 #[test]
 fn a_texture_is_uploaded_again_when_its_surface_changes() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client
         .open_toplevel("window", "test.change", (120, 80), 0xff80_0000)
         .unwrap();
@@ -154,7 +154,7 @@ fn a_texture_is_uploaded_again_when_its_surface_changes() {
 #[test]
 fn only_what_a_client_damaged_is_uploaded_again() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client
         .open_toplevel("window", "test.patch", (120, 80), 0xff80_0000)
         .unwrap();

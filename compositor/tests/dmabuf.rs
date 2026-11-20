@@ -150,7 +150,7 @@ fn feedback_says_what_the_compositor_takes_on_which_device() {
 #[test]
 fn a_dmabuf_buffer_is_shown_like_shared_memory() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment_with_gpu("c1");
+    let mut client = compositor.app();
     let window = client
         .open_toplevel("dmabuf", "test.dmabuf", (64, 48), 0xff00_00ff)
         .unwrap();
@@ -174,7 +174,7 @@ fn a_dmabuf_buffer_is_shown_like_shared_memory() {
 #[test]
 fn a_buffer_the_compositor_names_is_shown_too() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment_with_gpu("c1");
+    let mut client = compositor.app();
     let window = client
         .open_toplevel("dmabuf", "test.dmabuf", (32, 32), 0xff00_00ff)
         .unwrap();
@@ -213,7 +213,7 @@ fn a_buffer_the_compositor_names_is_shown_too() {
 #[test]
 fn a_tiled_buffer_fails_and_is_not_an_error() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment_with_gpu("c1");
+    let mut client = compositor.app();
     let params = params(&mut client);
     add(&mut client, params, 0, dmabuf(16, 16, 64, 0), 64, TILED);
     client
@@ -235,7 +235,7 @@ fn a_tiled_buffer_fails_and_is_not_an_error() {
 /// Expects the compositor to refuse what `send` does with `code`.
 fn refused(code: u32, send: impl FnOnce(&mut Client, u32)) {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment_with_gpu("c1");
+    let mut client = compositor.app();
     let params = params(&mut client);
     send(&mut client, params);
     assert!(client.roundtrip().is_err(), "the compositor accepted it");
@@ -285,7 +285,7 @@ fn the_params_errors() {
 #[test]
 fn a_dmabuf_that_shrinks_cannot_crash_the_compositor() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment_with_gpu("c1");
+    let mut client = compositor.app();
     let window = client
         .open_toplevel("dmabuf", "test.dmabuf", (64, 64), 0xff00_00ff)
         .unwrap();

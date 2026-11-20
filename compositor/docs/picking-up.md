@@ -4,7 +4,7 @@ Where the buildout paused, how to run everything, what trips people up, and how 
 
 ## Where it paused
 
-Fulcrum came back to CrowbarOS's `compositor/` on November 18, 2026 ([ADR 0031](../../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)). It has drag and drop inside one compartment, which was not yet in a guest check when it was imported. Its tests cover the pointer grab, action negotiation and data transfer, lock and unmap cancellation, compartment isolation, and the icon's placement below trusted frames.
+Fulcrum came back to CrowbarOS's `compositor/` on November 18, 2026 ([ADR 0031](../../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)). It has two kinds of client, the shell and the person's apps ([ADR 0032](../../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md)), each at a socket of its own that takes one user ID. Copy and paste, the primary selection, and drag and drop work between all apps, and the shell's clipboard is its own. The probe's `copy`, `paste`, `drag`, and `drop` apps let CrowbarOS's desktop check show it.
 
 - **Built:**
   - Milestones 1, 2, and 5;
@@ -12,7 +12,6 @@ Fulcrum came back to CrowbarOS's `compositor/` on November 18, 2026 ([ADR 0031](
   - the parts of Milestones 4, 6, 7, and 8 that CrowbarOS's records decide.
 - **Built as proposals:** each passes CrowbarOS's checks and waits for a decision record ([the list](PLAN.md#decisions-this-needs-in-crowbaros)).
 - **Waiting on CrowbarOS:**
-  - a record of what replaces the broker;
   - records on capture by the shell and on input devices' settings;
   - records on the proposals.
 - **Waiting on hardware:** the RTX 4090, Intel, and Surface runs ([how](hardware-runs.md)).

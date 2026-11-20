@@ -82,15 +82,15 @@ fn lock_screen(shell: &mut Client) {
     shell.roundtrip().unwrap();
 }
 
-/// A compartment's window at 48,48 that has the keyboard.
-fn focused_window(compositor: &Compositor) -> (Client, crowbar_probe::CompartmentListener) {
-    let (mut client, listener) = compositor.compartment("c1");
+/// An app's window at 48,48 that has the keyboard.
+fn focused_window(compositor: &Compositor) -> Client {
+    let mut client = compositor.app();
     client.listen_to_keyboard().unwrap();
     client.open_toplevel("app", "test.app", (200, 100), RED).unwrap();
     compositor.click(60, 60);
     client.roundtrip().unwrap();
     client.take_keys().unwrap();
-    (client, listener)
+    client
 }
 
 fn pressed(client: &mut Client) -> Vec<u32> {
@@ -109,7 +109,7 @@ fn pressed(client: &mut Client) -> Vec<u32> {
 fn locked_the_lock_screen_is_all_that_shows_and_all_that_hears() {
     let compositor = Compositor::start();
     let mut control = Control::connect(&compositor);
-    let (mut client, _listener) = focused_window(&compositor);
+    let mut client = focused_window(&compositor);
 
     control.send(r#"{"op":"lock"}"#);
     assert_eq!(control.line(), r#"{"event":"locked"}"#);
@@ -170,7 +170,7 @@ fn super_l_locks_and_nothing_else_draws_on_another_display() {
         state.set_backend(crowbar_compositor::backend::headless::Headless::default());
     });
     let mut control = Control::connect(&compositor);
-    let (_client, _listener) = focused_window(&compositor);
+    let _client = focused_window(&compositor);
 
     chord(&compositor, &[KEY_SUPER, KEY_L]);
     assert_eq!(control.line(), r#"{"event":"locked"}"#);
@@ -200,7 +200,7 @@ fn the_session_locks_itself_when_idle_unless_a_shown_surface_inhibits_it() {
     assert!(compositor.with(|state| state.locked()), "idle did not lock");
 
     compositor.with(|state| state.unlock());
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client.open_toplevel("video", "test.video", (200, 100), RED).unwrap();
     let manager = client
         .bind(
@@ -232,7 +232,7 @@ fn the_session_locks_itself_when_idle_unless_a_shown_surface_inhibits_it() {
 fn the_confirm_chord_locks_an_unlocked_session_and_no_client_hears_its_enter() {
     let compositor = Compositor::start();
     let mut control = Control::connect(&compositor);
-    let (mut client, _listener) = focused_window(&compositor);
+    let mut client = focused_window(&compositor);
 
     chord(&compositor, &[KEY_CTRL, KEY_ALT, KEY_ENTER]);
 
@@ -256,7 +256,7 @@ fn once_there_is_an_unlock_authority_only_its_word_unlocks() {
     let compositor = Compositor::start();
     let mut control = Control::connect(&compositor);
     let mut authority = Control::at(&with_authority(&compositor, own_uid()));
-    let (mut client, _listener) = focused_window(&compositor);
+    let mut client = focused_window(&compositor);
 
     // The authority locks, and hears no event: its reply is all it gets.
     authority.send(r#"{"op":"lock"}"#);
@@ -323,7 +323,7 @@ fn a_session_started_locked_shows_and_gives_nothing_before_the_lock_screen() {
         state.add_output("TEST-1", (640, 480), 60_000);
         state.set_backend(crowbar_compositor::backend::headless::Headless::default());
     });
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     client.listen_to_keyboard().unwrap();
     client.open_toplevel("app", "test.app", (200, 100), RED).unwrap();
     compositor.click(60, 60);

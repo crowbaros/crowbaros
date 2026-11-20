@@ -9,7 +9,7 @@ use fulcrum_wire::{ObjectId, protocol::xdg_shell::xdg_toplevel};
 #[test]
 fn a_dialog_of_the_window_with_the_keyboard_takes_it() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     client.listen_to_keyboard().unwrap();
     let parent = client
         .open_toplevel("app", "test.app", (300, 200), 0xffc0_2020)
@@ -34,7 +34,7 @@ fn a_dialog_of_the_window_with_the_keyboard_takes_it() {
 #[test]
 fn a_dialog_of_a_window_without_the_keyboard_does_not_take_it() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     client.listen_to_keyboard().unwrap();
     let parent = client
         .open_toplevel("app", "test.app", (300, 200), 0xffc0_2020)

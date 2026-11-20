@@ -1,12 +1,11 @@
-//! The primary selection, under the clipboard's rules (ADR 0020): inside
-//! one compartment it moves as apps expect, and between compartments not at
-//! all before slice 4.
+//! The primary selection, under the clipboard's rules (ADR 0032): it moves
+//! between all the person's apps, and the shell's is its own.
 
 mod common;
 
 use std::io::{Read, Write};
 
-use common::{Compositor, connect};
+use common::Compositor;
 use crowbar_probe::Client;
 use fulcrum_wire::{
     Arg, ObjectId,
@@ -90,11 +89,10 @@ fn last_selection(client: &mut Client, device: u32) -> Option<(u32, Vec<String>)
 }
 
 #[test]
-fn a_primary_selection_is_pasted_inside_one_compartment() {
+fn a_primary_selection_made_in_one_app_is_pasted_in_another() {
     let compositor = Compositor::start();
-    let listener = compositor.register("test.principal", "c1");
-    let mut selector = connect(&listener.path).unwrap();
-    let mut paster = connect(&listener.path).unwrap();
+    let mut selector = compositor.app();
+    let mut paster = compositor.app();
     let (manager, selector_device) = device(&mut selector);
     let (_, paster_device) = device(&mut paster);
     selector
@@ -142,10 +140,10 @@ fn a_primary_selection_is_pasted_inside_one_compartment() {
 }
 
 #[test]
-fn a_primary_selection_is_offered_to_no_client_of_another_compartment() {
+fn an_apps_primary_selection_is_not_offered_to_the_shell() {
     let compositor = Compositor::start();
-    let (mut selector, _first) = compositor.compartment("c1");
-    let (mut other, _second) = compositor.compartment("c2");
+    let mut selector = compositor.app();
+    let mut other = compositor.shell();
     let (manager, selector_device) = device(&mut selector);
     let (_, other_device) = device(&mut other);
     other
@@ -161,7 +159,7 @@ fn a_primary_selection_is_offered_to_no_client_of_another_compartment() {
             .events
             .iter()
             .all(|event| event.interface != zwp_primary_selection_offer_v1::NAME),
-        "an offer reached another compartment"
+        "an offer reached the shell"
     );
     selector.roundtrip().unwrap();
     assert!(

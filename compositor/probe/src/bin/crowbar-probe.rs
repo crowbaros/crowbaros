@@ -2,12 +2,16 @@
 
 //! Wayland clients for looking at a compositor from outside.
 
-use std::{io::Write, path::Path, process::Command, time::Instant};
+use std::{io::Write, time::Instant};
 
-use crowbar_probe::{self as probe, Client, Error, KeyEvent, LayerRequest};
+use crowbar_probe::{
+    self as probe, Client, Error, KeyEvent, LayerRequest,
+    apps::{App, Role},
+};
 
 const USAGE: &str = "\
-crowbar-probe: Wayland clients for testing a compositor. Never part of Base.
+crowbar-probe: Wayland clients for testing a compositor. Base's image carries
+it for its desktop check.
 
 Each connects as any client does: WAYLAND_DISPLAY names the socket, by path or
 by a name in XDG_RUNTIME_DIR.
@@ -17,10 +21,20 @@ by a name in XDG_RUNTIME_DIR.
   layer              Try to create a layer surface and say what happened.
   guess INTERFACE... Ask for each interface by guessing its global number,
                      without being offered it. Fails if any bind is accepted.
-  warden PRINCIPAL COMPARTMENT SOCKET [CMD ARGS]
-                     Stand in for the Warden: on the Warden's connection,
-                     register SOCKET as that compartment's listener. Then run
-                     CMD as a client of it, or keep it open until killed.
+
+These four open a maximized window with an app ID of their own, print
+`focused` each time it gains the keyboard, and print one line for each other
+thing that happens, until the compositor closes the connection:
+
+  copy TEXT          org.crowbaros.ProbeCopy. On the keyboard, sets the
+                     clipboard and the primary selection to TEXT: `copied`.
+  paste              org.crowbaros.ProbePaste. On the keyboard, reads both:
+                     `pasted clipboard=TEXT` and `pasted primary=TEXT`.
+  drag TEXT          org.crowbaros.ProbeDrag. A button pressed on the window
+                     starts a drag of TEXT: `drag started`, then
+                     `drag finished` or `drag cancelled`.
+  drop               org.crowbaros.ProbeDrop. Takes text dropped on the
+                     window: `dropped TEXT`.
 ";
 
 fn main() {
@@ -30,7 +44,10 @@ fn main() {
         Some("keylog") => keylog(args.get(1).map(String::as_str).unwrap_or("crowbar-probe keylog")),
         Some("layer") => layer(),
         Some("guess") if args.len() > 1 => guess(&args[1..]),
-        Some("warden") if args.len() > 3 => warden(&args[1], &args[2], Path::new(&args[3]), &args[4..]),
+        Some("copy") if args.len() == 2 => app(Role::Copy(args[1].clone())),
+        Some("paste") if args.len() == 1 => app(Role::Paste),
+        Some("drag") if args.len() == 2 => app(Role::Drag(args[1].clone())),
+        Some("drop") if args.len() == 1 => app(Role::Drop),
         _ => {
             eprint!("{USAGE}");
             std::process::exit(2);
@@ -121,31 +138,12 @@ fn guess(interfaces: &[String]) -> Result<(), Error> {
     Ok(())
 }
 
-fn warden(principal: &str, compartment: &str, socket: &Path, command: &[String]) -> Result<(), Error> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut client = client()?;
-    let listener = client.register_compartment(socket, Some(principal), Some(compartment))?;
-    // The directory the socket is in decides who reaches it, as the sandbox
-    // does for a real compartment.
-    std::fs::set_permissions(&listener.path, std::fs::Permissions::from_mode(0o666))?;
-    println!("listening at {}", listener.path.display());
-    std::io::stdout().flush()?;
-    if command.is_empty() {
-        // Hold the listener until the compositor goes away, as the Warden
-        // holds it for as long as the compartment runs. No deadline: a
-        // stand-in that gave up would close the listener under the clients.
-        loop {
-            client.wait_for_events(std::time::Duration::from_secs(60))?;
-            if client.is_closed() {
-                return Err("the compositor closed the connection".into());
-            }
-        }
-    }
-    let status = Command::new(&command[0])
-        .args(&command[1..])
-        .env("WAYLAND_DISPLAY", &listener.path)
-        .env_remove("WAYLAND_SOCKET")
-        .status()?;
-    drop(listener);
-    std::process::exit(status.code().unwrap_or(1));
+fn app(role: Role) -> Result<(), Error> {
+    let mut app = App::open(client()?, role)?;
+    let mut out = std::io::stdout();
+    app.run(&mut |line| {
+        // A closed stdout ends nothing: the app keeps serving its text.
+        let _ = writeln!(out, "{line}");
+        let _ = out.flush();
+    })
 }

@@ -1,10 +1,11 @@
-//! Clipboard and drag-and-drop transfers stay within a compartment (ADR 0020).
+//! Copy and paste and drag and drop work between all the person's apps, and
+//! the shell's clipboard is its own (ADR 0032).
 
 mod common;
 
 use std::io::{Read, Write};
 
-use common::{Compositor, connect};
+use common::Compositor;
 use crowbar_compositor::{
     FRAME_FOCUSED,
     data_device::{CLIENT_MIME_BYTES, SOURCE_MIME_TYPES},
@@ -88,10 +89,10 @@ fn seen(client: &mut Client, interface: &str) -> Vec<(u32, &'static str)> {
 }
 
 #[test]
-fn a_selection_is_offered_to_no_other_client_even_one_with_the_keyboard() {
+fn an_apps_selection_is_not_offered_to_the_shell_even_with_the_keyboard() {
     let compositor = Compositor::start();
-    let (mut copier, _first) = compositor.compartment("c1");
-    let (mut other, _second) = compositor.compartment("c2");
+    let mut copier = compositor.app();
+    let mut other = compositor.shell();
     let (manager, device) = data_device(&mut copier);
     let (_, other_device) = data_device(&mut other);
     other
@@ -113,7 +114,7 @@ fn a_selection_is_offered_to_no_other_client_even_one_with_the_keyboard() {
 #[test]
 fn a_new_selection_cancels_the_one_it_replaces() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let (manager, device) = data_device(&mut client);
 
     let first = source(&mut client, manager, &["text/plain"]);
@@ -131,7 +132,7 @@ fn a_new_selection_cancels_the_one_it_replaces() {
 #[test]
 fn a_drag_without_an_implicit_pointer_grab_is_cancelled() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let (manager, device) = data_device(&mut client);
     let window = client
         .open_toplevel("app", "test.app", (300, 200), 0xffff_ffff)
@@ -185,7 +186,7 @@ fn dragging_requires_the_serial_of_the_implicit_grab() {
 /// Expects the compositor to refuse what `send` does with `code`.
 fn refused(code: u32, send: impl FnOnce(&mut Client, u32, u32)) {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let (manager, device) = data_device(&mut client);
     send(&mut client, manager, device);
     assert!(client.roundtrip().is_err(), "the compositor accepted it");
@@ -240,8 +241,7 @@ fn a_client_cannot_make_the_compositor_hold_mime_types_without_end() {
     });
 }
 
-/// Two clients of one compartment, each with a window and a data device:
-/// the copier's window at 48,48 and the paster's above it at 80,80.
+/// Two apps, each with a window and a data device: the copier's window at 48,48 and the paster's above it at 80,80.
 struct Pair {
     copier: Client,
     copier_manager: u32,
@@ -250,7 +250,6 @@ struct Pair {
     paster: Client,
     paster_device: u32,
     paster_surface: u32,
-    _listener: crowbar_probe::CompartmentListener,
 }
 
 fn pair(compositor: &Compositor) -> Pair {
@@ -258,9 +257,8 @@ fn pair(compositor: &Compositor) -> Pair {
 }
 
 fn pair_for_target_version(compositor: &Compositor, target_version: u32) -> Pair {
-    let listener = compositor.register("test.principal", "c1");
-    let mut copier = connect(&listener.path).unwrap();
-    let mut paster = connect(&listener.path).unwrap();
+    let mut copier = compositor.app();
+    let mut paster = compositor.app();
     let (copier_manager, copier_device) = data_device(&mut copier);
     let (_, paster_device) = data_device_version(&mut paster, target_version);
     let copying = copier
@@ -279,7 +277,6 @@ fn pair_for_target_version(compositor: &Compositor, target_version: u32) -> Pair
         paster,
         paster_device,
         paster_surface: pasting.surface,
-        _listener: listener,
     }
 }
 
@@ -405,7 +402,7 @@ fn assert_action(client: &mut Client, object: u32, expected: u32) {
 }
 
 #[test]
-fn a_drag_and_drop_moves_data_inside_one_compartment() {
+fn a_drag_and_drop_moves_data_from_one_app_to_another() {
     let compositor = Compositor::start();
     let mut pair = pair(&compositor);
     pair.paster.listen_to_pointer().unwrap();
@@ -509,10 +506,10 @@ fn a_drop_with_ask_finishes_with_the_chosen_action() {
 }
 
 #[test]
-fn a_drop_in_another_compartment_is_cancelled_without_an_offer() {
+fn a_drop_on_the_shell_is_cancelled_without_an_offer() {
     let compositor = Compositor::start();
     let mut pair = pair(&compositor);
-    let (mut other, _listener) = compositor.compartment("c2");
+    let mut other = compositor.shell();
     let (_, other_device) = data_device(&mut other);
     other
         .open_toplevel("other", "test.other", (300, 200), 0xffff_ffff)
@@ -724,7 +721,7 @@ fn last_selection(client: &mut Client, device: u32) -> Option<(u32, Vec<String>)
 }
 
 #[test]
-fn a_selection_is_pasted_inside_one_compartment() {
+fn a_selection_copied_in_one_app_is_pasted_in_another() {
     let compositor = Compositor::start();
     let mut pair = pair(&compositor);
     let copied = source(&mut pair.copier, pair.copier_manager, &["text/plain;charset=utf-8"]);
@@ -820,7 +817,7 @@ fn a_selection_s_offer_takes_no_part_in_drag_and_drop() {
 #[test]
 fn a_client_that_keeps_every_offer_is_offered_no_more_past_its_bound() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let (manager, device) = data_device(&mut client);
     client
         .open_toplevel("app", "test.app", (300, 200), 0xffff_ffff)

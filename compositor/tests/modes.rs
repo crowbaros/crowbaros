@@ -71,7 +71,7 @@ fn rect(compositor: &Compositor) -> Rect {
 fn a_maximized_window_fills_the_room_the_bar_leaves_inside_its_frame() {
     let compositor = Compositor::start();
     let _shell = bar(&compositor);
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client.open_toplevel("app", "test.app", (100, 60), WINDOW).unwrap();
 
     client
@@ -94,7 +94,7 @@ fn a_maximized_window_fills_the_room_the_bar_leaves_inside_its_frame() {
 #[test]
 fn leaving_a_mode_puts_the_window_back_where_and_as_it_floated() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client.open_toplevel("app", "test.app", (100, 60), WINDOW).unwrap();
     client
         .request(window.toplevel, xdg_toplevel::Request::SetMaximized)
@@ -116,7 +116,7 @@ fn leaving_a_mode_puts_the_window_back_where_and_as_it_floated() {
 #[test]
 fn a_window_that_asks_to_be_maximized_before_it_maps_is_configured_so() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let wm_base = client.bind("xdg_wm_base", 6).unwrap();
     let surface = client.create_surface().unwrap();
     let xdg = client.new_id("xdg_surface");
@@ -161,7 +161,7 @@ fn a_window_that_asks_to_be_maximized_before_it_maps_is_configured_so() {
 fn super_f_makes_the_window_with_the_keyboard_cover_the_bar_and_keep_its_frame() {
     let compositor = Compositor::start();
     let _shell = bar(&compositor);
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client.open_toplevel("app", "test.app", (100, 60), WINDOW).unwrap();
     compositor.click(60, 100);
 
@@ -189,7 +189,7 @@ fn super_f_makes_the_window_with_the_keyboard_cover_the_bar_and_keep_its_frame()
 #[test]
 fn super_left_snaps_the_window_to_the_left_half() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client.open_toplevel("app", "test.app", (100, 60), WINDOW).unwrap();
     compositor.click(60, 60);
 
@@ -215,7 +215,7 @@ fn super_left_snaps_the_window_to_the_left_half() {
 #[test]
 fn a_maximized_window_is_fitted_again_when_its_output_changes() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client.open_toplevel("app", "test.app", (100, 60), WINDOW).unwrap();
     client
         .request(window.toplevel, xdg_toplevel::Request::SetMaximized)
@@ -234,7 +234,7 @@ fn a_maximized_window_is_fitted_again_when_its_output_changes() {
 #[test]
 fn a_client_is_told_it_may_ask_to_maximize_and_go_fullscreen() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client.open_toplevel("app", "test.app", (100, 60), WINDOW).unwrap();
     client.roundtrip().unwrap();
 

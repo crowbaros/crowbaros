@@ -87,7 +87,7 @@ fn the_outputs_to_the_right_of_one_that_grows_move_along() {
 #[test]
 fn a_window_an_output_shrinks_away_from_comes_back_onto_it() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     for title in ["first", "second"] {
         client
             .open_toplevel(title, "test.app", (200, 100), 0xffff_ffff)

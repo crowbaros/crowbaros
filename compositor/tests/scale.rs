@@ -66,7 +66,7 @@ fn fractional_scale(client: &mut Client, surface: u32) -> u32 {
 #[test]
 fn an_output_at_scale_two_covers_half_its_pixels_and_draws_at_all_of_them() {
     let compositor = scaled((2560, 1600), 240);
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     client.open_toplevel("app", "test.app", (200, 100), GREEN).unwrap();
     client.roundtrip().unwrap();
 
@@ -92,7 +92,7 @@ fn an_output_at_scale_two_covers_half_its_pixels_and_draws_at_all_of_them() {
 #[test]
 fn a_client_hears_the_scale_rounded_up_and_its_surface_the_scale_itself() {
     let compositor = scaled((1920, 1200), 180);
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let output = client.bind(wl_output::NAME, 4).unwrap();
     let window = client.open_toplevel("app", "test.app", (200, 100), GREEN).unwrap();
     let scale = fractional_scale(&mut client, window.surface);
@@ -157,7 +157,7 @@ fn outputs_side_by_side_meet_at_their_logical_edges() {
 #[test]
 fn the_gpu_draws_a_scaled_output_as_the_cpu_does() {
     let compositor = scaled((1600, 1000), 150);
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     client.open_toplevel("app", "test.app", (200, 100), GREEN).unwrap();
     client.roundtrip().unwrap();
 

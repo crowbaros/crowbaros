@@ -78,7 +78,7 @@ fn window_size(compositor: &Compositor) -> (i32, i32) {
 #[test]
 fn a_viewport_scales_the_buffer_to_its_destination() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = halves(&mut client);
     let viewport = viewport(&mut client, window.surface);
 
@@ -96,7 +96,7 @@ fn a_viewport_scales_the_buffer_to_its_destination() {
 #[test]
 fn a_viewport_shows_only_its_source_and_takes_its_size() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = halves(&mut client);
     let viewport = viewport(&mut client, window.surface);
 
@@ -114,7 +114,7 @@ fn a_viewport_shows_only_its_source_and_takes_its_size() {
 #[test]
 fn a_destroyed_viewport_leaves_the_buffer_as_it_is_after_the_next_commit() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = halves(&mut client);
     let viewport = viewport(&mut client, window.surface);
     set_destination(&mut client, viewport, (10, 10));
@@ -135,7 +135,7 @@ fn a_destroyed_viewport_leaves_the_buffer_as_it_is_after_the_next_commit() {
 /// with `code`, on the object `on` returns.
 fn refused(code: u32, send: impl FnOnce(&mut Client, u32) -> u32) {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = halves(&mut client);
     let on = send(&mut client, window.surface);
     assert!(client.roundtrip().is_err(), "the compositor accepted it");
@@ -192,7 +192,7 @@ fn the_viewport_errors() {
 #[test]
 fn a_viewport_whose_surface_is_gone_can_only_be_destroyed() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let surface = client.create_surface().unwrap();
     let gone = viewport(&mut client, surface);
     client.request(surface, wl_surface::Request::Destroy).unwrap();

@@ -177,10 +177,10 @@ fn released(client: &mut Client, buffer: u32) -> bool {
     client.take_event(buffer, "release").is_some()
 }
 
-fn window(compositor: &Compositor) -> (Client, Toplevel, crowbar_probe::CompartmentListener) {
-    let (mut client, listener) = compositor.compartment_with_gpu("c1");
+fn window(compositor: &Compositor) -> (Client, Toplevel) {
+    let mut client = compositor.app();
     let window = client.open_toplevel("gpu", "test.gpu", (64, 48), GREEN).unwrap();
-    (client, window, listener)
+    (client, window)
 }
 
 #[test]
@@ -188,7 +188,7 @@ fn a_dmabuf_the_gpu_imports_is_drawn_where_it_is_and_held() {
     let Some(compositor) = compositor_with(surfaceless, true) else {
         return;
     };
-    let (mut client, window, _listener) = window(&compositor);
+    let (mut client, window) = window(&compositor);
     let fd = memfd(RED);
     let kept = fd.try_clone().unwrap();
     let buffer = linear(&mut client, fd);
@@ -217,7 +217,7 @@ fn a_held_buffer_is_released_when_other_content_replaces_it() {
     let Some(compositor) = compositor_with(surfaceless, true) else {
         return;
     };
-    let (mut client, window, _listener) = window(&compositor);
+    let (mut client, window) = window(&compositor);
     let first = linear(&mut client, memfd(RED));
     let second = linear(&mut client, memfd(BLUE));
 
@@ -242,7 +242,7 @@ fn a_surface_that_is_destroyed_lets_its_buffer_go() {
     let Some(compositor) = compositor_with(surfaceless, true) else {
         return;
     };
-    let (mut client, _window, _listener) = window(&compositor);
+    let (mut client, _window) = window(&compositor);
     let surface = client.create_surface().unwrap();
     let buffer = linear(&mut client, memfd(RED));
     show(&mut client, surface, Some(buffer));
@@ -263,7 +263,7 @@ fn a_memfd_is_copied_and_never_reaches_the_gpu() {
     let Some(compositor) = compositor_with(surfaceless, false) else {
         return;
     };
-    let (mut client, window, _listener) = window(&compositor);
+    let (mut client, window) = window(&compositor);
     let buffer = linear(&mut client, memfd(RED));
     show(&mut client, window.surface, Some(buffer));
     assert!(released(&mut client, buffer), "a copied buffer is released at once");
@@ -342,7 +342,7 @@ fn a_buffer_in_the_gpus_own_layout_is_shown() {
     frame.finish();
     assert!(fulcrum_sys::dmabuf::is_dmabuf(planes()[0].0.as_fd()));
 
-    let (mut client, window, _listener) = window(&compositor);
+    let (mut client, window) = window(&compositor);
     let buffer = buffer(&mut client, planes(), made.modifier());
     show(&mut client, window.surface, Some(buffer));
 
@@ -382,7 +382,7 @@ fn a_held_buffers_release_point_waits_for_its_replacement() {
         eprintln!("no GPU that imports memfds: skipped");
         return;
     }
-    let (mut client, window, _listener) = window(&compositor);
+    let (mut client, window) = window(&compositor);
     let manager = client.bind(wp_linux_drm_syncobj_manager_v1::NAME, 1).unwrap();
     // One timeline the client's GPU signals, and one the compositor does.
     let timeline = |client: &mut Client| {

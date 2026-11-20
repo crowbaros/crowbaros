@@ -1,9 +1,9 @@
-//! What one compartment can make the compositor hold (CrowbarOS issue 174).
+//! What one client can make the compositor hold (CrowbarOS issue 174).
 //!
-//! Every connection and every pool costs the compositor a descriptor. A
-//! compartment is stopped at its budget, a reserve stays for the shell and
-//! the Warden, and a listener that cannot accept at all, because the process
-//! has no descriptor left, waits and tries again.
+//! Every connection and every pool costs the compositor a descriptor. Each
+//! client is stopped at its budget, a reserve stays for the shell, and a
+//! socket that cannot accept at all, because the process has no descriptor
+//! left, waits and tries again.
 //!
 //! The compositor is in this process, so these tests take turns: the
 //! descriptor table, and its limit, are the whole process's.
@@ -96,37 +96,23 @@ fn answers(socket: &Path) -> bool {
 }
 
 #[test]
-fn a_listener_that_cannot_accept_waits_and_the_compositor_goes_on() {
+fn the_apps_socket_that_cannot_accept_waits_and_the_compositor_goes_on() {
     let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let compositor = Compositor::start();
-    let mut warden = compositor.warden();
-    let mut register = |compartment: &str| {
-        warden
-            .register_compartment(
-                &compositor.listener_path(compartment),
-                Some("test.principal"),
-                Some(compartment),
-            )
-            .unwrap()
-    };
-    let other_listener = register("other");
-    let greedy = register("greedy");
-    let mut other = connect(&other_listener.path).unwrap();
+    let mut other = compositor.app();
 
-    let _pending = connect_when_the_compositor_cannot_accept(&compositor, &greedy.path);
+    let _pending = connect_when_the_compositor_cannot_accept(&compositor, &compositor.parts.apps.socket);
 
-    other
-        .roundtrip()
-        .expect("a client of another compartment lost its connection");
-    assert!(answers(&other_listener.path), "another compartment's listener stopped");
+    other.roundtrip().expect("a connected app lost its connection");
+    assert!(answers(&compositor.parts.shell.socket), "the shell's socket stopped");
     assert!(
-        answers(&greedy.path),
-        "the listener never accepted again after the descriptors came back"
+        answers(&compositor.parts.apps.socket),
+        "the apps' socket never accepted again after the descriptors came back"
     );
 }
 
 #[test]
-fn a_trusted_socket_that_cannot_accept_does_so_again_later() {
+fn the_shells_socket_that_cannot_accept_does_so_again_later() {
     let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let compositor = Compositor::start();
 
@@ -138,50 +124,11 @@ fn a_trusted_socket_that_cannot_accept_does_so_again_later() {
     );
 }
 
-/// Issue 174: a compartment that opens connections without end is stopped
-/// at its budget, and everyone else is still accepted.
-#[test]
-fn a_compartment_that_opens_connections_without_end_is_stopped_at_its_budget() {
-    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
-    let compositor = Compositor::start();
-    let greedy = compositor.register("test.principal", "greedy");
-    let other = compositor.register("test.principal", "other");
-
-    let mut held = Vec::new();
-    let mut refused = 0;
-    for _ in 0..limits::COMPARTMENT_CONNECTIONS + 4 {
-        match connect(&greedy.path) {
-            Ok(client) => held.push(client),
-            Err(_) => refused += 1,
-        }
-    }
-    assert_eq!(held.len(), limits::COMPARTMENT_CONNECTIONS);
-    assert_eq!(refused, 4);
-
-    // While it is at its budget, the compositor still takes the shell, the
-    // Warden, and another compartment, and a connected client still works.
-    assert!(compositor.try_shell().is_ok());
-    assert!(compositor.try_warden().is_ok());
-    let mut stranger = connect(&other.path).unwrap();
-    let surface = stranger.create_surface().unwrap();
-    let buffer = stranger.shm_buffer((2, 2), 0xffff_ffff).unwrap();
-    stranger.show(surface, Some(&buffer)).unwrap();
-    stranger.roundtrip().unwrap();
-
-    // A connection that ends gives its place back.
-    held.pop();
-    let back = (0..200).any(|_| {
-        std::thread::sleep(Duration::from_millis(5));
-        connect(&greedy.path).is_ok()
-    });
-    assert!(back, "a closed connection's place never came back");
-}
-
 #[test]
 fn a_client_is_stopped_at_its_budget_of_pools() {
     let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("pools");
+    let mut client = compositor.app();
     for _ in 0..limits::CLIENT_POOLS {
         client.shm_buffer((1, 1), 0).unwrap();
     }
@@ -200,7 +147,7 @@ fn a_client_is_stopped_at_its_budget_of_pools() {
 fn a_client_is_stopped_at_its_budget_of_shared_memory() {
     let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("bytes");
+    let mut client = compositor.app();
     let shm = client.bind(wl_shm::NAME, 1).unwrap();
     let file = rustix::fs::memfd_create("big", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
     let pool_size = crowbar_compositor::MAX_POOL_SIZE;
@@ -243,7 +190,7 @@ fn a_client_is_stopped_at_its_budget_of_shared_memory() {
 fn a_client_may_hold_sparse_pools_as_large_as_foots() {
     let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("foot");
+    let mut client = compositor.app();
     let shm = client.bind(wl_shm::NAME, 1).unwrap();
     const FOOT_POOL: i32 = 512 * 1024 * 1024;
     let file = rustix::fs::memfd_create("foot-like", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
@@ -305,7 +252,7 @@ fn a_client_is_stopped_at_its_budget_of_pixels() {
     let compositor = Compositor::start();
     // Four buffers of 256x256.
     compositor.with(|state| state.set_pixel_budget(4 * 256 * 256 * 4));
-    let (mut client, _listener) = compositor.compartment("pixels");
+    let mut client = compositor.app();
     let buffer = client.shm_buffer((256, 256), 0xffff_ffff).unwrap();
     let surfaces: Vec<u32> = (0..6).map(|_| client.create_surface().unwrap()).collect();
 
@@ -330,33 +277,41 @@ fn a_client_is_stopped_at_its_budget_of_pixels() {
     compositor.shell().roundtrip().unwrap();
 }
 
-/// When few descriptors are left, a compartment is refused before the
-/// trusted parts are: the reserve is theirs.
+/// When few descriptors are left, an app is refused before the shell is:
+/// the reserve is the shell's. An app that opens connections without end is
+/// stopped there, and the shell is still accepted.
 #[test]
-fn the_reserve_is_kept_for_the_shell_and_the_warden() {
+fn the_reserve_is_kept_for_the_shell() {
     let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let compositor = Compositor::start();
-    let listener = compositor.register("test.principal", "squeezed");
-    // The Warden's connection that registered the listener is closing. Wait
-    // until it has, or its descriptor comes back after the limit is set.
-    let settled = (0..400).any(|_| {
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        compositor.client_count() == 0
-    });
-    assert!(settled, "the Warden's connection never closed");
     // A limit that leaves room for two more connections above the reserve.
     compositor.with(|state| {
         let limit = state.descriptors_held() + limits::RESERVE + 2;
         state.set_descriptor_limit(limit);
     });
     let mut held = Vec::new();
-    while let Ok(client) = connect(&listener.path) {
+    while let Ok(client) = compositor.try_app() {
         held.push(client);
-        assert!(held.len() <= 2, "a compartment took descriptors from the reserve");
+        assert!(held.len() <= 2, "an app took descriptors from the reserve");
     }
     assert_eq!(held.len(), 2);
+
+    // A connection that ends gives its place back.
+    held.remove(0);
+    let back = (0..200).any(|_| {
+        std::thread::sleep(Duration::from_millis(5));
+        match compositor.try_app() {
+            Ok(client) => {
+                held.push(client);
+                true
+            }
+            Err(_) => false,
+        }
+    });
+    assert!(back, "a closed connection's place never came back");
+
     for _ in 0..4 {
         held.push(compositor.shell());
-        held.push(compositor.warden());
     }
+    held.last_mut().unwrap().roundtrip().unwrap();
 }

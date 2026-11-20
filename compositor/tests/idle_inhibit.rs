@@ -53,7 +53,7 @@ fn first_output(compositor: &Compositor) -> u64 {
 #[test]
 fn a_shown_window_keeps_its_output_from_idling_until_its_inhibitor_goes() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client
         .open_toplevel("video", "test.video", (200, 100), 0xff80_0000)
         .unwrap();
@@ -72,7 +72,7 @@ fn a_shown_window_keeps_its_output_from_idling_until_its_inhibitor_goes() {
 #[test]
 fn a_window_on_another_workspace_inhibits_nothing_until_it_shows_again() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client
         .open_toplevel("video", "test.video", (200, 100), 0xff80_0000)
         .unwrap();
@@ -88,7 +88,7 @@ fn a_window_on_another_workspace_inhibits_nothing_until_it_shows_again() {
 #[test]
 fn a_surface_never_shown_or_gone_inhibits_nothing() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let surface = client.create_surface().unwrap();
     inhibit(&mut client, surface);
     assert!(inhibited(&compositor).is_empty(), "a surface with no role inhibits");
@@ -117,7 +117,7 @@ fn a_surface_never_shown_or_gone_inhibits_nothing() {
 #[test]
 fn a_client_that_goes_takes_its_inhibitors_with_it() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client
         .open_toplevel("video", "test.video", (200, 100), 0xff80_0000)
         .unwrap();

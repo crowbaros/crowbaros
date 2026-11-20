@@ -29,19 +29,19 @@ fn workspace(n: u32) -> u32 {
     KEY_1 + n - 1
 }
 
-fn window(compositor: &Compositor) -> (Client, crowbar_probe::Toplevel, crowbar_probe::CompartmentListener) {
-    let (mut client, listener) = compositor.compartment("c1");
+fn window(compositor: &Compositor) -> (Client, crowbar_probe::Toplevel) {
+    let mut client = compositor.app();
     client.listen_to_keyboard().unwrap();
     // `enter` and `leave` name the client's own outputs.
     client.bind(wl_output::NAME, 4).unwrap();
     let window = client.open_toplevel("one", "test.one", (200, 100), RED).unwrap();
-    (client, window, listener)
+    (client, window)
 }
 
 #[test]
 fn a_window_on_a_workspace_not_showing_is_nowhere_until_it_shows_again() {
     let compositor = Compositor::start();
-    let (mut client, window, _listener) = window(&compositor);
+    let (mut client, window) = window(&compositor);
     assert_eq!(compositor.screen(0).pixel(INSIDE.0, INSIDE.1), Some(RED));
 
     chord(&compositor, &[KEY_SUPER, workspace(2)]);
@@ -65,7 +65,7 @@ fn a_window_on_a_workspace_not_showing_is_nowhere_until_it_shows_again() {
 #[test]
 fn a_chord_with_super_never_reaches_a_client() {
     let compositor = Compositor::start();
-    let (mut client, _window, _listener) = window(&compositor);
+    let (mut client, _window) = window(&compositor);
     compositor.click(INSIDE.0, INSIDE.1);
     client.take_keys().unwrap();
 
@@ -86,7 +86,7 @@ fn a_chord_with_super_never_reaches_a_client() {
 #[test]
 fn hiding_a_window_takes_the_keyboard_from_it() {
     let compositor = Compositor::start();
-    let (mut client, _window, _listener) = window(&compositor);
+    let (mut client, _window) = window(&compositor);
     compositor.click(INSIDE.0, INSIDE.1);
     client.take_keys().unwrap();
 
@@ -101,7 +101,7 @@ fn hiding_a_window_takes_the_keyboard_from_it() {
 #[test]
 fn super_shift_moves_the_window_with_the_keyboard_to_another_workspace() {
     let compositor = Compositor::start();
-    let (mut client, _window, _listener) = window(&compositor);
+    let (mut client, _window) = window(&compositor);
     compositor.click(INSIDE.0, INSIDE.1);
 
     chord(&compositor, &[KEY_SUPER, KEY_SHIFT, workspace(4)]);
@@ -121,7 +121,7 @@ fn super_shift_moves_the_window_with_the_keyboard_to_another_workspace() {
 fn a_new_window_opens_on_the_workspace_showing() {
     let compositor = Compositor::start();
     chord(&compositor, &[KEY_SUPER, workspace(5)]);
-    let (_client, _window, _listener) = window(&compositor);
+    let (_client, _window) = window(&compositor);
 
     assert_eq!(compositor.with(|state| state.window_rects()).len(), 1);
     chord(&compositor, &[KEY_SUPER, workspace(1)]);

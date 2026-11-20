@@ -5,7 +5,7 @@
 //! As with `wl_pointer.set_cursor`, the client with pointer focus or the
 //! active drag sets the shape. The compositor's own image comes back when
 //! control changes hands (see `cursor.rs`). The table offers it to
-//! every compartment and the shell (ADR 0020, ADR 0023).
+//! every client (ADR 0032).
 
 use std::borrow::Cow;
 

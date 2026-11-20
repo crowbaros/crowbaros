@@ -13,7 +13,7 @@ const RED: u32 = 0xffff_0000;
 #[test]
 fn a_still_desktop_draws_no_frames_and_does_not_look_for_any() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     client.open_toplevel("still", "test.still", (300, 200), WHITE).unwrap();
     let before = compositor.wait_until_still();
     assert!(before.0 > 0, "the window was never drawn");
@@ -27,7 +27,7 @@ fn a_still_desktop_draws_no_frames_and_does_not_look_for_any() {
 #[test]
 fn a_window_that_changes_is_drawn_once() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client
         .open_toplevel("change", "test.change", (300, 200), WHITE)
         .unwrap();
@@ -41,7 +41,7 @@ fn a_window_that_changes_is_drawn_once() {
 #[test]
 fn a_commit_that_changes_nothing_draws_no_frame_and_is_still_answered() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client.open_toplevel("same", "test.same", (300, 200), WHITE).unwrap();
     let (frames, _) = compositor.wait_until_still();
 
@@ -59,7 +59,7 @@ fn a_commit_that_changes_nothing_draws_no_frame_and_is_still_answered() {
 #[test]
 fn a_client_that_commits_on_every_frame_is_held_to_the_displays_rate() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client.open_toplevel("busy", "test.busy", (300, 200), WHITE).unwrap();
     let (frames, _) = compositor.wait_until_still();
 
@@ -86,7 +86,7 @@ fn a_client_that_commits_on_every_frame_is_held_to_the_displays_rate() {
 #[test]
 fn a_window_that_closes_is_drawn_away_and_then_nothing_more() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     client.open_toplevel("gone", "test.gone", (300, 200), WHITE).unwrap();
     let (frames, _) = compositor.wait_until_still();
 
@@ -103,7 +103,7 @@ fn a_window_that_closes_is_drawn_away_and_then_nothing_more() {
 #[test]
 fn a_part_of_a_window_that_is_destroyed_is_drawn_away() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client.open_toplevel("parts", "test.parts", (300, 200), WHITE).unwrap();
     let part = client.open_subsurface(&window, (100, 50), RED).unwrap();
     let (frames, _) = compositor.wait_until_still();
@@ -124,7 +124,7 @@ fn a_window_that_grows_onto_another_output_is_drawn_on_both() {
     compositor.with(|state| {
         state.add_output("TEST-2", OUTPUT_SIZE, 60_000);
     });
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let window = client.open_toplevel("grows", "test.grows", (300, 200), WHITE).unwrap();
     let (frames, _) = compositor.wait_until_still();
 
@@ -142,7 +142,7 @@ fn a_window_that_grows_onto_another_output_is_drawn_on_both() {
 #[test]
 fn moving_the_pointer_over_a_still_desktop_draws_no_frame() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     client.open_toplevel("still", "test.still", (300, 200), WHITE).unwrap();
     let (frames, _) = compositor.wait_until_still();
 

@@ -15,12 +15,15 @@ CrowbarOS decides what the compositor must do, in its decision records:
 | Decision | Record |
 | --- | --- |
 | CrowbarOS owns its compositor | [ADR 0015](../docs/adr/0015-our-own-compositor-on-smithay.md) |
-| Who its clients are, and how each connects | [ADR 0016](../docs/archive/substrate-vision/adr/0016-the-warden-starts-every-compartment.md) |
-| How an ask is shown and answered | [ADR 0018](../docs/archive/substrate-vision/adr/0018-one-gesture-answers-one-ask.md) |
-| What desktop it is, what each client is offered, and its slices | [ADR 0020](../docs/archive/substrate-vision/adr/0020-the-first-compositor-is-small-on-purpose.md) |
-| Which rows of that table the shell and the Warden are offered | [ADR 0023](../docs/archive/substrate-vision/adr/0023-the-shell-is-offered-a-compartments-protocols-and-layer-shell.md) |
+| Its two kinds of client, the shell and the person's apps, how each connects, and what each is offered | [ADR 0032](../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md) |
 | It is built in this repository, and reaches Base when a change merges | [ADR 0031](../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md), which replaces [ADR 0027](../docs/adr/0027-the-compositor-is-built-in-its-own-repository.md) |
 | It is written from the ground up | [ADR 0028](../docs/adr/0028-the-compositor-is-written-from-the-ground-up.md) |
+
+What Fulcrum does as a desktop, its frames, workspaces, chords, and
+placement, is what this README says, and changes by pull request
+(ADR 0032). The substrate vision's records in
+[the archive](../docs/archive/substrate-vision/adr/) bind nothing; where this
+README names one, as ADR 0020, it says where an idea came from.
 
 ## Where it stands
 
@@ -32,10 +35,10 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 - **`fulcrum-wire`**, the wire protocol: the codec, connections that pass
   descriptors beside the bytes, and Rust code generated from the protocol XML.
   Every queue is bounded, and nothing a peer sends can make it panic.
-- **The server core**: an event loop on `epoll`; the two trusted sockets, each
-  checking the peer's user ID; compartment listeners the Warden registers; and
-  the registry, which advertises and binds a global only if the policy table
-  offers it (ADR 0020). A client that breaks the protocol gets
+- **The server core**: an event loop on `epoll`; two path sockets, the
+  shell's and the one every app connects to, each taking one user ID as the
+  kernel reports it; and the registry, which advertises and binds a global
+  only if the policy table offers it (ADR 0032). A client that breaks the protocol gets
   `wl_display.error` and is disconnected, and everyone else is served.
 - **Surfaces and shared memory**, with double-buffered state, held commits for
   synchronized subsurfaces, `wp_viewporter`'s crop and scale, and pools read
@@ -108,8 +111,7 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   a real dma-buf reaches the import. Elsewhere, or where the GPU refuses a
   buffer, the CPU copies single-plane `XR24` and `AR24` at each commit.
   This path maps real dma-bufs and uses positioned reads for regular files.
-  The shell and a compartment whose needs include the GPU are offered it
-  (ADR 0020, ADR 0023).
+  The shell and every app are offered it (ADR 0032).
 - **Presentation time**: a client learns when its content was shown, on
   which output, and the refresh, so it can pace itself. A page flip's time
   is the kernel's, on the monotonic clock, with the display's vertical blank
@@ -151,19 +153,18 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   buffer: at once for a copy, and when other content replaces it for a
   buffer the GPU draws where it is. Drivers without implicit sync, as NVIDIA's, need it. It is offered
   where the display's device has timeline syncobjs.
-- **The data device**: inside one compartment, copy and paste work as apps
-  expect (ADR 0020). A client's selection is its compartment's, and the
-  compartment's client that holds the keyboard is offered it, as it gains
-  the keyboard and when the selection changes; the shell's clients share
-  one of their own. The primary selection, which a middle click pastes,
-  follows the same rules. Drag and drop works within one compartment. A
-  drag starts from a held pointer press, negotiates an action with its
-  destination, and ends if the session locks or its source goes away. Any
-  drag icon follows the pointer below trusted frames. Transfers between
-  compartments wait on CrowbarOS's decision about the broker.
-- **Budgets** (CrowbarOS ADR 0029): one compartment cannot take the
-  compositor's descriptors from the others, and one client cannot make it
-  hold pixels without end.
+- **The data device**: copy and paste work between all the person's apps,
+  as on any desktop (ADR 0032). An app's selection is every app's, and the
+  app that holds the keyboard is offered it, as it gains the keyboard and
+  when the selection changes; the shell's clients share one of their own.
+  The primary selection, which a middle click pastes, follows the same
+  rules. A drag from an app drops on any app, and one from the shell only on
+  the shell. A drag starts from a held pointer press, negotiates an action
+  with its destination, and ends if the session locks or its source goes
+  away. Any drag icon follows the pointer below trusted frames.
+- **Limits on each client** (ADR 0032): the apps cannot take the
+  descriptors the shell needs, since a reserve is kept for it, and one
+  client cannot make the compositor hold pools or pixels without end.
 - **The TTY backend**: the seat from seatd, through Fulcrum's own client of
   its socket; displays through the kernel's atomic mode setting; input
   through libinput; and monitors and input devices plugged in and out, heard
@@ -187,11 +188,11 @@ The later milestones stand as far as CrowbarOS's records decide, and no run on r
 | Milestone | Where it stands |
 | --- | --- |
 | 3 · Buffers and timing | Built, but not yet run on real GPUs |
-| 4 · Trusted shell session | The control channel and the confirm chord. Asks, arming, and the restart notice wait for a record of what replaces the broker |
+| 4 · Trusted shell session | The control channel and the confirm chord. Asks, arming, and the restart notice waited on the broker, and are dropped (ADR 0032) |
 | 5 · Working window manager | Built |
-| 6 · Clipboard and capture | Copy and paste and the primary selection inside one compartment. Drag and drop is not built. Transfers between compartments and capture wait for records |
+| 6 · Clipboard and capture | Copy and paste, the primary selection, and drag and drop between all apps. Capture waits for a record |
 | 7 · Displays, input, and hardware | Scale, the layout of displays, and hotplug. Input devices' settings wait for a record; suspend and mixed scale wait for the hardware runs |
-| 8 · Lock and recovery | Lock, the idle timer, the confirm chord, starting locked, and unlock by the person's password through Base's helper, as a proposal. The broker's record of each unlock waits for a record |
+| 8 · Lock and recovery | Lock, the idle timer, the confirm chord, starting locked, and unlock by the person's password through Base's helper, as a proposal. The broker's record of each unlock is dropped (ADR 0032) |
 | 9 · CrowbarOS cutover | The Alpha desktop, its GPUI shell and Studio Settings, runs on Fulcrum. The production interfaces wait for the records above |
 
 Several messages and flags are Fulcrum's proposals, built and checked, until CrowbarOS records decide them. [The plan](docs/PLAN.md) lists them, what each milestone has, and what is next. [Picking up the work](docs/picking-up.md) says where the work paused, how to run everything, and how to start each next piece.
@@ -209,15 +210,15 @@ and CrowbarOS has built it in the baseline's place since
 | `codegen/` | `fulcrum-codegen`: writes `wire/src/protocol/` from `protocols/`. A development tool, never part of Base |
 | `protocols/` | The protocol XML Fulcrum speaks, each file with its own license. [Where each came from](protocols/README.md) |
 | `src/event_loop.rs` | One thread on `epoll`, with timers in the loop and a waker for other threads |
-| `src/connections.rs` | Every way a client can connect: the two trusted sockets, and a compartment's listener |
-| `src/identity.rs` | Who a client is |
+| `src/connections.rs` | Every way a client can connect: the shell's socket and the apps' socket |
+| `src/identity.rs` | Who a client is: the shell or an app |
 | `src/policy.rs` | The one table that says which client is offered which global |
 | `src/globals.rs` | Globals and the registry |
 | `src/client.rs`, `src/state.rs` | Each client's objects, and how each request reaches the code that carries it out |
 | `src/surface.rs` | Surfaces, regions, and subsurfaces: double-buffered state, held commits, stacking |
 | `src/shm.rs` | Pools and buffers in a client's shared memory |
 | `src/image.rs`, `src/geometry.rs` | The CPU renderer, rectangles, and regions |
-| `src/limits.rs` | What one client, and one compartment, may make the compositor hold |
+| `src/limits.rs` | What one client may make the compositor hold, and the reserve kept for the shell |
 | `src/xdg.rs`, `src/windows.rs` | xdg-shell, and where windows go and what each output shows |
 | `src/layer.rs` | The shell's layer surfaces and the room they reserve |
 | `src/cursor.rs` | The pointer's image |
@@ -228,7 +229,7 @@ and CrowbarOS has built it in the baseline's place since
 | `src/modes.rs` | Maximized, fullscreen, and snapped windows |
 | `src/grabs.rs` | Moving and resizing windows with the pointer |
 | `src/control.rs`, `src/json.rs` | The shell's control channel, and the flat JSON it speaks |
-| `src/data_device.rs` | Data sources and offers, the clipboard, and routing within a compartment |
+| `src/data_device.rs` | Data sources and offers, and the clipboard the apps share |
 | `src/drag.rs` | Drag targets, action negotiation, drop, and cancellation |
 | `src/primary_selection.rs` | The primary selection, under the clipboard's rules |
 | `src/viewporter.rs` | `wp_viewporter`: a surface's crop and scale |
@@ -248,8 +249,8 @@ and CrowbarOS has built it in the baseline's place since
 | `src/backend/` | Where frames go: `tty.rs` (a virtual terminal), `session.rs` (Fulcrum's client of seatd), `uevent.rs` (hotplug from netlink), `nested.rs` (a window on a host session), and `headless.rs` (the tests) |
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `dl.rs` (libraries loaded at run time), `gles.rs` (EGL and GLES: the context, textures, targets, and draws), `gbm.rs`, `dmabuf.rs` (telling a dma-buf from other files, and reading one with the CPU), `syncobj.rs` (DRM timelines), `drm.rs` (mode setting, dumb buffers, and framebuffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (copying client pixel rows) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
-| `probe/` | `crowbar-probe`: test clients and the stand-in for the Warden. Never part of Base |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `cursor.rs` and `cursor_shape.rs` cover the pointer's image; `outputs.rs` covers outputs that change size; `data_device.rs`, `primary_selection.rs`, and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `scale.rs` covers outputs at other scales; `layout.rs` covers the layout of displays; `dmabuf.rs` covers linux-dmabuf; `idle_inhibit.rs` covers idle inhibit; `lock.rs` covers the locked session; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate [the plan](docs/PLAN.md) rules out enters `Cargo.lock` |
+| `probe/` | `crowbar-probe`: test clients, and apps that copy, paste, drag, and drop (`probe/src/apps.rs`). Base's image carries it for its desktop check |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the budgets; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` is the baseline's, unchanged; `seat.rs` covers the pointer and activation; `cursor.rs` and `cursor_shape.rs` cover the pointer's image; `outputs.rs` covers outputs that change size; `data_device.rs`, `primary_selection.rs`, and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `scale.rs` covers outputs at other scales; `layout.rs` covers the layout of displays; `dmabuf.rs` covers linux-dmabuf; `idle_inhibit.rs` covers idle inhibit; `lock.rs` covers the locked session; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `probe_apps.rs` runs the probe's apps as the desktop check does; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate [the plan](docs/PLAN.md) rules out enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), [picking up the work](docs/picking-up.md), [how to run Fulcrum on real hardware](docs/hardware-runs.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.
@@ -262,8 +263,14 @@ virtual terminal, with seatd running and the compositor's user in its group:
 ```sh
 crowbar-compositor \
     --shell-socket /run/crowbar/compositor-shell/wayland --shell-uid 1001 \
-    --warden-socket /run/crowbar/compositor-warden/wayland --warden-uid 0
+    --apps-socket /run/crowbar-person/wayland-0 --apps-uid 1003
 ```
+
+Every app connects at the apps' socket, and the compositor accepts a peer
+there only if the kernel reports the person's user ID. Base makes its
+directory, which only the compositor and the person's group can enter, and
+links the socket into the person's `XDG_RUNTIME_DIR` as `wayland-0`, so any
+Wayland app finds it.
 
 `--shell-control-socket PATH` adds the shell's control channel, from the
 shell's user ID.
@@ -274,15 +281,14 @@ session it is started from:
 ```sh
 cargo run --features nested -- --backend nested \
     --shell-socket /tmp/fulcrum/shell --shell-uid "$(id -u)" \
-    --warden-socket /tmp/fulcrum/warden --warden-uid "$(id -u)"
+    --apps-socket /tmp/fulcrum/apps --apps-uid "$(id -u)"
 ```
 
-A compartment's client reaches it through a listener the Warden registers.
-`crowbar-probe warden` stands in for the Warden:
+Then run apps at the apps' socket:
 
 ```sh
-WAYLAND_DISPLAY=/path/to/warden-socket \
-    crowbar-probe warden org.example.App compartment-1 /tmp/c1 wayland-info
+WAYLAND_DISPLAY=/tmp/fulcrum/apps foot
+WAYLAND_DISPLAY=/tmp/fulcrum/apps crowbar-probe globals
 ```
 
 ## Build and test

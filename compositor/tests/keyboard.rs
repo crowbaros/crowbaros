@@ -20,12 +20,11 @@ fn keys_only(events: Vec<KeyEvent>) -> Vec<(u32, bool)> {
 
 /// A client with a window, listening to the keyboard. The first window
 /// opens at 48,48 on the test output and the second at 80,80.
-fn client_with_window(compositor: &Compositor, compartment: &str) -> Client {
-    let listener = compositor.register("test.principal", compartment);
-    let mut client = common::connect(&listener.path).unwrap();
+fn client_with_window(compositor: &Compositor, title: &str) -> Client {
+    let mut client = compositor.app();
     client.listen_to_keyboard().unwrap();
     client
-        .open_toplevel(compartment, "test.keys", (300, 200), 0xffff_ffff)
+        .open_toplevel(title, "test.keys", (300, 200), 0xffff_ffff)
         .unwrap();
     client
 }

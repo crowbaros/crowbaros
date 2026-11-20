@@ -39,7 +39,7 @@ fn names(client: &mut Client, feedback: u32) -> Vec<&'static str> {
 #[test]
 fn binding_says_the_clock_is_the_monotonic_one() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let presentation = client.bind(wp_presentation::NAME, 2).unwrap();
     client.roundtrip().unwrap();
 
@@ -50,7 +50,7 @@ fn binding_says_the_clock_is_the_monotonic_one() {
 #[test]
 fn drawn_content_is_presented_on_its_output() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let presentation = client.bind(wp_presentation::NAME, 2).unwrap();
     let output = client.bind(wl_output::NAME, 4).unwrap();
     let window = client.open_toplevel("app", "test.app", (100, 60), 0xffff_ffff).unwrap();
@@ -83,7 +83,7 @@ fn drawn_content_is_presented_on_its_output() {
 #[test]
 fn content_replaced_before_it_was_drawn_is_discarded() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let presentation = client.bind(wp_presentation::NAME, 2).unwrap();
     // A surface with no role is on no output, so nothing draws it: each
     // commit's content waits until the next replaces it.
@@ -101,7 +101,7 @@ fn content_replaced_before_it_was_drawn_is_discarded() {
 #[test]
 fn a_surface_that_goes_discards_its_feedback() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let presentation = client.bind(wp_presentation::NAME, 2).unwrap();
     let surface = client.create_surface().unwrap();
     let feedback = feedback(&mut client, presentation, surface);

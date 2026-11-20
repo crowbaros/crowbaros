@@ -11,8 +11,7 @@
 //! release point is signalled at once; one the GPU shows uncopied, when other
 //! content replaces it (see `dmabuf.rs`).
 //!
-//! The table offers it to a compartment whose needs include the GPU, and to
-//! the shell (ADR 0020, ADR 0023).
+//! The table offers it to the shell and to every app (ADR 0032).
 
 use std::{
     borrow::Cow,

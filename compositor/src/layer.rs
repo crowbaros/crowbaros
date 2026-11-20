@@ -1,7 +1,7 @@
 //! The shell's layer surfaces: `zwlr_layer_shell_v1` and
 //! `zwlr_layer_surface_v1`.
 //!
-//! The table offers layer shell to the shell alone (ADR 0020, ADR 0023), so
+//! The table offers layer shell to the shell alone (ADR 0032), so
 //! every layer surface is the shell's: the wallpaper, the bar, the dock, the
 //! launcher. Each sits on one output, in one of four layers. The background
 //! and bottom layers are drawn below the windows, and the top and overlay

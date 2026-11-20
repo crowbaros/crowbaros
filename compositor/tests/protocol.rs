@@ -15,7 +15,7 @@ use fulcrum_wire::{
 
 /// Sends a request and expects the compositor to refuse it with `code`.
 fn refused(compositor: &Compositor, code: u32, send: impl FnOnce(&mut Client)) -> String {
-    let (mut client, _listener) = compositor.compartment(&format!("c{}", rand_id()));
+    let mut client = compositor.app();
     send(&mut client);
     let result = client.roundtrip();
     assert!(result.is_err(), "the compositor accepted it");
@@ -175,7 +175,7 @@ fn a_bind_that_misnames_the_interface_or_its_version_is_refused() {
 fn a_request_this_build_does_not_carry_out_is_an_implementation_error() {
     let compositor = Compositor::start();
     let planted = compositor.with(|state| state.plant_global("wp_cursor_shape_manager_v1"));
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     let manager = client.bind_name(planted, "wp_cursor_shape_manager_v1", 1).unwrap();
     let destroy = Header {
         object: manager,
@@ -197,7 +197,7 @@ fn a_request_this_build_does_not_carry_out_is_an_implementation_error() {
 #[test]
 fn a_client_that_never_reads_is_disconnected_and_others_are_served() {
     let compositor = Compositor::start();
-    let (mut flooder, _listener) = compositor.compartment("flood");
+    let mut flooder = compositor.app();
     let mut sent = 0u32;
     let disconnected = loop {
         let mut batch = Vec::new();
@@ -230,7 +230,7 @@ fn a_client_that_never_reads_is_disconnected_and_others_are_served() {
 #[test]
 fn a_client_that_floods_descriptors_is_disconnected() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = compositor.compartment("fds");
+    let mut client = compositor.app();
     let mut refused = false;
     for _ in 0..40 {
         let fds: Vec<_> = (0..28).map(|_| rustix::pipe::pipe().unwrap().0).collect();
@@ -256,7 +256,7 @@ fn random_bytes_from_a_client_never_stop_the_compositor() {
     let compositor = Compositor::start();
     let mut seed = 0x1234_5678_9abc_def0u64;
     for _ in 0..30 {
-        let (mut client, _listener) = compositor.compartment(&format!("noise{}", rand_id()));
+        let mut client = compositor.app();
         let bytes: Vec<u8> = (0..256)
             .map(|_| {
                 seed ^= seed << 13;

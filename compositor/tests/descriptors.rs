@@ -24,15 +24,13 @@ fn every_descriptor_the_compositor_opens_is_close_on_exec() {
 
     let compositor = Compositor::start();
     let _shell = compositor.shell();
-    let _warden = compositor.warden();
-    let (mut client, _listener) = compositor.compartment("c1");
+    let mut client = compositor.app();
     client.roundtrip().unwrap();
 
     let opened: Vec<i32> = open_descriptors().difference(&before).copied().collect();
-    // The event loop and its waker, the two trusted sockets, the
-    // compartment's listener and the descriptor that closes it, and each
-    // accepted connection, at the least.
-    assert!(opened.len() >= 8, "only {} descriptors were opened", opened.len());
+    // The event loop and its waker, the shell's and the apps' sockets, the
+    // control channel's, and each accepted connection, at the least.
+    assert!(opened.len() >= 7, "only {} descriptors were opened", opened.len());
     for fd in opened {
         // Safety: the descriptor is open, and is only looked at.
         let Ok(flags) = rustix::io::fcntl_getfd(unsafe { BorrowedFd::borrow_raw(fd) }) else {

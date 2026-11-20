@@ -103,11 +103,10 @@ struct Synced {
     /// The client's timeline object, and the test's own handle on it.
     timeline: u32,
     handle: Timeline,
-    _listener: crowbar_probe::CompartmentListener,
 }
 
 fn synced(compositor: &Compositor, node: &OwnedFd) -> Synced {
-    let (mut client, listener) = compositor.compartment_with_gpu("c1");
+    let mut client = compositor.app();
     let window = client.open_toplevel("app", "test.app", (64, 48), RED).unwrap();
     let manager = client.bind(wp_linux_drm_syncobj_manager_v1::NAME, 1).unwrap();
     let exported = syncobj::create_exported(node.as_fd()).unwrap();
@@ -139,7 +138,6 @@ fn synced(compositor: &Compositor, node: &OwnedFd) -> Synced {
         syncobj_surface: syncobj_surface.0,
         timeline: timeline.0,
         handle,
-        _listener: listener,
     }
 }
 
@@ -259,7 +257,7 @@ fn a_descriptor_that_is_not_a_timeline_is_refused() {
     let Some((compositor, _node)) = compositor() else {
         return;
     };
-    let (mut client, _listener) = compositor.compartment_with_gpu("c1");
+    let mut client = compositor.app();
     let manager = client.bind(wp_linux_drm_syncobj_manager_v1::NAME, 1).unwrap();
     let memfd = rustix::fs::memfd_create("not-a-timeline", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
     let timeline = client.new_id(wp_linux_drm_syncobj_timeline_v1::NAME);

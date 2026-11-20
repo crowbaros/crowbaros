@@ -25,7 +25,6 @@ use crate::{
 pub(crate) enum GlobalKind {
     /// A `wl_output`, for the output with this number.
     Output(u64),
-    SecurityContextManager,
     Compositor,
     Subcompositor,
     Shm,
@@ -163,7 +162,7 @@ impl State {
         id: DynamicNewId,
     ) -> Result<(), ProtocolError> {
         let identity: Identity = match self.clients.get(&client_id) {
-            Some(client) => client.identity.clone(),
+            Some(client) => client.identity,
             None => return Ok(()),
         };
         let refused = || ProtocolError {
@@ -200,7 +199,6 @@ impl State {
         let (interface, info, kind) = (global.interface.clone(), global.info, global.kind);
         let object_kind = match kind {
             GlobalKind::Output(output) => ObjectKind::Output(output),
-            GlobalKind::SecurityContextManager => ObjectKind::SecurityContextManager,
             GlobalKind::Compositor => ObjectKind::Compositor,
             GlobalKind::Subcompositor => ObjectKind::Subcompositor,
             GlobalKind::Shm => ObjectKind::Shm,

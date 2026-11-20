@@ -3,7 +3,7 @@
 //! window.
 //!
 //! It is a path socket of its own, checked against the shell's user ID as
-//! the shell's Wayland socket is (ADR 0016). The wire format is the spike's,
+//! the shell's Wayland socket is (ADR 0032). The wire format is the spike's,
 //! which the shell already speaks: one JSON object per line. Each request
 //! gets one reply. The set of requests is fixed, and none runs a command or
 //! loads code.
@@ -37,9 +37,9 @@
 //! open or close its launcher (ADR 0020's keys). A window that opened
 //! without the keyboard has `attention` in the snapshot until it gets it,
 //! for the bar to show (ADR 0020's focus). `launching` says the person just
-//! started an app from the shell: the next window a compartment maps within
-//! [`LAUNCH_FOCUS`] takes the keyboard, as the first window of a compartment
-//! the person started does. `lock` and `unlock` lock and unlock the session,
+//! started an app from the shell: the next window an app maps within
+//! [`LAUNCH_FOCUS`] takes the keyboard, as the first window of the app the
+//! person started does. `lock` and `unlock` lock and unlock the session,
 //! and the events `locked` and `unlocked` say it changed, as Super+L, the
 //! confirm chord, and the idle timer change it too (see `lock.rs`).
 //! `unlock_entry` says the confirm chord opened the unlock entry, before

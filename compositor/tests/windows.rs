@@ -18,20 +18,14 @@ const RED: u32 = 0xffff_0000;
 const BLUE: u32 = 0xff00_00ff;
 const GREEN: u32 = 0xff00_ff00;
 
-fn next() -> u32 {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static NEXT: AtomicU32 = AtomicU32::new(0);
-    NEXT.fetch_add(1, Ordering::Relaxed)
-}
-
-fn client(compositor: &Compositor) -> (Client, crowbar_probe::CompartmentListener) {
-    compositor.compartment(&format!("w{}", next()))
+fn client(compositor: &Compositor) -> Client {
+    compositor.app()
 }
 
 #[test]
 fn a_window_opens_inside_the_usable_area_and_the_next_one_steps_down() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     client.open_toplevel("one", "test.one", (100, 60), RED).unwrap();
     client.open_toplevel("two", "test.two", (100, 60), BLUE).unwrap();
     compositor.wait_until_still();
@@ -64,7 +58,7 @@ fn a_window_opens_inside_the_usable_area_and_the_next_one_steps_down() {
 #[test]
 fn the_window_geometry_is_what_is_placed() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let wm_base = client.bind(xdg_wm_base::NAME, 6).unwrap();
     let surface = client.create_surface().unwrap();
     let xdg = client.new_id(xdg_surface::NAME);
@@ -112,7 +106,7 @@ fn the_window_geometry_is_what_is_placed() {
 #[test]
 fn a_window_is_told_which_output_it_is_on() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let output = client.bind(wl_output::NAME, 4).unwrap();
     let window = client.open_toplevel("enter", "test.enter", (50, 50), RED).unwrap();
     client.roundtrip().unwrap();
@@ -123,7 +117,7 @@ fn a_window_is_told_which_output_it_is_on() {
 #[test]
 fn a_null_buffer_unmaps_and_the_client_starts_again_from_its_first_commit() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let window = client.open_toplevel("gone", "test.gone", (50, 50), RED).unwrap();
     client.show(window.surface, None).unwrap();
     client.roundtrip().unwrap();
@@ -139,38 +133,28 @@ fn a_null_buffer_unmaps_and_the_client_starts_again_from_its_first_commit() {
     );
 }
 
-/// The compartment a window belongs to is the one whose listener its client
-/// came through, and nothing the client calls itself changes that.
+/// A window belongs to an app because its client came through the apps'
+/// socket, and nothing the client calls itself changes that.
 #[test]
-fn a_window_belongs_to_its_clients_compartment_whatever_it_calls_itself() {
+fn a_window_belongs_to_an_app_whatever_it_calls_itself() {
     let compositor = Compositor::start();
-    let mail = compositor.register("org.example.Mail", "compartment-1");
-    let mut client = common::connect(&mail.path).unwrap();
+    let mut client = compositor.app();
     client
-        .open_toplevel("Notes", "org.example.Notes", (50, 50), RED)
+        .open_toplevel("Shell", "org.crowbaros.Shell", (50, 50), RED)
         .unwrap();
 
-    let owners = compositor.with(|state| {
-        state
-            .window_owners()
-            .into_iter()
-            .map(|owner| match owner {
-                Identity::Compartment(compartment) => compartment.principal().to_string(),
-                other => format!("{other:?}"),
-            })
-            .collect::<Vec<_>>()
-    });
-    assert_eq!(owners, ["org.example.Mail"]);
+    let owners = compositor.with(|state| state.window_owners());
+    assert_eq!(owners, [Identity::App]);
     let asked = compositor.with(|state| state.window_requests());
     assert_eq!(
-        asked[0].app_id, "org.example.Notes",
+        asked[0].app_id, "org.crowbaros.Shell",
         "the window's own name is kept, as a name"
     );
 }
 
 /// Expects the compositor to refuse what `send` does with `code`.
 fn refused(compositor: &Compositor, code: u32, send: impl FnOnce(&mut Client)) {
-    let (mut client, _listener) = client(compositor);
+    let mut client = client(compositor);
     send(&mut client);
     assert!(client.roundtrip().is_err(), "the compositor accepted it");
     let error = client.error.clone().expect("a protocol error");
@@ -376,7 +360,7 @@ fn popup(client: &mut Client, parent: &Toplevel, anchor: (i32, i32, i32, i32), s
 #[test]
 fn a_popup_shows_where_its_positioner_puts_it_and_goes_with_its_parent() {
     let compositor = Compositor::start();
-    let (mut client, _listener) = client(&compositor);
+    let mut client = client(&compositor);
     let window = client.open_toplevel("menu", "test.menu", (200, 100), RED).unwrap();
     // Anchored at the bottom-left corner of a 20x10 rectangle at (30,40), and
     // laid out down and to the right from it.

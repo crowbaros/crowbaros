@@ -1,12 +1,11 @@
 //! The primary selection: `zwp_primary_selection_device_manager_v1`, what a
 //! person selects and pastes with the middle button.
 //!
-//! ADR 0020 offers it to every compartment under the clipboard's rules (see
-//! `data_device.rs`). Inside one compartment it works as apps expect: a
-//! client's primary selection is its group's, and the group's client that
-//! holds the keyboard is offered it, as it gains the keyboard and when the
-//! selection changes. Between compartments nothing crosses until slice 4,
-//! which ties each transfer to the person's act and the broker's record.
+//! Every client is offered it, under the clipboard's rules (see
+//! `data_device.rs`). It works between all the person's apps, as on any
+//! desktop: a client's primary selection is its group's, and the group's
+//! client that holds the keyboard is offered it, as it gains the keyboard
+//! and when the selection changes.
 
 use std::{borrow::Cow, collections::HashMap};
 
@@ -152,7 +151,7 @@ impl State {
             return Ok(());
         };
         let old = match new {
-            Some(new) => self.primary.selections.insert(group.clone(), new),
+            Some(new) => self.primary.selections.insert(group, new),
             None => self.primary.selections.remove(&group),
         };
         if let Some(old) = old.filter(|old| Some(*old) != new) {
@@ -285,7 +284,7 @@ impl State {
             .selections
             .iter()
             .filter(|(_, selected)| **selected == source)
-            .map(|(group, _)| group.clone())
+            .map(|(group, _)| *group)
             .collect();
         for group in emptied {
             self.primary.selections.remove(&group);

@@ -13,8 +13,7 @@
 //! copies their pixels at each commit. It maps genuine dma-bufs and uses
 //! positioned reads for regular files.
 //!
-//! The table (ADR 0020's, with ADR 0023's) decides who is offered it: the
-//! shell, and a compartment whose needs include the GPU.
+//! The table offers it to the shell and to every app (ADR 0032).
 
 use std::{
     borrow::Cow,

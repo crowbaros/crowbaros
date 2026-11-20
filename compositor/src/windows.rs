@@ -4,7 +4,7 @@
 //! A new window opens on the workspace showing, on the output the pointer is
 //! on, inside the room the shell's layers leave, offset a little from the
 //! last. It takes the keyboard in ADR 0020's two cases: its parent has the
-//! keyboard, as a dialog's does, or it is the first window a compartment maps
+//! keyboard, as a dialog's does, or it is the first window an app maps
 //! after the shell says the person launched an app (`launching`, see
 //! `control.rs`). Any other new window opens without the keyboard and wants
 //! attention, which the snapshot tells the shell, until it gets it. A window
@@ -190,9 +190,9 @@ impl State {
         }
     }
 
-    /// The first window a compartment maps after the shell says the person
-    /// launched an app takes the keyboard, as the first window of a
-    /// compartment the person started from the shell does (ADR 0020).
+    /// The first window an app maps after the shell says the person
+    /// launched an app takes the keyboard, so that the app the person
+    /// started from the shell has it.
     fn focus_launched(&mut self, surface: SurfaceId) {
         let Some(asked) = self.launching else {
             return;
@@ -201,14 +201,14 @@ impl State {
             self.launching = None;
             return;
         }
-        let from_compartment = self
+        let from_app = self
             .surfaces
             .get(&surface)
             .and_then(|surface| self.clients.get(&surface.client))
-            .is_some_and(|client| matches!(client.identity, Identity::Compartment(_)));
+            .is_some_and(|client| client.identity == Identity::App);
         let new_window = self.windows.iter().any(|window| window.surface == surface)
             && self.xdg.get(&surface).is_some_and(|xdg| xdg.toplevel.parent.is_none());
-        if from_compartment && new_window {
+        if from_app && new_window {
             self.launching = None;
             self.raise(surface);
             self.set_keyboard_focus(Some(surface));
@@ -218,8 +218,8 @@ impl State {
     /// A new window takes the keyboard when its parent has it, as a dialog
     /// opened from the window the person is using (ADR 0020). It also opens
     /// above. No other new window takes the keyboard here: the other case,
-    /// the first window of a compartment the person just started from the
-    /// shell, needs the shell to say so.
+    /// the first window of an app the person just started from the shell,
+    /// needs the shell to say so.
     fn focus_new_child(&mut self, surface: SurfaceId) {
         let Some(parent) = self.xdg.get(&surface).and_then(|xdg| xdg.toplevel.parent) else {
             return;
@@ -340,7 +340,7 @@ impl State {
             .iter()
             .filter_map(|window| {
                 let client = self.surfaces.get(&window.surface)?.client;
-                Some(self.clients.get(&client)?.identity.clone())
+                Some(self.clients.get(&client)?.identity)
             })
             .collect()
     }

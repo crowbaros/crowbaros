@@ -1,16 +1,15 @@
 //! The data device: `wl_data_device_manager`, its sources, each seat's data
 //! device, and the offers it makes.
 //!
-//! ADR 0020 offers it to every compartment and the shell, and says how the
-//! clipboard works. Inside one compartment, copy and paste work as apps
-//! expect: a client's selection is the compartment's, and is offered to the
-//! compartment's client that holds the keyboard, as it gains it and when the
-//! selection changes. The shell's clients share one selection of their own.
+//! Every client is offered it (ADR 0032). Copy, paste, and drag and drop
+//! work between all the person's apps, as on any desktop: an app's
+//! selection is every app's, and is offered to the app that holds the
+//! keyboard, as it gains it and when the selection changes. A drag from an
+//! app can drop on any app. The person's act moves the data.
 //!
-//! Between compartments, the compositor makes the transfer itself, when one
-//! of the person's acts asks for it, and the broker records it: that is slice
-//! 4 (CrowbarOS issue 166, Milestone 6). Copy, paste, and drag and drop
-//! stay within the group identified by the client's connection.
+//! The shell's clients share one selection of their own, and a drag from
+//! the shell drops only on the shell, so that nothing the person types into
+//! the shell reaches an app's clipboard, and no app's reaches the shell.
 
 use std::{borrow::Cow, collections::HashMap};
 
@@ -57,12 +56,11 @@ pub(crate) struct DataSource {
     pub used: bool,
 }
 
-/// Clients that share a selection without an act of the person's: one
-/// compartment's, or the shell's.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// Clients that share a selection: the shell's, or the person's apps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Group {
     Shell,
-    Compartment(String),
+    Apps,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -232,7 +230,7 @@ impl State {
                     return Ok(());
                 };
                 let old = match new {
-                    Some(new) => self.data.selections.insert(group.clone(), new),
+                    Some(new) => self.data.selections.insert(group, new),
                     None => self.data.selections.remove(&group),
                 };
                 if let Some(old) = old.filter(|old| Some(*old) != new) {
@@ -326,7 +324,7 @@ impl State {
             .selections
             .iter()
             .filter(|(_, selected)| **selected == source)
-            .map(|(group, _)| group.clone())
+            .map(|(group, _)| *group)
             .collect();
         for group in emptied {
             self.data.selections.remove(&group);
@@ -334,14 +332,13 @@ impl State {
         }
     }
 
-    /// The group a client shares a selection with: none for the Warden,
-    /// which is offered no data device.
+    /// The group a client shares a selection with, if it is still
+    /// connected.
     pub(crate) fn group_of(&self, client_id: ClientId) -> Option<Group> {
-        match &self.clients.get(&client_id)?.identity {
-            Identity::Shell => Some(Group::Shell),
-            Identity::Compartment(compartment) => Some(Group::Compartment(compartment.id().to_owned())),
-            Identity::Warden => None,
-        }
+        Some(match self.clients.get(&client_id)?.identity {
+            Identity::Shell => Group::Shell,
+            Identity::App => Group::Apps,
+        })
     }
 
     /// The bytes of MIME types a client's data sources hold.

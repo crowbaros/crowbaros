@@ -25,15 +25,10 @@ use rustix::{
 /// What a ready descriptor is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Token {
-    /// A trusted part's path socket, by its index.
-    TrustedListener(usize),
+    /// A path socket clients connect to, by its index.
+    Listener(usize),
     /// A connected client.
     Client(u64),
-    /// A compartment's listener, by the compartment's number.
-    CompartmentListener(u64),
-    /// The descriptor whose hang-up tells the compositor to stop accepting
-    /// on a compartment's listener.
-    CompartmentClose(u64),
     /// Work handed to the compositor from another thread.
     Waker,
     /// A descriptor the backend watches, by the backend's own number.
@@ -51,10 +46,8 @@ pub enum Token {
 impl Token {
     fn encode(self) -> u64 {
         let (kind, value) = match self {
-            Token::TrustedListener(index) => (1, index as u64),
+            Token::Listener(index) => (1, index as u64),
             Token::Client(id) => (2, id),
-            Token::CompartmentListener(id) => (3, id),
-            Token::CompartmentClose(id) => (4, id),
             Token::Waker => (5, 0),
             Token::Backend(source) => (6, source),
             Token::ControlListener => (7, 0),
@@ -69,10 +62,8 @@ impl Token {
     fn decode(data: u64) -> Option<Self> {
         let value = data & ((1 << 56) - 1);
         Some(match data >> 56 {
-            1 => Token::TrustedListener(value as usize),
+            1 => Token::Listener(value as usize),
             2 => Token::Client(value),
-            3 => Token::CompartmentListener(value),
-            4 => Token::CompartmentClose(value),
             5 => Token::Waker,
             6 => Token::Backend(value),
             7 => Token::ControlListener,
@@ -96,10 +87,8 @@ pub struct Readiness {
 /// A timer the compositor set. It names what to do when it runs out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TimerKey {
-    /// Listen again on a trusted socket that could not accept.
-    RetryTrusted(usize),
-    /// Listen again on a compartment's listener that could not accept.
-    RetryCompartment(u64),
+    /// Listen again on a path socket that could not accept.
+    RetryListener(usize),
     /// One frame time after the draw with this number on this output, for a
     /// backend that does not hear when the display shows a frame.
     FrameWait(u64, u64),
@@ -337,13 +326,7 @@ mod tests {
 
     #[test]
     fn tokens_survive_the_kernel() {
-        for token in [
-            Token::TrustedListener(3),
-            Token::Client(1 << 40),
-            Token::CompartmentListener(7),
-            Token::CompartmentClose(7),
-            Token::Waker,
-        ] {
+        for token in [Token::Listener(3), Token::Client(1 << 40), Token::Held(7), Token::Waker] {
             assert_eq!(Token::decode(token.encode()), Some(token));
         }
         assert_eq!(Token::decode(0), None);
@@ -368,16 +351,16 @@ mod tests {
     fn timers_run_out_in_order_and_cancelled_ones_do_not() {
         let mut event_loop = EventLoop::new().unwrap();
         let now = Instant::now();
-        event_loop.set_timer(now + Duration::from_millis(20), TimerKey::RetryTrusted(2));
-        let cancelled = event_loop.set_timer(now + Duration::from_millis(10), TimerKey::RetryTrusted(9));
-        event_loop.set_timer(now + Duration::from_millis(5), TimerKey::RetryTrusted(1));
+        event_loop.set_timer(now + Duration::from_millis(20), TimerKey::RetryListener(2));
+        let cancelled = event_loop.set_timer(now + Duration::from_millis(10), TimerKey::RetryListener(9));
+        event_loop.set_timer(now + Duration::from_millis(5), TimerKey::RetryListener(1));
         event_loop.cancel_timer(cancelled);
         let mut seen = Vec::new();
         while seen.len() < 2 {
             let (_, timers) = event_loop.wait(Some(Duration::from_secs(1))).unwrap();
             seen.extend(timers);
         }
-        assert_eq!(seen, [TimerKey::RetryTrusted(1), TimerKey::RetryTrusted(2)]);
+        assert_eq!(seen, [TimerKey::RetryListener(1), TimerKey::RetryListener(2)]);
     }
 
     #[test]

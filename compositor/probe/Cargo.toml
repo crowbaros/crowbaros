@@ -4,7 +4,7 @@ version = "0.2.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Wayland clients for testing the CrowbarOS compositor from outside, on fulcrum-wire's client side, and a stand-in for the Warden. Never part of Base."
+description = "Wayland clients for testing the CrowbarOS compositor from outside, on fulcrum-wire's client side. Base's image carries it for its desktop check."
 
 [lib]
 name = "crowbar_probe"
