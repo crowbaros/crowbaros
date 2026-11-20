@@ -23,6 +23,11 @@ sides hold.
 
 ## Branches and pull requests
 
+- Claim an issue before you start work on it. It is free when its only
+  assignee, if any, is the person you work for, and no open pull request
+  names it. Assign it to them with
+  `gh issue edit <n> --add-assignee <their login>`. When someone else holds
+  it, ask the person you work for before you start.
 - `main` changes only through a pull request from a short-lived branch.
 - Commit locally as you go. Push, open a pull request, or merge only when the
   person you work for asks.
