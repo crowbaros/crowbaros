@@ -6,7 +6,8 @@
 #       the path any UEFI firmware boots with no boot entry
 #   p2  Btrfs, label $ROOT_LABEL: the Void root; GRUB reads /boot/grub/grub.cfg here
 #
-# Inputs: ROOTFS WORK OUT PUBKEY HOSTNAME ROOT_LABEL ESP_LABEL ESP_MIB ROOT_GIB,
+# Inputs: ROOTFS WORK OUT PUBKEY HOSTNAME ROOT_LABEL ESP_LABEL ESP_MIB ROOT_GIB
+# KERNEL_ARGS (added to the kernel's command line),
 # and for the desktop DESKTOP (base/desktop) and REPO_ROOT. Its arguments are
 # the desktop's programs.
 set -eu
@@ -84,7 +85,7 @@ terminal_input console serial
 terminal_output console serial
 menuentry "CrowbarOS base (Void Linux, kernel $KVER)" {
     search --no-floppy --label $ROOT_LABEL --set=root
-    linux /boot/vmlinuz-$KVER root=LABEL=$ROOT_LABEL rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200
+    linux /boot/vmlinuz-$KVER root=LABEL=$ROOT_LABEL rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 $KERNEL_ARGS
     initrd /boot/initramfs-$KVER.img
 }
 GRUB

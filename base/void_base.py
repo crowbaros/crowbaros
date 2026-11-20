@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import shutil
@@ -47,6 +48,10 @@ SERIAL_SOCK = WORK / "serial.sock"
 SERIAL_LOG = WORK / "serial.log"
 MONITOR_SOCK = WORK / "monitor.sock"
 PIDFILE = WORK / "qemu.pid"
+REPOSITORY = CFG["void_repository"]
+# Void's nonfree repository, which holds NVIDIA's driver. Only the image's root
+# installs from it.
+NONFREE = REPOSITORY + "/nonfree"
 # What the desktop is built from: each Cargo project, and the part of the
 # target directory it builds in. The two apps share theirs.
 PROJECTS = [("compositor", "compositor"), ("apps/shell", ""), ("apps/studio-settings", "")]
@@ -153,14 +158,14 @@ def fetch():
     return target
 
 
-def install(target, packages, what, force, missing=lambda: None):
-    """Install a Void root of these packages at `target`.
+def install(target, packages, what, force, missing=lambda: None, repositories=(REPOSITORY,)):
+    """Install a Void root of these packages, from these repositories, at `target`.
 
     A root counts as installed only once an install of these packages from
-    this repository finished, and `missing` names nothing the root lacks. A
+    these repositories finished, and `missing` names nothing the root lacks. A
     root left by a failed or interrupted install, or one built from other
     packages, is installed again."""
-    wanted = json.dumps({"repository": CFG["void_repository"], "packages": packages})
+    wanted = json.dumps({"repositories": list(repositories), "packages": packages})
     done = target.with_name(target.name + ".done")
     if not force and target.exists() and done.exists() and done.read_text() == wanted:
         print(f"Using the {what} at {target} (pass --force to install it again)")
@@ -172,12 +177,13 @@ def install(target, packages, what, force, missing=lambda: None):
     WORK.mkdir(parents=True, exist_ok=True)
     done.unlink(missing_ok=True)
     env = dict(os.environ, XBPS=str(xbps / "usr/bin"), ROOTFS=str(target),
-               REPO=CFG["void_repository"], KEYS=str(xbps / "var/db/xbps/keys"),
+               REPOS=" ".join(repositories), KEYS=str(xbps / "var/db/xbps/keys"),
                PKGCACHE=str(CACHE / "packages"), PACKAGES=" ".join(packages))
     log = target.with_name(target.name + ".log")
     print(f"Installing the {what}: {len(packages)} packages and what they depend on. The first "
           f"time, this downloads them into {CACHE / 'packages'}.", flush=True)
-    if run_shown(*userns(), "sh", HERE / "host/rootfs.sh", log=log, env=env) != 0:
+    # In a mount namespace of its own, so the root can borrow the host's /dev.
+    if run_shown(*userns(), "--mount", "sh", HERE / "host/rootfs.sh", log=log, env=env) != 0:
         raise SystemExit(f"Installing the {what} failed; the output is in {log}")
     if lack := missing():
         raise SystemExit(f"The {what} has {lack} after the install; see {log}")
@@ -185,9 +191,44 @@ def install(target, packages, what, force, missing=lambda: None):
     print(f"Installed the {what} at {target} (log: {log})")
 
 
+# NVIDIA's kernel modules, which DKMS builds for the image's kernel while the
+# root is installed. The compositor needs the first three.
+NVIDIA_MODULES = ("nvidia", "nvidia-modeset", "nvidia-drm", "nvidia-uvm")
+
+
+def image_kernel(root):
+    """The version of the kernel the image boots: the newest in /boot, as
+    host/image.sh picks it. None if there is none."""
+    def version(path):
+        return [(0, int(part), "") if part.isdigit() else (1, 0, part)
+                for part in re.split(r"(\d+)", path.name.removeprefix("vmlinuz-")) if part]
+    kernels = sorted((root / "boot").glob("vmlinuz-*"), key=version)
+    return kernels[-1].name.removeprefix("vmlinuz-") if kernels else None
+
+
+def missing_from_root(root):
+    """What the root lacks to boot the image, or None: the kernel, and
+    NVIDIA's modules for it. xbps reports success when DKMS fails to build
+    them, so the root itself is the only witness."""
+    kernel = image_kernel(root)
+    if kernel is None:
+        return "no kernel in /boot"
+    try:
+        listed = (root / "usr/lib/modules" / kernel / "modules.dep").read_text()
+    except FileNotFoundError:
+        listed = ""
+    names = {line.split(":", 1)[0].rsplit("/", 1)[-1].split(".ko", 1)[0]
+             for line in listed.splitlines()}
+    if lack := [name for name in NVIDIA_MODULES if name not in names]:
+        return (f"no {', '.join(lack)} module for kernel {kernel}: NVIDIA's DKMS build did not "
+                f"finish. Its log is under {root}/var/lib/dkms/nvidia/*/build/make.log, which "
+                "is /var/lib/dkms in the root")
+    return None
+
+
 def rootfs(force):
-    install(ROOTFS, CFG["packages"], "Void root", force,
-            missing=lambda: None if any((ROOTFS / "boot").glob("vmlinuz-*")) else "no kernel in /boot")
+    install(ROOTFS, CFG["packages"], "Void root", force, missing=lambda: missing_from_root(ROOTFS),
+            repositories=(REPOSITORY, NONFREE))
 
 
 def binaries():
@@ -225,12 +266,18 @@ def build(force=False):
     preflight(build=True)
     rootfs(force)
     compile_desktop(force)
+    # Checked on every build, not only after an install: the image is never
+    # written from a root that cannot drive NVIDIA's GPUs.
+    if lack := missing_from_root(ROOTFS):
+        raise SystemExit(f"The Void root at {ROOTFS} has {lack}. Install it again with "
+                         "`base/void_base.py build --force`")
     if not KEY.exists():
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "crowbaros-base", "-f", KEY)
     env = dict(os.environ, ROOTFS=str(ROOTFS), WORK=str(WORK), OUT=str(BASE_DISK),
                PUBKEY=str(KEY) + ".pub", HOSTNAME=CFG["hostname"],
                ROOT_LABEL=CFG["root_label"], ESP_LABEL=CFG["esp_label"],
                ESP_MIB=str(CFG["esp_mib"]), ROOT_GIB=str(CFG["root_gib"]),
+               KERNEL_ARGS=" ".join(CFG["kernel_args"]),
                DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT))
     run(*userns(), "sh", HERE / "host/image.sh", *binaries().values(), env=env)
 
@@ -376,6 +423,14 @@ CHECKS = [
      lambda out: "inet " in out),
     ("packages keep their groups", "stat -c '%G %n' /usr/bin/wall /var/db/dhcpcd",
      lambda out: "tty /usr/bin/wall" in out and "_dhcpcd /var/db/dhcpcd" in out),
+    ("kernel command line carries NVIDIA's settings", "cat /proc/cmdline",
+     lambda out: set(CFG["kernel_args"]) <= set(out.split())),
+    # The first line is where the module is, or nothing; the rest are the
+    # modules loaded. The VM has no NVIDIA card, so none of NVIDIA's loads.
+    ("NVIDIA's module is built, and not loaded without an NVIDIA card",
+     "modinfo -n nvidia; cut -d' ' -f1 /proc/modules",
+     lambda out: bool(out.split()) and re.search(r"/nvidia\.ko(\.\w+)?$", out.split()[0]) is not None
+     and not {"nvidia", "nvidia_modeset", "nvidia_drm", "nvidia_uvm"} & set(out.split()[1:])),
     ("no failed kernel messages", "dmesg --level=emerg,alert,crit",
      lambda out: out.strip() == ""),
 ]

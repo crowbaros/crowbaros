@@ -6,6 +6,11 @@
   "packages": [
     "base-minimal",
     "linux",
+    "linux-headers",
+    "dkms",
+    "pahole",
+    "nvidia",
+    "void-repo-nonfree",
     "btrfs-progs",
     "grub-x86_64-efi",
     "mtools",
@@ -56,6 +61,8 @@
     "freetype-devel",
     "patch"
   ],
+  "kernel_args_comment": "What NVIDIA's driver needs: DRM with kernel modesetting, and a framebuffer console on it. Ignored where nvidia-drm never loads.",
+  "kernel_args": ["nvidia-drm.modeset=1", "nvidia-drm.fbdev=1"],
   "hostname": "crowbaros",
   "root_label": "crowbaros-root",
   "esp_label": "CROWBAROS",
