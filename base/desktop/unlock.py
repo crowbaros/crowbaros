@@ -35,6 +35,7 @@ import time
 SOCKET = '/run/crowbar-unlock/socket'
 COMPOSITOR = '/run/crowbar-trusted/unlock/compositor'
 SHELL = 'crowbar-shell'
+# Base's build gives the person's account this UID: void_base.PERSON_UID.
 PERSON_UID = 1003
 MAX_REQUEST = 4096
 MAX_PASSWORD = 1024

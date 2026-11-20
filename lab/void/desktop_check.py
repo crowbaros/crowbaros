@@ -303,7 +303,8 @@ class Check:
                    and all(re.search(label + r': [1-9]\d*', render) for label in
                            ('layer crowbaros-bar', 'layer crowbaros-dock', r'com\.crowbaros\.StudioSettings')))
         # A file the person writes in their home, to find after the reboot.
-        person, home = self.run('getent passwd 1003').split(':')[0::5][:2]
+        account = self.run(f'getent passwd {void_base.PERSON_UID}').split(':')
+        person, home = account[0], account[5]
         kept = f'{home}/kept-across-reboot'
         token = os.urandom(8).hex()
         self.run(f'chpst -u {person}:{person} sh -c {shlex.quote(f"echo {token} > {kept}")}')

@@ -152,8 +152,8 @@ Later tickets of Milestone 2 replace them.
 - `crowbar-unlock` is a root service, `desktop/unlock.py`. The compositor
   starts locked and listens for it at a socket only root may use. After the
   confirm chord, the lock screen sends the person's password to the helper,
-  which checks it against the account with UID 1003 in `/etc/shadow` and only then tells the compositor to
-  unlock. zzz's suspend hook locks the desktop through the same helper.
+  which checks it against the account with UID 1003 in `/etc/shadow` and only
+  then tells the compositor to unlock. zzz's suspend hook locks the desktop through the same helper.
 
 This is not the production Warden or principal isolation. Apps share one user
 and can reach one another. The launcher registers one compartment for every
@@ -173,23 +173,28 @@ consoles. SSH still takes keys only, and only for root.
 `build` reads the account from `base/account.json`, which git ignores:
 
 ```json
-{"name": "jim", "password_hash": "$6$...", "full_name": "Jim Martin"}
+{"name": "jim", "password_hash": "<what openssl passwd -6 prints>", "full_name": "Jim Martin"}
 ```
 
 - `name`: a lowercase account name of up to 32 characters, starting with a
-  letter or `_`. Not `root`, `nobody`, or a name starting with `crowbar-`.
-- `password_hash`: a crypt hash, never the password itself. Print one with
-  `openssl passwd -6`, which asks for the password twice.
+  letter or `_`. Not a name starting with `crowbar-`, and not a user or group
+  the image already has, such as `root` or `sshd`.
+- `password_hash`: the whole crypt hash, never the password itself. Print one
+  with `openssl passwd -6`, which asks for the password twice.
 - `full_name`: optional. The lock screen shows it in place of the name.
 
-The build refuses a file with anything else in it, or with a value that would
-break `/etc/passwd` or `/etc/shadow`.
+The build refuses a file with anything else in it, a hash cut short, or a value
+that would break `/etc/passwd` or `/etc/shadow`, before it builds anything.
 
 With no account file, `build` makes the lab account, `crowbar`, whose password
-is `crowbar`, and prints a warning: that password is in this repository, so
-such an image is for the lab alone. `build --lab-account` makes the lab account
-whatever the file says, without the warning. Base's check and the desktop
-check build that way, so they type a password they know.
+is `crowbar`. `build --lab-account` makes the lab account whatever the file
+says. Base's check and the desktop check build that way, so they type a
+password they know. Either way the build prints a warning: that password is in
+this repository, so such an image is for the lab alone.
+
+The checks write the same image, `.lab/base/base.raw`, that `build` writes. So
+after a check, build again before you write the image to a disk. The build's
+last line names the image's account.
 
 ## Not yet
 

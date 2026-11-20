@@ -75,8 +75,8 @@ class RootfsTrust(unittest.TestCase):
         self.assertFalse(build_root.with_name('buildroot.done').exists())
 
 
-class Desktop(unittest.TestCase):
-    """What Base's build hands Cargo's build and the image step."""
+class BuildFixture(unittest.TestCase):
+    """A build with every outside step recorded instead of run."""
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -103,11 +103,6 @@ class Desktop(unittest.TestCase):
         p.start()
         self.addCleanup(p.stop)
 
-    def test_a_fresh_cargo_home_has_both_caches_the_build_binds_in(self):
-        void_base.compile_desktop(force=False)
-        self.assertTrue((self.cargo_home / 'registry').is_dir())
-        self.assertTrue((self.cargo_home / 'git').is_dir())
-
     def root(self, kernels, nvidia):
         """A root holding these kernels, with NVIDIA's modules built for those in `nvidia`."""
         for kernel in kernels:
@@ -124,6 +119,16 @@ class Desktop(unittest.TestCase):
     def image_step(self):
         return next((c, e) for c, e in zip(self.commands, self.envs)
                     if any(a.endswith('host/image.sh') for a in c))
+
+
+
+class Desktop(BuildFixture):
+    """What Base's build hands Cargo's build and the image step."""
+
+    def test_a_fresh_cargo_home_has_both_caches_the_build_binds_in(self):
+        void_base.compile_desktop(force=False)
+        self.assertTrue((self.cargo_home / 'registry').is_dir())
+        self.assertTrue((self.cargo_home / 'git').is_dir())
 
     def test_no_image_is_written_when_the_image_kernel_lacks_nvidias_module(self):
         # The newest kernel is the one the image boots, and DKMS built only for the older.
@@ -155,58 +160,89 @@ class Desktop(unittest.TestCase):
         self.assertTrue(all(' ' in path for path in programs))
 
 
+
+class Account(BuildFixture):
+    """The person's account the image gets: from the account file, or the lab's."""
+
+    HASH = '$6$saltsalt$' + 'h' * 86
+
+    def setUp(self):
+        super().setUp()
+        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
+        (void_base.ROOTFS / 'etc').mkdir(parents=True, exist_ok=True)
+        (void_base.ROOTFS / 'etc/passwd').write_text('root:x:0:0::/root:/bin/sh\nsshd:x:22:22::/var/empty:/bin/false\n')
+        (void_base.ROOTFS / 'etc/group').write_text('root:x:0:\n_seatd:x:996:\n')
+
     def write_account(self, **account):
         void_base.ACCOUNT_FILE.write_text(json.dumps(account))
 
+    def build(self, **kw):
+        with patch('sys.stderr', new_callable=io.StringIO) as stderr:
+            void_base.build(**kw)
+        return self.image_step()[1], stderr.getvalue()
+
     def test_an_account_file_makes_that_account_and_not_the_lab_one(self):
-        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
-        self.write_account(name='jim', password_hash='$6$salt$hash', full_name='Jim Martin')
-        void_base.build()
-        _, env = self.image_step()
+        self.write_account(name='jim', password_hash=self.HASH, full_name='Jim Martin')
+        env, stderr = self.build()
         self.assertEqual((env['PERSON'], env['PERSON_PASSWORD_HASH'], env['PERSON_FULL_NAME']),
-                         ('jim', '$6$salt$hash', 'Jim Martin'))
+                         ('jim', self.HASH, 'Jim Martin'))
         self.assertEqual(env['PERSON_PASSWORD'], '')
+        self.assertNotIn('WARNING', stderr)
 
     def test_with_no_account_file_the_lab_account_comes_with_a_warning(self):
-        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
-        with patch('sys.stderr', new_callable=io.StringIO) as stderr:
-            void_base.build()
-        _, env = self.image_step()
+        env, stderr = self.build()
         self.assertEqual((env['PERSON'], env['PERSON_PASSWORD'], env['PERSON_PASSWORD_HASH']),
                          ('crowbar', 'crowbar', ''))
-        self.assertIn('WARNING', stderr.getvalue())
-        self.assertIn('published', stderr.getvalue())
+        self.assertIn('WARNING', stderr)
+        self.assertIn('published', stderr)
 
-    def test_the_checks_build_the_lab_account_whatever_the_account_file_says(self):
-        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
-        self.write_account(name='jim', password_hash='$6$salt$hash')
-        with patch('sys.stderr', new_callable=io.StringIO) as stderr:
-            void_base.build(lab_account=True)
-        _, env = self.image_step()
+    def test_a_check_overwriting_the_image_with_the_lab_account_still_warns(self):
+        # The checks write the same image file a person builds with their own
+        # account, so the lab account never replaces it silently.
+        self.write_account(name='jim', password_hash=self.HASH)
+        env, stderr = self.build(lab_account=True)
         self.assertEqual(env['PERSON'], 'crowbar')
-        self.assertNotIn('WARNING', stderr.getvalue())
+        self.assertIn('WARNING', stderr)
+
+    def test_the_account_has_the_uid_the_unlock_helper_looks_for(self):
+        env, _ = self.build()
+        self.assertEqual(env['PERSON_UID'], str(void_base.PERSON_UID))
+        unlock = (void_base.HERE / 'desktop/unlock.py').read_text()
+        self.assertIn(f'PERSON_UID = {void_base.PERSON_UID}\n', unlock)
 
     def test_an_account_file_that_would_break_the_image_is_refused(self):
-        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
         for account in [dict(name='jim'), dict(name='jim', password_hash='plain text'),
-                        dict(name='jim', password_hash='$6$salt$hash:0:'),
-                        dict(name='root', password_hash='$6$salt$hash'),
-                        dict(name='crowbar-shell', password_hash='$6$salt$hash'),
-                        dict(name='Jim Martin', password_hash='$6$salt$hash'),
-                        dict(name='jim', password_hash='$6$salt$hash', full_name='Jim, Martin'),
-                        dict(name='jim', password_hash='$6$salt$hash', shell='/bin/zsh')]:
+                        dict(name='jim', password_hash='$6$...'),
+                        dict(name='jim', password_hash='$6$saltsalt'),
+                        dict(name='jim', password_hash=self.HASH + ':0:'),
+                        dict(name='crowbar-shell', password_hash=self.HASH),
+                        dict(name='Jim Martin', password_hash=self.HASH),
+                        dict(name='jim', password_hash=self.HASH, full_name='Jim, Martin'),
+                        dict(name='jim', password_hash=self.HASH, shell='/bin/zsh')]:
             self.write_account(**account)
             with self.assertRaises(SystemExit, msg=account):
                 void_base.build()
         self.assertEqual(self.commands, [])
+
+    def test_a_name_the_image_already_has_is_refused_before_anything_is_built(self):
+        for name in ('root', 'sshd', '_seatd'):
+            self.write_account(name=name, password_hash=self.HASH)
+            with self.assertRaises(SystemExit, msg=name) as stopped:
+                void_base.build()
+            self.assertIn(name, str(stopped.exception))
+        self.assertEqual(self.commands, [])
+
+    def test_the_hashes_people_make_are_taken(self):
+        for hashed in ('$6$rounds=5000$saltsalt$' + 'a/b.' * 21 + 'xy',
+                       '$y$j9T$saltsaltsaltsalt$' + 'A' * 43):
+            self.assertTrue(void_base.PASSWORD_HASH.fullmatch(hashed), hashed)
 
 
 class PersonCheck(unittest.TestCase):
     """Base's check finds the person's account with a home of its own and a login shell."""
 
     def setUp(self):
-        self.passes = dict((name, ok) for name, _, ok in void_base.CHECKS)[
-            "the person's account has a home and a login shell"]
+        self.passes = void_base.person_has_home
 
     def test_a_home_and_a_shell_pass(self):
         self.assertTrue(self.passes('crowbar:/home/crowbar:/bin/bash\ncrowbar 700\n'))

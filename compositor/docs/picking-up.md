@@ -37,7 +37,7 @@ Milestone 8's exit check restarts the compositor during a session. The session m
   - `lab/void/compositor_guest.py check` builds `compositor/`, runs its tests in the Void guest, and checks what the compositor serves. It takes about 3 minutes.
   - `lab/void/compositor_guest.py desktop-check` builds Base's image and runs the whole desktop on a copy of it, booted under UEFI. It takes 4 to 8 minutes, and rebuilds GPUI the first time.
   - Evidence (logs, screenshots, `results.json`) lands under `.lab/`. Attach the log to the pull request.
-- **The Alpha desktop's lock:** it starts locked. Press Ctrl+Alt+Enter, then type the person's password, and press Enter. The checks build the lab account, `crowbar`, whose password is `crowbar`.
+- **The desktop's lock:** it starts locked. Press Ctrl+Alt+Enter, then type the person's password, and press Enter. The checks build the lab account, `crowbar`, whose password is `crowbar`.
 
 ## Getting a change into Base
 

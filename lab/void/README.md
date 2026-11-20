@@ -80,8 +80,10 @@ lab/void/compositor_guest.py desktop-check
 This builds Base's image with Base's own command, `base/void_base.py build
 --lab-account`, which builds and tests the
 [compositor](../../compositor/README.md), the shell, and Studio Settings in
-Void, and makes the lab account whatever account file you keep. Base keeps its Void roots and Cargo target in
-`.lab/base/`, so a second run starts from them. The check then boots a copy of
+Void, and gives the image the lab account even when you keep an account file.
+It overwrites Base's image, so build again before you put it on a disk. Base
+keeps its Void roots and Cargo target in `.lab/base/`, so a second run starts
+from them. The check then boots a copy of
 that image under UEFI, through the firmware and GRUB, as a person's machine
 would, exercises the desktop, and powers the guest off. Every run gets a new
 directory in `.lab/void-desktop-checks/`, with its own copy of the disk,

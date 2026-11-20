@@ -10,8 +10,8 @@
 # KVER (the kernel to boot, which void_base.py checked), KERNEL_ARGS (added to
 # the kernel's command line),
 # and for the desktop DESKTOP (base/desktop) and REPO_ROOT. The person's
-# account is PERSON and PERSON_FULL_NAME, with PERSON_PASSWORD_HASH from the
-# account file or, for the lab account, PERSON_PASSWORD. Its arguments are the
+# account is PERSON_UID, PERSON, and PERSON_FULL_NAME, with PERSON_PASSWORD_HASH
+# from the account file or, for the lab account, PERSON_PASSWORD. Its arguments are the
 # desktop's programs.
 set -eu
 R="$WORK/staging"
@@ -51,7 +51,7 @@ rm -f "$SV/agetty-tty2"
 chroot "$R" useradd -m -u 1000 -G _seatd crowbar-compositor
 chroot "$R" useradd -m -u 1001 crowbar-shell
 chroot "$R" useradd -m -u 1002 crowbar-app
-chroot "$R" useradd -m -u 1003 -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
+chroot "$R" useradd -m -u "$PERSON_UID" -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
 for service in compositor shell launcher unlock; do
   install -D -m 755 "$DESKTOP/$service-run" "$R/etc/sv/crowbar-$service/run"
   ln -sfn "/etc/sv/crowbar-$service" "$SV/crowbar-$service"

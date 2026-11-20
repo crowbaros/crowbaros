@@ -1892,7 +1892,6 @@ mod lock_tests {
             "crowbar-compositor:x:1000:1000::/home/crowbar-compositor:/bin/sh\n",
             "crowbar-shell:x:1001:1001::/home/crowbar-shell:/bin/sh\n",
             "crowbar-app:x:1002:1002::/home/crowbar-app:/bin/sh\n",
-
         );
         assert_eq!(
             person_label_from(Some("Alex"), Some("crowbar-shell"), Some(passwd)),

@@ -267,29 +267,37 @@ def compile_desktop(force):
 
 # The account an image gets with no account file. Its password is in this
 # repository, so the image is for the lab alone.
-LAB_ACCOUNT = {"name": "crowbar", "password": "crowbar", "full_name": ""}
+LAB_ACCOUNT = {"name": "crowbar", "full_name": "", "password_hash": "", "password": "crowbar"}
+# The person's account has this UID whatever its name: the unlock helper, and
+# both checks, find it by UID.
+PERSON_UID = 1003
 ACCOUNT_NAME = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
-# A crypt(5) hash: `$id$`, then salt and hash, with nothing /etc/shadow would split on.
-PASSWORD_HASH = re.compile(r"\$[0-9a-z]+\$[^:\s]+")
+# A crypt(5) hash: `$id$`, its settings and salt, each ended by `$`, then the
+# hash itself, with nothing /etc/shadow would split on.
+PASSWORD_HASH = re.compile(r"\$[0-9a-z]+\$(?:[^$:\s]+\$)+[./0-9A-Za-z]{20,}")
+
+
+def warn_lab_account(why):
+    bar = "!" * 78
+    print(f"\n{bar}\nWARNING: {why}, so this image has the lab account `{LAB_ACCOUNT['name']}`.\n"
+          f"Its password, `{LAB_ACCOUNT['password']}`, is published in this repository, so anyone "
+          "at the\nmachine can unlock its desktop. Never put it on a machine anyone else can "
+          "reach.\nTo set your own account, see base/README.md, \"The person's account\".\n"
+          + bar + "\n", file=sys.stderr, flush=True)
 
 
 def person_account(lab=False):
-    """The person's account, as `image.sh` takes it: NAME, FULL_NAME, and
-    either PASSWORD_HASH from the account file or the lab's PASSWORD.
+    """The person's account, as `image.sh` takes it: its name, full name, and
+    either the password hash from the account file or the lab's password.
 
-    With `lab`, or with no account file, it is the lab account. Without `lab`
-    that is a mistake worth a loud warning: anyone who reads this repository
-    knows its password."""
+    With `lab`, or with no account file, it is the lab account, which always
+    comes with a loud warning: anyone who reads this repository knows its
+    password, and the checks write the same image file a person would."""
     if lab:
-        print(f"Building with the lab account `{LAB_ACCOUNT['name']}`, as the checks do.")
+        warn_lab_account("--lab-account ignores any account file, as the checks do")
         return dict(LAB_ACCOUNT)
     if not ACCOUNT_FILE.exists():
-        bar = "!" * 78
-        print(f"\n{bar}\nWARNING: there is no account file at {ACCOUNT_FILE}, so this image has the\n"
-              f"lab account `{LAB_ACCOUNT['name']}`, whose password, `{LAB_ACCOUNT['password']}`, "
-              "is published in this\nrepository. Anyone at the machine can unlock its desktop. "
-              "Never put it on a machine\nanyone else can reach. To set your own account, see "
-              "base/README.md, \"The person's\naccount\".\n" + bar + "\n", file=sys.stderr, flush=True)
+        warn_lab_account(f"there is no account file at {ACCOUNT_FILE}")
         return dict(LAB_ACCOUNT)
     try:
         account = json.loads(ACCOUNT_FILE.read_text())
@@ -300,24 +308,39 @@ def person_account(lab=False):
         raise SystemExit(f"{ACCOUNT_FILE} must hold `name` and `password_hash`, and may hold "
                          "`full_name`, and nothing else")
     name, hashed, full = account["name"], account["password_hash"], account.get("full_name", "")
-    if not (isinstance(name, str) and ACCOUNT_NAME.fullmatch(name)) or name in ("root", "nobody") \
-            or name.startswith("crowbar-"):
+    if not (isinstance(name, str) and ACCOUNT_NAME.fullmatch(name)) or name.startswith("crowbar-"):
         raise SystemExit(f"{ACCOUNT_FILE}: `name` must be a lowercase account name of up to 32 "
-                         "characters, not root, nobody, or a crowbar- service account")
+                         "characters, and not a crowbar- service account")
     if not (isinstance(hashed, str) and PASSWORD_HASH.fullmatch(hashed)):
-        raise SystemExit(f"{ACCOUNT_FILE}: `password_hash` must be a crypt hash such as "
-                         "`openssl passwd -6` prints, starting with `$`")
+        raise SystemExit(f"{ACCOUNT_FILE}: `password_hash` must be a whole crypt hash, as "
+                         "`openssl passwd -6` prints it")
     if not isinstance(full, str) or any(c in full for c in ":,\n"):
         raise SystemExit(f"{ACCOUNT_FILE}: `full_name` must be text with no colon, comma, or "
                          "line break")
-    print(f"Building with the account `{name}` from {ACCOUNT_FILE}")
-    return {"name": name, "password_hash": hashed, "full_name": full}
+    return {"name": name, "full_name": full, "password_hash": hashed, "password": ""}
+
+
+def names_in_root(root):
+    """Every user and group name the root already has, which the person's
+    account must not take."""
+    names = set()
+    for table in ("etc/passwd", "etc/group"):
+        try:
+            names |= {line.split(":", 1)[0] for line in (root / table).read_text().splitlines()}
+        except FileNotFoundError:
+            pass
+    return names
 
 
 def build(force=False, lab_account=False):
     preflight(build=True)
     account = person_account(lab_account)
     rootfs(force)
+    if account["name"] in names_in_root(ROOTFS):
+        raise SystemExit(f"{ACCOUNT_FILE}: the image already has a user or group named "
+                         f"`{account['name']}`; choose another name")
+    if not account["password"]:
+        print(f"Building with the account `{account['name']}` from {ACCOUNT_FILE}")
     compile_desktop(force)
     # Checked on every build, not only after an install: the image is never
     # written from a root that cannot drive NVIDIA's GPUs.
@@ -331,11 +354,12 @@ def build(force=False, lab_account=False):
                ROOT_LABEL=CFG["root_label"], ESP_LABEL=CFG["esp_label"],
                ESP_MIB=str(CFG["esp_mib"]), ROOT_GIB=str(CFG["root_gib"]),
                KVER=image_kernel(ROOTFS), KERNEL_ARGS=" ".join(CFG["kernel_args"]),
-               DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT),
+               DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT), PERSON_UID=str(PERSON_UID),
                PERSON=account["name"], PERSON_FULL_NAME=account["full_name"],
-               PERSON_PASSWORD_HASH=account.get("password_hash", ""),
-               PERSON_PASSWORD=account.get("password", ""))
+               PERSON_PASSWORD_HASH=account["password_hash"], PERSON_PASSWORD=account["password"])
     run(*userns(), "sh", HERE / "host/image.sh", *binaries().values(), env=env)
+    lab = " (the lab account; see the warning above)" if account["password"] else ""
+    print(f"The image's person's account is `{account['name']}`{lab}.")
 
 
 def running():
@@ -458,6 +482,18 @@ def stop():
     print(f"Powered off the guest (pid {pid})")
 
 
+def person_has_home(out):
+    """Whether the check's output shows the person's account with a home of
+    its own under /home and a login shell: `name:home:shell`, then the home's
+    owner and mode."""
+    lines = out.splitlines()
+    if len(lines) < 2 or len(account := lines[0].split(":")) != 3:
+        return False
+    name, home, shell = account
+    return home == f"/home/{name}" and shell in ("/bin/bash", "/bin/sh") \
+        and lines[1].split()[:1] == [name]
+
+
 # What a booted base must show, as (name, guest command, test on its output).
 CHECKS = [
     ("Void Linux", "cat /etc/os-release",
@@ -477,10 +513,9 @@ CHECKS = [
                   "pubkeyauthentication yes"} <= set(out.lower().splitlines())),
     # Its name, home, and shell, then who owns the home and its mode.
     ("the person's account has a home and a login shell",
-     "getent passwd 1003 | cut -d: -f1,6,7; stat -c '%U %a' \"$(getent passwd 1003 | cut -d: -f6)\"",
-     lambda out: len(lines := out.split("\n")) > 1 and len(entry := lines[0].split(":")) == 3
-     and entry[1] == f"/home/{entry[0]}" and entry[2] in ("/bin/bash", "/bin/sh")
-     and lines[1].split()[:1] == [entry[0]]),
+     f"getent passwd {PERSON_UID} | cut -d: -f1,6,7; "
+     f"stat -c '%U %a' \"$(getent passwd {PERSON_UID} | cut -d: -f6)\"",
+     lambda out: person_has_home(out)),
     ("network has an address", "ip -4 -o addr show scope global",
      lambda out: "inet " in out),
     ("packages keep their groups", "stat -c '%G %n' /usr/bin/wall /var/db/dhcpcd",
