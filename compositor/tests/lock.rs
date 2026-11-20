@@ -125,32 +125,19 @@ fn locked_the_lock_screen_is_all_that_shows_and_all_that_hears() {
     assert_eq!(compositor.screen(0).pixel(60, 60), Some(BLUE));
     shell.take_keys().unwrap();
 
-    // A click or a chord moves nothing, and until the confirm chord the lock
-    // screen takes no text, and the shell may not unlock.
+    // A click or a chord moves nothing, and the lock screen takes text at
+    // once: the person types their password with nothing first.
     compositor.click(60, 60);
     chord(&compositor, &[KEY_SUPER, KEY_2]);
     compositor.key(KEY_A, true);
     compositor.key(KEY_A, false);
     shell.roundtrip().unwrap();
     client.roundtrip().unwrap();
-    assert_eq!(pressed(&mut shell), [KEY_SUPER], "the lock screen took text");
+    assert_eq!(pressed(&mut shell), [KEY_SUPER, KEY_A], "the lock screen took no text");
     assert!(pressed(&mut client).is_empty(), "a window heard a key while locked");
     assert_eq!(compositor.with(|state| state.workspace()), 1, "a chord acted");
-    control.send(r#"{"op":"unlock"}"#);
-    assert!(
-        control.line().starts_with(r#"{"reply":"error""#),
-        "unlocked without the chord"
-    );
 
-    // The confirm chord opens the unlock entry: the lock screen takes text,
-    // and never hears the chord's Enter.
-    chord(&compositor, &[KEY_CTRL, KEY_ALT, KEY_ENTER]);
-    assert_eq!(control.line(), r#"{"event":"unlock_entry"}"#);
-    compositor.key(KEY_A, true);
-    compositor.key(KEY_A, false);
-    shell.roundtrip().unwrap();
-    assert_eq!(pressed(&mut shell), [KEY_CTRL, KEY_ALT, KEY_A]);
-
+    // With no unlock authority, the shell's word unlocks.
     control.send(r#"{"op":"unlock"}"#);
     assert_eq!(control.line(), r#"{"event":"unlocked"}"#);
     assert_eq!(control.line(), r#"{"reply":"ok"}"#);
@@ -229,17 +216,41 @@ fn the_session_locks_itself_when_idle_unless_a_shown_surface_inhibits_it() {
 }
 
 #[test]
-fn the_confirm_chord_locks_an_unlocked_session_and_no_client_hears_its_enter() {
+fn the_confirm_chord_neither_locks_nor_unlocks_and_no_client_hears_its_enter() {
     let compositor = Compositor::start();
     let mut control = Control::connect(&compositor);
     let mut client = focused_window(&compositor);
 
+    // Unlocked, the chord does not lock, and the window does not hear its
+    // Enter.
     chord(&compositor, &[KEY_CTRL, KEY_ALT, KEY_ENTER]);
-
-    assert_eq!(control.line(), r#"{"event":"locked"}"#);
     client.roundtrip().unwrap();
     let keys = pressed(&mut client);
     assert!(!keys.contains(&KEY_ENTER), "a client heard the chord's Enter: {keys:?}");
+    assert!(!compositor.with(|state| state.locked()), "the chord locked");
+
+    // Locked, it does not unlock, and the lock screen does not hear its
+    // Enter either.
+    control.send(r#"{"op":"lock"}"#);
+    assert_eq!(control.line(), r#"{"event":"locked"}"#);
+    assert_eq!(control.line(), r#"{"reply":"ok"}"#);
+    let mut shell = compositor.shell();
+    lock_screen(&mut shell);
+    shell.take_keys().unwrap();
+    chord(&compositor, &[KEY_CTRL, KEY_ALT, KEY_ENTER]);
+    shell.roundtrip().unwrap();
+    let keys = pressed(&mut shell);
+    assert!(
+        !keys.contains(&KEY_ENTER),
+        "the lock screen heard the chord's Enter: {keys:?}"
+    );
+    assert!(compositor.with(|state| state.locked()), "the chord unlocked");
+
+    // The shell hears no event of the chord: the next line answers its
+    // request.
+    control.send(r#"{"op":"snapshot"}"#);
+    let reply = control.line();
+    assert!(reply.starts_with(r#"{"reply":"snapshot""#), "{reply}");
 }
 
 /// The unlock authority, listening at `authority` in the compositor's
@@ -262,15 +273,6 @@ fn once_there_is_an_unlock_authority_only_its_word_unlocks() {
     authority.send(r#"{"op":"lock"}"#);
     assert_eq!(authority.line(), r#"{"reply":"ok"}"#);
     assert_eq!(control.line(), r#"{"event":"locked"}"#);
-
-    // Before the confirm chord, not even the authority unlocks.
-    authority.send(r#"{"op":"unlock"}"#);
-    assert!(
-        authority.line().starts_with(r#"{"reply":"error""#),
-        "unlocked before the chord"
-    );
-    chord(&compositor, &[KEY_CTRL, KEY_ALT, KEY_ENTER]);
-    assert_eq!(control.line(), r#"{"event":"unlock_entry"}"#);
 
     // The shell's word is not enough.
     control.send(r#"{"op":"unlock"}"#);
@@ -304,7 +306,6 @@ fn the_unlock_authority_takes_its_user_id_and_no_other() {
     let compositor = Compositor::start();
     let mut impostor = Control::at(&with_authority(&compositor, another_uid()));
     compositor.with(|state| state.lock("test"));
-    chord(&compositor, &[KEY_CTRL, KEY_ALT, KEY_ENTER]);
 
     impostor.writer.write_all(b"{\"op\":\"unlock\"}\n").ok();
     let mut line = String::new();
@@ -340,4 +341,11 @@ fn a_session_started_locked_shows_and_gives_nothing_before_the_lock_screen() {
     let mut shell = compositor.shell();
     lock_screen(&mut shell);
     assert_eq!(compositor.screen(0).pixel(60, 60), Some(BLUE));
+
+    // The lock screen takes the person's keys as soon as it shows.
+    shell.take_keys().unwrap();
+    compositor.key(KEY_A, true);
+    compositor.key(KEY_A, false);
+    shell.roundtrip().unwrap();
+    assert_eq!(pressed(&mut shell), [KEY_A], "the lock screen took no text");
 }

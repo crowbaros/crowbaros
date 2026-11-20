@@ -105,10 +105,10 @@ Then each row:
    - The displays show the desktop again, the `frames=` count grows when something moves, and the pointer is drawn.
    - Also switch to another virtual terminal and back, which seatd handles the same way.
 5. **Lock:**
-   - Super+L, or Ctrl+Alt+Enter, locks.
+   - Super+L locks. Ctrl+Alt+Enter neither locks nor unlocks.
    - With no shell to draw the lock screen, every display goes black, and keys reach no client.
-   - Unlock it from the control channel: `{"op":"unlock"}` is refused until Ctrl+Alt+Enter opens the unlock entry, and taken after.
-   - To try the unlock authority, as CrowbarOS's desktop runs it, start Fulcrum with `--unlock-socket $D/unlock --unlock-uid $(id -u) --start-locked` as well. It starts locked, the control channel's `unlock` is refused, and `{"op":"unlock"}` on `$D/unlock` is taken after the chord. Lock it there with `{"op":"lock"}`, suspend with a second monitor attached, and resume: that is the row for Milestone 8.
+   - Unlock it from the control channel: `{"op":"unlock"}`.
+   - To try the unlock authority, as CrowbarOS's desktop runs it, start Fulcrum with `--unlock-socket $D/unlock --unlock-uid $(id -u) --start-locked` as well. It starts locked, the control channel's `unlock` is refused, and `{"op":"unlock"}` on `$D/unlock` is taken. Lock it there with `{"op":"lock"}`, suspend with a second monitor attached, and resume: that is the row for Milestone 8.
 
 ## What to record
 

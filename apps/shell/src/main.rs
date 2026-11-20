@@ -147,8 +147,6 @@ struct Model {
     preferences: Preferences,
     launcher: Option<WindowHandle<Launcher>>,
     lock: Option<WindowHandle<LockScreen>>,
-    /// The confirm chord opened the lock screen's unlock entry.
-    unlock_entry: bool,
     apps: Vec<AppEntry>,
     tx: Sender<session::Event>,
     clock: String,
@@ -990,9 +988,8 @@ fn toggle_launcher(model: Entity<Model>, cx: &mut App) {
     }
 }
 /// The lock screen: shown while the compositor has the session locked, and
-/// all it shows (ADR 0020). Unlock begins with the confirm chord,
-/// Ctrl+Alt+Enter, which opens its entry. Where an unlock helper checks the
-/// person's password, the entry takes it, and Enter sends it to the helper,
+/// all it shows (ADR 0020). Where an unlock helper checks the person's
+/// password, its entry takes it at once, and Enter sends it to the helper,
 /// which tells the compositor to unlock: the shell's own word is not enough.
 /// Without one, Enter asks the compositor to unlock. Both stand in for the
 /// broker, as Fulcrum's proposal until a record decides (issues 87 and 100).
@@ -1009,8 +1006,7 @@ struct LockScreen {
 impl LockScreen {
     const MAX_PASSWORD: usize = 1024;
     fn submit(&mut self, cx: &mut Context<Self>) {
-        let m = self.model.read(cx);
-        if !m.unlock_entry || self.busy {
+        if self.busy {
             return;
         }
         if !session::unlocks_with_password() {
@@ -1020,14 +1016,14 @@ impl LockScreen {
         if self.password.is_empty() {
             return;
         }
-        let tx = m.tx.clone();
+        let tx = self.model.read(cx).tx.clone();
         self.busy = true;
         self.error = None;
         session::unlock_with_password(std::mem::take(&mut self.password), tx);
         cx.notify();
     }
     fn typed(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        if !self.model.read(cx).unlock_entry || self.busy || !session::unlocks_with_password() {
+        if self.busy || !session::unlocks_with_password() {
             return;
         }
         let k = &event.keystroke;
@@ -1180,20 +1176,6 @@ fn person_label() -> String {
     person_label_from(env_person.as_deref(), env_user.as_deref(), passwd.as_deref())
 }
 
-fn keycap(label: &'static str) -> Div {
-    div()
-        .px(px(8.))
-        .py(px(3.))
-        .rounded(px(6.))
-        .bg(rgb(LOCK_ABYSS))
-        .border_1()
-        .border_color(rgb(LOCK_LINE))
-        .text_size(px(11.))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(rgb(LOCK_FROST))
-        .child(label)
-}
-
 impl Render for LockScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let m = self.model.read(cx);
@@ -1203,7 +1185,6 @@ impl Render for LockScreen {
         let lock_time = m.lock_time.clone();
         let lock_date = m.lock_date.clone();
         let person = m.person.clone();
-        let entry = m.unlock_entry;
         let with_password = session::unlocks_with_password();
         let has_password = !self.password.is_empty();
         let dot_count = visible_password_dots(&self.password);
@@ -1311,64 +1292,7 @@ impl Render for LockScreen {
                                                     .child(person),
                                             ),
                                     )
-                                    .when(!entry, |d| {
-                                        d.child(
-                                            div()
-                                                .id("lock-chord")
-                                                .w_full()
-                                                .h(px(52.))
-                                                .px(px(17.))
-                                                .flex()
-                                                .items_center()
-                                                .justify_between()
-                                                .rounded(px(10.))
-                                                .bg(rgb(LOCK_VOID))
-                                                .border_1()
-                                                .border_color(rgb(LOCK_STEEL))
-                                                .child(
-                                                    div()
-                                                        .flex()
-                                                        .items_center()
-                                                        .gap(px(10.))
-                                                        .child(icon("lock", LOCK_MUTED, 16.))
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(14.))
-                                                                .text_color(rgb(LOCK_MUTED))
-                                                                .child("Locked"),
-                                                        ),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .flex()
-                                                        .items_center()
-                                                        .gap(px(5.))
-                                                        .child(keycap("Ctrl"))
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(11.))
-                                                                .text_color(rgb(LOCK_STEEL))
-                                                                .child("+"),
-                                                        )
-                                                        .child(keycap("Alt"))
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(11.))
-                                                                .text_color(rgb(LOCK_STEEL))
-                                                                .child("+"),
-                                                        )
-                                                        .child(keycap("Enter")),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .mt(px(14.))
-                                                .text_size(px(12.))
-                                                .text_color(rgb(LOCK_MUTED))
-                                                .child("Press Ctrl+Alt+Enter to unlock"),
-                                        )
-                                    })
-                                    .when(entry && with_password, |d| {
+                                    .when(with_password, |d| {
                                         let border = if error.is_some() {
                                             LOCK_ERROR
                                         } else if busy {
@@ -1511,7 +1435,7 @@ impl Render for LockScreen {
                                                 }),
                                         )
                                     })
-                                    .when(entry && !with_password, |d| {
+                                    .when(!with_password, |d| {
                                         d.child(
                                             div()
                                                 .id("unlock")
@@ -1690,7 +1614,6 @@ fn main() -> anyhow::Result<()> {
             },
             launcher: None,
             lock: None,
-            unlock_entry: false,
             apps: catalog::discover(),
             tx,
             clock: now.bar,
@@ -1767,27 +1690,15 @@ fn main() -> anyhow::Result<()> {
                                     // A shell that starts while locked shows
                                     // the lock screen too.
                                     let locked = s.locked;
-                                    let entry = s.unlock_entry;
                                     let lock_changes =
                                         lock_screen_changes(&s, model.read(cx).lock.is_some());
-                                    model.update(cx, |m, _| {
-                                        m.snapshot = s;
-                                        m.unlock_entry = entry;
-                                    });
+                                    model.update(cx, |m, _| m.snapshot = s);
                                     if lock_changes {
                                         set_lock_screen(&model, locked, cx);
                                     }
                                     refresh = true
                                 }
-                                session::Event::Lock(locked) => {
-                                    model.update(cx, |m, _| m.unlock_entry = false);
-                                    set_lock_screen(&model, locked, cx)
-                                }
-                                session::Event::UnlockEntry => {
-                                    log::info!("SHELL lock entry=open");
-                                    model.update(cx, |m, _| m.unlock_entry = true);
-                                    refresh = true
-                                }
+                                session::Event::Lock(locked) => set_lock_screen(&model, locked, cx),
                                 session::Event::Unlock(result) => {
                                     if let Some(w) = model.read(cx).lock {
                                         let _ = w.update(cx, |v, _, cx| v.answered(result, cx));
@@ -2103,7 +2014,6 @@ mod lock_tests {
             active: foot_client.clone(),
             connected: true,
             locked: false,
-            unlock_entry: false,
         };
         assert_eq!(
             dock_pin_state(Some(&foot), &focused_foot),
@@ -2122,7 +2032,6 @@ mod lock_tests {
             active: foot_client,
             connected: true,
             locked: false,
-            unlock_entry: false,
         };
         assert_eq!(
             dock_pin_state(Some(&settings), &urgent_snapshot),
@@ -2135,7 +2044,6 @@ mod lock_tests {
             active: session::Client::default(),
             connected: true,
             locked: false,
-            unlock_entry: false,
         };
         assert_eq!(
             dock_pin_state(Some(&settings), &no_active),

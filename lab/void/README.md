@@ -99,9 +99,10 @@ The host needs what [Base's README](../../base/README.md#what-the-host-needs)
 lists, QEMU's virtio-gpu device included. Avoid two builds at once: they share
 Base's build directory.
 
-The check drives real QEMU keyboard/pointer events for unlock at boot (the
-confirm chord, a wrong password, then the right one), launch, focus, workspaces,
-lock and unlock, the suspend hook's lock, Settings preview/Save/Undo, and
+The check drives real QEMU keyboard/pointer events for unlock at boot (a
+wrong password, then the right one, with nothing typed first), launch, focus,
+workspaces, lock by Super+L and by the bar's button, Ctrl+Alt+Enter neither
+locking nor unlocking, the suspend hook's lock, Settings preview/Save/Undo, and
 relaunch. It checks saved appearance, and a file the person wrote in their
 home, after a clean reboot, service identities, linked libraries, binary hashes, render
 activity, and shell restart. It checks that apps run as the person at the

@@ -34,13 +34,12 @@ required:
 
   --lock-after SECONDS   Locks the session after this long without input,
                          unless a shown surface inhibits idle. Without it,
-                         only the shell and the confirm chord lock it.
+                         only the shell and Super+L lock it.
 
   --unlock-socket PATH   Where the unlock authority connects, from
   --unlock-uid UID       --unlock-uid alone. With it, only the authority
-                         unlocks the session, after the confirm chord: the
-                         shell's word is not enough. Without it, the shell's
-                         request unlocks.
+                         unlocks the session: the shell's word is not
+                         enough. Without it, the shell's request unlocks.
 
   --start-locked         Starts with the session locked. It needs the unlock
                          authority.

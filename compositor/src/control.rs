@@ -40,10 +40,8 @@
 //! from the shell. It changes nothing, since every new window takes the
 //! keyboard (see `windows.rs`), and is answered so that the shell's
 //! messages stay as they are. `lock` and `unlock` lock and unlock the session,
-//! and the events `locked` and `unlocked` say it changed, as Super+L, the
-//! confirm chord, and the idle timer change it too (see `lock.rs`).
-//! `unlock_entry` says the confirm chord opened the unlock entry, before
-//! which `unlock` is refused. The snapshot has `locked` and `unlock_entry`.
+//! and the events `locked` and `unlocked` say it changed, as Super+L and
+//! the idle timer change it too (see `lock.rs`). The snapshot has `locked`.
 //! Where an unlock authority listens, the shell's `unlock` is refused: the
 //! authority has a socket of its own, checked against its user ID, where it
 //! may send `lock` and `unlock`, and nothing else, and hears no events.
@@ -270,8 +268,7 @@ impl State {
         }
     }
 
-    /// A request on the unlock authority's connection: `lock`, or `unlock`
-    /// once the confirm chord opened the unlock entry.
+    /// A request on the unlock authority's connection: `lock` or `unlock`.
     fn authority_request(&mut self, line: &str) -> String {
         let op = match parse_object(line) {
             Ok(request) if request.len() == 1 => match request.get("op") {
@@ -286,20 +283,13 @@ impl State {
                 self.lock("authority");
                 Ok(())
             }
-            "unlock" => self.unlock_after_chord(),
+            "unlock" => {
+                self.unlock();
+                Ok(())
+            }
             _ => Err(format!("the unlock authority may lock and unlock, and not {op:?}")),
         };
         result.map_or_else(|message| error_reply(&message), |()| ok_reply())
-    }
-
-    /// Unlocks the session, if the confirm chord opened the unlock entry:
-    /// ADR 0020's unlock begins with it.
-    fn unlock_after_chord(&mut self) -> Result<(), String> {
-        if self.locked() && !self.unlock_entry_open() {
-            return Err("unlock begins with the confirm chord".into());
-        }
-        self.unlock();
-        Ok(())
     }
 
     /// Sends an event to every shell control connection: a line with no
@@ -407,7 +397,7 @@ impl State {
                 if self.controls.authority.is_some() {
                     return Err("the shell's word is not enough: the unlock authority unlocks".into());
                 }
-                self.unlock_after_chord()?;
+                self.unlock();
                 Ok(ok_reply())
             }),
             "launching" => only(&[], &request).map(|()| ok_reply()),
@@ -456,10 +446,9 @@ impl State {
             })
             .collect();
         format!(
-            "{{\"reply\":\"snapshot\",\"workspace\":{},\"active\":{active},\"locked\":{},\"unlock_entry\":{},\"windows\":[{}]}}",
+            "{{\"reply\":\"snapshot\",\"workspace\":{},\"active\":{active},\"locked\":{},\"windows\":[{}]}}",
             self.workspace,
             self.locked(),
-            self.unlock_entry_open(),
             windows.join(",")
         )
     }
