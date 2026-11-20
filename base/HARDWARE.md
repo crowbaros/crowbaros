@@ -105,12 +105,14 @@ asked for.
 
 ## Reach it over SSH
 
-SSH takes root's key alone, the one Base's build made: `.lab/base/id_ed25519`
-in the checkout that built the image. With the machine's address from
-`ip -4 addr`:
+SSH takes keys alone. The key Base's build made, `.lab/base/id_ed25519` in the
+checkout that built the image, logs in as root and as your account. Your
+account also takes the keys you listed in the account file's `ssh_keys`. With
+the machine's address from `ip -4 addr`:
 
 ```sh
 ssh -i .lab/base/id_ed25519 root@<the machine's address>
+ssh -i .lab/base/id_ed25519 <your account>@<the machine's address>
 ```
 
 The desktop's logs are in `/var/log/crowbar-*.log`.

@@ -11,7 +11,8 @@
 # the kernel's command line),
 # and for the desktop DESKTOP (base/desktop) and REPO_ROOT. The person's
 # account is PERSON_UID, PERSON, and PERSON_FULL_NAME, with PERSON_PASSWORD_HASH
-# from the account file or, for the lab account, PERSON_PASSWORD. Its arguments are the
+# from the account file or, for the lab account, PERSON_PASSWORD, and
+# PERSON_SSH_KEYS, its public keys from the account file, one per line. Its arguments are the
 # desktop's programs.
 set -eu
 R="$WORK/staging"
@@ -76,6 +77,12 @@ install -D -m 755 "$DESKTOP/zzz-lock" "$R/etc/zzz.d/suspend/50-crowbar-lock"
 HASH=$PERSON_PASSWORD_HASH
 if [ -z "$HASH" ]; then HASH=$(chroot "$R" /usr/local/bin/crowbar-unlock hash "$PERSON_PASSWORD"); fi
 chroot "$R" usermod -p "$HASH" "$PERSON"
+# SSH as the person takes the build's key, as root's does, and the keys the
+# account file lists. Whoever holds the build's key is root already.
+install -d -m 700 "$R/home/$PERSON/.ssh"
+{ cat "$PUBKEY"; printf '%s' "$PERSON_SSH_KEYS"; } > "$R/home/$PERSON/.ssh/authorized_keys"
+chmod 600 "$R/home/$PERSON/.ssh/authorized_keys"
+chroot "$R" chown -R "$PERSON:$PERSON" "/home/$PERSON/.ssh"
 for path in "$@"; do install -D -m 755 "$path" "$R/usr/local/bin/$(basename "$path")"; done
 install -d "$R/usr/share/crowbaros-shell" "$R/usr/share/applications" "$R/usr/share/fonts/crowbaros" "$R/usr/share/icons/default"
 install -m 644 "$REPO_ROOT/apps/shell/assets/wallpaper.png" "$REPO_ROOT/apps/shell/assets/nightwatch.png" "$REPO_ROOT/apps/shell/assets/mark.png" "$REPO_ROOT/apps/shell/assets/quiet-signal.png" "$R/usr/share/crowbaros-shell/"

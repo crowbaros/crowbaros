@@ -22,7 +22,7 @@ base/void_base.py stop           # power off
 | Desktop | Fulcrum (`compositor/`), the shell, and Studio Settings, built and tested in a Void build root of their own so they link Void's libraries, in `/usr/local/bin`. Their runit services and helpers are in [`desktop/`](desktop/) |
 | Disk | GPT. An ESP holds a standalone GRUB at `\EFI\BOOT\BOOTX64.EFI`, the path any UEFI firmware boots without a boot entry. The root is Btrfs, labelled `crowbaros-root` |
 | Boot | GRUB finds the root by label and reads `/boot/grub/grub.cfg` there. The kernel and initramfs are the ones xbps built. The kernel's command line adds `nvidia-drm.modeset=1 nvidia-drm.fbdev=1` |
-| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `dbus`, `iwd`, `seatd`, and the desktop's four: the compositor on virtual terminal 2, the shell, the launcher, and the unlock helper. Root logs in over SSH with a key made for the lab, and has no password. SSH takes keys only |
+| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `dbus`, `iwd`, `seatd`, and the desktop's four: the compositor on virtual terminal 2, the shell, the launcher, and the unlock helper. Root logs in over SSH with a key made for the lab, and has no password; the person's account takes the same key. SSH takes keys only |
 
 The VM is QEMU with KVM, OVMF firmware, virtio disk and network, SSH
 forwarded to `127.0.0.1:22240`, and for the desktop a virtio GPU, keyboard, and
@@ -120,7 +120,8 @@ PID 1, that `sshd`, `dhcpcd`, and the serial getty run, that SSH takes keys and
 no passwords, that `dbus` and `iwd` run, that the root has grown to fill a
 disk larger than the image, that the initramfs carries Intel's and AMD's
 microcode, that the person's account is in `netdev` and may use `iwctl`, that
-the person's account has a home it owns and a login shell, that the network has an address, that packages kept their groups, that the kernel's command line carries
+the person's account has a home it owns and a login shell and takes the build's key
+over SSH, that the network has an address, that packages kept their groups, that the kernel's command line carries
 NVIDIA's settings, that NVIDIA's module is built for the running kernel and,
 with no NVIDIA card in the VM, not loaded, and that the kernel logged nothing
 critical.
@@ -172,12 +173,15 @@ Settings saves the motion preference and says it has no effect here.
 
 Each image has one person's account, with UID 1003, a home in `/home`, and
 `bash` as its login shell. Its password unlocks the desktop and logs in on the
-consoles. SSH still takes keys only, and only for root.
+consoles. SSH takes keys only, never a password: root's and the person's
+account take the build's key, `.lab/base/id_ed25519`, and the person's account
+takes the keys the account file lists as well.
 
 `build` reads the account from `base/account.json`, which git ignores:
 
 ```json
-{"name": "jim", "password_hash": "<what openssl passwd -6 prints>", "full_name": "Jim Martin"}
+{"name": "jim", "password_hash": "<what openssl passwd -6 prints>", "full_name": "Jim Martin",
+ "ssh_keys": ["ssh-ed25519 AAAA... jim@laptop"]}
 ```
 
 - `name`: a lowercase account name of up to 32 characters, starting with a
@@ -186,6 +190,9 @@ consoles. SSH still takes keys only, and only for root.
 - `password_hash`: the whole crypt hash, never the password itself. Print one
   with `openssl passwd -6`, which asks for the password twice.
 - `full_name`: optional. The lock screen shows it in place of the name.
+- `ssh_keys`: optional. Public keys that may log in as this account over SSH,
+  each one line as its `.pub` file holds it, with no options before the key's
+  type.
 
 The build refuses a file with anything else in it, a hash cut short, or a value
 that would break `/etc/passwd` or `/etc/shadow`, before it builds anything.

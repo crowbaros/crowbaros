@@ -299,7 +299,8 @@ def compile_desktop(force):
 
 # The account an image gets with no account file. Its password is in this
 # repository, so the image is for the lab alone.
-LAB_ACCOUNT = {"name": "crowbar", "full_name": "", "password_hash": "", "password": "crowbar"}
+LAB_ACCOUNT = {"name": "crowbar", "full_name": "", "password_hash": "", "password": "crowbar",
+               "ssh_keys": []}
 # The person's account has this UID whatever its name: the unlock helper, and
 # both checks, find it by UID.
 PERSON_UID = 1003
@@ -307,6 +308,12 @@ ACCOUNT_NAME = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
 # A crypt(5) hash: `$id$`, its settings and salt, each ended by `$`, then the
 # hash itself, with nothing /etc/shadow would split on.
 PASSWORD_HASH = re.compile(r"\$[0-9a-z]+\$(?:[^$:\s]+\$)+[./0-9A-Za-z]{20,}")
+# One OpenSSH public key, as a `.pub` file holds it: its type, the key in
+# base64, and an optional comment, on one line. No options before the type, so
+# a key file cannot give a key a forced command or anything else.
+SSH_PUBLIC_KEY = re.compile(r"(?:ssh-(?:ed25519|rsa)|ecdsa-sha2-nistp(?:256|384|521)"
+                            r"|sk-(?:ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)"
+                            r" [A-Za-z0-9+/]+={0,2}(?: [^\n\r]*)?")
 
 
 def warn_lab_account(why):
@@ -320,7 +327,9 @@ def warn_lab_account(why):
 
 def person_account(lab=False):
     """The person's account, as `image.sh` takes it: its name, full name, and
-    either the password hash from the account file or the lab's password.
+    either the password hash from the account file or the lab's password, and
+    the SSH public keys the file lists. The build's own key is added in
+    `image.sh`, for this account as for root.
 
     With `lab`, or with no account file, it is the lab account, which always
     comes with a loud warning: anyone who reads this repository knows its
@@ -336,9 +345,9 @@ def person_account(lab=False):
     except ValueError as error:
         raise SystemExit(f"{ACCOUNT_FILE} is not JSON: {error}")
     if not isinstance(account, dict) or not {"name", "password_hash"} <= set(account) \
-            or not set(account) <= {"name", "password_hash", "full_name"}:
+            or not set(account) <= {"name", "password_hash", "full_name", "ssh_keys"}:
         raise SystemExit(f"{ACCOUNT_FILE} must hold `name` and `password_hash`, and may hold "
-                         "`full_name`, and nothing else")
+                         "`full_name` and `ssh_keys`, and nothing else")
     name, hashed, full = account["name"], account["password_hash"], account.get("full_name", "")
     if not (isinstance(name, str) and ACCOUNT_NAME.fullmatch(name)) or name.startswith("crowbar-"):
         raise SystemExit(f"{ACCOUNT_FILE}: `name` must be a lowercase account name of up to 32 "
@@ -349,7 +358,13 @@ def person_account(lab=False):
     if not isinstance(full, str) or any(c in full for c in ":,\n"):
         raise SystemExit(f"{ACCOUNT_FILE}: `full_name` must be text with no colon, comma, or "
                          "line break")
-    return {"name": name, "full_name": full, "password_hash": hashed, "password": ""}
+    keys = account.get("ssh_keys", [])
+    if not (isinstance(keys, list) and all(isinstance(key, str) and SSH_PUBLIC_KEY.fullmatch(key)
+                                           for key in keys)):
+        raise SystemExit(f"{ACCOUNT_FILE}: `ssh_keys` must be a list of SSH public keys, each "
+                         "one line as its .pub file holds it")
+    return {"name": name, "full_name": full, "password_hash": hashed, "password": "",
+            "ssh_keys": keys}
 
 
 def names_in_root(root):
@@ -389,7 +404,8 @@ def build(force=False, lab_account=False):
                KVER=image_kernel(ROOTFS), KERNEL_ARGS=" ".join(CFG["kernel_args"]),
                DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT), PERSON_UID=str(PERSON_UID),
                PERSON=account["name"], PERSON_FULL_NAME=account["full_name"],
-               PERSON_PASSWORD_HASH=account["password_hash"], PERSON_PASSWORD=account["password"])
+               PERSON_PASSWORD_HASH=account["password_hash"], PERSON_PASSWORD=account["password"],
+               PERSON_SSH_KEYS="".join(key + "\n" for key in account["ssh_keys"]))
     run(*userns(), "sh", HERE / "host/image.sh", *binaries().values(), env=env)
     lab = " (the lab account; see the warning above)" if account["password"] else ""
     print(f"The image's person's account is `{account['name']}`{lab}.")
@@ -462,16 +478,17 @@ def wait_for(predicate, timeout, what):
     raise SystemExit(f"Timed out after {timeout}s waiting for {what}; see {SERIAL_LOG}")
 
 
-def ssh_args():
+def ssh_args(user="root"):
     return ["ssh", "-i", str(KEY), "-p", str(CFG["ssh_port"]), "-o", "IdentitiesOnly=yes",
             "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
             "-o", "StrictHostKeyChecking=accept-new",
             "-o", f"UserKnownHostsFile={WORK / 'known_hosts'}",
-            "-o", "GlobalKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "root@127.0.0.1"]
+            "-o", "GlobalKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", f"{user}@127.0.0.1"]
 
 
-def ssh(command, timeout=60):
-    return subprocess.run(ssh_args() + [command], text=True, capture_output=True, timeout=timeout)
+def ssh(command, timeout=60, user="root"):
+    return subprocess.run(ssh_args(user) + [command], text=True, capture_output=True,
+                          timeout=timeout)
 
 
 def ssh_up():
@@ -578,6 +595,9 @@ CHECKS = [
      f"getent passwd {PERSON_UID} | cut -d: -f1,6,7; "
      f"stat -c '%U %a' \"$(getent passwd {PERSON_UID} | cut -d: -f6)\"",
      lambda out: person_has_home(out)),
+    # Logged in as the person, not as root: the build's key reaches their account too.
+    ("the person's account takes the build's key over SSH", "id -u",
+     lambda out: out.strip() == str(PERSON_UID), "person"),
     ("network has an address", "ip -4 -o addr show scope global",
      lambda out: "inet " in out),
     ("packages keep their groups", "stat -c '%G %n' /usr/bin/wall /var/db/dhcpcd",
@@ -605,8 +625,8 @@ def check():
     lines = [f"CrowbarOS base boot check, {stamp}, commit {head}",
              f"disk sha256 {sha256(BASE_DISK)}", f"login prompt after {to_login:.1f}s", ""]
     failed = 0
-    for name, command, ok in CHECKS:
-        result = ssh(command)
+    for name, command, ok, *as_person in CHECKS:
+        result = ssh(command, user=LAB_ACCOUNT["name"] if as_person else "root")
         passed = result.returncode == 0 and ok(result.stdout)
         failed += not passed
         lines.append(f"{'PASS' if passed else 'FAIL'}: {name}")
