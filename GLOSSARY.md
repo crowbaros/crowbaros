@@ -25,6 +25,13 @@ The name of the CrowbarOS compositor, the way Mutter or KWin names theirs. Its c
 The bar, launcher, dock, and wallpaper the person works in, drawn as layer surfaces.
 _Avoid_: Desktop environment
 
+**App**:
+A program the person runs on the desktop. Every app runs as the person's account, at the compositor's one socket for apps, and may do what a program may on any desktop: share the clipboard, take the keyboard when it opens, use the GPU.
+_Avoid_: Compartment, principal, Tool
+
+**Launcher service**:
+The Base service that starts the apps the shell asks for, as the person. The shell's launcher is the menu the person picks an app from; the launcher service is what starts it.
+
 **Default apps**:
 The handful of apps CrowbarOS installs. Studio Settings is the first.
 

@@ -146,10 +146,12 @@ says. Nothing in the desktop runs as root to start an app.
 - The person's account (UID 1003) has a home and a login shell, and its
   password unlocks the desktop. Its name and password come from the account
   file; see [The person's account](#the-persons-account). Every app runs as it.
-- The launcher, `desktop/launcher.py`, runs as the person's account with its
-  groups and `no_new_privs`. It starts an installed desktop entry when the
-  shell asks, and takes requests from the shell's UID alone. Its apps get a
-  fixed environment, with no trusted descriptors.
+- The launcher, `desktop/launcher.py`, binds its socket as root in a directory
+  root owns, so no app can take its place, and then becomes the person's
+  account with its groups. It starts a desktop entry when the shell asks, and
+  takes requests from the shell's UID alone. Apps get what a login gives the
+  person: their home, `~/.local/bin` on `PATH`, and the system's locale. They
+  may gain privileges, so `sudo` and `su` work from the terminal.
 - `crowbar-unlock` is a root service, `desktop/unlock.py`. The compositor
   starts locked and listens for it at a socket only root may use. After the
   confirm chord, the lock screen sends the person's password to the helper,
@@ -160,8 +162,8 @@ Apps reach the compositor at one ordinary Wayland socket, in a directory only
 the compositor and the person's group may enter, and the compositor takes only
 the person's UID there. The launcher links it into the person's runtime
 directory, `/run/user/1003`, as `wayland-0`, the `WAYLAND_DISPLAY` every app
-gets, so any Wayland app from Void runs as it is. Apps can reach one another,
-and share the clipboard, as on any desktop. The shell reads saved appearance
+gets, so any Wayland app from Void runs as it is. Apps and the shell share one
+clipboard, and a new window takes the keyboard, as on any desktop. The shell reads saved appearance
 through a read-only request to the launcher, and Studio Settings keeps its
 preferences in the person's home. The compositor has no animations, so Studio
 Settings saves the motion preference and says it has no effect here.

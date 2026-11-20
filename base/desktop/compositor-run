@@ -15,7 +15,7 @@ install -d -o crowbar-compositor -g crowbar-shell -m 2750 /run/crowbar-trusted/c
 PERSON_UID=1003
 PERSON_GID=$(getent passwd "$PERSON_UID" | cut -d: -f4)
 test -n "$PERSON_GID" || exit 1
-install -d -o crowbar-compositor -g "$PERSON_GID" -m 2750 /run/crowbar-person
+install -d -o crowbar-compositor -g "$PERSON_GID" -m 2750 /run/crowbar-apps
 install -d -o crowbar-compositor -g root -m 0700 /run/crowbar-trusted/unlock
 chown crowbar-compositor:crowbar-compositor /var/log/crowbar-compositor.log
 chown crowbar-compositor:crowbar-compositor /home/crowbar-compositor
@@ -26,7 +26,7 @@ exec openvt -c 2 -s -f -w -- chpst -u crowbar-compositor:crowbar-compositor:_sea
   sh -c 'exec crowbar-compositor --backend tty \
   --shell-socket /run/crowbar-trusted/compositor/wayland --shell-uid 1001 \
   --shell-control-socket /run/crowbar-trusted/compositor/control \
-  --apps-socket /run/crowbar-person/wayland-0 --apps-uid 1003 \
+  --apps-socket /run/crowbar-apps/wayland-0 --apps-uid 1003 \
   --unlock-socket /run/crowbar-trusted/unlock/compositor --unlock-uid 0 \
   --layout /home/crowbar-compositor/layout \
   --start-locked \

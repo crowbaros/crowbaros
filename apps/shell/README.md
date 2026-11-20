@@ -40,10 +40,10 @@ historical behavior evidence, not a current Fedora workflow.
 - Saved Settings themes are read by the shell; it does not theme third-party apps.
 - Desktop-entry discovery honors XDG precedence, visibility, locale, and executable availability. Search text is never executed as a command.
 
-In the Alpha session, app launches go through the root stand-in's authenticated
-socket and run under a third UID with no trusted descriptors or seat access.
-The shell reads the app account's saved appearance through a bounded read-only
-request. The compositor and shell restart independently under runit.
+On Base, the shell asks the launcher service to start an app, and the
+launcher starts it as the person's account. The shell reads the person's saved
+appearance through a read-only request to the launcher. The compositor and
+shell restart independently under runit.
 
 `src/session.rs` retains Hyprland, `systemd-run`, and `systemctl` fallback paths.
 They are not used by the Alpha services; do not use `--start-session` as a Void
@@ -52,11 +52,10 @@ startup command. Replacing these adapters and the spike IPC is
 hook are archived and are not installed.
 
 The [full Void acceptance record](../../docs/development/void-desktop-smoke-2026-11-15.md)
-covers the Alpha desktop. Production identity,
-locking, safe focus/clipboard, display policy, accessibility/IME, and crash
-recovery are not established by this slice. The Alpha session's lock, with a
-root helper that checks one account's password, stands in for the broker's
-unlock; it records nothing. Desktop shortcuts and window-layout
+covers the desktop as it was then. Display policy, accessibility and input
+methods, and crash recovery are not established yet. The lock's root helper
+checks the person's password and tells the compositor to unlock. Desktop
+shortcuts and window-layout
 behavior come from the compositor, not the archived Hyprland configuration.
 
 ## Licensing

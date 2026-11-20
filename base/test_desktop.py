@@ -19,7 +19,7 @@ def load(name, file):
 
 launcher = load('launcher', 'launcher.py')
 unlocker = load('unlock', 'unlock.py')
-PERSON = types.SimpleNamespace(pw_name='jim', pw_dir='/home/jim', pw_uid=1003, pw_shell='/bin/bash')
+PERSON = types.SimpleNamespace(pw_name='alex', pw_dir='/home/alex', pw_uid=1003, pw_shell='/bin/bash')
 SHELL_UID = 1001
 
 
@@ -35,9 +35,9 @@ class LauncherRequests(unittest.TestCase):
         with patch.object(launcher, 'appearance', return_value={'theme': 'light'}) as read:
             reply = launcher.answer(b'{"op":"appearance"}\n', SHELL_UID, SHELL_UID, PERSON)
         self.assertEqual(reply, {'ok': True, 'preferences': {'theme': 'light'}})
-        read.assert_called_once_with('/home/jim', 1003)
+        read.assert_called_once_with('/home/alex', 1003)
 
-    def test_a_launch_runs_as_the_launcher_itself_with_no_new_privileges(self):
+    def test_a_launch_runs_as_the_launcher_itself_and_may_gain_privileges(self):
         with patch.object(launcher, 'desktop_path', side_effect=lambda path: path), \
                 patch.object(launcher.subprocess, 'run') as run, patch('builtins.open'):
             run.return_value.returncode = 0
@@ -45,7 +45,8 @@ class LauncherRequests(unittest.TestCase):
                                     SHELL_UID, SHELL_UID, PERSON)
         self.assertEqual(reply, {'ok': True})
         command, options = run.call_args
-        self.assertEqual(command[0][:2], ['/usr/bin/setpriv', '--no-new-privs'])
+        # As on any desktop: sudo and su work from the terminal.
+        self.assertEqual(command[0], ['/usr/bin/gio', 'launch', '/usr/share/applications/foot.desktop'])
         self.assertFalse({'user', 'group', 'extra_groups'} & set(options))
         self.assertEqual(options['env']['WAYLAND_DISPLAY'], 'wayland-0')
 
@@ -145,11 +146,19 @@ class PreferencesSafety(unittest.TestCase):
         with self.assertRaises(ValueError):
             launcher.appearance(self.home, os.getuid())
 
-    def test_desktop_path_cannot_select_arbitrary_code(self):
-        for path in ('/tmp/evil.desktop', '/usr/share/applications/../evil.desktop',
-                     '/usr/share/applications/foot.desktop/../../evil.desktop'):
+    def test_any_desktop_entry_launches_by_its_full_path(self):
+        entry = self.home / '.local/share/applications/mine.desktop'
+        entry.parent.mkdir(parents=True)
+        entry.write_text('[Desktop Entry]\n')
+        self.assertEqual(launcher.desktop_path(str(entry)), str(entry))
+        for path in ('mine.desktop', str(self.home / 'script.sh')):
             with self.assertRaises(ValueError):
                 launcher.desktop_path(path)
+        with self.assertRaises(ValueError):
+            launcher.desktop_path(str(entry.parent))
+        entry.parent.rename(self.home / 'x.desktop')
+        with self.assertRaises(ValueError):
+            launcher.desktop_path(str(self.home / 'x.desktop'))
 
     def test_app_environment_sets_cursor_theme_and_size(self):
         env = launcher.app_environment(PERSON)
@@ -159,8 +168,16 @@ class PreferencesSafety(unittest.TestCase):
     def test_an_app_is_the_person_at_the_ordinary_wayland_socket(self):
         env = launcher.app_environment(PERSON)
         self.assertEqual((env['HOME'], env['USER'], env['LOGNAME'], env['SHELL']),
-                         ('/home/jim', 'jim', 'jim', '/bin/bash'))
+                         ('/home/alex', 'alex', 'alex', '/bin/bash'))
         self.assertEqual((env['XDG_RUNTIME_DIR'], env['WAYLAND_DISPLAY']), ('/run/user/1003', 'wayland-0'))
+        self.assertTrue(env['PATH'].startswith('/home/alex/.local/bin:'))
+
+    def test_an_app_gets_the_systems_locale(self):
+        with tempfile.TemporaryDirectory() as folder:
+            conf = Path(folder) / 'locale.conf'
+            conf.write_text('# comment\nLANG="en_GB.UTF-8"\n')
+            self.assertEqual(launcher.system_locale(conf), 'en_GB.UTF-8')
+            self.assertEqual(launcher.system_locale(Path(folder) / 'missing'), 'C.UTF-8')
 
     def test_preferences_cannot_read_a_different_owners_file_or_hard_link(self):
         file = self.folder / 'appearance.json'

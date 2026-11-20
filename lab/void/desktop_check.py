@@ -330,6 +330,7 @@ class Check:
         self.run(f'chpst -u {person}:{person} sh -c {shlex.quote(f"echo {token} > {kept}")}')
         self.check("the person writes a file in their home",
                    self.run(f"stat -c %U {kept}").strip() == person)
+        followed = self.shell_log().count('SHELL appearance theme=Light')
         boot_id = self.run('cat /proc/sys/kernel/random/boot_id').strip()
         self.run("nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &")
         self.wait('new boot ID after clean reboot', lambda: (r := guest.ssh('cat /proc/sys/kernel/random/boot_id', check=False, timeout=6)).returncode == 0 and r.stdout.strip() != boot_id, timeout=180)
@@ -338,6 +339,9 @@ class Check:
         self.unlock()
         self.wait('the password unlocks after reboot', lambda: not self.snapshot().get('locked'))
         self.check('saved preferences survive clean reboot', self.preferences() == saved)
+        self.wait('the shell follows the saved appearance after the reboot',
+                  lambda: self.shell_log().count('SHELL appearance theme=Light') > followed)
+        self.check('the shell follows the saved appearance after the reboot', True)
         self.check("the file in the person's home survives the reboot",
                    self.run(f'cat {kept}').strip() == token)
         log_offset = len(self.app_log())
@@ -403,17 +407,22 @@ print(json.dumps({'processes': found, 'seat_members': seat.gr_mem, 'seat_gid': s
             self.check(name + " is at the ordinary Wayland socket, in the person's runtime directory",
                        {f'XDG_RUNTIME_DIR=/run/user/{person}', 'WAYLAND_DISPLAY=wayland-0'} <= set(found[name]['env']))
         self.check("the person's terminal may join Wi-Fi, in netdev", report['netdev_gid'] in found['foot']['groups'])
+        launcher = self.run("for p in $(pgrep -f '^/usr/bin/python3 /usr/local/bin/crowbar-launcher'); do grep -E '^(Uid|Gid):' /proc/$p/status; done")
+        self.check('the launcher runs as the person, not root',
+                   bool(launcher) and all(line.split()[1:] == [str(person)] * 4 for line in launcher.splitlines() if line.startswith('Uid:')))
+        owners = self.run('stat -c "%U %G %a" /run/crowbar-launch /run/crowbar-launch/socket').split('\n')
+        self.check('root owns the launch socket and its directory, so no app can take its place',
+                   owners[0] == 'root crowbar-shell 750' and owners[1].startswith('root crowbar-shell'), ' | '.join(owners))
         self.check('only compositor belongs to seatd', report['seat_members'] == ['crowbar-compositor'] and all(report['seat_gid'] not in found[n]['groups'] for n in found if n != 'crowbar-compositor'))
         trusted = {fd for n in ('crowbar-compositor', 'crowbaros-shell')
                    for fd in found[n]['fds'].values() if fd.startswith('socket:[')}
         apps = [name for name in found if found[name]['uid'][0] == person]
         self.check('ordinary app child processes were inspected', any('(' in name for name in apps))
         for name in apps:
-            self.check(name + ' cannot gain privileges', found[name]['no_new_privs'] == '1' and int(found[name]['capabilities'], 16) == 0)
             self.check(name + ' inherited no trusted sockets or seat devices',
                        not trusted.intersection(found[name]['fds'].values())
                        and not any(fd.startswith(('/dev/input/', '/dev/dri/card', '/dev/tty')) for fd in found[name]['fds'].values()))
-            self.check(name + ' inherited no privileged environment', not any(v.startswith(('CROWBAR_SHELL_CONTROL_FD=', 'WAYLAND_SOCKET=', 'LIBSEAT_BACKEND=', 'DBUS_SESSION_BUS_ADDRESS=')) for v in found[name]['env']))
+            self.check(name + ' inherited no privileged environment', not any(v.startswith(('CROWBAR_SHELL_CONTROL_FD=', 'WAYLAND_SOCKET=', 'LIBSEAT_BACKEND=')) for v in found[name]['env']))
 
     def socket_refusals(self):
         # Give the app the exact paths and temporarily allow directory traversal:
@@ -452,7 +461,7 @@ print(json.dumps(results))
         offered = self.wait('the app lists its globals', lambda: (r := self.run(f'cat {out}')) and 'wl_compositor' in r and r, timeout=10)
         self.check("an app at the person's socket is offered the GPU's buffers and not layer shell",
                    'zwp_linux_dmabuf_v1' in offered and 'xdg_wm_base' in offered and 'zwlr_layer_shell_v1' not in offered)
-        apps = '/run/crowbar-person'
+        apps = '/run/crowbar-apps'
         modes = json.loads(self.python(f'import os,json; print(json.dumps({{p:os.stat(p).st_mode & 0o7777 for p in ["{apps}", "{apps}/wayland-0"]}}))'))
         try:
             self.run(f'chmod o+x {apps}; chmod o+rw {apps}/wayland-0')
@@ -468,11 +477,10 @@ print(json.dumps(results))
                    and 'No such file' not in other and 'ermission denied' not in other, other.strip())
 
     def probe_window(self, command, app_id, out):
-        """Opens one of the probe's maximized windows as an app, and clicks it
-        to give it the keyboard."""
+        """Opens one of the probe's maximized windows as an app. A new window
+        takes the keyboard, as on any desktop."""
         self.as_app(command, out)
         window = self.wait(app_id + ' maps', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == app_id), None))
-        self.click(640, 480)
         self.wait(app_id + ' takes the keyboard', lambda: self.snapshot()['active']['address'] == window['address'])
         return window
 
@@ -485,6 +493,7 @@ print(json.dumps(results))
         output = lambda name: guest.ssh(f'cat /tmp/{name}.out', check=False).stdout
         try:
             self.probe_window(f'crowbar-probe copy copied-{token}', 'org.crowbaros.ProbeCopy', '/tmp/copy.out')
+            self.check('a new window an app opens takes the keyboard, with no click', True)
             self.wait('the first app copies', lambda: 'copied' in output('copy'))
             self.probe_window('crowbar-probe paste', 'org.crowbaros.ProbePaste', '/tmp/paste.out')
             pasted = self.wait('the second app pastes',
