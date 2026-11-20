@@ -546,6 +546,16 @@ def root_fills_disk(out):
     return disk > image and disk - start - size <= 4096 and 0 <= size * 512 - filesystem < 4096
 
 
+def person_may_reboot(out):
+    """Whether the check's output shows the person in `wheel`, with `reboot`
+    and `poweroff` that ask sudo for Void's own, and sudo letting them run
+    both with no password: their groups, where each command is found, then
+    what sudo allows."""
+    lines = out.splitlines()
+    return len(lines) == 5 and "wheel" in lines[0].split() and lines[1:] == [
+        "/usr/local/bin/reboot", "/usr/local/bin/poweroff", "/usr/bin/reboot", "/usr/bin/poweroff"]
+
+
 def person_has_home(out):
     """Whether the check's output shows the person's account with a home of
     its own under /home and a login shell: `name:home:shell`, then the home's
@@ -571,7 +581,8 @@ CHECKS = [
     ("runit is PID 1", "cat /proc/1/comm", lambda out: out.strip() == "runit"),
     ("services are up", "sv status /var/service/*",
      lambda out: all(f"run: /var/service/{s}:" in out
-                     for s in ("sshd", "dhcpcd", "agetty-ttyS0", "dbus", "iwd"))),
+                     for s in ("sshd", "dhcpcd", "agetty-ttyS0", "dbus", "iwd",
+                               "crowbar-ctrl-alt-del"))),
     # The disk's size, the root partition's start and size, in 512-byte
     # sectors, then the size of the root's Btrfs, in bytes.
     ("the root fills a disk larger than the image",
@@ -607,6 +618,10 @@ CHECKS = [
      "sleep 0.2; done; "
      "grep -rhs \"$m-\" /var/log/socklog | sed 's/.*crowbar-check-[0-9]*-//' | sort -u",
      lambda out: {"service", "kernel"} <= set(out.split())),
+    # As the person: no password is asked for either, and sudo -n would fail if one were.
+    ("the person may reboot and power off from the terminal",
+     "id -nG; command -v reboot poweroff; sudo -n -l /usr/bin/reboot; sudo -n -l /usr/bin/poweroff",
+     lambda out: person_may_reboot(out), "person"),
     ("network has an address", "ip -4 -o addr show scope global",
      lambda out: "inet " in out),
     ("packages keep their groups", "stat -c '%G %n' /usr/bin/wall /var/db/dhcpcd",

@@ -29,6 +29,10 @@
 //! When the person switches to another virtual terminal, seatd takes the
 //! devices back. The compositor stops drawing and reading input until it is
 //! switched back to, and then sets every mode again.
+//!
+//! The compositor reads the keyboard itself, so the kernel never sees
+//! Ctrl+Alt+Del, which on a console reboots. Where Base names a socket for
+//! it, the compositor says `ctrl-alt-del` there, and Base reboots.
 
 use std::{
     cell::RefCell,
@@ -77,6 +81,51 @@ const KEY_F1: u32 = 59;
 const KEY_F10: u32 = 68;
 const KEY_F11: u32 = 87;
 const KEY_F12: u32 = 88;
+const KEY_DELETE: u32 = 111;
+
+/// What a key does before any client hears it, with the Ctrl and Alt held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Chord {
+    /// Ctrl+Alt+F1 to F12: the virtual terminal to switch to.
+    SwitchTo(u32),
+    /// Ctrl+Alt+Del.
+    CtrlAltDel,
+}
+
+/// The backend's chord a key press makes, with the keys already held.
+fn chord(held: &[u32], key: u32, pressed: bool) -> Option<Chord> {
+    let control = held.iter().any(|key| [KEY_LEFTCTRL, KEY_RIGHTCTRL].contains(key));
+    let alt = held.iter().any(|key| [KEY_LEFTALT, KEY_RIGHTALT].contains(key));
+    if !(pressed && control && alt) {
+        return None;
+    }
+    match key {
+        KEY_F1..=KEY_F10 => Some(Chord::SwitchTo(key - KEY_F1 + 1)),
+        KEY_F11 => Some(Chord::SwitchTo(11)),
+        KEY_F12 => Some(Chord::SwitchTo(12)),
+        KEY_DELETE => Some(Chord::CtrlAltDel),
+        _ => None,
+    }
+}
+
+/// Says `ctrl-alt-del` at Base's socket, on a thread of its own, so that a
+/// slow listener never holds up a frame.
+fn say_ctrl_alt_del(socket: &Path) {
+    let socket = socket.to_owned();
+    let said = std::thread::Builder::new().name("ctrl-alt-del".into()).spawn(move || {
+        use std::io::Write;
+        let result = std::os::unix::net::UnixStream::connect(&socket).and_then(|mut stream| {
+            stream.set_write_timeout(Some(std::time::Duration::from_secs(2)))?;
+            stream.write_all(b"ctrl-alt-del\n")
+        });
+        if let Err(error) = result {
+            log::warning!("could not say ctrl-alt-del at {}: {error}", socket.display());
+        }
+    });
+    if let Err(error) = said {
+        log::warning!("could not say ctrl-alt-del: {error}");
+    }
+}
 
 /// The property IDs a monitor's commits set.
 #[derive(Clone, Copy, Debug, Default)]
@@ -333,8 +382,10 @@ pub struct Tty {
     monitors: Vec<Monitor>,
     input: Input,
     uevents: Uevents,
-    /// Ctrl and Alt held, for the switch to another virtual terminal.
+    /// The keys held, for the backend's own chords.
     modifiers: Vec<u32>,
+    /// Where Ctrl+Alt+Del is said, if anywhere.
+    ctrl_alt_del: Option<PathBuf>,
     /// The GPU, if it draws the frames.
     gpu: Option<Gpu>,
 }
@@ -387,7 +438,8 @@ fn add_input_devices(input: &mut Input) -> Vec<PathBuf> {
 
 /// Starts the TTY backend: opens the seat, the first DRM device that has a
 /// monitor, and every input device, and lights each connected monitor.
-pub fn init(state: &mut State) -> io::Result<()> {
+/// Ctrl+Alt+Del is said at `ctrl_alt_del`, where it is named.
+pub fn init(state: &mut State, ctrl_alt_del: Option<PathBuf>) -> io::Result<()> {
     let session = Rc::new(RefCell::new(Session::open()?));
     log::info!("session opened through seatd seat={}", session.borrow().seat);
 
@@ -449,6 +501,7 @@ pub fn init(state: &mut State) -> io::Result<()> {
         input,
         uevents,
         modifiers: Vec::new(),
+        ctrl_alt_del,
         gpu,
     };
     tty.scan(state);
@@ -740,26 +793,24 @@ impl Tty {
                 } else {
                     self.modifiers.retain(|held| *held != key);
                 }
-                let control = self
-                    .modifiers
-                    .iter()
-                    .any(|key| [KEY_LEFTCTRL, KEY_RIGHTCTRL].contains(key));
-                let alt = self
-                    .modifiers
-                    .iter()
-                    .any(|key| [KEY_LEFTALT, KEY_RIGHTALT].contains(key));
-                let terminal = match key {
-                    KEY_F1..=KEY_F10 => Some(key - KEY_F1 + 1),
-                    KEY_F11 => Some(11),
-                    KEY_F12 => Some(12),
-                    _ => None,
-                };
-                if let (true, true, Some(terminal), true) = (control, alt, terminal, pressed) {
-                    log::info!("switching to virtual terminal {terminal}");
-                    if let Err(error) = self.session.borrow_mut().switch_session(terminal as i32) {
-                        log::warning!("could not switch: {error}");
+                match chord(&self.modifiers, key, pressed) {
+                    Some(Chord::SwitchTo(terminal)) => {
+                        log::info!("switching to virtual terminal {terminal}");
+                        if let Err(error) = self.session.borrow_mut().switch_session(terminal as i32) {
+                            log::warning!("could not switch: {error}");
+                        }
+                        return;
                     }
-                    return;
+                    // Even locked, as on a console: whoever is at the
+                    // keyboard can hold the power button too.
+                    Some(Chord::CtrlAltDel) if self.ctrl_alt_del.is_some() => {
+                        if let Some(socket) = &self.ctrl_alt_del {
+                            log::info!("ctrl-alt-del said socket={}", socket.display());
+                            say_ctrl_alt_del(socket);
+                        }
+                        return;
+                    }
+                    _ => {}
                 }
                 state.handle_key(key, pressed, time);
             }
@@ -1086,5 +1137,54 @@ impl Backend for Tty {
         while self.session.borrow().has_queued() {
             self.session_events(state);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ctrl_alt_del_is_the_backends_chord_with_either_ctrl_and_alt() {
+        for held in [
+            [KEY_LEFTCTRL, KEY_LEFTALT],
+            [KEY_RIGHTCTRL, KEY_RIGHTALT],
+            [KEY_LEFTALT, KEY_RIGHTCTRL],
+        ] {
+            let mut keys = held.to_vec();
+            keys.push(KEY_DELETE);
+            assert_eq!(chord(&keys, KEY_DELETE, true), Some(Chord::CtrlAltDel), "{held:?}");
+        }
+    }
+
+    #[test]
+    fn delete_without_both_or_released_is_no_chord() {
+        assert_eq!(chord(&[KEY_LEFTCTRL, KEY_DELETE], KEY_DELETE, true), None);
+        assert_eq!(chord(&[KEY_LEFTALT, KEY_DELETE], KEY_DELETE, true), None);
+        assert_eq!(chord(&[KEY_DELETE], KEY_DELETE, true), None);
+        assert_eq!(chord(&[KEY_LEFTCTRL, KEY_LEFTALT], KEY_DELETE, false), None);
+    }
+
+    #[test]
+    fn ctrl_alt_f_keys_still_switch_virtual_terminals() {
+        let held = [KEY_LEFTCTRL, KEY_LEFTALT];
+        assert_eq!(chord(&held, KEY_F1, true), Some(Chord::SwitchTo(1)));
+        assert_eq!(chord(&held, KEY_F10, true), Some(Chord::SwitchTo(10)));
+        assert_eq!(chord(&held, KEY_F12, true), Some(Chord::SwitchTo(12)));
+    }
+
+    #[test]
+    fn ctrl_alt_del_is_said_at_the_socket() {
+        let dir = std::env::temp_dir().join(format!("fulcrum-cad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket = dir.join("socket");
+        let _ = std::fs::remove_file(&socket);
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        say_ctrl_alt_del(&socket);
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut said = String::new();
+        io::Read::read_to_string(&mut stream, &mut said).unwrap();
+        assert_eq!(said, "ctrl-alt-del\n");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

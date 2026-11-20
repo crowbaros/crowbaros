@@ -18,11 +18,11 @@ base/void_base.py stop           # power off
 
 | Part | What it is |
 | --- | --- |
-| Packages | `base-minimal`, `linux`, and NVIDIA's driver (`nvidia`, with `linux-headers`, `dkms`, and `pahole` to build its kernel module), `btrfs-progs`, `grub-x86_64-efi`, `mtools`, `openssh`, `dhcpcd`, `iproute2`; for real machines, Intel's microcode (`intel-ucode`), `iwd` for Wi-Fi, `wireless-regdb`, and Mesa's Vulkan drivers for Intel and AMD GPUs, beside the firmware and AMD's microcode `linux` already brings; and what the desktop needs: `seatd`, Mesa with lavapipe, Wayland, `foot`, Chromium, `python3`, and others, from Void's `current` repository and, for NVIDIA's driver, its `nonfree` repository ([`config.json`](config.json)) |
+| Packages | `base-minimal`, `linux`, and NVIDIA's driver (`nvidia`, with `linux-headers`, `dkms`, and `pahole` to build its kernel module), `btrfs-progs`, `grub-x86_64-efi`, `mtools`, `openssh`, `sudo`, `dhcpcd`, `iproute2`; for real machines, Intel's microcode (`intel-ucode`), `iwd` for Wi-Fi, `wireless-regdb`, and Mesa's Vulkan drivers for Intel and AMD GPUs, beside the firmware and AMD's microcode `linux` already brings; and what the desktop needs: `seatd`, Mesa with lavapipe, Wayland, `foot`, Chromium, `python3`, and others, from Void's `current` repository and, for NVIDIA's driver, its `nonfree` repository ([`config.json`](config.json)) |
 | Desktop | Fulcrum (`compositor/`), the shell, and Studio Settings, built and tested in a Void build root of their own so they link Void's libraries, in `/usr/local/bin`. Their runit services and helpers are in [`desktop/`](desktop/) |
 | Disk | GPT. An ESP holds a standalone GRUB at `\EFI\BOOT\BOOTX64.EFI`, the path any UEFI firmware boots without a boot entry. The root is Btrfs, labelled `crowbaros-root` |
 | Boot | GRUB finds the root by label and reads `/boot/grub/grub.cfg` there. The kernel and initramfs are the ones xbps built. The kernel's command line adds `nvidia-drm.modeset=1 nvidia-drm.fbdev=1` |
-| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `dbus`, `iwd`, `seatd`, the system's log (`socklog` and `nanoklogd`, kept in `/var/log/socklog`), and the desktop's four: the compositor on virtual terminal 2, the shell, the launcher, and the unlock helper. Root logs in over SSH with a key made for the lab, and has no password; the person's account takes the same key. SSH takes keys only |
+| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `dbus`, `iwd`, `seatd`, the system's log (`socklog` and `nanoklogd`, kept in `/var/log/socklog`), and the desktop's five: the compositor on virtual terminal 2, the shell, the launcher, the unlock helper, and the service that reboots for Ctrl+Alt+Del. Root logs in over SSH with a key made for the lab, and has no password; the person's account takes the same key. SSH takes keys only |
 
 The VM is QEMU with KVM, OVMF firmware, virtio disk and network, SSH
 forwarded to `127.0.0.1:22240`, and for the desktop a virtio GPU, keyboard, and
@@ -154,6 +154,16 @@ says. Nothing in the desktop runs as root to start an app.
   takes requests from the shell's UID alone. Apps get what a login gives the
   person: their home, `~/.local/bin` on `PATH`, and the system's locale. They
   may gain privileges, so `sudo` and `su` work from the terminal.
+- The person's account is in `wheel`, so `sudo` takes their password.
+  `reboot` and `poweroff` take none, as on a desktop with logind: the ones in
+  `/usr/local/bin` run Void's own through sudo, which lets the person run
+  those two without a password (`desktop/sudoers`).
+- `crowbar-ctrl-alt-del` is a root service, `desktop/ctrl-alt-del.py`. The
+  compositor reads the keyboard itself, so the kernel never sees
+  Ctrl+Alt+Del. The compositor says it at a socket only its group may reach,
+  and the service, which takes the compositor's UID alone, sends init the
+  SIGINT the kernel would. runit runs `/etc/runit/ctrlaltdel` and reboots, as
+  from a console, even while the desktop is locked.
 - `crowbar-unlock` is a root service, `desktop/unlock.py`. The compositor
   starts locked and listens for it at a socket only root may use. After the
   confirm chord, the lock screen sends the person's password to the helper,

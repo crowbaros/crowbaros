@@ -49,6 +49,12 @@ required:
                          monitor's mode, place, and scale. Without it, the
                          layout lasts until the compositor stops.
 
+  --ctrl-alt-del-socket PATH
+                         Where the TTY backend says `ctrl-alt-del` when the
+                         chord is pressed, even locked. The compositor reads
+                         the keyboard itself, so the kernel never sees the
+                         chord. Without it, clients hear it as any other keys.
+
   --backend tty          Where frames go: a virtual terminal, with the seat
                          from seatd. The default.
   --backend nested       A window on the host session, for development. Only
@@ -74,6 +80,7 @@ struct Args {
     lock_after: Option<std::time::Duration>,
     unlock: Option<TrustedPart>,
     start_locked: bool,
+    ctrl_alt_del: Option<PathBuf>,
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -84,6 +91,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut lock_after = None;
     let (mut unlock_socket, mut unlock_uid) = (None, None);
     let mut start_locked = false;
+    let mut ctrl_alt_del = None;
     let mut rest = args;
     while let Some(flag) = rest.next() {
         let mut value = || rest.next().ok_or(format!("{flag} needs a value"));
@@ -98,6 +106,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--unlock-socket" => unlock_socket = Some(PathBuf::from(value()?)),
             "--unlock-uid" => unlock_uid = Some(uid(value()?)?),
             "--start-locked" => start_locked = true,
+            "--ctrl-alt-del-socket" => ctrl_alt_del = Some(PathBuf::from(value()?)),
             "--lock-after" => {
                 let text = value()?;
                 let seconds = text
@@ -140,6 +149,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         lock_after,
         unlock,
         start_locked,
+        ctrl_alt_del,
     })
 }
 
@@ -167,7 +177,7 @@ fn main() {
         // Clients are accepted only once there is something to show them on.
         let name = match args.backend {
             BackendKind::Tty => {
-                crowbar_compositor::backend::tty::init(&mut state)?;
+                crowbar_compositor::backend::tty::init(&mut state, args.ctrl_alt_del.clone())?;
                 "tty"
             }
             #[cfg(feature = "nested")]
@@ -264,6 +274,17 @@ mod tests {
         assert!(args.start_locked);
         let authority = args.unlock.unwrap();
         assert_eq!((authority.socket, authority.uid), (PathBuf::from("/run/unlock"), 0));
+    }
+
+    #[test]
+    fn ctrl_alt_del_is_said_where_the_flag_names() {
+        assert_eq!(parse(&PARTS).unwrap().ctrl_alt_del, None);
+        let mut args = PARTS.to_vec();
+        args.extend(["--ctrl-alt-del-socket", "/run/crowbar-ctrl-alt-del/socket"]);
+        assert_eq!(
+            parse(&args).unwrap().ctrl_alt_del,
+            Some(PathBuf::from("/run/crowbar-ctrl-alt-del/socket"))
+        );
     }
 
     /// The nested backend makes the compositor a client of another display.

@@ -171,7 +171,9 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   its socket; displays through the kernel's atomic mode setting; input
   through libinput; and monitors and input devices plugged in and out, heard
   from the kernel's netlink uevents. Ctrl+Alt+F1 to F12 switch virtual
-  terminals.
+  terminals. The kernel never sees Ctrl+Alt+Del, so with
+  `--ctrl-alt-del-socket` the compositor says `ctrl-alt-del` at that socket,
+  even locked, and Base reboots.
 - **The GLES renderer**: where Mesa's EGL and GBM load, each monitor's frames
   are drawn by the GPU into GBM buffers the display scans out. Where they do
   not, or `FULCRUM_RENDERER=cpu` says so, the CPU renderer draws into dumb

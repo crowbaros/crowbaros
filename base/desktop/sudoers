@@ -1,0 +1,4 @@
+# CrowbarOS: who may use sudo. image.sh puts the person's account name in
+# place of @PERSON@.
+%wheel ALL=(ALL:ALL) ALL
+@PERSON@ ALL=(root) NOPASSWD: /usr/bin/reboot, /usr/bin/poweroff
