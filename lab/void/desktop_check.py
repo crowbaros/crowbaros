@@ -12,6 +12,7 @@ disk in place.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -301,6 +302,13 @@ class Check:
                    len(frames) >= 2 and frames[-1] > frames[0]
                    and all(re.search(label + r': [1-9]\d*', render) for label in
                            ('layer crowbaros-bar', 'layer crowbaros-dock', r'com\.crowbaros\.StudioSettings')))
+        # A file the person writes in their home, to find after the reboot.
+        person, home = self.run('getent passwd 1003').split(':')[0::5][:2]
+        kept = f'{home}/kept-across-reboot'
+        token = os.urandom(8).hex()
+        self.run(f'chpst -u {person}:{person} sh -c {shlex.quote(f"echo {token} > {kept}")}')
+        self.check("the person writes a file in their home",
+                   self.run(f"stat -c %U {kept}").strip() == person)
         boot_id = self.run('cat /proc/sys/kernel/random/boot_id').strip()
         self.run("nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &")
         self.wait('new boot ID after clean reboot', lambda: (r := guest.ssh('cat /proc/sys/kernel/random/boot_id', check=False, timeout=6)).returncode == 0 and r.stdout.strip() != boot_id, timeout=180)
@@ -309,6 +317,8 @@ class Check:
         self.unlock()
         self.wait('the password unlocks after reboot', lambda: not self.snapshot().get('locked'))
         self.check('saved preferences survive clean reboot', self.preferences() == saved)
+        self.check("the file in the person's home survives the reboot",
+                   self.run(f'cat {kept}').strip() == token)
         log_offset = len(self.app_log())
         self.click(700, 935)
         self.wait('Settings restored Light after reboot', lambda: 'event=opened theme=Light' in self.app_log()[log_offset:])
@@ -462,7 +472,7 @@ def main():
         build_log = guest.WORK / 'build.log'
         check.log(f'Building the image with Base\'s build; its output goes to {build_log}')
         with build_log.open('w') as log:
-            if subprocess.run([sys.executable, void_base.HERE / 'void_base.py', 'build'],
+            if subprocess.run([sys.executable, void_base.HERE / 'void_base.py', 'build', '--lab-account'],
                               stdout=log, stderr=subprocess.STDOUT).returncode:
                 raise RuntimeError(f'Base\'s build failed; see {build_log}')
         built = {name: void_base.sha256(path) for name, path in void_base.binaries().items()}

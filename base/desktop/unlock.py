@@ -9,8 +9,9 @@ socket of its own, checked against root's user ID, and once it does, the
 shell's word no longer unlocks.
 
 The shell's lock screen sends the password the person typed, after the
-confirm chord. The helper checks it against the person's account in
-/etc/shadow, through libcrypt, and only then tells the compositor to unlock.
+confirm chord. The helper checks it against the person's account, the one
+with UID 1003, in /etc/shadow, through libcrypt, and only then tells the
+compositor to unlock.
 The compositor still refuses unless the confirm chord opened the unlock entry.
 A wrong password costs a pause before the next one is heard, one at a time.
 
@@ -34,7 +35,7 @@ import time
 SOCKET = '/run/crowbar-unlock/socket'
 COMPOSITOR = '/run/crowbar-trusted/unlock/compositor'
 SHELL = 'crowbar-shell'
-PERSON = 'crowbar-person'
+PERSON_UID = 1003
 MAX_REQUEST = 4096
 MAX_PASSWORD = 1024
 WRONG_PAUSE = 2
@@ -59,8 +60,17 @@ def shadow_hash(account):
     return None
 
 
+def person_name():
+    """The person's account name, whatever the image was built with, or None."""
+    try:
+        return pwd.getpwuid(PERSON_UID).pw_name
+    except KeyError:
+        return None
+
+
 def password_matches(password):
-    stored = shadow_hash(PERSON)
+    name = person_name()
+    stored = name and shadow_hash(name)
     # A locked or empty field matches nothing: `!`, `*`, or nothing at all.
     if not stored or stored[:1] in (b'!', b'*'):
         return False

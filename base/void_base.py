@@ -10,7 +10,8 @@ The desktop (Fulcrum, the shell, and Studio Settings) is built and tested in a
 Void build root of its own, so it links Void's own libraries, and goes into the
 image with its runit services from desktop/.
 
-    void_base.py build [--force]   install the Void roots, build the desktop, and write the boot disk
+    void_base.py build [--force] [--lab-account]
+                                   install the Void roots, build the desktop, and write the boot disk
     void_base.py boot [--window]   boot a fresh copy of the disk and wait for it
     void_base.py ssh [CMD]         run a command in the guest as root
     void_base.py console           attach to the guest's serial console
@@ -48,6 +49,9 @@ SERIAL_SOCK = WORK / "serial.sock"
 SERIAL_LOG = WORK / "serial.log"
 MONITOR_SOCK = WORK / "monitor.sock"
 PIDFILE = WORK / "qemu.pid"
+# The person's account: its name and password hash, kept outside git. See
+# README.md, "The person's account".
+ACCOUNT_FILE = HERE / "account.json"
 REPOSITORY = CFG["void_repository"]
 # Void's nonfree repository, which holds NVIDIA's driver. Only the image's root
 # installs from it.
@@ -261,8 +265,58 @@ def compile_desktop(force):
         print(f"{name}: sha256 {sha256(path)}")
 
 
-def build(force=False):
+# The account an image gets with no account file. Its password is in this
+# repository, so the image is for the lab alone.
+LAB_ACCOUNT = {"name": "crowbar", "password": "crowbar", "full_name": ""}
+ACCOUNT_NAME = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
+# A crypt(5) hash: `$id$`, then salt and hash, with nothing /etc/shadow would split on.
+PASSWORD_HASH = re.compile(r"\$[0-9a-z]+\$[^:\s]+")
+
+
+def person_account(lab=False):
+    """The person's account, as `image.sh` takes it: NAME, FULL_NAME, and
+    either PASSWORD_HASH from the account file or the lab's PASSWORD.
+
+    With `lab`, or with no account file, it is the lab account. Without `lab`
+    that is a mistake worth a loud warning: anyone who reads this repository
+    knows its password."""
+    if lab:
+        print(f"Building with the lab account `{LAB_ACCOUNT['name']}`, as the checks do.")
+        return dict(LAB_ACCOUNT)
+    if not ACCOUNT_FILE.exists():
+        bar = "!" * 78
+        print(f"\n{bar}\nWARNING: there is no account file at {ACCOUNT_FILE}, so this image has the\n"
+              f"lab account `{LAB_ACCOUNT['name']}`, whose password, `{LAB_ACCOUNT['password']}`, "
+              "is published in this\nrepository. Anyone at the machine can unlock its desktop. "
+              "Never put it on a machine\nanyone else can reach. To set your own account, see "
+              "base/README.md, \"The person's\naccount\".\n" + bar + "\n", file=sys.stderr, flush=True)
+        return dict(LAB_ACCOUNT)
+    try:
+        account = json.loads(ACCOUNT_FILE.read_text())
+    except ValueError as error:
+        raise SystemExit(f"{ACCOUNT_FILE} is not JSON: {error}")
+    if not isinstance(account, dict) or not {"name", "password_hash"} <= set(account) \
+            or not set(account) <= {"name", "password_hash", "full_name"}:
+        raise SystemExit(f"{ACCOUNT_FILE} must hold `name` and `password_hash`, and may hold "
+                         "`full_name`, and nothing else")
+    name, hashed, full = account["name"], account["password_hash"], account.get("full_name", "")
+    if not (isinstance(name, str) and ACCOUNT_NAME.fullmatch(name)) or name in ("root", "nobody") \
+            or name.startswith("crowbar-"):
+        raise SystemExit(f"{ACCOUNT_FILE}: `name` must be a lowercase account name of up to 32 "
+                         "characters, not root, nobody, or a crowbar- service account")
+    if not (isinstance(hashed, str) and PASSWORD_HASH.fullmatch(hashed)):
+        raise SystemExit(f"{ACCOUNT_FILE}: `password_hash` must be a crypt hash such as "
+                         "`openssl passwd -6` prints, starting with `$`")
+    if not isinstance(full, str) or any(c in full for c in ":,\n"):
+        raise SystemExit(f"{ACCOUNT_FILE}: `full_name` must be text with no colon, comma, or "
+                         "line break")
+    print(f"Building with the account `{name}` from {ACCOUNT_FILE}")
+    return {"name": name, "password_hash": hashed, "full_name": full}
+
+
+def build(force=False, lab_account=False):
     preflight(build=True)
+    account = person_account(lab_account)
     rootfs(force)
     compile_desktop(force)
     # Checked on every build, not only after an install: the image is never
@@ -277,7 +331,10 @@ def build(force=False):
                ROOT_LABEL=CFG["root_label"], ESP_LABEL=CFG["esp_label"],
                ESP_MIB=str(CFG["esp_mib"]), ROOT_GIB=str(CFG["root_gib"]),
                KVER=image_kernel(ROOTFS), KERNEL_ARGS=" ".join(CFG["kernel_args"]),
-               DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT))
+               DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT),
+               PERSON=account["name"], PERSON_FULL_NAME=account["full_name"],
+               PERSON_PASSWORD_HASH=account.get("password_hash", ""),
+               PERSON_PASSWORD=account.get("password", ""))
     run(*userns(), "sh", HERE / "host/image.sh", *binaries().values(), env=env)
 
 
@@ -418,6 +475,12 @@ CHECKS = [
     ("SSH takes keys and no passwords", "sshd -T | grep -iE '^(passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication) '",
      lambda out: {"passwordauthentication no", "kbdinteractiveauthentication no",
                   "pubkeyauthentication yes"} <= set(out.lower().splitlines())),
+    # Its name, home, and shell, then who owns the home and its mode.
+    ("the person's account has a home and a login shell",
+     "getent passwd 1003 | cut -d: -f1,6,7; stat -c '%U %a' \"$(getent passwd 1003 | cut -d: -f6)\"",
+     lambda out: len(lines := out.split("\n")) > 1 and len(entry := lines[0].split(":")) == 3
+     and entry[1] == f"/home/{entry[0]}" and entry[2] in ("/bin/bash", "/bin/sh")
+     and lines[1].split()[:1] == [entry[0]]),
     ("network has an address", "ip -4 -o addr show scope global",
      lambda out: "inet " in out),
     ("packages keep their groups", "stat -c '%G %n' /usr/bin/wall /var/db/dhcpcd",
@@ -440,7 +503,7 @@ def check():
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True,
                           capture_output=True).stdout.strip()
     preflight(vm=True, build=True)
-    build(force=False)
+    build(force=False, lab_account=True)
     to_login = boot()
     lines = [f"CrowbarOS base boot check, {stamp}, commit {head}",
              f"disk sha256 {sha256(BASE_DISK)}", f"login prompt after {to_login:.1f}s", ""]
@@ -468,8 +531,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("build").add_argument("--force", action="store_true",
-                                         help="install the Void roots again")
+    build_parser = sub.add_parser("build")
+    build_parser.add_argument("--force", action="store_true", help="install the Void roots again")
+    build_parser.add_argument("--lab-account", action="store_true",
+                              help="make the lab account and ignore the account file, as the checks do")
     sub.add_parser("boot").add_argument("--window", action="store_true",
                                         help="also show the guest's screen in a window")
     sub.add_parser("ssh").add_argument("command", nargs=argparse.REMAINDER)
@@ -478,7 +543,7 @@ def main():
     sub.add_parser("check")
     args = parser.parse_args()
     if args.cmd == "build":
-        build(args.force)
+        build(args.force, args.lab_account)
     elif args.cmd == "boot":
         boot(args.window)
     elif args.cmd == "ssh":

@@ -1,5 +1,7 @@
 """Base's build: which roots it trusts, what it hands the build and the image,
 and how its check reads SSH."""
+import io
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -91,7 +93,8 @@ class Desktop(unittest.TestCase):
                             ('BUILD_ROOT', self.work / 'buildroot'), ('KEY', self.work / 'id_ed25519'),
                             ('ROOTFS', self.work / 'rootfs'), ('run', run),
                             ('install', lambda *args, **kw: None), ('sha256', lambda path: 'digest'),
-                            ('preflight', lambda **kw: None), ('rootfs', lambda force: None)]:
+                            ('preflight', lambda **kw: None), ('rootfs', lambda force: None),
+                            ('ACCOUNT_FILE', Path(temporary.name) / 'account.json')]:
             p = patch.object(void_base, name, value)
             p.start()
             self.addCleanup(p.stop)
@@ -150,6 +153,68 @@ class Desktop(unittest.TestCase):
         programs = image[[a.endswith('host/image.sh') for a in image].index(True) + 1:]
         self.assertEqual(programs, [str(path) for path in void_base.binaries().values()])
         self.assertTrue(all(' ' in path for path in programs))
+
+
+    def write_account(self, **account):
+        void_base.ACCOUNT_FILE.write_text(json.dumps(account))
+
+    def test_an_account_file_makes_that_account_and_not_the_lab_one(self):
+        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
+        self.write_account(name='jim', password_hash='$6$salt$hash', full_name='Jim Martin')
+        void_base.build()
+        _, env = self.image_step()
+        self.assertEqual((env['PERSON'], env['PERSON_PASSWORD_HASH'], env['PERSON_FULL_NAME']),
+                         ('jim', '$6$salt$hash', 'Jim Martin'))
+        self.assertEqual(env['PERSON_PASSWORD'], '')
+
+    def test_with_no_account_file_the_lab_account_comes_with_a_warning(self):
+        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
+        with patch('sys.stderr', new_callable=io.StringIO) as stderr:
+            void_base.build()
+        _, env = self.image_step()
+        self.assertEqual((env['PERSON'], env['PERSON_PASSWORD'], env['PERSON_PASSWORD_HASH']),
+                         ('crowbar', 'crowbar', ''))
+        self.assertIn('WARNING', stderr.getvalue())
+        self.assertIn('published', stderr.getvalue())
+
+    def test_the_checks_build_the_lab_account_whatever_the_account_file_says(self):
+        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
+        self.write_account(name='jim', password_hash='$6$salt$hash')
+        with patch('sys.stderr', new_callable=io.StringIO) as stderr:
+            void_base.build(lab_account=True)
+        _, env = self.image_step()
+        self.assertEqual(env['PERSON'], 'crowbar')
+        self.assertNotIn('WARNING', stderr.getvalue())
+
+    def test_an_account_file_that_would_break_the_image_is_refused(self):
+        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
+        for account in [dict(name='jim'), dict(name='jim', password_hash='plain text'),
+                        dict(name='jim', password_hash='$6$salt$hash:0:'),
+                        dict(name='root', password_hash='$6$salt$hash'),
+                        dict(name='crowbar-shell', password_hash='$6$salt$hash'),
+                        dict(name='Jim Martin', password_hash='$6$salt$hash'),
+                        dict(name='jim', password_hash='$6$salt$hash', full_name='Jim, Martin'),
+                        dict(name='jim', password_hash='$6$salt$hash', shell='/bin/zsh')]:
+            self.write_account(**account)
+            with self.assertRaises(SystemExit, msg=account):
+                void_base.build()
+        self.assertEqual(self.commands, [])
+
+
+class PersonCheck(unittest.TestCase):
+    """Base's check finds the person's account with a home of its own and a login shell."""
+
+    def setUp(self):
+        self.passes = dict((name, ok) for name, _, ok in void_base.CHECKS)[
+            "the person's account has a home and a login shell"]
+
+    def test_a_home_and_a_shell_pass(self):
+        self.assertTrue(self.passes('crowbar:/home/crowbar:/bin/bash\ncrowbar 700\n'))
+
+    def test_no_home_or_no_shell_fails(self):
+        self.assertFalse(self.passes('crowbar:/home/crowbar:/bin/false\ncrowbar 700\n'))
+        self.assertFalse(self.passes('crowbar:/home/crowbar:/bin/bash\n'))
+        self.assertFalse(self.passes('crowbar:/home/crowbar:/bin/bash\nroot 755\n'))
 
 
 class SshCheck(unittest.TestCase):

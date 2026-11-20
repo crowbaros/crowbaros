@@ -77,9 +77,10 @@ From the repository root:
 lab/void/compositor_guest.py desktop-check
 ```
 
-This builds Base's image with Base's own command, `base/void_base.py build`,
-which builds and tests the [compositor](../../compositor/README.md), the shell,
-and Studio Settings in Void. Base keeps its Void roots and Cargo target in
+This builds Base's image with Base's own command, `base/void_base.py build
+--lab-account`, which builds and tests the
+[compositor](../../compositor/README.md), the shell, and Studio Settings in
+Void, and makes the lab account whatever account file you keep. Base keeps its Void roots and Cargo target in
 `.lab/base/`, so a second run starts from them. The check then boots a copy of
 that image under UEFI, through the firmware and GRUB, as a person's machine
 would, exercises the desktop, and powers the guest off. Every run gets a new
@@ -96,8 +97,8 @@ Base's build directory.
 The check drives real QEMU keyboard/pointer events for unlock at boot (the
 confirm chord, a wrong password, then the right one), launch, focus, workspaces,
 lock and unlock, the suspend hook's lock, Settings preview/Save/Undo, and
-relaunch. It checks saved appearance after a
-clean reboot, service identities, linked libraries, binary hashes, render
+relaunch. It checks saved appearance, and a file the person wrote in their
+home, after a clean reboot, service identities, linked libraries, binary hashes, render
 activity, shell restart, and refusal of app access to trusted sockets. An error
 returns nonzero and retains `desktop.log`, `results.json`, the build log,
 service/kernel diagnostics, screenshots, and the failed disk in that run's
