@@ -341,4 +341,11 @@ fn a_session_started_locked_shows_and_gives_nothing_before_the_lock_screen() {
     let mut shell = compositor.shell();
     lock_screen(&mut shell);
     assert_eq!(compositor.screen(0).pixel(60, 60), Some(BLUE));
+
+    // The lock screen takes the person's keys as soon as it shows.
+    shell.take_keys().unwrap();
+    compositor.key(KEY_A, true);
+    compositor.key(KEY_A, false);
+    shell.roundtrip().unwrap();
+    assert_eq!(pressed(&mut shell), [KEY_A], "the lock screen took no text");
 }

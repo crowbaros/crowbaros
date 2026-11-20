@@ -1006,7 +1006,6 @@ struct LockScreen {
 impl LockScreen {
     const MAX_PASSWORD: usize = 1024;
     fn submit(&mut self, cx: &mut Context<Self>) {
-        let m = self.model.read(cx);
         if self.busy {
             return;
         }
@@ -1017,7 +1016,7 @@ impl LockScreen {
         if self.password.is_empty() {
             return;
         }
-        let tx = m.tx.clone();
+        let tx = self.model.read(cx).tx.clone();
         self.busy = true;
         self.error = None;
         session::unlock_with_password(std::mem::take(&mut self.password), tx);

@@ -255,9 +255,13 @@ class Check:
         self.capture('01-locked')
         self.check('Super+L locks the session and shows the lock screen',
                    self.snapshot()['locked'] and 'SHELL lock open=true' in shell_log())
+        # With the right password typed, the chord's Enter would send it, if
+        # it reached the lock screen.
+        self.type('crowbar')
         self.key('ctrl', 'alt', 'ret')
         time.sleep(1)
-        self.check('Ctrl+Alt+Enter does not unlock', self.snapshot()['locked'])
+        self.check('Ctrl+Alt+Enter does not unlock, nor send a typed password', self.snapshot()['locked'])
+        self.key('esc')
         self.unlock()
         self.wait('the password unlocks', lambda: not self.snapshot().get('locked'))
         self.check('the lock screen unlocks, and the window has the keyboard back',
