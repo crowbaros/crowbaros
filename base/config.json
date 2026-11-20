@@ -16,6 +16,7 @@
     "grub-x86_64-efi",
     "mtools",
     "openssh",
+    "socklog-void",
     "dhcpcd",
     "iwd",
     "wireless-regdb",

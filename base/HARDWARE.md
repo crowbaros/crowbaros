@@ -115,4 +115,8 @@ ssh -i .lab/base/id_ed25519 root@<the machine's address>
 ssh -i .lab/base/id_ed25519 <your account>@<the machine's address>
 ```
 
-The desktop's logs are in `/var/log/crowbar-*.log`.
+The desktop's logs are in `/var/log/crowbar-*.log`. The system's log, with
+the services' and the kernel's messages, is in `/var/log/socklog`, by kind:
+`everything/current` holds them all, `kernel/current` the kernel's. Both stay
+on the disk across boots, so after a boot that never reached the network, boot
+another system and read them from Base's root partition.

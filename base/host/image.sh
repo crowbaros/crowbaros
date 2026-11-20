@@ -36,6 +36,10 @@ tmpfs	/tmp	tmpfs	defaults,nosuid,nodev	0 0
 FSTAB
 SV="$R/etc/runit/runsvdir/default"
 for s in agetty-ttyS0 dhcpcd sshd; do ln -sfn "/etc/sv/$s" "$SV/$s"; done
+# The system's log: socklog takes what services send to /dev/log, nanoklogd
+# the kernel's messages, and svlogd keeps both in /var/log/socklog on the root,
+# in rotated files, so a boot that went wrong can be read on the next one.
+for s in socklog-unix nanoklogd; do ln -sfn "/etc/sv/$s" "$SV/$s"; done
 install -d -m 700 "$R/root/.ssh"
 install -m 600 "$PUBKEY" "$R/root/.ssh/authorized_keys"
 # SSH by key alone: the person's account has a password, and it is not for SSH.

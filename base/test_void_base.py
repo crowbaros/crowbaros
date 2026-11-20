@@ -308,6 +308,21 @@ class PersonSshCheck(unittest.TestCase):
         self.assertNotIn('root@127.0.0.1', run.call_args.args[0])
 
 
+class SystemLogCheck(unittest.TestCase):
+    """Base's check wants both a service's and the kernel's message in the log."""
+
+    def setUp(self):
+        self.passes = dict((name, ok) for name, _, ok, *_ in void_base.CHECKS)[
+            "the system's log keeps services' and the kernel's messages"]
+
+    def test_both_messages_pass(self):
+        self.assertTrue(self.passes('kernel\nservice\n'))
+
+    def test_either_alone_or_neither_fails(self):
+        for out in ('kernel\n', 'service\n', ''):
+            self.assertFalse(self.passes(out), out)
+
+
 class EarlyCpio(unittest.TestCase):
     """The build reads the microcode's names from the initramfs's first archive."""
 
