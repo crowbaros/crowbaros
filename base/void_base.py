@@ -210,13 +210,45 @@ def image_kernel(root):
     return kernels[-1].name.removeprefix("vmlinuz-") if kernels else None
 
 
+# The CPU microcode the initramfs loads before the kernel starts, one file for
+# each vendor, from `intel-ucode` and `linux-firmware-amd`.
+MICROCODE = ("kernel/x86/microcode/GenuineIntel.bin", "kernel/x86/microcode/AuthenticAMD.bin")
+
+
+def early_cpio(image):
+    """The names in the uncompressed cpio archive at the start of an
+    initramfs, where dracut puts the microcode the kernel loads first. Empty
+    when the initramfs has no such archive."""
+    names, offset = [], 0
+    while image[offset:offset + 6] == b"070701":
+        header = image[offset:offset + 110]
+        filesize, namesize = int(header[54:62], 16), int(header[94:102], 16)
+        name = image[offset + 110:offset + 110 + namesize - 1].decode(errors="replace")
+        if name == "TRAILER!!!":
+            break
+        names.append(name)
+        data = (offset + 110 + namesize + 3) & ~3
+        offset = (data + filesize + 3) & ~3
+    return names
+
+
 def missing_from_root(root):
-    """What the root lacks to boot the image, or None: the kernel, and
-    NVIDIA's modules for it. xbps reports success when DKMS fails to build
-    them, so the root itself is the only witness."""
+    """What the root lacks to boot the image, or None: the kernel, NVIDIA's
+    modules for it, and both vendors' microcode in its initramfs. xbps reports
+    success when DKMS fails to build the modules, and when the initramfs was
+    made before the microcode was installed, so the root itself is the only
+    witness."""
     kernel = image_kernel(root)
     if kernel is None:
         return "no kernel in /boot"
+    try:
+        with (root / "boot" / f"initramfs-{kernel}.img").open("rb") as initramfs:
+            early = early_cpio(initramfs.read(64 << 20))
+    except FileNotFoundError:
+        return f"no initramfs for kernel {kernel}"
+    if lack := [path.rsplit("/", 1)[1] for path in MICROCODE if path not in early]:
+        return (f"no {', '.join(lack)} microcode in the initramfs for kernel {kernel}: it was made "
+                "before the microcode was installed")
     try:
         listed = (root / "usr/lib/modules" / kernel / "modules.dep").read_text()
     except FileNotFoundError:
@@ -336,7 +368,8 @@ def build(force=False, lab_account=False):
     preflight(build=True)
     account = person_account(lab_account)
     rootfs(force)
-    if account["name"] in names_in_root(ROOTFS):
+    # `netdev` is the group the image makes for Wi-Fi.
+    if account["name"] in names_in_root(ROOTFS) | {"netdev"}:
         raise SystemExit(f"{ACCOUNT_FILE}: the image already has a user or group named "
                          f"`{account['name']}`; choose another name")
     if not account["password"]:
@@ -397,6 +430,8 @@ def launch(window):
         raise SystemExit("No base disk; run `void_base.py build` first")
     DISK.unlink(missing_ok=True)
     run("cp", "--reflink=auto", "--sparse=always", BASE_DISK, DISK)
+    # Larger than the image, as a person's disk is, so the root grows on boot.
+    os.truncate(DISK, max(DISK.stat().st_size, CFG["disk_gib"] << 30))
     shutil.copyfile(CFG["firmware_vars"], NVRAM)
     for path in (SERIAL_SOCK, SERIAL_LOG, MONITOR_SOCK, PIDFILE, WORK / "known_hosts"):
         path.unlink(missing_ok=True)
@@ -482,6 +517,18 @@ def stop():
     print(f"Powered off the guest (pid {pid})")
 
 
+def root_fills_disk(out):
+    """Whether the check's output shows the root partition reaching its
+    disk's end, past the image's size, and its Btrfs filling the partition, to
+    within the last part of a 4 KiB block that Btrfs leaves unused."""
+    try:
+        disk, start, size, filesystem = (int(value) for value in out.split())
+    except ValueError:
+        return False
+    image = (1 + CFG["esp_mib"] + CFG["root_gib"] * 1024 + 1) * 2048
+    return disk > image and disk - start - size <= 4096 and 0 <= size * 512 - filesystem < 4096
+
+
 def person_has_home(out):
     """Whether the check's output shows the person's account with a home of
     its own under /home and a login shell: `name:home:shell`, then the home's
@@ -506,7 +553,22 @@ CHECKS = [
     ("hostname", "hostname", lambda out: out.strip() == CFG["hostname"]),
     ("runit is PID 1", "cat /proc/1/comm", lambda out: out.strip() == "runit"),
     ("services are up", "sv status /var/service/*",
-     lambda out: all(f"run: /var/service/{s}:" in out for s in ("sshd", "dhcpcd", "agetty-ttyS0"))),
+     lambda out: all(f"run: /var/service/{s}:" in out
+                     for s in ("sshd", "dhcpcd", "agetty-ttyS0", "dbus", "iwd"))),
+    # The disk's size, the root partition's start and size, in 512-byte
+    # sectors, then the size of the root's Btrfs, in bytes.
+    ("the root fills a disk larger than the image",
+     "p=$(basename \"$(readlink -f \"$(findmnt -no SOURCE / | sed 's/\\[.*//')\")\"); "
+     "d=$(basename \"$(readlink -f /sys/class/block/$p/..)\"); "
+     "cat /sys/class/block/$d/size /sys/class/block/$p/start /sys/class/block/$p/size; "
+     "btrfs filesystem show --raw / | awk '/devid/ {print $4}'",
+     lambda out: root_fills_disk(out)),
+    ("the image loads both vendors' microcode early",
+     "lsinitrd /boot/initramfs-$(uname -r).img 2>/dev/null | grep -o 'kernel/x86/microcode/[A-Za-z]*.bin' | sort -u",
+     lambda out: set(MICROCODE) <= set(out.split())),
+    ("the person may join Wi-Fi with iwctl",
+     f"su -s /bin/sh -c 'id -nG; iwctl device list' \"$(getent passwd {PERSON_UID} | cut -d: -f1)\"",
+     lambda out: "netdev" in out.splitlines()[0].split() if out else False),
     # sshd -T names each setting in lowercase or, in newer releases, as written.
     ("SSH takes keys and no passwords", "sshd -T | grep -iE '^(passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication) '",
      lambda out: {"passwordauthentication no", "kbdinteractiveauthentication no",

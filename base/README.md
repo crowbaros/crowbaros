@@ -1,7 +1,7 @@
 # The CrowbarOS base
 
 Plain Void Linux with the desktop on it, built without root and booted under
-UEFI. The desktop is Fulcrum, the shell, and Studio Settings, as the lab ran
+UEFI, in a VM or on a real machine ([the guide](HARDWARE.md)). The desktop is Fulcrum, the shell, and Studio Settings, as the lab ran
 them. It has no apply engine and no generations.
 
 ```sh
@@ -18,11 +18,11 @@ base/void_base.py stop           # power off
 
 | Part | What it is |
 | --- | --- |
-| Packages | `base-minimal`, `linux`, and NVIDIA's driver (`nvidia`, with `linux-headers`, `dkms`, and `pahole` to build its kernel module), `btrfs-progs`, `grub-x86_64-efi`, `mtools`, `openssh`, `dhcpcd`, `iproute2`, and what the desktop needs: `seatd`, Mesa with lavapipe, Wayland, `foot`, Chromium, `python3`, and others, from Void's `current` repository and, for NVIDIA's driver, its `nonfree` repository ([`config.json`](config.json)) |
+| Packages | `base-minimal`, `linux`, and NVIDIA's driver (`nvidia`, with `linux-headers`, `dkms`, and `pahole` to build its kernel module), `btrfs-progs`, `grub-x86_64-efi`, `mtools`, `openssh`, `dhcpcd`, `iproute2`; for real machines, Intel's microcode (`intel-ucode`), `iwd` for Wi-Fi, `wireless-regdb`, and Mesa's Vulkan drivers for Intel and AMD GPUs, beside the firmware and AMD's microcode `linux` already brings; and what the desktop needs: `seatd`, Mesa with lavapipe, Wayland, `foot`, Chromium, `python3`, and others, from Void's `current` repository and, for NVIDIA's driver, its `nonfree` repository ([`config.json`](config.json)) |
 | Desktop | Fulcrum (`compositor/`), the shell, and Studio Settings, built and tested in a Void build root of their own so they link Void's libraries, in `/usr/local/bin`. Their runit services and helpers are in [`desktop/`](desktop/) |
 | Disk | GPT. An ESP holds a standalone GRUB at `\EFI\BOOT\BOOTX64.EFI`, the path any UEFI firmware boots without a boot entry. The root is Btrfs, labelled `crowbaros-root` |
 | Boot | GRUB finds the root by label and reads `/boot/grub/grub.cfg` there. The kernel and initramfs are the ones xbps built. The kernel's command line adds `nvidia-drm.modeset=1 nvidia-drm.fbdev=1` |
-| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `seatd`, and the desktop's four: the compositor on virtual terminal 2, the shell, the launcher, and the unlock helper. Root logs in over SSH with a key made for the lab, and has no password. SSH takes keys only |
+| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `dbus`, `iwd`, `seatd`, and the desktop's four: the compositor on virtual terminal 2, the shell, the launcher, and the unlock helper. Root logs in over SSH with a key made for the lab, and has no password. SSH takes keys only |
 
 The VM is QEMU with KVM, OVMF firmware, virtio disk and network, SSH
 forwarded to `127.0.0.1:22240`, and for the desktop a virtio GPU, keyboard, and
@@ -117,8 +117,10 @@ serial console and for SSH, and then checks in the guest: that it is Void, that
 the running kernel is the one in the boot menu, that the root is the Btrfs
 volume and writable, that it booted under UEFI, the hostname, that runit is
 PID 1, that `sshd`, `dhcpcd`, and the serial getty run, that SSH takes keys and
-no passwords, that the person's account has a home it owns and a login
-shell, that the network has an address, that packages kept their groups, that the kernel's command line carries
+no passwords, that `dbus` and `iwd` run, that the root has grown to fill a
+disk larger than the image, that the initramfs carries Intel's and AMD's
+microcode, that the person's account is in `netdev` and may use `iwctl`, that
+the person's account has a home it owns and a login shell, that the network has an address, that packages kept their groups, that the kernel's command line carries
 NVIDIA's settings, that NVIDIA's module is built for the running kernel and,
 with no NVIDIA card in the VM, not loaded, and that the kernel logged nothing
 critical.
@@ -196,11 +198,30 @@ The checks write the same image, `.lab/base/base.raw`, that `build` writes. So
 after a check, build again before you write the image to a disk. The build's
 last line names the image's account.
 
+## On a real machine
+
+[`HARDWARE.md`](HARDWARE.md) says how to write the image to a disk, boot it
+from the firmware's boot menu, and join Wi-Fi from a terminal.
+
+- **Firmware and microcode.** `linux` brings Void's firmware for AMD, Intel,
+  and NVIDIA GPUs and for network devices, and AMD's microcode; Base adds
+  Intel's from the `nonfree` repository. dracut puts both vendors' microcode
+  in the initramfs, where the kernel loads it first. The build reads the
+  initramfs and stops if either is missing, as it does for NVIDIA's module.
+- **The root grows to fill its disk.** On every boot, once the root is
+  writable, `crowbar-grow-root` ([`system/grow-root`](system/grow-root))
+  moves GPT's backup header to the disk's end, grows the root partition to
+  meet it, and grows the Btrfs on it, all with the root mounted. When the root
+  already fills its disk, it does nothing. It grows the root only when the
+  root is the disk's last partition.
+- **Wi-Fi** is `iwd`, which joins a network, while `dhcpcd` gets the address
+  as it does for Ethernet. `iwctl` answers to root and the `netdev` group; the
+  person's account is in `netdev`.
+
 ## Not yet
 
-- Real hardware. Apart from NVIDIA's driver and its firmware, the disk has only
-  what a VM needs: no other firmware, no Wi-Fi, no microcode. The driver has not
-  yet drawn from this image on an NVIDIA machine.
+- The image has not booted a real machine. Nor has NVIDIA's driver drawn from
+  it on an NVIDIA machine.
 - Kernel updates in the guest. Void's kernel hook would rewrite
   `/boot/grub/grub.cfg` with `update-grub`, and that path is untested.
 - The initramfs is dracut's generic one, about 200 MB.

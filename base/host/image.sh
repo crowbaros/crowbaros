@@ -40,18 +40,32 @@ install -m 600 "$PUBKEY" "$R/root/.ssh/authorized_keys"
 # SSH by key alone: the person's account has a password, and it is not for SSH.
 printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' > "$R/etc/ssh/sshd_config.d/10-crowbaros.conf"
 
+# Real machines. Wi-Fi is iwd, which joins a network; dhcpcd, which already
+# serves every interface, gets the address. iwd answers on the system bus, to
+# root and to the `netdev` group, which the person's account joins below. On
+# every boot, once the root is writable, the root grows to fill its disk.
+for s in dbus iwd; do ln -sfn "/etc/sv/$s" "$SV/$s"; done
+chroot "$R" groupadd -r netdev
+install -D -m 755 "$REPO_ROOT/base/system/grow-root" "$R/usr/local/sbin/crowbar-grow-root"
+cat > "$R/etc/runit/core-services/04-crowbar-grow-root.sh" <<'GROW'
+# Grow the root to fill its disk: see /usr/local/sbin/crowbar-grow-root.
+[ -n "$IS_CONTAINER" ] && return 0
+msg "Growing the root to fill its disk..."
+/usr/local/sbin/crowbar-grow-root || msg_warn "The root could not grow to fill its disk"
+GROW
+
 # The desktop. Four accounts: the compositor, which alone is in `_seatd`; the
 # shell; one for every app; and the person's, with a home and a login shell,
-# whose password unlocks the desktop. Its UID is fixed, as the unlock helper
-# finds it by UID. runit starts the seat manager, the compositor on virtual
-# terminal 2 in place of its getty, the shell, the launcher, and the unlock
-# helper; see desktop/.
+# in `netdev` to join Wi-Fi, whose password unlocks the desktop. Its UID is
+# fixed, as the unlock helper finds it by UID. runit starts the seat manager,
+# the compositor on virtual terminal 2 in place of its getty, the shell, the
+# launcher, and the unlock helper; see desktop/.
 ln -sfn /etc/sv/seatd "$SV/seatd"
 rm -f "$SV/agetty-tty2"
 chroot "$R" useradd -m -u 1000 -G _seatd crowbar-compositor
 chroot "$R" useradd -m -u 1001 crowbar-shell
 chroot "$R" useradd -m -u 1002 crowbar-app
-chroot "$R" useradd -m -u "$PERSON_UID" -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
+chroot "$R" useradd -m -u "$PERSON_UID" -G netdev -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
 for service in compositor shell launcher unlock; do
   install -D -m 755 "$DESKTOP/$service-run" "$R/etc/sv/crowbar-$service/run"
   ln -sfn "/etc/sv/crowbar-$service" "$SV/crowbar-$service"

@@ -72,6 +72,7 @@
   "esp_label": "CROWBAROS",
   "esp_mib": 64,
   "root_gib": 8,
+  "disk_gib": 12,
   "memory_mib": 4096,
   "vcpus": 4,
   "ssh_port": 22240,

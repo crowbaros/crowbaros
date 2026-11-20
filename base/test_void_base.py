@@ -11,6 +11,23 @@ from unittest.mock import patch
 import void_base
 
 
+def newc(names, compressed=b'the compressed main archive'):
+    """An initramfs as dracut makes one: an uncompressed cpio archive of these
+    files, the early microcode, then the rest."""
+    out = b''
+    for name in [*names, 'TRAILER!!!']:
+        data = b'' if name == 'TRAILER!!!' else b'microcode for ' + name.encode()
+        encoded = name.encode() + b'\0'
+        fields = [0, 0o100644, 0, 0, 1, 0, len(data), 0, 0, 0, 0, len(encoded), 0]
+        out += b'070701' + b''.join(b'%08X' % f for f in fields) + encoded
+        out += b'\0' * (-len(out) % 4) + data
+        out += b'\0' * (-len(out) % 4)
+    return out + compressed
+
+
+BOTH = list(void_base.MICROCODE)
+
+
 class RootfsTrust(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -19,6 +36,7 @@ class RootfsTrust(unittest.TestCase):
         self.installs = 0
         self.kernel = False
         self.nvidia = True
+        self.microcode = BOTH
 
         def install(*args, log, env):
             # What rootfs.sh leaves: a root, with or without a kernel, and with
@@ -29,6 +47,7 @@ class RootfsTrust(unittest.TestCase):
             (root / 'boot').mkdir(parents=True, exist_ok=True)
             if self.kernel:
                 (root / 'boot/vmlinuz-6.18.64_1').write_bytes(b'kernel')
+                (root / 'boot/initramfs-6.18.64_1.img').write_bytes(newc(self.microcode))
                 modules = root / 'usr/lib/modules/6.18.64_1'
                 modules.mkdir(parents=True, exist_ok=True)
                 listed = ['kernel/drivers/net/virtio_net.ko.zst:']
@@ -58,6 +77,13 @@ class RootfsTrust(unittest.TestCase):
         self.assertIn('nvidia', str(stopped.exception))
         self.assertIn('6.18.64_1', str(stopped.exception))
         self.assertIn('/var/lib/dkms', str(stopped.exception))
+        self.assertFalse((void_base.WORK / 'rootfs.done').exists())
+
+    def test_a_root_whose_initramfs_lacks_a_vendors_microcode_is_not_trusted(self):
+        self.kernel, self.microcode = True, BOTH[1:]
+        with self.assertRaises(SystemExit) as stopped:
+            void_base.rootfs(force=False)
+        self.assertIn('GenuineIntel', str(stopped.exception))
         self.assertFalse((void_base.WORK / 'rootfs.done').exists())
 
     def test_a_finished_root_is_used_as_it_is(self):
@@ -108,6 +134,7 @@ class BuildFixture(unittest.TestCase):
         for kernel in kernels:
             (void_base.ROOTFS / 'boot').mkdir(parents=True, exist_ok=True)
             (void_base.ROOTFS / f'boot/vmlinuz-{kernel}').write_bytes(b'kernel')
+            (void_base.ROOTFS / f'boot/initramfs-{kernel}.img').write_bytes(newc(BOTH))
             modules = void_base.ROOTFS / 'usr/lib/modules' / kernel
             modules.mkdir(parents=True)
             names = ('nvidia', 'nvidia-modeset', 'nvidia-drm', 'nvidia-uvm') if kernel in nvidia else ()
@@ -225,7 +252,7 @@ class Account(BuildFixture):
         self.assertEqual(self.commands, [])
 
     def test_a_name_the_image_already_has_is_refused_before_anything_is_built(self):
-        for name in ('root', 'sshd', '_seatd'):
+        for name in ('root', 'sshd', '_seatd', 'netdev'):
             self.write_account(name=name, password_hash=self.HASH)
             with self.assertRaises(SystemExit, msg=name) as stopped:
                 void_base.build()
@@ -236,6 +263,50 @@ class Account(BuildFixture):
         for hashed in ('$6$rounds=5000$saltsalt$' + 'a/b.' * 21 + 'xy',
                        '$y$j9T$saltsaltsaltsalt$' + 'A' * 43):
             self.assertTrue(void_base.PASSWORD_HASH.fullmatch(hashed), hashed)
+
+
+class EarlyCpio(unittest.TestCase):
+    """The build reads the microcode's names from the initramfs's first archive."""
+
+    def test_names_in_the_early_archive(self):
+        names = ['early_cpio', 'kernel/x86/microcode/GenuineIntel.bin']
+        self.assertEqual(void_base.early_cpio(newc(names)), names)
+
+    def test_an_initramfs_with_no_early_archive_names_nothing(self):
+        self.assertEqual(void_base.early_cpio(b'\x28\xb5\x2f\xfd zstd'), [])
+
+
+class RootFillsDisk(unittest.TestCase):
+    """Base's check sees the root grown to fill a disk larger than the image."""
+
+    IMAGE = (1 + 64 + 8 * 1024 + 1) * 2048  # sectors, from config.json
+    START = (1 + 64) * 2048
+
+    def output(self, disk, size, filesystem):
+        return f'{disk}\n{self.START}\n{size}\n{filesystem}\n'
+
+    def test_a_grown_root_passes(self):
+        disk = 12 * 1024 * 2048
+        size = disk - self.START - 2048
+        self.assertTrue(void_base.root_fills_disk(self.output(disk, size, size * 512)))
+
+    def test_btrfs_rounding_down_to_a_whole_block_passes(self):
+        # As in the VM: the partition ends on an odd sector, and Btrfs stops
+        # at the last whole 4 KiB block in it.
+        self.assertTrue(void_base.root_fills_disk('25165824\n133120\n25032671\n12816723968\n'))
+
+    def test_a_root_left_at_the_images_size_fails(self):
+        disk, size = 12 * 1024 * 2048, 8 * 1024 * 2048
+        self.assertFalse(void_base.root_fills_disk(self.output(disk, size, size * 512)))
+
+    def test_a_partition_grown_without_its_filesystem_fails(self):
+        disk = 12 * 1024 * 2048
+        size = disk - self.START - 2048
+        self.assertFalse(void_base.root_fills_disk(self.output(disk, size, 8 << 30)))
+
+    def test_a_disk_no_larger_than_the_image_shows_nothing(self):
+        size = self.IMAGE - self.START - 2048
+        self.assertFalse(void_base.root_fills_disk(self.output(self.IMAGE, size, size * 512)))
 
 
 class PersonCheck(unittest.TestCase):
