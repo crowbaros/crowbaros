@@ -14,6 +14,7 @@ It becomes the commit on main. See AGENTS.md. -->
 
 <!-- What you ran and what you saw. "Tests pass" alone is not enough.
 Name anything you could not run. For interface changes, add before and after
-captures. For Base changes, add the Void lab evidence log. -->
+captures. CI boots Base; add the evidence for any check AGENTS.md leaves
+to you, and which main commit it ran on. -->
 
 <!-- If an agent did the work, end with its model and harness. -->

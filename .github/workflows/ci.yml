@@ -1,22 +1,16 @@
 name: CI
 
-# A change to docs alone starts no run: nothing here builds or tests them.
-# A change that also touches any other path runs every job. Keep the two
-# lists the same.
+# Every pull request and every push to main runs this workflow, so "CI passed"
+# is always reported: it is the one check main's ruleset requires (ADR 0033).
+# A required check that a path filter skips would leave a pull request
+# waiting on it forever, so the filtering happens in the `changes` job
+# instead, and each job runs only when the change needs it. A change to docs
+# alone runs `changes` and the gate, and nothing else.
+
 on:
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - ".impeccable/**"
-      - "LICENSE"
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - ".impeccable/**"
-      - "LICENSE"
 
 permissions:
   contents: read
@@ -26,14 +20,69 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The compositor has a workflow of its own, compositor.yml (ADR 0031).
+  changes:
+    name: What changed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      compositor: ${{ steps.classify.outputs.compositor }}
+      boot: ${{ steps.classify.outputs.boot }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Docs are any Markdown file, docs/, compositor/docs/, .impeccable/, and
+      # LICENSE. Everything else is code. The boot check covers what goes into
+      # Base's image: base/, the compositor, and the shell and Studio Settings.
+      - name: Classify the changed files
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            files=$(git diff --name-only "$PR_BASE...$PR_HEAD")
+          elif [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            files=$(git diff --name-only "$BEFORE" "$AFTER")
+          else
+            files=$(git ls-files)
+          fi
+          code=false compositor=false boot=false
+          while IFS= read -r f; do
+            case "$f" in
+              ""|*.md|docs/*|compositor/docs/*|.impeccable/*|LICENSE) continue ;;
+            esac
+            echo "$f"
+            code=true
+            case "$f" in
+              compositor/*|.github/workflows/compositor.yml) compositor=true ;;
+            esac
+            case "$f" in
+              base/*|compositor/*|apps/shell/*|apps/studio-settings/*|.github/workflows/ci.yml) boot=true ;;
+            esac
+          done <<EOF
+          $files
+          EOF
+          printf 'code=%s\ncompositor=%s\nboot=%s\n' "$code" "$compositor" "$boot" | tee -a "$GITHUB_OUTPUT"
+
   check:
     name: Lab scripts
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Lab scripts compile and pass their tests
         run: |
@@ -43,6 +92,8 @@ jobs:
 
   shell:
     name: Interface (${{ matrix.project }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       matrix:
         project: [apps/shell, apps/studio-settings]
@@ -54,6 +105,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust
         run: |
@@ -77,3 +130,131 @@ jobs:
 
       - name: Test
         run: cargo test --locked
+
+  # The compositor's own workflow (ADR 0031), run when its code changes.
+  compositor:
+    name: Compositor
+    needs: changes
+    if: needs.changes.outputs.compositor == 'true'
+    uses: ./.github/workflows/compositor.yml
+
+  # Base's boot check, the same command a person runs: build Base and its
+  # desktop, boot the image under UEFI with KVM, check it, and power it off.
+  # GitHub's runners offer /dev/kvm, but GitHub does not support a VM inside
+  # them (ADR 0033). The Void packages, the crates, and the desktop's Cargo
+  # build are cached from main, so a run reinstalls the Void roots from the
+  # cached packages and rebuilds only what changed.
+  boot:
+    name: Base boots
+    needs: changes
+    if: needs.changes.outputs.boot == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The Void roots, the build, and the disk need more room than the
+      # runner leaves free. These toolchains are never used here.
+      - name: Make room
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h / | tail -n 1
+
+      # The host's Cargo only fetches the crates; Void's own Rust builds them.
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install the host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends uidmap btrfs-progs dosfstools fdisk \
+            qemu-system-x86 ovmf openssh-client patch
+
+      # What README.md asks of a host: user namespaces (Ubuntu limits them
+      # with AppArmor), subordinate IDs, /dev/kvm, and the firmware at the
+      # paths config.json names, which are Arch's.
+      - name: Let the check run as this user
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo chmod 0666 /dev/kvm
+          for f in /etc/subuid /etc/subgid; do
+            grep -q "^$USER:" "$f" || echo "$USER:100000:65536" | sudo tee -a "$f"
+          done
+          sudo mkdir -p /usr/share/edk2/x64
+          sudo ln -sf /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/edk2/x64/OVMF_CODE.4m.fd
+          sudo ln -sf /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/edk2/x64/OVMF_VARS.4m.fd
+
+      - name: Restore the Void packages
+        id: packages
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/crowbaros/void
+          key: base-packages-${{ hashFiles('base/config.json') }}
+          restore-keys: base-packages-
+
+      - name: Restore the desktop's build
+        id: build
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .lab/base/target
+          key: base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/studio-settings/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/studio-settings/Cargo.lock') }}-
+            base-build-
+
+      - name: Build, boot, and check Base
+        run: python3 base/void_base.py check
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: base-boot-logs
+          path: .lab/base/*.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+      # Only main saves, so every pull request starts from main's build and
+      # the caches stay inside the repository's 10 GB.
+      - name: Save the Void packages
+        if: github.event_name == 'push' && steps.packages.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/crowbaros/void
+          key: ${{ steps.packages.outputs.cache-primary-key }}
+
+      - name: Save the desktop's build
+        if: github.event_name == 'push'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .lab/base/target
+          key: ${{ steps.build.outputs.cache-primary-key }}
+
+  # The one required check. It passes when every job the change needed
+  # passed, and a job the change did not need counts as passed.
+  gate:
+    name: CI passed
+    if: always()
+    needs: [changes, check, shell, compositor, boot]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job the change needed passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "*|*" cancelled "*) exit 1 ;;
+          esac
