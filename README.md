@@ -35,7 +35,7 @@ The substrate vision before it is archived, and its code is at the
 
 | Path | Contents |
 | --- | --- |
-| [`base/`](base/) | Plain Void Linux with the desktop on it, built without root, that boots under UEFI in a VM |
+| [`base/`](base/) | Plain Void Linux with the desktop on it, built without root, that boots under UEFI in a VM or [on a real machine](base/HARDWARE.md) |
 | [`apps/`](apps/) | The GPUI interfaces: desktop shell, Studio Settings, and the GPUI probe |
 | [`compositor/`](compositor/) | Fulcrum, the Wayland compositor: its own Cargo project, with its own CI workflow |
 | [`lab/`](lab/) | The Void lab: the compositor check, and the desktop check on Base's image |

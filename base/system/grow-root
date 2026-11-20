@@ -1,0 +1,39 @@
+#!/bin/sh
+# Grow the root's partition, and its Btrfs, to fill the disk the image was
+# written to. The image is a few GiB; the disk a person writes it to is
+# usually larger. runit's stage 1 runs this on every boot, once the root is
+# mounted read-write; when the root already fills its disk, it does nothing.
+#
+# The root must be the disk's last partition. GPT keeps a backup header in
+# the disk's last sectors, which an image written to a larger disk leaves in
+# the middle, so it moves first. The kernel is told the partition's new size
+# while the root stays mounted, and Btrfs grows online.
+set -eu
+
+source=$(findmnt -no SOURCE /)
+part=$(basename "$(readlink -f "${source%%\[*}")")
+sys=/sys/class/block/$part
+[ -r "$sys/partition" ] || { echo "the root, $part, is not a partition; nothing to grow"; exit 0; }
+disk=$(basename "$(readlink -f "$sys/..")")
+number=$(cat "$sys/partition")
+start=$(cat "$sys/start")
+size=$(cat "$sys/size")
+total=$(cat "/sys/class/block/$disk/size")
+
+# In 512-byte sectors, as sysfs counts. Less than 2 MiB left over is the GPT
+# backup and alignment, not room to grow into.
+free=$((total - start - size))
+[ "$free" -gt 4096 ] || exit 0
+for other in /sys/class/block/"$disk"/"$disk"*; do
+  if [ -r "$other/start" ] && [ "$(cat "$other/start")" -gt "$start" ]; then
+    echo "the root, $part, is not the last partition on /dev/$disk; not growing it"
+    exit 0
+  fi
+done
+
+echo "Growing the root, $part, by $((free / 2048)) MiB to fill /dev/$disk"
+sfdisk --quiet --relocate gpt-bak-std "/dev/$disk"
+echo ', +' | sfdisk --quiet --no-reread --no-tell-kernel -N "$number" "/dev/$disk"
+partx --update --nr "$number" "/dev/$disk"
+btrfs filesystem resize max / >/dev/null
+echo "The root, $part, fills /dev/$disk: $(($(cat "$sys/size") / 2048)) MiB"
