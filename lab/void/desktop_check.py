@@ -457,11 +457,15 @@ print(json.dumps(results))
         try:
             self.run(f'chmod o+x {apps}; chmod o+rw {apps}/wayland-0')
             other = self.run(f'chpst -u crowbar-shell:crowbar-shell env -i WAYLAND_DISPLAY={apps}/wayland-0 '
-                             'timeout 5 crowbar-probe globals 2>&1; echo exit=$?')
+                             'timeout 5 /usr/local/bin/crowbar-probe globals 2>&1; echo exit=$?')
         finally:
             self.python('import os; modes=' + repr(modes) + '; [os.chmod(p,m) for p,m in modes.items()]')
+        # The probe ran, reached the socket, and was turned away: not a probe
+        # that could not start (127) or a socket it could not open.
+        status = int(other.rsplit('exit=', 1)[1])
         self.check("the person's socket refuses another account, even with its path exposed",
-                   'wl_compositor' not in other and 'exit=0' not in other, other.strip())
+                   'wl_compositor' not in other and status not in (0, 126, 127)
+                   and 'No such file' not in other and 'ermission denied' not in other, other.strip())
 
     def probe_window(self, command, app_id, out):
         """Opens one of the probe's maximized windows as an app, and clicks it
