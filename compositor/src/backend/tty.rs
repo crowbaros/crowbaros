@@ -776,6 +776,20 @@ impl Tty {
         }
     }
 
+    fn session_events(&mut self, state: &mut State) {
+        let events = match self.session.borrow_mut().dispatch() {
+            Ok(events) => events,
+            Err(error) => {
+                log::error!("lost the seat: {error}");
+                state.stop();
+                return;
+            }
+        };
+        for event in events {
+            self.session_event(state, event);
+        }
+    }
+
     fn session_event(&mut self, state: &mut State, event: SessionEvent) {
         match event {
             SessionEvent::Disabled => {
@@ -936,8 +950,10 @@ impl Backend for Tty {
             Err(error) => {
                 log::warning!("could not show a frame on {}: {error}", monitor.name);
                 // A cursor plane the display refuses is given up: the pointer
-                // is drawn with the frame from now on.
-                if monitor.cursor.take().is_some() {
+                // is drawn with the frame from now on. A display that refuses
+                // every commit, as when seatd has taken the device back for
+                // another virtual terminal, says nothing of the plane.
+                if error.kind() != io::ErrorKind::PermissionDenied && monitor.cursor.take().is_some() {
                     log::warning!("the pointer is drawn with the frame on {}", monitor.name);
                 }
                 Drawn::Nothing
@@ -999,19 +1015,7 @@ impl Backend for Tty {
 
     fn ready(&mut self, state: &mut State, source: u64) {
         match source {
-            SOURCE_SESSION => {
-                let events = match self.session.borrow_mut().dispatch() {
-                    Ok(events) => events,
-                    Err(error) => {
-                        log::error!("lost the seat: {error}");
-                        state.stop();
-                        return;
-                    }
-                };
-                for event in events {
-                    self.session_event(state, event);
-                }
-            }
+            SOURCE_SESSION => self.session_events(state),
             SOURCE_DRM => {
                 let flips = self.device.read_flips().unwrap_or_default();
                 for flip in flips {
@@ -1054,6 +1058,14 @@ impl Backend for Tty {
                 }
             }
             _ => {}
+        }
+        // seatd's events can arrive while a request waits for its reply, as
+        // when the person switches away while libinput closes a device. The
+        // socket is read to its end then and will not say it is ready, so
+        // they are handled here or the pause is never acknowledged and the
+        // switch back never finishes.
+        while self.session.borrow().has_queued() {
+            self.session_events(state);
         }
     }
 }

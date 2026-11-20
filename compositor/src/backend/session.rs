@@ -228,7 +228,18 @@ impl Session {
         self.send(CLIENT_SWITCH_SESSION, &session.to_ne_bytes())
     }
 
-    /// The events seatd has sent, read without waiting.
+    /// Whether seatd said something while a request waited for its reply.
+    /// The socket was read to its end then, so nothing will say it is ready
+    /// again: the caller must [`Session::dispatch`] for these.
+    pub fn has_queued(&self) -> bool {
+        !self.events.is_empty()
+    }
+
+    /// The events seatd has sent, read without waiting: those kept while a
+    /// request waited, then those on the socket. Each one that changes
+    /// nothing is left out: seatd enables the seat just after it opens it,
+    /// when it is already active, and that comes back here at the first
+    /// switch, ahead of the switch's own pause.
     pub fn dispatch(&mut self) -> io::Result<Vec<SessionEvent>> {
         let mut events: Vec<SessionEvent> = self.events.drain(..).collect();
         loop {
@@ -244,10 +255,14 @@ impl Session {
                 _ => {}
             }
         }
-        for event in &events {
-            if *event == SessionEvent::Enabled {
-                self.active = true;
-            }
+        let mut active = self.active;
+        events.retain(|event| {
+            let changes = active != (*event == SessionEvent::Enabled);
+            active = *event == SessionEvent::Enabled;
+            changes
+        });
+        if events.contains(&SessionEvent::Enabled) {
+            self.active = true;
         }
         Ok(events)
     }
@@ -260,6 +275,82 @@ fn short() -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A session on an open, active seat, and seatd's end of its socket.
+    fn active_session() -> (Session, UnixStream) {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let session = Session {
+            stream: ours,
+            seat: "seat0".into(),
+            active: true,
+            events: VecDeque::new(),
+            devices: HashMap::new(),
+        };
+        (session, theirs)
+    }
+
+    /// seatd's message with no body.
+    fn say(seatd: &UnixStream, opcode: u16) {
+        let mut message = opcode.to_ne_bytes().to_vec();
+        message.extend_from_slice(&0u16.to_ne_bytes());
+        rustix::io::write(seatd, &message).unwrap();
+    }
+
+    #[test]
+    fn the_enable_seatd_sends_just_after_opening_the_seat_is_not_a_switch() {
+        // seatd enables the seat after its reply to open it, so the enable
+        // is read during the next request and kept until the first dispatch.
+        let (mut session, seatd) = active_session();
+        session.events.push_back(SessionEvent::Enabled);
+        say(&seatd, SERVER_ENABLE_SEAT);
+        assert_eq!(session.dispatch().unwrap(), vec![]);
+        assert!(session.active);
+    }
+
+    #[test]
+    fn a_pause_that_arrives_while_a_device_closes_is_kept_and_handed_out() {
+        let (mut session, seatd) = active_session();
+        let fd: OwnedFd = rustix::pipe::pipe().unwrap().0;
+        session.devices.insert(fd.as_raw_fd(), 9);
+        let replies = std::thread::spawn(move || {
+            let mut request = [0u8; 8];
+            rustix::io::read(&seatd, &mut request).unwrap();
+            assert_eq!(u16::from_ne_bytes([request[0], request[1]]), CLIENT_CLOSE_DEVICE);
+            say(&seatd, SERVER_DISABLE_SEAT);
+            say(&seatd, SERVER_DEVICE_CLOSED);
+            seatd
+        });
+        session.close_device(fd);
+        let _seatd = replies.join().unwrap();
+        // Nothing is left on the socket to say the pause is there.
+        assert!(session.has_queued());
+        assert_eq!(session.dispatch().unwrap(), vec![SessionEvent::Disabled]);
+        assert!(!session.has_queued());
+    }
+
+    #[test]
+    fn the_stale_enable_does_not_hide_the_first_pause() {
+        let (mut session, seatd) = active_session();
+        session.events.push_back(SessionEvent::Enabled);
+        say(&seatd, SERVER_DISABLE_SEAT);
+        assert_eq!(session.dispatch().unwrap(), vec![SessionEvent::Disabled]);
+    }
+
+    #[test]
+    fn a_pause_and_a_return_read_together_both_come_out_in_order() {
+        let (mut session, seatd) = active_session();
+        say(&seatd, SERVER_DISABLE_SEAT);
+        say(&seatd, SERVER_ENABLE_SEAT);
+        assert_eq!(
+            session.dispatch().unwrap(),
+            vec![SessionEvent::Disabled, SessionEvent::Enabled]
+        );
+        // After the pause is acknowledged, the return is a return.
+        session.acknowledge_disable().unwrap();
+        say(&seatd, SERVER_ENABLE_SEAT);
+        assert_eq!(session.dispatch().unwrap(), vec![SessionEvent::Enabled]);
+        assert!(session.active);
+    }
 
     /// A stand-in for seatd: answers one open-seat and one open-device.
     #[test]
