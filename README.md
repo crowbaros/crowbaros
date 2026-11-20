@@ -38,7 +38,7 @@ The substrate vision before it is archived, and its code is at the
 | [`base/`](base/) | Plain Void Linux with the desktop on it, built without root, that boots under UEFI in a VM or [on a real machine](base/HARDWARE.md) |
 | [`apps/`](apps/) | The GPUI interfaces: desktop shell, Studio Settings, and the GPUI probe |
 | [`compositor/`](compositor/) | Fulcrum, the Wayland compositor: its own Cargo project, with its own CI workflow |
-| [`lab/`](lab/) | The Void lab: the compositor check, and the desktop check on Base's image |
+| [`lab/`](lab/) | The Void lab: the compositor check and the desktop check, both on Base's image |
 | [`docs/VISION.md`](docs/VISION.md), [`docs/LESSONS.md`](docs/LESSONS.md) | The vision, and what the earlier plans taught us |
 | [`docs/adr/`](docs/adr/) | Decision records |
 | [`docs/research/`](docs/research/) | Prior-art research and compositor records |
@@ -52,9 +52,9 @@ The substrate vision before it is archived, and its code is at the
 ```sh
 python3 -m unittest discover -s base -p "test_*.py"
 python3 -m unittest discover -s lab/void -p "test_*.py"
-base/void_base.py check                     # build Base with the desktop, boot it, and check it
-lab/void/compositor_guest.py check          # the compositor in a Void VM
-lab/void/compositor_guest.py desktop-check  # the desktop, on a copy of Base's image booted under UEFI
+base/void_base.py check        # build Base with the desktop, boot it, and check it
+lab/void/compositor_check.py   # the compositor, on a copy of Base's image booted under UEFI
+lab/void/desktop_check.py      # the desktop and Base boot checks, on a copy of Base's image booted under UEFI
 ```
 
 The compositor's own build and test commands are in its

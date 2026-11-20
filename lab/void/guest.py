@@ -1,0 +1,255 @@
+"""Drives an isolated QEMU guest booted from Base's image under UEFI.
+
+Both the compositor check and the desktop check use this module. Every run
+owns a directory with its own copy of Base's disk, firmware variables, SSH
+port, and Unix QMP and VNC sockets, and reaches the guest with Base's SSH key.
+"""
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+
+LAB = Path(__file__).resolve().parent
+ROOT = LAB.parents[1]
+if str(ROOT / "base") not in sys.path:
+    sys.path.insert(0, str(ROOT / "base"))
+
+import void_base  # noqa: E402
+
+
+class Qmp:
+    """A QMP connection: QEMU's JSON control protocol."""
+
+    def __init__(self, sock_path):
+        self.sock = socket.socket(socket.AF_UNIX)
+        self.sock.settimeout(10)
+        self.sock.connect(str(sock_path))
+        self.file = self.sock.makefile("rw")
+        self.read()  # greeting
+        self.command("qmp_capabilities")
+
+    def read(self):
+        while True:
+            line = self.file.readline()
+            if not line:
+                raise ConnectionError("QMP disconnected")
+            message = json.loads(line)
+            if "event" not in message:
+                return message
+
+    def command(self, name, **arguments):
+        self.file.write(json.dumps({"execute": name, "arguments": arguments}) + "\n")
+        self.file.flush()
+        reply = self.read()
+        if "error" in reply:
+            raise RuntimeError(f"QMP {name}: {reply['error']}")
+        return reply.get("return")
+
+    def key(self, qcode, down):
+        """One key goes down or up on the guest's keyboard."""
+        self.command("input-send-event", events=[
+            {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": qcode}}}])
+        time.sleep(0.15)
+
+    def pointer(self, x, y):
+        """Moves the tablet. x and y are fractions of the whole desktop."""
+        self.command("input-send-event", events=[
+            {"type": "abs", "data": {"axis": "x", "value": int(x * 0x7fff)}},
+            {"type": "abs", "data": {"axis": "y", "value": int(y * 0x7fff)}}])
+        time.sleep(0.3)
+
+    def click(self):
+        for down in (True, False):
+            self.command("input-send-event", events=[
+                {"type": "btn", "data": {"down": down, "button": "left"}}])
+            time.sleep(0.15)
+
+    def screendump(self, path, head):
+        path = Path(path)
+        path.unlink(missing_ok=True)
+        self.command("screendump", filename=str(path), device="gpu0", head=head, format="png")
+
+    def close(self):
+        self.file.close()
+        self.sock.close()
+
+
+def build_base(log_path):
+    """Build Base's image with the lab account, logging output to `log_path`."""
+    with Path(log_path).open("w") as log:
+        result = subprocess.run(
+            [sys.executable, void_base.HERE / "void_base.py", "build", "--lab-account"],
+            stdout=log, stderr=subprocess.STDOUT,
+        )
+    if result.returncode:
+        raise RuntimeError(f"Base's build failed; see {log_path}")
+    return {name: void_base.sha256(path) for name, path in void_base.binaries().items()}
+
+
+class Guest:
+    """One isolated UEFI VM run on a copy of Base's disk."""
+
+    def __init__(self, work, name, ssh_port):
+        self.work = Path(work)
+        self.name = name
+        self.ssh_port = ssh_port
+        self.disk = self.work / "disk.raw"
+        self.nvram = self.work / "nvram.fd"
+        self.pidfile = self.work / "qemu.pid"
+        self.qmp_sock = self.work / "qmp.sock"
+        self.serial_log = self.work / "serial.log"
+        self.known_hosts = self.work / "known_hosts"
+        self.vnc = [self.work / f"vnc{n}.sock" for n in range(2)]
+        self.key = void_base.KEY
+
+    @classmethod
+    def create(cls, runs_dir, name):
+        runs_dir = Path(runs_dir)
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        work = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%dT%H%M%S-"), dir=runs_dir))
+        with socket.socket() as free_port:
+            free_port.bind(("127.0.0.1", 0))
+            port = free_port.getsockname()[1]
+        vm = cls(work, name, port)
+        (work / "run.json").write_text(json.dumps({
+            "workspace": str(work),
+            "ssh_port": port,
+            "image": str(void_base.BASE_DISK),
+            "revision": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=void_base.ROOT, text=True).strip(),
+            "dirty": bool(subprocess.check_output(
+                ["git", "status", "--porcelain"], cwd=void_base.ROOT)),
+        }, indent=2) + "\n")
+        return vm
+
+    def running(self):
+        try:
+            os.kill(int(self.pidfile.read_text().strip()), 0)
+            return True
+        except (FileNotFoundError, ProcessLookupError, ValueError):
+            return False
+
+    def start(self):
+        """Boot this run's own grown copy of Base's image through UEFI."""
+        for path in (self.qmp_sock, self.pidfile, self.known_hosts, *self.vnc):
+            path.unlink(missing_ok=True)
+        subprocess.run(
+            ["cp", "--reflink=auto", "--sparse=always", void_base.BASE_DISK, self.disk],
+            check=True,
+        )
+        # Larger than the image, as a person's disk is, so the root grows on boot.
+        os.truncate(self.disk, max(self.disk.stat().st_size, void_base.CFG["disk_gib"] << 30))
+        shutil.copyfile(void_base.CFG["firmware_vars"], self.nvram)
+        void_base.run(
+            *void_base.qemu(self.name, self.disk, self.nvram, self.ssh_port),
+            # A VNC server per connector. A VNC client that sets a desktop
+            # size on the second one plugs the second monitor in.
+            "-vnc", f"unix:{self.vnc[0]},display=gpu0,head=0",
+            "-vnc", f"unix:{self.vnc[1]},display=gpu0,head=1",
+            "-qmp", f"unix:{self.qmp_sock},server=on,wait=off",
+            "-chardev", f"file,id=ser0,path={self.serial_log}", "-serial", "chardev:ser0",
+            "-display", "none", "-daemonize", "-pidfile", self.pidfile,
+        )
+
+    def ssh_args(self, user="root"):
+        return [
+            "ssh", "-i", str(self.key), "-p", str(self.ssh_port),
+            "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", f"UserKnownHostsFile={self.known_hosts}",
+            "-o", "GlobalKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
+            f"{user}@127.0.0.1",
+        ]
+
+    def ssh(self, command, check=True, timeout=120, user="root"):
+        result = subprocess.run(
+            self.ssh_args(user) + [command], text=True, capture_output=True, timeout=timeout,
+        )
+        if check and result.returncode != 0:
+            raise RuntimeError(
+                f"guest command failed ({result.returncode}): {command}\n"
+                f"{result.stdout}{result.stderr}"
+            )
+        return result
+
+    def wait_ssh(self, timeout=180):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self.running():
+                raise RuntimeError(f"QEMU exited while waiting for SSH; see {self.serial_log}")
+            try:
+                if self.ssh("true", check=False, timeout=15).returncode == 0:
+                    return
+            except subprocess.TimeoutExpired:
+                pass
+            time.sleep(2)
+        raise RuntimeError(f"the guest did not come up on SSH; see {self.serial_log}")
+
+    def qmp(self):
+        return Qmp(self.qmp_sock)
+
+    def plug_monitor(self, head, width, height):
+        """Plug a monitor into a connector by asking QEMU's VNC server for a
+        desktop size. QEMU passes the size to virtio-gpu, which raises a
+        hotplug event in the guest."""
+        sock = socket.socket(socket.AF_UNIX)
+        try:
+            sock.connect(str(self.vnc[head]))
+            sock.settimeout(5)
+            sock.recv(12)                       # server version
+            sock.sendall(b"RFB 003.008\n")
+            count = sock.recv(1)[0]             # security types
+            sock.recv(count)
+            sock.sendall(b"\x01")               # none
+            sock.recv(4)                        # security result
+            sock.sendall(b"\x01")               # shared
+            header = sock.recv(24)              # server init
+            name_length = struct.unpack(">I", header[20:24])[0]
+            sock.recv(name_length)
+            # SetDesktopSize: type 251, pad, width, height, one screen, pad,
+            # then the screen: id, x, y, width, height, flags.
+            sock.sendall(
+                struct.pack(">BxHHBx", 251, width, height, 1)
+                + struct.pack(">IHHHHI", 0, 0, 0, width, height, 0)
+            )
+            time.sleep(1)
+        finally:
+            sock.close()
+
+    def stop(self):
+        if not self.running():
+            return
+        pid = int(self.pidfile.read_text().strip())
+        # Let the guest flush its filesystem before QEMU exits. The fallback
+        # also handles a guest that did not boot far enough to bring up SSH.
+        try:
+            self.ssh("nohup sh -c 'sleep 1; poweroff' >/dev/null 2>&1 &", check=False, timeout=8)
+            for _ in range(150):
+                if not self.running():
+                    self.pidfile.unlink(missing_ok=True)
+                    return
+                time.sleep(0.2)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            qmp = self.qmp()
+            try:
+                qmp.command("quit")
+            finally:
+                qmp.close()
+        except (OSError, RuntimeError, ValueError):
+            try:
+                os.kill(pid, 15)
+            except ProcessLookupError:
+                pass
+        for _ in range(50):
+            if not self.running():
+                break
+            time.sleep(0.2)
+        self.pidfile.unlink(missing_ok=True)
