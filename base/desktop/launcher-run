@@ -1,7 +1,18 @@
 #!/bin/sh
+# The launcher service, as the person's account with its groups, so the apps
+# it starts are the person's. Root only makes the directories the person
+# cannot: the person's runtime directory, with the compositor's socket for
+# apps linked into it as `wayland-0`, and the launch socket's directory, which
+# only the shell's group may enter.
 set -eu
 exec >>/var/log/crowbar-launcher.log 2>&1
-install -d -o root -g crowbar-shell -m 0750 /run/crowbar-launch
-install -d -o crowbar-app -g crowbar-app -m 0700 /run/user/1002
-chown crowbar-app:crowbar-app /home/crowbar-app
-exec /usr/local/bin/crowbar-launcher
+PERSON_UID=1003
+PERSON=$(getent passwd "$PERSON_UID" | cut -d: -f1)
+test -n "$PERSON" || { echo "no account has user ID $PERSON_UID"; exit 1; }
+install -d -o "$PERSON" -g "$PERSON" -m 0700 "/run/user/$PERSON_UID"
+ln -sfn /run/crowbar-person/wayland-0 "/run/user/$PERSON_UID/wayland-0"
+install -d -o "$PERSON" -g crowbar-shell -m 2750 /run/crowbar-launch
+touch /var/log/crowbar-apps.log
+chown "$PERSON:$PERSON" /var/log/crowbar-apps.log
+exec chpst -u "$PERSON:$(id -Gn "$PERSON" | tr ' ' ':')" \
+  /usr/bin/setpriv --no-new-privs /usr/local/bin/crowbar-launcher

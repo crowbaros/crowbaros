@@ -19,6 +19,41 @@ def load(name, file):
 
 launcher = load('launcher', 'launcher.py')
 unlocker = load('unlock', 'unlock.py')
+PERSON = types.SimpleNamespace(pw_name='jim', pw_dir='/home/jim', pw_uid=1003, pw_shell='/bin/bash')
+SHELL_UID = 1001
+
+
+class LauncherRequests(unittest.TestCase):
+    def test_only_the_shell_may_make_a_request(self):
+        with patch.object(launcher, 'dispatch') as dispatch:
+            for peer in (0, 1003, 1000, 1002):
+                reply = launcher.answer(b'{"op":"appearance"}\n', peer, SHELL_UID, PERSON)
+                self.assertFalse(reply['ok'], peer)
+            dispatch.assert_not_called()
+
+    def test_the_shell_reads_the_persons_appearance(self):
+        with patch.object(launcher, 'appearance', return_value={'theme': 'light'}) as read:
+            reply = launcher.answer(b'{"op":"appearance"}\n', SHELL_UID, SHELL_UID, PERSON)
+        self.assertEqual(reply, {'ok': True, 'preferences': {'theme': 'light'}})
+        read.assert_called_once_with('/home/jim', 1003)
+
+    def test_a_launch_runs_as_the_launcher_itself_with_no_new_privileges(self):
+        with patch.object(launcher, 'desktop_path', side_effect=lambda path: path), \
+                patch.object(launcher.subprocess, 'run') as run, patch('builtins.open'):
+            run.return_value.returncode = 0
+            reply = launcher.answer(b'{"op":"launch","desktop":"/usr/share/applications/foot.desktop"}\n',
+                                    SHELL_UID, SHELL_UID, PERSON)
+        self.assertEqual(reply, {'ok': True})
+        command, options = run.call_args
+        self.assertEqual(command[0][:2], ['/usr/bin/setpriv', '--no-new-privs'])
+        self.assertFalse({'user', 'group', 'extra_groups'} & set(options))
+        self.assertEqual(options['env']['WAYLAND_DISPLAY'], 'wayland-0')
+
+    def test_a_malformed_or_unknown_request_is_refused(self):
+        for line in (b'{"op":"appearance"}', b'[]\n', b'{"op":"run","command":"sh"}\n',
+                     b'{"op":"launch","desktop":"/usr/share/applications/foot.desktop","uid":0}\n',
+                     b'x' * 5000 + b'\n'):
+            self.assertFalse(launcher.answer(line, SHELL_UID, SHELL_UID, PERSON)['ok'], line[:40])
 
 
 class UnlockHelper(unittest.TestCase):
@@ -117,9 +152,15 @@ class PreferencesSafety(unittest.TestCase):
                 launcher.desktop_path(path)
 
     def test_app_environment_sets_cursor_theme_and_size(self):
-        env = launcher.app_environment(types.SimpleNamespace(pw_dir='/home/crowbar-app', pw_uid=1002))
+        env = launcher.app_environment(PERSON)
         self.assertEqual(env['XCURSOR_THEME'], 'Vanilla-DMZ')
         self.assertEqual(env['XCURSOR_SIZE'], '24')
+
+    def test_an_app_is_the_person_at_the_ordinary_wayland_socket(self):
+        env = launcher.app_environment(PERSON)
+        self.assertEqual((env['HOME'], env['USER'], env['LOGNAME'], env['SHELL']),
+                         ('/home/jim', 'jim', 'jim', '/bin/bash'))
+        self.assertEqual((env['XDG_RUNTIME_DIR'], env['WAYLAND_DISPLAY']), ('/run/user/1003', 'wayland-0'))
 
     def test_preferences_cannot_read_a_different_owners_file_or_hard_link(self):
         file = self.folder / 'appearance.json'

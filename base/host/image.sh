@@ -54,17 +54,16 @@ msg "Growing the root to fill its disk..."
 /usr/local/sbin/crowbar-grow-root || msg_warn "The root could not grow to fill its disk"
 GROW
 
-# The desktop. Four accounts: the compositor, which alone is in `_seatd`; the
-# shell; one for every app; and the person's, with a home and a login shell,
-# in `netdev` to join Wi-Fi, whose password unlocks the desktop. Its UID is
-# fixed, as the unlock helper finds it by UID. runit starts the seat manager,
-# the compositor on virtual terminal 2 in place of its getty, the shell, the
-# launcher, and the unlock helper; see desktop/.
+# The desktop. Three accounts: the compositor, which alone is in `_seatd`; the
+# shell; and the person's, with a home and a login shell, in `netdev` to join
+# Wi-Fi, whose password unlocks the desktop and as whom every app runs. Its UID
+# is fixed, as the desktop's services find it by UID. runit starts the seat
+# manager, the compositor on virtual terminal 2 in place of its getty, the
+# shell, the launcher, as the person, and the unlock helper; see desktop/.
 ln -sfn /etc/sv/seatd "$SV/seatd"
 rm -f "$SV/agetty-tty2"
 chroot "$R" useradd -m -u 1000 -G _seatd crowbar-compositor
 chroot "$R" useradd -m -u 1001 crowbar-shell
-chroot "$R" useradd -m -u 1002 crowbar-app
 chroot "$R" useradd -m -u "$PERSON_UID" -G netdev -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
 for service in compositor shell launcher unlock; do
   install -D -m 755 "$DESKTOP/$service-run" "$R/etc/sv/crowbar-$service/run"

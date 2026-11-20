@@ -158,8 +158,28 @@ class Check:
     def capture(self, name):
         self.qmp.screendump(guest.WORK / f'{name}.png', 0)
 
+    def person(self):
+        """The person's account name and home: every app runs as it."""
+        if not hasattr(self, '_person'):
+            account = self.run(f'getent passwd {void_base.PERSON_UID}').split(':')
+            self._person = account[0], account[5]
+        return self._person
+
+    def as_app(self, command, out):
+        """Starts a command as an app would run: as the person, with their
+        groups, at the ordinary Wayland socket, with its output in `out`."""
+        person, home = self.person()
+        self.run(f'cd {home} && setsid -f chpst -u "{person}:$(id -Gn {person} | tr " " :)" '
+                 f'env -i HOME={home} PATH=/usr/local/bin:/usr/bin:/bin '
+                 f'XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} WAYLAND_DISPLAY=wayland-0 '
+                 f'{command} >{out} 2>&1 </dev/null')
+
+    def button(self, down):
+        self.qmp.command('input-send-event', events=[{'type': 'btn', 'data': {'down': down, 'button': 'left'}}])
+        time.sleep(0.15)
+
     def preferences(self):
-        result = guest.ssh('cat /home/crowbar-app/.config/crowbaros/appearance.json', check=False)
+        result = guest.ssh(f'cat {self.person()[1]}/.config/crowbaros/appearance.json', check=False)
         return json.loads(result.stdout) if result.returncode == 0 else None
 
     def app_log(self):
@@ -290,6 +310,7 @@ class Check:
         self.identities()
         self.socket_refusals()
         self.display_bridge()
+        self.between_apps()
         before = self.run('pgrep -x crowbaros-shell; pgrep -x foot').splitlines()
         self.run('sv restart crowbar-shell')
         self.ready()
@@ -303,8 +324,7 @@ class Check:
                    and all(re.search(label + r': [1-9]\d*', render) for label in
                            ('layer crowbaros-bar', 'layer crowbaros-dock', r'com\.crowbaros\.StudioSettings')))
         # A file the person writes in their home, to find after the reboot.
-        account = self.run(f'getent passwd {void_base.PERSON_UID}').split(':')
-        person, home = account[0], account[5]
+        person, home = self.person()
         kept = f'{home}/kept-across-reboot'
         token = os.urandom(8).hex()
         self.run(f'chpst -u {person}:{person} sh -c {shlex.quote(f"echo {token} > {kept}")}')
@@ -339,8 +359,9 @@ class Check:
         self.click(136, 204)
         self.capture('06-settings-displays-dark')
         # Verify Chromium is configured as the default browser and launches natively from the dock
-        default_browser = self.run("su -s /bin/sh crowbar-app -c 'xdg-settings get default-web-browser'").strip()
-        https_handler = self.run("su -s /bin/sh crowbar-app -c 'xdg-mime query default x-scheme-handler/https'").strip()
+        person = self.person()[0]
+        default_browser = self.run(f"su -s /bin/sh {person} -c 'xdg-settings get default-web-browser'").strip()
+        https_handler = self.run(f"su -s /bin/sh {person} -c 'xdg-mime query default x-scheme-handler/https'").strip()
         self.check('Chromium is configured as the default browser',
                    default_browser == 'chromium.desktop' and https_handler == 'chromium.desktop',
                    f'browser={default_browser!r} https={https_handler!r}')
@@ -359,27 +380,33 @@ class Check:
         report = json.loads(self.python("""
 import grp, json, os
 from pathlib import Path
-names = {'crowbar-compositor': 1000, 'crowbaros-shell': 1001, 'crowbaros-studio-settings': 1002, 'foot': 1002}
+names = {'crowbar-compositor': 1000, 'crowbaros-shell': 1001, 'crowbaros-studio-settings': PERSON, 'foot': PERSON}
 found = {}
 seat = grp.getgrnam('_seatd')
 for proc in Path('/proc').glob('[0-9]*'):
  try:
   name = Path(os.readlink(proc/'exe')).name
   status = dict(line.split(':',1) for line in (proc/'status').read_text().splitlines() if ':' in line)
-  if name not in names and int(status['Uid'].split()[0]) != 1002: continue
+  if name not in names and int(status['Uid'].split()[0]) != PERSON: continue
   if name not in names: name += '(' + proc.name + ')'
   found[name] = {'uid': list(map(int,status['Uid'].split())), 'groups': list(map(int,status['Groups'].split())), 'no_new_privs': status['NoNewPrivs'].strip(), 'capabilities': status['CapEff'].strip(), 'fds': {p.name: os.readlink(p) for p in (proc/'fd').iterdir() if int(p.name)>2}, 'env': (proc/'environ').read_bytes().decode().split(chr(0))}
  except (FileNotFoundError, ProcessLookupError): pass
-print(json.dumps({'processes': found, 'seat_members': seat.gr_mem, 'seat_gid': seat.gr_gid}))
-"""))
+print(json.dumps({'processes': found, 'seat_members': seat.gr_mem, 'seat_gid': seat.gr_gid, 'netdev_gid': grp.getgrnam('netdev').gr_gid}))
+""".replace('PERSON', str(void_base.PERSON_UID))))
         (guest.WORK / 'identities.json').write_text(json.dumps(report, indent=2) + '\n')
         found = report['processes']
-        for name, uid in [('crowbar-compositor', 1000), ('crowbaros-shell', 1001), ('crowbaros-studio-settings', 1002), ('foot', 1002)]:
+        person = void_base.PERSON_UID
+        for name, uid in [('crowbar-compositor', 1000), ('crowbaros-shell', 1001)]:
             self.check(name + ' has the assigned non-root identity', name in found and found[name]['uid'] == [uid] * 4)
+        for name in ('foot', 'crowbaros-studio-settings'):
+            self.check(name + " runs as the person's account", name in found and found[name]['uid'] == [person] * 4)
+            self.check(name + " is at the ordinary Wayland socket, in the person's runtime directory",
+                       {f'XDG_RUNTIME_DIR=/run/user/{person}', 'WAYLAND_DISPLAY=wayland-0'} <= set(found[name]['env']))
+        self.check("the person's terminal may join Wi-Fi, in netdev", report['netdev_gid'] in found['foot']['groups'])
         self.check('only compositor belongs to seatd', report['seat_members'] == ['crowbar-compositor'] and all(report['seat_gid'] not in found[n]['groups'] for n in found if n != 'crowbar-compositor'))
         trusted = {fd for n in ('crowbar-compositor', 'crowbaros-shell')
                    for fd in found[n]['fds'].values() if fd.startswith('socket:[')}
-        apps = [name for name in found if found[name]['uid'][0] == 1002]
+        apps = [name for name in found if found[name]['uid'][0] == person]
         self.check('ordinary app child processes were inspected', any('(' in name for name in apps))
         for name in apps:
             self.check(name + ' cannot gain privileges', found[name]['no_new_privs'] == '1' and int(found[name]['capabilities'], 16) == 0)
@@ -412,10 +439,74 @@ print(json.dumps(results))
         modes = json.loads(self.python('import os,json; print(json.dumps({p:os.stat(p).st_mode & 0o7777 for p in ' + repr(paths + directories) + '}))'))
         try:
             self.run('chmod o+x ' + ' '.join(directories) + '; chmod o+rw ' + ' '.join(paths))
-            refused = json.loads(self.python(code, 'crowbar-app'))
-            self.check('trusted sockets reject the app UID even with paths exposed', refused == [True] * len(paths))
+            refused = json.loads(self.python(code, self.person()[0]))
+            self.check("the shell's sockets, the control channel, the launcher, and the unlock helper refuse an app, even with paths exposed",
+                       refused == [True] * len(paths))
         finally:
             self.python('import os; modes=' + repr(modes) + '; [os.chmod(p,m) for p,m in modes.items()]')
+        # The apps' socket: an app is offered what a Wayland app expects, the
+        # GPU's buffers included, and not layer shell; any other account,
+        # even the shell's, is refused there.
+        out = '/tmp/app-globals.out'
+        self.as_app('crowbar-probe globals', out)
+        offered = self.wait('the app lists its globals', lambda: (r := self.run(f'cat {out}')) and 'wl_compositor' in r and r, timeout=10)
+        self.check("an app at the person's socket is offered the GPU's buffers and not layer shell",
+                   'zwp_linux_dmabuf_v1' in offered and 'xdg_wm_base' in offered and 'zwlr_layer_shell_v1' not in offered)
+        apps = '/run/crowbar-person'
+        modes = json.loads(self.python(f'import os,json; print(json.dumps({{p:os.stat(p).st_mode & 0o7777 for p in ["{apps}", "{apps}/wayland-0"]}}))'))
+        try:
+            self.run(f'chmod o+x {apps}; chmod o+rw {apps}/wayland-0')
+            other = self.run(f'chpst -u crowbar-shell:crowbar-shell env -i WAYLAND_DISPLAY={apps}/wayland-0 '
+                             'timeout 5 crowbar-probe globals 2>&1; echo exit=$?')
+        finally:
+            self.python('import os; modes=' + repr(modes) + '; [os.chmod(p,m) for p,m in modes.items()]')
+        self.check("the person's socket refuses another account, even with its path exposed",
+                   'wl_compositor' not in other and 'exit=0' not in other, other.strip())
+
+    def probe_window(self, command, app_id, out):
+        """Opens one of the probe's maximized windows as an app, and clicks it
+        to give it the keyboard."""
+        self.as_app(command, out)
+        window = self.wait(app_id + ' maps', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == app_id), None))
+        self.click(640, 480)
+        self.wait(app_id + ' takes the keyboard', lambda: self.snapshot()['active']['address'] == window['address'])
+        return window
+
+    def between_apps(self):
+        """Copy and paste, the primary selection, and drag and drop, between
+        two of the person's apps, on a workspace of their own."""
+        self.click(100, 12)
+        self.wait('workspace 3', lambda: self.snapshot()['workspace'] == 3)
+        token = os.urandom(6).hex()
+        output = lambda name: guest.ssh(f'cat /tmp/{name}.out', check=False).stdout
+        try:
+            self.probe_window(f'crowbar-probe copy copied-{token}', 'org.crowbaros.ProbeCopy', '/tmp/copy.out')
+            self.wait('the first app copies', lambda: 'copied' in output('copy'))
+            self.probe_window('crowbar-probe paste', 'org.crowbaros.ProbePaste', '/tmp/paste.out')
+            pasted = self.wait('the second app pastes',
+                               lambda: (o := output('paste')) and f'pasted clipboard=copied-{token}' in o and f'pasted primary=copied-{token}' in o and o)
+            self.capture('08-pasted')
+            self.check('what one app copies, another pastes', f'pasted clipboard=copied-{token}' in pasted)
+            self.check("one app's primary selection pastes in another", f'pasted primary=copied-{token}' in pasted)
+            self.run("pkill -f 'crowbar-probe (copy|paste)'; true")
+            self.probe_window(f'crowbar-probe drag dragged-{token}', 'org.crowbaros.ProbeDrag', '/tmp/drag.out')
+            self.key('meta_l', 'left')
+            self.probe_window('crowbar-probe drop', 'org.crowbaros.ProbeDrop', '/tmp/drop.out')
+            self.key('meta_l', 'right')
+            time.sleep(0.5)
+            self.capture('09-drag-and-drop')
+            self.qmp.pointer(320 / 1280, 480 / 960)
+            self.button(True)
+            for x in range(400, 1000, 80):
+                self.qmp.pointer(x / 1280, 480 / 960)
+            self.button(False)
+            self.wait('the drop', lambda: f'dropped dragged-{token}' in output('drop'))
+            self.check('what the person drags from one app drops on another',
+                       'drag started' in output('drag') and f'dropped dragged-{token}' in output('drop'))
+        finally:
+            self.run("pkill -f 'crowbar-probe (copy|paste|drag|drop)'; true")
+        self.click(60, 12)
+        self.wait('workspace 1', lambda: self.snapshot()['workspace'] == 1)
 
     def display_bridge(self):
         code = """
@@ -450,8 +541,8 @@ print(json.dumps({
  'restored_ok': restored.get('reply') == 'ok' and after['outputs'][0]['scale'] == orig_scale,
 }))
 """
-        report = json.loads(self.python(code, 'crowbar-app'))
-        self.check('display bridge refuses non-display compositor ops from app UID',
+        report = json.loads(self.python(code, self.person()[0]))
+        self.check("display bridge refuses non-display compositor ops from the person's apps",
                    report['snap_refused'] and report['lock_refused'])
         self.check('display bridge serves outputs and applies scale changes',
                    report['has_outputs'] and report['scaled_ok'] and report['restored_ok'])

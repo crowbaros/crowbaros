@@ -136,35 +136,35 @@ See the [lab's README](../lab/void/README.md#the-desktop-check).
 
 ## The desktop's accounts
 
-The desktop runs as the lab ran it, under the temporary rules of
-[ADR 0016](../docs/archive/substrate-vision/adr/0016-the-warden-starts-every-compartment.md).
-Later tickets of Milestone 2 replace them.
+Three accounts run the desktop, as
+[ADR 0032](../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md)
+says. Nothing in the desktop runs as root to start an app.
 
 - `crowbar-compositor` (UID 1000) owns the seat and is the only `_seatd` member.
 - `crowbar-shell` (UID 1001) is a separate runit service. Its two compositor
   sockets check its kernel UID; neither service launches the other.
-- `crowbar-app` (UID 1002) runs installed desktop entries through a root
-  launcher, `desktop/launcher.py`, with no inherited trusted descriptors or
-  supplementary groups, a fixed environment, and `no_new_privs`. Only the shell
-  UID may ask it to launch.
 - The person's account (UID 1003) has a home and a login shell, and its
   password unlocks the desktop. Its name and password come from the account
-  file; see [The person's account](#the-persons-account). Apps do not run as
-  it yet.
+  file; see [The person's account](#the-persons-account). Every app runs as it.
+- The launcher, `desktop/launcher.py`, runs as the person's account with its
+  groups and `no_new_privs`. It starts an installed desktop entry when the
+  shell asks, and takes requests from the shell's UID alone. Its apps get a
+  fixed environment, with no trusted descriptors.
 - `crowbar-unlock` is a root service, `desktop/unlock.py`. The compositor
   starts locked and listens for it at a socket only root may use. After the
   confirm chord, the lock screen sends the person's password to the helper,
   which checks it against the account with UID 1003 in `/etc/shadow` and only
   then tells the compositor to unlock. zzz's suspend hook locks the desktop through the same helper.
 
-This is not the production Warden or principal isolation. Apps share one user
-and can reach one another. The launcher registers one compartment for every
-app through the compositor's Warden socket, with `crowbar-probe warden`, and
-starts each app on that compartment's listener. The shell reads saved
-appearance through a bounded, read-only request to the launcher, and Studio
-Settings keeps its preferences in the app user's home. The compositor has no
-animations, so Studio Settings saves the motion preference and says it has no
-effect here.
+Apps reach the compositor at one ordinary Wayland socket, in a directory only
+the compositor and the person's group may enter, and the compositor takes only
+the person's UID there. The launcher links it into the person's runtime
+directory, `/run/user/1003`, as `wayland-0`, the `WAYLAND_DISPLAY` every app
+gets, so any Wayland app from Void runs as it is. Apps can reach one another,
+and share the clipboard, as on any desktop. The shell reads saved appearance
+through a read-only request to the launcher, and Studio Settings keeps its
+preferences in the person's home. The compositor has no animations, so Studio
+Settings saves the motion preference and says it has no effect here.
 
 ## The person's account
 
