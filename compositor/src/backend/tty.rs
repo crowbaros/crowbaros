@@ -373,6 +373,18 @@ fn input_devices() -> Vec<PathBuf> {
     devices
 }
 
+/// Adds every input device libinput does not have yet, and returns the ones
+/// it would not take.
+fn add_input_devices(input: &mut Input) -> Vec<PathBuf> {
+    input_devices()
+        .into_iter()
+        .filter(|path| {
+            let sysname = path.file_name().map(|name| name.to_string_lossy().into_owned());
+            !sysname.is_some_and(|sysname| input.has_device(&sysname)) && !input.add_device(path)
+        })
+        .collect()
+}
+
 /// Starts the TTY backend: opens the seat, the first DRM device that has a
 /// monitor, and every input device, and lights each connected monitor.
 pub fn init(state: &mut State) -> io::Result<()> {
@@ -409,10 +421,8 @@ pub fn init(state: &mut State) -> io::Result<()> {
     log::info!("DRM device opened path={}", device_path.display());
 
     let mut input = Input::new(Box::new(SeatOpener(session.clone())))?;
-    for path in input_devices() {
-        if !input.add_device(&path) {
-            log::warning!("libinput did not take {}", path.display());
-        }
+    for path in add_input_devices(&mut input) {
+        log::warning!("libinput did not take {}", path.display());
     }
     let uevents = Uevents::open()?;
     let gpu = if std::env::var_os("FULCRUM_RENDERER").is_some_and(|renderer| renderer == "cpu") {
@@ -794,7 +804,10 @@ impl Tty {
         match event {
             SessionEvent::Disabled => {
                 log::info!("the session is paused: another virtual terminal is showing");
-                self.input.suspend();
+                self.input.remove_all();
+                for event in self.input.dispatch() {
+                    self.handle_input(state, event);
+                }
                 for monitor in &mut self.monitors {
                     monitor.needs_modeset = true;
                     // What the display shows when it comes back is not known.
@@ -812,7 +825,13 @@ impl Tty {
             SessionEvent::Enabled => {
                 log::info!("the session is back");
                 self.session.borrow_mut().active = true;
-                self.input.resume();
+                // The devices are found again: one may have gone or come
+                // while another virtual terminal showed.
+                let refused = add_input_devices(&mut self.input);
+                log::debug!("libinput did not take {} input devices", refused.len());
+                for event in self.input.dispatch() {
+                    self.handle_input(state, event);
+                }
                 for monitor in &mut self.monitors {
                     monitor.needs_modeset = true;
                 }
