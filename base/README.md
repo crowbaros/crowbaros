@@ -49,7 +49,8 @@ to keep one image. [The lessons](../docs/LESSONS.md) count NVIDIA as a cost.
 - **The module is built during the build.** Installing `nvidia` runs DKMS in
   the root, which builds `nvidia`, `nvidia-modeset`, `nvidia-drm`, and
   `nvidia-uvm` for the kernel in the root. These are NVIDIA's open kernel
-  modules, which Void uses from driver 595. They run on Turing (RTX 20) and
+  modules, which Void uses from driver 595. `dkms` depends on `pahole`, so
+  xbps installs it first; without it the module's build fails. They run on Turing (RTX 20) and
   later; older cards need Void's `nvidia580` and are not carried.
 - **A build without the module stops.** xbps reports success when DKMS fails,
   so the build reads the root's `modules.dep` itself. When the newest kernel in

@@ -197,8 +197,8 @@ NVIDIA_MODULES = ("nvidia", "nvidia-modeset", "nvidia-drm", "nvidia-uvm")
 
 
 def image_kernel(root):
-    """The version of the kernel the image boots: the newest in /boot, as
-    host/image.sh picks it. None if there is none."""
+    """The version of the kernel the image boots: the newest in /boot. The
+    build checks it and hands it to host/image.sh. None if there is none."""
     def version(path):
         return [(0, int(part), "") if part.isdigit() else (1, 0, part)
                 for part in re.split(r"(\d+)", path.name.removeprefix("vmlinuz-")) if part]
@@ -221,8 +221,7 @@ def missing_from_root(root):
              for line in listed.splitlines()}
     if lack := [name for name in NVIDIA_MODULES if name not in names]:
         return (f"no {', '.join(lack)} module for kernel {kernel}: NVIDIA's DKMS build did not "
-                f"finish. Its log is under {root}/var/lib/dkms/nvidia/*/build/make.log, which "
-                "is /var/lib/dkms in the root")
+                f"finish; see its make.log under {root}/var/lib/dkms/nvidia")
     return None
 
 
@@ -277,7 +276,7 @@ def build(force=False):
                PUBKEY=str(KEY) + ".pub", HOSTNAME=CFG["hostname"],
                ROOT_LABEL=CFG["root_label"], ESP_LABEL=CFG["esp_label"],
                ESP_MIB=str(CFG["esp_mib"]), ROOT_GIB=str(CFG["root_gib"]),
-               KERNEL_ARGS=" ".join(CFG["kernel_args"]),
+               KVER=image_kernel(ROOTFS), KERNEL_ARGS=" ".join(CFG["kernel_args"]),
                DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT))
     run(*userns(), "sh", HERE / "host/image.sh", *binaries().values(), env=env)
 
@@ -430,7 +429,7 @@ CHECKS = [
     ("NVIDIA's module is built, and not loaded without an NVIDIA card",
      "modinfo -n nvidia; cut -d' ' -f1 /proc/modules",
      lambda out: bool(out.split()) and re.search(r"/nvidia\.ko(\.\w+)?$", out.split()[0]) is not None
-     and not {"nvidia", "nvidia_modeset", "nvidia_drm", "nvidia_uvm"} & set(out.split()[1:])),
+     and not {name.replace("-", "_") for name in NVIDIA_MODULES} & set(out.split()[1:])),
     ("no failed kernel messages", "dmesg --level=emerg,alert,crit",
      lambda out: out.strip() == ""),
 ]

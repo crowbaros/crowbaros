@@ -61,7 +61,6 @@
     "freetype-devel",
     "patch"
   ],
-  "kernel_args_comment": "What NVIDIA's driver needs: DRM with kernel modesetting, and a framebuffer console on it. Ignored where nvidia-drm never loads.",
   "kernel_args": ["nvidia-drm.modeset=1", "nvidia-drm.fbdev=1"],
   "hostname": "crowbaros",
   "root_label": "crowbaros-root",

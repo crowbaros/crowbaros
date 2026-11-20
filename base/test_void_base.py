@@ -130,6 +130,12 @@ class Desktop(unittest.TestCase):
         self.assertIn('6.18.10_1', str(stopped.exception))
         self.assertFalse(any(any(a.endswith('host/image.sh') for a in c) for c in self.commands))
 
+    def test_the_image_boots_the_newest_kernel_the_build_checked(self):
+        self.root(['6.18.9_1', '6.18.10_1'], nvidia=['6.18.9_1', '6.18.10_1'])
+        void_base.build()
+        _, env = self.image_step()
+        self.assertEqual(env['KVER'], '6.18.10_1')
+
     def test_the_kernel_command_line_carries_what_nvidias_driver_needs(self):
         self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
         void_base.build()
