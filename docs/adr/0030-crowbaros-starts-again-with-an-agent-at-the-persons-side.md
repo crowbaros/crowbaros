@@ -11,7 +11,7 @@ The [substrate vision](../archive/substrate-vision/README.md) made CrowbarOS a l
 - **The compositor decisions stand:** [ADR 0015](0015-our-own-compositor-on-smithay.md), [ADR 0027](0027-the-compositor-is-built-in-its-own-repository.md), and [ADR 0028](0028-the-compositor-is-written-from-the-ground-up.md). Fulcrum's target is unchanged: the new compositor replaces the Smithay baseline when it passes the baseline's tests and the Void guest's checks. The requirements those records take from archived ones, such as who the clients are and what each is offered (ADRs 0016, 0020, 0022, 0023, and 0029), bind only until a new record says what the compositor offers the shell and the Agent.
 - **The code of the substrate vision is removed:** the Rust workspace in `crates/`, the adversarial lab, the Base generations lab, and the Warden's tests. It is at the [`substrate-final`](https://github.com/crowbaros/crowbaros/tree/substrate-final) tag.
 - **What carries over stays where it is:** the compositor pin, the compositor spike that the Alpha desktop runs, the GPUI shell, Studio Settings, the GPUI probe, the graphical Void lab, the brand, and the design system.
-- **What the earlier plans taught us is kept in [LESSONS.md](../LESSONS.md).**
+- **What the earlier plans taught us is kept in LESSONS.md.** It was later removed, because most of it held for the earlier plans and not this one.
 - **ADR numbers continue from 0030.** Archived records keep their numbers, so a reference to one still means one record. This record was first merged as a second 0029, beside ADR 0029 on compositor budgets for compartments, which merged first and is archived with the rest.
 
 ## Considered Options
