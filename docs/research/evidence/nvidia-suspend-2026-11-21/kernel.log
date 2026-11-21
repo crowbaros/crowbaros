@@ -1,0 +1,79 @@
+[    0.000000] Command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+[    0.019177] Kernel command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+[    0.209067] PM: RTC time: 19:05:24, date: 2026-11-21
+[    0.235634] ACPI: PM: (supports S0 S3 S4 S5)
+[    0.537844] PM: genpd: Disabling unused power domains
+[    3.274793] [drm] Detected VRAM RAM=512M, BAR=512M
+[    3.274795] [drm] RAM width 64bits DDR5
+[    3.274872] [drm] GART: num cpu pages 262144, num gpu pages 262144
+[    3.275032] [drm] PCIE GART of 1024M enabled (table at 0x000000F41FC00000).
+[    3.275295] amdgpu 0000:0b:00.0: amdgpu: [drm] Loading DMUB firmware via PSP: version=0x05003300
+[    3.275582] [drm] use_doorbell being set to: [true]
+[    3.372873] amdgpu 0000:0b:00.0: amdgpu: [drm] Display Core v3.2.351 initialized on DCN 3.1.5
+[    3.372875] amdgpu 0000:0b:00.0: amdgpu: [drm] DP-HDMI FRL PCON supported
+[    3.373529] amdgpu 0000:0b:00.0: amdgpu: [drm] DMUB hardware initialized: version=0x05003300
+[    3.376341] amdgpu 0000:0b:00.0: amdgpu: [drm] HDMI-A-1: PSR support 0, DC PSR ver -1, sink PSR ver 0 DPCD caps 0x0 su_y_granularity 0
+[    3.376385] amdgpu 0000:0b:00.0: amdgpu: [drm] DP-1: PSR support 0, DC PSR ver -1, sink PSR ver 0 DPCD caps 0x0 su_y_granularity 0
+[    3.381239] [drm] Initialized amdgpu 3.64.0 for 0000:0b:00.0 on minor 0
+[    3.383308] amdgpu 0000:0b:00.0: [drm] Cannot find any crtc or sizes
+[    3.383322] [drm] pre_validate_dsc:1667 MST_DSC dsc precompute is not needed
+[    3.707132] nvidia: loading out-of-tree module taints kernel.
+[    3.707141] nvidia: module verification failed: signature and/or required key missing - tainting kernel
+[    3.814397] nvidia-nvlink: Nvlink Core is being initialized, major device number 509
+[    3.817469] nvidia 0000:01:00.0: enabling device (0002 -> 0003)
+[    3.819296] nvidia 0000:01:00.0: vgaarb: VGA decodes changed: olddecodes=io+mem,decodes=none:owns=none
+[    3.830445] NVRM: loading NVIDIA UNIX Open Kernel Module for x86_64  595.112.07  Release Build  (dvs-builder@U22-I3-AL23-31-2)  Tue Oct 20 09:16:38 UTC 2026
+[    3.877582] input: HDA NVidia HDMI/DP,pcm=3 as /devices/pci0000:00/0000:00:01.1/0000:01:00.1/sound/card0/input11
+[    3.877636] input: HDA NVidia HDMI/DP,pcm=7 as /devices/pci0000:00/0000:00:01.1/0000:01:00.1/sound/card0/input12
+[    3.877685] input: HDA NVidia HDMI/DP,pcm=8 as /devices/pci0000:00/0000:00:01.1/0000:01:00.1/sound/card0/input13
+[    3.877733] input: HDA NVidia HDMI/DP,pcm=9 as /devices/pci0000:00/0000:00:01.1/0000:01:00.1/sound/card0/input14
+[    3.898791] nvidia-modeset: Loading NVIDIA UNIX Open Kernel Mode Setting Driver for x86_64  595.112.07  Release Build  (dvs-builder@U22-I3-AL23-31-2)  Tue Oct 20 08:54:59 UTC 2026
+[    3.908949] [drm] [nvidia-drm] [GPU ID 0x00000100] Loading driver
+[    5.471502] [drm] Initialized nvidia-drm 0.0.0 for 0000:01:00.0 on minor 1
+[    5.471630] nvidia 0000:01:00.0: vgaarb: deactivate vga console
+[    5.627198] fbcon: nvidia-drmdrmfb (fb0) is primary device
+[    5.716240] nvidia 0000:01:00.0: [drm] fb0: nvidia-drmdrmfb frame buffer device
+[   41.087705] PM: suspend entry (deep)
+[   42.142517] Filesystems sync: 1.054 seconds
+[   42.183212] Freezing user space processes
+[   42.184359] Freezing user space processes completed (elapsed 0.001 seconds)
+[   42.184363] Freezing remaining freezable tasks
+[   42.185379] Freezing remaining freezable tasks completed (elapsed 0.001 seconds)
+[   42.185401] printk: Suspending console(s) (use no_console_suspend to debug)
+[   42.344443] ACPI: PM: Preparing to enter system sleep state S3
+[   42.852915] ACPI: PM: Saving platform NVS memory
+[   42.874130] ACPI: PM: Low-level resume complete
+[   42.874149] ACPI: PM: Restoring platform NVS memory
+[   43.009960] ACPI: PM: Waking up from system sleep state S3
+[   43.013219] nvidia 0000:01:00.0: Enabling HDA controller
+[   43.015049] xhci_hcd 0000:09:00.0: xHC error in resume, USBSTS 0x401, Reinit
+[   43.015088] [drm] PCIE GART of 1024M enabled (table at 0x000000F41FC00000).
+[   43.110518] amdgpu 0000:0b:00.0: amdgpu: SMU is resumed successfully!
+[   43.113577] amdgpu 0000:0b:00.0: amdgpu: [drm] DMUB hardware initialized: version=0x05003300
+[   43.118682] amdgpu 0000:0b:00.0: [drm] Cannot find any crtc or sizes
+[   43.118690] amdgpu 0000:0b:00.0: [drm] Cannot find any crtc or sizes
+[   45.033748] Restarting tasks: Starting
+[   45.034281] Restarting tasks: Done
+[   45.038647] PM: suspend exit
+[  121.600328] PM: suspend entry (deep)
+[  122.292630] Filesystems sync: 0.692 seconds
+[  122.333727] Freezing user space processes
+[  122.334879] Freezing user space processes completed (elapsed 0.001 seconds)
+[  122.334883] Freezing remaining freezable tasks
+[  122.335877] Freezing remaining freezable tasks completed (elapsed 0.000 seconds)
+[  122.335900] printk: Suspending console(s) (use no_console_suspend to debug)
+[  122.493853] ACPI: PM: Preparing to enter system sleep state S3
+[  123.001766] ACPI: PM: Saving platform NVS memory
+[  123.021196] ACPI: PM: Low-level resume complete
+[  123.021216] ACPI: PM: Restoring platform NVS memory
+[  124.480486] ACPI: PM: Waking up from system sleep state S3
+[  124.483962] nvidia 0000:01:00.0: Enabling HDA controller
+[  124.485359] [drm] PCIE GART of 1024M enabled (table at 0x000000F41FC00000).
+[  124.486676] xhci_hcd 0000:09:00.0: xHC error in resume, USBSTS 0x401, Reinit
+[  124.580753] amdgpu 0000:0b:00.0: amdgpu: SMU is resumed successfully!
+[  124.583733] amdgpu 0000:0b:00.0: amdgpu: [drm] DMUB hardware initialized: version=0x05003300
+[  124.588122] amdgpu 0000:0b:00.0: [drm] Cannot find any crtc or sizes
+[  124.588130] amdgpu 0000:0b:00.0: [drm] Cannot find any crtc or sizes
+[  126.503845] Restarting tasks: Starting
+[  126.504094] Restarting tasks: Done
+[  126.507424] PM: suspend exit

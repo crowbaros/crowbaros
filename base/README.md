@@ -74,7 +74,9 @@ to keep one image.
   disk, and on the 16 GB disk the [guide](HARDWARE.md) asks for, it has about
   11 GB free, more than an RTX 5060's 8 GB; a GPU with more in use needs a
   larger disk. The module loads from the root, not the initramfs, so the file
-  needs no new initramfs.
+  needs no new initramfs. The
+  [suspend record](../docs/research/nvidia-suspend-2026-11-21.md) shows it on
+  an RTX 5060.
 - **Where there is no NVIDIA card, the module does not load,** and Mesa draws.
   The package blacklists `nouveau`. The kernel's NVIDIA settings do nothing
   where `nvidia-drm` never loads.
