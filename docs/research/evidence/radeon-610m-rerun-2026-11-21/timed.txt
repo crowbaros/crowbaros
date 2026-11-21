@@ -1,0 +1,15 @@
+## Both GPUs on, locked, untouched (21:22:52 to 21:25:50)
+21:23:00 INFO crowbar_compositor: commits so far: layer crowbaros-bar: 4, layer crowbaros-dock: 5, layer crowbaros-lock: 63, layer crowbaros-wallpaper: 6 frames=62
+21:24:00 INFO crowbar_compositor: commits so far: layer crowbaros-bar: 6, layer crowbaros-dock: 7, layer crowbaros-lock: 65, layer crowbaros-wallpaper: 8 frames=63
+21:25:00 INFO crowbar_compositor: commits so far: layer crowbaros-bar: 8, layer crowbaros-dock: 9, layer crowbaros-lock: 67, layer crowbaros-wallpaper: 10 frames=64
+
+## Both GPUs on, unlocked, foot, Studio Settings, and Chromium open, untouched (21:28:58 to 21:32:03)
+21:29:01 INFO crowbar_compositor: commits so far: layer crowbaros-bar: 58, layer crowbaros-dock: 131, layer crowbaros-lock: 364, layer crowbaros-wallpaper: 96, window 0x2d foot: 43, window 0x37 com.crowbaros.StudioSettings: 1165, window 0x46 chromium: 807 frames=3756
+21:30:01 INFO crowbar_compositor: commits so far: layer crowbaros-bar: 60, layer crowbaros-dock: 133, layer crowbaros-lock: 364, layer crowbaros-wallpaper: 98, window 0x2d foot: 43, window 0x37 com.crowbaros.StudioSettings: 1165, window 0x46 chromium: 807 frames=3758
+21:31:01 INFO crowbar_compositor: commits so far: layer crowbaros-bar: 62, layer crowbaros-dock: 135, layer crowbaros-lock: 364, layer crowbaros-wallpaper: 100, window 0x2d foot: 43, window 0x37 com.crowbaros.StudioSettings: 1165, window 0x46 chromium: 807 frames=3760
+21:32:01 INFO crowbar_compositor: commits so far: layer crowbaros-bar: 64, layer crowbaros-dock: 137, layer crowbaros-lock: 364, layer crowbaros-wallpaper: 102, window 0x2d foot: 43, window 0x37 com.crowbaros.StudioSettings: 1165, window 0x46 chromium: 807 frames=3762
+
+## The Radeon alone, NVIDIA's modules kept from loading, locked, untouched (21:37:20 to 21:40:20)
+21:38:01 INFO crowbar_compositor: commits so far: layer crowbaros-bar: 6, layer crowbaros-dock: 6, layer crowbaros-lock: 64, layer crowbaros-wallpaper: 6 frames=63
+21:39:01 INFO crowbar_compositor: commits so far: layer crowbaros-bar: 8, layer crowbaros-dock: 8, layer crowbaros-lock: 66, layer crowbaros-wallpaper: 8 frames=64
+21:40:01 INFO crowbar_compositor: commits so far: layer crowbaros-bar: 10, layer crowbaros-dock: 10, layer crowbaros-lock: 68, layer crowbaros-wallpaper: 10 frames=65

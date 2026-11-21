@@ -15,6 +15,7 @@ The [Fedora workflow](../archive/fedora-workflow/README.md) is archived.
 | [RTX 5060 record](../research/fulcrum-rtx-5060-2026-11-20.md) | Base's image and Fulcrum on real hardware with NVIDIA's driver: the desktop flow, the GPU, the cursor plane, the monitor, and suspend |
 | [NVIDIA suspend record](../research/nvidia-suspend-2026-11-21.md) | Base's image keeping NVIDIA's video memory across suspend, on the RTX 5060 machine |
 | [Still desktop on the RTX 5060](../research/rtx-5060-still-desktop-2026-11-21.md) | A still desktop, locked and unlocked, drawing one frame a minute on the RTX 5060 machine |
+| [Radeon 610M, after the fixes](../research/radeon-610m-rerun-2026-11-21.md) | The integrated Radeon again on `main` with the fixes: a still desktop, which GPU each app draws on, the monitor unplugged, and locked across suspend |
 | [NVIDIA/DRM record](../research/compositor-nvidia-2026-11-15.md) | GPUI and compositor on Void hardware, resize, and suspend/resume |
 | [shell validation](shell-validation-2026-11-14.md) | Historical shell behavior checks and captures |
 | [Settings validation](studio-settings-validation-2026-11-14.md) | Historical persistence, input, and visual checks |
