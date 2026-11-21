@@ -658,11 +658,12 @@ print(json.dumps({
         time.sleep(2)
         app = self.run('pgrep -x foot').split()
         shell_from, compositor_from = len(self.shell_log()), len(self.compositor_log())
-        # Forcing the connector off sends no uevent, so the check sends the
-        # one the kernel sends when a monitor is unplugged.
-        hotplug = (f"echo 'change 00000000-0000-0000-0000-000000000000 HOTPLUG=1' "
-                   f"> {status.rsplit('-', 2)[0]}/uevent")
-        self.run(f'echo off > {status} && {hotplug}')
+        # Forcing the connector sends no hotplug event. A new size asked of
+        # QEMU for the connector makes virtio-gpu send the kernel's, and the
+        # compositor then finds the connector as it was forced. QEMU passes on
+        # only a size that differs from the last, so the two differ.
+        self.run(f'echo off > {status}')
+        self.guest.plug_monitor(0, 1024, 768)
         self.wait('the display goes away',
                   lambda: 'output disconnected name=Virtual-1' in self.compositor_log()[compositor_from:])
         self.wait('the shell waits for a display',
@@ -677,7 +678,8 @@ print(json.dumps({
                    and self.guest.ssh('pgrep -x crowbaros-shell', check=False).stdout.strip(),
                    f'started {starts} times')
         before = self.layer_commits()
-        self.run(f'echo detect > {status} && {hotplug}')
+        self.run(f'echo detect > {status}')
+        self.guest.plug_monitor(0, 1280, 960)
         self.wait('the display comes back',
                   lambda: 'output connected name=Virtual-1' in self.compositor_log()[compositor_from:])
         self.wait('the shell sees the display', lambda: 'SHELL display connected' in self.shell_log()[shell_from:])
