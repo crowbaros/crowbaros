@@ -1,0 +1,56 @@
+2026-11-21T03:59:18.00183 kern.notice: [    0.000000] Linux version 6.18.64_1 (voidlinux@voidlinux) (gcc (GCC) 14.2.1 20250405, GNU ld (GNU Binutils) 2.44) #1 SMP PREEMPT_DYNAMIC Tue Nov 17 22:22:11 UTC 2026
+2026-11-21T03:59:18.00184 kern.info: [    0.000000] Command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+2026-11-21T03:59:18.00461 kern.notice: [    0.019660] Kernel command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+2026-11-21T03:59:18.01398 kern.warn: [    2.822305] nvidia: loading out-of-tree module taints kernel.
+2026-11-21T03:59:18.01400 kern.notice: [    2.822311] nvidia: module verification failed: signature and/or required key missing - tainting kernel
+2026-11-21T03:59:18.01401 kern.info: [    2.910627] nvidia-nvlink: Nvlink Core is being initialized, major device number 235
+2026-11-21T03:59:18.01405 kern.info: [    2.912634] nvidia 0000:01:00.0: vgaarb: VGA decodes changed: olddecodes=io+mem,decodes=none:owns=none
+2026-11-21T03:59:18.01406 kern.warn: [    2.924414] NVRM: loading NVIDIA UNIX Open Kernel Module for x86_64  595.112.07  Release Build  (dvs-builder@U22-I3-AL23-31-2)  Tue Oct 20 09:16:38 UTC 2026
+2026-11-21T03:59:18.01408 kern.info: [    2.958526] nvidia-modeset: Loading NVIDIA UNIX Open Kernel Mode Setting Driver for x86_64  595.112.07  Release Build  (dvs-builder@U22-I3-AL23-31-2)  Tue Oct 20 08:54:59 UTC 2026
+2026-11-21T03:59:18.01410 kern.info: [    2.961500] [drm] [nvidia-drm] [GPU ID 0x00000100] Loading driver
+2026-11-21T03:59:18.01421 kern.info: [    4.512463] [drm] Initialized nvidia-drm 0.0.0 for 0000:01:00.0 on minor 0
+2026-11-21T03:59:18.01425 kern.info: [    4.512597] nvidia 0000:01:00.0: vgaarb: deactivate vga console
+2026-11-21T03:59:18.01427 kern.info: [    4.666580] fbcon: nvidia-drmdrmfb (fb0) is primary device
+2026-11-21T03:59:18.01430 kern.info: [    4.735385] nvidia 0000:01:00.0: [drm] fb0: nvidia-drmdrmfb frame buffer device
+2026-11-21T04:14:49.73116 kern.notice: [    0.000000] Linux version 6.18.64_1 (voidlinux@voidlinux) (gcc (GCC) 14.2.1 20250405, GNU ld (GNU Binutils) 2.44) #1 SMP PREEMPT_DYNAMIC Tue Nov 17 22:22:11 UTC 2026
+2026-11-21T04:14:49.73136 kern.info: [    0.000000] Command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+2026-11-21T04:14:49.73320 kern.notice: [    0.019350] Kernel command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+2026-11-21T04:14:49.74112 kern.warn: [    2.769385] nvidia: loading out-of-tree module taints kernel.
+2026-11-21T04:14:49.74112 kern.notice: [    2.769391] nvidia: module verification failed: signature and/or required key missing - tainting kernel
+2026-11-21T04:14:49.74122 kern.info: [    2.872702] nvidia-nvlink: Nvlink Core is being initialized, major device number 235
+2026-11-21T04:14:49.74125 kern.info: [    2.874915] nvidia 0000:01:00.0: vgaarb: VGA decodes changed: olddecodes=io+mem,decodes=none:owns=none
+2026-11-21T04:14:49.74126 kern.warn: [    2.888411] NVRM: loading NVIDIA UNIX Open Kernel Module for x86_64  595.112.07  Release Build  (dvs-builder@U22-I3-AL23-31-2)  Tue Oct 20 09:16:38 UTC 2026
+2026-11-21T04:14:49.74127 kern.info: [    2.934412] nvidia-modeset: Loading NVIDIA UNIX Open Kernel Mode Setting Driver for x86_64  595.112.07  Release Build  (dvs-builder@U22-I3-AL23-31-2)  Tue Oct 20 08:54:59 UTC 2026
+2026-11-21T04:14:49.74127 kern.info: [    2.938154] [drm] [nvidia-drm] [GPU ID 0x00000100] Loading driver
+2026-11-21T04:14:49.74133 kern.info: [    4.506799] [drm] Initialized nvidia-drm 0.0.0 for 0000:01:00.0 on minor 0
+2026-11-21T04:14:49.74135 kern.info: [    4.506917] nvidia 0000:01:00.0: vgaarb: deactivate vga console
+2026-11-21T04:14:49.74136 kern.info: [    4.673012] fbcon: nvidia-drmdrmfb (fb0) is primary device
+2026-11-21T04:14:49.74138 kern.info: [    4.750931] nvidia 0000:01:00.0: [drm] fb0: nvidia-drmdrmfb frame buffer device
+2026-11-21T04:18:24.35030 kern.info: [  220.456174] PM: suspend entry (deep)
+2026-11-21T04:18:43.05477 kern.info: [  221.196759] ACPI: PM: Low-level resume complete
+2026-11-21T04:18:43.05515 kern.info: [  221.250083] nvidia 0000:01:00.0: Enabling HDA controller
+2026-11-21T04:18:43.05518 kern.warn: [  221.252255] xhci_hcd 0000:09:00.0: xHC error in resume, USBSTS 0x401, Reinit
+2026-11-21T04:18:43.05887 kern.info: [  223.274879] PM: suspend exit
+2026-11-21T04:18:44.32096 kern.warn: [  224.536939] NVRM: Xid (PCI:0000:01:00): 13, Graphics Exception: Shader Program Header 18 Error
+2026-11-21T04:18:44.32098 kern.warn: [  224.536945] NVRM: Xid (PCI:0000:01:00): 13, Graphics Exception: ESR 0x405840=0x82040000
+2026-11-21T04:18:44.32099 kern.warn: [  224.537086] NVRM: Xid (PCI:0000:01:00): 13, Graphics Exception: ESR 0x405848=0x80000000
+2026-11-21T04:18:44.32186 kern.warn: [  224.537545] NVRM: Xid (PCI:0000:01:00): 13, pid=792, name=crowbar-composi, Graphics Exception: channel 0x00000002, Class 0000ce97, Offset 00000000, Data 00000000
+2026-11-21T04:21:14.69196 kern.notice: [    0.000000] Linux version 6.18.64_1 (voidlinux@voidlinux) (gcc (GCC) 14.2.1 20250405, GNU ld (GNU Binutils) 2.44) #1 SMP PREEMPT_DYNAMIC Tue Nov 17 22:22:11 UTC 2026
+2026-11-21T04:21:14.69215 kern.info: [    0.000000] Command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+2026-11-21T04:21:14.69421 kern.notice: [    0.019533] Kernel command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+2026-11-21T04:21:14.70206 kern.warn: [    2.759499] nvidia: loading out-of-tree module taints kernel.
+2026-11-21T04:21:14.70207 kern.notice: [    2.759506] nvidia: module verification failed: signature and/or required key missing - tainting kernel
+2026-11-21T04:21:14.70217 kern.info: [    2.847906] nvidia-nvlink: Nvlink Core is being initialized, major device number 235
+2026-11-21T04:21:14.70220 kern.info: [    2.850609] nvidia 0000:01:00.0: vgaarb: VGA decodes changed: olddecodes=io+mem,decodes=none:owns=none
+2026-11-21T04:21:14.70220 kern.warn: [    2.865420] NVRM: loading NVIDIA UNIX Open Kernel Module for x86_64  595.112.07  Release Build  (dvs-builder@U22-I3-AL23-31-2)  Tue Oct 20 09:16:38 UTC 2026
+2026-11-21T04:21:14.70221 kern.info: [    2.906766] nvidia-modeset: Loading NVIDIA UNIX Open Kernel Mode Setting Driver for x86_64  595.112.07  Release Build  (dvs-builder@U22-I3-AL23-31-2)  Tue Oct 20 08:54:59 UTC 2026
+2026-11-21T04:21:14.70222 kern.info: [    2.909836] [drm] [nvidia-drm] [GPU ID 0x00000100] Loading driver
+2026-11-21T04:21:14.70227 kern.info: [    4.459656] [drm] Initialized nvidia-drm 0.0.0 for 0000:01:00.0 on minor 0
+2026-11-21T04:21:14.70229 kern.info: [    4.459772] nvidia 0000:01:00.0: vgaarb: deactivate vga console
+2026-11-21T04:21:14.70230 kern.info: [    4.626974] fbcon: nvidia-drmdrmfb (fb0) is primary device
+2026-11-21T04:21:14.70232 kern.info: [    4.702057] nvidia 0000:01:00.0: [drm] fb0: nvidia-drmdrmfb frame buffer device
+2026-11-21T04:23:03.00212 kern.info: [  114.107903] PM: suspend entry (deep)
+2026-11-21T04:23:21.05363 kern.info: [  115.548906] ACPI: PM: Low-level resume complete
+2026-11-21T04:23:21.05405 kern.info: [  115.602704] nvidia 0000:01:00.0: Enabling HDA controller
+2026-11-21T04:23:21.05407 kern.warn: [  115.605591] xhci_hcd 0000:09:00.0: xHC error in resume, USBSTS 0x401, Reinit
+2026-11-21T04:23:21.05774 kern.info: [  117.626205] PM: suspend exit
