@@ -9,7 +9,7 @@ exec >>/var/log/crowbar-compositor.log 2>&1
 # as `wayland-0`. The
 # unlock helper, as root, reaches the compositor's unlock socket in a
 # directory no one else can enter; once it listens, only the helper's word
-# unlocks, and the session starts locked (Fulcrum's proposal).
+# unlocks, and the desktop starts locked (ADR 0032).
 # Ctrl+Alt+Del, which the kernel never sees while the compositor reads the
 # keyboard, goes to a root service that reboots, as a console would.
 install -d -m 0755 /run/crowbar-trusted

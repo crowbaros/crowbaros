@@ -80,7 +80,7 @@ impl State {
         self.queue_redraw_all();
     }
 
-    /// Unlocks the session, as the unlock authority, or the shell where there
+    /// Unlocks the desktop, as the unlock authority, or the shell where there
     /// is none, asks. The window that had the keyboard has it back.
     pub fn unlock(&mut self) {
         if !self.lock.locked {

@@ -94,7 +94,7 @@ pub fn deliver_events_to(tx: Sender<Event>) {
 }
 
 /// One event the compositor sent: `launcher` opens or closes the launcher,
-/// as Super tapped alone asks (Fulcrum's proposal, ADR 0020's keys).
+/// as Super tapped alone asks (ADR 0032).
 fn compositor_event(event: &serde_json::Value) {
     log::info!("SHELL event=compositor-event name={event}");
     let Some(tx) = EVENTS.get() else {
@@ -519,8 +519,8 @@ pub fn closed() -> bool {
     connection().is_ok_and(|connection| connection.closed())
 }
 /// Asks the compositor to lock the session, or to unlock it, as the person
-/// asks the shell. Unlocking is the shell's word, in the place of the broker
-/// ADR 0020 has end it: Fulcrum's proposal until a record decides.
+/// asks the shell. The compositor refuses the shell's unlock where Base's
+/// unlock helper listens (ADR 0032).
 pub fn lock(locked: bool) {
     std::thread::spawn(move || {
         if let Err(e) = connection().and_then(|c| c.lock(locked)) {

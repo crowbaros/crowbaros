@@ -45,7 +45,7 @@
 //! Where an unlock authority listens, the shell's `unlock` is refused: the
 //! authority has a socket of its own, checked against its user ID, where it
 //! may send `lock` and `unlock`, and nothing else, and hears no events.
-//! These are Fulcrum's proposal until a CrowbarOS record decides them.
+//! ADR 0032 accepts these.
 //!
 //! `outputs` and `configure_output` are the shell's interface to the layout
 //! of displays (ADR 0020): a monitor's mode, place, and scale, the scale in

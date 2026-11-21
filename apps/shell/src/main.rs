@@ -988,11 +988,10 @@ fn toggle_launcher(model: Entity<Model>, cx: &mut App) {
     }
 }
 /// The lock screen: shown while the compositor has the session locked, and
-/// all it shows (ADR 0020). Where an unlock helper checks the person's
+/// all it shows (ADR 0032). Where an unlock helper checks the person's
 /// password, its entry takes it at once, and Enter sends it to the helper,
 /// which tells the compositor to unlock: the shell's own word is not enough.
-/// Without one, Enter asks the compositor to unlock. Both stand in for the
-/// broker, as Fulcrum's proposal until a record decides (issues 87 and 100).
+/// Without one, Enter asks the compositor to unlock.
 struct LockScreen {
     model: Entity<Model>,
     focus: FocusHandle,
