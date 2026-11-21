@@ -423,6 +423,29 @@ class PersonCheck(unittest.TestCase):
         self.assertFalse(self.passes('crowbar:/home/crowbar:/bin/bash\nroot 755\n'))
 
 
+class CompositorRestartCheck(unittest.TestCase):
+    """Base's check finds that restarting the compositor's service puts one
+    new compositor in the place of the old."""
+
+    def setUp(self):
+        self.passes = void_base.compositor_restarted
+
+    def test_one_new_compositor_that_stays_passes(self):
+        self.assertTrue(self.passes('restart 0\nbefore 640\nafter 1669\nlater 1669\n'))
+
+    def test_the_old_compositor_left_running_fails(self):
+        # runit stopped openvt, the old compositor kept the seat, and each new
+        # one failed to start.
+        self.assertFalse(self.passes('restart 1\nbefore 640\nafter 640\nlater 640\n'))
+        self.assertFalse(self.passes('restart 0\nbefore 640\nafter 640 1669\nlater 640 1669\n'))
+
+    def test_no_compositor_or_one_that_does_not_stay_fails(self):
+        self.assertFalse(self.passes('restart 0\nbefore 640\nafter\nlater\n'))
+        self.assertFalse(self.passes('restart 0\nbefore 640\nafter 1669\nlater 1702\n'))
+        self.assertFalse(self.passes('restart 0\nbefore 640\nafter 1669\n'))
+        self.assertFalse(self.passes(''))
+
+
 class RebootCheck(unittest.TestCase):
     """Base's check finds that the person may reboot and power off."""
 

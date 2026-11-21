@@ -254,6 +254,7 @@ class Check:
         self.check('the suspend hook locks the session before the machine sleeps', int(self.run("grep -c 'session locked by=authority' /var/log/crowbar-compositor.log || true").strip() or 0) > 0)
         self.unlock()
         self.wait('the password unlocks after the suspend hook', lambda: not self.snapshot().get('locked'))
+        terminal = self.compositor_restart()
         self.click(700, 935)
         settings = self.wait('Settings launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'com.crowbaros.StudioSettings'), None))
         self.check('Settings launch through the shell', bool(settings))
@@ -362,6 +363,46 @@ class Check:
         self.wait('Chromium takes focus', lambda: self.snapshot()['active']['address'] == browser['address'], timeout=15)
         time.sleep(1.5)
         self.capture('07-chromium')
+
+    def compositor_restart(self):
+        """The compositor's service restarts while the person uses the desktop.
+        The desktop comes back locked, behind the lock screen, with no app
+        holding the keyboard; the password unlocks it, and the Terminal the
+        later checks use is launched again. Returns the new Terminal."""
+        self.check('the desktop is unlocked before the compositor restarts', not self.snapshot()['locked'])
+        shell = self.run('pgrep -x crowbaros-shell').split()
+        compositor = self.run('pgrep -u crowbar-compositor').split()
+        log_offset = len(self.run('cat /var/log/crowbar-compositor.log'))
+        locks = self.shell_log().count('SHELL lock open=true')
+        self.run('sv restart crowbar-compositor')
+        self.wait('a new compositor and a new shell',
+                  lambda: self.run('pgrep -u crowbar-compositor').split() not in ([], compositor)
+                  and self.run('pgrep -x crowbaros-shell').split() not in ([], shell)
+                  and self.snapshot().get('connected'), timeout=60)
+        self.wait('the lock screen shows after the compositor restarts',
+                  lambda: self.snapshot().get('locked') and self.shell_log().count('SHELL lock open=true') > locks)
+        self.capture('01-locked-after-compositor-restart')
+        snapshot = self.snapshot()
+        since = self.run('cat /var/log/crowbar-compositor.log')[log_offset:]
+        self.check('a compositor restart comes back locked, behind the lock screen',
+                   snapshot['locked'] and self.shell_log().count('SHELL lock open=true') > locks)
+        # The new compositor locked as it started, and nothing unlocked it
+        # before the person's password.
+        self.check('the new compositor starts locked, and nothing unlocks it first',
+                   'session locked by=start' in since and 'session unlocked' not in since)
+        self.check('no app has the keyboard behind the lock screen',
+                   not snapshot['active']['address'], json.dumps(snapshot['active']))
+        self.unlock()
+        self.wait('the password unlocks after the compositor restarts', lambda: not self.snapshot().get('locked'))
+        self.check("the person's password unlocks the desktop after the compositor restarts",
+                   'session unlocked' in self.run('cat /var/log/crowbar-compositor.log')[log_offset:])
+        self.click(660, 935)  # Terminal dock entry.
+        terminal = self.wait('Terminal launched after the compositor restarts',
+                             lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
+        self.wait('the new Terminal takes the keyboard', lambda: self.snapshot()['active']['address'] == terminal['address'])
+        self.check('Terminal launches again after the compositor restarts',
+                   len([c for c in self.snapshot()['clients'] if c['class'] == 'foot']) == 1)
+        return terminal
 
     def identities(self):
         report = json.loads(self.python("""

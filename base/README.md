@@ -124,7 +124,8 @@ microcode, that the person's account is in `netdev` and may use `iwctl`, that
 the person's account has a home it owns and a login shell and takes the build's key
 over SSH, that the network has an address, that packages kept their groups, that the kernel's command line carries
 NVIDIA's settings, that NVIDIA's module is built for the running kernel and,
-with no NVIDIA card in the VM, not loaded, and that the kernel logged nothing
+with no NVIDIA card in the VM, not loaded, that restarting the compositor's
+service leaves one new compositor running, and that the kernel logged nothing
 critical.
 
 The lab's two graphical checks boot a copy of this image under UEFI as well.
@@ -145,6 +146,10 @@ Three accounts run the desktop, as
 says. Nothing in the desktop runs as root to start an app.
 
 - `crowbar-compositor` (UID 1000) owns the seat and is the only `_seatd` member.
+  Its service runs the compositor on virtual terminal 2 through `openvt`,
+  which does not pass runit's signals on, so the service's `finish` script
+  stops a compositor left behind before the next one starts. The new one
+  starts locked.
 - `crowbar-shell` (UID 1001) is a separate runit service. Its two compositor
   sockets check its kernel UID; neither service launches the other.
 - The person's account (UID 1003) has a home and a login shell, and its

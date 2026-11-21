@@ -66,7 +66,8 @@ GROW
 # every app runs. Its UID is fixed, as the desktop's services find it by UID.
 # runit starts the seat manager, the compositor on virtual terminal 2 in place
 # of its getty, the shell, the launcher, as the person, the unlock helper, and
-# the service that reboots for Ctrl+Alt+Del; see desktop/ and helpers/.
+# the service that reboots for Ctrl+Alt+Del; see desktop/ and helpers/. The
+# compositor's service stops a compositor its openvt left behind.
 ln -sfn /etc/sv/seatd "$SV/seatd"
 rm -f "$SV/agetty-tty2"
 chroot "$R" useradd -m -u 1000 -G _seatd crowbar-compositor
@@ -76,6 +77,7 @@ for service in compositor shell launcher unlock ctrl-alt-del; do
   install -D -m 755 "$DESKTOP/$service-run" "$R/etc/sv/crowbar-$service/run"
   ln -sfn "/etc/sv/crowbar-$service" "$SV/crowbar-$service"
 done
+install -m 755 "$DESKTOP/compositor-finish" "$R/etc/sv/crowbar-compositor/finish"
 for path in "$@"; do install -D -m 755 "$path" "$R/usr/local/bin/$(basename "$path")"; done
 # The four helpers are one program, which takes the name it runs by.
 for helper in unlock launcher shell-connect ctrl-alt-del; do
