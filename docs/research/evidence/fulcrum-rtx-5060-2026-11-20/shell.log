@@ -1,0 +1,94 @@
+[2026-11-21T03:59:19Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T03:59:19Z INFO  crowbaros_shell] SHELL appearance theme=Dark wallpaper=SignalFeather
+[2026-11-21T03:59:19Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T03:59:20Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T03:59:20Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T03:59:20Z INFO  crowbaros_shell] SHELL lock open=true
+[2026-11-21T03:59:20Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:01:03Z INFO  crowbaros_shell::session] SHELL unlock ok=false
+[2026-11-21T04:01:17Z INFO  crowbaros_shell::session] SHELL unlock ok=true
+[2026-11-21T04:01:17Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="unlocked"
+[2026-11-21T04:01:17Z INFO  crowbaros_shell] SHELL lock open=false
+[2026-11-21T04:08:12Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="launcher"
+[2026-11-21T04:08:12Z INFO  crowbaros_shell] SHELL launcher open=true
+[2026-11-21T04:08:12Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:08:12Z ERROR] can't render at a zero size
+[2026-11-21T04:08:12Z ERROR] can't render at a zero size
+[2026-11-21T04:08:27Z ERROR] window not found
+[2026-11-21T04:08:27Z ERROR] window not found
+[2026-11-21T04:11:35Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="launcher"
+[2026-11-21T04:11:35Z INFO  crowbaros_shell] SHELL launcher open=true
+[2026-11-21T04:11:35Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:11:35Z ERROR] can't render at a zero size
+[2026-11-21T04:11:35Z ERROR] can't render at a zero size
+[2026-11-21T04:11:58Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="launcher"
+[2026-11-21T04:11:58Z INFO  crowbaros_shell] SHELL launcher open=false
+[2026-11-21T04:13:25Z INFO  crowbaros_shell] SHELL appearance theme=WarmPaper wallpaper=SignalFeather
+[2026-11-21T04:14:49Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:14:50Z INFO  crowbaros_shell] SHELL appearance theme=WarmPaper wallpaper=SignalFeather
+[2026-11-21T04:14:50Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:14:50Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:14:50Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:14:50Z INFO  crowbaros_shell] SHELL lock open=true
+[2026-11-21T04:14:50Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:15:49Z INFO  crowbaros_shell::session] SHELL unlock ok=true
+[2026-11-21T04:15:49Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="unlocked"
+[2026-11-21T04:15:49Z INFO  crowbaros_shell] SHELL lock open=false
+
+thread 'main' (772) panicked at /cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blade-graphics-0.7.1/src/vulkan/surface.rs:160:18:
+called `Result::unwrap()` on an `Err` value: ERROR_EXTENSION_NOT_PRESENT
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+[2026-11-21T04:16:56Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:16:57Z INFO  crowbaros_shell] SHELL appearance theme=WarmPaper wallpaper=SignalFeather
+[2026-11-21T04:16:57Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:16:57Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:16:57Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:16:57Z ERROR] window not found
+[2026-11-21T04:16:57Z ERROR] window not found
+[2026-11-21T04:16:57Z ERROR] window not found
+[2026-11-21T04:16:57Z ERROR] window not found
+[2026-11-21T04:16:58Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:16:58Z INFO  crowbaros_shell] SHELL appearance theme=WarmPaper wallpaper=SignalFeather
+[2026-11-21T04:16:58Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:16:58Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:16:58Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:16:58Z ERROR] window not found
+[2026-11-21T04:16:58Z ERROR] window not found
+[2026-11-21T04:16:58Z ERROR] window not found
+[2026-11-21T04:16:58Z ERROR] window not found
+[2026-11-21T04:16:59Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:17:00Z INFO  crowbaros_shell] SHELL appearance theme=WarmPaper wallpaper=SignalFeather
+[2026-11-21T04:17:00Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:17:00Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:17:00Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:17:00Z ERROR] window not found
+[2026-11-21T04:17:00Z ERROR] window not found
+[2026-11-21T04:17:00Z ERROR] window not found
+[2026-11-21T04:17:00Z ERROR] window not found
+[2026-11-21T04:17:01Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:17:02Z INFO  crowbaros_shell] SHELL appearance theme=WarmPaper wallpaper=SignalFeather
+[2026-11-21T04:17:02Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:17:02Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:17:02Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:18:23Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="locked"
+[2026-11-21T04:18:23Z INFO  crowbaros_shell] SHELL lock open=true
+[2026-11-21T04:18:43Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:21:14Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:21:15Z INFO  crowbaros_shell] SHELL appearance theme=WarmPaper wallpaper=SignalFeather
+[2026-11-21T04:21:15Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:21:15Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:21:15Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:21:15Z INFO  crowbaros_shell] SHELL lock open=true
+[2026-11-21T04:21:15Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:22:37Z INFO  crowbaros_shell::session] SHELL unlock ok=true
+[2026-11-21T04:22:37Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="unlocked"
+[2026-11-21T04:22:37Z INFO  crowbaros_shell] SHELL lock open=false
+[2026-11-21T04:22:37Z ERROR] window not found
+[2026-11-21T04:23:01Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="locked"
+[2026-11-21T04:23:01Z INFO  crowbaros_shell] SHELL lock open=true
+[2026-11-21T04:23:21Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:24:04Z INFO  crowbaros_shell::session] SHELL unlock ok=true
+[2026-11-21T04:24:04Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="unlocked"
+[2026-11-21T04:24:04Z INFO  crowbaros_shell] SHELL lock open=false
+[2026-11-21T04:24:04Z ERROR] window not found
+[2026-11-21T04:24:04Z ERROR] window not found

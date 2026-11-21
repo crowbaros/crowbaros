@@ -1,0 +1,36 @@
+[04:26:53.070988] wl_registry#2.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:26:53.328529] wl_registry#22.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:26:53.328781] wl_registry#25.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:26:53.328890] wl_registry#26.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:26:53.329003] wl_registry#24.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:26:53.329210] wl_registry#28.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:26:53.329313] wl_registry#29.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:26:53.329506] wl_registry#30.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:26:53.329623] wl_registry#31.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:26:53.329627]  -> wl_registry#31.bind(16, "wp_linux_drm_syncobj_manager_v1", 1, new id [unknown]#33)
+[04:26:53.329632]  -> wp_linux_drm_syncobj_manager_v1#33.get_surface(new id wp_linux_drm_syncobj_surface_v1#34, wl_surface#17)
+[04:26:53.345573]  -> wp_linux_drm_syncobj_manager_v1#33.import_timeline(new id wp_linux_drm_syncobj_timeline_v1#37, fd 69)
+[04:26:53.346291]  -> wp_linux_drm_syncobj_manager_v1#33.import_timeline(new id wp_linux_drm_syncobj_timeline_v1#40, fd 74)
+[04:26:53.346991]  -> wp_linux_drm_syncobj_manager_v1#33.import_timeline(new id wp_linux_drm_syncobj_timeline_v1#43, fd 79)
+[04:26:53.358714]  -> wp_linux_drm_syncobj_timeline_v1#37.destroy()
+[04:26:53.358724]  -> wp_linux_drm_syncobj_timeline_v1#40.destroy()
+[04:26:53.358733]  -> wp_linux_drm_syncobj_timeline_v1#43.destroy()
+[04:26:53.359005]  -> wp_linux_drm_syncobj_manager_v1#33.import_timeline(new id wp_linux_drm_syncobj_timeline_v1#46, fd 78)
+[04:26:53.359159]  -> wp_linux_drm_syncobj_manager_v1#33.import_timeline(new id wp_linux_drm_syncobj_timeline_v1#49, fd 82)
+[04:26:53.359301]  -> wp_linux_drm_syncobj_manager_v1#33.import_timeline(new id wp_linux_drm_syncobj_timeline_v1#52, fd 85)
+[04:26:53.376848]  -> wp_linux_drm_syncobj_surface_v1#34.set_acquire_point(wp_linux_drm_syncobj_timeline_v1#46, 0, 1)
+[04:26:53.376855]  -> wp_linux_drm_syncobj_surface_v1#34.set_release_point(wp_linux_drm_syncobj_timeline_v1#46, 0, 2)
+[04:26:53.379726]  -> wp_linux_drm_syncobj_timeline_v1#46.destroy()
+[04:26:53.379747]  -> wp_linux_drm_syncobj_timeline_v1#49.destroy()
+[04:26:53.379767]  -> wp_linux_drm_syncobj_timeline_v1#52.destroy()
+[04:26:53.380012]  -> wp_linux_drm_syncobj_manager_v1#33.import_timeline(new id wp_linux_drm_syncobj_timeline_v1#44, fd 71)
+[04:26:53.380164]  -> wp_linux_drm_syncobj_manager_v1#33.import_timeline(new id wp_linux_drm_syncobj_timeline_v1#40, fd 76)
+[04:26:53.380302]  -> wp_linux_drm_syncobj_manager_v1#33.import_timeline(new id wp_linux_drm_syncobj_timeline_v1#36, fd 79)
+[04:26:53.395975]  -> wp_linux_drm_syncobj_surface_v1#34.set_acquire_point(wp_linux_drm_syncobj_timeline_v1#44, 0, 1)
+[04:26:53.395989]  -> wp_linux_drm_syncobj_surface_v1#34.set_release_point(wp_linux_drm_syncobj_timeline_v1#44, 0, 2)
+
+      1 wp_linux_drm_syncobj_manager_v1.get_surface
+      9 wp_linux_drm_syncobj_manager_v1.import_timeline
+     60 wp_linux_drm_syncobj_surface_v1.set_acquire_point
+     60 wp_linux_drm_syncobj_surface_v1.set_release_point
+      6 wp_linux_drm_syncobj_timeline_v1.destroy

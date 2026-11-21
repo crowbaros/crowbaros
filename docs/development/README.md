@@ -11,6 +11,7 @@ The [Fedora workflow](../archive/fedora-workflow/README.md) is archived.
 | [Void desktop acceptance](void-desktop-smoke-2026-11-15.md) | 37 passing checks for the desktop and Settings, as they were on that date |
 | [Fedora retirement acceptance](fedora-retirement-completion-2026-11-15.md) | Post-retirement desktop/Base checks and preservation audit |
 | [Fedora retirement preparation](fedora-retirement-2026-11-15.md) | Earlier archive preservation and build checks, recorded before desktop acceptance |
+| [RTX 5060 record](../research/fulcrum-rtx-5060-2026-11-20.md) | Base's image and Fulcrum on real hardware with NVIDIA's driver: the desktop flow, the GPU, the cursor plane, the monitor, and suspend |
 | [NVIDIA/DRM record](../research/compositor-nvidia-2026-11-15.md) | GPUI and compositor on Void hardware, resize, and suspend/resume |
 | [shell validation](shell-validation-2026-11-14.md) | Historical shell behavior checks and captures |
 | [Settings validation](studio-settings-validation-2026-11-14.md) | Historical persistence, input, and visual checks |
