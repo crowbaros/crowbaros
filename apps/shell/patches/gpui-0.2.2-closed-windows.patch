@@ -1,0 +1,62 @@
+--- a/src/platform/blade/blade_renderer.rs
++++ b/src/platform/blade/blade_renderer.rs
+@@ -341,6 +341,11 @@
+     path_intermediate_msaa_texture: Option<gpu::Texture>,
+     path_intermediate_msaa_texture_view: Option<gpu::TextureView>,
+     rendering_parameters: RenderingParameters,
++    /// CrowbarOS: `destroy` has run. A Wayland window leaves its client's
++    /// window list only in a task after it is dropped, so events already
++    /// queued for its surface, as a new preferred scale, still reach it. They
++    /// must not touch the destroyed surface (crowbaros/crowbaros#271).
++    destroyed: bool,
+ }
+ 
+ impl BladeRenderer {
+@@ -427,6 +432,7 @@
+             path_intermediate_msaa_texture,
+             path_intermediate_msaa_texture_view,
+             rendering_parameters,
++            destroyed: false,
+         })
+     }
+ 
+@@ -468,6 +474,9 @@
+     }
+ 
+     fn update_drawable_size_impl(&mut self, size: Size<DevicePixels>, always_resize: bool) {
++        if self.destroyed {
++            return;
++        }
+         let gpu_size = gpu::Extent {
+             width: size.width.0 as u32,
+             height: size.height.0 as u32,
+@@ -512,6 +521,9 @@
+     }
+ 
+     pub fn update_transparency(&mut self, transparent: bool) {
++        if self.destroyed {
++            return;
++        }
+         if transparent != self.surface_config.transparent {
+             self.wait_for_gpu();
+             self.surface_config.transparent = transparent;
+@@ -622,6 +634,9 @@
+     }
+ 
+     pub fn destroy(&mut self) {
++        if std::mem::replace(&mut self.destroyed, true) {
++            return;
++        }
+         self.wait_for_gpu();
+         self.atlas.destroy();
+         self.gpu.destroy_sampler(self.atlas_sampler);
+@@ -641,6 +656,9 @@
+     }
+ 
+     pub fn draw(&mut self, scene: &Scene) {
++        if self.destroyed {
++            return;
++        }
+         self.command_encoder.start();
+         self.atlas.before_frame(&mut self.command_encoder);
+ 

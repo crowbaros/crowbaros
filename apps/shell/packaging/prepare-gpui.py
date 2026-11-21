@@ -11,7 +11,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 SHA = "979b45cfa6ec723b6f42330915a1b3769b930d02b2d505f9697f8ca602bee707"
 # Applied in this order. See patches/README.md.
-PATCHES = ["gpui-0.2.2-layer-shell.patch", "gpui-0.2.2-still-frames.patch"]
+PATCHES = ["gpui-0.2.2-layer-shell.patch", "gpui-0.2.2-still-frames.patch",
+           "gpui-0.2.2-closed-windows.patch"]
 cache = ROOT / ".upstream-cache"
 cache.mkdir(exist_ok=True)
 archive = cache / "gpui-0.2.2.crate"
@@ -34,4 +35,4 @@ with tempfile.TemporaryDirectory(dir=ROOT) as temp:
     if destination.exists():
         shutil.rmtree(destination)
     extracted.rename(destination)
-print("Prepared GPUI 0.2.2 with the pinned upstream layer-shell backport and the still-frames patch")
+print("Prepared GPUI 0.2.2 with the pinned upstream layer-shell backport and our two patches")

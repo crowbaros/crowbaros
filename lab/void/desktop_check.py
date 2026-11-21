@@ -342,6 +342,7 @@ class Check:
                    and all(re.search(label + r': [1-9]\d*', render) for label in
                            ('layer crowbaros-bar', 'layer crowbaros-dock', r'com\.crowbaros\.StudioSettings')))
         self.still('a still desktop, unlocked with apps open, commits nothing and draws nothing')
+        self.display_unplugged()
         # A file the person writes in their home, to find after the reboot.
         person, home = self.person()
         kept = f'{home}/kept-across-reboot'
@@ -634,6 +635,61 @@ print(json.dumps({
         self.check('compositor persists output placement to layout file',
                    bool(layout.strip()) and 'scale' in layout)
 
+    def displays(self, request):
+        """One request to the shell's display bridge, as Studio Settings
+        makes it, and its reply."""
+        code = ("import json, socket; s=socket.socket(socket.AF_UNIX); s.settimeout(3); "
+                "s.connect('/run/crowbar-displays/socket'); "
+                f"s.sendall({json.dumps(json.dumps(request) + chr(10))}.encode()); "
+                "print(s.makefile('rb').readline().decode())")
+        return json.loads(self.python(code, self.person()[0]))
+
+    def display_unplugged(self):
+        """The only display is unplugged and plugged in again (#271). The
+        compositor closes the shell's layers, and the shell stops once,
+        cleanly. Started again, it waits for a display without stopping, and
+        draws when one comes. The display is at 1.5 first, as a 4K monitor
+        may be, so the scale the shell is told falls as the display goes:
+        GPUI once resized a window it had destroyed on that."""
+        status = self.run('ls /sys/class/drm/card*-Virtual-1/status').strip()
+        scale = self.displays({'op': 'outputs'})['outputs'][0]['scale']
+        self.displays({'op': 'configure_output', 'name': 'Virtual-1', 'scale': 150})
+        time.sleep(2)
+        app = self.run('pgrep -x foot').split()
+        shell_from, compositor_from = len(self.shell_log()), len(self.compositor_log())
+        # Forcing the connector off raises a hotplug event, as unplugging does.
+        self.run(f'echo off > {status}')
+        self.wait('the display goes away',
+                  lambda: 'output disconnected name=Virtual-1' in self.compositor_log()[compositor_from:])
+        self.wait('the shell waits for a display',
+                  lambda: 'SHELL waits for a display' in self.shell_log()[shell_from:])
+        # Without a display for a while: a shell that stopped each time it
+        # started would start several times in this.
+        time.sleep(6)
+        since = self.shell_log()[shell_from:]
+        starts = since.count('SHELL display-bridge listening')
+        self.check('with its display unplugged, the shell stops once without panicking, and waits',
+                   'panicked' not in since and starts == 1
+                   and self.guest.ssh('pgrep -x crowbaros-shell', check=False).stdout.strip(),
+                   f'started {starts} times')
+        before = self.layer_commits()
+        self.run(f'echo detect > {status}')
+        self.wait('the display comes back',
+                  lambda: 'output connected name=Virtual-1' in self.compositor_log()[compositor_from:])
+        self.wait('the shell sees the display', lambda: 'SHELL display connected' in self.shell_log()[shell_from:])
+        self.ready()
+        # Fulcrum's next report shows the shell's layers committing again.
+        drawn = self.wait('the shell draws on the display',
+                          lambda: all(self.layer_commits().get(name, 0) > before.get(name, 0)
+                                      for name in ('wallpaper', 'bar', 'dock')))
+        self.displays({'op': 'configure_output', 'name': 'Virtual-1', 'scale': scale})
+        time.sleep(2)
+        self.capture('05-display-back')
+        since = self.shell_log()[shell_from:]
+        self.check('plugged in again, the shell draws its layers on it, and the app keeps running',
+                   bool(drawn) and 'panicked' not in since and self.run('pgrep -x foot').split() == app
+                   and since.count('SHELL display-bridge listening') == 1)
+
     def still(self, name):
         """Once a still desktop settles, it commits nothing and draws nothing
         (#269). Fulcrum writes its report after a commit or a frame, at most
@@ -649,6 +705,12 @@ print(json.dumps({
         after = self.reports()
         self.check(name, after == before,
                    f'{after - before} reports in {STILL_WINDOW} s')
+
+    def layer_commits(self):
+        """The commits each of the shell's layers has made, by name, as
+        Fulcrum last reported them."""
+        report = self.run("grep 'commits so far' /var/log/crowbar-compositor.log | tail -1 || true")
+        return {name: int(count) for name, count in re.findall(r'layer crowbaros-(\w+): (\d+)', report)}
 
     def reports(self):
         """How many reports Fulcrum has written."""

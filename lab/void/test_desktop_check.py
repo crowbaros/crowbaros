@@ -175,3 +175,22 @@ class StillDesktopAndBar(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DisplayUnplugged(unittest.TestCase):
+    def test_layer_commits_reads_the_last_report(self):
+        log = ('INFO crowbar_compositor: commits so far: layer crowbaros-bar: 3, layer crowbaros-dock: 3 frames=4\n'
+               'INFO crowbar_compositor: output disconnected name=Virtual-1\n'
+               'INFO crowbar_compositor: commits so far: layer crowbaros-bar: 9, layer crowbaros-dock: 8, '
+               'layer crowbaros-wallpaper: 7, window 0x2d foot: 2 frames=12\n')
+
+        def responder(user, command):
+            if 'commits so far' in command:
+                return 0, log.splitlines()[-1] + '\n', ''
+            return 1, '', ''
+
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        check = desktop_check.Check(FakeGuest(temporary.name, responder))
+        self.addCleanup(check.logfile.close)
+        self.assertEqual(check.layer_commits(), {'bar': 9, 'dock': 8, 'wallpaper': 7})
