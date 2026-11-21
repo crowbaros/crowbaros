@@ -99,10 +99,12 @@ class Check:
         return self.guest.ssh('cat /var/log/crowbar-shell.log', check=False).stdout
 
     def shell_unlock(self):
-        """The compositor's reply when the shell asks it to unlock."""
+        """The compositor's reply when the shell asks it to unlock, passing
+        over the snapshots it sends unasked."""
         code = ("import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(3); "
                 "s.connect('/run/crowbar-trusted/compositor/control'); "
-                "s.sendall(b'{\"op\":\"unlock\"}\\n'); print(s.makefile('rb').readline().decode())")
+                "s.sendall(b'{\"op\":\"unlock\"}\\n'); f=s.makefile('rb'); "
+                "print(next(l for l in f if not l.startswith(b'{\"event\":\"snapshot\",')).decode())")
         return self.python(code, 'crowbar-shell')
 
     def unlock(self, password='crowbar'):
@@ -195,6 +197,7 @@ class Check:
         self.capture('00-locked-at-boot')
         self.check('the session starts locked, behind the lock screen',
                    self.snapshot()['locked'] and 'SHELL lock open=true' in shell_log())
+        self.still('a still desktop, locked at boot, commits nothing and draws nothing')
         locks = shell_log().count('SHELL lock open=true')
         self.base_checks()
         self.wait("the shell's lock screen is back after Base's checks restart the compositor",
@@ -298,6 +301,7 @@ class Check:
         self.check('workspace switch clears focus on hidden windows', not self.snapshot()['active']['address'])
         self.click(60, 12)
         self.wait('workspace 1', lambda: self.snapshot()['workspace'] == 1)
+        self.bar_follows_workspaces()
         self.click(700, 935)
         self.wait('Settings focus', lambda: self.snapshot()['active']['address'] == settings['address'])
         # Settings initially focuses Dark. Tab, Space chooses Light, Ctrl+S saves.
@@ -337,6 +341,7 @@ class Check:
                    len(frames) >= 2 and frames[-1] > frames[0]
                    and all(re.search(label + r': [1-9]\d*', render) for label in
                            ('layer crowbaros-bar', 'layer crowbaros-dock', r'com\.crowbaros\.StudioSettings')))
+        self.still('a still desktop, unlocked with apps open, commits nothing and draws nothing')
         # A file the person writes in their home, to find after the reboot.
         person, home = self.person()
         kept = f'{home}/kept-across-reboot'
@@ -628,6 +633,57 @@ print(json.dumps({
         layout = self.run('cat /home/crowbar-compositor/layout || true')
         self.check('compositor persists output placement to layout file',
                    bool(layout.strip()) and 'scale' in layout)
+
+    def still(self, name):
+        """Once a still desktop settles, it commits nothing and draws nothing
+        (#269). Fulcrum writes its report after a commit or a frame, at most
+        every 5 s, so a desktop that keeps drawing adds a report in 12 s."""
+        # The clock changes what the bar and the lock screen show each minute,
+        # so the 15 s looked at stay within one minute.
+        second = int(self.run('date +%S'))
+        if second > 40:
+            time.sleep(62 - second)
+        time.sleep(STILL_SETTLE)
+        before = self.reports()
+        time.sleep(STILL_WINDOW)
+        after = self.reports()
+        self.check(name, after == before,
+                   f'{after - before} reports in {STILL_WINDOW} s')
+
+    def reports(self):
+        """How many reports Fulcrum has written."""
+        return int(self.run("grep -c 'commits so far' /var/log/crowbar-compositor.log || true").strip() or 0)
+
+    def bar_follows_workspaces(self):
+        """Super+1 to 9 show a workspace, and the bar draws it in the frame the
+        workspace changes or the next (#273). Fulcrum logs how soon each
+        layer drew after the workspaces changed."""
+        drawn = []
+        for workspace in ('2', '1', '2', '1'):
+            seen = len(self.bar_drawn())
+            self.key('meta_l', workspace)
+            drawn.append(self.wait(f'the bar draws workspace {workspace}',
+                                   lambda: self.bar_drawn()[seen:])[0])
+        self.wait('workspace 1', lambda: self.snapshot()['workspace'] == 1)
+        drawn.sort()
+        median = (drawn[1] + drawn[2]) / 2
+        self.check('the bar draws a workspace in the frame it changes or the next',
+                   median <= BAR_FOLLOWS,
+                   f'{", ".join(f"{ms:.1f}" for ms in drawn)} ms; at most {BAR_FOLLOWS:.1f} ms')
+
+    def bar_drawn(self):
+        """How soon the bar drew after each change to the workspaces, in ms."""
+        log = self.guest.ssh('grep "layer crowbaros-bar drew" /var/log/crowbar-compositor.log',
+                             check=False).stdout
+        return [float(ms) for ms in re.findall(r'drew ([\d.]+) ms after the workspaces changed', log)]
+
+
+# How long a desktop is given to settle, as GPUI keeps presenting for a second
+# after input, and how long it is then watched.
+STILL_SETTLE = 3
+STILL_WINDOW = 12
+# Two frames at the guest's 60 Hz: the frame the workspace changes, or the next.
+BAR_FOLLOWS = 2 * 1000 / 60
 
 
 def main():

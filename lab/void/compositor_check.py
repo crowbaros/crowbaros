@@ -68,10 +68,19 @@ SHELL_ALONE = {"zwlr_layer_shell_v1"}
 
 # Asks the shell's control channel for a snapshot, and prints the reply as
 # Python's repr: '' when the compositor closes the connection without one.
+# The events the compositor sends the shell unasked, which start with the
+# third argument, are passed over.
 SNAPSHOT = '{"op":"snapshot"}\n'.encode().hex()
-ASK_CONTROL = ("python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.settimeout(5); "
-               f"s.connect(sys.argv[1]); s.sendall(bytes.fromhex(sys.argv[2])); "
-               f"print(repr(s.makefile().readline()))' {CONTROL_SOCKET} {SNAPSHOT}")
+UNASKED = '{"event":"snapshot",'.encode().hex()
+ASK_CONTROL = ("python3 -c 'import socket, sys\n"
+               "s = socket.socket(socket.AF_UNIX); s.settimeout(5); s.connect(sys.argv[1])\n"
+               "unasked = bytes.fromhex(sys.argv[3]).decode()\n"
+               "try:\n"
+               "    s.sendall(bytes.fromhex(sys.argv[2]))\n"
+               "    print(repr(next((l for l in s.makefile() if not l.startswith(unasked)), \"\")))\n"
+               "except OSError:\n"
+               "    print(repr(\"\"))' "
+               f"{CONTROL_SOCKET} {SNAPSHOT} {UNASKED}")
 
 
 def apps_refused():

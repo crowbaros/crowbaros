@@ -107,7 +107,10 @@ service mid-session that comes back locked behind the lock screen, with an
 app's window behind it hearing none of the keys typed, Settings
 preview/Save/Undo, and relaunch. It checks saved appearance, and a file the
 person wrote in their home, after a clean reboot, service identities, linked
-libraries, binary hashes, render activity, and shell restart. It checks that
+libraries, binary hashes, render activity, and shell restart. It checks that a
+still desktop, locked at boot and unlocked with apps open, commits nothing and
+draws nothing once it settles, and that the bar draws a workspace that
+Super+1 to 9 show within two frames, by the times Fulcrum logs. It checks that
 apps run as the person at the ordinary socket for apps, that copy and paste, the primary
 selection, and drag and drop work between two apps, and that the shell's
 sockets, its control channel, and the unlock helper refuse an app. An error
