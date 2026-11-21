@@ -216,7 +216,7 @@ Each theme choice is a bordered card with 12px internal padding and spacing. Its
 
 Each setting row combines a semibold setting name, supporting explanation, explicit On/Off text and a pill switch. The entire row is the interactive control, with 16px vertical and 12px horizontal padding and 20px gaps. Off uses line/text for track/thumb; On uses accent/on-accent. On moves the thumb to the end without authored interpolation. Studio Mode neutralizes the window immediately. Studio Mode does not calibrate a display.
 
-In the Void Alpha session, the motion row says **Reduced motion preference** and explains that this desktop has no animations. Save preserves the preference for compatible desktops and confirms **Saved.**; it claims no motion effect. The scope line explains that saved appearance also styles the shell, while other applications keep their themes. The legacy Hyprland adapter still applies motion on Save. The existing composition, tokens, and focus states are preserved.
+On CrowbarOS's desktop, the motion row says **Reduced motion preference** and explains that this desktop has no animations. Save preserves the preference for compatible desktops and confirms **Saved.**; it claims no motion effect. The scope line explains that saved appearance also styles the shell, while other applications keep their themes. The legacy Hyprland adapter still applies motion on Save. The existing composition, tokens, and focus states are preserved.
 
 ### Status, errors and close protection
 

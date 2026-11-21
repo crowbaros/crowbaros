@@ -7,20 +7,26 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// The Alpha compositor has no window/workspace animations. Keep the person's
-/// preference for other sessions, without pretending to apply an effect here.
+/// CrowbarOS's compositor has no window/workspace animations. Keep the person's
+/// preference for other desktops, without pretending to apply an effect here.
 pub enum Session {
     NoAnimations,
     Hyprland(Hyprland),
 }
 
-pub fn is_alpha() -> bool {
-    std::env::var("CROWBAR_SESSION").as_deref() == Ok("alpha-no-animations")
+/// The launcher sets `CROWBAR_SESSION=crowbaros` for every app on CrowbarOS's
+/// desktop.
+pub fn on_crowbaros() -> bool {
+    is_crowbaros(std::env::var("CROWBAR_SESSION").ok().as_deref())
+}
+
+fn is_crowbaros(session: Option<&str>) -> bool {
+    session == Some("crowbaros")
 }
 
 impl Session {
     pub fn connect() -> Result<Self, String> {
-        if is_alpha() {
+        if on_crowbaros() {
             Ok(Self::NoAnimations)
         } else {
             Hyprland::connect().map(Self::Hyprland)
@@ -154,5 +160,18 @@ impl Motion for Hyprland {
             );
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_crowbaros;
+
+    #[test]
+    fn only_crowbaros_desktop_has_no_animations() {
+        assert!(is_crowbaros(Some("crowbaros")));
+        assert!(!is_crowbaros(Some("hyprland")));
+        assert!(!is_crowbaros(Some("")));
+        assert!(!is_crowbaros(None));
     }
 }

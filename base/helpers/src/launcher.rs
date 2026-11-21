@@ -117,7 +117,7 @@ pub fn app_environment(person: &Account, locale: &str) -> Vec<(String, String)> 
         ("XCURSOR_THEME", "Vanilla-DMZ".into()),
         ("XCURSOR_SIZE", "24".into()),
         ("CROWBAR_DISPLAY_SOCKET", "/run/crowbar-displays/socket".into()),
-        ("CROWBAR_SESSION", "alpha-no-animations".into()),
+        ("CROWBAR_SESSION", "crowbaros".into()),
         ("RUST_LOG", "info".into()),
     ]
     .into_iter()
@@ -462,6 +462,13 @@ mod tests {
         let env = environment(&person(Path::new("/home/alex")));
         assert_eq!(env["XCURSOR_THEME"], "Vanilla-DMZ");
         assert_eq!(env["XCURSOR_SIZE"], "24");
+    }
+
+    #[test]
+    fn an_app_learns_it_is_on_crowbaros_desktop() {
+        let env = environment(&person(Path::new("/home/alex")));
+        assert_eq!(env["XDG_CURRENT_DESKTOP"], "CrowbarOS");
+        assert_eq!(env["CROWBAR_SESSION"], "crowbaros");
     }
 
     #[test]

@@ -84,7 +84,7 @@ cargo run --manifest-path compositor/Cargo.toml --release --features nested -- -
   --shell-socket /tmp/fulcrum/shell --shell-uid "$(id -u)" \
   --apps-socket /tmp/fulcrum/apps --apps-uid "$(id -u)"
 # Then:
-WAYLAND_DISPLAY=/tmp/fulcrum/apps CROWBAR_SESSION=alpha-no-animations \
+WAYLAND_DISPLAY=/tmp/fulcrum/apps CROWBAR_SESSION=crowbaros \
   "$PWD/apps/studio-settings/target/release/crowbaros-studio-settings"
 ```
 
@@ -93,15 +93,12 @@ the [NVIDIA record](../research/compositor-nvidia-2026-11-15.md). It includes
 seatd, runtime-directory ownership, driver setup, and suspend hooks. Do not take
 over a TTY/GPU used by another active session.
 
-## Alpha limits and remaining session work
+## What the desktop does not use
 
-| Existing source | Remaining task |
-| --- | --- |
-| Shell Hyprland/systemd fallback, Settings Hyprland adapter, and spike control protocol | [#71](https://github.com/crowbaros/crowbaros/issues/71): production IPC, adapter removal, and corresponding regressions |
-
-The desktop's services do not use those legacy adapters. The launcher starts
+The shell's Hyprland and systemd fallbacks and Settings' Hyprland adapter are
+from before Void. The desktop's services do not use them. The launcher starts
 apps as the person, at the compositor's ordinary socket for apps. Settings Save
 works without Hyprland, and the shell follows saved preferences. The compositor
-has no animations; the motion preference is stored for compatible sessions
+has no animations; the motion preference is stored for other desktops
 without claiming an effect here. Archived Fedora service files are not a
 supported alternative session.

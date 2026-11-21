@@ -1,4 +1,4 @@
-//! Lock (ADR 0020, as Fulcrum's proposal): while the session is locked, the
+//! Lock (ADR 0032): while the session is locked, the
 //! shell's lock screen is all that is drawn and all that gets input.
 
 mod common;

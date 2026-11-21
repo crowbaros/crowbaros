@@ -702,9 +702,9 @@ impl Settings {
             .child(div().flex().flex_col().border_t_1().border_b_1().border_color(rgb(p.line))
                 .child(self.toggle(CONTROL_STUDIO,"Studio Mode","Use neutral grays for visual work. This does not calibrate your display.",self.draft.studio,p,window,cx))
                 .child(div().h(px(1.)).bg(rgb(p.line)))
-                .child(self.toggle(CONTROL_REDUCED_MOTION,if session::is_alpha() { "Reduced motion preference" } else { "Reduced motion" },if session::is_alpha() { "Saved for compatible desktops. This desktop has no animations." } else { "Turn off desktop window and workspace animations when you save." },self.draft.reduced_motion,p,window,cx)))
+                .child(self.toggle(CONTROL_REDUCED_MOTION,if session::on_crowbaros() { "Reduced motion preference" } else { "Reduced motion" },if session::on_crowbaros() { "Saved for compatible desktops. This desktop has no animations." } else { "Turn off desktop window and workspace animations when you save." },self.draft.reduced_motion,p,window,cx)))
             .child(div().text_size(px(12.)).text_color(rgb(p.muted))
-                .child(if session::is_alpha() { "Saved appearance and wallpaper also apply to the shell. Other applications keep their own themes." } else { "Appearance currently styles Studio Settings. Reduced motion applies to your Hyprland desktop and is restored at login." }))
+                .child(if session::on_crowbaros() { "Saved appearance and wallpaper also apply to the shell. Other applications keep their own themes." } else { "Appearance currently styles Studio Settings. Reduced motion applies to your Hyprland desktop and is restored at login." }))
     }
     fn displays(&self, p: Palette, window: &Window, cx: &Context<Self>) -> Div {
         let mut page = div().flex().flex_col().gap_4().child(

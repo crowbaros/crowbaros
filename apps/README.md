@@ -8,7 +8,7 @@ to Void.
 | App | Current role |
 | --- | --- |
 | [shell/](shell/README.md) | Workspace bar, dock, launcher, and wallpaper; starting point for the trusted shell |
-| [studio-settings/](studio-settings/README.md) | Appearance preview, Save/Undo, and restored preferences in the Void Alpha session |
+| [studio-settings/](studio-settings/README.md) | Appearance preview, Save/Undo, and restored preferences on CrowbarOS's desktop |
 | [gpui-probe/](gpui-probe/README.md) | Optional GPUI rendering/input reference |
 
 Use the [Void build/run guide](../docs/development/local-vms.md). Each app is a
@@ -27,7 +27,6 @@ the shell run as service accounts of their own, and every app as the person. The
 covers launch, focus, workspaces, saved appearance, restart, and reboot.
 The apps have also rendered on [Void hardware](../docs/research/compositor-nvidia-2026-11-15.md).
 
-The Alpha path does not call the retained Hyprland or systemd adapters. Their
-removal and replacement with production shell/Settings IPC are bounded by
-[#71](https://github.com/crowbaros/crowbaros/issues/71). The old hooks are archived
-and are not installed.
+Base's desktop does not call the shell's and Settings' retained Hyprland or
+systemd adapters, which are from before Void. The old hooks are archived and
+are not installed.
