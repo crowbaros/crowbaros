@@ -95,6 +95,19 @@ sides hold.
 - CI runs only on GitHub's runners. Never connect a self-hosted runner: it
   would run strangers' code on our machines.
 
+## Code Review Rules
+
+Codex reviews every pull request against this file. Flag each of these as P1:
+
+- A bug fix with no test that fails without the fix.
+- A break of [The repository is public](#the-repository-is-public): a
+  secret, an address, or a detail of our homes or machines, anywhere in the
+  change or its test output.
+- A change to `.github/workflows/` that gives a fork's code a secret or a
+  write token, or runs a job off GitHub's runners.
+- A change to what CrowbarOS does that departs from the
+  [vision](docs/VISION.md) or an accepted ADR, with no new ADR.
+
 ## Releases
 
 Nothing is released or deployed yet, so there is no CD. Record the release
