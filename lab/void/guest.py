@@ -3,7 +3,11 @@
 Both the compositor check and the desktop check use this module. Every run
 owns a directory with its own copy of Base's disk, firmware variables, SSH
 port, and Unix QMP and VNC sockets, and reaches the guest with Base's SSH key.
+The sockets are in a short directory of the run's own under the system's
+temporary directory, since a Unix socket's path is at most 107 bytes and a
+worktree's run directory can be longer than that.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -104,10 +108,12 @@ class Guest:
         self.disk = self.work / "disk.raw"
         self.nvram = self.work / "nvram.fd"
         self.pidfile = self.work / "qemu.pid"
-        self.qmp_sock = self.work / "qmp.sock"
+        run = hashlib.sha256(os.fsencode(self.work.resolve())).hexdigest()[:16]
+        self.sockets = Path(tempfile.gettempdir()) / f"crowbaros-{run}"
+        self.qmp_sock = self.sockets / "qmp.sock"
         self.serial_log = self.work / "serial.log"
         self.known_hosts = self.work / "known_hosts"
-        self.vnc = [self.work / f"vnc{n}.sock" for n in range(2)]
+        self.vnc = [self.sockets / f"vnc{n}.sock" for n in range(2)]
         self.key = void_base.KEY
 
     @classmethod
@@ -141,6 +147,7 @@ class Guest:
 
     def start(self):
         """Boot this run's own grown copy of Base's image through UEFI."""
+        self.sockets.mkdir(mode=0o700, exist_ok=True)
         for path in (self.qmp_sock, self.pidfile, self.known_hosts, *self.vnc):
             path.unlink(missing_ok=True)
         subprocess.run(
@@ -150,6 +157,13 @@ class Guest:
         # Larger than the image, as a person's disk is, so the root grows on boot.
         os.truncate(self.disk, max(self.disk.stat().st_size, void_base.CFG["disk_gib"] << 30))
         shutil.copyfile(void_base.CFG["firmware_vars"], self.nvram)
+        try:
+            self._boot()
+        except BaseException:
+            shutil.rmtree(self.sockets, ignore_errors=True)
+            raise
+
+    def _boot(self):
         void_base.run(
             *void_base.qemu(self.name, self.disk, self.nvram, self.ssh_port),
             # A VNC server per connector. A VNC client that sets a desktop
@@ -227,6 +241,12 @@ class Guest:
             sock.close()
 
     def stop(self):
+        try:
+            self._stop()
+        finally:
+            shutil.rmtree(self.sockets, ignore_errors=True)
+
+    def _stop(self):
         if not self.running():
             return
         pid = int(self.pidfile.read_text().strip())

@@ -1,6 +1,8 @@
 """The lab's guest driver: isolated UEFI runs of Base's image."""
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -61,6 +63,7 @@ class IsolatedRuns(GuestFixture):
 class BootsBase(GuestFixture):
     def boot(self):
         vm = guest.Guest.create(self.runs, 'crowbaros-check')
+        self.addCleanup(shutil.rmtree, vm.sockets, True)
         commands = []
         with patch.object(self.base, 'run', lambda *args, **kw: commands.append([str(a) for a in args])):
             vm.start()
@@ -97,6 +100,16 @@ class BootsBase(GuestFixture):
         self.assertIn(f'hostfwd=tcp:127.0.0.1:{vm.ssh_port}-:22', joined)
         for vnc in vm.vnc:
             self.assertIn(f'unix:{vnc}', joined)
+
+    def test_sockets_fit_a_unix_socket_path_however_deep_the_checkout(self):
+        # A Unix socket's path is at most 107 bytes, and a worktree's run
+        # directory can be longer than that alone.
+        self.runs = self.root / ('deep-' * 20) / '.lab/void-desktop-checks'
+        vm, command = self.boot()
+        for path in (vm.qmp_sock, *vm.vnc):
+            self.assertLess(len(os.fsencode(path)), 108, path)
+        again = guest.Guest(vm.work, 'crowbaros-check', vm.ssh_port)
+        self.assertEqual((again.qmp_sock, again.vnc), (vm.qmp_sock, vm.vnc))
 
 
 class SshAndBuild(GuestFixture):
