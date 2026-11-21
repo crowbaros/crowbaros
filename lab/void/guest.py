@@ -157,6 +157,13 @@ class Guest:
         # Larger than the image, as a person's disk is, so the root grows on boot.
         os.truncate(self.disk, max(self.disk.stat().st_size, void_base.CFG["disk_gib"] << 30))
         shutil.copyfile(void_base.CFG["firmware_vars"], self.nvram)
+        try:
+            self._boot()
+        except BaseException:
+            shutil.rmtree(self.sockets, ignore_errors=True)
+            raise
+
+    def _boot(self):
         void_base.run(
             *void_base.qemu(self.name, self.disk, self.nvram, self.ssh_port),
             # A VNC server per connector. A VNC client that sets a desktop

@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -62,6 +63,7 @@ class IsolatedRuns(GuestFixture):
 class BootsBase(GuestFixture):
     def boot(self):
         vm = guest.Guest.create(self.runs, 'crowbaros-check')
+        self.addCleanup(shutil.rmtree, vm.sockets, True)
         commands = []
         with patch.object(self.base, 'run', lambda *args, **kw: commands.append([str(a) for a in args])):
             vm.start()
