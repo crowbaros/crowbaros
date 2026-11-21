@@ -1,0 +1,90 @@
+INFO crowbar_compositor: session locked by=start
+INFO crowbar_compositor: session opened through seatd seat=seat0
+INFO crowbar_compositor: DRM device opened path=/dev/dri/card1
+WARN crowbar_compositor: libinput did not take /dev/input/event10
+WARN crowbar_compositor: libinput did not take /dev/input/event11
+WARN crowbar_compositor: libinput did not take /dev/input/event12
+WARN crowbar_compositor: libinput did not take /dev/input/event13
+WARN crowbar_compositor: libinput did not take /dev/input/event14
+WARN crowbar_compositor: libinput did not take /dev/input/event15
+WARN crowbar_compositor: libinput did not take /dev/input/event16
+WARN crowbar_compositor: libinput did not take /dev/input/event17
+WARN crowbar_compositor: libinput did not take /dev/input/event18
+WARN crowbar_compositor: libinput did not take /dev/input/event19
+WARN crowbar_compositor: libinput did not take /dev/input/event7
+WARN crowbar_compositor: libinput did not take /dev/input/event9
+INFO crowbar_compositor: renderer=gles gpu=NVIDIA GeForce RTX 5060/PCIe/SSE2
+INFO crowbar_compositor: output scale from its density name=HDMI-A-2 scale=180 physical=600x340mm
+INFO crowbar_compositor: output connected name=HDMI-A-2 size=3840x2160 refresh=59982 pointer=cursor-plane
+INFO crowbar_compositor: linux-dmabuf imported by the GPU formats=702
+INFO crowbar_compositor: compositor is up backend=tty
+INFO crowbar_compositor: commits so far:  frames=1
+INFO crowbar_compositor: shell control connected id=1
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 5, layer crowbaros-dock: 5, layer crowbaros-lock: 64, layer crowbaros-wallpaper: 6 frames=63
+INFO crowbar_compositor: unlock authority connected id=2
+INFO crowbar_compositor: shell control disconnected id=2
+INFO crowbar_compositor: input device added name=Power Button sysname=event0
+INFO crowbar_compositor: input device added name=Power Button sysname=event1
+INFO crowbar_compositor: input device added name=Video Bus sysname=event2
+INFO crowbar_compositor: input device added name=SIGMACHIP Usb Mouse sysname=event3
+INFO crowbar_compositor: input device added name=USB Keyboard sysname=event4
+INFO crowbar_compositor: input device added name=USB Keyboard Consumer Control sysname=event5
+INFO crowbar_compositor: input device added name=USB Keyboard System Control sysname=event6
+INFO crowbar_compositor: input device added name=Eee PC WMI hotkeys sysname=event8
+INFO crowbar_compositor: input device removed sysname=event8
+INFO crowbar_compositor: input device removed sysname=event6
+INFO crowbar_compositor: input device removed sysname=event5
+INFO crowbar_compositor: input device removed sysname=event4
+INFO crowbar_compositor: input device removed sysname=event3
+INFO crowbar_compositor: input device removed sysname=event2
+INFO crowbar_compositor: the session is paused: another virtual terminal is showing
+INFO crowbar_compositor: input device removed sysname=event1
+INFO crowbar_compositor: input device removed sysname=event0
+INFO crowbar_compositor: udev says the DRM device changed path=/dev/dri/card1
+INFO crowbar_compositor: udev says the DRM device changed path=/dev/dri/card1
+INFO crowbar_compositor: the session is back
+INFO crowbar_compositor: input device added name=Power Button sysname=event0
+INFO crowbar_compositor: input device added name=Power Button sysname=event1
+INFO crowbar_compositor: input device added name=Video Bus sysname=event2
+INFO crowbar_compositor: input device added name=SIGMACHIP Usb Mouse sysname=event3
+INFO crowbar_compositor: input device added name=USB Keyboard sysname=event4
+INFO crowbar_compositor: input device added name=USB Keyboard Consumer Control sysname=event5
+INFO crowbar_compositor: input device added name=USB Keyboard System Control sysname=event6
+INFO crowbar_compositor: input device added name=Eee PC WMI hotkeys sysname=event8
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 8, layer crowbaros-dock: 8, layer crowbaros-lock: 66, layer crowbaros-wallpaper: 8 frames=65
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 8, layer crowbaros-dock: 8, layer crowbaros-lock: 66, layer crowbaros-wallpaper: 9 frames=65
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 11, layer crowbaros-dock: 11, layer crowbaros-lock: 70, layer crowbaros-wallpaper: 11 frames=66
+INFO crowbar_compositor: unlock authority connected id=3
+INFO crowbar_compositor: session unlocked
+INFO crowbar_compositor: shell control disconnected id=3
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 13, layer crowbaros-dock: 13, layer crowbaros-lock: 326, layer crowbaros-wallpaper: 14 frames=323
+INFO crowbar_compositor: unlock authority connected id=4
+INFO crowbar_compositor: session locked by=authority
+WARN crowbar_compositor: could not show a frame on HDMI-A-2: Permission denied (os error 13)
+INFO crowbar_compositor: shell control disconnected id=4
+INFO crowbar_compositor: input device removed sysname=event8
+INFO crowbar_compositor: input device removed sysname=event6
+INFO crowbar_compositor: input device removed sysname=event5
+INFO crowbar_compositor: input device removed sysname=event4
+INFO crowbar_compositor: input device removed sysname=event3
+INFO crowbar_compositor: input device removed sysname=event2
+INFO crowbar_compositor: input device removed sysname=event1
+INFO crowbar_compositor: input device removed sysname=event0
+INFO crowbar_compositor: the session is paused: another virtual terminal is showing
+INFO crowbar_compositor: udev says the DRM device changed path=/dev/dri/card1
+INFO crowbar_compositor: udev says the DRM device changed path=/dev/dri/card1
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 15, layer crowbaros-dock: 15, layer crowbaros-lock: 327, layer crowbaros-wallpaper: 15 frames=324
+INFO crowbar_compositor: the session is back
+INFO crowbar_compositor: input device added name=Power Button sysname=event0
+INFO crowbar_compositor: input device added name=Power Button sysname=event1
+INFO crowbar_compositor: input device added name=Video Bus sysname=event2
+INFO crowbar_compositor: input device added name=SIGMACHIP Usb Mouse sysname=event3
+INFO crowbar_compositor: input device added name=USB Keyboard sysname=event4
+INFO crowbar_compositor: input device added name=USB Keyboard Consumer Control sysname=event5
+INFO crowbar_compositor: input device added name=USB Keyboard System Control sysname=event6
+INFO crowbar_compositor: input device added name=Eee PC WMI hotkeys sysname=event8
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 20, layer crowbaros-dock: 20, layer crowbaros-lock: 367, layer crowbaros-wallpaper: 19 frames=359
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 20, layer crowbaros-dock: 20, layer crowbaros-lock: 668, layer crowbaros-wallpaper: 19 frames=658
+INFO crowbar_compositor: unlock authority connected id=5
+INFO crowbar_compositor: session unlocked
+INFO crowbar_compositor: shell control disconnected id=5

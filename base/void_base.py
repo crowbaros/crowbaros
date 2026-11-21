@@ -410,6 +410,7 @@ def build(force=False, lab_account=False):
                ROOT_LABEL=CFG["root_label"], ESP_LABEL=CFG["esp_label"],
                ESP_MIB=str(CFG["esp_mib"]), ROOT_GIB=str(CFG["root_gib"]),
                KVER=image_kernel(ROOTFS), KERNEL_ARGS=" ".join(CFG["kernel_args"]),
+               NVIDIA_OPTIONS=" ".join(CFG["nvidia_options"]),
                DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT), PERSON_UID=str(PERSON_UID),
                PERSON=account["name"], PERSON_FULL_NAME=account["full_name"],
                PERSON_PASSWORD_HASH=account["password_hash"], PERSON_PASSWORD=account["password"],
@@ -578,6 +579,23 @@ def person_has_home(out):
         and lines[1].split()[:1] == [name]
 
 
+def nvidia_saves_video_memory(out):
+    """Whether the check's output shows NVIDIA's module set to save all video
+    memory across suspend into /var/tmp, on the root's disk: `modprobe -c`'s
+    lines for the module, then the type of the file system under /var/tmp.
+    modprobe gives the module every line's options, and the last value of
+    each wins."""
+    lines = out.splitlines()
+    if not lines or lines[-1].strip() in ("", "tmpfs"):
+        return False
+    options = {}
+    for line in lines[:-1]:
+        if line.split()[:2] == ["options", "nvidia"]:
+            options.update(word.split("=", 1) for word in line.split()[2:] if "=" in word)
+    return all(options.get(key) == value
+               for key, value in (option.split("=", 1) for option in CFG["nvidia_options"]))
+
+
 def compositor_restarted(out):
     """Whether the check's output shows the compositor's service restarted
     with one new compositor, which stayed: `sv restart`'s exit status, then
@@ -664,6 +682,10 @@ CHECKS = [
      "modinfo -n nvidia; cut -d' ' -f1 /proc/modules",
      lambda out: bool(out.split()) and re.search(r"/nvidia\.ko(\.\w+)?$", out.split()[0]) is not None
      and not {name.replace("-", "_") for name in NVIDIA_MODULES} & set(out.split()[1:])),
+    # Read from modprobe's configuration, as the VM's module never loads.
+    ("NVIDIA's module saves video memory to the disk across suspend",
+     "modprobe -c | grep '^options nvidia '; findmnt -no FSTYPE -T /var/tmp",
+     lambda out: nvidia_saves_video_memory(out)),
     ("no failed kernel messages", "dmesg --level=emerg,alert,crit",
      lambda out: out.strip() == ""),
 ]

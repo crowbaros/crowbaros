@@ -8,7 +8,7 @@
 #
 # Inputs: ROOTFS WORK OUT PUBKEY HOSTNAME ROOT_LABEL ESP_LABEL ESP_MIB ROOT_GIB,
 # KVER (the kernel to boot, which void_base.py checked), KERNEL_ARGS (added to
-# the kernel's command line),
+# the kernel's command line), NVIDIA_OPTIONS (for NVIDIA's `nvidia` module),
 # and for the desktop DESKTOP (base/desktop) and REPO_ROOT. The person's
 # account is PERSON_UID, PERSON, and PERSON_FULL_NAME, with PERSON_PASSWORD_HASH
 # from the account file or, for the lab account, PERSON_PASSWORD, and
@@ -45,6 +45,13 @@ install -d -m 700 "$R/root/.ssh"
 install -m 600 "$PUBKEY" "$R/root/.ssh/authorized_keys"
 # SSH by key alone: the person's account has a password, and it is not for SSH.
 printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' > "$R/etc/ssh/sshd_config.d/10-crowbaros.conf"
+
+# NVIDIA's module saves all video memory across a suspend, in a file under
+# /var/tmp, on the root's disk; /tmp is in memory. Its own defaults keep only
+# some, and the desktop wakes grey. The module loads from the root, not the
+# initramfs, so it reads this. Not named nvidia.conf, which would hide the
+# package's own in /usr/lib/modprobe.d, the one that blacklists nouveau.
+echo "options nvidia $NVIDIA_OPTIONS" > "$R/etc/modprobe.d/crowbaros-nvidia.conf"
 
 # Real machines. Wi-Fi is iwd, which joins a network; dhcpcd, which already
 # serves every interface, gets the address. iwd answers on the system bus, to

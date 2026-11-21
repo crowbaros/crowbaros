@@ -70,6 +70,7 @@
     "libxcrypt-devel"
   ],
   "kernel_args": ["nvidia-drm.modeset=1", "nvidia-drm.fbdev=1"],
+  "nvidia_options": ["NVreg_PreserveVideoMemoryAllocations=1", "NVreg_TemporaryFilePath=/var/tmp"],
   "hostname": "crowbaros",
   "root_label": "crowbaros-root",
   "esp_label": "CROWBAROS",
