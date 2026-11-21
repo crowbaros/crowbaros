@@ -1,78 +1,35 @@
 #!/usr/bin/env python3
 """The desktop check: Base's image, booted under UEFI, driven as a person would.
 
-Run: python3 lab/void/compositor_guest.py desktop-check
-It builds the image with Base's one command, `base/void_base.py build`, which
-keeps its Void roots and Cargo target in .lab/base as a cache. Every run then
-owns a new directory under .lab/void-desktop-checks, with its own copy of the
-disk, firmware variables, SSH port, and Unix VNC and QMP sockets. It boots that
-copy through the firmware and GRUB, as a person's machine would, and never
-touches Base's own disk or the lab's. Failure leaves logs, screenshots, and the
-disk in place.
+Run: lab/void/desktop_check.py
+It builds the image with Base's one command, `base/void_base.py build
+--lab-account`, which keeps its Void roots and Cargo target in .lab/base as a
+cache. Every run then owns a new directory under .lab/void-desktop-checks,
+with its own copy of the disk, firmware variables, SSH port, and Unix VNC and
+QMP sockets. It boots that copy through the firmware and GRUB, as a person's
+machine would, runs Base's boot checks and the desktop checks, and never
+touches Base's own disk. Failure leaves logs, screenshots, and the disk in
+place.
 """
 import argparse
 import json
 import os
-from pathlib import Path
 import re
 import shlex
-import shutil
-import socket
 import subprocess
-import sys
-import tempfile
 import time
 
-import compositor_guest as guest
+import guest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'base'))
-import void_base  # noqa: E402
-
-
-def configure():
-    base = guest.ROOT / '.lab/void-desktop-checks'
-    base.mkdir(parents=True, exist_ok=True)
-    guest.WORK = Path(tempfile.mkdtemp(prefix=time.strftime('%Y%m%dT%H%M%S-'), dir=base))
-    for name, path in {
-        'DISK': 'disk.raw', 'PIDFILE': 'qemu.pid', 'QMP_SOCK': 'qmp.sock', 'SERIAL_LOG': 'serial.log',
-    }.items():
-        setattr(guest, name, guest.WORK / path)
-    guest.VNC = [guest.WORK / f'vnc{n}.sock' for n in range(2)]
-    # The key Base's build put in the image for root.
-    guest.KEY = void_base.KEY
-    with socket.socket() as free_port:
-        free_port.bind(('127.0.0.1', 0))
-        port = free_port.getsockname()[1]
-    guest.CFG = dict(guest.CFG, ssh_port=port, vnc_port=None)
-    (guest.WORK / 'run.json').write_text(json.dumps({
-        'workspace': str(guest.WORK), 'ssh_port': port, 'image': str(void_base.BASE_DISK),
-        'revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=guest.ROOT, text=True).strip(),
-        'dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=guest.ROOT)),
-    }, indent=2) + '\n')
-
-
-def start():
-    """Boots this run's own copy of Base's image through the firmware."""
-    for path in (guest.QMP_SOCK, guest.PIDFILE, *guest.VNC):
-        path.unlink(missing_ok=True)
-    subprocess.run(['cp', '--reflink=auto', '--sparse=always', void_base.BASE_DISK, guest.DISK],
-                   check=True)
-    nvram = guest.WORK / 'nvram.fd'
-    shutil.copyfile(void_base.CFG['firmware_vars'], nvram)
-    guest.run(*void_base.qemu('crowbaros-desktop-check', guest.DISK, nvram, guest.CFG['ssh_port']),
-              # A VNC server per connector. A VNC client that sets a desktop
-              # size on the second one plugs the second monitor in.
-              '-vnc', f'unix:{guest.VNC[0]},display=gpu0,head=0',
-              '-vnc', f'unix:{guest.VNC[1]},display=gpu0,head=1',
-              '-qmp', f'unix:{guest.QMP_SOCK},server=on,wait=off',
-              '-chardev', f'file,id=ser0,path={guest.SERIAL_LOG}', '-serial', 'chardev:ser0',
-              '-display', 'none', '-daemonize', '-pidfile', guest.PIDFILE)
+void_base = guest.void_base
 
 
 class Check:
-    def __init__(self):
+    def __init__(self, vm):
+        self.guest = vm
+        self.work = vm.work
         self.results = []
-        self.logfile = (guest.WORK / 'desktop.log').open('w', buffering=1)
+        self.logfile = (self.work / 'desktop.log').open('w', buffering=1)
         self.qmp = None
 
     def log(self, message):
@@ -80,15 +37,18 @@ class Check:
         print(line, flush=True)
         self.logfile.write(line + '\n')
 
-    def check(self, name, condition, detail=''):
+    def record(self, name, condition, detail=''):
         self.results.append({'name': name, 'passed': bool(condition), 'detail': detail})
         self.log(f'{"PASS" if condition else "FAIL"}: {name}' + (f' — {detail}' if detail else ''))
-        if not condition:
+        return bool(condition)
+
+    def check(self, name, condition, detail=''):
+        if not self.record(name, condition, detail):
             raise AssertionError(name)
 
     def run(self, command, timeout=20):
         self.log('guest$ ' + command)
-        result = guest.ssh(command, check=False, timeout=timeout)
+        result = self.guest.ssh(command, check=False, timeout=timeout)
         self.log((result.stdout + result.stderr).rstrip())
         if result.returncode:
             raise RuntimeError(f'guest command exited {result.returncode}: {command}')
@@ -114,8 +74,8 @@ class Check:
         code = ("import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(3); "
                 "s.connect('/run/user/1001/crowbaros-shell/control.sock'); "
                 "s.sendall(b'snapshot'); print(s.makefile('rb').read(65537).decode())")
-        result = guest.ssh('chpst -u crowbar-shell:crowbar-shell python3 -c ' + shlex.quote(code),
-                           check=False, timeout=6)
+        result = self.guest.ssh('chpst -u crowbar-shell:crowbar-shell python3 -c ' + shlex.quote(code),
+                                check=False, timeout=6)
         return json.loads(result.stdout)
 
     def ready(self):
@@ -136,7 +96,7 @@ class Check:
             self.key(letter)
 
     def shell_log(self):
-        return guest.ssh('cat /var/log/crowbar-shell.log', check=False).stdout
+        return self.guest.ssh('cat /var/log/crowbar-shell.log', check=False).stdout
 
     def shell_unlock(self):
         """The compositor's reply when the shell asks it to unlock."""
@@ -152,7 +112,7 @@ class Check:
         self.key('ret')
 
     def capture(self, name):
-        self.qmp.screendump(guest.WORK / f'{name}.png', 0)
+        self.qmp.screendump(self.work / f'{name}.png', 0)
 
     def person(self):
         """The person's account name and home: every app runs as it."""
@@ -175,11 +135,27 @@ class Check:
         time.sleep(0.15)
 
     def preferences(self):
-        result = guest.ssh(f'cat {self.person()[1]}/.config/crowbaros/appearance.json', check=False)
+        result = self.guest.ssh(f'cat {self.person()[1]}/.config/crowbaros/appearance.json', check=False)
         return json.loads(result.stdout) if result.returncode == 0 else None
 
     def app_log(self):
-        return guest.ssh('cat /var/log/crowbar-apps.log', check=False).stdout
+        return self.guest.ssh('cat /var/log/crowbar-apps.log', check=False).stdout
+
+    def base_checks(self):
+        """Run every Base boot check from `void_base.boot_checks()` and report each."""
+        failed = []
+        for name, user, command, ok in void_base.boot_checks():
+            self.log(f'guest({user})$ {command}' if user != 'root' else f'guest$ {command}')
+            result = self.guest.ssh(command, check=False, timeout=60, user=user)
+            output = (result.stdout + result.stderr).rstrip()
+            if output:
+                self.log(output)
+            passed = result.returncode == 0 and ok(result.stdout)
+            detail = '' if passed else (f'exit {result.returncode}' if result.returncode else output)
+            if not self.record(name, passed, detail):
+                failed.append(name)
+        if failed:
+            raise AssertionError('Base boot checks failed: ' + ', '.join(failed))
 
     def diagnostics(self):
         commands = {
@@ -193,23 +169,22 @@ class Check:
         }
         for name, command in commands.items():
             try:
-                r = guest.ssh(command, check=False, timeout=6)
-                (guest.WORK / name).write_text(r.stdout + r.stderr)
+                r = self.guest.ssh(command, check=False, timeout=6)
+                (self.work / name).write_text(r.stdout + r.stderr)
             except (OSError, subprocess.TimeoutExpired) as error:
-                (guest.WORK / name).write_text(str(error))
+                (self.work / name).write_text(str(error))
         try:
             if self.qmp is None:
-                self.qmp = guest.Qmp()
+                self.qmp = self.guest.qmp()
             self.capture('final-or-failure')
         except (OSError, RuntimeError, ValueError) as error:
             self.log(f'Could not capture final display: {error}')
 
     def checks(self, built):
-        self.qmp = guest.Qmp()
+        self.qmp = self.guest.qmp()
         self.ready()
-        self.check('Void Linux and runit PID 1',
-                   self.run('. /etc/os-release; printf "%s\\n" "$ID"; cat /proc/1/comm').splitlines() == ['void', 'runit'])
-        self.check('seatd and four Alpha services supervised',
+        self.base_checks()
+        self.check('seatd and four desktop services supervised',
                    all(line.startswith('run: ') for line in self.run('sv status seatd crowbar-compositor crowbar-shell crowbar-launcher crowbar-unlock').splitlines()))
         digests = self.run('sha256sum ' + ' '.join('/usr/local/bin/' + n for n in built))
         self.check('guest binaries match this build', all(f'{h}  /usr/local/bin/{n}' in digests for n, h in built.items()))
@@ -302,7 +277,7 @@ class Check:
         self.key('ctrl', 's')
         saved = self.wait('Settings Save', lambda: self.preferences())
         self.check('Save persists Light appearance', saved['theme'] == 'light')
-        self.wait('shell follows saved appearance', lambda: 'SHELL appearance theme=Light' in guest.ssh('cat /var/log/crowbar-shell.log', check=False).stdout)
+        self.wait('shell follows saved appearance', lambda: 'SHELL appearance theme=Light' in self.guest.ssh('cat /var/log/crowbar-shell.log', check=False).stdout)
         self.capture('03-settings-saved')
         self.key('tab')
         self.key('spc')
@@ -341,7 +316,7 @@ class Check:
         followed = self.shell_log().count('SHELL appearance theme=Light')
         boot_id = self.run('cat /proc/sys/kernel/random/boot_id').strip()
         self.run("nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &")
-        self.wait('new boot ID after clean reboot', lambda: (r := guest.ssh('cat /proc/sys/kernel/random/boot_id', check=False, timeout=6)).returncode == 0 and r.stdout.strip() != boot_id, timeout=180)
+        self.wait('new boot ID after clean reboot', lambda: (r := self.guest.ssh('cat /proc/sys/kernel/random/boot_id', check=False, timeout=6)).returncode == 0 and r.stdout.strip() != boot_id, timeout=180)
         self.ready()
         self.wait('the session starts locked after reboot', lambda: self.snapshot().get('locked'))
         self.unlock()
@@ -405,7 +380,7 @@ for proc in Path('/proc').glob('[0-9]*'):
  except (FileNotFoundError, ProcessLookupError): pass
 print(json.dumps({'processes': found, 'seat_members': seat.gr_mem, 'seat_gid': seat.gr_gid, 'netdev_gid': grp.getgrnam('netdev').gr_gid}))
 """.replace('PERSON', str(void_base.PERSON_UID))))
-        (guest.WORK / 'identities.json').write_text(json.dumps(report, indent=2) + '\n')
+        (self.work / 'identities.json').write_text(json.dumps(report, indent=2) + '\n')
         found = report['processes']
         person = void_base.PERSON_UID
         for name, uid in [('crowbar-compositor', 1000), ('crowbaros-shell', 1001)]:
@@ -498,7 +473,7 @@ print(json.dumps(results))
         self.click(100, 12)
         self.wait('workspace 3', lambda: self.snapshot()['workspace'] == 3)
         token = os.urandom(6).hex()
-        output = lambda name: guest.ssh(f'cat /tmp/{name}.out', check=False).stdout
+        output = lambda name: self.guest.ssh(f'cat /tmp/{name}.out', check=False).stdout
         try:
             self.probe_window(f'crowbar-probe copy copied-{token}', 'org.crowbaros.ProbeCopy', '/tmp/copy.out')
             self.check('a new window an app opens takes the keyboard, with no click', True)
@@ -578,32 +553,30 @@ def main():
     parser.parse_args()
     # What building and booting the image need, before the build spends its time.
     void_base.preflight(vm=True, build=True)
-    configure()
-    check = Check()
-    check.log(f'Evidence and new guest disk: {guest.WORK}')
+    vm = guest.Guest.create(guest.ROOT / '.lab/void-desktop-checks', 'crowbaros-desktop-check')
+    check = Check(vm)
+    check.log(f'Evidence and new guest disk: {vm.work}')
     try:
-        build_log = guest.WORK / 'build.log'
-        check.log(f'Building the image with Base\'s build; its output goes to {build_log}')
-        with build_log.open('w') as log:
-            if subprocess.run([sys.executable, void_base.HERE / 'void_base.py', 'build', '--lab-account'],
-                              stdout=log, stderr=subprocess.STDOUT).returncode:
-                raise RuntimeError(f'Base\'s build failed; see {build_log}')
-        built = {name: void_base.sha256(path) for name, path in void_base.binaries().items()}
-        start()
-        guest.wait_ssh()
+        build_log = vm.work / 'build.log'
+        check.log(f"Building the image with Base's build; its output goes to {build_log}")
+        built = guest.build_base(build_log)
+        vm.start()
+        vm.wait_ssh()
         check.checks(built)
     except Exception as error:
-        if not check.results or check.results[-1]['passed']:
+        if all(row['passed'] for row in check.results):
             check.results.append({'name': 'smoke run completed', 'passed': False, 'detail': repr(error)})
         check.log(f'FAIL: {error!r}')
     finally:
-        if guest.running():
+        if vm.running():
             check.diagnostics()
-            guest.stop()
+            vm.stop()
+        if check.qmp is not None:
+            check.qmp.close()
         failed = sum(not row['passed'] for row in check.results)
-        (guest.WORK / 'results.json').write_text(json.dumps(check.results, indent=2) + '\n')
+        (vm.work / 'results.json').write_text(json.dumps(check.results, indent=2) + '\n')
         check.log(f'RESULT: {len(check.results)-failed} passed, {failed} failed')
-        check.log(f'Evidence: {guest.WORK}')
+        check.log(f'Evidence: {vm.work}')
         check.logfile.close()
     return int(failed != 0)
 

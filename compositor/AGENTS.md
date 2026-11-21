@@ -48,7 +48,7 @@ These hold for every change ([the plan](docs/PLAN.md)):
 | --- | --- |
 | The commands under the README's [Build and test](README.md#build-and-test) | Every change to code. CI runs them too |
 | `cargo run -p fulcrum-codegen` | A change to `protocols/`. Commit what it writes |
-| `lab/void/compositor_guest.py check`, from the repository's root | Every pull request that changes how the compositor serves clients ([ADR 0031](../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)). Attach the evidence log it writes |
+| `lab/void/compositor_check.py`, from the repository's root | Every pull request that changes how the compositor serves clients ([ADR 0031](../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)). Attach the evidence log it writes |
 
 A bug fix comes with a test that fails without the fix. Every client is
 offered a new protocol global unless `src/policy.rs` refuses it. Refusing one

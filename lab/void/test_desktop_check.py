@@ -1,108 +1,101 @@
-"""Each desktop check run is isolated, and boots what a person would boot."""
-import json
+"""The desktop check runs every Base boot check and reports each."""
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
 
 import desktop_check
+import guest
 
-guest = desktop_check.guest
-base = desktop_check.void_base
+base = guest.void_base
 
 
-class Run(unittest.TestCase):
-    """A run in a temporary repository, with Base's disk and the lab's
-    development disk already there."""
+class FakeGuest:
+    def __init__(self, work, responder):
+        self.work = Path(work)
+        self.responder = responder
+        self.calls = []
 
-    def setUp(self):
-        names = ['ROOT', 'WORK', 'CFG', 'DISK', 'KEY', 'PIDFILE', 'QMP_SOCK', 'SERIAL_LOG', 'VNC']
-        saved = {name: getattr(guest, name) for name in names}
-        saved_base = {'BASE_DISK': base.BASE_DISK, 'KEY': base.KEY}
-        self.addCleanup(lambda: [setattr(guest, n, v) for n, v in saved.items()])
-        self.addCleanup(lambda: [setattr(base, n, v) for n, v in saved_base.items()])
+    def ssh(self, command, check=True, timeout=120, user='root'):
+        self.calls.append((user, command))
+        returncode, stdout, stderr = self.responder(user, command)
+        return subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+
+class BaseBootChecks(unittest.TestCase):
+    def make_check(self, responder):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        guest.ROOT = Path(temporary.name)
-        self.development = guest.ROOT / '.lab/void-graphical/disk.raw'
-        self.development.parent.mkdir(parents=True)
-        self.development.write_bytes(b'preserved VM')
-        base.BASE_DISK = guest.ROOT / '.lab/base/base.raw'
-        base.BASE_DISK.parent.mkdir(parents=True)
-        base.BASE_DISK.write_bytes(b'the Base image')
-        base.KEY = base.BASE_DISK.parent / 'id_ed25519'
-        firmware = guest.ROOT / 'firmware'
-        firmware.mkdir()
-        (firmware / 'code.fd').write_bytes(b'OVMF code')
-        (firmware / 'vars.fd').write_bytes(b'OVMF variables')
-        paths = patch.dict(base.CFG, firmware_code=str(firmware / 'code.fd'),
-                           firmware_vars=str(firmware / 'vars.fd'))
-        paths.start()
-        self.addCleanup(paths.stop)
-        # rev-parse asks for text, and status for bytes.
-        output = patch.object(desktop_check.subprocess, 'check_output',
-                              side_effect=lambda *a, **kw: 'fixture' if kw.get('text') else b'')
-        output.start()
-        self.addCleanup(output.stop)
+        vm = FakeGuest(temporary.name, responder)
+        check = desktop_check.Check(vm)
+        self.addCleanup(check.logfile.close)
+        return vm, check
 
+    def test_base_checks_runs_every_check_in_void_base_with_the_right_user(self):
+        sample = [
+            ('Void Linux', 'root', 'cat /etc/os-release', lambda out: 'ID=void' in out),
+            ('person ssh', base.LAB_ACCOUNT['name'], 'id -u', lambda out: out.strip() == '1003'),
+            ('booted with UEFI', 'root', 'test -d /sys/firmware/efi && echo efi', lambda out: 'efi' in out),
+        ]
 
-class IsolatedRuns(Run):
-    def test_each_run_owns_new_state_and_never_selects_another_disk(self):
-        desktop_check.configure()
-        first = guest.WORK
-        desktop_check.configure()
-        self.assertNotEqual(first, guest.WORK)
-        self.assertEqual(guest.DISK.parent, guest.WORK)
-        self.assertNotIn(guest.DISK, (self.development, base.BASE_DISK))
-        self.assertEqual(self.development.read_bytes(), b'preserved VM')
-        self.assertIsNone(guest.CFG['vnc_port'])
-        self.assertGreater(json.loads((guest.WORK / 'run.json').read_text())['ssh_port'], 0)
+        def responder(user, command):
+            if command == 'cat /etc/os-release':
+                return 0, 'ID=void\n', ''
+            if command == 'id -u':
+                return 0, ('1003\n' if user == base.LAB_ACCOUNT['name'] else '0\n'), ''
+            return 0, 'efi\n', ''
 
-    def test_the_run_reaches_the_guest_with_the_key_base_put_in_the_image(self):
-        desktop_check.configure()
-        self.assertEqual(guest.KEY, base.KEY)
+        vm, check = self.make_check(responder)
+        with patch.object(base, 'boot_checks', return_value=sample):
+            check.base_checks()
+        self.assertEqual(vm.calls, [
+            ('root', 'cat /etc/os-release'),
+            (base.LAB_ACCOUNT['name'], 'id -u'),
+            ('root', 'test -d /sys/firmware/efi && echo efi'),
+        ])
+        self.assertEqual(
+            [(row['name'], row['passed']) for row in check.results],
+            [('Void Linux', True), ('person ssh', True), ('booted with UEFI', True)],
+        )
+        log = (vm.work / 'desktop.log').read_text()
+        for name, *_ in sample:
+            self.assertIn(f'PASS: {name}', log)
 
+    def test_base_checks_reports_every_check_even_when_one_fails(self):
+        sample = [
+            ('first passes', 'root', 'cmd1', lambda out: out == 'ok'),
+            ('second fails on output', 'root', 'cmd2', lambda out: out == 'ok'),
+            ('third fails on exit', 'root', 'cmd3', lambda out: True),
+            ('fourth still runs', 'root', 'cmd4', lambda out: out == 'ok'),
+        ]
 
-class BootsBase(Run):
-    """The run boots its own copy of Base's image through the firmware, as a
-    person's machine would, and leaves Base's image as it was."""
+        def responder(user, command):
+            if command == 'cmd2':
+                return 0, 'bad', ''
+            if command == 'cmd3':
+                return 1, '', 'boom'
+            return 0, 'ok', ''
 
-    def boot(self):
-        desktop_check.configure()
-        commands = []
-        with patch.object(guest, 'run', lambda *args, **kw: commands.append([str(a) for a in args])):
-            desktop_check.start()
-        qemu = [command for command in commands if command[0] == 'qemu-system-x86_64']
-        self.assertEqual(len(qemu), 1, commands)
-        return qemu[0]
-
-    def drives(self, command):
-        return [command[i + 1] for i, arg in enumerate(command) if arg == '-drive']
-
-    def test_the_run_boots_a_copy_of_bases_image(self):
-        command = self.boot()
-        disks = [d for d in self.drives(command) if 'if=virtio' in d]
-        self.assertEqual(disks, [f'file={guest.DISK},format=raw,if=virtio,cache=unsafe'])
-        self.assertEqual(guest.DISK.read_bytes(), b'the Base image')
-        self.assertEqual(base.BASE_DISK.read_bytes(), b'the Base image')
-
-    def test_the_firmware_boots_it_with_the_runs_own_variables(self):
-        command = self.boot()
-        self.assertNotIn('-kernel', command)
-        flash = [d for d in self.drives(command) if 'if=pflash' in d]
-        self.assertEqual(flash[0], f'if=pflash,format=raw,readonly=on,file={base.CFG["firmware_code"]}')
-        variables = Path(flash[1].rsplit('file=', 1)[1])
-        self.assertEqual(variables.parent, guest.WORK)
-        self.assertEqual(variables.read_bytes(), b'OVMF variables')
-
-    def test_the_run_drives_the_desktop_through_its_own_sockets(self):
-        command = self.boot()
-        joined = ' '.join(command)
-        self.assertIn('virtio-gpu-pci', joined)
-        self.assertIn(f'unix:{guest.QMP_SOCK}', joined)
-        self.assertIn(f'hostfwd=tcp:127.0.0.1:{guest.CFG["ssh_port"]}-:22', joined)
-        for vnc in guest.VNC:
-            self.assertIn(f'unix:{vnc}', joined)
+        vm, check = self.make_check(responder)
+        with patch.object(base, 'boot_checks', return_value=sample):
+            with self.assertRaises(AssertionError) as error:
+                check.base_checks()
+        self.assertEqual(
+            [(row['name'], row['passed']) for row in check.results],
+            [
+                ('first passes', True),
+                ('second fails on output', False),
+                ('third fails on exit', False),
+                ('fourth still runs', True),
+            ],
+        )
+        self.assertIn('second fails on output', str(error.exception))
+        self.assertIn('third fails on exit', str(error.exception))
+        log = (vm.work / 'desktop.log').read_text()
+        self.assertIn('FAIL: second fails on output', log)
+        self.assertIn('FAIL: third fails on exit', log)
+        self.assertIn('PASS: fourth still runs', log)
 
 
 if __name__ == '__main__':

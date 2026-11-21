@@ -30,7 +30,7 @@ tablet, with no VGA card.
 
 ## Where things go
 
-- Downloads: `~/.cache/crowbaros/void`, shared with `lab/void/`. The static xbps
+- Downloads: `~/.cache/crowbaros/void`. The static xbps
   is pinned by SHA-256 and refused if it does not match.
 - The root, the build root, the Cargo target, the disks, the SSH key, and boot
   logs: `.lab/base/`, outside git. The build root and the target are kept, so
@@ -112,7 +112,7 @@ of the configured packages finished.
 
 ## What it checks
 
-`check` boots a fresh copy of the disk, waits for the login prompt on the
+`check` (which CI runs) boots a fresh copy of the disk, waits for the login prompt on the
 serial console and for SSH, and then checks in the guest: that it is Void, that
 the running kernel is the one in the boot menu, that the root is the Btrfs
 volume and writable, that it booted under UEFI, the hostname, that runit is
@@ -127,11 +127,13 @@ NVIDIA's settings, that NVIDIA's module is built for the running kernel and,
 with no NVIDIA card in the VM, not loaded, and that the kernel logged nothing
 critical.
 
-The desktop has its own check, which boots a copy of this image under UEFI and
-drives the desktop as a person would:
+The lab's two graphical checks boot a copy of this image under UEFI as well.
+The desktop check runs all of these Base boot checks alongside the desktop
+checks; the compositor check exercises Fulcrum directly on a TTY:
 
 ```sh
-lab/void/compositor_guest.py desktop-check
+lab/void/desktop_check.py
+lab/void/compositor_check.py
 ```
 
 See the [lab's README](../lab/void/README.md#the-desktop-check).
@@ -210,7 +212,7 @@ that would break `/etc/passwd` or `/etc/shadow`, before it builds anything.
 
 With no account file, `build` makes the lab account, `crowbar`, whose password
 is `crowbar`. `build --lab-account` makes the lab account whatever the file
-says. Base's check and the desktop check build that way, so they type a
+says. Base's check and the lab's checks build that way, so they type a
 password they know. Either way the build prints a warning: that password is in
 this repository, so such an image is for the lab alone.
 

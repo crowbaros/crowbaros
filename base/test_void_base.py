@@ -299,14 +299,27 @@ class PersonSshCheck(unittest.TestCase):
     """Base's check logs in as the person, with the build's key, not as root."""
 
     def test_the_check_runs_as_the_lab_account_and_wants_its_uid(self):
-        [(command, ok)] = [(command, ok) for name, command, ok, *person in void_base.CHECKS
-                           if person and name == "the person's account takes the build's key over SSH"]
+        [(user, command, ok)] = [
+            (user, command, ok) for name, user, command, ok in void_base.boot_checks()
+            if name == "the person's account takes the build's key over SSH"
+        ]
+        self.assertEqual(user, void_base.LAB_ACCOUNT['name'])
         self.assertTrue(ok(f'{void_base.PERSON_UID}\n'))
         self.assertFalse(ok('0\n'))
         with patch('subprocess.run') as run:
-            void_base.ssh(command, user=void_base.LAB_ACCOUNT['name'])
+            void_base.ssh(command, user=user)
         self.assertIn('crowbar@127.0.0.1', run.call_args.args[0])
         self.assertNotIn('root@127.0.0.1', run.call_args.args[0])
+
+    def test_boot_checks_resolves_root_and_person_users_for_every_check(self):
+        resolved = void_base.boot_checks()
+        self.assertEqual(len(resolved), len(void_base.CHECKS))
+        users = {name: user for name, user, _, _ in resolved}
+        self.assertEqual(users['Void Linux'], 'root')
+        self.assertEqual(users["the person's account takes the build's key over SSH"],
+                         void_base.LAB_ACCOUNT['name'])
+        self.assertEqual(users['the person may reboot and power off from the terminal'],
+                         void_base.LAB_ACCOUNT['name'])
 
 
 class SystemLogCheck(unittest.TestCase):

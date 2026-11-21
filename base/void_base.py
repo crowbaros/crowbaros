@@ -639,6 +639,12 @@ CHECKS = [
 ]
 
 
+def boot_checks():
+    """Each check a booted Base must pass, as `(name, user, command, ok)`."""
+    return [(name, LAB_ACCOUNT["name"] if as_person else "root", command, ok)
+            for name, command, ok, *as_person in CHECKS]
+
+
 def check():
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True,
@@ -649,8 +655,8 @@ def check():
     lines = [f"CrowbarOS base boot check, {stamp}, commit {head}",
              f"disk sha256 {sha256(BASE_DISK)}", f"login prompt after {to_login:.1f}s", ""]
     failed = 0
-    for name, command, ok, *as_person in CHECKS:
-        result = ssh(command, user=LAB_ACCOUNT["name"] if as_person else "root")
+    for name, user, command, ok in boot_checks():
+        result = ssh(command, user=user)
         passed = result.returncode == 0 and ok(result.stdout)
         failed += not passed
         lines.append(f"{'PASS' if passed else 'FAIL'}: {name}")

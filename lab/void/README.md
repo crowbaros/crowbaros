@@ -1,7 +1,12 @@
 # Void Linux lab
 
-A Void Linux VM that runs the CrowbarOS compositor for its check, and the check
-of the desktop, which runs on [Base](../../base/README.md). Through the substrate vision this lab also ran
+The two graphical checks for CrowbarOS: the compositor check and the desktop
+check. Both build [Base](../../base/README.md)'s image with `base/void_base.py
+build --lab-account` and boot a fresh copy of it under UEFI in an isolated run
+directory. Base builds the only Void root and the only disk image; this lab
+keeps the checks and the code that drives a guest.
+
+Through the substrate vision this lab also ran
 [Milestone 1](../../docs/archive/substrate-vision/milestones/milestone-1.md)
 and the Warden's tests; those are at the
 [`substrate-final`](https://github.com/crowbaros/crowbaros/tree/substrate-final/lab/void)
@@ -9,106 +14,97 @@ tag.
 
 | Path | Contents |
 | --- | --- |
-| `compositor_guest.py`, `compositor_check.py` | Void builds, and the check of the [compositor](../../compositor/README.md) on a TTY |
-| `desktop_check.py` | The desktop check, on a fresh copy of Base's image, with retained diagnostics |
-| `void_lab.py` | What the checks share: the pinned static xbps and the package cache |
-| `config.json` | The pinned xbps build, the package lists, and the VM sizes |
-| `host/` | Rootless rootfs and disk-image scripts for the graphical guest (run inside `unshare -r`) |
+| `compositor_check.py` | The check of the [compositor](../../compositor/README.md) on a TTY in Base's image |
+| `desktop_check.py` | The desktop check and Base boot checks, on a fresh copy of Base's image, with retained diagnostics |
+| `guest.py` | What both checks share: isolated UEFI VM runs on a copy of Base's disk, QMP input/screendumps, VNC monitor hotplug, and SSH |
+| `test_*.py` | Unit tests for the guest driver and the checks |
 
 ```sh
-lab/void/compositor_guest.py check   # build, boot, run every check, record evidence
-lab/void/compositor_guest.py --help
+lab/void/compositor_check.py   # build Base, boot a copy, run every compositor check, record evidence
+lab/void/desktop_check.py      # build Base, boot a copy, run Base's boot checks and the desktop checks
 ```
 
-The scripts use only the Python standard library and need no sudo. Downloads go
-to `~/.cache/crowbaros/void`. Images, VM runtime files, and evidence logs go to
-`.lab/void-graphical/` in the repository root. All are outside git.
+The scripts use only the Python standard library and need no sudo. Base keeps
+downloads in `~/.cache/crowbaros/void` and its roots, Cargo target, and image
+in `.lab/base/`. Each check run gets its own directory under
+`.lab/void-compositor-checks/` or `.lab/void-desktop-checks/`, outside git,
+with its own grown copy of Base's disk, firmware variables, SSH port, and Unix
+VNC and QMP sockets. Neither check touches Base's own `.lab/base/disk.raw`.
+Both reach the guest with Base's SSH key, `.lab/base/id_ed25519`.
 
-## The graphical guest
+The host needs what [Base's README](../../base/README.md#what-the-host-needs)
+lists, QEMU's virtio-gpu device included. Avoid running two checks or a Base
+build at once: they share Base's build directory, `.lab/base/`, and both
+checks overwrite `.lab/base/base.raw` with the lab account. Build Base again
+before writing `.lab/base/base.raw` to a real disk.
 
-The graphical guest runs the CrowbarOS [compositor](../../compositor/README.md)
-on a virtual terminal, with seatd as the seat manager and no systemd.
+## The compositor check
+
+From the repository root:
 
 ```sh
-lab/void/compositor_guest.py check   # build, boot, run every check, record evidence
-lab/void/compositor_guest.py --help
+lab/void/compositor_check.py
 ```
 
-`check` builds and tests the compositor, Fulcrum, from `compositor/`
-([ADR 0031](../../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)) inside a Void build
-root, with Base's build script, so the binary links Void's own libraries. The evidence log names the
-commit, and says when the build had changes that were not committed. It then boots the guest and drives it from outside:
-keys and the pointer through QEMU, and a second monitor plugged into QEMU's
-second virtio-gpu connector. Every pull request that touches the compositor
-runs it ([ADR 0022](../../docs/archive/substrate-vision/adr/0022-the-compositor-is-built-beside-milestone-2.md)).
+`compositor_check.py` builds Base's image with `base/void_base.py build
+--lab-account` (which builds and tests Fulcrum from `compositor/`,
+[ADR 0031](../../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md),
+in Base's Void build root), boots a copy under UEFI, stops Base's boot-time
+desktop services, and starts Fulcrum directly on virtual terminal 2 with
+seatd, debug logging, and no systemd. The evidence log names the commit, and
+says when the build had changes that were not committed. It drives the guest
+from outside: keys and the pointer through QEMU, and a second monitor plugged
+into QEMU's second virtio-gpu connector. Every pull request that changes how
+the compositor serves clients runs it.
 
 The compositor has two kinds of client, and the check connects each the way
 it allows ([ADR 0032](../../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md)):
 
 - The compositor runs as `crowbar-compositor`, the only member of `_seatd`.
 - `crowbar-shell` connects to the shell's socket and its control channel.
-- `crowbar-app` stands in for the person, and runs every app at the apps'
-  socket.
+- The lab account (`crowbar`, UID 1003) runs every app at the apps' socket.
 
 It checks what the shell and an app are offered; that an app is refused
 layer shell, session lock, security contexts, the shell's socket, and the
 control channel; that only the person's user ID is served at the apps'
 socket, `/run/crowbar-apps/wayland-0`; that Void's own `foot` runs as an
-app; that a new window takes the keyboard; that a still
+app; that a new window takes the keyboard; that switching to the console and
+back while a second keyboard is unplugged keeps typing working; that a still
 desktop draws no frames; and a monitor plugged in while it runs. The
-[slice 1 record](../../docs/research/compositor-slice-1-2026-11-15.md) holds a
-run. The run of the [spike](https://github.com/crowbaros/crowbaros/tree/substrate-final/lab/compositor-spike) is in the
-[spike record](../../docs/research/compositor-spike-2026-11-15.md).
+[slice 1 record](../../docs/research/compositor-slice-1-2026-11-15.md) holds an
+earlier run. The run of the
+[spike](https://github.com/crowbaros/crowbaros/tree/substrate-final/lab/compositor-spike)
+is in the [spike record](../../docs/research/compositor-spike-2026-11-15.md).
 
-Four things to know:
-
-- `check` replaces the disk at `.lab/void-graphical/disk.raw`, and keeps the
-  one it replaces beside it.
-
-- The guest is a plain Void root booted straight from its kernel. It has no
-  generations.
-- QEMU needs its virtio-gpu device. Where the distribution packages it apart
-  (Arch: `qemu-hw-display-virtio-gpu-pci`), install it, or set
-  `QEMU_MODULE_DIR` to a directory that holds the modules.
-- The guest uses software rendering. Hardware GPU qualification is separate.
+The guest uses software rendering. Hardware GPU qualification is separate.
 
 ## The desktop check
 
 From the repository root:
 
 ```sh
-lab/void/compositor_guest.py desktop-check
+lab/void/desktop_check.py
 ```
 
-This builds Base's image with Base's own command, `base/void_base.py build
---lab-account`, which builds and tests the
-[compositor](../../compositor/README.md), the shell, and Studio Settings in
-Void, and gives the image the lab account even when you keep an account file.
-It overwrites Base's image, so build again before you put it on a disk. Base
-keeps its Void roots and Cargo target in `.lab/base/`, so a second run starts
-from them. The check then boots a copy of
-that image under UEFI, through the firmware and GRUB, as a person's machine
-would, exercises the desktop, and powers the guest off. Every run gets a new
-directory in `.lab/void-desktop-checks/`, with its own copy of the disk,
-firmware variables, SSH port, and Unix VNC and QMP sockets. It never touches
-Base's own disk, `.lab/base/disk.raw`, or the lab's,
-`.lab/void-graphical/disk.raw`. It reaches the guest with the SSH key Base's
-build made, `.lab/base/id_ed25519`.
-
-The host needs what [Base's README](../../base/README.md#what-the-host-needs)
-lists, QEMU's virtio-gpu device included. Avoid two builds at once: they share
-Base's build directory.
+`desktop_check.py` builds Base's image with `base/void_base.py build
+--lab-account`, boots a grown copy under UEFI through the firmware and GRUB as
+a person's machine would, runs every Base boot check from `base/void_base.py`
+(Void, the kernel, the Btrfs root growing to fill the disk, UEFI, runit,
+services, microcode, Wi-Fi, SSH, the person's account, the system's log,
+reboot/poweroff, the network, package groups, NVIDIA's module and command
+line, and kernel messages) and reports each in `desktop.log` and
+`results.json`, exercises the desktop, and powers the guest off.
 
 The check drives real QEMU keyboard/pointer events for unlock at boot (a
 wrong password, then the right one, with nothing typed first), launch, focus,
 workspaces, lock by Super+L and by the bar's button, Ctrl+Alt+Enter neither
 locking nor unlocking, the suspend hook's lock, Settings preview/Save/Undo, and
 relaunch. It checks saved appearance, and a file the person wrote in their
-home, after a clean reboot, service identities, linked libraries, binary hashes, render
-activity, and shell restart. It checks that apps run as the person at the
-ordinary socket for apps, that copy and paste, the primary selection, and drag
-and drop work between two apps, and that the shell's sockets, its control
-channel, and the unlock helper refuse an app. An error
+home, after a clean reboot, service identities, linked libraries, binary
+hashes, render activity, and shell restart. It checks that apps run as the
+person at the ordinary socket for apps, that copy and paste, the primary
+selection, and drag and drop work between two apps, and that the shell's
+sockets, its control channel, and the unlock helper refuse an app. An error
 returns nonzero and retains `desktop.log`, `results.json`, the build log,
 service/kernel diagnostics, screenshots, and the failed disk in that run's
 directory. The desktop's accounts and services are described in
