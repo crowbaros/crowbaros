@@ -124,7 +124,8 @@ if [ -n "$LAB_PACKAGES" ]; then
   mount --rbind /dev "$R/dev"
   # shellcheck disable=SC2086
   XBPS_ARCH=x86_64 "$XBPS/xbps-install.static" -y -r "$R" -c "$PKGCACHE" -R "$REPOS" $LAB_PACKAGES
-  umount -R "$R/dev"
+  # The host's mounts under /dev come locked to the bind, so they leave with it.
+  umount -l "$R/dev"
 fi
 
 # The boot menu, on the root.
