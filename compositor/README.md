@@ -73,8 +73,8 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   belongs to the compositor and never reaches a client: Super+1 to 9 show a
   workspace, and Super+Shift+1 to 9 move the window with the keyboard there.
   Super tapped alone sends the shell a `launcher` event on its control
-  channel. The launcher event, the `launching` request, and the snapshot's
-  `attention` are Fulcrum's proposal until a CrowbarOS record decides them.
+  channel. ADR 0032 accepts the launcher event, the `launching` request,
+  and the snapshot's `attention`.
 - **The shell's control channel**: a path socket of its own, checked against
   the shell's user ID, where the shell asks for a snapshot of the windows and
   shows a workspace or a window. One JSON object per line, as the spike
@@ -137,12 +137,11 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   monitor starts at 1.5 and a 1080p one at 1. A display that reports no
   size, or one that cannot be its own, starts at 1. The picked scale is not
   kept: only a scale the person sets is, and it wins.
-  The wire format is Fulcrum's proposal until CrowbarOS's display settings
-  take it up.
+  ADR 0032 accepts the wire format.
 - **Fractional scale**: a surface hears the scale it should draw at, in
   120ths: the largest scale of the outputs it is on, again whenever that
   changes.
-- **Lock** (ADR 0020, as ADR 0032 accepts it): the shell's `lock` request,
+- **Lock** (ADR 0032): the shell's `lock` request,
   Super+L, or `--lock-after` seconds without input lock the session, unless
   a shown surface inhibits idle. Locked, the shell's lock screen (its layer
   surface of namespace `crowbaros-lock`) is all that is drawn, every other
@@ -152,7 +151,7 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   person's password and says `unlock`. With one, the shell's `unlock` is
   refused, and `--start-locked` starts the session locked; without one, the
   shell's `unlock` ends it. The confirm chord, Ctrl+Alt+Enter, waits for the
-  vision's Milestone 3, the Agent at hand, to decide what it does. Until
+  vision's Milestone 3, the Agent at hand, to decide what it confirms. Until
   then it does nothing, and no client hears its Enter.
 - **Idle inhibit**: a surface that is shown, drawn on an output on the
   workspace the person is on, keeps that output from going idle. One that is
@@ -194,19 +193,20 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 - **A headless backend** that draws each output with the CPU renderer, and
   `crowbar-probe`, the test client, on `fulcrum-wire`'s client side.
 
-The later milestones stand as far as CrowbarOS's records decide, and no run on real hardware has been made yet:
+The later milestones, as [the plan](docs/PLAN.md) sets them. No hardware
+record has been made yet:
 
 | Milestone | Where it stands |
 | --- | --- |
-| 3 · Buffers and timing | Built, but not yet run on real GPUs |
-| 4 · Trusted shell session | The control channel, and the confirm chord, which does nothing until the vision's Milestone 3, the Agent at hand, decides on it. Asks, arming, and the restart notice waited on the broker, and are dropped (ADR 0032) |
+| 3 · Buffers and timing | Built. The runs on the test machine's RTX 5060 and on a Mesa machine are next ([how](docs/hardware-runs.md)) |
+| 4 · The shell's channel | Built: the control channel, the launcher's key, and the confirm chord, which does nothing until the vision's Milestone 3 decides what it confirms |
 | 5 · Working window manager | Built |
-| 6 · Clipboard and capture | Copy and paste, the primary selection, and drag and drop between the shell and every app. Capture waits for a record |
-| 7 · Displays, input, and hardware | Scale, the layout of displays, and hotplug. Input devices' settings wait for a record; suspend and mixed scale wait for the hardware runs |
-| 8 · Lock and recovery | Lock, the idle timer, starting locked, and unlock by the person's password through Base's helper, as a proposal. The broker's record of each unlock is dropped (ADR 0032) |
-| 9 · CrowbarOS cutover | The Alpha desktop, its GPUI shell and Studio Settings, runs on Fulcrum. The production interfaces wait for the records above |
+| 6 · Clipboard and drag and drop | Built: copy and paste, the primary selection, and drag and drop between the shell and every app. Capture waits for a record |
+| 7 · Displays, input, and hardware | Scale, the layout of displays, a readable scale by default, and hotplug. Input devices' settings wait for a record; suspend and mixed scale wait for the hardware runs |
+| 8 · Lock and recovery | Built: the desktop starts locked, the person's password unlocks it through Base's helper, and a compositor restart comes back locked. Locked across suspend waits for the hardware runs |
+| 9 · CrowbarOS cutover | Done: CrowbarOS's desktop runs on Fulcrum, built into Base's image |
 
-Several messages and flags are Fulcrum's proposals, built and checked, until CrowbarOS records decide them. [The plan](docs/PLAN.md) lists them, what each milestone has, and what is next. [Picking up the work](docs/picking-up.md) says where the work paused, how to run everything, and how to start each next piece.
+[The plan](docs/PLAN.md) says what each milestone has, the records that decide Fulcrum, and what is next. [Picking up the work](docs/picking-up.md) says where the work paused, how to run everything, and how to start each next piece.
 
 The compositor Milestone 0 brought here, the baseline, is at commit
 `d11400f`. Fulcrum passed the baseline's 57 tests and the Void guest's checks,

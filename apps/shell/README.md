@@ -20,43 +20,61 @@ The sources are not rustfmt-clean, and CI runs `cargo test` only. Do not run
 `cargo fmt` here: it reformats files a change does not touch.
 
 GPUI 0.2.2 uses the existing verified [layer-shell backport](patches/README.md).
-Use the [full desktop smoke command](../../lab/void/README.md#the-desktop-check)
-to build Base's image and run the separate runit services on a copy of it. The Alpha shell
-service connects to the compositor's UID-checked private Wayland and control
-sockets. The guide also describes a nested, same-user rendering experiment;
-that experiment does not exercise the Alpha launch or identity rules.
+The [desktop check](../../lab/void/README.md#the-desktop-check) builds Base's
+image and runs the shell as Base runs it, on a copy of that image. On Base the
+shell runs as its own service account, `crowbar-shell`, and connects to the
+compositor's shell socket and control channel, which take the shell's user ID
+alone ([ADR 0032](../../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md)).
+The [development guide](../../docs/development/local-vms.md) also describes a
+nested, same-user rendering experiment, which runs no launcher service and has
+no separate accounts.
 
 The [Void NVIDIA record](../../docs/research/compositor-nvidia-2026-11-15.md)
 shows rendering, resize, and suspend/resume for the tested setup. The earlier
 [shell validation](../../docs/development/shell-validation-2026-11-14.md) remains
 historical behavior evidence, not a current Fedora workflow.
 
-## Current behavior and limits
+## How it behaves on the desktop
 
 - The bar and dock reserve 24 and 48 pixels through Wayland layer surfaces.
+  Only the shell is offered layer shell, so no app can draw the bar, the dock,
+  the launcher, the wallpaper, or the lock screen.
 - Applications search supports keyboard navigation; closing the launcher returns focus.
-- Workspace and window focus requests use the CrowbarOS control channel when supplied.
-- On that channel, Super tapped alone toggles the launcher, an app the shell launches takes the keyboard with its first window, and the bar and dock mark a window that wants attention. While the compositor has the session locked, the shell shows its lock screen; the bar's lock button locks it. Where `CROWBAR_UNLOCK_SOCKET` names an unlock helper, as in the Alpha session, the lock screen takes the person's password at once and sends it to the helper, which checks it and tells the compositor to unlock; a wrong one shows "Wrong password". Without one, its Unlock button or Enter asks the compositor to unlock. These messages, and the helper, are Fulcrum's proposal until a decision record settles them.
-- Saved Settings themes are read by the shell; it does not theme third-party apps.
+- Workspace and window focus requests go over the compositor's control channel.
+- Super tapped alone toggles the launcher, an app the shell launches takes the
+  keyboard with its first window, and the bar and dock mark a window that
+  wants attention.
+- The desktop starts locked. While the compositor has it locked, the shell
+  shows its lock screen, and the bar's lock button and Super+L lock it. The
+  lock screen takes the person's password at once and sends it to Base's
+  unlock helper (`CROWBAR_UNLOCK_SOCKET`), which checks it and tells the
+  compositor to unlock; a wrong one shows "Wrong password" after a pause.
+  Without a helper, as in the nested experiment, its Unlock button or Enter
+  asks the compositor to unlock.
+- The shell asks Base's launcher service to start an app, and the launcher
+  starts it as the person's account. The shell reads the person's saved
+  appearance through a read-only request to the launcher, and follows the
+  theme they saved; it does not theme other apps.
+- The shell lends Studio Settings the display layout through a bounded socket
+  of its own (`CROWBAR_DISPLAY_SOCKET`), which takes only the person's and
+  the shell's user IDs and passes on only `outputs` and `configure_output`.
 - Desktop-entry discovery honors XDG precedence, visibility, locale, and executable availability. Search text is never executed as a command.
+- The compositor and the shell restart independently under runit. A shell
+  restart keeps the person's windows open; a compositor restart comes back
+  locked.
 
-On Base, the shell asks the launcher service to start an app, and the
-launcher starts it as the person's account. The shell reads the person's saved
-appearance through a read-only request to the launcher. The compositor and
-shell restart independently under runit.
+These messages, the lock screen's namespace, and the unlock helper's socket
+are accepted in ADR 0032. Desktop shortcuts and window-layout behavior come
+from the compositor.
 
-`src/session.rs` retains Hyprland, `systemd-run`, and `systemctl` fallback paths.
-They are not used by the Alpha services; do not use `--start-session` as a Void
-startup command. Replacing these adapters and the spike IPC is
-[#71](https://github.com/crowbaros/crowbaros/issues/71). Their old service and Lua
-hook are archived and are not installed.
+`src/session.rs` retains Hyprland, `systemd-run`, and `systemctl` fallback
+paths from before Void. Base's services do not use them; do not use
+`--start-session` as a Void startup command. Their old service and Lua hook
+are archived and are not installed.
 
-The [full Void acceptance record](../../docs/development/void-desktop-smoke-2026-11-15.md)
-covers the desktop as it was then. Display policy, accessibility and input
-methods, and crash recovery are not established yet. The lock's root helper
-checks the person's password and tells the compositor to unlock. Desktop
-shortcuts and window-layout
-behavior come from the compositor, not the archived Hyprland configuration.
+The [desktop acceptance record](../../docs/development/void-desktop-smoke-2026-11-15.md)
+covers the desktop as it was on that date. Accessibility and input methods are
+not established yet.
 
 ## Licensing
 

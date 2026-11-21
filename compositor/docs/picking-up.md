@@ -4,30 +4,21 @@ Where the buildout paused, how to run everything, what trips people up, and how 
 
 ## Where it paused
 
-Fulcrum came back to CrowbarOS's `compositor/` on November 18, 2026 ([ADR 0031](../../docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)). It has two kinds of client, the shell and the person's apps ([ADR 0032](../../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md)), each at a socket of its own that takes one user ID. Copy and paste, the primary selection, and drag and drop work between the shell and every app, and a new window takes the keyboard, as on any desktop. The probe's `copy`, `paste`, `drag`, and `drop` apps let CrowbarOS's desktop check show it.
+Fulcrum runs CrowbarOS's desktop on Base's image. It has two kinds of client, the shell and the person's apps ([ADR 0032](../../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md)), each at a socket of its own that takes one user ID. Copy and paste, the primary selection, and drag and drop work between the shell and every app, and a new window takes the keyboard, as on any desktop. The desktop starts locked, the person's password unlocks it through Base's helper, and a compositor restart comes back locked. CrowbarOS's desktop check shows each of these on a copy of Base's image, booted under UEFI.
 
-- **Built:**
-  - Milestones 1, 2, and 5;
-  - Milestone 3, though not yet run on real GPUs;
-  - the parts of Milestones 4, 6, 7, and 8 that CrowbarOS's records decide.
-- **Built as proposals:** each passes CrowbarOS's checks and waits for a decision record ([the list](PLAN.md#decisions-this-needs-in-crowbaros)).
-- **Waiting on CrowbarOS:**
-  - records on capture by the shell and on input devices' settings;
-  - records on the proposals.
-- **Waiting on hardware:** the RTX 4090, Intel, and Surface runs ([how](hardware-runs.md)).
+- **Built:** Milestones 1 to 6, 8, and 9, and Milestone 7 but for input devices' settings. Milestones 3, 7, and 8 have not yet been run on a real GPU.
+- **Waiting on CrowbarOS's records:** capture by the shell, input devices' settings, and what Fulcrum offers the Agent ([crowbaros#239](https://github.com/crowbaros/crowbaros/issues/239)).
+- **Waiting on hardware:** the runs on the test machine's RTX 5060 ([crowbaros#227](https://github.com/crowbaros/crowbaros/issues/227)) and on Jason Alexander's Mesa machine ([crowbaros#228](https://github.com/crowbaros/crowbaros/issues/228)).
 
 ## Next, without a new record
 
-### A compositor restart, in CrowbarOS's desktop check
+### The hardware runs
 
-Milestone 8's exit check restarts the compositor during a session. The session must come back locked before an app gets input. Base starts Fulcrum with `--start-locked`, so this should already hold. What is missing is the check.
+Base's image boots a real machine from a USB disk, and the desktop runs there as it does in the VM. What is missing is a run on each machine, with a dated record.
 
-- In CrowbarOS's `lab/void/desktop_check.py`, after the shell restart check:
-  1. Run `sv restart crowbar-compositor`.
-  2. Wait for the shell to come back. It loses its Wayland connection, exits, and runit starts it again.
-  3. Check that the session is locked and the lock screen shows.
-  4. Unlock with `self.unlock()`.
-- Apps lose their connection too, and close, so relaunch any the later checks need.
+1. Build the image with your own account file, write it to a disk, and boot the machine, as [Base on a real machine](../../base/HARDWARE.md) says.
+2. Run each row of [Running Fulcrum on real hardware](hardware-runs.md), and read the compositor's log over SSH.
+3. Write the dated record the guide asks for, with the log beside it. A row that fails opens an issue.
 
 ## Running everything
 
@@ -46,7 +37,7 @@ Milestone 8's exit check restarts the compositor during a session. The session m
 
 ## Things that trip people up
 
-- **The proposals span the compositor, the shell, and the lab:**
+- **The messages ADR 0032 accepted span the compositor, the shell, and Base:**
   - in `compositor/`, the shell's messages are in `src/control.rs`, lock and the unlock authority in `src/lock.rs`, and the layout of displays in `src/layout.rs` and `src/output.rs`;
   - the shell's half is in `apps/shell/src/session.rs` and `main.rs` (`LockScreen`);
   - Base's half is the unlock helper, `base/helpers/src/unlock.rs`, and in `base/desktop/`: `unlock-run`, `zzz-lock`, `compositor-run`, and `shell-run`, with the account set up in `base/host/image.sh`.

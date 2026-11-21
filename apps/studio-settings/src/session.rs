@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn only_crowbaros_desktop_has_no_animations() {
         assert!(is_crowbaros(Some("crowbaros")));
-        assert!(!is_crowbaros(Some("alpha-no-animations")));
+        assert!(!is_crowbaros(Some("hyprland")));
         assert!(!is_crowbaros(Some("")));
         assert!(!is_crowbaros(None));
     }

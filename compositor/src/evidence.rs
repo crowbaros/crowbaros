@@ -3,8 +3,8 @@
 //!
 //! The line is written after a frame is drawn, and at most every
 //! [`EVERY`], so a still desktop writes nothing and no timer wakes the
-//! compositor for it. CrowbarOS's Alpha desktop check reads it, as it read
-//! the spike's:
+//! compositor for it. CrowbarOS's desktop check reads it, as it read the
+//! spike's:
 //!
 //! ```text
 //! commits so far: layer crowbaros-bar: 3, window 0x7 foot: 12 frames=41

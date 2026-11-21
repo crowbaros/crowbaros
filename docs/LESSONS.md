@@ -78,8 +78,8 @@ record in the archive, with the attacks it was built against.
   [NVIDIA record](research/compositor-nvidia-2026-11-15.md))
 - **GPUI works for the shell** with a layer-shell backport, which
   `apps/shell/packaging/prepare-gpui.py` applies to the pinned crate.
-- **Separate service users work.** The Alpha desktop runs the compositor, the
-  shell, and apps as separate users under runit, and passed 37 checks.
+- **Separate service users work.** The desktop ran the compositor, the shell,
+  and apps as separate users under runit, and passed 37 checks.
   ([record](development/void-desktop-smoke-2026-11-15.md))
 
 ## Labs and evidence

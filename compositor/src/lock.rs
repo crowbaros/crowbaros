@@ -1,4 +1,4 @@
-//! Lock (ADR 0020): a state of the compositor, in which it shows the shell's
+//! Lock (ADR 0032): a state of the compositor, in which it shows the shell's
 //! lock screen and nothing else.
 //!
 //! The shell's request, the idle timer, and Super+L each lock the session.
@@ -11,16 +11,13 @@
 //! alone: nothing else can be under the pointer or have the keyboard, and no
 //! chord of the compositor's acts.
 //!
-//! ADR 0020 has the broker end it, when the person has authenticated, and
-//! the compositor start locked. The broker is archived with CrowbarOS's
-//! substrate vision. Until a record says what replaces it, an unlock
-//! authority stands in: a privileged part of Base, at a socket and user ID
-//! of its own (`--unlock-socket`, `--unlock-uid`), that checks the person's
-//! proof and says `unlock`. Once there is one, the shell's word is not
-//! enough, and the compositor can start locked (`--start-locked`). Without
-//! one, the shell's request ends it, and the compositor starts unlocked. These, the lock
-//! screen's namespace, and the `lock` and `unlock` messages are Fulcrum's
-//! proposal (see `control.rs`).
+//! An unlock authority ends it: a privileged part of Base, at a socket and
+//! user ID of its own (`--unlock-socket`, `--unlock-uid`), that checks the
+//! person's password and says `unlock`. Once there is one, the shell's word
+//! is not enough, and the compositor can start locked (`--start-locked`).
+//! Without one, the shell's request ends it, and the compositor starts
+//! unlocked. ADR 0032 accepts these, the lock screen's namespace, and the
+//! `lock` and `unlock` messages (see `control.rs`).
 
 use std::time::{Duration, Instant};
 
@@ -83,8 +80,8 @@ impl State {
         self.queue_redraw_all();
     }
 
-    /// Unlocks the session, as the shell asks in the broker's place. The
-    /// window that had the keyboard has it back.
+    /// Unlocks the session, as the unlock authority, or the shell where there
+    /// is none, asks. The window that had the keyboard has it back.
     pub fn unlock(&mut self) {
         if !self.lock.locked {
             return;
