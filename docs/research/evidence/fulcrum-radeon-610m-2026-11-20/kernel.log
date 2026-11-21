@@ -1,0 +1,297 @@
+2026-11-21T04:48:41.49970 kern.notice: [    0.000000] Linux version 6.18.64_1 (voidlinux@voidlinux) (gcc (GCC) 14.2.1 20250405, GNU ld (GNU Binutils) 2.44) #1 SMP PREEMPT_DYNAMIC Tue Nov 17 22:22:11 UTC 2026
+2026-11-21T04:48:41.50476 kern.info: [    0.000000] Command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+2026-11-21T04:48:41.50724 kern.notice: [    0.019170] Kernel command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+2026-11-21T04:48:41.51643 kern.info: [    3.346974] amdgpu: vga_switcheroo: detected switching method \_SB_.PCI0.GP17.VGA_.ATPX handle
+2026-11-21T04:48:41.51644 kern.notice: [    3.347085] amdgpu: ATPX version 1, functions 0x00000000
+2026-11-21T04:48:41.51645 kern.info: [    3.353995] amdgpu: Virtual CRAT table created for CPU
+2026-11-21T04:48:41.51646 kern.info: [    3.354023] amdgpu: Topology: Add CPU node
+2026-11-21T04:48:41.51647 kern.info: [    3.354121] amdgpu 0000:0b:00.0: enabling device (0006 -> 0007)
+2026-11-21T04:48:41.51648 kern.info: [    3.354158] amdgpu 0000:0b:00.0: amdgpu: initializing kernel modesetting (IP DISCOVERY 0x1002:0x164E 0x1043:0x8877 0xCB).
+2026-11-21T04:48:41.51650 kern.info: [    3.354166] amdgpu 0000:0b:00.0: amdgpu: register mmio base: 0xDC500000
+2026-11-21T04:48:41.51651 kern.info: [    3.354168] amdgpu 0000:0b:00.0: amdgpu: register mmio size: 524288
+2026-11-21T04:48:41.51652 kern.info: [    3.355882] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 0 <common_v1_0_0> (nv_common)
+2026-11-21T04:48:41.51652 kern.info: [    3.355885] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 1 <gmc_v10_0_0> (gmc_v10_0)
+2026-11-21T04:48:41.51654 kern.info: [    3.355888] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 2 <ih_v5_0_0> (navi10_ih)
+2026-11-21T04:48:41.51655 kern.info: [    3.355889] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 3 <psp_v13_0_0> (psp)
+2026-11-21T04:48:41.51655 kern.info: [    3.355891] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 4 <smu_v13_0_0> (smu)
+2026-11-21T04:48:41.51656 kern.info: [    3.355893] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 5 <dce_v1_0_0> (dm)
+2026-11-21T04:48:41.51657 kern.info: [    3.355894] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 6 <gfx_v10_0_0> (gfx_v10_0)
+2026-11-21T04:48:41.51658 kern.info: [    3.355896] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 7 <sdma_v5_2_0> (sdma_v5_2)
+2026-11-21T04:48:41.51659 kern.info: [    3.355898] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 8 <vcn_v3_0_0> (vcn_v3_0)
+2026-11-21T04:48:41.51660 kern.info: [    3.355899] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 9 <jpeg_v3_0_0> (jpeg_v3_0)
+2026-11-21T04:48:41.51661 kern.info: [    3.355914] amdgpu 0000:0b:00.0: amdgpu: Fetched VBIOS from VFCT
+2026-11-21T04:48:41.51662 kern.info: [    3.355916] amdgpu: ATOM BIOS: 102-RAPHAEL-008
+2026-11-21T04:48:41.51663 kern.info: [    3.358875] amdgpu 0000:0b:00.0: vgaarb: deactivate vga console
+2026-11-21T04:48:41.51664 kern.info: [    3.358878] amdgpu 0000:0b:00.0: amdgpu: Trusted Memory Zone (TMZ) feature disabled as experimental (default)
+2026-11-21T04:48:41.51664 kern.info: [    3.358901] amdgpu 0000:0b:00.0: amdgpu: vm size is 262144 GB, 4 levels, block size is 9-bit, fragment size is 9-bit
+2026-11-21T04:48:41.51665 kern.info: [    3.358905] amdgpu 0000:0b:00.0: amdgpu: VRAM: 512M 0x000000F400000000 - 0x000000F41FFFFFFF (512M used)
+2026-11-21T04:48:41.51666 kern.info: [    3.358907] amdgpu 0000:0b:00.0: amdgpu: GART: 1024M 0x0000000000000000 - 0x000000003FFFFFFF
+2026-11-21T04:48:41.51667 kern.info: [    3.358912] [drm] Detected VRAM RAM=512M, BAR=512M
+2026-11-21T04:48:41.51668 kern.info: [    3.358913] [drm] RAM width 64bits DDR5
+2026-11-21T04:48:41.51669 kern.info: [    3.359004] amdgpu 0000:0b:00.0: amdgpu: amdgpu: 512M of VRAM memory ready
+2026-11-21T04:48:41.51670 kern.info: [    3.359006] amdgpu 0000:0b:00.0: amdgpu: amdgpu: 7573M of GTT memory ready.
+2026-11-21T04:48:41.51671 kern.info: [    3.359018] [drm] GART: num cpu pages 262144, num gpu pages 262144
+2026-11-21T04:48:41.51672 kern.info: [    3.359201] [drm] PCIE GART of 1024M enabled (table at 0x000000F41FC00000).
+2026-11-21T04:48:41.51673 kern.info: [    3.359469] amdgpu 0000:0b:00.0: amdgpu: [drm] Loading DMUB firmware via PSP: version=0x05003300
+2026-11-21T04:48:41.51674 kern.info: [    3.359755] [drm] use_doorbell being set to: [true]
+2026-11-21T04:48:41.51675 kern.info: [    3.359771] amdgpu 0000:0b:00.0: amdgpu: [VCN instance 0] Found VCN firmware Version ENC: 1.33 DEC: 4 VEP: 0 Revision: 21
+2026-11-21T04:48:41.51677 kern.info: [    3.381880] amdgpu 0000:0b:00.0: amdgpu: reserve 0xa00000 from 0xf41e000000 for PSP TMR
+2026-11-21T04:48:41.51678 kern.info: [    3.449183] amdgpu 0000:0b:00.0: amdgpu: RAS: optional ras ta ucode is not available
+2026-11-21T04:48:41.51679 kern.info: [    3.454863] amdgpu 0000:0b:00.0: amdgpu: RAP: optional rap ta ucode is not available
+2026-11-21T04:48:41.51680 kern.info: [    3.454865] amdgpu 0000:0b:00.0: amdgpu: SECUREDISPLAY: optional securedisplay ta ucode is not available
+2026-11-21T04:48:41.51681 kern.info: [    3.456488] amdgpu 0000:0b:00.0: amdgpu: SMU is initialized successfully!
+2026-11-21T04:48:41.51682 kern.info: [    3.456789] amdgpu 0000:0b:00.0: amdgpu: [drm] Display Core v3.2.351 initialized on DCN 3.1.5
+2026-11-21T04:48:41.51683 kern.info: [    3.456792] amdgpu 0000:0b:00.0: amdgpu: [drm] DP-HDMI FRL PCON supported
+2026-11-21T04:48:41.51684 kern.info: [    3.457448] amdgpu 0000:0b:00.0: amdgpu: [drm] DMUB hardware initialized: version=0x05003300
+2026-11-21T04:48:41.51685 kern.info: [    3.484928] amdgpu 0000:0b:00.0: amdgpu: [drm] HDMI-A-1: PSR support 0, DC PSR ver -1, sink PSR ver 0 DPCD caps 0x0 su_y_granularity 0
+2026-11-21T04:48:41.51686 kern.info: [    3.484968] amdgpu 0000:0b:00.0: amdgpu: [drm] DP-1: PSR support 0, DC PSR ver -1, sink PSR ver 0 DPCD caps 0x0 su_y_granularity 0
+2026-11-21T04:48:41.51686 kern.info: [    3.485332] amdgpu 0000:0b:00.0: amdgpu: kiq ring mec 2 pipe 1 q 0
+2026-11-21T04:48:41.51687 kern.info: [    3.488113] kfd kfd: amdgpu: Allocated 3969056 bytes on gart
+2026-11-21T04:48:41.51688 kern.info: [    3.488120] kfd kfd: amdgpu: Total number of KFD nodes to be created: 1
+2026-11-21T04:48:41.51689 kern.info: [    3.488561] amdgpu: Virtual CRAT table created for GPU
+2026-11-21T04:48:41.51690 kern.info: [    3.488669] amdgpu: Topology: Add dGPU node [0x164e:0x1002]
+2026-11-21T04:48:41.51691 kern.info: [    3.488671] kfd kfd: amdgpu: added device 1002:164e
+2026-11-21T04:48:41.51692 kern.info: [    3.488679] amdgpu 0000:0b:00.0: amdgpu: SE 1, SH per SE 1, CU per SH 2, active_cu_number 2
+2026-11-21T04:48:41.51693 kern.info: [    3.488682] amdgpu 0000:0b:00.0: amdgpu: ring gfx_0.0.0 uses VM inv eng 0 on hub 0
+2026-11-21T04:48:41.51693 kern.info: [    3.488684] amdgpu 0000:0b:00.0: amdgpu: ring gfx_0.1.0 uses VM inv eng 1 on hub 0
+2026-11-21T04:48:41.51694 kern.info: [    3.488685] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.0.0 uses VM inv eng 4 on hub 0
+2026-11-21T04:48:41.51695 kern.info: [    3.488686] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.1.0 uses VM inv eng 5 on hub 0
+2026-11-21T04:48:41.51696 kern.info: [    3.488688] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.2.0 uses VM inv eng 6 on hub 0
+2026-11-21T04:48:41.51697 kern.info: [    3.488689] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.3.0 uses VM inv eng 7 on hub 0
+2026-11-21T04:48:41.51698 kern.info: [    3.488691] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.0.1 uses VM inv eng 8 on hub 0
+2026-11-21T04:48:41.51699 kern.info: [    3.488692] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.1.1 uses VM inv eng 9 on hub 0
+2026-11-21T04:48:41.51700 kern.info: [    3.488693] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.2.1 uses VM inv eng 10 on hub 0
+2026-11-21T04:48:41.51701 kern.info: [    3.488695] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.3.1 uses VM inv eng 11 on hub 0
+2026-11-21T04:48:41.51702 kern.info: [    3.488696] amdgpu 0000:0b:00.0: amdgpu: ring kiq_0.2.1.0 uses VM inv eng 12 on hub 0
+2026-11-21T04:48:41.51703 kern.info: [    3.488698] amdgpu 0000:0b:00.0: amdgpu: ring sdma0 uses VM inv eng 13 on hub 0
+2026-11-21T04:48:41.51704 kern.info: [    3.488699] amdgpu 0000:0b:00.0: amdgpu: ring vcn_dec_0 uses VM inv eng 0 on hub 8
+2026-11-21T04:48:41.51705 kern.info: [    3.488700] amdgpu 0000:0b:00.0: amdgpu: ring vcn_enc_0.0 uses VM inv eng 1 on hub 8
+2026-11-21T04:48:41.51706 kern.info: [    3.488702] amdgpu 0000:0b:00.0: amdgpu: ring vcn_enc_0.1 uses VM inv eng 4 on hub 8
+2026-11-21T04:48:41.51707 kern.info: [    3.488703] amdgpu 0000:0b:00.0: amdgpu: ring jpeg_dec uses VM inv eng 5 on hub 8
+2026-11-21T04:48:41.51708 kern.info: [    3.488942] amdgpu 0000:0b:00.0: amdgpu: Runtime PM not available
+2026-11-21T04:48:41.51709 kern.info: [    3.489211] [drm] Initialized amdgpu 3.64.0 for 0000:0b:00.0 on minor 0
+2026-11-21T04:48:41.51710 kern.info: [    3.497297] fbcon: amdgpudrmfb (fb0) is primary device
+2026-11-21T04:48:41.51712 kern.info: [    3.497301] amdgpu 0000:0b:00.0: [drm] fb0: amdgpudrmfb frame buffer device
+2026-11-21T04:48:41.51745 kern.warn: [    3.827774] nvidia: loading out-of-tree module taints kernel.
+2026-11-21T04:48:41.51745 kern.notice: [    3.827782] nvidia: module verification failed: signature and/or required key missing - tainting kernel
+2026-11-21T04:48:41.51759 kern.info: [    3.928146] nvidia-nvlink: Nvlink Core is being initialized, major device number 509
+2026-11-21T04:48:41.51764 kern.info: [    3.933968] [drm] pre_validate_dsc:1667 MST_DSC dsc precompute is not needed
+2026-11-21T04:48:41.51765 kern.info: [    3.935584] nvidia 0000:01:00.0: enabling device (0002 -> 0003)
+2026-11-21T04:48:41.51766 kern.info: [    3.935763] nvidia 0000:01:00.0: vgaarb: VGA decodes changed: olddecodes=io+mem,decodes=none:owns=none
+2026-11-21T04:48:41.51767 kern.warn: [    3.947449] NVRM: loading NVIDIA UNIX Open Kernel Module for x86_64  595.112.07  Release Build  (dvs-builder@U22-I3-AL23-31-2)  Tue Oct 20 09:16:38 UTC 2026
+2026-11-21T04:48:41.51789 kern.info: [    4.000534] snd_hda_intel 0000:0b:00.1: bound 0000:0b:00.0 (ops amdgpu_dm_audio_component_bind_ops [amdgpu])
+2026-11-21T04:48:41.51791 kern.info: [    4.007596] nvidia-modeset: Loading NVIDIA UNIX Open Kernel Mode Setting Driver for x86_64  595.112.07  Release Build  (dvs-builder@U22-I3-AL23-31-2)  Tue Oct 20 08:54:59 UTC 2026
+2026-11-21T04:48:41.51800 kern.info: [    4.012414] [drm] [nvidia-drm] [GPU ID 0x00000100] Loading driver
+2026-11-21T04:48:41.51814 kern.warn: [    4.114128] amdgpu 0000:0b:00.0: [drm] REG_WAIT timeout 1us * 100000 tries - optc31_disable_crtc line:145
+2026-11-21T04:48:41.51827 kern.info: [    5.521470] [drm] Initialized nvidia-drm 0.0.0 for 0000:01:00.0 on minor 1
+2026-11-21T04:48:41.51828 kern.info: [    5.522598] nvidia 0000:01:00.0: [drm] Cannot find any crtc or sizes
+2026-11-21T04:51:20.42723 kern.notice: [    0.000000] Linux version 6.18.64_1 (voidlinux@voidlinux) (gcc (GCC) 14.2.1 20250405, GNU ld (GNU Binutils) 2.44) #1 SMP PREEMPT_DYNAMIC Tue Nov 17 22:22:11 UTC 2026
+2026-11-21T04:51:20.42842 kern.info: [    0.000000] Command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+2026-11-21T04:51:20.43350 kern.notice: [    0.019086] Kernel command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+2026-11-21T04:51:20.44191 kern.info: [    3.246254] amdgpu: vga_switcheroo: detected switching method \_SB_.PCI0.GP17.VGA_.ATPX handle
+2026-11-21T04:51:20.44192 kern.notice: [    3.246368] amdgpu: ATPX version 1, functions 0x00000000
+2026-11-21T04:51:20.44193 kern.info: [    3.253259] amdgpu: Virtual CRAT table created for CPU
+2026-11-21T04:51:20.44194 kern.info: [    3.253275] amdgpu: Topology: Add CPU node
+2026-11-21T04:51:20.44194 kern.info: [    3.253367] amdgpu 0000:0b:00.0: enabling device (0006 -> 0007)
+2026-11-21T04:51:20.44195 kern.info: [    3.253399] amdgpu 0000:0b:00.0: amdgpu: initializing kernel modesetting (IP DISCOVERY 0x1002:0x164E 0x1043:0x8877 0xCB).
+2026-11-21T04:51:20.44196 kern.info: [    3.253407] amdgpu 0000:0b:00.0: amdgpu: register mmio base: 0xDC500000
+2026-11-21T04:51:20.44197 kern.info: [    3.253409] amdgpu 0000:0b:00.0: amdgpu: register mmio size: 524288
+2026-11-21T04:51:20.44198 kern.info: [    3.255055] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 0 <common_v1_0_0> (nv_common)
+2026-11-21T04:51:20.44199 kern.info: [    3.255057] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 1 <gmc_v10_0_0> (gmc_v10_0)
+2026-11-21T04:51:20.44200 kern.info: [    3.255059] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 2 <ih_v5_0_0> (navi10_ih)
+2026-11-21T04:51:20.44201 kern.info: [    3.255061] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 3 <psp_v13_0_0> (psp)
+2026-11-21T04:51:20.44202 kern.info: [    3.255062] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 4 <smu_v13_0_0> (smu)
+2026-11-21T04:51:20.44203 kern.info: [    3.255064] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 5 <dce_v1_0_0> (dm)
+2026-11-21T04:51:20.44203 kern.info: [    3.255066] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 6 <gfx_v10_0_0> (gfx_v10_0)
+2026-11-21T04:51:20.44204 kern.info: [    3.255067] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 7 <sdma_v5_2_0> (sdma_v5_2)
+2026-11-21T04:51:20.44206 kern.info: [    3.255069] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 8 <vcn_v3_0_0> (vcn_v3_0)
+2026-11-21T04:51:20.44207 kern.info: [    3.255071] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 9 <jpeg_v3_0_0> (jpeg_v3_0)
+2026-11-21T04:51:20.44208 kern.info: [    3.255086] amdgpu 0000:0b:00.0: amdgpu: Fetched VBIOS from VFCT
+2026-11-21T04:51:20.44209 kern.info: [    3.255088] amdgpu: ATOM BIOS: 102-RAPHAEL-008
+2026-11-21T04:51:20.44210 kern.info: [    3.258041] amdgpu 0000:0b:00.0: vgaarb: deactivate vga console
+2026-11-21T04:51:20.44210 kern.info: [    3.258044] amdgpu 0000:0b:00.0: amdgpu: Trusted Memory Zone (TMZ) feature disabled as experimental (default)
+2026-11-21T04:51:20.44211 kern.info: [    3.258066] amdgpu 0000:0b:00.0: amdgpu: vm size is 262144 GB, 4 levels, block size is 9-bit, fragment size is 9-bit
+2026-11-21T04:51:20.44212 kern.info: [    3.258070] amdgpu 0000:0b:00.0: amdgpu: VRAM: 512M 0x000000F400000000 - 0x000000F41FFFFFFF (512M used)
+2026-11-21T04:51:20.44213 kern.info: [    3.258073] amdgpu 0000:0b:00.0: amdgpu: GART: 1024M 0x0000000000000000 - 0x000000003FFFFFFF
+2026-11-21T04:51:20.44214 kern.info: [    3.258078] [drm] Detected VRAM RAM=512M, BAR=512M
+2026-11-21T04:51:20.44215 kern.info: [    3.258079] [drm] RAM width 64bits DDR5
+2026-11-21T04:51:20.44216 kern.info: [    3.258136] amdgpu 0000:0b:00.0: amdgpu: amdgpu: 512M of VRAM memory ready
+2026-11-21T04:51:20.44216 kern.info: [    3.258138] amdgpu 0000:0b:00.0: amdgpu: amdgpu: 7573M of GTT memory ready.
+2026-11-21T04:51:20.44218 kern.info: [    3.258150] [drm] GART: num cpu pages 262144, num gpu pages 262144
+2026-11-21T04:51:20.44219 kern.info: [    3.258321] [drm] PCIE GART of 1024M enabled (table at 0x000000F41FC00000).
+2026-11-21T04:51:20.44220 kern.info: [    3.258596] amdgpu 0000:0b:00.0: amdgpu: [drm] Loading DMUB firmware via PSP: version=0x05003300
+2026-11-21T04:51:20.44222 kern.info: [    3.258886] [drm] use_doorbell being set to: [true]
+2026-11-21T04:51:20.44223 kern.info: [    3.258901] amdgpu 0000:0b:00.0: amdgpu: [VCN instance 0] Found VCN firmware Version ENC: 1.33 DEC: 4 VEP: 0 Revision: 21
+2026-11-21T04:51:20.44225 kern.info: [    3.281060] amdgpu 0000:0b:00.0: amdgpu: reserve 0xa00000 from 0xf41e000000 for PSP TMR
+2026-11-21T04:51:20.44226 kern.info: [    3.347874] amdgpu 0000:0b:00.0: amdgpu: RAS: optional ras ta ucode is not available
+2026-11-21T04:51:20.44227 kern.info: [    3.353567] amdgpu 0000:0b:00.0: amdgpu: RAP: optional rap ta ucode is not available
+2026-11-21T04:51:20.44228 kern.info: [    3.353569] amdgpu 0000:0b:00.0: amdgpu: SECUREDISPLAY: optional securedisplay ta ucode is not available
+2026-11-21T04:51:20.44228 kern.info: [    3.355070] amdgpu 0000:0b:00.0: amdgpu: SMU is initialized successfully!
+2026-11-21T04:51:20.44230 kern.info: [    3.355398] amdgpu 0000:0b:00.0: amdgpu: [drm] Display Core v3.2.351 initialized on DCN 3.1.5
+2026-11-21T04:51:20.44230 kern.info: [    3.355400] amdgpu 0000:0b:00.0: amdgpu: [drm] DP-HDMI FRL PCON supported
+2026-11-21T04:51:20.44231 kern.info: [    3.356050] amdgpu 0000:0b:00.0: amdgpu: [drm] DMUB hardware initialized: version=0x05003300
+2026-11-21T04:51:20.44232 kern.info: [    3.383529] amdgpu 0000:0b:00.0: amdgpu: [drm] HDMI-A-1: PSR support 0, DC PSR ver -1, sink PSR ver 0 DPCD caps 0x0 su_y_granularity 0
+2026-11-21T04:51:20.44233 kern.info: [    3.383569] amdgpu 0000:0b:00.0: amdgpu: [drm] DP-1: PSR support 0, DC PSR ver -1, sink PSR ver 0 DPCD caps 0x0 su_y_granularity 0
+2026-11-21T04:51:20.44234 kern.info: [    3.383927] amdgpu 0000:0b:00.0: amdgpu: kiq ring mec 2 pipe 1 q 0
+2026-11-21T04:51:20.44235 kern.info: [    3.386727] kfd kfd: amdgpu: Allocated 3969056 bytes on gart
+2026-11-21T04:51:20.44236 kern.info: [    3.386735] kfd kfd: amdgpu: Total number of KFD nodes to be created: 1
+2026-11-21T04:51:20.44237 kern.info: [    3.387068] amdgpu: Virtual CRAT table created for GPU
+2026-11-21T04:51:20.44237 kern.info: [    3.387176] amdgpu: Topology: Add dGPU node [0x164e:0x1002]
+2026-11-21T04:51:20.44238 kern.info: [    3.387178] kfd kfd: amdgpu: added device 1002:164e
+2026-11-21T04:51:20.44239 kern.info: [    3.387186] amdgpu 0000:0b:00.0: amdgpu: SE 1, SH per SE 1, CU per SH 2, active_cu_number 2
+2026-11-21T04:51:20.44240 kern.info: [    3.387189] amdgpu 0000:0b:00.0: amdgpu: ring gfx_0.0.0 uses VM inv eng 0 on hub 0
+2026-11-21T04:51:20.44241 kern.info: [    3.387191] amdgpu 0000:0b:00.0: amdgpu: ring gfx_0.1.0 uses VM inv eng 1 on hub 0
+2026-11-21T04:51:20.44242 kern.info: [    3.387192] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.0.0 uses VM inv eng 4 on hub 0
+2026-11-21T04:51:20.44243 kern.info: [    3.387194] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.1.0 uses VM inv eng 5 on hub 0
+2026-11-21T04:51:20.44244 kern.info: [    3.387195] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.2.0 uses VM inv eng 6 on hub 0
+2026-11-21T04:51:20.44245 kern.info: [    3.387197] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.3.0 uses VM inv eng 7 on hub 0
+2026-11-21T04:51:20.44246 kern.info: [    3.387198] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.0.1 uses VM inv eng 8 on hub 0
+2026-11-21T04:51:20.44246 kern.info: [    3.387199] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.1.1 uses VM inv eng 9 on hub 0
+2026-11-21T04:51:20.44247 kern.info: [    3.387201] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.2.1 uses VM inv eng 10 on hub 0
+2026-11-21T04:51:20.44248 kern.info: [    3.387202] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.3.1 uses VM inv eng 11 on hub 0
+2026-11-21T04:51:20.44250 kern.info: [    3.387204] amdgpu 0000:0b:00.0: amdgpu: ring kiq_0.2.1.0 uses VM inv eng 12 on hub 0
+2026-11-21T04:51:20.44251 kern.info: [    3.387205] amdgpu 0000:0b:00.0: amdgpu: ring sdma0 uses VM inv eng 13 on hub 0
+2026-11-21T04:51:20.44252 kern.info: [    3.387207] amdgpu 0000:0b:00.0: amdgpu: ring vcn_dec_0 uses VM inv eng 0 on hub 8
+2026-11-21T04:51:20.44254 kern.info: [    3.387208] amdgpu 0000:0b:00.0: amdgpu: ring vcn_enc_0.0 uses VM inv eng 1 on hub 8
+2026-11-21T04:51:20.44255 kern.info: [    3.387209] amdgpu 0000:0b:00.0: amdgpu: ring vcn_enc_0.1 uses VM inv eng 4 on hub 8
+2026-11-21T04:51:20.44257 kern.info: [    3.387211] amdgpu 0000:0b:00.0: amdgpu: ring jpeg_dec uses VM inv eng 5 on hub 8
+2026-11-21T04:51:20.44258 kern.info: [    3.387490] amdgpu 0000:0b:00.0: amdgpu: Runtime PM not available
+2026-11-21T04:51:20.44258 kern.info: [    3.387749] [drm] Initialized amdgpu 3.64.0 for 0000:0b:00.0 on minor 0
+2026-11-21T04:51:20.44259 kern.info: [    3.395655] fbcon: amdgpudrmfb (fb0) is primary device
+2026-11-21T04:51:20.44261 kern.info: [    3.395659] amdgpu 0000:0b:00.0: [drm] fb0: amdgpudrmfb frame buffer device
+2026-11-21T04:51:20.44334 kern.info: [    3.800716] [drm] pre_validate_dsc:1667 MST_DSC dsc precompute is not needed
+2026-11-21T04:51:20.44335 kern.info: [    3.806239] snd_hda_intel 0000:0b:00.1: bound 0000:0b:00.0 (ops amdgpu_dm_audio_component_bind_ops [amdgpu])
+2026-11-21T04:51:20.44369 kern.warn: [    3.982931] amdgpu 0000:0b:00.0: [drm] REG_WAIT timeout 1us * 100000 tries - optc31_disable_crtc line:145
+2026-11-21T04:56:37.38867 kern.notice: [    0.000000] Linux version 6.18.64_1 (voidlinux@voidlinux) (gcc (GCC) 14.2.1 20250405, GNU ld (GNU Binutils) 2.44) #1 SMP PREEMPT_DYNAMIC Tue Nov 17 22:22:11 UTC 2026
+2026-11-21T04:56:37.39019 kern.info: [    0.000000] Command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+2026-11-21T04:56:37.39223 kern.notice: [    0.019111] Kernel command line: BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+2026-11-21T04:56:37.39938 kern.info: [    3.256996] amdgpu: vga_switcheroo: detected switching method \_SB_.PCI0.GP17.VGA_.ATPX handle
+2026-11-21T04:56:37.39939 kern.notice: [    3.257109] amdgpu: ATPX version 1, functions 0x00000000
+2026-11-21T04:56:37.39940 kern.info: [    3.264043] amdgpu: Virtual CRAT table created for CPU
+2026-11-21T04:56:37.39940 kern.info: [    3.264057] amdgpu: Topology: Add CPU node
+2026-11-21T04:56:37.39941 kern.info: [    3.264151] amdgpu 0000:0b:00.0: enabling device (0006 -> 0007)
+2026-11-21T04:56:37.39942 kern.info: [    3.264188] amdgpu 0000:0b:00.0: amdgpu: initializing kernel modesetting (IP DISCOVERY 0x1002:0x164E 0x1043:0x8877 0xCB).
+2026-11-21T04:56:37.39943 kern.info: [    3.264196] amdgpu 0000:0b:00.0: amdgpu: register mmio base: 0xDC500000
+2026-11-21T04:56:37.39944 kern.info: [    3.264198] amdgpu 0000:0b:00.0: amdgpu: register mmio size: 524288
+2026-11-21T04:56:37.39945 kern.info: [    3.265844] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 0 <common_v1_0_0> (nv_common)
+2026-11-21T04:56:37.39946 kern.info: [    3.265846] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 1 <gmc_v10_0_0> (gmc_v10_0)
+2026-11-21T04:56:37.39946 kern.info: [    3.265848] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 2 <ih_v5_0_0> (navi10_ih)
+2026-11-21T04:56:37.39947 kern.info: [    3.265850] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 3 <psp_v13_0_0> (psp)
+2026-11-21T04:56:37.39948 kern.info: [    3.265852] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 4 <smu_v13_0_0> (smu)
+2026-11-21T04:56:37.39949 kern.info: [    3.265853] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 5 <dce_v1_0_0> (dm)
+2026-11-21T04:56:37.39950 kern.info: [    3.265855] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 6 <gfx_v10_0_0> (gfx_v10_0)
+2026-11-21T04:56:37.39951 kern.info: [    3.265856] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 7 <sdma_v5_2_0> (sdma_v5_2)
+2026-11-21T04:56:37.39953 kern.info: [    3.265858] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 8 <vcn_v3_0_0> (vcn_v3_0)
+2026-11-21T04:56:37.39954 kern.info: [    3.265860] amdgpu 0000:0b:00.0: amdgpu: detected ip block number 9 <jpeg_v3_0_0> (jpeg_v3_0)
+2026-11-21T04:56:37.39955 kern.info: [    3.265875] amdgpu 0000:0b:00.0: amdgpu: Fetched VBIOS from VFCT
+2026-11-21T04:56:37.39956 kern.info: [    3.265877] amdgpu: ATOM BIOS: 102-RAPHAEL-008
+2026-11-21T04:56:37.39956 kern.info: [    3.268829] amdgpu 0000:0b:00.0: vgaarb: deactivate vga console
+2026-11-21T04:56:37.39957 kern.info: [    3.268832] amdgpu 0000:0b:00.0: amdgpu: Trusted Memory Zone (TMZ) feature disabled as experimental (default)
+2026-11-21T04:56:37.39958 kern.info: [    3.268855] amdgpu 0000:0b:00.0: amdgpu: vm size is 262144 GB, 4 levels, block size is 9-bit, fragment size is 9-bit
+2026-11-21T04:56:37.39960 kern.info: [    3.268859] amdgpu 0000:0b:00.0: amdgpu: VRAM: 512M 0x000000F400000000 - 0x000000F41FFFFFFF (512M used)
+2026-11-21T04:56:37.39961 kern.info: [    3.268861] amdgpu 0000:0b:00.0: amdgpu: GART: 1024M 0x0000000000000000 - 0x000000003FFFFFFF
+2026-11-21T04:56:37.39962 kern.info: [    3.268866] [drm] Detected VRAM RAM=512M, BAR=512M
+2026-11-21T04:56:37.39962 kern.info: [    3.268867] [drm] RAM width 64bits DDR5
+2026-11-21T04:56:37.39963 kern.info: [    3.268945] amdgpu 0000:0b:00.0: amdgpu: amdgpu: 512M of VRAM memory ready
+2026-11-21T04:56:37.39964 kern.info: [    3.268947] amdgpu 0000:0b:00.0: amdgpu: amdgpu: 7573M of GTT memory ready.
+2026-11-21T04:56:37.39965 kern.info: [    3.268959] [drm] GART: num cpu pages 262144, num gpu pages 262144
+2026-11-21T04:56:37.39966 kern.info: [    3.269128] [drm] PCIE GART of 1024M enabled (table at 0x000000F41FC00000).
+2026-11-21T04:56:37.39967 kern.info: [    3.269399] amdgpu 0000:0b:00.0: amdgpu: [drm] Loading DMUB firmware via PSP: version=0x05003300
+2026-11-21T04:56:37.39968 kern.info: [    3.269701] [drm] use_doorbell being set to: [true]
+2026-11-21T04:56:37.39968 kern.info: [    3.269717] amdgpu 0000:0b:00.0: amdgpu: [VCN instance 0] Found VCN firmware Version ENC: 1.33 DEC: 4 VEP: 0 Revision: 21
+2026-11-21T04:56:37.39970 kern.info: [    3.291766] amdgpu 0000:0b:00.0: amdgpu: reserve 0xa00000 from 0xf41e000000 for PSP TMR
+2026-11-21T04:56:37.39971 kern.info: [    3.359572] amdgpu 0000:0b:00.0: amdgpu: RAS: optional ras ta ucode is not available
+2026-11-21T04:56:37.39972 kern.info: [    3.365184] amdgpu 0000:0b:00.0: amdgpu: RAP: optional rap ta ucode is not available
+2026-11-21T04:56:37.39973 kern.info: [    3.365186] amdgpu 0000:0b:00.0: amdgpu: SECUREDISPLAY: optional securedisplay ta ucode is not available
+2026-11-21T04:56:37.39974 kern.info: [    3.366870] amdgpu 0000:0b:00.0: amdgpu: SMU is initialized successfully!
+2026-11-21T04:56:37.39975 kern.info: [    3.367191] amdgpu 0000:0b:00.0: amdgpu: [drm] Display Core v3.2.351 initialized on DCN 3.1.5
+2026-11-21T04:56:37.39976 kern.info: [    3.367194] amdgpu 0000:0b:00.0: amdgpu: [drm] DP-HDMI FRL PCON supported
+2026-11-21T04:56:37.39976 kern.info: [    3.367954] amdgpu 0000:0b:00.0: amdgpu: [drm] DMUB hardware initialized: version=0x05003300
+2026-11-21T04:56:37.39977 kern.info: [    3.395408] amdgpu 0000:0b:00.0: amdgpu: [drm] HDMI-A-1: PSR support 0, DC PSR ver -1, sink PSR ver 0 DPCD caps 0x0 su_y_granularity 0
+2026-11-21T04:56:37.39978 kern.info: [    3.395452] amdgpu 0000:0b:00.0: amdgpu: [drm] DP-1: PSR support 0, DC PSR ver -1, sink PSR ver 0 DPCD caps 0x0 su_y_granularity 0
+2026-11-21T04:56:37.39979 kern.info: [    3.395799] amdgpu 0000:0b:00.0: amdgpu: kiq ring mec 2 pipe 1 q 0
+2026-11-21T04:56:37.39980 kern.info: [    3.398675] kfd kfd: amdgpu: Allocated 3969056 bytes on gart
+2026-11-21T04:56:37.39981 kern.info: [    3.398683] kfd kfd: amdgpu: Total number of KFD nodes to be created: 1
+2026-11-21T04:56:37.39982 kern.info: [    3.398912] amdgpu: Virtual CRAT table created for GPU
+2026-11-21T04:56:37.39983 kern.info: [    3.399019] amdgpu: Topology: Add dGPU node [0x164e:0x1002]
+2026-11-21T04:56:37.39984 kern.info: [    3.399021] kfd kfd: amdgpu: added device 1002:164e
+2026-11-21T04:56:37.39985 kern.info: [    3.399029] amdgpu 0000:0b:00.0: amdgpu: SE 1, SH per SE 1, CU per SH 2, active_cu_number 2
+2026-11-21T04:56:37.39986 kern.info: [    3.399032] amdgpu 0000:0b:00.0: amdgpu: ring gfx_0.0.0 uses VM inv eng 0 on hub 0
+2026-11-21T04:56:37.39987 kern.info: [    3.399034] amdgpu 0000:0b:00.0: amdgpu: ring gfx_0.1.0 uses VM inv eng 1 on hub 0
+2026-11-21T04:56:37.39988 kern.info: [    3.399035] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.0.0 uses VM inv eng 4 on hub 0
+2026-11-21T04:56:37.39989 kern.info: [    3.399037] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.1.0 uses VM inv eng 5 on hub 0
+2026-11-21T04:56:37.39990 kern.info: [    3.399038] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.2.0 uses VM inv eng 6 on hub 0
+2026-11-21T04:56:37.39991 kern.info: [    3.399040] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.3.0 uses VM inv eng 7 on hub 0
+2026-11-21T04:56:37.39992 kern.info: [    3.399041] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.0.1 uses VM inv eng 8 on hub 0
+2026-11-21T04:56:37.39993 kern.info: [    3.399042] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.1.1 uses VM inv eng 9 on hub 0
+2026-11-21T04:56:37.39994 kern.info: [    3.399044] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.2.1 uses VM inv eng 10 on hub 0
+2026-11-21T04:56:37.39995 kern.info: [    3.399045] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.3.1 uses VM inv eng 11 on hub 0
+2026-11-21T04:56:37.39995 kern.info: [    3.399047] amdgpu 0000:0b:00.0: amdgpu: ring kiq_0.2.1.0 uses VM inv eng 12 on hub 0
+2026-11-21T04:56:37.39996 kern.info: [    3.399048] amdgpu 0000:0b:00.0: amdgpu: ring sdma0 uses VM inv eng 13 on hub 0
+2026-11-21T04:56:37.39997 kern.info: [    3.399050] amdgpu 0000:0b:00.0: amdgpu: ring vcn_dec_0 uses VM inv eng 0 on hub 8
+2026-11-21T04:56:37.39998 kern.info: [    3.399051] amdgpu 0000:0b:00.0: amdgpu: ring vcn_enc_0.0 uses VM inv eng 1 on hub 8
+2026-11-21T04:56:37.39999 kern.info: [    3.399052] amdgpu 0000:0b:00.0: amdgpu: ring vcn_enc_0.1 uses VM inv eng 4 on hub 8
+2026-11-21T04:56:37.40000 kern.info: [    3.399054] amdgpu 0000:0b:00.0: amdgpu: ring jpeg_dec uses VM inv eng 5 on hub 8
+2026-11-21T04:56:37.40001 kern.info: [    3.399328] amdgpu 0000:0b:00.0: amdgpu: Runtime PM not available
+2026-11-21T04:56:37.40002 kern.info: [    3.399596] [drm] Initialized amdgpu 3.64.0 for 0000:0b:00.0 on minor 0
+2026-11-21T04:56:37.40003 kern.info: [    3.407555] fbcon: amdgpudrmfb (fb0) is primary device
+2026-11-21T04:56:37.40004 kern.info: [    3.407559] amdgpu 0000:0b:00.0: [drm] fb0: amdgpudrmfb frame buffer device
+2026-11-21T04:56:37.40050 kern.info: [    3.754711] [drm] pre_validate_dsc:1667 MST_DSC dsc precompute is not needed
+2026-11-21T04:56:37.40060 kern.info: [    3.772313] snd_hda_intel 0000:0b:00.1: bound 0000:0b:00.0 (ops amdgpu_dm_audio_component_bind_ops [amdgpu])
+2026-11-21T04:56:37.40087 kern.warn: [    3.934268] amdgpu 0000:0b:00.0: [drm] REG_WAIT timeout 1us * 100000 tries - optc31_disable_crtc line:145
+2026-11-21T04:58:05.13757 kern.info: [   93.048456] PM: suspend entry (deep)
+2026-11-21T04:58:24.06007 kern.info: [   93.796843] [drm] PCIE GART of 1024M enabled (table at 0x000000F41FC00000).
+2026-11-21T04:58:24.06008 kern.info: [   93.796898] amdgpu 0000:0b:00.0: amdgpu: PSP is resuming...
+2026-11-21T04:58:24.06014 kern.info: [   93.818567] amdgpu 0000:0b:00.0: amdgpu: reserve 0xa00000 from 0xf41e000000 for PSP TMR
+2026-11-21T04:58:24.06017 kern.info: [   93.884156] amdgpu 0000:0b:00.0: amdgpu: RAS: optional ras ta ucode is not available
+2026-11-21T04:58:24.06018 kern.info: [   93.889954] amdgpu 0000:0b:00.0: amdgpu: RAP: optional rap ta ucode is not available
+2026-11-21T04:58:24.06019 kern.info: [   93.889955] amdgpu 0000:0b:00.0: amdgpu: SECUREDISPLAY: optional securedisplay ta ucode is not available
+2026-11-21T04:58:24.06020 kern.info: [   93.889957] amdgpu 0000:0b:00.0: amdgpu: SMU is resuming...
+2026-11-21T04:58:24.06022 kern.info: [   93.891163] amdgpu 0000:0b:00.0: amdgpu: SMU is resumed successfully!
+2026-11-21T04:58:24.06023 kern.info: [   93.891287] amdgpu 0000:0b:00.0: amdgpu: kiq ring mec 2 pipe 1 q 0
+2026-11-21T04:58:24.06024 kern.info: [   93.894277] amdgpu 0000:0b:00.0: amdgpu: [drm] DMUB hardware initialized: version=0x05003300
+2026-11-21T04:58:24.06029 kern.info: [   94.026447] amdgpu 0000:0b:00.0: amdgpu: ring gfx_0.0.0 uses VM inv eng 0 on hub 0
+2026-11-21T04:58:24.06031 kern.info: [   94.026449] amdgpu 0000:0b:00.0: amdgpu: ring gfx_0.1.0 uses VM inv eng 1 on hub 0
+2026-11-21T04:58:24.06032 kern.info: [   94.026451] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.0.0 uses VM inv eng 4 on hub 0
+2026-11-21T04:58:24.06033 kern.info: [   94.026452] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.1.0 uses VM inv eng 5 on hub 0
+2026-11-21T04:58:24.06035 kern.info: [   94.026453] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.2.0 uses VM inv eng 6 on hub 0
+2026-11-21T04:58:24.06036 kern.info: [   94.026454] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.3.0 uses VM inv eng 7 on hub 0
+2026-11-21T04:58:24.06037 kern.info: [   94.026455] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.0.1 uses VM inv eng 8 on hub 0
+2026-11-21T04:58:24.06039 kern.info: [   94.026456] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.1.1 uses VM inv eng 9 on hub 0
+2026-11-21T04:58:24.06041 kern.info: [   94.026457] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.2.1 uses VM inv eng 10 on hub 0
+2026-11-21T04:58:24.06042 kern.info: [   94.026458] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.3.1 uses VM inv eng 11 on hub 0
+2026-11-21T04:58:24.06043 kern.info: [   94.026459] amdgpu 0000:0b:00.0: amdgpu: ring kiq_0.2.1.0 uses VM inv eng 12 on hub 0
+2026-11-21T04:58:24.06045 kern.info: [   94.026460] amdgpu 0000:0b:00.0: amdgpu: ring sdma0 uses VM inv eng 13 on hub 0
+2026-11-21T04:58:24.06046 kern.info: [   94.026461] amdgpu 0000:0b:00.0: amdgpu: ring vcn_dec_0 uses VM inv eng 0 on hub 8
+2026-11-21T04:58:24.06047 kern.info: [   94.026462] amdgpu 0000:0b:00.0: amdgpu: ring vcn_enc_0.0 uses VM inv eng 1 on hub 8
+2026-11-21T04:58:24.06049 kern.info: [   94.026463] amdgpu 0000:0b:00.0: amdgpu: ring vcn_enc_0.1 uses VM inv eng 4 on hub 8
+2026-11-21T04:58:24.06050 kern.info: [   94.026464] amdgpu 0000:0b:00.0: amdgpu: ring jpeg_dec uses VM inv eng 5 on hub 8
+2026-11-21T04:58:24.06398 kern.info: [   95.823774] PM: suspend exit
+2026-11-21T05:00:46.71199 kern.info: [  238.472050] PM: suspend entry (deep)
+2026-11-21T05:01:05.05749 kern.info: [  239.219860] [drm] PCIE GART of 1024M enabled (table at 0x000000F41FC00000).
+2026-11-21T05:01:05.05751 kern.info: [  239.219881] amdgpu 0000:0b:00.0: amdgpu: PSP is resuming...
+2026-11-21T05:01:05.05756 kern.info: [  239.241565] amdgpu 0000:0b:00.0: amdgpu: reserve 0xa00000 from 0xf41e000000 for PSP TMR
+2026-11-21T05:01:05.05758 kern.info: [  239.308560] amdgpu 0000:0b:00.0: amdgpu: RAS: optional ras ta ucode is not available
+2026-11-21T05:01:05.05759 kern.info: [  239.314245] amdgpu 0000:0b:00.0: amdgpu: RAP: optional rap ta ucode is not available
+2026-11-21T05:01:05.05761 kern.info: [  239.314247] amdgpu 0000:0b:00.0: amdgpu: SECUREDISPLAY: optional securedisplay ta ucode is not available
+2026-11-21T05:01:05.05762 kern.info: [  239.314248] amdgpu 0000:0b:00.0: amdgpu: SMU is resuming...
+2026-11-21T05:01:05.05763 kern.info: [  239.315429] amdgpu 0000:0b:00.0: amdgpu: SMU is resumed successfully!
+2026-11-21T05:01:05.05764 kern.info: [  239.315550] amdgpu 0000:0b:00.0: amdgpu: kiq ring mec 2 pipe 1 q 0
+2026-11-21T05:01:05.05765 kern.info: [  239.318298] amdgpu 0000:0b:00.0: amdgpu: [drm] DMUB hardware initialized: version=0x05003300
+2026-11-21T05:01:05.05771 kern.info: [  239.450487] amdgpu 0000:0b:00.0: amdgpu: ring gfx_0.0.0 uses VM inv eng 0 on hub 0
+2026-11-21T05:01:05.05772 kern.info: [  239.450489] amdgpu 0000:0b:00.0: amdgpu: ring gfx_0.1.0 uses VM inv eng 1 on hub 0
+2026-11-21T05:01:05.05773 kern.info: [  239.450491] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.0.0 uses VM inv eng 4 on hub 0
+2026-11-21T05:01:05.05774 kern.info: [  239.450492] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.1.0 uses VM inv eng 5 on hub 0
+2026-11-21T05:01:05.05775 kern.info: [  239.450493] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.2.0 uses VM inv eng 6 on hub 0
+2026-11-21T05:01:05.05776 kern.info: [  239.450494] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.3.0 uses VM inv eng 7 on hub 0
+2026-11-21T05:01:05.05777 kern.info: [  239.450495] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.0.1 uses VM inv eng 8 on hub 0
+2026-11-21T05:01:05.05778 kern.info: [  239.450496] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.1.1 uses VM inv eng 9 on hub 0
+2026-11-21T05:01:05.05780 kern.info: [  239.450497] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.2.1 uses VM inv eng 10 on hub 0
+2026-11-21T05:01:05.05781 kern.info: [  239.450498] amdgpu 0000:0b:00.0: amdgpu: ring comp_1.3.1 uses VM inv eng 11 on hub 0
+2026-11-21T05:01:05.05781 kern.info: [  239.450499] amdgpu 0000:0b:00.0: amdgpu: ring kiq_0.2.1.0 uses VM inv eng 12 on hub 0
+2026-11-21T05:01:05.05782 kern.info: [  239.450500] amdgpu 0000:0b:00.0: amdgpu: ring sdma0 uses VM inv eng 13 on hub 0
+2026-11-21T05:01:05.05783 kern.info: [  239.450501] amdgpu 0000:0b:00.0: amdgpu: ring vcn_dec_0 uses VM inv eng 0 on hub 8
+2026-11-21T05:01:05.05784 kern.info: [  239.450502] amdgpu 0000:0b:00.0: amdgpu: ring vcn_enc_0.0 uses VM inv eng 1 on hub 8
+2026-11-21T05:01:05.05786 kern.info: [  239.450504] amdgpu 0000:0b:00.0: amdgpu: ring vcn_enc_0.1 uses VM inv eng 4 on hub 8
+2026-11-21T05:01:05.05787 kern.info: [  239.450505] amdgpu 0000:0b:00.0: amdgpu: ring jpeg_dec uses VM inv eng 5 on hub 8
+2026-11-21T05:01:05.06112 kern.info: [  241.243938] PM: suspend exit

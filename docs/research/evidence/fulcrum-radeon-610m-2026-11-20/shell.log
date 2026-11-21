@@ -1,0 +1,242 @@
+[2026-11-21T04:48:42Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:48:42Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-21T04:48:42Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-21T04:48:42Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-21T04:48:42Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-21T04:48:42Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-21T04:48:42Z INFO  blade_graphics::hal::init] Adapter: "NVIDIA GeForce RTX 5060"
+[2026-11-21T04:48:42Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-21T04:48:42Z INFO  crowbaros_shell] SHELL appearance theme=WarmPaper wallpaper=SignalFeather
+[2026-11-21T04:48:42Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:48:42Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:48:42Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:48:43Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:48:43Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:48:43Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:48:43Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:48:43Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:48:43Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:48:43Z INFO  crowbaros_shell] SHELL lock open=true
+[2026-11-21T04:48:43Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:48:43Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:48:43Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:51:21Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::init] Adapter: "AMD Ryzen 5 7500X3D 6-Core Processor (RADV RAPHAEL_MENDOCINO)"
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-21T04:51:21Z INFO  crowbaros_shell] SHELL appearance theme=WarmPaper wallpaper=SignalFeather
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:51:21Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:51:21Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:51:21Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:51:21Z INFO  crowbaros_shell] SHELL lock open=true
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:51:21Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:51:21Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:52:18Z INFO  crowbaros_shell::session] SHELL unlock ok=false
+[2026-11-21T04:52:25Z INFO  crowbaros_shell::session] SHELL unlock ok=true
+[2026-11-21T04:52:25Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="unlocked"
+[2026-11-21T04:52:25Z INFO  crowbaros_shell] SHELL lock open=false
+[2026-11-21T04:54:48Z INFO  crowbaros_shell] SHELL appearance theme=Dark wallpaper=QuietSignal
+[2026-11-21T04:54:55Z INFO  crowbaros_shell] SHELL appearance theme=Dark wallpaper=Nightwatch
+[2026-11-21T04:56:37Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::init] Adapter: "AMD Ryzen 5 7500X3D 6-Core Processor (RADV RAPHAEL_MENDOCINO)"
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-21T04:56:37Z INFO  crowbaros_shell] SHELL appearance theme=Dark wallpaper=Nightwatch
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:56:37Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:56:37Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:56:37Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:56:37Z INFO  crowbaros_shell] SHELL lock open=true
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:56:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:56:37Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:09Z INFO  crowbaros_shell::session] SHELL unlock ok=true
+[2026-11-21T04:57:09Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="unlocked"
+[2026-11-21T04:57:09Z INFO  crowbaros_shell] SHELL lock open=false
+
+thread 'main' (781) panicked at /cargo/registry/src/index.crates.io-1949cf8c6b5b557f/blade-graphics-0.7.1/src/vulkan/surface.rs:160:18:
+called `Result::unwrap()` on an `Err` value: ERROR_EXTENSION_NOT_PRESENT
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+[2026-11-21T04:57:35Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:57:35Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-21T04:57:35Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-21T04:57:35Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-21T04:57:35Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-21T04:57:35Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-21T04:57:35Z INFO  blade_graphics::hal::init] Adapter: "AMD Ryzen 5 7500X3D 6-Core Processor (RADV RAPHAEL_MENDOCINO)"
+[2026-11-21T04:57:35Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-21T04:57:35Z INFO  crowbaros_shell] SHELL appearance theme=Dark wallpaper=Nightwatch
+[2026-11-21T04:57:35Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:35Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:35Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:35Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:35Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:35Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:35Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:35Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:35Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:35Z ERROR] window not found
+[2026-11-21T04:57:35Z ERROR] window not found
+[2026-11-21T04:57:35Z ERROR] window not found
+[2026-11-21T04:57:35Z ERROR] window not found
+[2026-11-21T04:57:36Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:57:36Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-21T04:57:36Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-21T04:57:36Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-21T04:57:36Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-21T04:57:36Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-21T04:57:36Z INFO  blade_graphics::hal::init] Adapter: "AMD Ryzen 5 7500X3D 6-Core Processor (RADV RAPHAEL_MENDOCINO)"
+[2026-11-21T04:57:36Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-21T04:57:36Z INFO  crowbaros_shell] SHELL appearance theme=Dark wallpaper=Nightwatch
+[2026-11-21T04:57:36Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:36Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:36Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:36Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:36Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:36Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:36Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:36Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:36Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:36Z ERROR] window not found
+[2026-11-21T04:57:36Z ERROR] window not found
+[2026-11-21T04:57:36Z ERROR] window not found
+[2026-11-21T04:57:36Z ERROR] window not found
+[2026-11-21T04:57:37Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:57:37Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-21T04:57:37Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-21T04:57:37Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-21T04:57:37Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-21T04:57:37Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-21T04:57:37Z INFO  blade_graphics::hal::init] Adapter: "AMD Ryzen 5 7500X3D 6-Core Processor (RADV RAPHAEL_MENDOCINO)"
+[2026-11-21T04:57:37Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-21T04:57:37Z INFO  crowbaros_shell] SHELL appearance theme=Dark wallpaper=Nightwatch
+[2026-11-21T04:57:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:37Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:37Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:37Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:37Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:37Z ERROR] window not found
+[2026-11-21T04:57:37Z ERROR] window not found
+[2026-11-21T04:57:37Z ERROR] window not found
+[2026-11-21T04:57:37Z ERROR] window not found
+[2026-11-21T04:57:39Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:57:39Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-21T04:57:39Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-21T04:57:39Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-21T04:57:39Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-21T04:57:39Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-21T04:57:39Z INFO  blade_graphics::hal::init] Adapter: "AMD Ryzen 5 7500X3D 6-Core Processor (RADV RAPHAEL_MENDOCINO)"
+[2026-11-21T04:57:39Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-21T04:57:39Z INFO  crowbaros_shell] SHELL appearance theme=Dark wallpaper=Nightwatch
+[2026-11-21T04:57:39Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:39Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:39Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:39Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:39Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:39Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:39Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:39Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:39Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:39Z ERROR] window not found
+[2026-11-21T04:57:39Z ERROR] window not found
+[2026-11-21T04:57:39Z ERROR] window not found
+[2026-11-21T04:57:39Z ERROR] window not found
+[2026-11-21T04:57:40Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:57:40Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-21T04:57:40Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-21T04:57:40Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-21T04:57:40Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-21T04:57:40Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-21T04:57:40Z INFO  blade_graphics::hal::init] Adapter: "AMD Ryzen 5 7500X3D 6-Core Processor (RADV RAPHAEL_MENDOCINO)"
+[2026-11-21T04:57:40Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-21T04:57:40Z INFO  crowbaros_shell] SHELL appearance theme=Dark wallpaper=Nightwatch
+[2026-11-21T04:57:40Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:40Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:40Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:40Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:40Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:40Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:40Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:40Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:40Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:40Z ERROR] window not found
+[2026-11-21T04:57:40Z ERROR] window not found
+[2026-11-21T04:57:40Z ERROR] window not found
+[2026-11-21T04:57:40Z ERROR] window not found
+[2026-11-21T04:57:41Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:57:41Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-21T04:57:41Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-21T04:57:41Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-21T04:57:41Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-21T04:57:41Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-21T04:57:41Z INFO  blade_graphics::hal::init] Adapter: "AMD Ryzen 5 7500X3D 6-Core Processor (RADV RAPHAEL_MENDOCINO)"
+[2026-11-21T04:57:41Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-21T04:57:41Z INFO  crowbaros_shell] SHELL appearance theme=Dark wallpaper=Nightwatch
+[2026-11-21T04:57:41Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:41Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:41Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:41Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:41Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:41Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:41Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:41Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:41Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:41Z ERROR] window not found
+[2026-11-21T04:57:41Z ERROR] window not found
+[2026-11-21T04:57:41Z ERROR] window not found
+[2026-11-21T04:57:41Z ERROR] window not found
+[2026-11-21T04:57:42Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T04:57:42Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_wayland_surface"
+[2026-11-21T04:57:42Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xcb_surface"
+[2026-11-21T04:57:42Z INFO  blade_graphics::hal::init] Presentation support: "VK_KHR_xlib_surface"
+[2026-11-21T04:57:42Z INFO  blade_graphics::hal::init] Presentation support: "VK_EXT_swapchain_colorspace"
+[2026-11-21T04:57:42Z INFO  blade_graphics::hal::init] Enabling Vulkan Portability
+[2026-11-21T04:57:42Z INFO  blade_graphics::hal::init] Adapter: "AMD Ryzen 5 7500X3D 6-Core Processor (RADV RAPHAEL_MENDOCINO)"
+[2026-11-21T04:57:42Z INFO  blade_graphics::hal::init] Ray tracing is supported
+[2026-11-21T04:57:42Z INFO  crowbaros_shell] SHELL appearance theme=Dark wallpaper=Nightwatch
+[2026-11-21T04:57:42Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:42Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:42Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:42Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:42Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:42Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:57:42Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:42Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:57:42Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T04:58:24Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="locked"
+[2026-11-21T04:58:24Z INFO  crowbaros_shell] SHELL lock open=true
+[2026-11-21T04:58:24Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:58:24Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T04:58:24Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T05:00:18Z INFO  crowbaros_shell::session] SHELL unlock ok=true
+[2026-11-21T05:00:18Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="unlocked"
+[2026-11-21T05:00:18Z INFO  crowbaros_shell] SHELL lock open=false
+[2026-11-21T05:01:05Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="locked"
+[2026-11-21T05:01:05Z INFO  crowbaros_shell] SHELL lock open=true
+[2026-11-21T05:01:05Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T05:01:05Z INFO  blade_graphics::hal::descriptor] Creating a descriptor pool for at most 16 sets
+[2026-11-21T05:01:05Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }

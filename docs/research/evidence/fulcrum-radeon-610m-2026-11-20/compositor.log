@@ -1,0 +1,253 @@
+INFO crowbar_compositor: session locked by=start
+INFO crowbar_compositor: session opened through seatd seat=seat0
+INFO crowbar_compositor: DRM device opened path=/dev/dri/card0
+WARN crowbar_compositor: libinput did not take /dev/input/event10
+WARN crowbar_compositor: libinput did not take /dev/input/event11
+WARN crowbar_compositor: libinput did not take /dev/input/event12
+WARN crowbar_compositor: libinput did not take /dev/input/event13
+WARN crowbar_compositor: libinput did not take /dev/input/event14
+WARN crowbar_compositor: libinput did not take /dev/input/event15
+WARN crowbar_compositor: libinput did not take /dev/input/event16
+WARN crowbar_compositor: libinput did not take /dev/input/event17
+WARN crowbar_compositor: libinput did not take /dev/input/event18
+WARN crowbar_compositor: libinput did not take /dev/input/event19
+WARN crowbar_compositor: libinput did not take /dev/input/event7
+WARN crowbar_compositor: libinput did not take /dev/input/event9
+INFO crowbar_compositor: renderer=gles gpu=AMD Ryzen 5 7500X3D 6-Core Processor (radeonsi, raphael_mendocino, ACO, DRM 3.64, 6.18.64_1)
+INFO crowbar_compositor: output scale from its density name=HDMI-A-1 scale=180 physical=600x340mm
+INFO crowbar_compositor: output connected name=HDMI-A-1 size=3840x2160 refresh=59982 pointer=cursor-plane
+INFO crowbar_compositor: linux-dmabuf imported by the GPU formats=356
+INFO crowbar_compositor: compositor is up backend=tty
+INFO crowbar_compositor: commits so far:  frames=1
+INFO crowbar_compositor: shell control connected id=1
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 243, layer crowbaros-dock: 242, layer crowbaros-lock: 233, layer crowbaros-wallpaper: 243 frames=80
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 549, layer crowbaros-dock: 548, layer crowbaros-lock: 539, layer crowbaros-wallpaper: 549 frames=114
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 855, layer crowbaros-dock: 854, layer crowbaros-lock: 845, layer crowbaros-wallpaper: 855 frames=148
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 1158, layer crowbaros-dock: 1157, layer crowbaros-lock: 1146, layer crowbaros-wallpaper: 1156 frames=182
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 1464, layer crowbaros-dock: 1463, layer crowbaros-lock: 1452, layer crowbaros-wallpaper: 1462 frames=216
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 1770, layer crowbaros-dock: 1769, layer crowbaros-lock: 1758, layer crowbaros-wallpaper: 1768 frames=250
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 2076, layer crowbaros-dock: 2075, layer crowbaros-lock: 2064, layer crowbaros-wallpaper: 2074 frames=284
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 2382, layer crowbaros-dock: 2381, layer crowbaros-lock: 2370, layer crowbaros-wallpaper: 2380 frames=318
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 2688, layer crowbaros-dock: 2687, layer crowbaros-lock: 2676, layer crowbaros-wallpaper: 2686 frames=352
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 2994, layer crowbaros-dock: 2993, layer crowbaros-lock: 2982, layer crowbaros-wallpaper: 2992 frames=386
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 3300, layer crowbaros-dock: 3299, layer crowbaros-lock: 3288, layer crowbaros-wallpaper: 3298 frames=420
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 3606, layer crowbaros-dock: 3605, layer crowbaros-lock: 3594, layer crowbaros-wallpaper: 3604 frames=454
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 3912, layer crowbaros-dock: 3911, layer crowbaros-lock: 3900, layer crowbaros-wallpaper: 3910 frames=488
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 4218, layer crowbaros-dock: 4217, layer crowbaros-lock: 4206, layer crowbaros-wallpaper: 4216 frames=522
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 4524, layer crowbaros-dock: 4523, layer crowbaros-lock: 4512, layer crowbaros-wallpaper: 4522 frames=556
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 4825, layer crowbaros-dock: 4824, layer crowbaros-lock: 4811, layer crowbaros-wallpaper: 4821 frames=590
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 5131, layer crowbaros-dock: 5130, layer crowbaros-lock: 5117, layer crowbaros-wallpaper: 5127 frames=624
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 5437, layer crowbaros-dock: 5436, layer crowbaros-lock: 5423, layer crowbaros-wallpaper: 5433 frames=658
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 5743, layer crowbaros-dock: 5742, layer crowbaros-lock: 5729, layer crowbaros-wallpaper: 5739 frames=692
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 6049, layer crowbaros-dock: 6048, layer crowbaros-lock: 6035, layer crowbaros-wallpaper: 6045 frames=726
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 6355, layer crowbaros-dock: 6354, layer crowbaros-lock: 6341, layer crowbaros-wallpaper: 6351 frames=760
+ERROR crowbar_compositor: lost the seat: seatd closed the connection
+INFO crowbar_compositor: session locked by=start
+INFO crowbar_compositor: session opened through seatd seat=seat0
+INFO crowbar_compositor: DRM device opened path=/dev/dri/card0
+WARN crowbar_compositor: libinput did not take /dev/input/event10
+WARN crowbar_compositor: libinput did not take /dev/input/event11
+WARN crowbar_compositor: libinput did not take /dev/input/event12
+WARN crowbar_compositor: libinput did not take /dev/input/event13
+WARN crowbar_compositor: libinput did not take /dev/input/event14
+WARN crowbar_compositor: libinput did not take /dev/input/event15
+WARN crowbar_compositor: libinput did not take /dev/input/event16
+WARN crowbar_compositor: libinput did not take /dev/input/event17
+WARN crowbar_compositor: libinput did not take /dev/input/event18
+WARN crowbar_compositor: libinput did not take /dev/input/event19
+WARN crowbar_compositor: libinput did not take /dev/input/event7
+WARN crowbar_compositor: libinput did not take /dev/input/event9
+INFO crowbar_compositor: renderer=gles gpu=AMD Ryzen 5 7500X3D 6-Core Processor (radeonsi, raphael_mendocino, ACO, DRM 3.64, 6.18.64_1)
+INFO crowbar_compositor: output scale from its density name=HDMI-A-1 scale=180 physical=600x340mm
+INFO crowbar_compositor: output connected name=HDMI-A-1 size=3840x2160 refresh=59982 pointer=cursor-plane
+INFO crowbar_compositor: linux-dmabuf imported by the GPU formats=356
+INFO crowbar_compositor: compositor is up backend=tty
+INFO crowbar_compositor: commits so far:  frames=1
+INFO crowbar_compositor: shell control connected id=1
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 277, layer crowbaros-dock: 277, layer crowbaros-lock: 267, layer crowbaros-wallpaper: 277 frames=83
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 583, layer crowbaros-dock: 583, layer crowbaros-lock: 573, layer crowbaros-wallpaper: 583 frames=117
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 889, layer crowbaros-dock: 889, layer crowbaros-lock: 879, layer crowbaros-wallpaper: 889 frames=151
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 1195, layer crowbaros-dock: 1195, layer crowbaros-lock: 1185, layer crowbaros-wallpaper: 1195 frames=185
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 1501, layer crowbaros-dock: 1501, layer crowbaros-lock: 1491, layer crowbaros-wallpaper: 1501 frames=219
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 1807, layer crowbaros-dock: 1807, layer crowbaros-lock: 1797, layer crowbaros-wallpaper: 1807 frames=253
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 2113, layer crowbaros-dock: 2113, layer crowbaros-lock: 2103, layer crowbaros-wallpaper: 2113 frames=287
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 2418, layer crowbaros-dock: 2418, layer crowbaros-lock: 2408, layer crowbaros-wallpaper: 2418 frames=321
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 2724, layer crowbaros-dock: 2724, layer crowbaros-lock: 2714, layer crowbaros-wallpaper: 2724 frames=355
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 3030, layer crowbaros-dock: 3030, layer crowbaros-lock: 3020, layer crowbaros-wallpaper: 3030 frames=389
+INFO crowbar_compositor: input device added name=Power Button sysname=event0
+INFO crowbar_compositor: input device added name=Power Button sysname=event1
+INFO crowbar_compositor: input device added name=Video Bus sysname=event2
+INFO crowbar_compositor: input device added name=SIGMACHIP Usb Mouse sysname=event3
+INFO crowbar_compositor: input device added name=USB Keyboard sysname=event4
+INFO crowbar_compositor: input device added name=USB Keyboard Consumer Control sysname=event5
+INFO crowbar_compositor: input device added name=USB Keyboard System Control sysname=event6
+INFO crowbar_compositor: input device added name=Eee PC WMI hotkeys sysname=event8
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 3339, layer crowbaros-dock: 3339, layer crowbaros-lock: 3329, layer crowbaros-wallpaper: 3339 frames=519
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 3640, layer crowbaros-dock: 3640, layer crowbaros-lock: 3630, layer crowbaros-wallpaper: 3640 frames=675
+INFO crowbar_compositor: unlock authority connected id=2
+INFO crowbar_compositor: session unlocked
+INFO crowbar_compositor: shell control disconnected id=2
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 3942, layer crowbaros-dock: 3942, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 3942 frames=896
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 4243, layer crowbaros-dock: 4243, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 4243 frames=967
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 4543, layer crowbaros-dock: 4544, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 4543, window 0x38 foot: 3, window 0x42 com.crowbaros.StudioSettings: 71 frames=1110
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 4843, layer crowbaros-dock: 4844, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 4843, window 0x38 foot: 3, window 0x42 com.crowbaros.StudioSettings: 371 frames=1362
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 5143, layer crowbaros-dock: 5144, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 5143, window 0x38 foot: 6, window 0x42 com.crowbaros.StudioSettings: 671 frames=1436
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 5449, layer crowbaros-dock: 5450, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 5449, window 0x38 foot: 6, window 0x42 com.crowbaros.StudioSettings: 977 frames=1470
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 5750, layer crowbaros-dock: 5751, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 5750, window 0x38 foot: 8, window 0x42 com.crowbaros.StudioSettings: 1278 frames=1620
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 6050, layer crowbaros-dock: 6051, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 6050, window 0x38 foot: 9, window 0x42 com.crowbaros.StudioSettings: 1578 frames=1824
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 6357, layer crowbaros-dock: 6358, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 6357, window 0x38 foot: 9, window 0x42 com.crowbaros.StudioSettings: 1705 frames=1956
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 6659, layer crowbaros-dock: 6660, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 6659, window 0x38 foot: 10, window 0x42 com.crowbaros.StudioSettings: 1782 frames=2049
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 6961, layer crowbaros-dock: 6962, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 6961, window 0x38 foot: 11, window 0x42 com.crowbaros.StudioSettings: 1815 frames=2085
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 7262, layer crowbaros-dock: 7263, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 7262, window 0x38 foot: 120, window 0x42 com.crowbaros.StudioSettings: 1815 frames=2262
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 7564, layer crowbaros-dock: 7565, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 7564, window 0x38 foot: 275, window 0x42 com.crowbaros.StudioSettings: 1815 frames=2427
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 7870, layer crowbaros-dock: 7871, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 7870, window 0x38 foot: 275, window 0x42 com.crowbaros.StudioSettings: 1815 frames=2461
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 8176, layer crowbaros-dock: 8177, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 8176, window 0x38 foot: 275, window 0x42 com.crowbaros.StudioSettings: 1815 frames=2495
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 8485, layer crowbaros-dock: 8486, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 8485, window 0x38 foot: 281, window 0x42 com.crowbaros.StudioSettings: 1815 frames=2552
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 8787, layer crowbaros-dock: 8788, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 8787, window 0x38 foot: 284, window 0x42 com.crowbaros.StudioSettings: 1815 frames=2641
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 9088, layer crowbaros-dock: 9089, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 9088, window 0x38 foot: 288, window 0x42 com.crowbaros.StudioSettings: 1815 frames=2705
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 9388, layer crowbaros-dock: 9389, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 9388, window 0x38 foot: 289, window 0x42 com.crowbaros.StudioSettings: 1815 frames=2786
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 9690, layer crowbaros-dock: 9692, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 9690, window 0x174 chromium: 30, window 0x38 foot: 290, window 0x42 com.crowbaros.StudioSettings: 1815 frames=2971
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 9991, layer crowbaros-dock: 9993, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 9991, window 0x174 chromium: 107, window 0x38 foot: 290, window 0x42 com.crowbaros.StudioSettings: 1815 frames=3143
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 10292, layer crowbaros-dock: 10294, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 10292, window 0x174 chromium: 215, window 0x38 foot: 290, window 0x42 com.crowbaros.StudioSettings: 1815 frames=3291
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 10596, layer crowbaros-dock: 10598, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 10596, window 0x174 chromium: 236, window 0x38 foot: 291, window 0x42 com.crowbaros.StudioSettings: 1815 frames=3408
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 10903, layer crowbaros-dock: 10905, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 10903, window 0x174 chromium: 236, window 0x38 foot: 298, window 0x42 com.crowbaros.StudioSettings: 1815 frames=3447
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 11209, layer crowbaros-dock: 11211, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 11209, window 0x174 chromium: 236, window 0x38 foot: 300, window 0x42 com.crowbaros.StudioSettings: 1815 frames=3514
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 11509, layer crowbaros-dock: 11511, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 11509, window 0x174 chromium: 236, window 0x38 foot: 300, window 0x42 com.crowbaros.StudioSettings: 1815 frames=3600
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 11810, layer crowbaros-dock: 11813, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 11810, window 0x174 chromium: 237, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 2052 frames=3847
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 12110, layer crowbaros-dock: 12113, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 12110, window 0x174 chromium: 237, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 2352 frames=4112
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 12410, layer crowbaros-dock: 12413, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 12410, window 0x174 chromium: 237, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 2652 frames=4412
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 12710, layer crowbaros-dock: 12713, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 12709, window 0x174 chromium: 237, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 2952 frames=4583
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 13010, layer crowbaros-dock: 13013, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 13009, window 0x174 chromium: 237, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 3252 frames=4783
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 13313, layer crowbaros-dock: 13316, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 13312, window 0x174 chromium: 237, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 3555 frames=4921
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 13619, layer crowbaros-dock: 13622, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 13618, window 0x174 chromium: 237, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 3861 frames=5009
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 13925, layer crowbaros-dock: 13928, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 13924, window 0x174 chromium: 237, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 4167 frames=5043
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 14231, layer crowbaros-dock: 14234, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 14230, window 0x174 chromium: 237, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 4473 frames=5077
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 14537, layer crowbaros-dock: 14540, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 14536, window 0x174 chromium: 237, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 4779 frames=5111
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 14843, layer crowbaros-dock: 14846, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 14842, window 0x174 chromium: 237, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 5085 frames=5145
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 15144, layer crowbaros-dock: 15147, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 15143, window 0x174 chromium: 237, window 0x1a2 com.crowbaros.StudioSettings: 55, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 5386 frames=5228
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 15446, layer crowbaros-dock: 15449, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 15445, window 0x174 chromium: 237, window 0x1a2 com.crowbaros.StudioSettings: 348, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 5688 frames=5266
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 15746, layer crowbaros-dock: 15749, layer crowbaros-lock: 3841, layer crowbaros-wallpaper: 15745, window 0x174 chromium: 237, window 0x1a2 com.crowbaros.StudioSettings: 348, window 0x38 foot: 301, window 0x42 com.crowbaros.StudioSettings: 5988 frames=5300
+ERROR crowbar_compositor: lost the seat: seatd closed the connection
+INFO crowbar_compositor: session locked by=start
+INFO crowbar_compositor: session opened through seatd seat=seat0
+INFO crowbar_compositor: DRM device opened path=/dev/dri/card0
+WARN crowbar_compositor: libinput did not take /dev/input/event10
+WARN crowbar_compositor: libinput did not take /dev/input/event11
+WARN crowbar_compositor: libinput did not take /dev/input/event12
+WARN crowbar_compositor: libinput did not take /dev/input/event13
+WARN crowbar_compositor: libinput did not take /dev/input/event14
+WARN crowbar_compositor: libinput did not take /dev/input/event15
+WARN crowbar_compositor: libinput did not take /dev/input/event16
+WARN crowbar_compositor: libinput did not take /dev/input/event17
+WARN crowbar_compositor: libinput did not take /dev/input/event18
+WARN crowbar_compositor: libinput did not take /dev/input/event19
+WARN crowbar_compositor: libinput did not take /dev/input/event7
+WARN crowbar_compositor: libinput did not take /dev/input/event9
+INFO crowbar_compositor: renderer=gles gpu=AMD Ryzen 5 7500X3D 6-Core Processor (radeonsi, raphael_mendocino, ACO, DRM 3.64, 6.18.64_1)
+INFO crowbar_compositor: output scale from its density name=HDMI-A-1 scale=180 physical=600x340mm
+INFO crowbar_compositor: output connected name=HDMI-A-1 size=3840x2160 refresh=59982 pointer=cursor-plane
+INFO crowbar_compositor: linux-dmabuf imported by the GPU formats=356
+INFO crowbar_compositor: compositor is up backend=tty
+INFO crowbar_compositor: commits so far:  frames=1
+INFO crowbar_compositor: shell control connected id=1
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 279, layer crowbaros-dock: 279, layer crowbaros-lock: 268, layer crowbaros-wallpaper: 278 frames=84
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 585, layer crowbaros-dock: 585, layer crowbaros-lock: 574, layer crowbaros-wallpaper: 584 frames=118
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 891, layer crowbaros-dock: 891, layer crowbaros-lock: 880, layer crowbaros-wallpaper: 890 frames=152
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 1197, layer crowbaros-dock: 1197, layer crowbaros-lock: 1186, layer crowbaros-wallpaper: 1196 frames=186
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 1499, layer crowbaros-dock: 1499, layer crowbaros-lock: 1488, layer crowbaros-wallpaper: 1498 frames=220
+INFO crowbar_compositor: input device added name=Power Button sysname=event0
+INFO crowbar_compositor: input device added name=Power Button sysname=event1
+INFO crowbar_compositor: input device added name=Video Bus sysname=event2
+INFO crowbar_compositor: input device added name=SIGMACHIP Usb Mouse sysname=event3
+INFO crowbar_compositor: input device added name=USB Keyboard sysname=event4
+INFO crowbar_compositor: input device added name=USB Keyboard Consumer Control sysname=event5
+INFO crowbar_compositor: input device added name=USB Keyboard System Control sysname=event6
+INFO crowbar_compositor: input device added name=Eee PC WMI hotkeys sysname=event8
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 1800, layer crowbaros-dock: 1800, layer crowbaros-lock: 1789, layer crowbaros-wallpaper: 1799 frames=498
+INFO crowbar_compositor: unlock authority connected id=2
+INFO crowbar_compositor: session unlocked
+INFO crowbar_compositor: shell control disconnected id=2
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 2103, layer crowbaros-dock: 2103, layer crowbaros-lock: 1911, layer crowbaros-wallpaper: 2103 frames=637
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 2406, layer crowbaros-dock: 2407, layer crowbaros-lock: 1911, layer crowbaros-wallpaper: 2406, window 0x38 foot: 2 frames=744
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 2708, layer crowbaros-dock: 2709, layer crowbaros-lock: 1911, layer crowbaros-wallpaper: 2708, window 0x38 foot: 5 frames=941
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 3013, layer crowbaros-dock: 3014, layer crowbaros-lock: 1911, layer crowbaros-wallpaper: 3013, window 0x38 foot: 65 frames=1015
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 3319, layer crowbaros-dock: 3320, layer crowbaros-lock: 1911, layer crowbaros-wallpaper: 3319, window 0x38 foot: 65 frames=1049
+INFO crowbar_compositor: udev says the DRM device changed path=/dev/dri/card0
+INFO crowbar_compositor: output disconnected name=HDMI-A-1
+INFO crowbar_compositor: shell control disconnected id=1
+INFO crowbar_compositor: shell control connected id=3
+INFO crowbar_compositor: shell control disconnected id=3
+INFO crowbar_compositor: shell control connected id=4
+INFO crowbar_compositor: shell control disconnected id=4
+INFO crowbar_compositor: shell control connected id=5
+INFO crowbar_compositor: shell control disconnected id=5
+INFO crowbar_compositor: shell control connected id=6
+INFO crowbar_compositor: shell control disconnected id=6
+INFO crowbar_compositor: shell control connected id=7
+INFO crowbar_compositor: shell control disconnected id=7
+INFO crowbar_compositor: shell control connected id=8
+INFO crowbar_compositor: shell control disconnected id=8
+INFO crowbar_compositor: udev says the DRM device changed path=/dev/dri/card0
+INFO crowbar_compositor: output scale from its density name=HDMI-A-1 scale=180 physical=600x340mm
+INFO crowbar_compositor: output connected name=HDMI-A-1 size=3840x2160 refresh=59982 pointer=cursor-plane
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 3468, layer crowbaros-dock: 3469, layer crowbaros-lock: 1911, layer crowbaros-wallpaper: 3468, window 0x38 foot: 66 frames=1065
+INFO crowbar_compositor: shell control connected id=9
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 3751, layer crowbaros-dock: 3752, layer crowbaros-lock: 1911, layer crowbaros-wallpaper: 3750, window 0x38 foot: 67 frames=1101
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 4057, layer crowbaros-dock: 4058, layer crowbaros-lock: 1911, layer crowbaros-wallpaper: 4056, window 0x38 foot: 67 frames=1135
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 4363, layer crowbaros-dock: 4364, layer crowbaros-lock: 1911, layer crowbaros-wallpaper: 4362, window 0x38 foot: 67 frames=1169
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 4671, layer crowbaros-dock: 4672, layer crowbaros-lock: 1911, layer crowbaros-wallpaper: 4670, window 0x38 foot: 67 frames=1204
+INFO crowbar_compositor: unlock authority connected id=10
+INFO crowbar_compositor: session locked by=authority
+INFO crowbar_compositor: shell control disconnected id=10
+INFO crowbar_compositor: udev says the DRM device changed path=/dev/dri/card0
+INFO crowbar_compositor: udev says the DRM device changed path=/dev/dri/card0
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 4820, layer crowbaros-dock: 4821, layer crowbaros-lock: 1913, layer crowbaros-wallpaper: 4819, window 0x38 foot: 68 frames=1221
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 5123, layer crowbaros-dock: 5124, layer crowbaros-lock: 2216, layer crowbaros-wallpaper: 5122, window 0x38 foot: 68 frames=1308
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 5429, layer crowbaros-dock: 5430, layer crowbaros-lock: 2522, layer crowbaros-wallpaper: 5428, window 0x38 foot: 68 frames=1342
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 5735, layer crowbaros-dock: 5736, layer crowbaros-lock: 2828, layer crowbaros-wallpaper: 5734, window 0x38 foot: 68 frames=1376
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 6041, layer crowbaros-dock: 6042, layer crowbaros-lock: 3134, layer crowbaros-wallpaper: 6040, window 0x38 foot: 68 frames=1410
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 6347, layer crowbaros-dock: 6348, layer crowbaros-lock: 3440, layer crowbaros-wallpaper: 6346, window 0x38 foot: 68 frames=1444
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 6653, layer crowbaros-dock: 6654, layer crowbaros-lock: 3746, layer crowbaros-wallpaper: 6652, window 0x38 foot: 68 frames=1478
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 6959, layer crowbaros-dock: 6960, layer crowbaros-lock: 4052, layer crowbaros-wallpaper: 6958, window 0x38 foot: 68 frames=1512
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 7263, layer crowbaros-dock: 7264, layer crowbaros-lock: 4356, layer crowbaros-wallpaper: 7262, window 0x38 foot: 68 frames=1546
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 7569, layer crowbaros-dock: 7570, layer crowbaros-lock: 4662, layer crowbaros-wallpaper: 7568, window 0x38 foot: 68 frames=1580
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 7875, layer crowbaros-dock: 7876, layer crowbaros-lock: 4968, layer crowbaros-wallpaper: 7874, window 0x38 foot: 68 frames=1614
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 8181, layer crowbaros-dock: 8182, layer crowbaros-lock: 5274, layer crowbaros-wallpaper: 8180, window 0x38 foot: 68 frames=1648
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 8487, layer crowbaros-dock: 8488, layer crowbaros-lock: 5580, layer crowbaros-wallpaper: 8486, window 0x38 foot: 68 frames=1682
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 8793, layer crowbaros-dock: 8794, layer crowbaros-lock: 5886, layer crowbaros-wallpaper: 8792, window 0x38 foot: 68 frames=1716
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 9099, layer crowbaros-dock: 9100, layer crowbaros-lock: 6192, layer crowbaros-wallpaper: 9098, window 0x38 foot: 68 frames=1750
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 9405, layer crowbaros-dock: 9406, layer crowbaros-lock: 6498, layer crowbaros-wallpaper: 9404, window 0x38 foot: 68 frames=1784
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 9711, layer crowbaros-dock: 9712, layer crowbaros-lock: 6804, layer crowbaros-wallpaper: 9710, window 0x38 foot: 68 frames=1818
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 10017, layer crowbaros-dock: 10018, layer crowbaros-lock: 7110, layer crowbaros-wallpaper: 10016, window 0x38 foot: 68 frames=1852
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 10323, layer crowbaros-dock: 10324, layer crowbaros-lock: 7416, layer crowbaros-wallpaper: 10322, window 0x38 foot: 68 frames=1886
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 10624, layer crowbaros-dock: 10625, layer crowbaros-lock: 7717, layer crowbaros-wallpaper: 10623, window 0x38 foot: 68 frames=1920
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 10930, layer crowbaros-dock: 10931, layer crowbaros-lock: 8023, layer crowbaros-wallpaper: 10929, window 0x38 foot: 68 frames=1954
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 11236, layer crowbaros-dock: 11237, layer crowbaros-lock: 8329, layer crowbaros-wallpaper: 11235, window 0x38 foot: 68 frames=1988
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 11537, layer crowbaros-dock: 11538, layer crowbaros-lock: 8630, layer crowbaros-wallpaper: 11536, window 0x38 foot: 68 frames=2141
+INFO crowbar_compositor: unlock authority connected id=11
+INFO crowbar_compositor: session unlocked
+INFO crowbar_compositor: shell control disconnected id=11
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 11838, layer crowbaros-dock: 11839, layer crowbaros-lock: 8797, layer crowbaros-wallpaper: 11837, window 0x38 foot: 69 frames=2361
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 12138, layer crowbaros-dock: 12139, layer crowbaros-lock: 8797, layer crowbaros-wallpaper: 12137, window 0x38 foot: 73 frames=2472
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 12444, layer crowbaros-dock: 12445, layer crowbaros-lock: 8797, layer crowbaros-wallpaper: 12443, window 0x38 foot: 73 frames=2592
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 12750, layer crowbaros-dock: 12751, layer crowbaros-lock: 8797, layer crowbaros-wallpaper: 12749, window 0x38 foot: 73 frames=2626
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 13056, layer crowbaros-dock: 13057, layer crowbaros-lock: 8797, layer crowbaros-wallpaper: 13055, window 0x38 foot: 73 frames=2660
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 13362, layer crowbaros-dock: 13363, layer crowbaros-lock: 8797, layer crowbaros-wallpaper: 13361, window 0x38 foot: 73 frames=2694
+INFO crowbar_compositor: unlock authority connected id=12
+INFO crowbar_compositor: session locked by=authority
+INFO crowbar_compositor: shell control disconnected id=12
+INFO crowbar_compositor: udev says the DRM device changed path=/dev/dri/card0
+INFO crowbar_compositor: udev says the DRM device changed path=/dev/dri/card0
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 13500, layer crowbaros-dock: 13501, layer crowbaros-lock: 8922, layer crowbaros-wallpaper: 13499, window 0x38 foot: 74 frames=2763
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 13806, layer crowbaros-dock: 13807, layer crowbaros-lock: 9228, layer crowbaros-wallpaper: 13805, window 0x38 foot: 74 frames=2797
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 14112, layer crowbaros-dock: 14113, layer crowbaros-lock: 9534, layer crowbaros-wallpaper: 14111, window 0x38 foot: 74 frames=2831
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 14418, layer crowbaros-dock: 14419, layer crowbaros-lock: 9840, layer crowbaros-wallpaper: 14417, window 0x38 foot: 74 frames=2865
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 14724, layer crowbaros-dock: 14725, layer crowbaros-lock: 10146, layer crowbaros-wallpaper: 14723, window 0x38 foot: 74 frames=2899
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 15030, layer crowbaros-dock: 15031, layer crowbaros-lock: 10452, layer crowbaros-wallpaper: 15029, window 0x38 foot: 74 frames=2933
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 15336, layer crowbaros-dock: 15337, layer crowbaros-lock: 10758, layer crowbaros-wallpaper: 15335, window 0x38 foot: 74 frames=2967
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 15642, layer crowbaros-dock: 15643, layer crowbaros-lock: 11064, layer crowbaros-wallpaper: 15641, window 0x38 foot: 74 frames=3001
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 15948, layer crowbaros-dock: 15949, layer crowbaros-lock: 11370, layer crowbaros-wallpaper: 15947, window 0x38 foot: 74 frames=3035
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 16254, layer crowbaros-dock: 16255, layer crowbaros-lock: 11676, layer crowbaros-wallpaper: 16253, window 0x38 foot: 74 frames=3069
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 16560, layer crowbaros-dock: 16561, layer crowbaros-lock: 11982, layer crowbaros-wallpaper: 16559, window 0x38 foot: 74 frames=3103
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 16866, layer crowbaros-dock: 16867, layer crowbaros-lock: 12288, layer crowbaros-wallpaper: 16865, window 0x38 foot: 74 frames=3137
+INFO crowbar_compositor: commits so far: layer crowbaros-bar: 17172, layer crowbaros-dock: 17173, layer crowbaros-lock: 12594, layer crowbaros-wallpaper: 17171, window 0x38 foot: 74 frames=3171
