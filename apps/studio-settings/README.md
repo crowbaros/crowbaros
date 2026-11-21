@@ -9,9 +9,12 @@ the Fedora RPM and Hyprland startup hook are
 ## Build and run on Void
 
 Use the dependencies and compositor command in the
-[Void development guide](../../docs/development/local-vms.md). From this directory:
+[Void development guide](../../docs/development/local-vms.md). Settings builds
+with the shell's patched GPUI 0.2.2, so a still window commits nothing
+([patches](../shell/patches/README.md)). From this directory:
 
 ```sh
+python3 ../shell/packaging/prepare-gpui.py
 cargo build --release --locked
 cargo test --release --locked
 target/release/crowbaros-studio-settings --version

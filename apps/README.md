@@ -12,8 +12,9 @@ to Void.
 | [gpui-probe/](gpui-probe/README.md) | Optional GPUI rendering/input reference |
 
 Use the [Void build/run guide](../docs/development/local-vms.md). Each app is a
-separate Cargo project. The shell's verified GPUI layer-shell backport and
-`packaging/prepare-gpui.py` remain active; the RPM recipes and systemd/Hyprland
+separate Cargo project. The shell's [GPUI patches](shell/patches/README.md),
+which `shell/packaging/prepare-gpui.py` applies, serve the shell and Studio
+Settings; the RPM recipes and systemd/Hyprland
 startup hooks are in the [workflow archive](../docs/archive/fedora-workflow/README.md).
 Portable desktop entries and icons remain beside the source.
 The shell launches desktop entries, and the launcher service starts each as
