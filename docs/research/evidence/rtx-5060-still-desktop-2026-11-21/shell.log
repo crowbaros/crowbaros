@@ -1,0 +1,22 @@
+[2026-11-21T19:05:31Z INFO  crowbaros_shell::session] SHELL display-bridge listening=/run/crowbar-displays/socket
+[2026-11-21T19:05:32Z INFO  crowbaros_shell] SHELL appearance theme=Dark wallpaper=SignalFeather
+[2026-11-21T19:05:32Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T19:05:32Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T19:05:32Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T19:05:32Z INFO  crowbaros_shell] SHELL lock open=true
+[2026-11-21T19:05:32Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T19:07:53Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="unlocked"
+[2026-11-21T19:07:53Z INFO  crowbaros_shell::session] SHELL unlock ok=true
+[2026-11-21T19:07:53Z INFO  crowbaros_shell] SHELL lock open=false
+[2026-11-21T19:08:08Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="locked"
+[2026-11-21T19:08:08Z INFO  crowbaros_shell] SHELL lock open=true
+[2026-11-21T19:08:59Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T19:09:28Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="unlocked"
+[2026-11-21T19:09:28Z INFO  crowbaros_shell] SHELL lock open=false
+[2026-11-21T19:09:28Z INFO  crowbaros_shell::session] SHELL unlock ok=true
+[2026-11-21T20:58:43Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="locked"
+[2026-11-21T20:58:43Z INFO  crowbaros_shell] SHELL lock open=true
+[2026-11-21T20:58:43Z INFO  gpui::platform::blade::blade_renderer] Initializing Blade pipelines for surface SurfaceInfo { format: Bgra8Unorm, alpha: PreMultiplied }
+[2026-11-21T21:01:43Z INFO  crowbaros_shell::session] SHELL event=compositor-event name="unlocked"
+[2026-11-21T21:01:43Z INFO  crowbaros_shell::session] SHELL unlock ok=true
+[2026-11-21T21:01:43Z INFO  crowbaros_shell] SHELL lock open=false

@@ -1,0 +1,20 @@
+# Fulcrum's commit reports on the RTX 5060 machine, 2026-11-21, each stamped
+# with the time it was written to the log (UTC). The reports are written after a
+# commit or a frame, at most every 5 s, and never on a timer, so a still
+# desktop writes nothing. Each stretch was watched with `tail -f` over SSH.
+
+## Unlocked, untouched since 19:09:28, no app open, watched 20:37:30 to 20:40:00
+20:38:00 commits so far: layer crowbaros-bar: 249, layer crowbaros-dock: 247, layer crowbaros-lock: 722, layer crowbaros-wallpaper: 231 frames=802
+20:39:00 commits so far: layer crowbaros-bar: 252, layer crowbaros-dock: 250, layer crowbaros-lock: 722, layer crowbaros-wallpaper: 234 frames=803
+
+## Locked over SSH with `crowbar-unlock lock` at 20:58:43, watched to 21:01:13
+20:58:43 lock returned 0
+20:58:43 commits so far: layer crowbaros-bar: 308, layer crowbaros-dock: 306, layer crowbaros-lock: 722, layer crowbaros-wallpaper: 284 frames=824
+20:59:00 commits so far: layer crowbaros-bar: 310, layer crowbaros-dock: 308, layer crowbaros-lock: 785, layer crowbaros-wallpaper: 287 frames=886
+21:00:00 commits so far: layer crowbaros-bar: 313, layer crowbaros-dock: 311, layer crowbaros-lock: 787, layer crowbaros-wallpaper: 290 frames=887
+21:01:00 commits so far: layer crowbaros-bar: 316, layer crowbaros-dock: 314, layer crowbaros-lock: 789, layer crowbaros-wallpaper: 293 frames=888
+
+## Unlocked by password at the machine at 21:01:43, watched 21:01:50 to 21:04:20
+21:02:00 commits so far: layer crowbaros-bar: 321, layer crowbaros-dock: 319, layer crowbaros-lock: 1145, layer crowbaros-wallpaper: 297 frames=1242
+21:03:00 commits so far: layer crowbaros-bar: 323, layer crowbaros-dock: 321, layer crowbaros-lock: 1145, layer crowbaros-wallpaper: 299 frames=1243
+21:04:00 commits so far: layer crowbaros-bar: 326, layer crowbaros-dock: 324, layer crowbaros-lock: 1145, layer crowbaros-wallpaper: 302 frames=1244
