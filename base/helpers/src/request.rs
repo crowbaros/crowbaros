@@ -2,6 +2,9 @@
 
 use std::io::{BufRead, BufReader, Read};
 
+/// The longest request line a helper reads, newline included.
+pub const MAX_REQUEST: usize = 4096;
+
 /// One request line of at most `max` bytes, ended by a newline.
 pub fn read_line(stream: &mut impl Read, max: usize) -> Result<Vec<u8>, String> {
     let mut line = Vec::new();

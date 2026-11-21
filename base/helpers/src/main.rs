@@ -1,11 +1,17 @@
 //! Base's desktop helpers, one binary for all four: the unlock helper, the
 //! launcher, the shell's connection to the compositor, and Ctrl+Alt+Del. See
 //! README.md.
+//!
+//! `unsafe` code lives in `sys` and in `crypt`, libcrypt's binding, alone.
+#![deny(unsafe_code)]
+
+#[allow(unsafe_code)]
 mod crypt;
 mod ctrl_alt_del;
 mod launcher;
 mod request;
 mod shell_connect;
+#[allow(unsafe_code)]
 mod sys;
 mod unlock;
 

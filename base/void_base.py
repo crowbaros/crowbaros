@@ -398,8 +398,9 @@ def build(force=False, lab_account=False):
     if lack := missing_from_root(ROOTFS):
         raise SystemExit(f"The Void root at {ROOTFS} has {lack}. Install it again with "
                          "`base/void_base.py build --force`")
-    # What only the lab's image gets, installed from the root's own package
-    # index, so the same versions the root was installed with.
+    # What only the lab's image gets: python3, as the lab's checks drive the
+    # guest with `python3 -c`. It comes from the root's own package index, so
+    # it matches what the root was installed with.
     lab_packages = CFG["lab_packages"] if lab_account else []
     xbps = fetch() if lab_packages else None
     if not KEY.exists():
@@ -415,7 +416,7 @@ def build(force=False, lab_account=False):
                PERSON_SSH_KEYS="".join(key + "\n" for key in account["ssh_keys"]),
                LAB_PACKAGES=" ".join(lab_packages), XBPS=str(xbps / "usr/bin") if xbps else "",
                REPOS=REPOSITORY, PKGCACHE=str(CACHE / "packages"))
-    run(*userns(), "sh", HERE / "host/image.sh", *binaries().values(), env=env)
+    run(*userns(), "--mount", "sh", HERE / "host/image.sh", *binaries().values(), env=env)
     lab = " (the lab account; see the warning above)" if account["password"] else ""
     print(f"The image's person's account is `{account['name']}`{lab}.")
 

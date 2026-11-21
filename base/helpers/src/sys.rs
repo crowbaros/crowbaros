@@ -3,9 +3,11 @@
 
 use std::ffi::{CStr, CString, c_char};
 use std::io;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixListener;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// An account, as /etc/passwd lists it.
 #[derive(Clone, Debug)]
@@ -88,8 +90,10 @@ pub fn account_by_uid(uid: u32) -> io::Result<Option<Account>> {
 }
 
 /// The account, or an error that names it.
-pub fn require(account: io::Result<Option<Account>>, what: &str) -> io::Result<Account> {
-    account?.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no account {what}")))
+pub fn require(account: io::Result<Option<Account>>, what: &str) -> Result<Account, String> {
+    account
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no account {what}"))
 }
 
 /// A listening socket at `path`, in place of anything there before, owned by
@@ -146,6 +150,39 @@ pub fn become_account(account: &Account) -> io::Result<()> {
     Ok(())
 }
 
+/// Opens `name` in the directory `at` (or the working directory, for
+/// `AT_FDCWD`), following no symbolic link.
+pub fn open_at(at: RawFd, name: &str, flags: libc::c_int) -> io::Result<OwnedFd> {
+    let name = CString::new(name)?;
+    // SAFETY: a NUL-ended name, and a descriptor we hold or AT_FDCWD.
+    let fd = unsafe { libc::openat(at, name.as_ptr(), flags | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: openat just gave us this descriptor.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// Has the command start in a session of its own, as a login's would.
+pub fn new_session(command: &mut Command) {
+    // SAFETY: setsid is async-signal-safe, as pre_exec requires.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    }
+}
+
+/// Sends init SIGINT, as the kernel does for Ctrl+Alt+Del on a console.
+pub fn ctrl_alt_del_to_init() {
+    // SAFETY: a plain system call.
+    unsafe { libc::kill(1, libc::SIGINT) };
+}
+
 /// Lets a descriptor pass to the program this process becomes.
 pub fn keep_across_exec(fd: &impl AsRawFd) -> io::Result<()> {
     // SAFETY: F_SETFD on a descriptor we hold.
@@ -179,6 +216,13 @@ pub mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// Makes a named pipe at `path`.
+    pub fn mkfifo(path: &Path) {
+        let path = CString::new(path.to_str().unwrap()).unwrap();
+        // SAFETY: a NUL-ended path.
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
     }
 
     #[test]

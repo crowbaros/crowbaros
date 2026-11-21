@@ -49,7 +49,6 @@
     "dbus",
     "glib"
   ],
-  "lab_packages_comment": "Only in an image built with --lab-account: the lab's checks drive the guest with python3 -c.",
   "lab_packages": ["python3"],
   "build_packages": [
     "base-minimal",

@@ -26,7 +26,6 @@ const COMPOSITOR: &str = "/run/crowbar-trusted/unlock/compositor";
 const SHELL: &str = "crowbar-shell";
 const WRONG_PAUSE: Duration = Duration::from_secs(2);
 
-pub const MAX_REQUEST: usize = 4096;
 pub const MAX_PASSWORD: usize = 1024;
 
 /// What the helper asks of the system, so a test can stand in for it.
@@ -69,7 +68,7 @@ pub fn answer(peer: u32, shell_uid: u32, stream: &mut impl Read, authority: &mut
         if peer != shell_uid {
             return Err("Only the shell may ask to unlock".to_string());
         }
-        let request = request::parse_object(&request::read_line(stream, MAX_REQUEST)?)?;
+        let request = request::parse_object(&request::read_line(stream, request::MAX_REQUEST)?)?;
         let password = match (request.len(), request.get("password")) {
             (1, Some(Value::String(password))) => password,
             _ => return Err("A request is the password, and nothing else".into()),
@@ -129,7 +128,7 @@ pub fn tell_compositor(path: &Path, op: &str) -> Result<(), String> {
         connection.write_all(format!("{}\n", json!({ "op": op })).as_bytes())?;
         let mut line = Vec::new();
         std::io::BufRead::read_until(
-            &mut std::io::BufReader::new(connection.take(MAX_REQUEST as u64 + 1)),
+            &mut std::io::BufReader::new(connection.take(request::MAX_REQUEST as u64 + 1)),
             b'\n',
             &mut line,
         )?;
@@ -151,7 +150,7 @@ pub fn tell_compositor(path: &Path, op: &str) -> Result<(), String> {
 pub fn main(args: &[String]) -> Result<(), String> {
     match args {
         [] => {
-            let shell = sys::require(sys::account_by_name(SHELL), SHELL).map_err(|e| e.to_string())?;
+            let shell = sys::require(sys::account_by_name(SHELL), SHELL)?;
             let listener = sys::listen_as(Path::new(SOCKET), 0, shell.gid).map_err(|e| e.to_string())?;
             loop {
                 serve_one(&listener, shell.uid, &mut System);
@@ -173,7 +172,7 @@ mod tests {
     use crate::crypt;
     use serde_json::json;
 
-    const SHELL: u32 = 1001;
+    const SHELL_UID: u32 = 1001;
 
     /// Stands in for /etc/shadow, the compositor, and the pause.
     struct Fake {
@@ -210,7 +209,7 @@ mod tests {
 
     fn ask(fake: &mut Fake, password: &str) -> serde_json::Value {
         let line = format!("{}\n", json!({ "password": password }));
-        answer(SHELL, SHELL, &mut line.as_bytes(), fake)
+        answer(SHELL_UID, SHELL_UID, &mut line.as_bytes(), fake)
     }
 
     #[test]
@@ -271,14 +270,17 @@ mod tests {
             "[\"crowbar\"]\n",
             "{\"password\":\"crowbar\"}",
         ] {
-            let reply = answer(SHELL, SHELL, &mut line.as_bytes(), &mut fake);
+            let reply = answer(SHELL_UID, SHELL_UID, &mut line.as_bytes(), &mut fake);
             assert_eq!(reply["ok"], false, "{line}");
             assert_ne!(reply["error"], "Wrong password", "{line}");
         }
         let long = "x".repeat(MAX_PASSWORD + 1);
         assert_eq!(ask(&mut fake, &long), json!({"ok": false, "error": "Wrong password"}));
-        let huge = format!("{}\n", json!({ "password": "x".repeat(MAX_REQUEST) }));
-        assert_eq!(answer(SHELL, SHELL, &mut huge.as_bytes(), &mut fake)["ok"], false);
+        let huge = format!("{}\n", json!({ "password": "x".repeat(request::MAX_REQUEST) }));
+        assert_eq!(
+            answer(SHELL_UID, SHELL_UID, &mut huge.as_bytes(), &mut fake)["ok"],
+            false
+        );
         assert!(fake.told.is_empty());
     }
 
@@ -286,7 +288,12 @@ mod tests {
     fn only_the_shell_may_ask_to_unlock() {
         let mut fake = Fake::new("crowbar");
         for peer in [0, 1000, 1002, 1003] {
-            let reply = answer(peer, SHELL, &mut b"{\"password\":\"crowbar\"}\n".as_slice(), &mut fake);
+            let reply = answer(
+                peer,
+                SHELL_UID,
+                &mut b"{\"password\":\"crowbar\"}\n".as_slice(),
+                &mut fake,
+            );
             assert_eq!(reply, json!({"ok": false, "error": "Only the shell may ask to unlock"}));
         }
         assert!(fake.told.is_empty());

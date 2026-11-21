@@ -1,6 +1,6 @@
 #!/bin/sh
-# Turn the Void root into a bootable UEFI disk, inside `unshare -r` so every
-# file is recorded as owned by root.
+# Turn the Void root into a bootable UEFI disk, inside `unshare -r --mount` so
+# every file is recorded as owned by root, and no mount outlives the script.
 #
 #   p1  ESP, FAT32, label $ESP_LABEL: a standalone GRUB at \EFI\BOOT\BOOTX64.EFI,
 #       the path any UEFI firmware boots with no boot entry
@@ -116,9 +116,15 @@ printf '[Icon Theme]\nInherits=Vanilla-DMZ\n' > "$R/usr/share/icons/default/inde
 # The lab's image alone gets LAB_PACKAGES, which its checks need in the guest
 # and a person's image never has. They come from the root's own package index,
 # so they match what the root was installed with, and through the same cache.
+# Their scripts get the host's /dev, as the root's install does: Python's
+# byte-compiles its library, which needs /dev/shm. It is unbound before the
+# root is packed.
 if [ -n "$LAB_PACKAGES" ]; then
+  mount --make-rslave /
+  mount --rbind /dev "$R/dev"
   # shellcheck disable=SC2086
   XBPS_ARCH=x86_64 "$XBPS/xbps-install.static" -y -r "$R" -c "$PKGCACHE" -R "$REPOS" $LAB_PACKAGES
+  umount -R "$R/dev"
 fi
 
 # The boot menu, on the root.

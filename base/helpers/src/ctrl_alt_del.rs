@@ -48,13 +48,10 @@ pub fn main(args: &[String]) -> Result<(), String> {
     if !args.is_empty() {
         return Err("usage: crowbar-ctrl-alt-del".into());
     }
-    let compositor = sys::require(sys::account_by_name(COMPOSITOR), COMPOSITOR).map_err(|e| e.to_string())?;
+    let compositor = sys::require(sys::account_by_name(COMPOSITOR), COMPOSITOR)?;
     let listener = sys::listen_as(Path::new(SOCKET), 0, compositor.gid).map_err(|e| e.to_string())?;
     loop {
-        // SAFETY: a signal to init, as the kernel sends for the chord.
-        serve_one(&listener, compositor.uid, &mut || unsafe {
-            libc::kill(1, libc::SIGINT);
-        });
+        serve_one(&listener, compositor.uid, &mut sys::ctrl_alt_del_to_init);
     }
 }
 

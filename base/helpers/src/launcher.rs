@@ -12,13 +12,10 @@
 use crate::request;
 use crate::sys::{self, Account};
 use serde_json::{Value, json};
-use std::ffi::CString;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::os::fd::{FromRawFd, OwnedFd, RawFd};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::UnixListener;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -29,7 +26,6 @@ const APPS_LOG: &str = "/var/log/crowbar-apps.log";
 /// The compositor's socket for apps, as Base links it into the person's
 /// runtime directory.
 const WAYLAND_DISPLAY: &str = "wayland-0";
-const MAX_REQUEST: usize = 4096;
 const MAX_PREFERENCES: usize = 64 << 10;
 /// How long `gio launch` may take to start an app.
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(8);
@@ -49,18 +45,6 @@ pub fn desktop_path(value: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// Opens `name` in the directory `at`, following no symbolic link.
-fn open_at(at: RawFd, name: &str, flags: libc::c_int) -> io::Result<OwnedFd> {
-    let name = CString::new(name)?;
-    // SAFETY: a NUL-ended name, and a descriptor we hold or AT_FDCWD.
-    let fd = unsafe { libc::openat(at, name.as_ptr(), flags | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: openat just gave us this descriptor.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
-}
-
 /// The person's saved appearance, ~/.config/crowbaros/appearance.json, or
 /// None when there is none. No symbolic link is followed on the way, and the
 /// file must be a regular one, the person's alone, of at most 64 KiB.
@@ -68,11 +52,11 @@ pub fn appearance(home: &Path, uid: u32) -> Result<Option<Value>, String> {
     use std::os::fd::AsRawFd;
     let found = (|| -> io::Result<File> {
         let home = home.to_str().ok_or_else(|| io::Error::other("The home is not UTF-8"))?;
-        let mut directory = open_at(libc::AT_FDCWD, home, libc::O_RDONLY | libc::O_DIRECTORY)?;
+        let mut directory = sys::open_at(libc::AT_FDCWD, home, libc::O_RDONLY | libc::O_DIRECTORY)?;
         for name in [".config", "crowbaros"] {
-            directory = open_at(directory.as_raw_fd(), name, libc::O_RDONLY | libc::O_DIRECTORY)?;
+            directory = sys::open_at(directory.as_raw_fd(), name, libc::O_RDONLY | libc::O_DIRECTORY)?;
         }
-        let file = open_at(
+        let file = sys::open_at(
             directory.as_raw_fd(),
             "appearance.json",
             libc::O_RDONLY | libc::O_NONBLOCK,
@@ -176,7 +160,7 @@ pub fn answer(peer: u32, shell_uid: u32, stream: &mut impl Read, person: &Accoun
             return Err("Only the shell may make a request".to_string());
         }
         dispatch(
-            request::parse_object(&request::read_line(stream, MAX_REQUEST)?)?,
+            request::parse_object(&request::read_line(stream, request::MAX_REQUEST)?)?,
             person,
             run,
         )
@@ -207,16 +191,7 @@ fn run_launch(command: &mut Command) -> Result<(), String> {
         .open(APPS_LOG)
         .map_err(|e| e.to_string())?;
     command.stdout(log.try_clone().map_err(|e| e.to_string())?).stderr(log);
-    // SAFETY: setsid is async-signal-safe.
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() < 0 {
-                Err(io::Error::last_os_error())
-            } else {
-                Ok(())
-            }
-        });
-    }
+    sys::new_session(command);
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     let deadline = Instant::now() + LAUNCH_TIMEOUT;
     loop {
@@ -244,9 +219,9 @@ pub fn main(args: &[String]) -> Result<(), String> {
     if !args.is_empty() {
         return Err("usage: crowbar-launcher".into());
     }
-    let shell = sys::require(sys::account_by_name(SHELL), SHELL).map_err(|e| e.to_string())?;
+    let shell = sys::require(sys::account_by_name(SHELL), SHELL)?;
     let uid = crate::PERSON_UID;
-    let person = sys::require(sys::account_by_uid(uid), &format!("with user ID {uid}")).map_err(|e| e.to_string())?;
+    let person = sys::require(sys::account_by_uid(uid), &format!("with user ID {uid}"))?;
     // Root's socket in root's directory, which the shell's group may enter:
     // the person, and so every app, may neither replace nor remove it. The
     // peer's user ID is the check that counts.
@@ -264,7 +239,7 @@ mod tests {
     use serde_json::json;
     use std::cell::RefCell;
 
-    const SHELL: u32 = 1001;
+    const SHELL_UID: u32 = 1001;
 
     fn person(home: &Path) -> Account {
         Account {
@@ -279,7 +254,7 @@ mod tests {
     /// The reply to `line` from `peer`, and each command the launcher ran.
     fn ask(line: &[u8], peer: u32, person: &Account) -> (serde_json::Value, Vec<String>) {
         let ran = RefCell::new(vec![]);
-        let reply = answer(peer, SHELL, &mut &line[..], person, &mut |command: &mut Command| {
+        let reply = answer(peer, SHELL_UID, &mut &line[..], person, &mut |command: &mut Command| {
             ran.borrow_mut().push(format!("{command:?}"));
             Ok(())
         });
@@ -329,7 +304,7 @@ mod tests {
     fn the_shell_reads_the_persons_appearance() {
         let home = Home::new();
         std::fs::write(home.folder().join("appearance.json"), r#"{"theme":"light"}"#).unwrap();
-        let (reply, _) = ask(b"{\"op\":\"appearance\"}\n", SHELL, &person(home.path()));
+        let (reply, _) = ask(b"{\"op\":\"appearance\"}\n", SHELL_UID, &person(home.path()));
         assert_eq!(reply, json!({"ok": true, "preferences": {"theme": "light"}}));
     }
 
@@ -341,8 +316,8 @@ mod tests {
         let line = format!("{}\n", json!({"op": "launch", "desktop": entry}));
         let mut seen = None;
         let reply = answer(
-            SHELL,
-            SHELL,
+            SHELL_UID,
+            SHELL_UID,
             &mut line.as_bytes(),
             &person(home.path()),
             &mut |command: &mut Command| {
@@ -375,8 +350,8 @@ mod tests {
         std::fs::write(&entry, "").unwrap();
         let line = format!("{}\n", json!({"op": "launch", "desktop": entry}));
         let reply = answer(
-            SHELL,
-            SHELL,
+            SHELL_UID,
+            SHELL_UID,
             &mut line.as_bytes(),
             &person(home.path()),
             &mut |_: &mut Command| Err("The application failed to launch".into()),
@@ -397,7 +372,7 @@ mod tests {
             b"{\"op\":\"appearance\",\"path\":\"/etc/shadow\"}\n",
             &long,
         ] {
-            let (reply, ran) = ask(line, SHELL, &person(home.path()));
+            let (reply, ran) = ask(line, SHELL_UID, &person(home.path()));
             assert_eq!(
                 reply["ok"],
                 false,
@@ -440,9 +415,7 @@ mod tests {
     fn a_fifo_or_an_oversized_file_is_refused_without_blocking() {
         let home = Home::new();
         let file = home.folder().join("appearance.json");
-        let path = std::ffi::CString::new(file.to_str().unwrap()).unwrap();
-        // SAFETY: a NUL-ended path.
-        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+        crate::sys::tests::mkfifo(&file);
         assert!(home.read(crate::sys::uid()).is_err());
         std::fs::remove_file(&file).unwrap();
         std::fs::write(&file, " ".repeat(65537)).unwrap();

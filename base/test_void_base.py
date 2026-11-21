@@ -206,6 +206,13 @@ class Desktop(BuildFixture):
         self.assertEqual(lab['LAB_PACKAGES'].split(), ['python3'])
         self.assertEqual(lab['XBPS'], '/xbps-static/usr/bin')
 
+    def test_the_image_step_has_a_mount_namespace_to_lend_the_lab_packages_dev(self):
+        # Python's install byte-compiles its library, which needs /dev/shm.
+        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
+        void_base.build(lab_account=True)
+        image, _ = self.image_step()
+        self.assertIn('--mount', image[:image.index('sh')])
+
 
 
 class Account(BuildFixture):

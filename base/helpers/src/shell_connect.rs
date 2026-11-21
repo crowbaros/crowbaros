@@ -16,7 +16,7 @@ use std::time::Duration;
 
 const DIRECTORY: &str = "/run/crowbar-trusted/compositor";
 const COMPOSITOR: &str = "crowbar-compositor";
-const SHELL: &str = "/usr/local/bin/crowbaros-shell";
+const SHELL_PROGRAM: &str = "/usr/local/bin/crowbaros-shell";
 
 /// A connection to the socket at `path`, served by `compositor_uid`. While
 /// the compositor is not yet listening, it tries again, `attempts` times in
@@ -50,7 +50,7 @@ pub fn main(args: &[String]) -> Result<(), String> {
     if !args.is_empty() {
         return Err("usage: crowbar-shell-connect".into());
     }
-    let compositor = sys::require(sys::account_by_name(COMPOSITOR), COMPOSITOR).map_err(|e| e.to_string())?;
+    let compositor = sys::require(sys::account_by_name(COMPOSITOR), COMPOSITOR)?;
     let mut channels = vec![];
     for name in ["wayland", "control"] {
         let channel = connect(
@@ -63,12 +63,12 @@ pub fn main(args: &[String]) -> Result<(), String> {
         sys::keep_across_exec(&channel).map_err(|e| e.to_string())?;
         channels.push(channel);
     }
-    let error = std::process::Command::new(SHELL)
+    let error = std::process::Command::new(SHELL_PROGRAM)
         .arg0("crowbaros-shell")
         .env("WAYLAND_SOCKET", channels[0].as_raw_fd().to_string())
         .env("CROWBAR_SHELL_CONTROL_FD", channels[1].as_raw_fd().to_string())
         .exec();
-    Err(format!("{SHELL}: {error}"))
+    Err(format!("{SHELL_PROGRAM}: {error}"))
 }
 
 #[cfg(test)]
