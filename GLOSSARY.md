@@ -56,7 +56,7 @@ The helper built into CrowbarOS, at the person's side. It runs from boot and act
 _Avoid_: Assistant, copilot, bot
 
 **Harness**:
-The program that runs the Agent: it holds the conversation, calls a model, and carries out the Agent's acts on the OS.
+The program that runs the Agent: it holds the conversation, calls a model, and carries out the Agent's acts on the OS. It runs as the person's account.
 
 **Model**:
 The language model a harness calls. It is not part of what CrowbarOS trusts.
