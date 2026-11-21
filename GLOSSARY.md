@@ -22,7 +22,7 @@ _Avoid_: Window manager
 The name of the CrowbarOS compositor, the way Mutter or KWin names theirs. Its code is in `compositor/`.
 
 **Shell**:
-The bar, launcher, dock, and wallpaper the person works in, drawn as layer surfaces.
+The bar, launcher, dock, and wallpaper the person works in, and the Agent's surface and the mark, drawn as layer surfaces.
 _Avoid_: Desktop environment
 
 **App**:
@@ -84,11 +84,11 @@ The person's act, in the Agent's surface, that gives the Agent the clipboard or 
 _Avoid_: Attach, grant
 
 **Allowance**:
-A share that lasts for one conversation: the Agent may take the clipboard and any capture again without asking. It ends with the conversation, when the person switches it off, or when the machine restarts, and nothing is taken while the desktop is locked. Each take shows in the mark, in an outline the compositor draws around what was captured, and in the conversation.
+A share that lasts for one conversation: the Agent may take the clipboard and any capture again without asking. It ends with the conversation, when the person switches it off, or when the Agent or the machine restarts, and nothing is taken while the desktop is locked. Each take shows in the mark, in an outline the compositor draws around what was captured, and in the conversation.
 _Avoid_: Permission, consent
 
 **Ask**:
-The Agent's request for a yes, shown in the Agent's surface with the exact act it will carry out. The act waits, through a restart if need be, until the person answers. One yes answers one ask. An ask never brings the surface up; the mark shows that one is waiting.
+The Agent's request for a yes, shown by the compositor over the Agent's surface with the exact act it will carry out. The act waits, through a restart if need be, until the person answers. One yes answers one ask. An ask never brings the surface up; the mark shows that one is waiting.
 _Avoid_: Prompt, approval, confirmation dialog
 
 **Yes**:
