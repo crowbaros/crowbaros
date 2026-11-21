@@ -28,8 +28,11 @@ The scripts use only the Python standard library and need no sudo. Base keeps
 downloads in `~/.cache/crowbaros/void` and its roots, Cargo target, and image
 in `.lab/base/`. Each check run gets its own directory under
 `.lab/void-compositor-checks/` or `.lab/void-desktop-checks/`, outside git,
-with its own grown copy of Base's disk, firmware variables, SSH port, and Unix
-VNC and QMP sockets. Neither check touches Base's own `.lab/base/disk.raw`.
+with its own grown copy of Base's disk, firmware variables, and SSH port. Its
+Unix VNC and QMP sockets are in a short directory of its own under the
+system's temporary directory, since a socket's path may be no longer than 107
+bytes and a worktree's run directory can be. Neither check touches Base's own
+`.lab/base/disk.raw`.
 Both reach the guest with Base's SSH key, `.lab/base/id_ed25519`.
 
 The host needs what [Base's README](../../base/README.md#what-the-host-needs)
