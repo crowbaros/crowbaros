@@ -87,6 +87,33 @@ _Avoid_: Attach, grant
 A share that lasts for one conversation: the Agent may take the clipboard and any capture again without asking. It ends with the conversation, when the person switches it off, or when the machine restarts, and nothing is taken while the desktop is locked. Each take shows in the mark, in an outline the compositor draws around what was captured, and in the conversation.
 _Avoid_: Permission, consent
 
+**Ask**:
+The Agent's request for a yes, shown in the Agent's surface with the exact act it will carry out. The act waits, through a restart if need be, until the person answers. One yes answers one ask. An ask never brings the surface up; the mark shows that one is waiting.
+_Avoid_: Prompt, approval, confirmation dialog
+
+**Yes**:
+The person's answer that lets an ask's act run: the confirm chord, or a click on the ask's button that the compositor saw come from a real pointer. It counts only after the ask has been shown, unchanged and uncovered, for half a second. Escape or the ask's other button is a no.
+_Avoid_: Approval, consent
+
+**Confirm chord**:
+Ctrl+Alt+Enter. The compositor takes it before any app hears it. It answers the ask that is showing, and with none showing it does nothing.
+
+**Mode**:
+How much the Agent asks before it acts: Ask, Auto, or YOLO. One mode covers the whole Agent. The person switches it in the Agent's surface, and the Agent cannot.
+_Avoid_: Permission mode
+
+**Ask mode**:
+The mode in which every shell command and every act as root raises an ask. For the rest, the Agent raises an ask when it judges an act cannot be taken back.
+
+**Auto mode**:
+The mode a new install starts in. Every act as root raises an ask. For the rest, shell commands included, the Agent raises an ask when it judges an act cannot be taken back, and acts when it is unsure.
+
+**YOLO mode**:
+The mode in which nothing raises an ask: the Agent may act as root, and may take the clipboard and captures without a share. Each take still shows as it does under an allowance, and nothing is taken while the desktop is locked. Only a yes turns it on. It ends when the person switches it off, or when the compositor or the machine restarts.
+
+**Root helper**:
+The Base service that carries out the Agent's acts as root: a command, or installing and removing packages. It acts only on the compositor's word, which is the person's yes to that exact act or YOLO mode being on. The harness's word is not enough.
+
 **Person**:
 The one who uses the machine and is in charge of it.
 _Avoid_: User, owner

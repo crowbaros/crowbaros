@@ -51,10 +51,11 @@ Nothing else is installed.
    conversation. A mark shows whenever the Agent is working, looking, or
    waiting for the person.
 4. **The person stays in charge.** The Agent acts with the person's
-   permissions and never more. Before it does something that cannot be taken
-   back, it shows what it will do and waits for the person's yes. A yes comes
-   from the person's own hand, and the compositor can tell it apart from input
-   an app or the Agent made.
+   permissions. Before it does something as root, CrowbarOS makes it show what
+   it will do and wait for the person's yes. Before anything else it judges
+   cannot be taken back, the Agent does the same. The person chooses a mode:
+   Ask, Auto, or YOLO. A yes comes from the person's own hand, and the
+   compositor can tell it apart from input an app or the Agent made.
 
 ## What we build first
 
