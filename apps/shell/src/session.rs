@@ -5,7 +5,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, Read, Write},
     os::{
-        fd::{FromRawFd, RawFd},
+        fd::{AsRawFd, FromRawFd, RawFd},
         unix::{
             fs::PermissionsExt,
             net::{UnixListener, UnixStream},
@@ -13,7 +13,7 @@ use std::{
     },
     path::PathBuf,
     process::{Command, Stdio},
-    sync::{Mutex, OnceLock, mpsc::Sender},
+    sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -53,6 +53,25 @@ pub enum Event {
     /// compositor unlocked, or why not.
     Unlock(Result<(), String>),
 }
+/// The shell's events, from any thread to the interface. Sending one wakes
+/// the interface at once: it does not look for them on a timer.
+#[derive(Clone)]
+pub struct Sender(futures::channel::mpsc::UnboundedSender<Event>);
+/// Where the interface takes the shell's events.
+pub type Receiver = futures::channel::mpsc::UnboundedReceiver<Event>;
+impl Sender {
+    /// Sends an event. An error once the interface has gone.
+    pub fn send(&self, event: Event) -> Result<(), Event> {
+        self.0
+            .unbounded_send(event)
+            .map_err(|error| error.into_inner())
+    }
+}
+/// A new channel for the shell's events.
+pub fn channel() -> (Sender, Receiver) {
+    let (tx, rx) = futures::channel::mpsc::unbounded();
+    (Sender(tx), rx)
+}
 /// What the shell asks of the compositor it runs under: the windows and
 /// workspaces, and the two focus requests.
 pub trait Adapter: Send + Sync {
@@ -66,6 +85,10 @@ pub trait Adapter: Send + Sync {
     }
     /// Reads the events the compositor sent while no request was waiting.
     fn pump(&self) {}
+    /// Waits up to `timeout` for the compositor to send something.
+    fn wait(&self, timeout: Duration) {
+        std::thread::sleep(timeout);
+    }
     /// The channel to the compositor is gone for good, and only a new
     /// connection, from a shell started again, would talk to it.
     fn closed(&self) -> bool {
@@ -86,17 +109,21 @@ pub trait Adapter: Send + Sync {
 }
 
 /// Where the compositor's events go: the shell's own event channel.
-static EVENTS: OnceLock<Sender<Event>> = OnceLock::new();
+static EVENTS: OnceLock<Sender> = OnceLock::new();
 
 /// Sends the compositor's events to the shell's event channel from now on.
-pub fn deliver_events_to(tx: Sender<Event>) {
+pub fn deliver_events_to(tx: Sender) {
     let _ = EVENTS.set(tx);
 }
 
 /// One event the compositor sent: `launcher` opens or closes the launcher,
-/// as Super tapped alone asks (ADR 0032).
-fn compositor_event(event: &serde_json::Value) {
-    log::info!("SHELL event=compositor-event name={event}");
+/// as Super tapped alone asks (ADR 0032), and `snapshot` says what the
+/// windows and workspaces are now, so the bar shows a change at once.
+fn compositor_event(message: &serde_json::Value) {
+    let event = &message["event"];
+    if event.as_str() != Some("snapshot") {
+        log::info!("SHELL event=compositor-event name={event}");
+    }
     let Some(tx) = EVENTS.get() else {
         return;
     };
@@ -104,8 +131,60 @@ fn compositor_event(event: &serde_json::Value) {
         Some("launcher") => tx.send(Event::Toggle),
         Some("locked") => tx.send(Event::Lock(true)),
         Some("unlocked") => tx.send(Event::Lock(false)),
+        Some("snapshot") => match snapshot_from(message.clone()) {
+            Ok(snapshot) => tx.send(Event::Snapshot(snapshot)),
+            Err(e) => {
+                log::warn!("Compositor: a snapshot event: {e}");
+                Ok(())
+            }
+        },
         _ => Ok(()),
     };
+}
+
+/// A snapshot, from the compositor's snapshot reply or event.
+fn snapshot_from(message: serde_json::Value) -> Result<Snapshot> {
+    #[derive(Deserialize)]
+    struct Window {
+        id: String,
+        app_id: String,
+        title: String,
+        workspace: i32,
+        #[serde(default)]
+        attention: bool,
+    }
+    #[derive(Deserialize)]
+    struct Reply {
+        workspace: i32,
+        active: Option<String>,
+        #[serde(default)]
+        locked: bool,
+        windows: Vec<Window>,
+    }
+    let reply: Reply = serde_json::from_value(message)?;
+    let clients: Vec<Client> = reply
+        .windows
+        .into_iter()
+        .map(|w| Client {
+            address: w.id,
+            class: w.app_id,
+            title: w.title,
+            workspace: Workspace { id: w.workspace },
+            attention: w.attention,
+        })
+        .collect();
+    let active = clients
+        .iter()
+        .find(|c| Some(&c.address) == reply.active.as_ref())
+        .cloned()
+        .unwrap_or_default();
+    Ok(Snapshot {
+        workspace: reply.workspace,
+        clients,
+        active,
+        connected: true,
+        locked: reply.locked,
+    })
 }
 
 /// The lines the compositor sends, read whole: what has arrived of a line
@@ -352,8 +431,8 @@ impl Channel {
                 if late { Failure::Late } else { Failure::Broken(error) }
             })?;
             let message: serde_json::Value = serde_json::from_str(&line)?;
-            if let Some(event) = message.get("event") {
-                compositor_event(event);
+            if message.get("event").is_some() {
+                compositor_event(&message);
                 continue;
             }
             if message["reply"].is_string() {
@@ -372,48 +451,7 @@ impl Channel {
 
 impl Adapter for Compositor {
     fn snapshot(&self) -> Result<Snapshot> {
-        #[derive(Deserialize)]
-        struct Window {
-            id: String,
-            app_id: String,
-            title: String,
-            workspace: i32,
-            #[serde(default)]
-            attention: bool,
-        }
-        #[derive(Deserialize)]
-        struct Reply {
-            workspace: i32,
-            active: Option<String>,
-            #[serde(default)]
-            locked: bool,
-            windows: Vec<Window>,
-        }
-        let reply: Reply =
-            serde_json::from_value(self.request(serde_json::json!({"op": "snapshot"}))?)?;
-        let clients: Vec<Client> = reply
-            .windows
-            .into_iter()
-            .map(|w| Client {
-                address: w.id,
-                class: w.app_id,
-                title: w.title,
-                workspace: Workspace { id: w.workspace },
-                attention: w.attention,
-            })
-            .collect();
-        let active = clients
-            .iter()
-            .find(|c| Some(&c.address) == reply.active.as_ref())
-            .cloned()
-            .unwrap_or_default();
-        Ok(Snapshot {
-            workspace: reply.workspace,
-            clients,
-            active,
-            connected: true,
-            locked: reply.locked,
-        })
+        snapshot_from(self.request(serde_json::json!({"op": "snapshot"}))?)
     }
 
     fn focus_workspace(&self, id: i32) -> Result<()> {
@@ -453,8 +491,8 @@ impl Adapter for Compositor {
         for line in channel.reader.waiting() {
             match serde_json::from_str::<serde_json::Value>(&line) {
                 Ok(message) => {
-                    if let Some(event) = message.get("event") {
-                        compositor_event(event);
+                    if message.get("event").is_some() {
+                        compositor_event(&message);
                     } else if message["reply"].is_string() && channel.owed > 0 {
                         // A late reply, come while no request waited.
                         channel.owed -= 1;
@@ -467,6 +505,31 @@ impl Adapter for Compositor {
 
     fn closed(&self) -> bool {
         self.channel.lock().map_or(true, |channel| channel.is_none())
+    }
+
+    /// Waits on a copy of the socket, so that a request on another thread
+    /// does not wait for this. A request may read what woke it first.
+    fn wait(&self, timeout: Duration) {
+        let copy = match self.channel.lock() {
+            Ok(guard) => guard
+                .as_ref()
+                .and_then(|channel| channel.reader.stream.try_clone().ok()),
+            Err(_) => None,
+        };
+        let Some(copy) = copy else {
+            std::thread::sleep(timeout);
+            return;
+        };
+        let mut poll = libc::pollfd {
+            fd: copy.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let millis = timeout.as_millis().min(i32::MAX as u128) as i32;
+        // Safety: one valid pollfd, and the descriptor is open while `copy` lives.
+        unsafe {
+            libc::poll(&mut poll, 1, millis);
+        }
     }
 }
 
@@ -536,7 +599,7 @@ pub fn unlocks_with_password() -> bool {
 /// Sends the person's password to the unlock helper, which checks it and
 /// tells the compositor to unlock; the answer comes back as
 /// [`Event::Unlock`]. The password is not kept.
-pub fn unlock_with_password(password: String, tx: Sender<Event>) {
+pub fn unlock_with_password(password: String, tx: Sender) {
     std::thread::spawn(move || {
         let result = std::env::var_os("CROWBAR_UNLOCK_SOCKET")
             .context("No unlock helper")
@@ -569,6 +632,25 @@ fn ask_unlock_helper(mut stream: UnixStream, password: String) -> Result<()> {
         bail!("{}", reply["error"].as_str().unwrap_or("Could not unlock"));
     }
     Ok(())
+}
+/// Reads the compositor's events as they come, for `period`.
+pub fn read_events_for(period: Duration) {
+    for_a_while(
+        period,
+        |timeout| match connection() {
+            Ok(connection) => connection.wait(timeout),
+            Err(_) => std::thread::sleep(timeout),
+        },
+        pump,
+    );
+}
+/// Waits, then reads, until `period` is over. A wait may end late.
+fn for_a_while(period: Duration, mut wait: impl FnMut(Duration), mut read: impl FnMut()) {
+    let start = Instant::now();
+    while start.elapsed() < period {
+        wait(period.saturating_sub(start.elapsed()));
+        read();
+    }
 }
 /// Reads the compositor's events that wait, as Super tapped alone.
 pub fn pump() {
@@ -642,7 +724,7 @@ pub fn launcher_request(request: serde_json::Value) -> Result<serde_json::Value>
     Ok(reply)
 }
 
-pub fn launch(path: PathBuf, tx: Sender<Event>) {
+pub fn launch(path: PathBuf, tx: Sender) {
     std::thread::spawn(move || {
         // The app's first window takes the keyboard, as the person started it.
         if let Err(e) = connection().and_then(|c| c.launching()) {
@@ -696,7 +778,7 @@ pub fn send(command: &str) -> Result<()> {
     s.write_all(command.as_bytes())?;
     Ok(())
 }
-pub fn server(tx: Sender<Event>) -> Result<File> {
+pub fn server(tx: Sender) -> Result<File> {
     let dir = runtime()?;
     let lock = OpenOptions::new()
         .create(true)
@@ -932,8 +1014,23 @@ mod tests {
     }
 
     #[test]
+    fn reading_events_for_a_while_survives_a_wait_that_ends_late() {
+        let mut waits = 0;
+        for_a_while(
+            Duration::from_millis(20),
+            |timeout| {
+                waits += 1;
+                // Ends after the period, and after the loop looked at the time.
+                std::thread::sleep(timeout + Duration::from_millis(5));
+            },
+            || {},
+        );
+        assert_eq!(waits, 1);
+    }
+
+    #[test]
     fn super_tapped_alone_toggles_the_launcher_and_a_launch_is_announced() {
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, mut rx) = channel();
         deliver_events_to(tx);
         let (ours, mut theirs) = UnixStream::pair().unwrap();
         let compositor = Compositor::new(ours).unwrap();
@@ -959,6 +1056,7 @@ mod tests {
         assert!(matches!(rx.try_recv(), Ok(Event::Lock(true))));
         assert!(matches!(rx.try_recv(), Ok(Event::Lock(false))));
 
+        let mut later = theirs.try_clone().unwrap();
         // Half an event that a request's reply follows is read with it.
         theirs.write_all(b"{\"event\":\"laun").unwrap();
         compositor.pump();
@@ -971,6 +1069,38 @@ mod tests {
         });
         compositor.launching().unwrap();
         peer.join().unwrap();
+        assert!(matches!(rx.try_recv(), Ok(Event::Toggle)));
+
+        // A snapshot the compositor sends unasked reaches the shell as one
+        // it asked for would (#273).
+        later
+            .write_all(
+                b"{\"event\":\"snapshot\",\"workspace\":2,\"active\":\"0x2\",\"locked\":false,\
+                  \"windows\":[{\"id\":\"0x2\",\"app_id\":\"foot\",\"title\":\"~\",\"workspace\":2,\"attention\":false}]}\n",
+            )
+            .unwrap();
+        compositor.pump();
+        match rx.try_recv() {
+            Ok(Event::Snapshot(snapshot)) => {
+                assert_eq!(snapshot.workspace, 2);
+                assert_eq!(snapshot.active.address, "0x2");
+                assert_eq!(snapshot.clients[0].workspace.id, 2);
+                assert!(snapshot.connected);
+            }
+            _ => panic!("the snapshot event did not reach the shell"),
+        }
+
+        // Waiting for events ends as soon as one comes.
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            later.write_all(b"{\"event\":\"launcher\"}\n").unwrap();
+            later
+        });
+        let start = Instant::now();
+        compositor.wait(Duration::from_secs(10));
+        assert!(start.elapsed() < Duration::from_secs(5), "{:?}", start.elapsed());
+        let _later = sender.join().unwrap();
+        compositor.pump();
         assert!(matches!(rx.try_recv(), Ok(Event::Toggle)));
     }
 

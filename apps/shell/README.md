@@ -19,7 +19,8 @@ cargo test --release --locked
 The sources are not rustfmt-clean, and CI runs `cargo test` only. Do not run
 `cargo fmt` here: it reformats files a change does not touch.
 
-GPUI 0.2.2 uses the existing verified [layer-shell backport](patches/README.md).
+GPUI 0.2.2 uses the existing verified layer-shell backport, and a patch with
+which a still window commits nothing ([patches](patches/README.md)).
 The [desktop check](../../lab/void/README.md#the-desktop-check) builds Base's
 image and runs the shell as Base runs it, on a copy of that image. On Base the
 shell runs as its own service account, `crowbar-shell`, and connects to the
@@ -40,7 +41,11 @@ historical behavior evidence, not a current Fedora workflow.
   Only the shell is offered layer shell, so no app can draw the bar, the dock,
   the launcher, the wallpaper, or the lock screen.
 - Applications search supports keyboard navigation; closing the launcher returns focus.
-- Workspace and window focus requests go over the compositor's control channel.
+- Workspace and window focus requests go over the compositor's control
+  channel, and the compositor tells the shell of each change to the windows
+  and workspaces as it happens, so the bar shows it at once.
+- A still desktop draws nothing: the bar, dock, lock screen, and wallpaper
+  commit only when what they show changes.
 - Super tapped alone toggles the launcher, an app the shell launches takes the
   keyboard with its first window, and the bar and dock mark a window that
   wants attention.

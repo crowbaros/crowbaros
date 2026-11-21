@@ -1249,6 +1249,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "env_logger",
+ "futures",
  "gpui",
  "libc",
  "log",

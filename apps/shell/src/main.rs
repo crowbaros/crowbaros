@@ -5,12 +5,8 @@ mod session;
 mod theme;
 use catalog::AppEntry;
 use gpui::{layer_shell::*, prelude::*, *};
-use std::{
-    borrow::Cow,
-    path::PathBuf,
-    sync::mpsc::{self, Sender},
-    time::Duration,
-};
+use futures::StreamExt;
+use std::{borrow::Cow, path::PathBuf, time::Duration};
 use theme::{Palette, Preferences};
 actions!(shell, [Next, Previous, Open, Close, Unlock]);
 struct Assets;
@@ -148,7 +144,7 @@ struct Model {
     launcher: Option<WindowHandle<Launcher>>,
     lock: Option<WindowHandle<LockScreen>>,
     apps: Vec<AppEntry>,
-    tx: Sender<session::Event>,
+    tx: session::Sender,
     clock: String,
     lock_time: String,
     lock_date: String,
@@ -1531,6 +1527,86 @@ fn set_lock_screen(model: &Entity<Model>, locked: bool, cx: &mut App) {
         Err(e) => log::error!("Opening the lock screen: {e}"),
     }
 }
+/// Handles the shell's events. True if the windows must be drawn again: a
+/// snapshot that is the same as the last draws nothing.
+fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut App) -> bool {
+    let mut refresh = false;
+    for e in events {
+        match e {
+            session::Event::Toggle => toggle_launcher(model.clone(), cx),
+            session::Event::Quit => cx.quit(),
+            session::Event::Snapshot(s) => {
+                if model.read(cx).snapshot == s {
+                    continue;
+                }
+                // A shell that starts while locked shows the lock screen too.
+                let locked = s.locked;
+                let lock_changes = lock_screen_changes(&s, model.read(cx).lock.is_some());
+                model.update(cx, |m, _| m.snapshot = s);
+                if lock_changes {
+                    set_lock_screen(model, locked, cx);
+                }
+                refresh = true
+            }
+            session::Event::Lock(locked) => set_lock_screen(model, locked, cx),
+            session::Event::Unlock(result) => {
+                if let Some(w) = model.read(cx).lock {
+                    let _ = w.update(cx, |v, _, cx| v.answered(result, cx));
+                }
+            }
+            session::Event::Launch(result) => {
+                if let Some(w) = model.read(cx).launcher {
+                    match result {
+                        Ok(()) => close_launcher(model, cx),
+                        Err(error) => {
+                            let _ = w.update(cx, |v, _, cx| {
+                                v.busy = false;
+                                v.error = Some(error);
+                                cx.notify();
+                            });
+                        }
+                    }
+                } else if let Err(error) = result {
+                    toggle_launcher(model.clone(), cx);
+                    if let Some(w) = model.read(cx).launcher {
+                        let _ = w.update(cx, |v, _, cx| {
+                            v.error = Some(error);
+                            cx.notify();
+                        });
+                    }
+                }
+            }
+        }
+    }
+    refresh
+}
+/// Looks at the clock and the saved appearance. True if either changed what
+/// the shell shows.
+fn tick(model: &Entity<Model>, cx: &mut App) -> bool {
+    let now = ClockDisplay::now();
+    let prefs = Preferences::load();
+    model.update(cx, |m, _| {
+        let mut refresh = false;
+        if m.clock != now.bar || m.lock_time != now.lock_time || m.lock_date != now.lock_date {
+            m.clock = now.bar;
+            m.lock_time = now.lock_time;
+            m.lock_date = now.lock_date;
+            refresh = true
+        }
+        if let Some(prefs) = prefs {
+            if prefs != m.preferences {
+                log::info!(
+                    "SHELL appearance theme={:?} wallpaper={:?}",
+                    prefs.theme,
+                    prefs.wallpaper
+                );
+                m.preferences = prefs;
+                refresh = true
+            }
+        }
+        refresh
+    })
+}
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     match std::env::args().nth(1).as_deref() {
@@ -1551,7 +1627,7 @@ fn main() -> anyhow::Result<()> {
         None => {}
     }
     session::connect();
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = session::channel();
     session::deliver_events_to(tx.clone());
     let _lock = session::server(tx.clone())?;
     session::start_display_bridge();
@@ -1574,11 +1650,10 @@ fn main() -> anyhow::Result<()> {
                     break;
                 }
             }
-            // Events, as Super tapped alone, are read sooner than snapshots.
-            for _ in 0..7 {
-                session::pump();
-                std::thread::sleep(Duration::from_millis(100));
-            }
+            // Events, as Super tapped alone or the compositor's snapshot, are
+            // read as they come. Asking again is for a compositor that sends
+            // no snapshots, and finds a closed channel.
+            session::read_events_for(Duration::from_millis(700));
         }
     });
     Application::new().with_assets(Assets).run(move |cx| {
@@ -1672,89 +1747,37 @@ fn main() -> anyhow::Result<()> {
             },
         )
         .expect("Dock layer");
+        // The shell's events wake the interface as they come, so the bar
+        // shows a workspace in the frame it changes or the next (#273).
+        let events = model.clone();
         cx.spawn(async move |cx| {
-            let mut ticks = 0u8;
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(150))
-                    .await;
+            let mut rx = rx;
+            while let Some(first) = rx.next().await {
+                let mut waiting = vec![first];
+                while let Ok(e) = rx.try_recv() {
+                    waiting.push(e);
+                }
                 if cx
                     .update(|cx| {
-                        let mut refresh = false;
-                        for e in rx.try_iter() {
-                            match e {
-                                session::Event::Toggle => toggle_launcher(model.clone(), cx),
-                                session::Event::Quit => cx.quit(),
-                                session::Event::Snapshot(s) => {
-                                    // A shell that starts while locked shows
-                                    // the lock screen too.
-                                    let locked = s.locked;
-                                    let lock_changes =
-                                        lock_screen_changes(&s, model.read(cx).lock.is_some());
-                                    model.update(cx, |m, _| m.snapshot = s);
-                                    if lock_changes {
-                                        set_lock_screen(&model, locked, cx);
-                                    }
-                                    refresh = true
-                                }
-                                session::Event::Lock(locked) => set_lock_screen(&model, locked, cx),
-                                session::Event::Unlock(result) => {
-                                    if let Some(w) = model.read(cx).lock {
-                                        let _ = w.update(cx, |v, _, cx| v.answered(result, cx));
-                                    }
-                                }
-                                session::Event::Launch(result) => {
-                                    if let Some(w) = model.read(cx).launcher {
-                                        match result {
-                                            Ok(()) => close_launcher(&model, cx),
-                                            Err(error) => {
-                                                let _ = w.update(cx, |v, _, cx| {
-                                                    v.busy = false;
-                                                    v.error = Some(error);
-                                                    cx.notify();
-                                                });
-                                            }
-                                        }
-                                    } else if let Err(error) = result {
-                                        toggle_launcher(model.clone(), cx);
-                                        if let Some(w) = model.read(cx).launcher {
-                                            let _ = w.update(cx, |v, _, cx| {
-                                                v.error = Some(error);
-                                                cx.notify();
-                                            });
-                                        }
-                                    }
-                                }
-                            }
+                        if handle_events(&events, waiting, cx) {
+                            cx.refresh_windows();
                         }
-                        ticks = (ticks + 1) % 7;
-                        if ticks == 0 {
-                            let now = ClockDisplay::now();
-                            let prefs = Preferences::load();
-                            model.update(cx, |m, _| {
-                                if m.clock != now.bar
-                                    || m.lock_time != now.lock_time
-                                    || m.lock_date != now.lock_date
-                                {
-                                    m.clock = now.bar;
-                                    m.lock_time = now.lock_time;
-                                    m.lock_date = now.lock_date;
-                                    refresh = true
-                                }
-                                if let Some(prefs) = prefs {
-                                    if prefs != m.preferences {
-                                        log::info!(
-                                            "SHELL appearance theme={:?} wallpaper={:?}",
-                                            prefs.theme,
-                                            prefs.wallpaper
-                                        );
-                                        m.preferences = prefs;
-                                        refresh = true
-                                    }
-                                }
-                            });
-                        }
-                        if refresh {
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+        // The clock and the saved appearance are looked at once a second.
+        // Neither redraws anything until it changes.
+        cx.spawn(async move |cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if cx
+                    .update(|cx| {
+                        if tick(&model, cx) {
                             cx.refresh_windows();
                         }
                     })
