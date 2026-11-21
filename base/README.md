@@ -62,6 +62,19 @@ to keep one image.
   `/dev/null` in the root is a plain file, and NVIDIA's build reads garbage
   from it and fails. Because dracut would then make an initramfs for the host's
   hardware, the root sets dracut's `hostonly="no"`.
+- **Video memory survives a suspend.** Void's `nvidia` package has `zzz`
+  run `nvidia-sleep.sh` around a suspend, but the module's own defaults,
+  `PreserveVideoMemoryAllocations` 2 and no `TemporaryFilePath`, keep only
+  some of it, and the desktop woke grey. The image's
+  `/etc/modprobe.d/crowbaros-nvidia.conf` sets
+  `NVreg_PreserveVideoMemoryAllocations=1 NVreg_TemporaryFilePath=/var/tmp`
+  (`nvidia_options` in [`config.json`](config.json)), so the module saves all
+  of it in a file under `/var/tmp`. That is on the root's disk, as `/tmp` is in
+  memory. The file holds the video memory in use. The root grows to fill its
+  disk, and on the 16 GB disk the [guide](HARDWARE.md) asks for, it has about
+  11 GB free, more than an RTX 5060's 8 GB; a GPU with more in use needs a
+  larger disk. The module loads from the root, not the initramfs, so the file
+  needs no new initramfs.
 - **Where there is no NVIDIA card, the module does not load,** and Mesa draws.
   The package blacklists `nouveau`. The kernel's NVIDIA settings do nothing
   where `nvidia-drm` never loads.
@@ -124,7 +137,9 @@ microcode, that the person's account is in `netdev` and may use `iwctl`, that
 the person's account has a home it owns and a login shell and takes the build's key
 over SSH, that the network has an address, that packages kept their groups, that the kernel's command line carries
 NVIDIA's settings, that NVIDIA's module is built for the running kernel and,
-with no NVIDIA card in the VM, not loaded, that restarting the compositor's
+with no NVIDIA card in the VM, not loaded, that the module is set to save
+video memory across a suspend to `/var/tmp` and that `/var/tmp` is on the
+disk, that restarting the compositor's
 service leaves one new compositor running, and that the kernel logged nothing
 critical.
 

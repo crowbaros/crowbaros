@@ -179,6 +179,22 @@ class Desktop(BuildFixture):
         self.assertIn('nvidia-drm.modeset=1', env['KERNEL_ARGS'].split())
         self.assertIn('nvidia-drm.fbdev=1', env['KERNEL_ARGS'].split())
 
+    def test_nvidias_module_keeps_video_memory_on_disk_across_suspend(self):
+        # Without both, the GPU loses the compositor's video memory when the
+        # machine suspends, and the desktop wakes grey (issue #272).
+        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
+        void_base.build()
+        _, env = self.image_step()
+        self.assertEqual(env['NVIDIA_OPTIONS'].split(), [
+            'NVreg_PreserveVideoMemoryAllocations=1', 'NVreg_TemporaryFilePath=/var/tmp'])
+
+    def test_the_image_step_writes_nvidias_options_beside_the_packages_own(self):
+        # A file named nvidia.conf in /etc/modprobe.d would hide the package's
+        # /usr/lib/modprobe.d/nvidia.conf, which blacklists nouveau.
+        script = (Path(void_base.HERE) / 'host/image.sh').read_text()
+        self.assertIn('options nvidia $NVIDIA_OPTIONS', script)
+        self.assertIn('"$R/etc/modprobe.d/crowbaros-nvidia.conf"', script)
+
     def test_the_image_step_gets_each_program_whole(self):
         self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
         void_base.build()
@@ -490,6 +506,7 @@ class NvidiaCheck(unittest.TestCase):
         checks = dict((name, ok) for name, _, ok, *_ in void_base.CHECKS)
         self.cmdline = checks["kernel command line carries NVIDIA's settings"]
         self.module = checks["NVIDIA's module is built, and not loaded without an NVIDIA card"]
+        self.suspend = checks["NVIDIA's module saves video memory to the disk across suspend"]
 
     def test_the_command_line_needs_both_settings(self):
         line = 'BOOT_IMAGE=/boot/vmlinuz-6.18.64_1 root=LABEL=crowbaros-root rw console=ttyS0,115200'
@@ -507,6 +524,24 @@ class NvidiaCheck(unittest.TestCase):
 
     def test_a_module_that_is_not_there_fails(self):
         self.assertFalse(self.module('virtio_gpu\nvirtio_net\n'))
+
+    OPTIONS = 'options nvidia NVreg_PreserveVideoMemoryAllocations=1 NVreg_TemporaryFilePath=/var/tmp\n'
+
+    def test_both_options_and_var_tmp_on_the_root_pass(self):
+        # modprobe -c's lines for the module, then the file system under /var/tmp.
+        self.assertTrue(self.suspend(self.OPTIONS + 'options nvidia_drm modeset=1\nbtrfs\n'))
+
+    def test_the_drivers_own_defaults_fail(self):
+        # What the module did with no options: 2 and "" (issue #272).
+        self.assertFalse(self.suspend('btrfs\n'))
+        self.assertFalse(self.suspend('options nvidia NVreg_PreserveVideoMemoryAllocations=1\nbtrfs\n'))
+
+    def test_var_tmp_in_memory_fails(self):
+        self.assertFalse(self.suspend(self.OPTIONS + 'tmpfs\n'))
+
+    def test_a_later_line_that_sets_them_otherwise_fails(self):
+        # modprobe gives the module every line's options, and the last value wins.
+        self.assertFalse(self.suspend(self.OPTIONS + 'options nvidia NVreg_TemporaryFilePath=/tmp\nbtrfs\n'))
 
 
 if __name__ == '__main__':
