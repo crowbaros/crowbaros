@@ -34,7 +34,17 @@
 //!
 //! The compositor also sends events, at any time, one object per line with
 //! no reply: `launcher` when the person taps Super alone, for the shell to
-//! open or close its launcher (ADR 0020's keys). A window that opened
+//! open or close its launcher (ADR 0020's keys). `snapshot` carries what the
+//! snapshot reply does, whenever that changes from what the event last told
+//! the connection, so the bar shows a workspace or window as it changes, with
+//! no asking:
+//!
+//! ```text
+//! <- {"event":"snapshot","workspace":2,"active":null,"locked":false,"windows":[...]}
+//! ```
+//!
+//! A shell connection is told it once it connects, and again after each turn
+//! of the event loop in which something it shows changed. A window that opened
 //! without the keyboard has `attention` in the snapshot until it gets it,
 //! for the bar to show. `launching` says the person just started an app
 //! from the shell. It changes nothing, since every new window takes the
@@ -101,6 +111,8 @@ pub(crate) struct ControlConnection {
     output: Vec<u8>,
     /// The socket is watched for room to write.
     writing: bool,
+    /// The snapshot it was last sent as an event.
+    told: Option<String>,
 }
 
 #[derive(Default)]
@@ -201,6 +213,7 @@ impl State {
                     input: Vec::new(),
                     output: Vec::new(),
                     writing: false,
+                    told: None,
                 },
             );
         }
@@ -306,6 +319,38 @@ impl State {
         for id in ids {
             if let Some(connection) = self.controls.connections.get_mut(&id) {
                 connection.output.extend_from_slice(line.as_bytes());
+            }
+            if !self.flush_control(id) {
+                self.close_control(id);
+            }
+        }
+    }
+
+    /// Sends each shell connection the snapshot, where it changed from what
+    /// the connection was last told. The event loop calls it once a turn.
+    pub(crate) fn tell_shell_of_changes(&mut self) {
+        if self
+            .controls
+            .connections
+            .values()
+            .all(|connection| connection.authority)
+        {
+            return;
+        }
+        let snapshot = self.snapshot_fields();
+        let ids: Vec<u64> = self
+            .controls
+            .connections
+            .iter()
+            .filter(|(_, connection)| !connection.authority && connection.told.as_ref() != Some(&snapshot))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            if let Some(connection) = self.controls.connections.get_mut(&id) {
+                connection
+                    .output
+                    .extend_from_slice(format!("{{\"event\":\"snapshot\",{snapshot}}}\n").as_bytes());
+                connection.told = Some(snapshot.clone());
             }
             if !self.flush_control(id) {
                 self.close_control(id);
@@ -420,6 +465,11 @@ impl State {
     }
 
     fn snapshot_reply(&self) -> String {
+        format!("{{\"reply\":\"snapshot\",{}}}", self.snapshot_fields())
+    }
+
+    /// The snapshot's fields, as the reply and the event carry them.
+    fn snapshot_fields(&self) -> String {
         let active = self
             .seat
             .keyboard_focus
@@ -446,7 +496,7 @@ impl State {
             })
             .collect();
         format!(
-            "{{\"reply\":\"snapshot\",\"workspace\":{},\"active\":{active},\"locked\":{},\"windows\":[{}]}}",
+            "\"workspace\":{},\"active\":{active},\"locked\":{},\"windows\":[{}]",
             self.workspace,
             self.locked(),
             windows.join(",")

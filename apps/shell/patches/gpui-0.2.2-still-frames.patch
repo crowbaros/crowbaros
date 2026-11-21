@@ -1,0 +1,155 @@
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -1249,6 +1249,13 @@
+                 }
+ 
+                 if self.pending_effects.is_empty() {
++                    // A window whose frames stopped while nothing changed asks
++                    // for one now.
++                    for window in self.windows.values().flatten() {
++                        if window.wants_frame() {
++                            window.platform_window.schedule_frame();
++                        }
++                    }
+                     break;
+                 }
+             }
+--- a/src/platform/linux/wayland/window.rs
++++ b/src/platform/linux/wayland/window.rs
+@@ -111,6 +111,12 @@
+     hovered: bool,
+     in_progress_configure: Option<InProgressConfigure>,
+     resize_throttle: bool,
++    /// A frame callback was asked for, and has not come.
++    frame_requested: bool,
++    /// The frame callback asked for has not been committed yet.
++    frame_uncommitted: bool,
++    /// The window is in its frame callback.
++    in_frame: bool,
+     in_progress_window_controls: Option<WindowControls>,
+     window_controls: WindowControls,
+     client_inset: Option<Pixels>,
+@@ -344,6 +350,9 @@
+             window_bounds: options.bounds,
+             in_progress_configure: None,
+             resize_throttle: false,
++            frame_requested: false,
++            frame_uncommitted: false,
++            in_frame: false,
+             client,
+             appearance,
+             handle,
+@@ -507,9 +516,15 @@
+         Rc::ptr_eq(&self.state, &other.state)
+     }
+ 
++    /// A frame callback came. The next is asked for, and committed only if
++    /// the window draws, or wants another frame: a still window commits
++    /// nothing, and the compositor draws nothing for it.
+     pub fn frame(&self) {
+         let mut state = self.state.borrow_mut();
+         state.surface.frame(&state.globals.qh, state.surface.id());
++        state.frame_requested = true;
++        state.frame_uncommitted = true;
++        state.in_frame = true;
+         state.resize_throttle = false;
+         drop(state);
+ 
+@@ -517,6 +532,8 @@
+         if let Some(fun) = cb.request_frame.as_mut() {
+             fun(Default::default());
+         }
++        drop(cb);
++        self.state.borrow_mut().in_frame = false;
+     }
+ 
+     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
+@@ -1223,8 +1240,29 @@
+     }
+ 
+     fn completed_frame(&self) {
+-        let state = self.borrow();
++        let mut state = self.borrow_mut();
++        state.surface.commit();
++        state.frame_uncommitted = false;
++    }
++
++    fn completed_idle_frame(&self) {}
++
++    fn schedule_frame(&self) {
++        let mut state = self.borrow_mut();
++        // In its frame callback, the window commits when the frame ends.
++        // Before the first configure, the configure starts the frames.
++        if state.in_frame
++            || !state.acknowledged_first_configure
++            || (state.frame_requested && !state.frame_uncommitted)
++        {
++            return;
++        }
++        if !state.frame_requested {
++            state.surface.frame(&state.globals.qh, state.surface.id());
++            state.frame_requested = true;
++        }
+         state.surface.commit();
++        state.frame_uncommitted = false;
+     }
+ 
+     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+--- a/src/platform.rs
++++ b/src/platform.rs
+@@ -502,6 +502,12 @@
+     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
+     fn draw(&self, scene: &Scene);
+     fn completed_frame(&self) {}
++    /// The frame showed nothing new, and no frame is wanted after it.
++    fn completed_idle_frame(&self) {
++        self.completed_frame()
++    }
++    /// The window wants a frame: something changed while none was coming.
++    fn schedule_frame(&self) {}
+     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+ 
+     // macOS specific methods
+--- a/src/window.rs
++++ b/src/window.rs
+@@ -1041,6 +1041,9 @@
+                     || (active.get()
+                         && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
+ 
++                let presented = invalidator.is_dirty()
++                    || request_frame_options.force_render
++                    || needs_present;
+                 if invalidator.is_dirty() || request_frame_options.force_render {
+                     measure("frame duration", || {
+                         handle
+@@ -1058,9 +1061,15 @@
+                         .log_err();
+                 }
+ 
++                // A frame that showed nothing, with no frame wanted after it,
++                // ends the frames until something changes.
+                 handle
+                     .update(&mut cx, |_, window, _| {
+-                        window.complete_frame();
++                        if presented || window.wants_frame() {
++                            window.complete_frame();
++                        } else {
++                            window.platform_window.completed_idle_frame();
++                        }
+                     })
+                     .log_err();
+             }
+@@ -1908,6 +1917,13 @@
+         self.platform_window.completed_frame();
+     }
+ 
++    /// Whether the window has something to draw or show at its next frame.
++    pub(crate) fn wants_frame(&self) -> bool {
++        self.invalidator.is_dirty()
++            || self.needs_present.get()
++            || !self.next_frame_callbacks.borrow().is_empty()
++    }
++
+     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
+     /// the contents of the new [`Scene`], use [`Self::present`].
+     #[profiling::function]

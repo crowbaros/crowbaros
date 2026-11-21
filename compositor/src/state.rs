@@ -113,6 +113,8 @@ pub struct State {
     /// Commits by window and layer, and when they were last reported.
     pub(crate) commit_counts: std::collections::BTreeMap<String, u64>,
     pub(crate) last_report: Option<std::time::Instant>,
+    /// When the workspaces last changed, and the layers that drew since.
+    pub(crate) workspaces_changed: Option<crate::evidence::WorkspacesChanged>,
     pub(crate) data: crate::data_device::DataDevices,
     pub(crate) dmabufs: crate::dmabuf::Dmabufs,
 }
@@ -167,6 +169,7 @@ impl State {
             grab: None,
             commit_counts: std::collections::BTreeMap::new(),
             last_report: None,
+            workspaces_changed: None,
             data: crate::data_device::DataDevices::default(),
             dmabufs: crate::dmabuf::Dmabufs::default(),
         };
@@ -284,6 +287,7 @@ impl State {
                 TimerKey::IdleLock => self.idle_timer(),
             }
         }
+        self.tell_shell_of_changes();
         self.run_due_draws();
         // Flushing lets go of clients that are done, and a client that goes
         // can take a window with it: draw that before the loop sleeps.

@@ -1,5 +1,5 @@
 //! The shell's control channel, as the shell sees it: one JSON object per
-//! line, each request answered by one reply.
+//! line, each request answered by one reply, and events between them.
 
 mod common;
 
@@ -27,14 +27,41 @@ impl Control {
         }
     }
 
-    /// Sends one line and reads the reply.
+    /// Sends one line and reads the reply. The snapshots the compositor
+    /// sends unasked are passed over, as the shell passes events over.
     fn ask(&mut self, request: &str) -> String {
         self.writer.write_all(format!("{request}\n").as_bytes()).unwrap();
+        self.line()
+    }
+
+    /// Reads the next line the compositor sent that is not a snapshot event.
+    fn line(&mut self) -> String {
+        loop {
+            let line = self.any_line();
+            if !line.starts_with(SNAPSHOT_EVENT) {
+                return line;
+            }
+        }
+    }
+
+    /// Reads the next snapshot event, passing over anything else.
+    fn snapshot_event(&mut self) -> String {
+        loop {
+            let line = self.any_line();
+            if line.starts_with(SNAPSHOT_EVENT) {
+                return line;
+            }
+        }
+    }
+
+    fn any_line(&mut self) -> String {
         let mut line = String::new();
         self.reader.read_line(&mut line).unwrap();
         line.trim_end().to_string()
     }
 }
+
+const SNAPSHOT_EVENT: &str = r#"{"event":"snapshot","#;
 
 /// An app with one window, listening to its keyboard.
 fn window(compositor: &Compositor, app_id: &str) -> crowbar_probe::Client {
@@ -170,9 +197,15 @@ fn a_request_longer_than_the_limit_closes_the_connection() {
     );
     control.writer.write_all(long.as_bytes()).ok();
     control.writer.write_all(b"\n").ok();
-    let mut line = String::new();
-    let read = control.reader.read_line(&mut line).unwrap_or(0);
-    assert_eq!(read, 0, "the connection stayed open: {line}");
+    // The snapshot it was told on connecting may come first; no reply does.
+    loop {
+        let mut line = String::new();
+        let read = control.reader.read_line(&mut line).unwrap_or(0);
+        if read == 0 {
+            break;
+        }
+        assert!(line.starts_with(SNAPSHOT_EVENT), "the connection stayed open: {line}");
+    }
     // The shell can connect again.
     assert!(
         Control::connect(&compositor)
@@ -181,17 +214,50 @@ fn a_request_longer_than_the_limit_closes_the_connection() {
     );
 }
 
-impl Control {
-    /// Reads one line the compositor sent.
-    fn line(&mut self) -> String {
-        let mut line = String::new();
-        self.reader.read_line(&mut line).unwrap();
-        line.trim_end().to_string()
-    }
-}
-
 const KEY_LEFTMETA: u32 = 125;
+const KEY_LEFTSHIFT: u32 = 42;
 const KEY_1: u32 = 2;
+const KEY_2: u32 = 3;
+
+/// The shell is told the snapshot when it connects, and again whenever it
+/// changes, so the bar can show a workspace as soon as it shows (#273).
+#[test]
+fn the_shell_is_told_of_each_change_without_asking() {
+    let compositor = Compositor::start();
+    let mut control = Control::connect(&compositor);
+    assert_eq!(
+        control.snapshot_event(),
+        r#"{"event":"snapshot","workspace":1,"active":null,"locked":false,"windows":[]}"#
+    );
+
+    let _client = window(&compositor, "test.told");
+    let opened = control.snapshot_event();
+    let id = ids(&opened).remove(0);
+    assert!(opened.contains(&format!(r#""active":"{id}""#)), "{opened}");
+
+    // Super+Shift+2 moves the window with the keyboard to workspace 2.
+    compositor.key(KEY_LEFTMETA, true);
+    compositor.key(KEY_LEFTSHIFT, true);
+    compositor.key(KEY_2, true);
+    compositor.key(KEY_2, false);
+    compositor.key(KEY_LEFTSHIFT, false);
+    compositor.key(KEY_LEFTMETA, false);
+    let moved = control.snapshot_event();
+    assert!(moved.contains(r#""workspace":1,"active":null"#), "{moved}");
+    assert!(moved.contains(r#""workspace":2,"attention""#), "{moved}");
+
+    // Super+2 shows it.
+    compositor.key(KEY_LEFTMETA, true);
+    compositor.key(KEY_2, true);
+    compositor.key(KEY_2, false);
+    compositor.key(KEY_LEFTMETA, false);
+    let shown = control.snapshot_event();
+    assert!(shown.starts_with(r#"{"event":"snapshot","workspace":2,"#), "{shown}");
+
+    // Nothing changed since: the next line is a reply, not another snapshot.
+    control.writer.write_all(b"{\"op\":\"launching\"}\n").unwrap();
+    assert_eq!(control.any_line(), r#"{"reply":"ok"}"#);
+}
 
 #[test]
 fn super_tapped_alone_asks_the_shell_for_its_launcher() {

@@ -98,5 +98,80 @@ class BaseBootChecks(unittest.TestCase):
         self.assertIn('PASS: fourth still runs', log)
 
 
+
+class FakeQmp:
+    """Keys go nowhere but to `pressed`."""
+    def __init__(self, pressed):
+        self.pressed = pressed
+
+    def key(self, qcode, down):
+        if down:
+            self.pressed(qcode)
+
+
+class StillDesktopAndBar(unittest.TestCase):
+    """The checks that a still desktop draws nothing (#269), and that the bar
+    follows the workspaces at once (#273), read Fulcrum's log."""
+
+    def make_check(self, responder):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        check = desktop_check.Check(FakeGuest(temporary.name, responder))
+        self.addCleanup(check.logfile.close)
+        sleep = patch.object(desktop_check.time, 'sleep')
+        sleep.start()
+        self.addCleanup(sleep.stop)
+        return check
+
+    def still(self, reports):
+        counts = iter(reports)
+
+        def responder(user, command):
+            if command == 'date +%S':
+                return 0, '10\n', ''
+            if 'commits so far' in command:
+                return 0, f'{next(counts)}\n', ''
+            return 1, '', 'unexpected'
+        check = self.make_check(responder)
+        try:
+            check.still('still')
+        except AssertionError:
+            pass
+        return check.results
+
+    def test_a_desktop_that_keeps_drawing_fails(self):
+        self.assertEqual(self.still([4, 7]), [{'name': 'still', 'passed': False, 'detail': '3 reports in 12 s'}])
+
+    def test_a_still_desktop_passes(self):
+        self.assertEqual(self.still([4, 4]), [{'name': 'still', 'passed': True, 'detail': '0 reports in 12 s'}])
+
+    def bar(self, delays):
+        drawn, delays = [], iter(delays)
+
+        def responder(user, command):
+            if 'layer crowbaros-bar drew' in command:
+                return 0, ''.join(f'INFO layer crowbaros-bar drew {ms} ms after the workspaces changed\n'
+                                  for ms in drawn), ''
+            if 'control.sock' in command:
+                return 0, '{"workspace": 1}', ''
+            return 1, '', 'unexpected'
+        check = self.make_check(responder)
+        check.qmp = FakeQmp(lambda key: key in '12' and drawn.append(next(delays)))
+        try:
+            check.bar_follows_workspaces()
+        except AssertionError:
+            pass
+        return check.results
+
+    def test_a_bar_that_draws_within_two_frames_passes(self):
+        [result] = self.bar([24.1, 23.5, 40.0, 25.6])
+        self.assertTrue(result['passed'], result)
+        self.assertEqual(result['detail'], '23.5, 24.1, 25.6, 40.0 ms; at most 33.3 ms')
+
+    def test_a_bar_that_waits_for_a_poll_fails(self):
+        [result] = self.bar([782.0, 838.0, 700.0, 95.0])
+        self.assertFalse(result['passed'], result)
+
+
 if __name__ == '__main__':
     unittest.main()

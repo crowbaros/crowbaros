@@ -10,6 +10,8 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA = "979b45cfa6ec723b6f42330915a1b3769b930d02b2d505f9697f8ca602bee707"
+# Applied in this order. See patches/README.md.
+PATCHES = ["gpui-0.2.2-layer-shell.patch", "gpui-0.2.2-still-frames.patch"]
 cache = ROOT / ".upstream-cache"
 cache.mkdir(exist_ok=True)
 archive = cache / "gpui-0.2.2.crate"
@@ -25,10 +27,11 @@ with tempfile.TemporaryDirectory(dir=ROOT) as temp:
     with tarfile.open(archive) as tar:
         tar.extractall(temp, filter="data")
     extracted = Path(temp) / "gpui-0.2.2"
-    subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-d", str(extracted),
-                    "-i", str(ROOT / "patches/gpui-0.2.2-layer-shell.patch")], check=True)
+    for patch in PATCHES:
+        subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-d", str(extracted),
+                        "-i", str(ROOT / "patches" / patch)], check=True)
     (extracted / ".crowbaros-generated").write_text(SHA + "\n")
     if destination.exists():
         shutil.rmtree(destination)
     extracted.rename(destination)
-print("Prepared GPUI 0.2.2 with the pinned upstream layer-shell backport")
+print("Prepared GPUI 0.2.2 with the pinned upstream layer-shell backport and the still-frames patch")

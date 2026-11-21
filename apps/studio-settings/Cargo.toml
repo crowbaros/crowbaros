@@ -21,3 +21,8 @@ opt-level = 2
 debug = 0
 lto = false
 codegen-units = 16
+
+# The shell's GPUI 0.2.2, with its patches: among them, a still window
+# commits nothing. apps/shell/packaging/prepare-gpui.py makes it.
+[patch.crates-io]
+gpui = { path = "../shell/gpui-source" }

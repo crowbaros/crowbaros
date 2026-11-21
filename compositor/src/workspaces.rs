@@ -47,6 +47,7 @@ impl State {
     /// window's client is told its outputs, the pointer looks again at what
     /// is under it, and every output is drawn again.
     fn workspace_changed(&mut self) {
+        self.note_workspaces_changed();
         if let Some(focus) = self.seat.desktop_keyboard_focus {
             let root = self.root_of(focus);
             let hidden = self

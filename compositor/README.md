@@ -78,7 +78,8 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 - **The shell's control channel**: a path socket of its own, checked against
   the shell's user ID, where the shell asks for a snapshot of the windows and
   shows a workspace or a window. One JSON object per line, as the spike
-  spoke and the shell already speaks.
+  spoke and the shell already speaks. The compositor sends the snapshot as
+  an event whenever it changes, so the bar shows a workspace as it shows.
 - **Redraw on change**: an output is drawn only when something it shows
   changed, then waits for the display, so a still desktop draws nothing and a
   busy client is held to the display's rate. Frame callbacks are answered

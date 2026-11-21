@@ -71,5 +71,5 @@ them.
 - [`docs/archive/`](docs/archive/) is history. Where it disagrees with the
   vision, the vision is right.
 - CrowbarOS is [MIT](LICENSE). Third-party parts keep their own terms: the GPUI
-  layer-shell backport and the adapted GPUI text input in `apps/shell` are
+  patches and the adapted GPUI text input in `apps/shell` are
   Apache-2.0, and the bundled fonts are OFL-1.1.

@@ -46,10 +46,16 @@ impl Control {
         self.writer.write_all(format!("{request}\n").as_bytes()).unwrap();
     }
 
+    /// The next line, passing over the snapshots the compositor sends the
+    /// shell unasked.
     fn line(&mut self) -> String {
-        let mut line = String::new();
-        self.reader.read_line(&mut line).unwrap();
-        line.trim_end().to_string()
+        loop {
+            let mut line = String::new();
+            self.reader.read_line(&mut line).unwrap();
+            if !line.starts_with(r#"{"event":"snapshot","#) {
+                return line.trim_end().to_string();
+            }
+        }
     }
 }
 
