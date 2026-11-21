@@ -1,0 +1,13 @@
+# Render nodes, by PCI address (01:00.0 is the RTX 5060, 0b:00.0 the Radeon), and each app's open DRM nodes, at 21:28 UTC
+total 0
+lrwxrwxrwx 1 root root pci-0000:01:00.0-card -> ../card1
+lrwxrwxrwx 1 root root pci-0000:01:00.0-render -> ../renderD129
+lrwxrwxrwx 1 root root pci-0000:0b:00.0-card -> ../card0
+lrwxrwxrwx 1 root root pci-0000:0b:00.0-render -> ../renderD128
+pid=808 crowbaros-shell  ::       2 /dev/dri/renderD129 
+pid=1096 /usr/local/bin/crowbaros-studio-settings  ::       2 /dev/dri/renderD129 
+pid=1063 /usr/bin/foot  :: 
+pid=1131 /usr/lib/chromium/chromium --enable-gpu-rasterization --ozon ::       1 /dev/dri/renderD128 
+pid=1175 /usr/lib/chromium/chromium --type=gpu-process --gpu-recent-c ::       5 /dev/dri/renderD128 
+/var/log/crowbar-apps.log:[2026-11-21T21:26:46Z INFO  blade_graphics::hal::init] Adapter: "NVIDIA GeForce RTX 5060"
+/var/log/crowbar-shell.log:[2026-11-21T21:22:21Z INFO  blade_graphics::hal::init] Adapter: "NVIDIA GeForce RTX 5060"
