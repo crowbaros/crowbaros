@@ -120,6 +120,7 @@ class BuildFixture(unittest.TestCase):
                             ('ROOTFS', self.work / 'rootfs'), ('run', run),
                             ('install', lambda *args, **kw: None), ('sha256', lambda path: 'digest'),
                             ('preflight', lambda **kw: None), ('rootfs', lambda force: None),
+                            ('fetch', lambda: Path('/xbps-static')),
                             ('ACCOUNT_FILE', Path(temporary.name) / 'account.json')]:
             p = patch.object(void_base, name, value)
             p.start()
@@ -186,6 +187,25 @@ class Desktop(BuildFixture):
         self.assertEqual(programs, [str(path) for path in void_base.binaries().values()])
         self.assertTrue(all(' ' in path for path in programs))
 
+    def test_the_desktops_helpers_are_one_program_built_with_the_desktop(self):
+        self.assertIn('base/helpers', dict(void_base.PROJECTS))
+        self.assertEqual(void_base.binaries()['crowbar-helpers'].name, 'crowbar-helpers')
+
+    def test_python_is_only_in_an_image_built_for_the_lab_checks(self):
+        # The lab's checks drive the guest with `python3 -c`; the person's
+        # image has nothing that needs it.
+        self.assertNotIn('python3', void_base.CFG['packages'])
+        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
+        void_base.build()
+        _, person = self.image_step()
+        self.assertEqual(person['LAB_PACKAGES'], '')
+        self.commands.clear()
+        self.envs.clear()
+        void_base.build(lab_account=True)
+        _, lab = self.image_step()
+        self.assertEqual(lab['LAB_PACKAGES'].split(), ['python3'])
+        self.assertEqual(lab['XBPS'], '/xbps-static/usr/bin')
+
 
 
 class Account(BuildFixture):
@@ -234,8 +254,8 @@ class Account(BuildFixture):
     def test_the_account_has_the_uid_the_unlock_helper_looks_for(self):
         env, _ = self.build()
         self.assertEqual(env['PERSON_UID'], str(void_base.PERSON_UID))
-        unlock = (void_base.HERE / 'desktop/unlock.py').read_text()
-        self.assertIn(f'PERSON_UID = {void_base.PERSON_UID}\n', unlock)
+        helpers = (void_base.HERE / 'helpers/src/main.rs').read_text()
+        self.assertIn(f'pub const PERSON_UID: u32 = {void_base.PERSON_UID};\n', helpers)
 
     def test_an_account_file_that_would_break_the_image_is_refused(self):
         for account in [dict(name='jim'), dict(name='jim', password_hash='plain text'),

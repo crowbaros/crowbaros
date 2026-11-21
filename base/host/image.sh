@@ -13,7 +13,8 @@
 # account is PERSON_UID, PERSON, and PERSON_FULL_NAME, with PERSON_PASSWORD_HASH
 # from the account file or, for the lab account, PERSON_PASSWORD, and
 # PERSON_SSH_KEYS, its public keys from the account file, one per line. Its arguments are the
-# desktop's programs.
+# desktop's programs. For the lab's image, LAB_PACKAGES are installed with the
+# static xbps in XBPS, from REPOS, through the package cache PKGCACHE.
 set -eu
 R="$WORK/staging"
 rm -rf "$R" "$WORK/esp.img" "$WORK/root.img"
@@ -65,7 +66,7 @@ GROW
 # every app runs. Its UID is fixed, as the desktop's services find it by UID.
 # runit starts the seat manager, the compositor on virtual terminal 2 in place
 # of its getty, the shell, the launcher, as the person, the unlock helper, and
-# the service that reboots for Ctrl+Alt+Del; see desktop/.
+# the service that reboots for Ctrl+Alt+Del; see desktop/ and helpers/.
 ln -sfn /etc/sv/seatd "$SV/seatd"
 rm -f "$SV/agetty-tty2"
 chroot "$R" useradd -m -u 1000 -G _seatd crowbar-compositor
@@ -75,10 +76,11 @@ for service in compositor shell launcher unlock ctrl-alt-del; do
   install -D -m 755 "$DESKTOP/$service-run" "$R/etc/sv/crowbar-$service/run"
   ln -sfn "/etc/sv/crowbar-$service" "$SV/crowbar-$service"
 done
-install -D -m 755 "$DESKTOP/launcher.py" "$R/usr/local/bin/crowbar-launcher"
-install -D -m 755 "$DESKTOP/shell-connect.py" "$R/usr/local/bin/crowbar-shell-connect"
-install -D -m 755 "$DESKTOP/unlock.py" "$R/usr/local/bin/crowbar-unlock"
-install -D -m 755 "$DESKTOP/ctrl-alt-del.py" "$R/usr/local/bin/crowbar-ctrl-alt-del"
+for path in "$@"; do install -D -m 755 "$path" "$R/usr/local/bin/$(basename "$path")"; done
+# The four helpers are one program, which takes the name it runs by.
+for helper in unlock launcher shell-connect ctrl-alt-del; do
+  ln -sfn crowbar-helpers "$R/usr/local/bin/crowbar-$helper"
+done
 install -D -m 755 "$DESKTOP/zzz-lock" "$R/etc/zzz.d/suspend/50-crowbar-lock"
 # The person is in `wheel`, so sudo takes their password. Rebooting and powering
 # off take none, as on a desktop with logind: `reboot` and `poweroff` in
@@ -97,7 +99,6 @@ install -d -m 700 "$R/home/$PERSON/.ssh"
 { cat "$PUBKEY"; printf '%s' "$PERSON_SSH_KEYS"; } > "$R/home/$PERSON/.ssh/authorized_keys"
 chmod 600 "$R/home/$PERSON/.ssh/authorized_keys"
 chroot "$R" chown -R "$PERSON:$PERSON" "/home/$PERSON/.ssh"
-for path in "$@"; do install -D -m 755 "$path" "$R/usr/local/bin/$(basename "$path")"; done
 install -d "$R/usr/share/crowbaros-shell" "$R/usr/share/applications" "$R/usr/share/fonts/crowbaros" "$R/usr/share/icons/default"
 install -m 644 "$REPO_ROOT/apps/shell/assets/wallpaper.png" "$REPO_ROOT/apps/shell/assets/nightwatch.png" "$REPO_ROOT/apps/shell/assets/mark.png" "$REPO_ROOT/apps/shell/assets/quiet-signal.png" "$R/usr/share/crowbaros-shell/"
 install -m 644 "$REPO_ROOT/apps/studio-settings/packaging/com.crowbaros.StudioSettings.desktop" "$R/usr/share/applications/"
@@ -111,6 +112,14 @@ install -D -m 755 "$DESKTOP/chromium-wrapper" "$R/usr/local/bin/chromium"
 install -D -m 644 "$DESKTOP/mimeapps.list" "$R/etc/xdg/mimeapps.list"
 sed -i 's|^Exec=\(/usr/bin/\)\?chromium\b|Exec=/usr/local/bin/chromium|g' "$R/usr/share/applications/chromium.desktop"
 printf '[Icon Theme]\nInherits=Vanilla-DMZ\n' > "$R/usr/share/icons/default/index.theme"
+
+# The lab's image alone gets LAB_PACKAGES, which its checks need in the guest
+# and a person's image never has. They come from the root's own package index,
+# so they match what the root was installed with, and through the same cache.
+if [ -n "$LAB_PACKAGES" ]; then
+  # shellcheck disable=SC2086
+  XBPS_ARCH=x86_64 "$XBPS/xbps-install.static" -y -r "$R" -c "$PKGCACHE" -R "$REPOS" $LAB_PACKAGES
+fi
 
 # The boot menu, on the root.
 mkdir -p "$R/boot/grub"

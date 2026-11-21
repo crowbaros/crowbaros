@@ -390,7 +390,7 @@ print(json.dumps({'processes': found, 'seat_members': seat.gr_mem, 'seat_gid': s
             self.check(name + " is at the ordinary Wayland socket, in the person's runtime directory",
                        {f'XDG_RUNTIME_DIR=/run/user/{person}', 'WAYLAND_DISPLAY=wayland-0'} <= set(found[name]['env']))
         self.check("the person's terminal may join Wi-Fi, in netdev", report['netdev_gid'] in found['foot']['groups'])
-        launcher = self.run("for p in $(pgrep -f '^/usr/bin/python3 /usr/local/bin/crowbar-launcher'); do grep -E '^(Uid|Gid):' /proc/$p/status; done")
+        launcher = self.run("for p in $(pgrep -x crowbar-launcher); do grep -E '^(Uid|Gid):' /proc/$p/status; done")
         self.check('the launcher runs as the person, not root',
                    bool(launcher) and all(line.split()[1:] == [str(person)] * 4 for line in launcher.splitlines() if line.startswith('Uid:')))
         owners = self.run('stat -c "%U %G %a" /run/crowbar-launch /run/crowbar-launch/socket').split('\n')
@@ -420,7 +420,7 @@ for path in PATHS:
  try:
   s.connect(path); s.sendall(b'{"op":"snapshot"}\\n')
   data = s.recv(1024)
-  results.append(not data or b'"ok": false' in data)
+  results.append(not data or b'"ok":false' in data.replace(b' ', b''))
  except (PermissionError, ConnectionResetError, BrokenPipeError): results.append(True)
  except TimeoutError: results.append(False)
  finally: s.close()
