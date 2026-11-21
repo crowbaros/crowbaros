@@ -35,15 +35,21 @@ Nothing else is installed.
 
 ## The Agent
 
-1. **Always reachable.** One gesture brings the Agent up over whatever is on
-   screen, in any app, on any workspace, and the same gesture puts it away. The
-   compositor owns that gesture, so no app can take it or block it.
+1. **Always reachable.** One gesture, Super+Space, brings the Agent up over
+   whatever is on screen, in any app, on any workspace, and the same gesture
+   puts it away. The compositor owns that gesture, so no app can take it or
+   block it.
 2. **Part of the OS.** The Agent runs as a system service from boot, not in an
    app's window. Its surface is drawn by the compositor, above everything else.
    It can do what the OS can do: open and arrange windows, change settings,
    install and remove software, work with the person's files, and run commands.
 3. **Not intrusive.** The Agent speaks when it is spoken to. It does not pop
-   up, interrupt, or look at the screen unless the person asks.
+   up, interrupt, or look at the screen unless the person asks. With each
+   message it is given the desktop context: the windows' titles and apps and
+   where they are, never what they hold. The person asks it to look with a
+   share, of the clipboard or a capture, for once or as an allowance for one
+   conversation. A mark shows whenever the Agent is working, looking, or
+   waiting for the person.
 4. **The person stays in charge.** The Agent acts with the person's
    permissions and never more. Before it does something that cannot be taken
    back, it shows what it will do and waits for the person's yes. A yes comes
@@ -67,10 +73,7 @@ Agent's reach makes a real risk, a new record decides what to do about it.
 
 ## Open questions
 
-- **What the Agent sees.** When the person summons it, what can it see without
-  asking: the focused window, the selection, the screen? How does the person
-  share more, or less?
-- **The gesture.** Which key, and whether voice comes later.
+- **Voice.** Whether the person can summon the Agent and speak to it by voice.
 - **The harness.** Do we write our own, or run an existing harness as the OS's
   harness? Which models, local or in the cloud, and who chooses?
 - **Life without a model.** What does the desktop do when no model is

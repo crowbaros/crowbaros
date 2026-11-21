@@ -65,6 +65,28 @@ The language model a harness calls. It is not part of what CrowbarOS trusts.
 Bringing the Agent up with one gesture, from anywhere. The same gesture puts it away.
 _Avoid_: Launch, open
 
+**Summon gesture**:
+Super+Space. The compositor takes it before any app hears it. With the Agent's surface up and the keyboard in a window, it returns the keyboard to the surface; with the keyboard in the surface, it puts the surface away.
+
+**Agent's surface**:
+Where the person and the Agent talk: a drawer on the right of the display the pointer was on at the summon, above every window. Putting it away hides it and stops nothing the Agent is doing.
+_Avoid_: Agent window, chat window, panel
+
+**Mark**:
+The small sign of what the Agent is doing: working, done, waiting for the person, or looking. It is in the bar, and over a fullscreen window while the Agent works, looks, or waits. The Agent's surface never comes up on its own; the mark is how the person knows.
+_Avoid_: Notification, indicator, badge
+
+**Desktop context**:
+What the Agent is given of the desktop with each message, without a share: the title and app ID of the window with the keyboard, every window by workspace, and the displays. Never what a window or the clipboard holds.
+
+**Share**:
+The person's act, in the Agent's surface, that gives the Agent the clipboard or a capture of a window or a display. A share is for once, or it is an allowance.
+_Avoid_: Attach, grant
+
+**Allowance**:
+A share that lasts for one conversation: the Agent may take the clipboard and any capture again without asking. It ends with the conversation, when the person switches it off, or when the machine restarts, and nothing is taken while the desktop is locked. Each take shows in the mark, in an outline the compositor draws around what was captured, and in the conversation.
+_Avoid_: Permission, consent
+
 **Person**:
 The one who uses the machine and is in charge of it.
 _Avoid_: User, owner
