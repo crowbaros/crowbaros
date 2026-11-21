@@ -59,6 +59,8 @@ const BTN_RIGHT: u32 = 0x111;
 pub(crate) struct Seat {
     keyboard: Option<Keyboard>,
     pub keyboard_focus: Option<SurfaceId>,
+    /// The desktop's focus underneath a lock screen or an exclusive layer.
+    pub desktop_keyboard_focus: Option<SurfaceId>,
     /// The surface under the pointer, and where its corner is on the
     /// desktop.
     pub pointer_focus: Option<(SurfaceId, (f64, f64))>,
@@ -89,6 +91,7 @@ impl Seat {
         Seat {
             keyboard,
             keyboard_focus: None,
+            desktop_keyboard_focus: None,
             pointer_focus: None,
             keys: Vec::new(),
             withheld: Vec::new(),
@@ -302,14 +305,34 @@ impl State {
         self.seat.keyboard_focus
     }
 
-    /// Gives the keyboard to a surface, or to none. The client that loses it
-    /// hears `leave`, and the one that gets it `enter` with the keys held.
-    /// A toplevel's activated state follows.
+    /// Changes the desktop's focus. While locked, only a lock screen may
+    /// take focus, without changing the desktop's focus underneath it.
     pub(crate) fn set_keyboard_focus(&mut self, surface: Option<SurfaceId>) {
-        // While the session is locked, only the lock screen has it.
-        if self.locked() && surface.is_some_and(|surface| !self.is_lock_screen(surface)) {
-            return;
+        let lock_screen = surface.is_some_and(|surface| self.is_lock_screen(surface));
+        if self.locked() {
+            if lock_screen {
+                self.apply_keyboard_focus(surface);
+            }
+        } else if !lock_screen {
+            self.seat.desktop_keyboard_focus = surface;
+            self.refresh_keyboard_focus();
         }
+    }
+
+    /// A lock screen or exclusive layer takes the keyboard over the desktop.
+    pub(crate) fn refresh_keyboard_focus(&mut self) {
+        let focus = if self.locked() {
+            self.lock_screen()
+        } else {
+            self.exclusive_layer_keyboard_focus()
+                .or(self.seat.desktop_keyboard_focus)
+        };
+        self.apply_keyboard_focus(focus);
+    }
+
+    /// The client losing the keyboard hears `leave`. The one gaining it
+    /// hears `enter` with the held keys. A toplevel's activated state follows.
+    fn apply_keyboard_focus(&mut self, surface: Option<SurfaceId>) {
         let old = self.seat.keyboard_focus;
         if old == surface {
             return;
@@ -361,10 +384,12 @@ impl State {
     }
 
     /// A surface that is going away gives up the keyboard and the pointer.
-    /// Nothing else takes the keyboard: the next click decides.
     pub(crate) fn drop_focus_from(&mut self, surface: SurfaceId) {
+        if self.seat.desktop_keyboard_focus == Some(surface) {
+            self.seat.desktop_keyboard_focus = None;
+        }
         if self.seat.keyboard_focus == Some(surface) {
-            self.set_keyboard_focus(None);
+            self.refresh_keyboard_focus();
         }
         if self.seat.pointer_focus.is_some_and(|(focus, _)| focus == surface) {
             self.seat.pointer_focus = None;
@@ -759,7 +784,7 @@ impl State {
 
     /// A click gives the keyboard to what is under the pointer: a window,
     /// which is raised, or a layer surface that takes keys. A click on
-    /// anything else leaves the keyboard where it is.
+    /// anything else or through an exclusive layer leaves focus where it is.
     fn focus_under_pointer(&mut self) {
         let (x, y) = self.pointer;
         let Some((surface, _)) = self.surface_under(x, y) else {
@@ -768,8 +793,10 @@ impl State {
         let root = self.root_of(surface);
         if self.windows.iter().any(|window| window.surface == root) {
             self.raise(root);
-            self.set_keyboard_focus(Some(root));
-        } else if self.layer_of(root).is_some_and(|layer| layer.takes_keys()) {
+        } else if !self.layer_of(root).is_some_and(|layer| layer.takes_keys()) {
+            return;
+        }
+        if self.locked() || self.exclusive_layer_keyboard_focus().is_none() {
             self.set_keyboard_focus(Some(root));
         }
     }

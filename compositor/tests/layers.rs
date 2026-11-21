@@ -11,7 +11,10 @@ use fulcrum_wire::protocol::{
     wlr_layer_shell_unstable_v1::{zwlr_layer_shell_v1, zwlr_layer_surface_v1},
 };
 
-use zwlr_layer_surface_v1::anchor::{BOTTOM, LEFT, RIGHT, TOP};
+use zwlr_layer_surface_v1::{
+    anchor::{BOTTOM, LEFT, RIGHT, TOP},
+    keyboard_interactivity::{EXCLUSIVE, ON_DEMAND},
+};
 
 const BACKGROUND: u32 = 0;
 const TOP_LAYER: u32 = 2;
@@ -293,8 +296,8 @@ fn a_layer_on_an_output_that_goes_is_closed() {
     assert!(shell.take_event(id.0, "closed").is_some());
 }
 
-/// The launcher is a layer surface that takes keys. A click on it gives it
-/// the keyboard, and a click on a layer that takes none does not.
+/// An on-demand layer takes the keyboard on a click. A layer that takes no
+/// keys does not.
 #[test]
 fn a_click_gives_the_keyboard_to_a_layer_only_if_the_layer_takes_keys() {
     use crowbar_probe::KeyEvent;
@@ -318,7 +321,11 @@ fn a_click_gives_the_keyboard_to_a_layer_only_if_the_layer_takes_keys() {
             .unwrap();
     };
     layer("test-bar", TOP | LEFT | RIGHT, 0);
-    layer("test-launcher", BOTTOM | LEFT | RIGHT, 2);
+    layer("test-on-demand", BOTTOM | LEFT | RIGHT, ON_DEMAND);
+
+    compositor.key(KEY_A, true);
+    compositor.key(KEY_A, false);
+    assert!(shell.take_keys().unwrap().is_empty());
 
     compositor.click(600, 20);
     compositor.key(KEY_A, true);
@@ -340,4 +347,105 @@ fn a_click_gives_the_keyboard_to_a_layer_only_if_the_layer_takes_keys() {
         }),
         "{seen:?}"
     );
+}
+
+#[test]
+fn an_exclusive_overlay_takes_the_keyboard_until_it_unmaps() {
+    use crowbar_probe::KeyEvent;
+    const KEY_A: u32 = 30;
+    let compositor = Compositor::start();
+    let mut app = compositor.app();
+    app.listen_to_keyboard().unwrap();
+    app.open_toplevel("app", "test.app", (300, 200), 0xffc0_2020).unwrap();
+    app.take_keys().unwrap();
+    let mut shell = compositor.shell();
+    shell.listen_to_keyboard().unwrap();
+    let overlay = shell
+        .open_layer(
+            LayerRequest {
+                namespace: "test-launcher",
+                layer: OVERLAY,
+                anchor: TOP | LEFT,
+                size: (40, 40),
+                exclusive_zone: 0,
+                keyboard: EXCLUSIVE,
+            },
+            0xff20_4060,
+        )
+        .unwrap();
+
+    let key = KeyEvent::Key {
+        key: KEY_A,
+        pressed: true,
+    };
+    compositor.key(KEY_A, true);
+    compositor.key(KEY_A, false);
+    assert!(
+        shell.take_keys().unwrap().contains(&key),
+        "mapping did not focus the overlay"
+    );
+    assert_eq!(app.take_keys().unwrap(), [KeyEvent::Leave]);
+
+    compositor.click(100, 100);
+    compositor.key(KEY_A, true);
+    compositor.key(KEY_A, false);
+    assert!(shell.take_keys().unwrap().contains(&key), "a click outside took focus");
+    assert!(app.take_keys().unwrap().is_empty());
+
+    shell.show(overlay.surface, None).unwrap();
+    shell.roundtrip().unwrap();
+    compositor.key(KEY_A, true);
+    compositor.key(KEY_A, false);
+    assert_eq!(shell.take_keys().unwrap(), [KeyEvent::Leave]);
+    assert!(
+        app.take_keys().unwrap().contains(&key),
+        "unmapping did not restore focus"
+    );
+}
+
+#[test]
+fn an_exclusive_overlay_precedes_a_top_layer_and_defers_new_window_focus() {
+    use crowbar_probe::KeyEvent::{Enter, Leave};
+    let compositor = Compositor::start();
+    let mut overlay = compositor.shell();
+    let mut top = compositor.shell();
+    let mut app = compositor.app();
+    overlay.listen_to_keyboard().unwrap();
+    top.listen_to_keyboard().unwrap();
+    app.listen_to_keyboard().unwrap();
+    let request = LayerRequest {
+        namespace: "test-exclusive",
+        layer: OVERLAY,
+        anchor: TOP | LEFT,
+        size: (40, 40),
+        exclusive_zone: 0,
+        keyboard: EXCLUSIVE,
+    };
+    let overlay_window = overlay.open_layer(request, 0xff20_4060).unwrap();
+    let top_window = top
+        .open_layer(
+            LayerRequest {
+                layer: TOP_LAYER,
+                ..request
+            },
+            0xff40_6020,
+        )
+        .unwrap();
+    assert_eq!(overlay.take_keys().unwrap(), [Enter { keys: vec![] }]);
+    assert!(top.take_keys().unwrap().is_empty());
+
+    app.open_toplevel("app", "test.app", (300, 200), 0xffc0_2020).unwrap();
+    assert!(overlay.take_keys().unwrap().is_empty());
+    assert!(app.take_keys().unwrap().is_empty());
+
+    overlay
+        .request(overlay_window.layer_surface, zwlr_layer_surface_v1::Request::Destroy)
+        .unwrap();
+    assert_eq!(overlay.take_keys().unwrap(), [Leave]);
+    assert_eq!(top.take_keys().unwrap(), [Enter { keys: vec![] }]);
+
+    top.request(top_window.layer_surface, zwlr_layer_surface_v1::Request::Destroy)
+        .unwrap();
+    assert_eq!(top.take_keys().unwrap(), [Leave]);
+    assert_eq!(app.take_keys().unwrap(), [Enter { keys: vec![] }]);
 }

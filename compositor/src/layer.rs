@@ -165,6 +165,28 @@ impl State {
         self.layers.iter().find(|layer| layer.surface == surface)
     }
 
+    /// Layers that still have a client and an output to receive input on.
+    pub(crate) fn mapped_layers(&self) -> impl Iterator<Item = &LayerSurface> {
+        self.layers.iter().filter(|layer| {
+            layer.mapped
+                && self.clients.contains_key(&layer.client)
+                && self.outputs.iter().any(|output| output.number == layer.output)
+        })
+    }
+
+    /// The topmost exclusive layer above the windows. Later layers of the
+    /// same kind are drawn above earlier ones and also take precedence here.
+    pub(crate) fn exclusive_layer_keyboard_focus(&self) -> Option<SurfaceId> {
+        self.mapped_layers()
+            .filter(|layer| {
+                layer.layer() >= zwlr_layer_shell_v1::layer::TOP
+                    && layer.current.keyboard == zwlr_layer_surface_v1::keyboard_interactivity::EXCLUSIVE
+                    && !self.is_lock_screen(layer.surface)
+            })
+            .max_by_key(|layer| layer.layer())
+            .map(|layer| layer.surface)
+    }
+
     pub(crate) fn layer_surface_request(
         &mut self,
         object: u32,
@@ -268,6 +290,8 @@ impl State {
                 message: "a size of zero needs the surface anchored to both opposite edges".into(),
             });
         }
+        let focus_changed = layer.mapped != has_buffer
+            || (has_buffer && (layer.current.keyboard != placement.keyboard || layer.current.layer != placement.layer));
         layer.current = placement;
         if !layer.initial_commit {
             if has_buffer {
@@ -297,13 +321,19 @@ impl State {
             layer.configured = false;
         }
         let output = layer.output;
+        let takes_keys = layer.takes_keys();
         let before = self.layer_rects(output);
         self.arrange(output);
         if self.layer_rects(output) != before {
             self.configure_changed_layers(output, &before);
         }
-        if has_buffer {
-            self.lock_screen_mapped(surface);
+        if !has_buffer {
+            self.drop_focus_from(surface);
+        } else if focus_changed {
+            if !takes_keys && self.seat.desktop_keyboard_focus == Some(surface) {
+                self.seat.desktop_keyboard_focus = None;
+            }
+            self.refresh_keyboard_focus();
         }
         self.queue_redraw(output);
         Ok(())
@@ -445,6 +475,7 @@ impl State {
             client.send(object, zwlr_layer_surface_v1::Event::Closed);
         }
         self.drag_surface_unmapped(surface);
+        self.drop_focus_from(surface);
     }
 
     /// The part of an output that the shell's layers have not reserved, on

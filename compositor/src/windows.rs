@@ -201,7 +201,7 @@ impl State {
             None => true,
             Some(parent) => self
                 .seat
-                .keyboard_focus
+                .desktop_keyboard_focus
                 .map(|focus| self.root_of(focus))
                 .is_some_and(|root| root == parent || self.toplevel_of(root) == Some(parent)),
         };

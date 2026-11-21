@@ -228,11 +228,33 @@ class Check:
                    self.snapshot()['active']['address'] == terminal['address'])
         self.key('meta_l')
         self.wait('Super opens the launcher', lambda: 'SHELL launcher open=true' in shell_log())
+        self.wait('the launcher takes the keyboard without a click', lambda: not self.snapshot()['active']['address'])
         self.capture('01-launcher')
         self.key('meta_l')
         self.wait('Super closes the launcher', lambda: 'SHELL launcher open=false' in shell_log())
         self.check('Super tapped alone opens and closes the launcher',
                    'SHELL launcher open=true' in shell_log() and 'SHELL launcher open=false' in shell_log())
+        self.wait('closing the launcher restores Terminal focus',
+                  lambda: self.snapshot()['active']['address'] == terminal['address'])
+        launcher_opens = shell_log().count('SHELL launcher open=true')
+        self.key('meta_l')
+        self.wait('Super reopens the launcher', lambda: shell_log().count('SHELL launcher open=true') > launcher_opens)
+        self.wait('the launcher takes the keyboard without a click', lambda: not self.snapshot()['active']['address'])
+        self.type('studiosettings')
+        self.capture('01-launcher-filtered')
+        # Chromium sorts ahead of Studio Settings when the query is empty.
+        # Enter must launch Studio Settings from the filtered list.
+        self.key('ret')
+        settings_class = 'com.crowbaros.StudioSettings'
+        settings = self.wait('the launcher query starts Studio Settings',
+                             lambda: next((c for c in self.snapshot()['clients'] if c['class'] == settings_class), None))
+        self.check('typing without a click filters the launcher to Studio Settings', bool(settings))
+        self.wait('Studio Settings takes the keyboard', lambda: self.snapshot()['active']['address'] == settings['address'])
+        self.key('ctrl', 'q')
+        self.wait('Studio Settings closes after the launcher check',
+                  lambda: not any(c['class'] == settings_class for c in self.snapshot()['clients']))
+        self.click(660, 935)  # Return focus to Terminal before checking the lock.
+        self.wait('Terminal has the keyboard again', lambda: self.snapshot()['active']['address'] == terminal['address'])
         self.key('meta_l', 'l')
         self.wait('Super+L locks', lambda: self.snapshot().get('locked') and 'SHELL lock open=true' in shell_log())
         self.capture('01-locked')
@@ -264,7 +286,7 @@ class Check:
         self.wait('the password unlocks after the suspend hook', lambda: not self.snapshot().get('locked'))
         terminal = self.compositor_restart()
         self.click(700, 935)
-        settings = self.wait('Settings launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'com.crowbaros.StudioSettings'), None))
+        settings = self.wait('Settings launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == settings_class), None))
         self.check('Settings launch through the shell', bool(settings))
         self.capture('02-settings-before')
         self.click(660, 935)
