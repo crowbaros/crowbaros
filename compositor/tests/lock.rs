@@ -369,15 +369,18 @@ fn a_session_started_locked_shows_and_gives_nothing_before_the_lock_screen() {
 #[derive(Clone, Default)]
 struct Displays(Arc<Mutex<HashMap<u64, Frames>>>);
 
-/// A display's frame on its way to it, and the frame it shows.
-type Frames = (Option<Image>, Option<Image>);
+#[derive(Default)]
+struct Frames {
+    on_its_way: Option<Image>,
+    shown: Option<Image>,
+}
 
 impl Backend for Displays {
     fn draw(&mut self, state: &State, output: u64) -> Drawn {
         let Some(image) = state.render_output(output) else {
             return Drawn::Nothing;
         };
-        self.0.lock().unwrap().entry(output).or_default().0 = Some(image);
+        self.0.lock().unwrap().entry(output).or_default().on_its_way = Some(image);
         Drawn::Flip
     }
 }
@@ -396,7 +399,7 @@ impl Displays {
                 let flipped = {
                     let mut frames = displays.0.lock().unwrap();
                     let frame = frames.entry(number).or_default();
-                    frame.0.take().map(|image| frame.1 = Some(image)).is_some()
+                    frame.on_its_way.take().map(|image| frame.shown = Some(image)).is_some()
                 };
                 if flipped {
                     state.frame_shown(number);
@@ -413,7 +416,7 @@ impl Displays {
             state
                 .outputs()
                 .iter()
-                .map(|output| frames.get(&output.number).and_then(|frame| frame.1.clone()))
+                .map(|output| frames.get(&output.number).and_then(|frame| frame.shown.clone()))
                 .collect()
         })
     }

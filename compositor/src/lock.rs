@@ -127,12 +127,7 @@ impl State {
     /// each output there was when it locked has shown a frame drawn since,
     /// blank or the lock screen. An output added since draws nothing else.
     pub(crate) fn lock_shown(&self) -> bool {
-        self.lock.locked_from.iter().all(|(number, draw)| {
-            self.outputs
-                .iter()
-                .find(|output| output.number == *number)
-                .is_none_or(|output| output.presented >= *draw)
-        })
+        self.lock_not_shown_on().is_empty()
     }
 
     /// The outputs that do not yet show the session locked, by name.

@@ -44,6 +44,9 @@ pub struct Output {
     /// The last draw the display showed, by its number in `draws`.
     pub(crate) presented: u64,
     /// The draw on its way to the display, which will say when it shows it.
+    /// A backend whose session pauses says so too, though the frame never
+    /// shows: another virtual terminal shows instead of the desktop, so the
+    /// desktop is off the display all the same.
     pub(crate) flipping: Option<u64>,
     /// Presentation feedback for the frame on its way to the display.
     pub(crate) presenting: Vec<(ClientId, u32)>,

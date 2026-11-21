@@ -285,7 +285,7 @@ impl State {
                 TimerKey::RetryListener(index) => self.retry_listener(index),
                 TimerKey::FrameWait(output, draw) => self.wait_over(output, Some(draw)),
                 TimerKey::IdleLock => self.idle_timer(),
-                TimerKey::LockShown(id) => self.lock_not_shown(id),
+                TimerKey::LockShown(id) => self.answer_lock_anyway(id),
             }
         }
         self.tell_shell_of_changes();

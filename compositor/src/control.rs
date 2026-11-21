@@ -397,15 +397,6 @@ impl State {
     /// once every display shows the session locked. The event loop calls it
     /// once a turn, after its draws.
     pub(crate) fn answer_locks_shown(&mut self) {
-        if !self
-            .controls
-            .connections
-            .values()
-            .any(|connection| connection.held.is_some())
-            || !self.lock_shown()
-        {
-            return;
-        }
         let ids: Vec<u64> = self
             .controls
             .connections
@@ -413,6 +404,9 @@ impl State {
             .filter(|(_, connection)| connection.held.is_some())
             .map(|(id, _)| *id)
             .collect();
+        if ids.is_empty() || !self.lock_shown() {
+            return;
+        }
         for id in ids {
             self.release_control(id);
         }
@@ -421,7 +415,7 @@ impl State {
     /// A connection's `lock` waited [`LOCK_SHOWN_WITHIN`]: it is answered
     /// anyway, as the session is locked, though a display may still show
     /// what it showed before.
-    pub(crate) fn lock_not_shown(&mut self, id: u64) {
+    pub(crate) fn answer_lock_anyway(&mut self, id: u64) {
         if self
             .controls
             .connections
