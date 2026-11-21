@@ -94,6 +94,9 @@ pub enum TimerKey {
     FrameWait(u64, u64),
     /// The session may have been idle long enough to lock (see `lock.rs`).
     IdleLock,
+    /// A control connection's `lock` has waited long enough for the
+    /// displays to show the session locked (see `lock.rs`).
+    LockShown(u64),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

@@ -4,13 +4,20 @@
 mod common;
 
 use std::{
+    collections::HashMap,
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixStream,
-    time::Duration,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use common::{Compositor, another_uid, own_uid};
-use crowbar_compositor::lock::LOCKED_BACKGROUND;
+use crowbar_compositor::{
+    State,
+    backend::{Backend, Drawn},
+    image::Image,
+    lock::{LOCK_SHOWN_WITHIN, LOCKED_BACKGROUND},
+};
 use crowbar_probe::{Client, KeyEvent, LayerRequest};
 
 const RED: u32 = 0xffc0_2020;
@@ -354,4 +361,147 @@ fn a_session_started_locked_shows_and_gives_nothing_before_the_lock_screen() {
     compositor.key(KEY_A, false);
     shell.roundtrip().unwrap();
     assert_eq!(pressed(&mut shell), [KEY_A], "the lock screen took no text");
+}
+
+/// Displays that show the frame sent to them only when the test flips them,
+/// as a display controller does at its next vertical blank: the frame on its
+/// way, and the frame shown, by output.
+#[derive(Clone, Default)]
+struct Displays(Arc<Mutex<HashMap<u64, Frames>>>);
+
+/// A display's frame on its way to it, and the frame it shows.
+type Frames = (Option<Image>, Option<Image>);
+
+impl Backend for Displays {
+    fn draw(&mut self, state: &State, output: u64) -> Drawn {
+        let Some(image) = state.render_output(output) else {
+            return Drawn::Nothing;
+        };
+        self.0.lock().unwrap().entry(output).or_default().0 = Some(image);
+        Drawn::Flip
+    }
+}
+
+impl Displays {
+    /// The `index`th display, or every display where `None`, shows the frame
+    /// on its way to it, and the compositor hears so.
+    fn flip(&self, compositor: &Compositor, index: Option<usize>) {
+        let displays = self.clone();
+        compositor.with(move |state| {
+            let numbers: Vec<u64> = state.outputs().iter().map(|output| output.number).collect();
+            for (at, number) in numbers.into_iter().enumerate() {
+                if index.is_some_and(|index| index != at) {
+                    continue;
+                }
+                let flipped = {
+                    let mut frames = displays.0.lock().unwrap();
+                    let frame = frames.entry(number).or_default();
+                    frame.0.take().map(|image| frame.1 = Some(image)).is_some()
+                };
+                if flipped {
+                    state.frame_shown(number);
+                }
+            }
+        });
+    }
+
+    /// What each display shows.
+    fn shown(&self, compositor: &Compositor) -> Vec<Option<Image>> {
+        let displays = self.clone();
+        compositor.with(move |state| {
+            let frames = displays.0.lock().unwrap();
+            state
+                .outputs()
+                .iter()
+                .map(|output| frames.get(&output.number).and_then(|frame| frame.1.clone()))
+                .collect()
+        })
+    }
+}
+
+/// Two displays whose frames show when the test flips them, and a window
+/// that has the keyboard, shown on both.
+fn with_held_flips() -> (Compositor, Displays, Client) {
+    let displays = Displays::default();
+    let backend = displays.clone();
+    let compositor = Compositor::start_with(own_uid(), own_uid(), move |state| {
+        state.add_output("TEST-1", (640, 480), 60_000);
+        state.add_output("TEST-2", (640, 480), 60_000);
+        state.set_backend(backend);
+    });
+    let client = focused_window(&compositor);
+    // Until the desktop is still, every frame is shown.
+    for _ in 0..5 {
+        displays.flip(&compositor, None);
+    }
+    (compositor, displays, client)
+}
+
+/// The next line, or none within `wait`.
+fn line_within(control: &mut Control, wait: Duration) -> Option<String> {
+    control.writer.set_read_timeout(Some(wait)).unwrap();
+    let mut line = String::new();
+    let read = control.reader.read_line(&mut line);
+    control.writer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    read.ok().filter(|read| *read > 0).map(|_| line.trim_end().to_string())
+}
+
+#[test]
+fn a_lock_is_answered_only_once_every_display_shows_the_session_locked() {
+    let (compositor, displays, _client) = with_held_flips();
+    let mut authority = Control::at(&with_authority(&compositor, own_uid()));
+    assert_ne!(
+        displays.shown(&compositor)[0]
+            .as_ref()
+            .and_then(|image| image.pixel(60, 60)),
+        Some(LOCKED_BACKGROUND),
+        "the desktop did not show before the lock"
+    );
+
+    // The suspend hook locks, and asks something else after: neither is
+    // answered while a display still shows the desktop.
+    authority.send(r#"{"op":"lock"}"#);
+    authority.send(r#"{"op":"snapshot"}"#);
+    assert_eq!(line_within(&mut authority, Duration::from_millis(300)), None);
+    displays.flip(&compositor, Some(0));
+    assert_eq!(
+        line_within(&mut authority, Duration::from_millis(300)),
+        None,
+        "answered while the second display showed the desktop"
+    );
+
+    displays.flip(&compositor, Some(1));
+    assert_eq!(authority.line(), r#"{"reply":"ok"}"#);
+    let after = authority.line();
+    assert!(after.starts_with(r#"{"reply":"error""#), "{after}");
+    for (index, shown) in displays.shown(&compositor).into_iter().enumerate() {
+        let shown = shown.unwrap();
+        assert!(
+            shown.pixels.iter().all(|pixel| *pixel == LOCKED_BACKGROUND),
+            "display {index} does not show the session locked"
+        );
+    }
+
+    // Once the lock shows, a lock again is answered at once.
+    authority.send(r#"{"op":"lock"}"#);
+    assert_eq!(
+        line_within(&mut authority, Duration::from_millis(300)).as_deref(),
+        Some(r#"{"reply":"ok"}"#)
+    );
+}
+
+#[test]
+fn a_display_that_never_shows_a_frame_holds_the_lock_reply_only_so_long() {
+    let (compositor, _displays, _client) = with_held_flips();
+    let mut authority = Control::at(&with_authority(&compositor, own_uid()));
+
+    let asked = Instant::now();
+    authority.send(r#"{"op":"lock"}"#);
+    // The reply still comes, within the bound and well before the unlock
+    // helper gives up waiting for it, at five seconds.
+    assert_eq!(authority.line(), r#"{"reply":"ok"}"#);
+    let waited = asked.elapsed();
+    assert!(waited >= LOCK_SHOWN_WITHIN, "answered after {waited:?}");
+    assert!(waited < Duration::from_secs(3), "answered after {waited:?}");
+    assert!(compositor.with(|state| state.locked()));
 }

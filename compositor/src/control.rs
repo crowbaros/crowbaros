@@ -55,7 +55,9 @@
 //! Where an unlock authority listens, the shell's `unlock` is refused: the
 //! authority has a socket of its own, checked against its user ID, where it
 //! may send `lock` and `unlock`, and nothing else, and hears no events.
-//! ADR 0032 accepts these.
+//! ADR 0032 accepts these. A `lock` is answered once every display shows
+//! the session locked, and the connection hears nothing in between (see
+//! `lock.rs`).
 //!
 //! `outputs` and `configure_output` are the shell's interface to the layout
 //! of displays (ADR 0020): a monitor's mode, place, and scale, the scale in
@@ -78,13 +80,15 @@ use std::{
         },
     },
     path::Path,
+    time::Instant,
 };
 
 use crate::{
     State,
     connections::peer_uid,
-    event_loop::{Readiness, Token},
+    event_loop::{Readiness, TimerId, TimerKey, Token},
     json::{Value, parse_object, quote},
+    lock::LOCK_SHOWN_WITHIN,
     log,
     surface::SurfaceId,
     workspaces::WORKSPACES,
@@ -113,6 +117,10 @@ pub(crate) struct ControlConnection {
     writing: bool,
     /// The snapshot it was last sent as an event.
     told: Option<String>,
+    /// What it is sent while its `lock` waits for the displays to show the
+    /// session locked, from that `lock`'s reply on, and the timer that ends
+    /// the wait (see `lock.rs`).
+    held: Option<(Vec<u8>, TimerId)>,
 }
 
 #[derive(Default)]
@@ -214,6 +222,7 @@ impl State {
                     output: Vec::new(),
                     writing: false,
                     told: None,
+                    held: None,
                 },
             );
         }
@@ -264,14 +273,11 @@ impl State {
                 .get(&id)
                 .is_some_and(|connection| connection.authority);
             let reply = match std::str::from_utf8(&line) {
-                Ok(text) if authority => self.authority_request(text.trim_end()),
-                Ok(text) => self.control_request(text.trim_end()),
+                Ok(text) if authority => self.authority_request(id, text.trim_end()),
+                Ok(text) => self.control_request(id, text.trim_end()),
                 Err(_) => error_reply("the request is not UTF-8"),
             };
-            if let Some(connection) = self.controls.connections.get_mut(&id) {
-                connection.output.extend_from_slice(reply.as_bytes());
-                connection.output.push(b'\n');
-            }
+            self.send_control(id, format!("{reply}\n").as_bytes());
         }
         if !close {
             close = !self.flush_control(id);
@@ -282,7 +288,7 @@ impl State {
     }
 
     /// A request on the unlock authority's connection: `lock` or `unlock`.
-    fn authority_request(&mut self, line: &str) -> String {
+    fn authority_request(&mut self, id: u64, line: &str) -> String {
         let op = match parse_object(line) {
             Ok(request) if request.len() == 1 => match request.get("op") {
                 Some(Value::String(op)) => op.clone(),
@@ -294,6 +300,7 @@ impl State {
         let result = match op.as_str() {
             "lock" => {
                 self.lock("authority");
+                self.hold_until_lock_shown(id);
                 Ok(())
             }
             "unlock" => {
@@ -317,9 +324,7 @@ impl State {
             .map(|(id, _)| *id)
             .collect();
         for id in ids {
-            if let Some(connection) = self.controls.connections.get_mut(&id) {
-                connection.output.extend_from_slice(line.as_bytes());
-            }
+            self.send_control(id, line.as_bytes());
             if !self.flush_control(id) {
                 self.close_control(id);
             }
@@ -346,15 +351,103 @@ impl State {
             .map(|(id, _)| *id)
             .collect();
         for id in ids {
+            self.send_control(id, format!("{{\"event\":\"snapshot\",{snapshot}}}\n").as_bytes());
             if let Some(connection) = self.controls.connections.get_mut(&id) {
-                connection
-                    .output
-                    .extend_from_slice(format!("{{\"event\":\"snapshot\",{snapshot}}}\n").as_bytes());
                 connection.told = Some(snapshot.clone());
             }
             if !self.flush_control(id) {
                 self.close_control(id);
             }
+        }
+    }
+
+    /// Queues bytes for a connection: behind its held `lock` reply, if one
+    /// waits, so that what it hears keeps its order.
+    fn send_control(&mut self, id: u64, bytes: &[u8]) {
+        if let Some(connection) = self.controls.connections.get_mut(&id) {
+            match &mut connection.held {
+                Some((held, _)) => held.extend_from_slice(bytes),
+                None => connection.output.extend_from_slice(bytes),
+            }
+        }
+    }
+
+    /// A connection asked to lock: until every display shows the session
+    /// locked, or [`LOCK_SHOWN_WITHIN`] has passed, it hears nothing more,
+    /// starting with this request's reply (see `lock.rs`).
+    fn hold_until_lock_shown(&mut self, id: u64) {
+        if self.lock_shown() {
+            return;
+        }
+        let Some(connection) = self.controls.connections.get(&id) else {
+            return;
+        };
+        if connection.held.is_some() {
+            return;
+        }
+        let timer = self
+            .event_loop
+            .set_timer(Instant::now() + LOCK_SHOWN_WITHIN, TimerKey::LockShown(id));
+        if let Some(connection) = self.controls.connections.get_mut(&id) {
+            connection.held = Some((Vec::new(), timer));
+        }
+    }
+
+    /// Sends the connections that wait on a `lock` what they were held,
+    /// once every display shows the session locked. The event loop calls it
+    /// once a turn, after its draws.
+    pub(crate) fn answer_locks_shown(&mut self) {
+        if !self
+            .controls
+            .connections
+            .values()
+            .any(|connection| connection.held.is_some())
+            || !self.lock_shown()
+        {
+            return;
+        }
+        let ids: Vec<u64> = self
+            .controls
+            .connections
+            .iter()
+            .filter(|(_, connection)| connection.held.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            self.release_control(id);
+        }
+    }
+
+    /// A connection's `lock` waited [`LOCK_SHOWN_WITHIN`]: it is answered
+    /// anyway, as the session is locked, though a display may still show
+    /// what it showed before.
+    pub(crate) fn lock_not_shown(&mut self, id: u64) {
+        if self
+            .controls
+            .connections
+            .get(&id)
+            .is_none_or(|connection| connection.held.is_none())
+        {
+            return;
+        }
+        log::warning!(
+            "answered a lock before these displays showed it, after {LOCK_SHOWN_WITHIN:?}: {}",
+            self.lock_not_shown_on().join(", ")
+        );
+        self.release_control(id);
+    }
+
+    fn release_control(&mut self, id: u64) {
+        let Some(connection) = self.controls.connections.get_mut(&id) else {
+            return;
+        };
+        let Some((held, timer)) = connection.held.take() else {
+            return;
+        };
+        connection.output.extend_from_slice(&held);
+        self.event_loop.cancel_timer(timer);
+        if !self.flush_control(id) {
+            self.close_control(id);
         }
     }
 
@@ -374,7 +467,8 @@ impl State {
                 Err(_) => return false,
             }
         }
-        if connection.output.len() > MAX_PENDING {
+        let held = connection.held.as_ref().map_or(0, |(held, _)| held.len());
+        if connection.output.len() + held > MAX_PENDING {
             log::warning!("closed a control connection that reads no replies");
             return false;
         }
@@ -391,12 +485,15 @@ impl State {
     fn close_control(&mut self, id: u64) {
         if let Some(connection) = self.controls.connections.remove(&id) {
             self.event_loop.remove(connection.stream.as_fd());
+            if let Some((_, timer)) = connection.held {
+                self.event_loop.cancel_timer(timer);
+            }
             log::info!("shell control disconnected id={id}");
         }
     }
 
     /// One request, and its reply.
-    fn control_request(&mut self, line: &str) -> String {
+    fn control_request(&mut self, id: u64, line: &str) -> String {
         let request = match parse_object(line) {
             Ok(request) => request,
             Err(error) => return error_reply(&format!("not a request: {error}")),
@@ -436,6 +533,7 @@ impl State {
             "outputs" => only(&[], &request).map(|()| self.outputs_reply()),
             "lock" => only(&[], &request).map(|()| {
                 self.lock("shell");
+                self.hold_until_lock_shown(id);
                 ok_reply()
             }),
             "unlock" => only(&[], &request).and_then(|()| {

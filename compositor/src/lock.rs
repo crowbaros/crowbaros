@@ -11,6 +11,15 @@
 //! alone: nothing else can be under the pointer or have the keyboard, and no
 //! chord of the compositor's acts.
 //!
+//! A `lock` on the control channel is answered once every display shows the
+//! session locked: each has shown a frame drawn since, blank or the lock
+//! screen. The suspend hook waits for that answer, so the machine never
+//! sleeps with the desktop on screen for whoever wakes it to see. Until the
+//! answer, the connection hears nothing else, so its replies keep their
+//! order. A display that shows no frame within [`LOCK_SHOWN_WITHIN`], as one
+//! switched off, holds the answer no longer: it comes then, still `ok`, as
+//! the session is locked, and the log names the display.
+//!
 //! An unlock authority ends it: a privileged part of Base, at a socket and
 //! user ID of its own (`--unlock-socket`, `--unlock-uid`), that checks the
 //! person's password and says `unlock`. Once there is one, the shell's word
@@ -30,9 +39,17 @@ pub const LOCK_NAMESPACE: &str = "crowbaros-lock";
 /// (`#030B13`), matching the lock screen's wallpaper edge.
 pub const LOCKED_BACKGROUND: u32 = 0xff03_0b13;
 
+/// The longest a `lock` waits for its answer: for every display to show the
+/// session locked. One that shows no frame by then, as one switched off,
+/// does not hold it longer.
+pub const LOCK_SHOWN_WITHIN: Duration = Duration::from_secs(1);
+
 #[derive(Debug)]
 pub(crate) struct Lock {
     pub locked: bool,
+    /// For each output there was when the session locked, the first draw
+    /// that shows it locked.
+    locked_from: Vec<(u64, u64)>,
     /// How long without input before the session locks itself.
     idle_after: Option<Duration>,
     last_input: Instant,
@@ -43,6 +60,7 @@ impl Default for Lock {
     fn default() -> Self {
         Lock {
             locked: false,
+            locked_from: Vec::new(),
             idle_after: None,
             last_input: Instant::now(),
             timer: None,
@@ -66,6 +84,12 @@ impl State {
         self.cancel_drag();
         self.seat.drag_press = None;
         self.lock.locked = true;
+        // Every draw from the next on shows the session locked.
+        self.lock.locked_from = self
+            .outputs
+            .iter()
+            .map(|output| (output.number, output.draws + 1))
+            .collect();
         self.refresh_keyboard_focus();
         self.seat.pointer_focus = None;
         self.seat.cursor = None;
@@ -82,6 +106,7 @@ impl State {
         }
         log::info!("session unlocked");
         self.lock.locked = false;
+        self.lock.locked_from.clear();
         let before = self
             .seat
             .desktop_keyboard_focus
@@ -96,6 +121,32 @@ impl State {
         self.control_event("unlocked");
         self.input_seen();
         self.queue_redraw_all();
+    }
+
+    /// Whether every display shows the session locked, or it is not locked:
+    /// each output there was when it locked has shown a frame drawn since,
+    /// blank or the lock screen. An output added since draws nothing else.
+    pub(crate) fn lock_shown(&self) -> bool {
+        self.lock.locked_from.iter().all(|(number, draw)| {
+            self.outputs
+                .iter()
+                .find(|output| output.number == *number)
+                .is_none_or(|output| output.presented >= *draw)
+        })
+    }
+
+    /// The outputs that do not yet show the session locked, by name.
+    pub(crate) fn lock_not_shown_on(&self) -> Vec<String> {
+        self.lock
+            .locked_from
+            .iter()
+            .filter_map(|(number, draw)| {
+                self.outputs
+                    .iter()
+                    .find(|output| output.number == *number && output.presented < *draw)
+                    .map(|output| output.name.clone())
+            })
+            .collect()
     }
 
     /// Whether a surface belongs to the lock screen: the shell's layer

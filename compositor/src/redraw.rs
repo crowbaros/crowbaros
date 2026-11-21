@@ -119,6 +119,11 @@ impl State {
         output.redraw = Redraw::Waiting { again: false };
         output.draws += 1;
         let draw = output.draws;
+        match drawn {
+            Drawn::Flip => output.flipping = Some(draw),
+            Drawn::Sent => output.presented = draw,
+            Drawn::Nothing => {}
+        }
         let frame = Duration::from_secs_f64(1_000.0 / f64::from(output.refresh.max(1_000)));
         if drawn != Drawn::Flip {
             // No display will say when this wait is over.
@@ -141,6 +146,13 @@ impl State {
 
     /// A backend says the display showed the frame it was sent, and when.
     pub fn frame_shown_at(&mut self, number: u64, shown: crate::presentation::Shown) {
+        if let Some(output) = self.outputs.iter_mut().find(|output| output.number == number)
+            && let Some(draw) = output.flipping.take()
+        {
+            // After the session was paused, it never will: another virtual
+            // terminal shows instead, and the desktop does not.
+            output.presented = draw;
+        }
         self.present(number, shown);
         self.wait_over(number, None);
     }

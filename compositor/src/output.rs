@@ -41,6 +41,10 @@ pub struct Output {
     pub(crate) redraw: crate::redraw::Redraw,
     /// How many times it was drawn, or looked at for drawing.
     pub(crate) draws: u64,
+    /// The last draw the display showed, by its number in `draws`.
+    pub(crate) presented: u64,
+    /// The draw on its way to the display, which will say when it shows it.
+    pub(crate) flipping: Option<u64>,
     /// Presentation feedback for the frame on its way to the display.
     pub(crate) presenting: Vec<(ClientId, u32)>,
 }
@@ -94,6 +98,8 @@ impl State {
             global,
             redraw: crate::redraw::Redraw::Idle,
             draws: 0,
+            presented: 0,
+            flipping: None,
             presenting: Vec::new(),
         });
         self.queue_redraw(number);
