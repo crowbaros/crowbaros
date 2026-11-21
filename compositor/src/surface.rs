@@ -362,6 +362,14 @@ impl Surface {
         )
     }
 
+    /// Whether its last commit changed what it shows.
+    pub(crate) fn damaged_by_last_commit(&self) -> bool {
+        self.current
+            .damage_log
+            .back()
+            .is_some_and(|(made, _)| *made == self.commits)
+    }
+
     /// What its commits after the first `commits` damaged, in surface
     /// coordinates. None for all of it: when a commit damaged all of it, or
     /// when the log does not reach back that far.

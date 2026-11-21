@@ -1,13 +1,21 @@
 //! What the compositor shows it did, for the checks that run it: how many
 //! commits each window and layer has made, and how many frames it drew.
 //!
-//! The line is written after a frame is drawn, and at most every
-//! [`EVERY`], so a still desktop writes nothing and no timer wakes the
-//! compositor for it. CrowbarOS's desktop check reads it, as it read the
-//! spike's:
+//! The line is written after a commit or a frame, and at most every
+//! [`EVERY`], so a still desktop, which commits nothing and draws nothing,
+//! writes nothing, and no timer wakes the compositor for it. CrowbarOS's
+//! desktop check reads it, as it read the spike's:
 //!
 //! ```text
 //! commits so far: layer crowbaros-bar: 3, window 0x7 foot: 12 frames=41
+//! ```
+//!
+//! After the workspace showing changes, or a window moves to another, each
+//! layer's first commit that changes what it shows is logged with the time
+//! since, as the bar's showing it (#273):
+//!
+//! ```text
+//! layer crowbaros-bar drew 9.6 ms after the workspaces changed
 //! ```
 
 use std::time::{Duration, Instant};
@@ -16,6 +24,12 @@ use crate::{State, control::window_id, log, surface::SurfaceId};
 
 /// The least time between two reports.
 pub const EVERY: Duration = Duration::from_secs(5);
+
+/// The last change to the workspaces, and the layers that drew since.
+pub(crate) struct WorkspacesChanged {
+    at: Instant,
+    drawn: Vec<(String, Duration)>,
+}
 
 impl State {
     /// A window's or a layer surface's root committed.
@@ -29,11 +43,44 @@ impl State {
         } else {
             return;
         };
+        if label.starts_with("layer ")
+            && let Some(changed) = &mut self.workspaces_changed
+            && !changed.drawn.iter().any(|(drawn, _)| *drawn == label)
+            && self
+                .surfaces
+                .get(&root)
+                .is_some_and(|surface| surface.damaged_by_last_commit())
+        {
+            let after = changed.at.elapsed();
+            log::info!(
+                "{label} drew {:.1} ms after the workspaces changed",
+                after.as_secs_f64() * 1000.0
+            );
+            changed.drawn.push((label.clone(), after));
+        }
         *self.commit_counts.entry(label).or_insert(0) += 1;
+        self.report();
     }
 
-    /// After a frame was drawn: reports, if the last report is old enough.
-    pub(crate) fn report_after_frame(&mut self) {
+    /// The workspace showing changed, or a window moved to another.
+    pub(crate) fn note_workspaces_changed(&mut self) {
+        self.workspaces_changed = Some(WorkspacesChanged {
+            at: Instant::now(),
+            drawn: Vec::new(),
+        });
+    }
+
+    /// The layers that drew since the workspaces last changed, and how long
+    /// after the change each did.
+    #[doc(hidden)]
+    pub fn drawn_since_workspaces_changed(&self) -> Vec<(String, Duration)> {
+        self.workspaces_changed
+            .as_ref()
+            .map_or_else(Vec::new, |changed| changed.drawn.clone())
+    }
+
+    /// After a commit or a frame: reports, if the last report is old enough.
+    pub(crate) fn report(&mut self) {
         let now = Instant::now();
         if self.last_report.is_some_and(|last| now.duration_since(last) < EVERY) {
             return;

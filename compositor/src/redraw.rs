@@ -111,7 +111,7 @@ impl State {
         if drawn != Drawn::Nothing {
             self.frames_drawn += 1;
             crate::log::debug!("frame drawn on output {number}, {} in all", self.frames_drawn);
-            self.report_after_frame();
+            self.report();
         }
         let Some(output) = self.outputs.iter_mut().find(|output| output.number == number) else {
             return;
