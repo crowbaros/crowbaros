@@ -9,8 +9,6 @@ sides hold.
 
 - The [vision](docs/VISION.md) is the plan of record. Read it before work that
   changes what CrowbarOS does. The [README](README.md) has the repository map.
-- Read the [lessons](docs/LESSONS.md) before you design a part the earlier
-  plans already explored.
 - Write with the terms in the [glossary](GLOSSARY.md). Call the project
   CrowbarOS and the earlier plans "the Fedora blueprint" and "the substrate
   vision".

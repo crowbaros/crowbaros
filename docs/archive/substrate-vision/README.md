@@ -7,8 +7,7 @@ a lean base that each person shaped into their own OS with Tools their agent
 built, under a deterministic security model. Jim Martin and Jason Alexander
 replaced it with the [vision](../../VISION.md)
 ([ADR 0030](../../adr/0030-crowbaros-starts-again-with-an-agent-at-the-persons-side.md)).
-Where the two disagree, the vision is right. What it taught us is in
-[LESSONS.md](../../LESSONS.md).
+Where the two disagree, the vision is right.
 
 Its code, including the Rust workspace in `crates/` and the adversarial lab, is
 at the [`substrate-final`](https://github.com/crowbaros/crowbaros/tree/substrate-final)

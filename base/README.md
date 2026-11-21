@@ -45,7 +45,7 @@ repository. NVIDIA does not publish its user-space driver as free software, and
 the open kernel module needs that driver's firmware to run. The one image boots
 in the VM, on a machine with an NVIDIA GPU, and on a machine that draws with
 Mesa, so every copy carries the driver. The milestone's spec accepts that cost
-to keep one image. [The lessons](../docs/LESSONS.md) count NVIDIA as a cost.
+to keep one image.
 
 - **The module is built during the build.** Installing `nvidia` runs DKMS in
   the root, which builds `nvidia`, `nvidia-modeset`, `nvidia-drm`, and

@@ -10,10 +10,9 @@ anywhere, and out of the way until the person asks.
 ## Start here
 
 1. [Vision](docs/VISION.md): the plan of record.
-2. [Lessons](docs/LESSONS.md): what the earlier plans taught us.
-3. [Glossary](GLOSSARY.md): the words this project uses, and the ones it avoids.
-4. [Decision records](docs/adr/).
-5. [Design system](DESIGN.md) and [product brief](PRODUCT.md): how CrowbarOS
+2. [Glossary](GLOSSARY.md): the words this project uses, and the ones it avoids.
+3. [Decision records](docs/adr/).
+4. [Design system](DESIGN.md) and [product brief](PRODUCT.md): how CrowbarOS
    looks and what its interfaces must do.
 
 ## Status
@@ -39,7 +38,7 @@ The substrate vision before it is archived, and its code is at the
 | [`apps/`](apps/) | The GPUI interfaces: desktop shell, Studio Settings, and the GPUI probe |
 | [`compositor/`](compositor/) | Fulcrum, the Wayland compositor: its own Cargo project, with its own CI workflow |
 | [`lab/`](lab/) | The Void lab: the compositor check and the desktop check, both on Base's image |
-| [`docs/VISION.md`](docs/VISION.md), [`docs/LESSONS.md`](docs/LESSONS.md) | The vision, and what the earlier plans taught us |
+| [`docs/VISION.md`](docs/VISION.md) | The vision, the plan of record |
 | [`docs/adr/`](docs/adr/) | Decision records |
 | [`docs/research/`](docs/research/) | Prior-art research and compositor records |
 | [`docs/branding/`](docs/branding/) | The approved brand kit and the rounds that led to it |
