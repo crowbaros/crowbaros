@@ -155,9 +155,12 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   Base at `--unlock-socket`, checked against `--unlock-uid`, that checks the
   person's password and says `unlock`. With one, the shell's `unlock` is
   refused, and `--start-locked` starts the session locked; without one, the
-  shell's `unlock` ends it. The confirm chord, Ctrl+Alt+Enter, waits for the
-  vision's Milestone 3, the Agent at hand, to decide what it confirms. Until
-  then it does nothing, and no client hears its Enter.
+  shell's `unlock` ends it. A `lock` is answered once every display shows
+  the session locked, or after a second where one shows nothing, so the
+  suspend hook, which waits for the answer, never sleeps on the desktop. The
+  confirm chord, Ctrl+Alt+Enter, waits for the vision's Milestone 3, the
+  Agent at hand, to decide what it confirms. Until then it does nothing, and
+  no client hears its Enter.
 - **Idle inhibit**: a surface that is shown, drawn on an output on the
   workspace the person is on, keeps that output from going idle. One that is
   hidden or gone does not. The idle timer that locks the session
