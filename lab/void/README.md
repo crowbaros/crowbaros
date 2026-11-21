@@ -92,18 +92,20 @@ a person's machine would, runs every Base boot check from `base/void_base.py`
 (Void, the kernel, the Btrfs root growing to fill the disk, UEFI, runit,
 services, microcode, Wi-Fi, SSH, the person's account, the system's log,
 reboot/poweroff, the network, package groups, NVIDIA's module and command
-line, the compositor's service restarting, and kernel messages) and reports each in `desktop.log` and
-`results.json`, exercises the desktop, and powers the guest off.
+line, the compositor's service restarting, and kernel messages) and reports
+each in `desktop.log` and `results.json`, exercises the desktop, and powers
+the guest off.
 
 The check drives real QEMU keyboard/pointer events for unlock at boot (a
 wrong password, then the right one, with nothing typed first), launch, focus,
 workspaces, lock by Super+L and by the bar's button, Ctrl+Alt+Enter neither
-locking nor unlocking, the suspend hook's lock, a restart of the compositor's service
-that comes back locked behind the lock screen with no app holding the
-keyboard, Settings preview/Save/Undo, and relaunch. It checks saved appearance, and a file the person wrote in their
-home, after a clean reboot, service identities, linked libraries, binary
-hashes, render activity, and shell restart. It checks that apps run as the
-person at the ordinary socket for apps, that copy and paste, the primary
+locking nor unlocking, the suspend hook's lock, a restart of the compositor's
+service mid-session that comes back locked behind the lock screen, with an
+app's window behind it hearing none of the keys typed, Settings
+preview/Save/Undo, and relaunch. It checks saved appearance, and a file the
+person wrote in their home, after a clean reboot, service identities, linked
+libraries, binary hashes, render activity, and shell restart. It checks that
+apps run as the person at the ordinary socket for apps, that copy and paste, the primary
 selection, and drag and drop work between two apps, and that the shell's
 sockets, its control channel, and the unlock helper refuse an app. An error
 returns nonzero and retains `desktop.log`, `results.json`, the build log,

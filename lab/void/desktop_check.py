@@ -141,6 +141,9 @@ class Check:
     def app_log(self):
         return self.guest.ssh('cat /var/log/crowbar-apps.log', check=False).stdout
 
+    def compositor_log(self):
+        return self.run('cat /var/log/crowbar-compositor.log')
+
     def base_checks(self):
         """Run every Base boot check from `void_base.boot_checks()` and report each."""
         failed = []
@@ -183,7 +186,20 @@ class Check:
     def checks(self, built):
         self.qmp = self.guest.qmp()
         self.ready()
+        shell_log = self.shell_log
+        # The session starts locked, and only the unlock helper's word, on the
+        # person's password, unlocks it. The lock screen takes the password
+        # at once, with no chord first. Seen before Base's checks, which
+        # restart the compositor's service.
+        self.wait('the session starts locked', lambda: self.snapshot().get('locked') and 'SHELL lock open=true' in shell_log())
+        self.capture('00-locked-at-boot')
+        self.check('the session starts locked, behind the lock screen',
+                   self.snapshot()['locked'] and 'SHELL lock open=true' in shell_log())
+        locks = shell_log().count('SHELL lock open=true')
         self.base_checks()
+        self.wait("the shell's lock screen is back after Base's checks restart the compositor",
+                  lambda: shell_log().count('SHELL lock open=true') > locks
+                  and self.snapshot().get('connected') and self.snapshot().get('locked'), timeout=60)
         self.check('seatd and four desktop services supervised',
                    all(line.startswith('run: ') for line in self.run('sv status seatd crowbar-compositor crowbar-shell crowbar-launcher crowbar-unlock').splitlines()))
         digests = self.run('sha256sum ' + ' '.join('/usr/local/bin/' + n for n in built))
@@ -191,14 +207,6 @@ class Check:
         for name in built:
             linked = self.run('ldd /usr/local/bin/' + name)
             self.check(name + ' linked libraries resolve', '=> /' in linked and 'not found' not in linked)
-        shell_log = self.shell_log
-        # The session starts locked, and only the unlock helper's word, on the
-        # person's password, unlocks it. The lock screen takes the password
-        # at once, with no chord first.
-        self.wait('the session starts locked', lambda: self.snapshot().get('locked') and 'SHELL lock open=true' in shell_log())
-        self.capture('00-locked-at-boot')
-        self.check('the session starts locked, behind the lock screen',
-                   self.snapshot()['locked'] and 'SHELL lock open=true' in shell_log())
         answered = shell_log().count('SHELL unlock ok=false')
         self.unlock('wrong')
         self.wait('a wrong password is answered', lambda: shell_log().count('SHELL unlock ok=false') > answered)
@@ -372,7 +380,7 @@ class Check:
         self.check('the desktop is unlocked before the compositor restarts', not self.snapshot()['locked'])
         shell = self.run('pgrep -x crowbaros-shell').split()
         compositor = self.run('pgrep -u crowbar-compositor').split()
-        log_offset = len(self.run('cat /var/log/crowbar-compositor.log'))
+        log_offset = len(self.compositor_log())
         locks = self.shell_log().count('SHELL lock open=true')
         self.run('sv restart crowbar-compositor')
         self.wait('a new compositor and a new shell',
@@ -382,20 +390,32 @@ class Check:
         self.wait('the lock screen shows after the compositor restarts',
                   lambda: self.snapshot().get('locked') and self.shell_log().count('SHELL lock open=true') > locks)
         self.capture('01-locked-after-compositor-restart')
-        snapshot = self.snapshot()
-        since = self.run('cat /var/log/crowbar-compositor.log')[log_offset:]
-        self.check('a compositor restart comes back locked, behind the lock screen',
-                   snapshot['locked'] and self.shell_log().count('SHELL lock open=true') > locks)
+        self.check('a compositor restart comes back locked, behind the lock screen', self.snapshot()['locked'])
         # The new compositor locked as it started, and nothing unlocked it
         # before the person's password.
+        since = self.compositor_log()[log_offset:]
         self.check('the new compositor starts locked, and nothing unlocks it first',
                    'session locked by=start' in since and 'session unlocked' not in since)
-        self.check('no app has the keyboard behind the lock screen',
-                   not snapshot['active']['address'], json.dumps(snapshot['active']))
+        # An app opens a window behind the lock, as one would that started
+        # again on its own, and the person types: the lock screen has the
+        # keyboard, and the app hears none of it.
+        keylog = '/tmp/keylog-behind-the-lock.out'
+        try:
+            self.as_app('crowbar-probe keylog behind-the-lock', keylog)
+            self.wait('a window opens behind the lock', lambda: 'window mapped' in self.run(f'cat {keylog}'))
+            answered = self.shell_log().count('SHELL unlock ok=false')
+            self.unlock('wrong')
+            self.wait('the lock screen answers the wrong password',
+                      lambda: self.shell_log().count('SHELL unlock ok=false') > answered)
+            heard = self.run(f'cat {keylog}')
+            self.check('an app behind the lock gets no keys the person types', self.snapshot()['locked']
+                       and not re.search(r'\b(enter|key) ', heard), heard.strip())
+        finally:
+            self.run("pkill -f 'crowbar-probe [k]eylog'; true")
         self.unlock()
         self.wait('the password unlocks after the compositor restarts', lambda: not self.snapshot().get('locked'))
         self.check("the person's password unlocks the desktop after the compositor restarts",
-                   'session unlocked' in self.run('cat /var/log/crowbar-compositor.log')[log_offset:])
+                   'session unlocked' in self.compositor_log()[log_offset:])
         self.click(660, 935)  # Terminal dock entry.
         terminal = self.wait('Terminal launched after the compositor restarts',
                              lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
