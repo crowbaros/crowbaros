@@ -49,8 +49,8 @@ Milestone 8's exit check restarts the compositor during a session. The session m
 - **The proposals span the compositor, the shell, and the lab:**
   - in `compositor/`, the shell's messages are in `src/control.rs`, lock and the unlock authority in `src/lock.rs`, and the layout of displays in `src/layout.rs` and `src/output.rs`;
   - the shell's half is in `apps/shell/src/session.rs` and `main.rs` (`LockScreen`);
-  - Base's half is in `base/desktop/`: `unlock.py`, `unlock-run`, `zzz-lock`, `compositor-run`, and `shell-run`, with the account set up in `base/host/image.sh`.
+  - Base's half is the unlock helper, `base/helpers/src/unlock.rs`, and in `base/desktop/`: `unlock-run`, `zzz-lock`, `compositor-run`, and `shell-run`, with the account set up in `base/host/image.sh`.
 - **The shell is not rustfmt-clean.** `cargo fmt` in `apps/shell` reformats files a change does not touch, so do not run it there. Its CI runs `cargo test` only.
 - **Virtual GPUs hide the cursor plane** unless the compositor sets `DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT` and fills in the hotspot. Fulcrum does both; keep them.
-- **The unlock helper reads `/etc/shadow` through libcrypt by `ctypes`.** Python 3.13 removed the `crypt` module, and the Void guest runs 3.14.
+- **The unlock helper reads `/etc/shadow` through libcrypt** (libxcrypt's `crypt_rn`), linked from Base's helpers, `base/helpers/src/crypt.rs`. Base's image has no Python.
 - **Squash merges** leave local branches that `git branch --merged` does not count as merged. Delete them by name once their pull request is merged.

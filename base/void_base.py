@@ -58,11 +58,14 @@ REPOSITORY = CFG["void_repository"]
 NONFREE = REPOSITORY + "/nonfree"
 # What the desktop is built from: each Cargo project, and the part of the
 # target directory it builds in. The two apps share theirs.
-PROJECTS = [("compositor", "compositor"), ("apps/shell", ""), ("apps/studio-settings", "")]
+PROJECTS = [("compositor", "compositor"), ("apps/shell", ""), ("apps/studio-settings", ""),
+            ("base/helpers", "helpers")]
 # The programs the image holds, and the project each comes from. The probe is
-# Fulcrum's test client.
+# Fulcrum's test client. The helpers are the desktop's four helpers in one
+# program; see helpers/README.md.
 PROGRAMS = {"crowbar-compositor": "compositor", "crowbar-probe": "compositor",
-            "crowbaros-shell": "apps/shell", "crowbaros-studio-settings": "apps/studio-settings"}
+            "crowbaros-shell": "apps/shell", "crowbaros-studio-settings": "apps/studio-settings",
+            "crowbar-helpers": "base/helpers"}
 
 
 def run(*args, **kwargs):
@@ -395,6 +398,11 @@ def build(force=False, lab_account=False):
     if lack := missing_from_root(ROOTFS):
         raise SystemExit(f"The Void root at {ROOTFS} has {lack}. Install it again with "
                          "`base/void_base.py build --force`")
+    # What only the lab's image gets: python3, as the lab's checks drive the
+    # guest with `python3 -c`. It comes from the root's own package index, so
+    # it matches what the root was installed with.
+    lab_packages = CFG["lab_packages"] if lab_account else []
+    xbps = fetch() if lab_packages else None
     if not KEY.exists():
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "crowbaros-base", "-f", KEY)
     env = dict(os.environ, ROOTFS=str(ROOTFS), WORK=str(WORK), OUT=str(BASE_DISK),
@@ -405,8 +413,10 @@ def build(force=False, lab_account=False):
                DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT), PERSON_UID=str(PERSON_UID),
                PERSON=account["name"], PERSON_FULL_NAME=account["full_name"],
                PERSON_PASSWORD_HASH=account["password_hash"], PERSON_PASSWORD=account["password"],
-               PERSON_SSH_KEYS="".join(key + "\n" for key in account["ssh_keys"]))
-    run(*userns(), "sh", HERE / "host/image.sh", *binaries().values(), env=env)
+               PERSON_SSH_KEYS="".join(key + "\n" for key in account["ssh_keys"]),
+               LAB_PACKAGES=" ".join(lab_packages), XBPS=str(xbps / "usr/bin") if xbps else "",
+               REPOS=REPOSITORY, PKGCACHE=str(CACHE / "packages"))
+    run(*userns(), "--mount", "sh", HERE / "host/image.sh", *binaries().values(), env=env)
     lab = " (the lab account; see the warning above)" if account["password"] else ""
     print(f"The image's person's account is `{account['name']}`{lab}.")
 
@@ -681,7 +691,8 @@ def main():
     build_parser = sub.add_parser("build")
     build_parser.add_argument("--force", action="store_true", help="install the Void roots again")
     build_parser.add_argument("--lab-account", action="store_true",
-                              help="make the lab account and ignore the account file, as the checks do")
+                              help="make the lab account and ignore the account file, and add the lab's "
+                                   "packages, as the checks do")
     sub.add_parser("boot").add_argument("--window", action="store_true",
                                         help="also show the guest's screen in a window")
     sub.add_parser("ssh").add_argument("command", nargs=argparse.REMAINDER)

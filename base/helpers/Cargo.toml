@@ -1,0 +1,16 @@
+[package]
+name = "crowbar-helpers"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Base's desktop helpers: the unlock helper, the launcher, the shell's connection to the compositor, and Ctrl+Alt+Del. Part of Base."
+
+[[bin]]
+name = "crowbar-helpers"
+path = "src/main.rs"
+
+[dependencies]
+# Peer credentials, accounts, and dropping root: what std does not offer.
+libc = "0.2"
+serde_json = "1"

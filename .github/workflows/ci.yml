@@ -86,7 +86,7 @@ jobs:
 
       - name: Lab scripts compile and pass their tests
         run: |
-          python3 -m py_compile base/*.py base/desktop/*.py lab/void/*.py
+          python3 -m py_compile base/*.py lab/void/*.py
           python3 -m unittest discover -s base -p "test_*.py"
           python3 -m unittest discover -s lab/void -p "test_*.py"
 
@@ -130,6 +130,35 @@ jobs:
 
       - name: Test
         run: cargo test --locked
+
+  # Base's desktop helpers: the unlock helper, the launcher, the shell's
+  # connection, and Ctrl+Alt+Del. Their tests serve real sockets and hash
+  # with libcrypt, which the runner has.
+  helpers:
+    name: Desktop helpers
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: base/helpers
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+
+      - name: Test
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
 
   # The compositor's own workflow (ADR 0031), run when its code changes.
   compositor:
@@ -205,9 +234,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             .lab/base/target
-          key: base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/studio-settings/Cargo.lock') }}-${{ github.sha }}
+          key: base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/studio-settings/Cargo.lock') }}-
+            base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock') }}-
             base-build-
 
       - name: Build, boot, and check Base
@@ -246,7 +275,7 @@ jobs:
   gate:
     name: CI passed
     if: always()
-    needs: [changes, check, shell, compositor, boot]
+    needs: [changes, check, shell, helpers, compositor, boot]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
