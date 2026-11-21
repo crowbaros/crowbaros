@@ -617,10 +617,11 @@ fn launcher_command(path: &std::path::Path) -> Command {
         .env_remove("WAYLAND_SOCKET");
     command
 }
-/// Alpha-only root stand-in. Its socket checks the shell UID; the helper
-/// chooses app credentials and starts from an empty environment/descriptor set.
-pub fn lab_request(request: serde_json::Value) -> Result<serde_json::Value> {
-    let path = std::env::var_os("CROWBAR_LAUNCH_SOCKET").context("No Alpha launcher")?;
+/// A request to Base's launcher service, which runs as the person's account
+/// and takes requests from the shell's UID alone. It starts apps as the person,
+/// from an empty environment and descriptor set, and reads saved appearance.
+pub fn launcher_request(request: serde_json::Value) -> Result<serde_json::Value> {
+    let path = std::env::var_os("CROWBAR_LAUNCH_SOCKET").context("No launcher service")?;
     let mut stream = UnixStream::connect(path)?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
@@ -632,11 +633,11 @@ pub fn lab_request(request: serde_json::Value) -> Result<serde_json::Value> {
         .take(65538)
         .read_line(&mut response)?;
     if response.len() > 65537 || !response.ends_with('\n') {
-        bail!("Invalid Alpha launcher response")
+        bail!("Invalid launcher service response")
     }
     let reply: serde_json::Value = serde_json::from_str(&response)?;
     if reply["ok"] != true {
-        bail!("Alpha launcher: {}", reply["error"]);
+        bail!("Launcher service: {}", reply["error"]);
     }
     Ok(reply)
 }
@@ -649,7 +650,7 @@ pub fn launch(path: PathBuf, tx: Sender<Event>) {
         }
         let result = (|| -> Result<()> {
             if std::env::var_os("CROWBAR_LAUNCH_SOCKET").is_some() {
-                lab_request(serde_json::json!({"op": "launch", "desktop": path}))?;
+                launcher_request(serde_json::json!({"op": "launch", "desktop": path}))?;
                 return Ok(());
             }
             let mut child = launcher_command(&path)

@@ -40,7 +40,7 @@ impl Preferences {
     pub fn load() -> Option<Self> {
         if std::env::var_os("CROWBAR_LAUNCH_SOCKET").is_some() {
             let reply =
-                crate::session::lab_request(serde_json::json!({"op": "appearance"})).ok()?;
+                crate::session::launcher_request(serde_json::json!({"op": "appearance"})).ok()?;
             let prefs: Self = serde_json::from_value(reply["preferences"].clone()).ok()?;
             return (prefs.schema_version == 1).then_some(prefs);
         }
