@@ -40,7 +40,8 @@ Nothing else is installed.
    puts it away. The compositor owns that gesture, so no app can take it or
    block it.
 2. **Part of the OS.** The Agent runs as a system service from boot, not in an
-   app's window. Its surface is drawn by the compositor, above everything else.
+   app's window. Its surface is drawn by the shell, and every ask by the
+   compositor, above everything else.
    It can do what the OS can do: open and arrange windows, change settings,
    install and remove software, work with the person's files, and run commands.
 3. **Not intrusive.** The Agent speaks when it is spoken to. It does not pop
