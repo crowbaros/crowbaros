@@ -4,8 +4,7 @@
 It replaces the [substrate vision](archive/substrate-vision/README.md), which
 replaced the [Fedora blueprint](archive/fedora-blueprint/README.md). The decision
 is [ADR 0030](adr/0030-crowbaros-starts-again-with-an-agent-at-the-persons-side.md).
-What the earlier plans taught us is in [LESSONS.md](LESSONS.md). Terms are in
-the [glossary](../GLOSSARY.md).
+Terms are in the [glossary](../GLOSSARY.md).
 
 ## What CrowbarOS is
 
@@ -63,9 +62,8 @@ Each milestone ends in something a person can use.
 | **4. Installable** | An image a person installs on their own machine, with the default apps. The release process gets an ADR before it is published |
 
 The substrate vision's security architecture, with its broker, gate, labels,
-and compartments, is not part of this plan. It stays in the archive, and the
-[lessons](LESSONS.md) say what to reach for when the Agent's reach makes a real
-risk.
+and compartments, is not part of this plan. It stays in the archive. If the
+Agent's reach makes a real risk, a new record decides what to do about it.
 
 ## Open questions
 
