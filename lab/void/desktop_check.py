@@ -645,7 +645,8 @@ print(json.dumps({
         return json.loads(self.python(code, self.person()[0]))
 
     def display_unplugged(self):
-        """The only display is unplugged and plugged in again (#271). The
+        """The only display is unplugged and plugged in again (#271), by
+        forcing its connector off and back to what it detects. The
         compositor closes the shell's layers, and the shell stops once,
         cleanly. Started again, it waits for a display without stopping, and
         draws when one comes. The display is at 1.5 first, as a 4K monitor
@@ -657,8 +658,11 @@ print(json.dumps({
         time.sleep(2)
         app = self.run('pgrep -x foot').split()
         shell_from, compositor_from = len(self.shell_log()), len(self.compositor_log())
-        # Forcing the connector off raises a hotplug event, as unplugging does.
-        self.run(f'echo off > {status}')
+        # Forcing the connector off sends no uevent, so the check sends the
+        # one the kernel sends when a monitor is unplugged.
+        hotplug = (f"echo 'change 00000000-0000-0000-0000-000000000000 HOTPLUG=1' "
+                   f"> {status.rsplit('-', 2)[0]}/uevent")
+        self.run(f'echo off > {status} && {hotplug}')
         self.wait('the display goes away',
                   lambda: 'output disconnected name=Virtual-1' in self.compositor_log()[compositor_from:])
         self.wait('the shell waits for a display',
@@ -673,7 +677,7 @@ print(json.dumps({
                    and self.guest.ssh('pgrep -x crowbaros-shell', check=False).stdout.strip(),
                    f'started {starts} times')
         before = self.layer_commits()
-        self.run(f'echo detect > {status}')
+        self.run(f'echo detect > {status} && {hotplug}')
         self.wait('the display comes back',
                   lambda: 'output connected name=Virtual-1' in self.compositor_log()[compositor_from:])
         self.wait('the shell sees the display', lambda: 'SHELL display connected' in self.shell_log()[shell_from:])
