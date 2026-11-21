@@ -1,0 +1,50 @@
+[04:55:33.046240] wl_registry#2.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:55:33.205366] {mesa image count query} wl_registry#22.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:55:33.205370] {mesa image count query}  -> wl_registry#22.bind(16, "wp_linux_drm_syncobj_manager_v1", 1, new id [unknown]#26)
+[04:55:33.205523] {mesa image count query}  -> wp_linux_drm_syncobj_manager_v1#26.destroy()
+[04:55:33.205670] {mesa image count query} wl_registry#27.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:55:33.205674] {mesa image count query}  -> wl_registry#27.bind(16, "wp_linux_drm_syncobj_manager_v1", 1, new id [unknown]#26)
+[04:55:33.205812] {mesa image count query}  -> wp_linux_drm_syncobj_manager_v1#26.destroy()
+[04:55:33.205952] {mesa present modes query} wl_registry#23.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:55:33.205956] {mesa present modes query}  -> wl_registry#23.bind(16, "wp_linux_drm_syncobj_manager_v1", 1, new id [unknown]#26)
+[04:55:33.206096] {mesa present modes query}  -> wp_linux_drm_syncobj_manager_v1#26.destroy()
+[04:55:33.206234] {mesa present modes query} wl_registry#28.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:55:33.206238] {mesa present modes query}  -> wl_registry#28.bind(16, "wp_linux_drm_syncobj_manager_v1", 1, new id [unknown]#26)
+[04:55:33.206368] {mesa present modes query}  -> wp_linux_drm_syncobj_manager_v1#26.destroy()
+[04:55:33.206513] {mesa formats query} wl_registry#29.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:55:33.206517] {mesa formats query}  -> wl_registry#29.bind(16, "wp_linux_drm_syncobj_manager_v1", 1, new id [unknown]#26)
+[04:55:33.206642] {mesa formats query}  -> wp_linux_drm_syncobj_manager_v1#26.destroy()
+[04:55:33.206779] {mesa formats query} wl_registry#30.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:55:33.206784] {mesa formats query}  -> wl_registry#30.bind(16, "wp_linux_drm_syncobj_manager_v1", 1, new id [unknown]#26)
+[04:55:33.206907] {mesa formats query}  -> wp_linux_drm_syncobj_manager_v1#26.destroy()
+[04:55:33.207045] {mesa vk display queue} wl_registry#31.global(16, "wp_linux_drm_syncobj_manager_v1", 1)
+[04:55:33.207050] {mesa vk display queue}  -> wl_registry#31.bind(16, "wp_linux_drm_syncobj_manager_v1", 1, new id [unknown]#26)
+[04:55:33.207280] {mesa vk display queue}  -> wp_linux_drm_syncobj_manager_v1#26.get_surface(new id wp_linux_drm_syncobj_surface_v1#34, wl_surface#17)
+[04:55:33.207336] {mesa vk display queue}  -> zwp_linux_dmabuf_v1#25.create_params(new id zwp_linux_buffer_params_v1#33)
+[04:55:33.207342] {mesa vk display queue}  -> zwp_linux_buffer_params_v1#33.add(fd 19, 0, 0, 4096, 33554432, 5683971)
+[04:55:33.207348] {mesa vk display queue}  -> zwp_linux_buffer_params_v1#33.add(fd 20, 1, 3145728, 1024, 33554432, 5683971)
+[04:55:33.207357] {mesa vk display queue}  -> zwp_linux_buffer_params_v1#33.create_immed(new id wl_buffer#35, 980, 720, 875713089, 0)
+[04:55:33.207368] {mesa vk display queue}  -> zwp_linux_buffer_params_v1#33.destroy()
+[04:55:33.207373] {mesa vk display queue}  -> wp_linux_drm_syncobj_manager_v1#26.import_timeline(new id wp_linux_drm_syncobj_timeline_v1#36, fd 21)
+[04:55:33.207381] {mesa vk display queue}  -> wp_linux_drm_syncobj_manager_v1#26.import_timeline(new id wp_linux_drm_syncobj_timeline_v1#37, fd 22)
+[04:55:33.207415] {mesa vk display queue}  -> zwp_linux_dmabuf_v1#25.create_params(new id zwp_linux_buffer_params_v1#38)
+[04:55:33.207420] {mesa vk display queue}  -> zwp_linux_buffer_params_v1#38.add(fd 26, 0, 0, 4096, 33554432, 5683971)
+[04:55:33.207426] {mesa vk display queue}  -> zwp_linux_buffer_params_v1#38.add(fd 27, 1, 3145728, 1024, 33554432, 5683971)
+[04:55:33.207430] {mesa vk display queue}  -> zwp_linux_buffer_params_v1#38.create_immed(new id wl_buffer#39, 980, 720, 875713089, 0)
+[04:55:33.207438] {mesa vk display queue}  -> zwp_linux_buffer_params_v1#38.destroy()
+[04:55:33.207443] {mesa vk display queue}  -> wp_linux_drm_syncobj_manager_v1#26.import_timeline(new id wp_linux_drm_syncobj_timeline_v1#40, fd 28)
+[04:55:33.207451] {mesa vk display queue}  -> wp_linux_drm_syncobj_manager_v1#26.import_timeline(new id wp_linux_drm_syncobj_timeline_v1#41, fd 29)
+[04:55:33.207481] {mesa vk display queue}  -> zwp_linux_dmabuf_v1#25.create_params(new id zwp_linux_buffer_params_v1#42)
+[04:55:33.207486] {mesa vk display queue}  -> zwp_linux_buffer_params_v1#42.add(fd 33, 0, 0, 4096, 33554432, 5683971)
+[04:55:33.207491] {mesa vk display queue}  -> zwp_linux_buffer_params_v1#42.add(fd 34, 1, 3145728, 1024, 33554432, 5683971)
+[04:55:33.207496] {mesa vk display queue}  -> zwp_linux_buffer_params_v1#42.create_immed(new id wl_buffer#43, 980, 720, 875713089, 0)
+
+     10 wp_linux_drm_syncobj_manager_v1.destroy
+      3 wp_linux_drm_syncobj_manager_v1.get_surface
+     24 wp_linux_drm_syncobj_manager_v1.import_timeline
+      2 wp_linux_drm_syncobj_surface_v1.destroy
+     60 wp_linux_drm_syncobj_surface_v1.set_acquire_point
+     60 wp_linux_drm_syncobj_surface_v1.set_release_point
+     16 wp_linux_drm_syncobj_timeline_v1.destroy
+     24 zwp_linux_buffer_params_v1.add
+     12 zwp_linux_buffer_params_v1.create_immed
