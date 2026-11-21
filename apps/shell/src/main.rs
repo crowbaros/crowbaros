@@ -1656,6 +1656,11 @@ fn main() -> anyhow::Result<()> {
             session::read_events_for(Duration::from_millis(700));
         }
     });
+    // Before GPUI starts and makes the shell's layers.
+    if let Err(e) = session::wait_for_a_display() {
+        log::error!("SHELL exits: the compositor's control channel is closed: {e}");
+        std::process::exit(1);
+    }
     Application::new().with_assets(Assets).run(move |cx| {
         cx.text_system()
             .add_fonts(vec![
@@ -1789,6 +1794,10 @@ fn main() -> anyhow::Result<()> {
         })
         .detach();
     });
+    // GPUI stops when the shell quits, or once it has no layer left, as when
+    // the compositor closed them all because the last display went away. The
+    // shell's service starts it again, and it waits for a display (#271).
+    log::info!("SHELL exits: it quit, or has no layer left to draw");
     Ok(())
 }
 

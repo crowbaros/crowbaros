@@ -110,7 +110,11 @@ person wrote in their home, after a clean reboot, service identities, linked
 libraries, binary hashes, render activity, and shell restart. It checks that a
 still desktop, locked at boot and unlocked with apps open, commits nothing and
 draws nothing once it settles, and that the bar draws a workspace that
-Super+1 to 9 show within two frames, by the times Fulcrum logs. It checks that
+Super+1 to 9 show within two frames, by the times Fulcrum logs. It unplugs
+the only display, by forcing its connector off in sysfs while QEMU raises a
+hotplug event, and plugs it in
+again: the shell must stop once without panicking, wait for a display, and
+draw its layers when it comes back (#271). It checks that
 apps run as the person at the ordinary socket for apps, that copy and paste, the primary
 selection, and drag and drop work between two apps, and that the shell's
 sockets, its control channel, and the unlock helper refuse an app. An error

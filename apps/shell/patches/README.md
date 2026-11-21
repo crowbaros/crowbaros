@@ -38,5 +38,19 @@ the window asks for a frame callback and commits once, and its frames start
 again. Other platforms keep GPUI's behaviour: the patch adds two
 `PlatformWindow` methods whose defaults do what GPUI did.
 
-Both apps build with these patches: Studio Settings takes the shell's
-prepared source through its `[patch.crates-io]`.
+## A destroyed window draws nothing
+
+`gpui-0.2.2-closed-windows.patch`, applied last, is ours. When a Wayland
+window is dropped, GPUI 0.2.2 destroys its Vulkan surface at once but takes
+the window out of the client's list only in a task that runs later. Events
+already queued for the surface still reach it in between. When the last
+display goes away, Fulcrum closes the shell's layers and then tells each its
+new preferred scale, and GPUI resized the swapchain of a surface it had
+destroyed. On NVIDIA's driver that failed with `ERROR_EXTENSION_NOT_PRESENT`,
+and blade's `unwrap` panicked (#271). With the patch, a renderer that has been
+destroyed ignores a resize, a change of transparency, and a draw. The fault is
+GPUI's, so the fix is in GPUI: the shell cannot keep an event from reaching a
+window GPUI has dropped.
+
+All three patches serve both apps: Studio Settings takes the shell's prepared
+source through its `[patch.crates-io]`.

@@ -19,8 +19,15 @@ cargo test --release --locked
 The sources are not rustfmt-clean, and CI runs `cargo test` only. Do not run
 `cargo fmt` here: it reformats files a change does not touch.
 
-GPUI 0.2.2 uses the existing verified layer-shell backport, and a patch with
-which a still window commits nothing ([patches](patches/README.md)).
+GPUI 0.2.2 uses the existing verified layer-shell backport, a patch with
+which a still window commits nothing, and one with which a destroyed window
+draws nothing ([patches](patches/README.md)).
+
+With no display, the shell waits for one before it makes its layers. When the
+last display goes away, the compositor closes the shell's layers and GPUI
+stops, so the shell exits cleanly; its service starts it again, and it waits.
+`compositor/tests/shell_outputs.rs` runs the real shell through that on a GPU
+(#271).
 The [desktop check](../../lab/void/README.md#the-desktop-check) builds Base's
 image and runs the shell as Base runs it, on a copy of that image. On Base the
 shell runs as its own service account, `crowbar-shell`, and connects to the

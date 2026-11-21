@@ -98,6 +98,11 @@ pub trait Adapter: Send + Sync {
     fn lock(&self, _locked: bool) -> Result<()> {
         bail!("This compositor does not lock")
     }
+    /// Whether `outputs` answers. A compositor that does not is taken to
+    /// have a display.
+    fn reports_outputs(&self) -> bool {
+        false
+    }
     /// Lists connected displays and their modes, positions, and scales.
     fn outputs(&self) -> Result<serde_json::Value> {
         bail!("This compositor does not report display outputs")
@@ -473,6 +478,10 @@ impl Adapter for Compositor {
         self.request(serde_json::json!({ "op": op })).map(drop)
     }
 
+    fn reports_outputs(&self) -> bool {
+        true
+    }
+
     fn outputs(&self) -> Result<serde_json::Value> {
         self.request(serde_json::json!({ "op": "outputs" }))
     }
@@ -632,6 +641,43 @@ fn ask_unlock_helper(mut stream: UnixStream, password: String) -> Result<()> {
         bail!("{}", reply["error"].as_str().unwrap_or("Could not unlock"));
     }
     Ok(())
+}
+/// Waits until the compositor has a display to show the shell's layers on.
+///
+/// A layer made while there is none is closed at once, and a shell whose
+/// layers are all closed stops. With no display the shell would start, stop,
+/// and be started again, about once a second, so it waits here first (#271).
+/// An error once the control channel is closed.
+pub fn wait_for_a_display() -> Result<()> {
+    wait_for_a_display_on(connection()?, || std::thread::sleep(DISPLAY_POLL))
+}
+/// How often the shell asks again while there is no display. The compositor
+/// sends no event when a display comes, and this is only while there is none.
+const DISPLAY_POLL: Duration = Duration::from_millis(250);
+fn wait_for_a_display_on(adapter: &dyn Adapter, mut pause: impl FnMut()) -> Result<()> {
+    if !adapter.reports_outputs() {
+        return Ok(());
+    }
+    let mut said = false;
+    loop {
+        match adapter.outputs() {
+            Ok(reply) if reply["outputs"].as_array().is_some_and(|outputs| !outputs.is_empty()) => {
+                if said {
+                    log::info!("SHELL display connected");
+                }
+                return Ok(());
+            }
+            Ok(_) => {}
+            Err(e) if adapter.closed() => return Err(e),
+            // A late reply: ask again.
+            Err(e) => log::debug!("Outputs: {e}"),
+        }
+        if !said {
+            log::info!("SHELL waits for a display");
+            said = true;
+        }
+        pause();
+    }
 }
 /// Reads the compositor's events as they come, for `period`.
 pub fn read_events_for(period: Duration) {
@@ -1011,6 +1057,34 @@ mod tests {
             }
         });
         (Compositor::new(ours).unwrap(), peer)
+    }
+
+    /// With no display, the shell asks again until one comes, and makes no
+    /// layer before then (#271).
+    #[test]
+    fn the_shell_waits_for_a_display() {
+        const NONE: &str = "{\"reply\":\"outputs\",\"outputs\":[]}\n";
+        const ONE: &str = "{\"reply\":\"outputs\",\"outputs\":[{\"name\":\"Virtual-1\"}]}\n";
+        const ASK: &str = r#"{"op":"outputs"}"#;
+        let (compositor, peer) = scripted(vec![(ASK, NONE), (ASK, NONE), (ASK, ONE)]);
+        let mut pauses = 0;
+        wait_for_a_display_on(&compositor, || pauses += 1).unwrap();
+        assert_eq!(pauses, 2);
+        peer.join().unwrap();
+    }
+
+    /// A compositor that says nothing of displays is not waited on, and a
+    /// closed channel ends the wait.
+    #[test]
+    fn the_wait_for_a_display_ends_without_a_compositor_to_ask() {
+        let hyprland = Hyprland {
+            socket: PathBuf::from("/nonexistent"),
+        };
+        wait_for_a_display_on(&hyprland, || panic!("waited")).unwrap();
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        drop(theirs);
+        let compositor = Compositor::new(ours).unwrap();
+        assert!(wait_for_a_display_on(&compositor, || panic!("waited")).is_err());
     }
 
     #[test]
