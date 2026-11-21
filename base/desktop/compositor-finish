@@ -1,0 +1,11 @@
+#!/bin/sh
+# runit supervises openvt, which does not pass a signal on to the compositor
+# it waits for. When the service stops or restarts, stop a compositor left
+# behind, so the next one can take the seat and start locked. The
+# compositor's account runs nothing else.
+pkill -TERM -u crowbar-compositor || exit 0
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  pgrep -u crowbar-compositor >/dev/null || exit 0
+  sleep 0.5
+done
+pkill -KILL -u crowbar-compositor

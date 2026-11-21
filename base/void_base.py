@@ -578,6 +578,18 @@ def person_has_home(out):
         and lines[1].split()[:1] == [name]
 
 
+def compositor_restarted(out):
+    """Whether the check's output shows the compositor's service restarted
+    with one new compositor, which stayed: `sv restart`'s exit status, then
+    the compositor's account's processes before, after, and a moment later."""
+    lines = dict((line.split(" ", 1) + [""])[:2] for line in out.splitlines())
+    if not {"restart", "before", "after", "later"} <= lines.keys():
+        return False
+    after = lines["after"].split()
+    return lines["restart"] == "0" and len(after) == 1 \
+        and after[0] not in lines["before"].split() and lines["later"].split() == after
+
+
 # What a booted base must show, as (name, guest command, test on its output).
 CHECKS = [
     ("Void Linux", "cat /etc/os-release",
@@ -632,6 +644,14 @@ CHECKS = [
     ("the person may reboot and power off from the terminal",
      "id -nG; command -v reboot poweroff; sudo -n -l /usr/bin/reboot; sudo -n -l /usr/bin/poweroff",
      lambda out: person_may_reboot(out), "person"),
+    # The compositor's account runs nothing but the compositor. Restarting
+    # its service leaves one compositor, a new one, which stays up; the
+    # desktop check finds it locked.
+    ("the compositor's service restarts",
+     "c=crowbar-compositor; b=$(pgrep -u $c | xargs); sv restart $c >/dev/null; echo \"restart $?\"; "
+     "for i in $(seq 50); do a=$(pgrep -u $c | xargs); [ -n \"$a\" ] && [ \"$a\" != \"$b\" ] && break; "
+     "sleep 0.2; done; sleep 2; echo \"before $b\"; echo \"after $a\"; echo \"later $(pgrep -u $c | xargs)\"",
+     lambda out: compositor_restarted(out)),
     ("network has an address", "ip -4 -o addr show scope global",
      lambda out: "inet " in out),
     ("packages keep their groups", "stat -c '%G %n' /usr/bin/wall /var/db/dhcpcd",
