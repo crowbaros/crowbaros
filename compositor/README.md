@@ -98,11 +98,15 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   on the display's cursor plane where it has one, so moving the pointer
   redraws no frame.
 - **The seat**: one keyboard and one pointer. The keymap is compiled by
-  libxkbcommon and shared through a sealed memfd. The keyboard goes to the
-  window or key-taking layer the person clicks, and a click raises and
-  activates a window. A new window takes it, and a dialog does where its
-  parent has it. A new window that does not get it, as one that maps while
-  the session is locked, wants attention, which the shell's snapshot shows.
+  libxkbcommon and shared through a sealed memfd. The topmost mapped top or
+  overlay layer that requests exclusive interactivity takes the keyboard
+  until it goes away or releases it. This lets the person type into the
+  launcher as soon as it opens. The keyboard then returns to the desktop's
+  current focus. On-demand layers take the keyboard on a click. A click on a
+  window raises and activates it. A new window takes the keyboard, and a
+  dialog does where its parent has it. A new window that does not get it,
+  as one that maps while the session is locked, wants attention, which the
+  shell's snapshot shows.
   The shell's `launching` request is still answered, and changes nothing.
   The pointer follows what
   is under it, by input region, and stays with its surface while a button is

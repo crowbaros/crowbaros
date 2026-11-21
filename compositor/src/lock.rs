@@ -33,9 +33,6 @@ pub const LOCKED_BACKGROUND: u32 = 0xff03_0b13;
 #[derive(Debug)]
 pub(crate) struct Lock {
     pub locked: bool,
-    /// The window that had the keyboard as the session locked, to have it
-    /// back when it unlocks.
-    focus_before: Option<SurfaceId>,
     /// How long without input before the session locks itself.
     idle_after: Option<Duration>,
     last_input: Instant,
@@ -46,7 +43,6 @@ impl Default for Lock {
     fn default() -> Self {
         Lock {
             locked: false,
-            focus_before: None,
             idle_after: None,
             last_input: Instant::now(),
             timer: None,
@@ -69,10 +65,8 @@ impl State {
         self.grab = None;
         self.cancel_drag();
         self.seat.drag_press = None;
-        self.lock.focus_before = self.seat.keyboard_focus.map(|focus| self.root_of(focus));
         self.lock.locked = true;
-        let screen = self.lock_screen();
-        self.set_keyboard_focus(screen);
+        self.refresh_keyboard_focus();
         self.seat.pointer_focus = None;
         self.seat.cursor = None;
         self.refresh_pointer_focus();
@@ -88,11 +82,15 @@ impl State {
         }
         log::info!("session unlocked");
         self.lock.locked = false;
-        let before = self.lock.focus_before.take().filter(|window| {
-            self.windows
-                .iter()
-                .any(|w| w.surface == *window && w.workspace == self.workspace)
-        });
+        let before = self
+            .seat
+            .desktop_keyboard_focus
+            .map(|focus| self.root_of(focus))
+            .filter(|window| {
+                self.windows
+                    .iter()
+                    .any(|w| w.surface == *window && w.workspace == self.workspace)
+            });
         self.set_keyboard_focus(before);
         self.refresh_pointer_focus();
         self.control_event("unlocked");
@@ -115,20 +113,12 @@ impl State {
                 .is_some_and(|layer| layer.namespace == LOCK_NAMESPACE)
     }
 
-    /// The lock screen's surface that takes the keyboard, if it is mapped.
-    fn lock_screen(&self) -> Option<SurfaceId> {
-        self.layers
-            .iter()
-            .find(|layer| layer.mapped && self.is_lock_screen(layer.surface))
+    /// Keep the focused lock screen, or use the first mapped one.
+    pub(crate) fn lock_screen(&self) -> Option<SurfaceId> {
+        self.mapped_layers()
+            .filter(|layer| self.is_lock_screen(layer.surface))
+            .min_by_key(|layer| self.seat.keyboard_focus != Some(layer.surface))
             .map(|layer| layer.surface)
-    }
-
-    /// A layer surface mapped: the lock screen takes the keyboard while the
-    /// session is locked.
-    pub(crate) fn lock_screen_mapped(&mut self, surface: SurfaceId) {
-        if self.lock.locked && self.is_lock_screen(surface) && self.seat.keyboard_focus.is_none() {
-            self.set_keyboard_focus(Some(surface));
-        }
     }
 
     /// Locks the session after this long without input, or never. The idle

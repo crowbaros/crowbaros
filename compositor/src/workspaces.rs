@@ -47,7 +47,7 @@ impl State {
     /// window's client is told its outputs, the pointer looks again at what
     /// is under it, and every output is drawn again.
     fn workspace_changed(&mut self) {
-        if let Some(focus) = self.seat.keyboard_focus {
+        if let Some(focus) = self.seat.desktop_keyboard_focus {
             let root = self.root_of(focus);
             let hidden = self
                 .windows
@@ -59,7 +59,8 @@ impl State {
                     .any(|window| window.surface == toplevel && window.workspace != self.workspace)
             });
             if hidden || popup_of_hidden {
-                self.set_keyboard_focus(None);
+                self.seat.desktop_keyboard_focus = None;
+                self.refresh_keyboard_focus();
             }
         }
         let windows: Vec<SurfaceId> = self.windows.iter().map(|window| window.surface).collect();
