@@ -97,16 +97,26 @@ sides hold.
 
 ## Code Review Rules
 
-Codex reviews every pull request against this file. Flag each of these as P1:
+### Public repository
 
-- A bug fix with no test that fails without the fix.
-- A break of [The repository is public](#the-repository-is-public): a
-  secret, an address, or a detail of our homes or machines, anywhere in the
-  change or its test output.
-- A change to `.github/workflows/` that gives a fork's code a secret or a
-  write token, or runs a job off GitHub's runners.
-- A change to what CrowbarOS does that departs from the
-  [vision](docs/VISION.md) or an accepted ADR, with no new ADR.
+Anyone can read every commit, pull request, and CI log, and history keeps what
+a later commit deletes. Flag a secret, a key, an address on our networks, or a
+detail of our homes or machines, in the change or in what a test prints. Safe:
+placeholder names such as `example.org`, QEMU's own guest addresses, and
+secrets read from the environment at run time.
+
+### Bug fixes
+
+A fix with no test lets the bug come back unseen. Flag a fix to code that adds
+no test which fails without it. A fix to docs alone needs no test.
+
+### Decisions
+
+The [vision](docs/VISION.md) and the accepted ADRs in `docs/adr/` are the plan
+of record, so the next person builds on them. Flag a change to what CrowbarOS
+does that departs from one of them unless the same pull request adds an ADR or
+amends the vision. A refactor or a fix that keeps what CrowbarOS does needs
+neither.
 
 ## Releases
 
