@@ -43,6 +43,9 @@ pub const MAX_SUBSURFACE_DEPTH: usize = 32;
 const MAX_DAMAGE: usize = 64;
 
 /// How many commits' damage a surface keeps for the outputs that draw it.
+/// Only a commit that damaged something takes a place, so a client that
+/// commits with nothing new, as for a frame callback alone, pushes nothing
+/// out.
 const DAMAGE_LOG: usize = 8;
 
 /// What a surface is for. A surface has at most one role in its life.
@@ -211,9 +214,12 @@ pub(crate) struct Current {
     /// Counts the times `content` was replaced, so a renderer knows when
     /// what it uploaded is stale.
     pub(crate) content_serial: u64,
-    /// What the last few commits damaged, in surface coordinates, each with
-    /// the count of commits it made: None for all of the surface.
+    /// What the last few commits that damaged something damaged, in surface
+    /// coordinates, each with the count of commits it made: None for all of
+    /// the surface.
     pub(crate) damage_log: VecDeque<(u64, Option<Vec<Rect>>)>,
+    /// The log holds every commit after this count that damaged something.
+    pub(crate) damage_logged_after: u64,
 }
 
 impl Default for Current {
@@ -231,6 +237,7 @@ impl Default for Current {
             destination: None,
             content_serial: 0,
             damage_log: VecDeque::new(),
+            damage_logged_after: 0,
         }
     }
 }
@@ -362,12 +369,11 @@ impl Surface {
         if commits >= self.commits {
             return Some(Vec::new());
         }
-        let log = &self.current.damage_log;
-        if log.front().is_none_or(|(first, _)| *first > commits + 1) {
+        if commits < self.current.damage_logged_after {
             return None;
         }
         let mut damage = Vec::new();
-        for (_, rects) in log.iter().filter(|(made, _)| *made > commits) {
+        for (_, rects) in self.current.damage_log.iter().filter(|(made, _)| *made > commits) {
             damage.extend(rects.as_ref()?.iter().copied());
         }
         Some(damage)
@@ -828,9 +834,14 @@ impl State {
             surface_damage.iter().copied().chain(in_surface).collect()
         });
         let commits = surface.commits;
-        surface.current.damage_log.push_back((commits, damage));
-        while surface.current.damage_log.len() > DAMAGE_LOG {
-            surface.current.damage_log.pop_front();
+        if damage.as_ref().is_none_or(|rects: &Vec<Rect>| !rects.is_empty()) {
+            let log = &mut surface.current;
+            log.damage_log.push_back((commits, damage));
+            while log.damage_log.len() > DAMAGE_LOG {
+                if let Some((made, _)) = log.damage_log.pop_front() {
+                    log.damage_logged_after = made;
+                }
+            }
         }
         State::signal_release(release);
         if !superseded.is_empty() {
