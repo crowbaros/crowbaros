@@ -31,6 +31,7 @@ import socket
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 
 HERE = Path(__file__).resolve().parent
@@ -146,22 +147,53 @@ def userns():
 
 
 def fetch():
-    """Download the static xbps once, and refuse it unless it matches the pin."""
+    """Where the pinned static xbps is unpacked. Downloads and unpacks it once
+    for each pin, and refuses an archive that does not match the pin."""
     CACHE.mkdir(parents=True, exist_ok=True)
     url = CFG["xbps_static_url"]
-    tarball = CACHE / url.rsplit("/", 1)[1]
+    pin = CFG["xbps_static_sha256"]
+    # The archive and what is unpacked from it are both kept under the pin's
+    # name. A new pin never finds the last one's, and a build in another
+    # checkout, with another pin, leaves this one's as it is.
+    target = CACHE / f"xbps-static-{pin}"
+    xbps = target / "usr/bin/xbps-install.static"
+    if xbps.exists():
+        return target
+    tarball = CACHE / f"{pin}-{url.rsplit('/', 1)[1]}"
     if not tarball.exists():
-        part = tarball.with_name(tarball.name + ".part")
-        run("curl", "-fL", "--retry", "3", "-o", part, url)
-        part.replace(tarball)
-    if sha256(tarball) != CFG["xbps_static_sha256"]:
-        raise SystemExit(f"{tarball} does not match the pinned SHA-256; refusing to use it")
-    target = CACHE / "xbps-static"
-    if not (target / "usr/bin/xbps-install.static").exists():
-        shutil.rmtree(target, ignore_errors=True)
-        target.mkdir()
+        # Downloaded to a file of this build's own, checked there, and moved
+        # into place: two builds never write one file, and a download that is
+        # not the pinned archive is never kept.
+        handle, part = tempfile.mkstemp(prefix=tarball.name + ".", dir=CACHE)
+        os.close(handle)
+        part = Path(part)
+        try:
+            run("curl", "-fL", "--retry", "3", "-o", part, url)
+            if sha256(part) != pin:
+                raise SystemExit(f"{url} did not match the pinned SHA-256; the download was refused")
+            part.replace(tarball)
+        finally:
+            part.unlink(missing_ok=True)
+    if sha256(tarball) != pin:
+        tarball.unlink(missing_ok=True)
+        raise SystemExit(f"{tarball} did not match the pinned SHA-256; it was removed")
+    # Unpacked beside its place and moved there whole, so an unpacking that
+    # stops partway is never taken for the xbps.
+    unpacking = Path(tempfile.mkdtemp(prefix=target.name + ".", dir=CACHE))
+    try:
         with tarfile.open(tarball) as archive:
-            archive.extractall(target, filter="data")
+            archive.extractall(unpacking, filter="data")
+        unpacking.chmod(0o755)
+        try:
+            unpacking.rename(target)
+        except OSError:
+            # Another build unpacked the same pin first, or the directory is
+            # there without the xbps, as a cache restored in part leaves it.
+            if not xbps.exists():
+                shutil.rmtree(target, ignore_errors=True)
+                unpacking.rename(target)
+    finally:
+        shutil.rmtree(unpacking, ignore_errors=True)
     return target
 
 

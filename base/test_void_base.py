@@ -1,9 +1,11 @@
 """Base's build: which roots it trusts, what it hands the build and the image,
 and how its check reads SSH."""
+import hashlib
 import io
 import json
 import os
 from pathlib import Path
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -99,6 +101,129 @@ class RootfsTrust(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 void_base.compile_desktop(force=False)
         self.assertFalse(build_root.with_name('buildroot.done').exists())
+
+
+class StaticXbps(unittest.TestCase):
+    """The static xbps the builds run is the one the configuration pins."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.cache = Path(temporary.name) / 'cache'
+        self.cache.mkdir()
+        self.downloads = {}
+
+        def run(*args, **kw):
+            """curl, with what each address serves."""
+            command = [str(a) for a in args]
+            self.assertEqual(command[0], 'curl')
+            Path(command[command.index('-o') + 1]).write_bytes(self.downloads.pop(command[-1]))
+
+        for name, value in [('CACHE', self.cache), ('CFG', dict(void_base.CFG)), ('run', run)]:
+            p = patch.object(void_base, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def archive(self, program):
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode='w') as tar:
+            info = tarfile.TarInfo('usr/bin/xbps-install.static')
+            info.size = len(program)
+            tar.addfile(info, io.BytesIO(program))
+        return data.getvalue()
+
+    def pin(self, name, program):
+        """Pins an archive whose xbps-install is `program`, which its address
+        serves once."""
+        archive = self.archive(program)
+        url = f'https://example.org/static/{name}'
+        void_base.CFG['xbps_static_url'] = url
+        void_base.CFG['xbps_static_sha256'] = hashlib.sha256(archive).hexdigest()
+        self.downloads[url] = archive
+
+    def program(self, xbps=None):
+        return ((xbps or void_base.fetch()) / 'usr/bin/xbps-install.static').read_bytes()
+
+    def test_a_new_pin_runs_the_new_xbps(self):
+        # The unpacked copy used to be kept for as long as it was there, so a
+        # machine or a CI cache that had the old xbps went on running it.
+        self.pin('xbps-static-1.tar', b'the old xbps')
+        self.assertEqual(self.program(), b'the old xbps')
+        self.pin('xbps-static-2.tar', b'the new xbps')
+        self.assertEqual(self.program(), b'the new xbps')
+
+    def test_a_new_pin_at_the_same_address_runs_the_new_xbps(self):
+        # The download was kept under the address's last part alone, so the
+        # last pin's archive was found, and refused, at every build.
+        self.pin('xbps-static.tar', b'the old xbps')
+        self.assertEqual(self.program(), b'the old xbps')
+        self.pin('xbps-static.tar', b'the new xbps')
+        self.assertEqual(self.program(), b'the new xbps')
+
+    def test_another_pin_leaves_the_xbps_a_build_is_using(self):
+        # Checkouts share the cache, and each may pin its own.
+        self.pin('xbps-static-1.tar', b'the old xbps')
+        using = void_base.fetch()
+        self.pin('xbps-static-2.tar', b'the new xbps')
+        self.assertNotEqual(void_base.fetch(), using)
+        self.assertEqual(self.program(using), b'the old xbps')
+
+    def test_an_unpacking_that_stopped_partway_is_not_the_xbps(self):
+        self.pin('xbps-static-1.tar', b'the xbps')
+        with patch.object(void_base.tarfile.TarFile, 'extractall', side_effect=KeyboardInterrupt), \
+                self.assertRaises(KeyboardInterrupt):
+            void_base.fetch()
+        self.assertEqual([path.name for path in self.cache.iterdir() if path.is_dir()], [])
+        self.assertEqual(self.program(), b'the xbps')
+
+    def test_a_build_downloads_to_a_file_of_its_own(self):
+        # Every build downloaded to one file beside the archive, so two
+        # builds of one pin wrote it together, and one moved it away from
+        # under the other.
+        self.pin('xbps-static-1.tar', b'the xbps')
+        pin = void_base.CFG['xbps_static_sha256']
+        others = [self.cache / f'{name}xbps-static-1.tar.part' for name in ('', f'{pin}-', f'{pin[:16]}-')]
+        for other in others:
+            other.write_bytes(b'another build is writing this')
+        self.assertEqual(self.program(), b'the xbps')
+        for other in others:
+            self.assertEqual(other.read_bytes(), b'another build is writing this')
+
+    def test_an_archive_in_the_cache_that_is_not_the_pinned_one_is_refused_and_removed(self):
+        self.pin('xbps-static-1.tar', b'the xbps')
+        pin = void_base.CFG['xbps_static_sha256']
+        archive = self.cache / f'{pin}-xbps-static-1.tar'
+        archive.write_bytes(b'not the archive')
+        with self.assertRaises(SystemExit):
+            void_base.fetch()
+        self.assertFalse(archive.exists())
+        self.assertEqual(self.program(), b'the xbps')
+
+    def test_an_unpacked_copy_with_no_xbps_in_it_is_unpacked_again(self):
+        # As a cache restored in part leaves it: the directory, and not what
+        # was in it.
+        self.pin('xbps-static-1.tar', b'the xbps')
+        pin = void_base.CFG['xbps_static_sha256']
+        (self.cache / f'xbps-static-{pin}/usr').mkdir(parents=True)
+        self.assertEqual(self.program(), b'the xbps')
+
+    def test_the_pinned_xbps_is_downloaded_and_unpacked_once(self):
+        self.pin('xbps-static-1.tar', b'the xbps')
+        self.program()
+        with patch.object(void_base.tarfile, 'open', side_effect=AssertionError('unpacked again')):
+            self.assertEqual(self.program(), b'the xbps')
+        self.assertEqual(self.downloads, {})
+
+    def test_a_download_that_is_not_the_pinned_archive_is_refused_and_not_kept(self):
+        self.pin('xbps-static-1.tar', b'the xbps')
+        url = void_base.CFG['xbps_static_url']
+        self.downloads[url] = self.archive(b'another xbps')
+        with self.assertRaises(SystemExit):
+            void_base.fetch()
+        self.assertEqual(list(self.cache.iterdir()), [])
+        # The next build downloads it again, and takes the pinned one.
+        self.downloads[url] = self.archive(b'the xbps')
+        self.assertEqual(self.program(), b'the xbps')
 
 
 class BuildFixture(unittest.TestCase):

@@ -31,7 +31,9 @@ tablet, with no VGA card.
 ## Where things go
 
 - Downloads: `~/.cache/crowbaros/void`. The static xbps
-  is pinned by SHA-256 and refused if it does not match.
+  is pinned by SHA-256 and refused if it does not match. Each pin's archive
+  and unpacked copy are kept under the pin's name, so a new pin is never
+  served the last one's, and checkouts with different pins share the cache.
 - The root, the build root, the Cargo target, the disks, the SSH key, and boot
   logs: `.lab/base/`, outside git. The build root and the target are kept, so
   the next build starts from them.
