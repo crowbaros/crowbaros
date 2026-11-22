@@ -17,6 +17,8 @@ image with its runit services from desktop/.
     void_base.py console           attach to the guest's serial console
     void_base.py stop              power the guest off
     void_base.py check             build, boot, check, record, and power off
+    void_base.py root save|restore ARCHIVE
+                                   pack the finished Void root, or unpack one in its place
 """
 import argparse
 from datetime import datetime, timezone
@@ -299,6 +301,48 @@ def missing_from_root(root):
 def rootfs(force):
     install(ROOTFS, CFG["packages"], "Void root", force, missing=lambda: missing_from_root(ROOTFS),
             repositories=(REPOSITORY, NONFREE))
+
+
+# How the root is packed into one archive and unpacked again: inside the user
+# namespace the install ran in, so each file keeps its owner and group, with
+# its extended attributes, ACLs, and holes. The root comes before its `.done`,
+# so an unpack that stops partway leaves a root `install` does not trust.
+ROOT_ARCHIVE = ["--zstd", "--numeric-owner", "--xattrs", "--xattrs-include=*", "--acls", "--sparse"]
+
+
+def save_root(archive):
+    """Pack the finished Void root into `archive`. CI caches it, so a run
+    whose root would be installed from the same files restores it instead."""
+    done = ROOTFS.with_name(ROOTFS.name + ".done")
+    if not done.exists() or (lack := missing_from_root(ROOTFS)):
+        raise SystemExit(f"The Void root at {ROOTFS} is not a finished install"
+                         + (f": it has {lack}" if done.exists() else "") + "; nothing saved")
+    part = archive.with_name(archive.name + ".part")
+    part.parent.mkdir(parents=True, exist_ok=True)
+    run(*userns(), "tar", *ROOT_ARCHIVE, "-C", WORK, "-cf", part, ROOTFS.name, done.name)
+    part.replace(archive)
+    print(f"Saved the Void root to {archive} ({archive.stat().st_size >> 20} MiB)")
+
+
+def restore_root(archive):
+    """Unpack a root `save_root` packed, in place of the one here. The build
+    still checks it as it checks any root: `install` uses it only if it was
+    installed from the packages and repositories asked for now, and the image
+    is written only from a root that has its kernel, microcode, and NVIDIA's
+    modules. An archive that does not unpack leaves no root to trust, and the
+    build installs one."""
+    done = ROOTFS.with_name(ROOTFS.name + ".done")
+    WORK.mkdir(parents=True, exist_ok=True)
+    done.unlink(missing_ok=True)
+    try:
+        run(*userns(), "rm", "-rf", ROOTFS)
+        run(*userns(), "tar", *ROOT_ARCHIVE, "-C", WORK, "-xpf", archive)
+    except subprocess.CalledProcessError:
+        done.unlink(missing_ok=True)
+        print(f"{archive} did not unpack; the build installs the Void root", flush=True)
+        return False
+    print(f"Restored the Void root from {archive}")
+    return True
 
 
 def binaries():
@@ -820,6 +864,10 @@ def main():
     sub.add_parser("console")
     sub.add_parser("stop")
     sub.add_parser("check")
+    root_parser = sub.add_parser("root", help="pack the finished Void root into an archive, "
+                                              "or unpack one in its place, as CI's cache does")
+    root_parser.add_argument("action", choices=["save", "restore"])
+    root_parser.add_argument("archive", type=Path)
     args = parser.parse_args()
     if args.cmd == "build":
         build(args.force, args.lab_account)
@@ -835,6 +883,8 @@ def main():
         stop()
     elif args.cmd == "check":
         check()
+    elif args.cmd == "root":
+        save_root(args.archive) if args.action == "save" else restore_root(args.archive)
 
 
 if __name__ == "__main__":

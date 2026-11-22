@@ -231,6 +231,28 @@ jobs:
           sudo ln -sf /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/edk2/x64/OVMF_CODE.4m.fd
           sudo ln -sf /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/edk2/x64/OVMF_VARS.4m.fd
 
+      # The Void root takes about two and a half minutes to install, most of
+      # it NVIDIA's DKMS build. Main saves the root it installed, keyed on
+      # the files that decide what is installed and on the week, so a cached
+      # root is never more than a week behind Void. Only that exact key is
+      # restored, never a root installed from other files. void_base.py packs
+      # and unpacks it in its user namespace, so owners and groups hold, and
+      # the build checks a restored root as it checks any other.
+      - name: Name the week
+        id: week
+        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Void root
+        id: root
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/crowbaros/root.tar.zst
+          key: base-root-${{ hashFiles('base/config.json', 'base/host/rootfs.sh', 'base/void_base.py') }}-${{ steps.week.outputs.week }}
+
+      - name: Unpack the Void root
+        if: steps.root.outputs.cache-hit == 'true'
+        run: python3 base/void_base.py root restore ~/.cache/crowbaros/root.tar.zst
+
       - name: Restore the Void packages
         id: packages
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -304,6 +326,19 @@ jobs:
         with:
           path: ~/.cache/crowbaros/void
           key: ${{ steps.packages.outputs.cache-primary-key }}
+
+      # Saved only when the check passed, so a cached root is one Base booted
+      # from.
+      - name: Pack the Void root
+        if: github.event_name == 'push' && steps.root.outputs.cache-hit != 'true'
+        run: python3 base/void_base.py root save ~/.cache/crowbaros/root.tar.zst
+
+      - name: Save the Void root
+        if: github.event_name == 'push' && steps.root.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/crowbaros/root.tar.zst
+          key: ${{ steps.root.outputs.cache-primary-key }}
 
       - name: Save the desktop's build
         if: github.event_name == 'push'

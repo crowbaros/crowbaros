@@ -94,6 +94,59 @@ class RootfsTrust(unittest.TestCase):
         void_base.rootfs(force=False)
         self.assertEqual(self.installs, 1)
 
+    def cached_root(self):
+        """A finished root, saved as CI saves it, with the user namespace left
+        out: the test owns every file already."""
+        self.kernel = True
+        void_base.rootfs(force=False)
+        (void_base.ROOTFS / 'etc').mkdir()
+        (void_base.ROOTFS / 'etc/shadow').write_text('root:*:\n')
+        (void_base.ROOTFS / 'etc/shadow').chmod(0o600)
+        (void_base.ROOTFS / 'bin').symlink_to('usr/bin')
+        archive = void_base.WORK / 'cache/root.tar.zst'
+        void_base.save_root(archive)
+        return archive
+
+    def test_a_saved_root_is_restored_in_place_of_the_one_there_and_used(self):
+        with patch.object(void_base, 'userns', lambda: []):
+            archive = self.cached_root()
+            (void_base.ROOTFS / 'etc/shadow').write_text('changed\n')
+            (void_base.ROOTFS / 'stray').write_text('left by another build\n')
+            self.assertTrue(void_base.restore_root(archive))
+        root = void_base.ROOTFS
+        self.assertEqual((root / 'etc/shadow').read_text(), 'root:*:\n')
+        self.assertEqual((root / 'etc/shadow').stat().st_mode & 0o777, 0o600)
+        self.assertEqual(os.readlink(root / 'bin'), 'usr/bin')
+        self.assertFalse((root / 'stray').exists())
+        void_base.rootfs(force=False)
+        self.assertEqual(self.installs, 1)
+
+    def test_a_root_that_does_not_unpack_is_installed_again(self):
+        with patch.object(void_base, 'userns', lambda: []):
+            archive = self.cached_root()
+            archive.write_bytes(archive.read_bytes()[:len(archive.read_bytes()) // 2])
+            self.assertFalse(void_base.restore_root(archive))
+        self.assertFalse((void_base.WORK / 'rootfs.done').exists())
+        void_base.rootfs(force=False)
+        self.assertEqual(self.installs, 2)
+
+    def test_a_restored_root_from_other_packages_is_installed_again(self):
+        with patch.object(void_base, 'userns', lambda: []):
+            archive = self.cached_root()
+            with patch.dict(void_base.CFG, packages=[*void_base.CFG['packages'], 'another']):
+                void_base.restore_root(archive)
+                void_base.rootfs(force=False)
+        self.assertEqual(self.installs, 2)
+
+    def test_an_unfinished_root_is_not_saved(self):
+        self.kernel, self.nvidia = True, False
+        with self.assertRaises(SystemExit):
+            void_base.rootfs(force=False)
+        archive = void_base.WORK / 'cache/root.tar.zst'
+        with patch.object(void_base, 'userns', lambda: []), self.assertRaises(SystemExit):
+            void_base.save_root(archive)
+        self.assertFalse(archive.exists())
+
     def test_a_build_root_installed_without_cargo_is_not_trusted(self):
         build_root = void_base.WORK / 'buildroot'
         with patch.object(void_base, 'BUILD_ROOT', build_root), \
