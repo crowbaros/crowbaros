@@ -1,10 +1,11 @@
 # What the guest printed, in the order it was run: one boot of Base's image, built from
-# 280adc45 with the lab account. `footprint.py` is the script beside this file, and
+# dfc610b0 with the lab account. `footprint.py` is the script beside this file, and
 # L is the Harness's log, ~/.local/state/crowbaros/agent/harness.log, in the person's home.
 #
 #   log at boot      cat $L, 8 seconds after SSH first answered
 #   memory           footprint.py memory, four times over five minutes, nothing connecting
 #   status           the same process's lines in /proc/<pid>/status
+#   free             free -m, its first two lines
 #   start            footprint.py start
 #   memory after     footprint.py memory, on the last Harness of that run, a minute on
 #   listening        the time in each `listening` line of $L, in order
@@ -14,42 +15,42 @@
 #   machine          nproc; uname -r
 
 == log at boot
-2026-11-22T18:06:00.504Z start: process 609, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:06:00.684Z listening: /run/crowbar-agent/surface, for user ID 1001, 415 ms after the process started
+2026-11-22T18:29:01.634Z start: process 621, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-22T18:29:01.705Z listening: /run/crowbar-agent/surface, for user ID 1001, 375 ms after the process started
 == memory
-process 609, up 15 s: Rss 60.9 MiB, Pss 57.8 MiB, Pss_Anon 16.3 MiB, Pss_File 41.6 MiB
-process 609, up 76 s: Rss 60.9 MiB, Pss 57.9 MiB, Pss_Anon 16.3 MiB, Pss_File 41.6 MiB
-process 609, up 136 s: Rss 60.9 MiB, Pss 57.9 MiB, Pss_Anon 16.3 MiB, Pss_File 41.6 MiB
-process 609, up 316 s: Rss 60.9 MiB, Pss 57.9 MiB, Pss_Anon 16.3 MiB, Pss_File 41.6 MiB
-== status 609
-VmHWM:	   62412 kB
-VmRSS:	   62412 kB
-RssAnon:	   16664 kB
-RssFile:	   45748 kB
+process 621, up 15 s: Rss 60.9 MiB, Pss 57.8 MiB, Pss_Anon 16.2 MiB, Pss_File 41.5 MiB
+process 621, up 76 s: Rss 60.9 MiB, Pss 57.8 MiB, Pss_Anon 16.2 MiB, Pss_File 41.6 MiB
+process 621, up 136 s: Rss 60.9 MiB, Pss 57.8 MiB, Pss_Anon 16.2 MiB, Pss_File 41.5 MiB
+process 621, up 316 s: Rss 60.9 MiB, Pss 57.8 MiB, Pss_Anon 16.2 MiB, Pss_File 41.5 MiB
+== status 621
+VmHWM:	   62316 kB
+VmRSS:	   62316 kB
+RssAnon:	   16632 kB
+RssFile:	   45684 kB
 RssShmem:	       0 kB
 Threads:	11
 == free
                total        used        free      shared  buff/cache   available
-Mem:            3912         577        2964          85         662        3334
+Mem:            3912         582        2958          85         663        3329
 == start
-sv up to answered: median 70 ms, least 66, most 76, of 10: [66, 67, 69, 69, 69, 70, 70, 71, 72, 76]
-sv up to answered, page cache dropped first: median 143 ms, least 132, most 174, of 5: [132, 141, 143, 159, 174]
-kill -9 to answered: median 71 ms, least 66, most 78, of 5: [66, 70, 71, 76, 78]
-sv up to answered, stopped within a second of its start: median 1064 ms, least 1063, most 1066, of 4: [1063, 1063, 1066, 1066]
+sv up to answered: median 69 ms, least 66, most 76, of 10: [66, 67, 67, 68, 69, 69, 70, 70, 74, 76]
+sv up to answered, page cache dropped first: median 147 ms, least 137, most 167, of 5: [137, 138, 147, 151, 167]
+kill -9 to answered: median 73 ms, least 70, most 76, of 5: [70, 71, 73, 75, 76]
+sv up to answered, stopped within a second of its start: median 1062 ms, least 1060, most 1065, of 4: [1060, 1061, 1063, 1065]
 == memory after
-process 1690, up 60 s: Rss 61.4 MiB, Pss 58.3 MiB, Pss_Anon 16.3 MiB, Pss_File 41.9 MiB
+process 1695, up 60 s: Rss 61.3 MiB, Pss 58.3 MiB, Pss_Anon 16.3 MiB, Pss_File 42.0 MiB
 == listening
-415 ms 61 ms 56 ms 58 ms 55 ms 56 ms 56 ms 53 ms 53 ms 55 ms 57 ms 112 ms 93 ms 93 ms 85 ms 109 ms 60 ms 50 ms 54 ms 61 ms 55 ms 56 ms 59 ms 57 ms 55 ms 55 ms
+375 ms 59 ms 56 ms 62 ms 54 ms 56 ms 54 ms 57 ms 54 ms 55 ms 55 ms 107 ms 89 ms 87 ms 99 ms 98 ms 55 ms 53 ms 58 ms 58 ms 56 ms 52 ms 59 ms 53 ms 55 ms 54 ms
 == disk
 145M	/usr/local/lib/crowbar-agent
 total 147632
--rw-r--r-- 1 root root    821329 Nov 22 18:04 harness.mjs
--rwxr-xr-x 1 root root 150348872 Nov 22 18:04 node
+-rw-r--r-- 1 root root    821749 Nov 22 18:27 harness.mjs
+-rwxr-xr-x 1 root root 150348872 Nov 22 18:27 node
 ls: cannot access '/usr/bin/node': No such file or directory
 ls: cannot access '/usr/bin/npm': No such file or directory
 0
 == service log
--rw------- 1 crowbar crowbar 0 Nov 22 18:06 /var/log/crowbar-agent.log
+-rw------- 1 crowbar crowbar 0 Nov 22 18:29 /var/log/crowbar-agent.log
 == machine
 4
 6.18.64_1

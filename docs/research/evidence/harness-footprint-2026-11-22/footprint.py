@@ -17,11 +17,19 @@ SHELL = pwd.getpwnam("crowbar-shell")
 
 
 def answered():
+    """Whether the Harness answers the version, within a second of being asked."""
     s = socket.socket(socket.AF_UNIX)
+    s.settimeout(1)
     try:
         s.connect(SOCKET)
         s.sendall(FRAME)
-        return s.recv(64) == FRAME
+        heard = b""
+        while len(heard) < len(FRAME):
+            more = s.recv(64)
+            if not more:
+                break
+            heard += more
+        return heard == FRAME
     except OSError:
         return False
     finally:
@@ -70,12 +78,23 @@ def until_answered(act):
 
 def down():
     subprocess.run(["sv", "down", SERVICE], check=True)
+    deadline = time.monotonic() + 30
     while pid() is not None or os.path.exists(SOCKET):
+        if time.monotonic() > deadline:
+            raise SystemExit("The Harness or its socket was still there 30 seconds after sv down")
         time.sleep(0.01)
 
 
 def up():
     subprocess.run(["sv", "up", SERVICE], check=True)
+
+
+def age(process):
+    """Seconds since the process started: its start in clock ticks after
+    boot, the 22nd field of its stat, against the time since boot."""
+    stat = open(f"/proc/{process}/stat").read()
+    started = int(stat.rsplit(")", 1)[1].split()[19]) / os.sysconf("SC_CLK_TCK")
+    return float(open("/proc/uptime").read().split()[0]) - started
 
 
 def memory(process):
@@ -119,7 +138,6 @@ if sys.argv[1] == "start":
     show("sv up to answered, stopped within a second of its start", paced[1:])
 elif sys.argv[1] == "memory":
     process = pid()
-    age = time.time() - os.stat(f"/proc/{process}").st_mtime
     values = memory(process)
-    print(f"process {process}, up {age:.0f} s: " + ", ".join(
+    print(f"process {process}, up {age(process):.0f} s: " + ", ".join(
         f"{name} {kb / 1024:.1f} MiB" for name, kb in values.items()))
