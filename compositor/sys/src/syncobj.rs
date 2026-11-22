@@ -105,6 +105,13 @@ impl Timeline {
         })
     }
 
+    /// A timeline with no syncobj behind it, for tests of who holds a
+    /// timeline on a machine with no DRM device. Every call on it fails.
+    #[doc(hidden)]
+    pub fn unbacked(device: OwnedFd) -> Timeline {
+        Timeline { device, handle: 0 }
+    }
+
     /// The last point signalled.
     pub fn signalled(&self) -> io::Result<u64> {
         let handles = [self.handle];
