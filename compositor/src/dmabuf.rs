@@ -31,7 +31,7 @@ use fulcrum_wire::{
     NewId,
     protocol::{
         linux_dmabuf_v1::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1},
-        wayland::wl_buffer,
+        wayland::{wl_buffer, wl_display},
     },
 };
 
@@ -195,10 +195,17 @@ impl State {
     /// Makes a feedback object and tells it what the compositor takes: one
     /// tranche, on the main device, of every format in the table.
     fn send_feedback(&mut self, client_id: ClientId, id: NewId, version: u32) -> Result<(), ProtocolError> {
-        let (fd, size) = match &self.dmabufs.table {
-            Some((fd, size)) => (fd.try_clone(), *size),
-            None => return Ok(()),
+        let Some((table, size)) = &self.dmabufs.table else {
+            return Ok(());
         };
+        // The table goes to the client as a descriptor of its own, which
+        // waits here until the client reads it.
+        self.may_hold_descriptor(client_id).map_err(|over| ProtocolError {
+            object: 1,
+            code: wl_display::error::NO_MEMORY,
+            message: format!("no feedback: {over}"),
+        })?;
+        let (fd, size) = (table.try_clone(), *size);
         let device = self.dmabufs.device.to_ne_bytes().to_vec();
         let client = self.clients.get_mut(&client_id).expect("the client is dispatching");
         client.create(

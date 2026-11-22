@@ -3,11 +3,14 @@
 //! which point the compositor signals when it is done with it.
 //!
 //! The ioctls work on any DRM device descriptor, a card or a render node.
-//! A handle belongs to the descriptor it was imported on.
+//! A handle belongs to the descriptor it was imported on, so every timeline
+//! shares that one descriptor and keeps it open: a timeline costs the
+//! process no descriptor of its own.
 
 use std::{
     io,
-    os::fd::{AsRawFd, BorrowedFd, OwnedFd},
+    os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
+    rc::Rc,
 };
 
 use rustix::ioctl::{Updater, ioctl, opcode};
@@ -79,14 +82,14 @@ pub fn supported(device: BorrowedFd<'_>) -> bool {
 /// A timeline imported from a client's descriptor, on one DRM device.
 #[derive(Debug)]
 pub struct Timeline {
-    device: OwnedFd,
+    device: Rc<OwnedFd>,
     handle: u32,
 }
 
 impl Timeline {
     /// Imports a timeline syncobj from its descriptor. A descriptor that is
     /// not one is an error.
-    pub fn import(device: BorrowedFd<'_>, fd: BorrowedFd<'_>) -> io::Result<Timeline> {
+    pub fn import(device: &Rc<OwnedFd>, fd: BorrowedFd<'_>) -> io::Result<Timeline> {
         let mut handle = Handle {
             fd: fd.as_raw_fd(),
             ..Default::default()
@@ -95,12 +98,12 @@ impl Timeline {
         // fills; the descriptor is live for the call.
         unsafe {
             ioctl(
-                device,
+                device.as_fd(),
                 Updater::<{ opcode::read_write::<Handle>(DRM, 0xc2) }, _>::new(&mut handle),
             )?;
         }
         Ok(Timeline {
-            device: device.try_clone_to_owned()?,
+            device: device.clone(),
             handle: handle.handle,
         })
     }
@@ -108,7 +111,7 @@ impl Timeline {
     /// A timeline with no syncobj behind it, for tests of who holds a
     /// timeline on a machine with no DRM device. Every call on it fails.
     #[doc(hidden)]
-    pub fn unbacked(device: OwnedFd) -> Timeline {
+    pub fn unbacked(device: Rc<OwnedFd>) -> Timeline {
         Timeline { device, handle: 0 }
     }
 
@@ -248,7 +251,7 @@ mod tests {
 
     use super::*;
 
-    fn render_node() -> Option<OwnedFd> {
+    fn render_node() -> Option<Rc<OwnedFd>> {
         let path = std::fs::read_dir("/dev/dri")
             .ok()?
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -261,7 +264,7 @@ mod tests {
             .write(true)
             .open(path)
             .ok()
-            .map(Into::into)
+            .map(|file| Rc::new(file.into()))
     }
 
     #[test]
@@ -271,7 +274,7 @@ mod tests {
             return;
         };
         let exported = create_exported(device.as_fd()).unwrap();
-        let timeline = Timeline::import(device.as_fd(), exported.as_fd()).unwrap();
+        let timeline = Timeline::import(&device, exported.as_fd()).unwrap();
         let event = timeline.eventfd(3).unwrap();
         let mut count = [0u8; 8];
         assert!(rustix::io::read(&event, &mut count).is_err(), "woke before the point");
@@ -289,6 +292,6 @@ mod tests {
             return;
         };
         let memfd = rustix::fs::memfd_create("not-a-syncobj", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
-        assert!(Timeline::import(device.as_fd(), memfd.as_fd()).is_err());
+        assert!(Timeline::import(&device, memfd.as_fd()).is_err());
     }
 }

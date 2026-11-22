@@ -357,6 +357,9 @@ impl State {
                 if client.doomed {
                     break;
                 }
+                let left = self.descriptors_left();
+                let client = self.clients.get_mut(&id).expect("the client was just found");
+                let waiting = client.conn.queued_fds();
                 match client.conn.fill() {
                     Ok(0) => break,
                     Ok(_) => {}
@@ -365,7 +368,26 @@ impl State {
                         // What arrived before the close is still read.
                     }
                 }
+                let arrived = client.conn.queued_fds() > waiting;
                 self.take_messages(id);
+                if !self.clients.contains_key(&id) {
+                    break;
+                }
+                // Descriptors are in this process from the moment they
+                // arrive, whatever request takes them. The requests that
+                // came with them are read first, in their order, so what
+                // they let go of is free again: an app that destroys a pool
+                // no buffer still uses, and makes another, has taken nothing. If an app's
+                // descriptors then leave less than the shell's reserve, and
+                // less than before they came, the app is refused, and those
+                // no request took are closed. A request that passes one on
+                // to another client checks for itself, before it does. An
+                // app one of its own requests has already ended is checked
+                // too: it would otherwise hold them until the turn ends.
+                if arrived && let Err(over) = self.may_keep_descriptors(id, left) {
+                    self.refuse_descriptors(id, over);
+                    break;
+                }
                 if self.clients.get(&id).is_none_or(|client| client.doomed) {
                     break;
                 }
@@ -376,6 +398,25 @@ impl State {
             && let Err(error) = client.conn.flush()
         {
             client.fail(&error);
+        }
+    }
+
+    /// Closes the descriptors a client sent that no request has taken, and
+    /// ends the client with a protocol error, unless it is ended already. The
+    /// client goes now, and what its requests took with it, not when the
+    /// turn ends: until it does, the shell's reserve is short by what it
+    /// holds.
+    fn refuse_descriptors(&mut self, id: ClientId, over: crate::limits::OverBudget) {
+        if let Some(client) = self.clients.get_mut(&id) {
+            client.conn.fds().clear();
+            client.post_error(ProtocolError {
+                object: 1,
+                code: wl_display::error::NO_MEMORY,
+                message: format!("no descriptor is taken: {over}"),
+            });
+            // The error is sent if the socket takes it now.
+            let _ = client.conn.flush();
+            self.disconnect(id);
         }
     }
 
@@ -848,6 +889,55 @@ mod tests {
     use super::*;
     use crate::identity::Identity;
 
+    /// An app refused for the reserve goes at once, with the descriptors
+    /// its requests took. If it stayed until the turn ended, each app
+    /// refused in the turn would leave the shell that much short.
+    #[test]
+    fn an_app_refused_for_the_reserve_goes_at_once() {
+        use std::os::fd::OwnedFd;
+
+        use fulcrum_wire::socket::Connection;
+
+        use crate::{event_loop::Readiness, limits::RESERVE};
+
+        let words = |words: &[u32]| -> Vec<u8> { words.iter().flat_map(|word| word.to_ne_bytes()).collect() };
+        // `wl_display.sync`, which takes no descriptor.
+        let sync = words(&[1, 12 << 16, 2]);
+        // A request `wl_display` has not, which ends the client that sends it.
+        let unknown = words(&[1, (8 << 16) | 9]);
+        for (sent, why) in [
+            (sync.clone(), "the refused app is still held"),
+            (
+                [sync, unknown].concat(),
+                "the app a request of its own ended is still held",
+            ),
+        ] {
+            let mut state = State::new().unwrap();
+            let (stream, peer) = UnixStream::pair().unwrap();
+            state.clients.insert(1, Client::new(1, stream, Identity::App).unwrap());
+            let before = state.descriptors_held();
+            state.set_descriptor_limit(before + RESERVE);
+
+            // A descriptor beside the requests, which none of them takes.
+            let descriptor: OwnedFd = std::fs::File::open("/dev/null").unwrap().into();
+            let mut peer = Connection::new(peer).unwrap();
+            peer.queue(sent, vec![descriptor]).unwrap();
+            assert!(peer.flush().unwrap());
+
+            state.client_ready(
+                1,
+                Readiness {
+                    readable: true,
+                    writable: false,
+                    hung_up: false,
+                },
+            );
+
+            assert!(!state.clients.contains_key(&1), "{why}");
+            assert_eq!(state.descriptors_held(), before - 1);
+        }
+    }
+
     /// Runs with no DRM device: the timeline has no syncobj behind it, and
     /// the request is handed to the dispatch as a client's bytes would be.
     #[test]
@@ -867,7 +957,7 @@ mod tests {
         state.clients.insert(1, client);
         let device = std::fs::File::open("/dev/null").unwrap();
         // A surface's point holds a timeline like this, beside the compositor.
-        let point = Rc::new(Timeline::unbacked(device.into()));
+        let point = Rc::new(Timeline::unbacked(Rc::new(device.into())));
         state.explicit_sync.timelines.insert(7, point.clone());
 
         let destroy = Incoming {
