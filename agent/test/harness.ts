@@ -3,7 +3,7 @@
 // bytes written out by hand, so no test checks the framing against the code
 // that frames.
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -82,7 +82,24 @@ export function launch(
 	return { process: child, state, socket, output: () => output, exited };
 }
 
-/** Starts the bundled Harness, and waits until its surface socket takes a connection. */
+/** Whether the log in `state` has this process's start, and `listening` after it. */
+function logsListening(state: string, pid: number | undefined): boolean {
+	let log: string;
+	try {
+		log = readFileSync(join(state, "harness.log"), "utf8");
+	} catch {
+		return false;
+	}
+	const started = log.lastIndexOf(` start: process ${pid},`);
+	return started !== -1 && log.includes(" listening: ", started);
+}
+
+/**
+ * Starts the bundled Harness, waits until its log says it listens, and
+ * connects once, saying nothing. The socket takes a connection a moment
+ * before the Harness has set its mode and logged that it listens, so a
+ * connection made is no sign that either is done.
+ */
 export async function start(
 	t: TestContext,
 	directory: string,
@@ -90,16 +107,13 @@ export async function start(
 ): Promise<Running> {
 	const running = launch(t, directory, options);
 	const deadline = Date.now() + 10_000;
-	for (;;) {
-		const ended = await Promise.race([running.exited, sleep(20).then(() => undefined)]);
+	while (!logsListening(running.state, running.process.pid)) {
+		const ended = await Promise.race([running.exited, sleep(5).then(() => undefined)]);
 		if (ended !== undefined) throw new Error(`The Harness ended (${ended}) before it listened:\n${running.output()}`);
-		const peer = await dial(running.socket).catch(() => undefined);
-		if (peer !== undefined) {
-			peer.destroy();
-			return running;
-		}
 		if (Date.now() > deadline) throw new Error(`The Harness did not listen within 10 seconds:\n${running.output()}`);
 	}
+	(await dial(running.socket)).destroy();
+	return running;
 }
 
 export function sleep(ms: number): Promise<void> {

@@ -19,8 +19,8 @@ PERSON=$(getent passwd "$PERSON_UID" | cut -d: -f1)
 test -n "$PERSON" || { echo "no account has user ID $PERSON_UID"; exit 1; }
 PERSON_HOME=$(getent passwd "$PERSON_UID" | cut -d: -f6)
 SHELL_UID=$(id -u crowbar-shell)
-# This file holds what this script and Node.js itself print, never the
-# Harness's own log. It is the person's alone all the same.
+# This file holds what this script and the Harness's process print, never
+# the Harness's own log. It is the person's alone all the same.
 chown "$PERSON:$PERSON" /var/log/crowbar-agent.log
 chmod 0600 /var/log/crowbar-agent.log
 install -d -o "$PERSON" -g "$PERSON" -m 0700 "/run/user/$PERSON_UID"

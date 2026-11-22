@@ -53,9 +53,9 @@ that frames. None names a Pi Durable type. They need no root: the user ID
 that runs them stands for the shell's. A few faults cannot be caused from
 outside the process: a stop before the socket listens or at the moment it
 starts to, an error on the listening socket, a write the kernel takes only
-part of. For
-those, a test has Node.js load `test/faults.ts` ahead of the bundle, which
-causes the one fault the test names. The Harness never loads it.
+part of. For those, a test has Node.js load `test/faults.ts` ahead of the
+bundle, which causes the one fault the test names. The Harness never loads
+it.
 
 ## Running it
 

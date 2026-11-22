@@ -36,7 +36,12 @@ function writeInPart(thenFails: boolean): void {
 	syncBuiltinESMExports();
 }
 
-/** Runs `then` once the Harness has left its `running` marker, which it does before it listens. */
+/**
+ * Runs `then` once the Harness has left its `running` marker, which it does
+ * before it listens. A signal sent then is handled while Pi Durable opens
+ * its database, which gives the event loop a turn. A Pi Durable that opened
+ * it without one would have the signal handled once the Harness listens.
+ */
 function onceItIsMarked(then: () => void): void {
 	const writeFileSync = fs.writeFileSync;
 	fs.writeFileSync = ((...args: Parameters<typeof fs.writeFileSync>) => {

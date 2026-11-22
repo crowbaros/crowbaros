@@ -260,7 +260,8 @@ It has no account of its own: it runs as the person.
 - The Harness keeps its database and its log in the person's home,
   `~/.local/state/crowbaros/agent`, readable by the person alone. It makes
   them itself. `/var/log/crowbar-agent.log` holds only what the service's
-  script and Node.js itself print.
+  script and the Harness's process print: Node.js's own errors, and the
+  Harness's when its log is what failed.
 - It waits for nothing. runit starts it again whenever it exits: at once, or
   a second later when it had run for less than a second.
 

@@ -103,7 +103,7 @@ test("told to stop, the Harness stops, and the log says so", async (t) => {
 
 	// A start after a stop is a start, and no restart.
 	const next = await start(t, directory);
-	const lines = (await loggedOnce(next.state, logged(next.state).length + 2)).filter((line) => !line.startsWith("connection: "));
+	const lines = logged(next.state).filter((line) => !line.startsWith("connection: "));
 	assert.match(lines.at(-2) ?? "", new RegExp(`^start: process ${next.process.pid},`));
 	assert.match(lines.at(-1) ?? "", /^listening: /);
 });
