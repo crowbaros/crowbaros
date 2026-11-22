@@ -147,6 +147,104 @@ class RootfsTrust(unittest.TestCase):
             void_base.save_root(archive)
         self.assertFalse(archive.exists())
 
+    def test_the_root_key_follows_what_installs_the_root(self):
+        key = void_base.root_key()
+        with patch.dict(void_base.CFG, packages=[*void_base.CFG['packages'], 'another']):
+            self.assertNotEqual(void_base.root_key(), key)
+        with patch.dict(void_base.CFG, xbps_static_sha256='0' * 64):
+            self.assertNotEqual(void_base.root_key(), key)
+        with patch.dict(void_base.CFG, void_repository='https://example.org/current'):
+            self.assertNotEqual(void_base.root_key(), key)
+        script = (void_base.HERE / 'host/rootfs.sh').read_text()
+        here = void_base.WORK / 'here'
+        (here / 'host').mkdir(parents=True)
+        (here / 'host/rootfs.sh').write_text(script + 'true\n')
+        with patch.object(void_base, 'HERE', here):
+            self.assertNotEqual(void_base.root_key(), key)
+        (here / 'host/rootfs.sh').write_text(script)
+        with patch.object(void_base, 'HERE', here):
+            self.assertEqual(void_base.root_key(), key)
+
+    def test_the_root_key_holds_through_a_change_to_anything_else(self):
+        key = void_base.root_key()
+        with patch.dict(void_base.CFG, nvidia_options=['another'], vcpus=64, lab_packages=[],
+                        build_packages=['another']):
+            self.assertEqual(void_base.root_key(), key)
+        source = Path(void_base.__file__).read_text()
+        roots = void_base.ROOT_CODE
+        code = void_base.reachable_source(source, roots)
+        # The install, its checks, the xbps it runs, and the archive are in the
+        # key. The boot checks, the VM, and the desktop's build are not.
+        for name in ('install', 'fetch', 'userns', 'subordinate', 'run_shown', 'missing_from_root',
+                     'early_cpio', 'image_kernel', 'NVIDIA_MODULES', 'MICROCODE', 'ROOT_ARCHIVE'):
+            self.assertIn(name, code)
+        for name in ('CHECKS', 'check', 'boot', 'qemu', 'build', 'compile_desktop', 'main'):
+            self.assertNotIn(name, code)
+        self.assertEqual(void_base.reachable_source(source + '\nCHECKS = []\n', roots), code)
+        # Every value of config.json the root's code reads is in the key, and
+        # found by reading that code, not listed by hand.
+        self.assertEqual(void_base.config_read(source, roots),
+                         {'packages', 'void_repository', 'xbps_static_url', 'xbps_static_sha256'})
+
+    def test_code_is_reached_through_whatever_names_it(self):
+        source = ('import os\nLIMIT = 3\nOTHER = 4\n'
+                  'def helper():\n    return LIMIT\n'
+                  'def wrapped():\n    return (lambda: helper())()\n'
+                  'def unused():\n    return OTHER\n')
+        code = void_base.reachable_source(source, ['wrapped'])
+        self.assertEqual(set(code), {'import', 'wrapped', 'helper', 'LIMIT'})
+        changed = void_base.reachable_source(source.replace('LIMIT = 3', 'LIMIT = 5'), ['wrapped'])
+        self.assertNotEqual(changed, code)
+        self.assertEqual(void_base.reachable_source(source.replace('OTHER = 4', 'OTHER = 5'),
+                                                    ['wrapped']), code)
+        # An import may be what a name means, and so may a decorator.
+        for change in (source.replace('import os', 'import sys as os'),
+                       source.replace('def helper', '@staticmethod\ndef helper'),
+                       source.replace('def helper', 'async def helper')):
+            self.assertNotEqual(void_base.reachable_source(change, ['wrapped']), code)
+
+    def test_a_module_the_key_cannot_follow_is_refused(self):
+        source = 'LIMIT = [3]\ndef helper():\n    return LIMIT\n'
+        void_base.reachable_source(source, ['helper'])
+        for more in ('LIMIT.append(4)\n', 'if LIMIT:\n    LIMIT = []\n', 'LIMIT += [4]\n',
+                     'try:\n    LIMIT = []\nexcept OSError:\n    pass\n',
+                     'for LIMIT in ():\n    pass\n', 'del LIMIT\n',
+                     'if __name__ == "__main__":\n    LIMIT = []\n    helper()\n',
+                     'if __name__ == "__main__":\n    helper()\nelse:\n    LIMIT = []\n'):
+            with self.assertRaises(ValueError, msg=more):
+                void_base.reachable_source(source + more, ['helper'])
+        void_base.reachable_source(source + 'if __name__ == "__main__":\n    helper()\n', ['helper'])
+
+    def test_code_the_key_does_not_follow_may_not_change_what_it_does(self):
+        source = 'LIMIT = [3]\nCFG = {"packages": []}\ndef helper():\n    return LIMIT, CFG\n'
+        void_base.reachable_source(source + 'def other():\n    return LIMIT[0], CFG["packages"]\n',
+                                   ['helper'])
+        for more in ('SETUP = LIMIT.append(4)\n', 'X = (LIMIT := 5)\n',
+                     'def other():\n    global LIMIT\n    LIMIT = []\n',
+                     'def other():\n    LIMIT.append(4)\n',
+                     'def other():\n    CFG["packages"].append("another")\n',
+                     'def other():\n    LIMIT[0] = 4\n', 'def other():\n    del CFG["packages"]\n',
+                     'class Other:\n    LIMIT.clear()\n',
+                     'if __name__ == "__main__":\n    LIMIT.append(4)\n'):
+            with self.assertRaises(ValueError, msg=more):
+                void_base.reachable_source(source + more, ['helper'])
+        # What the key follows may change what it likes: the change is in the key.
+        inside = source.replace('return LIMIT, CFG', 'LIMIT.append(4)\n    return LIMIT, CFG')
+        self.assertNotEqual(void_base.reachable_source(inside, ['helper']),
+                            void_base.reachable_source(source, ['helper']))
+
+    def test_config_the_roots_code_reads_is_found_or_refused(self):
+        source = ('CFG = {}\nREPOSITORY = CFG["repository"]\n'
+                  'def install():\n    return REPOSITORY, CFG["packages"]\n'
+                  'def boot():\n    return CFG["vcpus"]\n')
+        self.assertEqual(void_base.config_read(source, ['install']), {'repository', 'packages'})
+        for use in ('CFG.get("packages")', 'CFG[name]', 'dict(CFG)'):
+            with self.assertRaises(ValueError, msg=use):
+                void_base.config_read(source.replace('CFG["packages"]', use), ['install'])
+        with patch.object(void_base.Path, 'read_text', return_value='import os\nos.getcwd()\n'), \
+                self.assertRaises(SystemExit):
+            void_base.root_key()
+
     def test_a_build_root_installed_without_cargo_is_not_trusted(self):
         build_root = void_base.WORK / 'buildroot'
         with patch.object(void_base, 'BUILD_ROOT', build_root), \

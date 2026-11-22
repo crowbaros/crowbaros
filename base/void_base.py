@@ -19,8 +19,10 @@ image with its runit services from desktop/.
     void_base.py check             build, boot, check, record, and power off
     void_base.py root save|restore ARCHIVE
                                    pack the finished Void root, or unpack one in its place
+    void_base.py root key          name what installs the Void root, as CI's cache keys it
 """
 import argparse
+import ast
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -343,6 +345,149 @@ def restore_root(archive):
         return False
     print(f"Restored the Void root from {archive}")
     return True
+
+
+def reached(source, names):
+    """Every definition at a module's top level that the named ones use,
+    themselves included, as the statements that define each name: a function,
+    a class, or an assignment, and whatever those name in turn. Every import
+    is reached, under the name `import`. A name a function uses only for a
+    local of its own still counts, which errs toward reaching more.
+
+    Only a module of imports, definitions, a docstring, and the `__main__`
+    guard can be followed. Any other statement at the top level, such as a
+    call or an `if` that changes a name after it is defined, could change
+    what a reached name means with nothing here to see it, so it is refused.
+    So is code anywhere else in the module that changes a reached name in a
+    way that can be seen: `global`, `:=`, a store to or a `del` of one of its
+    items or attributes, or a call of a method that changes a list, a dict,
+    or a set. This follows names. It cannot see a reached value changed
+    under another name."""
+    defined = {"import": []}
+    unreached = []
+    for node in ast.parse(source).body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            targets = ["import"]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            targets = [node.name]
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = [name.id for target in (node.targets if isinstance(node, ast.Assign)
+                                              else [node.target])
+                       for name in ast.walk(target) if isinstance(name, ast.Name)]
+        elif (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+              or isinstance(node, ast.If) and ast.unparse(node.test) == "__name__ == '__main__'"
+              and not node.orelse and all(isinstance(line, ast.Expr) for line in node.body)):
+            # The guard may only call: its body runs at the top level, where
+            # an assignment, an import, or a `def` would give a name a new
+            # meaning.
+            unreached.append(node)
+            continue
+        else:
+            raise ValueError(f"line {node.lineno}: a statement at the top level that is not an "
+                             "import, a definition, or an assignment cannot be followed")
+        for target in targets:
+            defined.setdefault(target, []).append(node)
+    found, waiting = {}, ["import", *names]
+    while waiting:
+        name = waiting.pop()
+        if name in found or name not in defined:
+            continue
+        found[name] = defined[name]
+        waiting += [used.id for node in defined[name] for used in ast.walk(node)
+                    if isinstance(used, ast.Name)]
+    followed = {id(node) for nodes in found.values() for node in nodes}
+    unreached += [node for nodes in defined.values() for node in nodes if id(node) not in followed]
+    for node in unreached:
+        for part in ast.walk(node):
+            if name := changes(part) & set(found):
+                raise ValueError(f"line {part.lineno}: code the key does not follow changes "
+                                 f"`{min(name)}`, which it does")
+    return found
+
+
+# The methods that change a list, a dict, or a set.
+CHANGING = {"append", "extend", "insert", "remove", "pop", "clear", "sort", "reverse", "update",
+            "setdefault", "popitem", "add", "discard", "difference_update",
+            "intersection_update", "symmetric_difference_update", "__setitem__", "__delitem__"}
+
+
+def changes(part):
+    """The names this one piece of syntax may change other than by a plain
+    assignment: those `global` names, the one `:=` binds, the one whose item
+    or attribute is stored to or deleted, and the one a changing method is
+    called on, however deep in it (`CFG["packages"].append`)."""
+    def holder(value):
+        while isinstance(value, (ast.Subscript, ast.Attribute)):
+            value = value.value
+        return {value.id} if isinstance(value, ast.Name) else set()
+    if isinstance(part, (ast.Global, ast.Nonlocal)):
+        return set(part.names)
+    if isinstance(part, ast.NamedExpr):
+        return {part.target.id}
+    if isinstance(part, (ast.Subscript, ast.Attribute)) and isinstance(part.ctx, (ast.Store, ast.Del)):
+        return holder(part.value)
+    if (isinstance(part, ast.Call) and isinstance(part.func, ast.Attribute)
+            and part.func.attr in CHANGING):
+        return holder(part.func.value)
+    return set()
+
+
+def reachable_source(source, names):
+    """The source of what `reached` finds, by name, decorators included."""
+    lines = source.splitlines(keepends=True)
+
+    def text(node):
+        first = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])])
+        return "".join(lines[first - 1:node.end_lineno])
+    return {name: "".join(text(node) for node in nodes)
+            for name, nodes in reached(source, names).items()}
+
+
+def config_read(source, names):
+    """The keys of `CFG` that what `reached` finds reads. Each must be read
+    as `CFG["key"]`: anything else done with `CFG` could read any key, so it
+    is refused."""
+    keys = set()
+    for name, nodes in reached(source, names).items():
+        if name == "CFG":
+            continue
+        for node in nodes:
+            by_key = {id(part.value): part.slice.value for part in ast.walk(node)
+                      if isinstance(part, ast.Subscript) and isinstance(part.slice, ast.Constant)
+                      and isinstance(part.slice.value, str)}
+            for part in ast.walk(node):
+                if isinstance(part, ast.Name) and part.id == "CFG":
+                    if id(part) not in by_key:
+                        raise ValueError(f"line {part.lineno}: `CFG` is used other than as "
+                                         '`CFG["key"]`, so what it reads cannot be followed')
+                    keys.add(by_key[id(part)])
+    return keys
+
+
+# What installs, checks, packs, and unpacks the Void root. `root_key` follows
+# everything these use.
+ROOT_CODE = ["rootfs", "save_root", "restore_root"]
+
+
+def root_key():
+    """A digest of all that decides what a finished Void root holds and how
+    its archive is packed: the code here that installs, checks, packs, and
+    unpacks the root, every value in config.json that code reads (the
+    packages, the repository, and the pinned xbps), and host/rootfs.sh. CI's
+    cache keys the root on it, so a change to anything else here, such as a
+    boot check, still restores the root main installed, and a change to any
+    of this installs a new one. A file this code came to read besides
+    rootfs.sh would have to be added here."""
+    source = Path(__file__).read_text()
+    try:
+        decides = {
+            "config": {key: CFG[key] for key in sorted(config_read(source, ROOT_CODE))},
+            "script": (HERE / "host/rootfs.sh").read_text(),
+            "code": reachable_source(source, ROOT_CODE),
+        }
+    except ValueError as error:
+        raise SystemExit(f"{__file__}: {error}; see `root_key`")
+    return hashlib.sha256(json.dumps(decides, sort_keys=True).encode()).hexdigest()
 
 
 def binaries():
@@ -873,9 +1018,11 @@ def main():
     sub.add_parser("check")
     root_parser = sub.add_parser("root", help="pack the finished Void root into an archive, "
                                               "or unpack one in its place, as CI's cache does")
-    root_parser.add_argument("action", choices=["save", "restore"])
-    root_parser.add_argument("archive", type=Path)
+    root_parser.add_argument("action", choices=["save", "restore", "key"])
+    root_parser.add_argument("archive", type=Path, nargs="?")
     args = parser.parse_args()
+    if args.cmd == "root" and (args.archive is None) != (args.action == "key"):
+        parser.error("`root save` and `root restore` take an archive, and `root key` takes none")
     if args.cmd == "build":
         build(args.force, args.lab_account)
     elif args.cmd == "boot":
@@ -890,6 +1037,8 @@ def main():
         stop()
     elif args.cmd == "check":
         check()
+    elif args.cmd == "root" and args.action == "key":
+        print(root_key())
     elif args.cmd == "root":
         save_root(args.archive) if args.action == "save" else restore_root(args.archive)
 
