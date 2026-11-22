@@ -48,7 +48,7 @@ async function loggedOnce(state: string, count: number): Promise<string[]> {
 
 test("the log records the start, and each connection with what became of it", async (t) => {
 	const harness = await start(t, scratch(t));
-	// `start` connected once to learn the Harness listens, and said nothing.
+	// `start` connected once, and said nothing.
 	const before = await loggedOnce(harness.state, 4);
 	assert.match(before[0] ?? "", new RegExp(`^start: process ${harness.process.pid}, Pi Durable 1\\.6\\.0, Node\\.js v\\d+`));
 	assert.match(before[1] ?? "", new RegExp(`^listening: ${harness.socket}, for user ID ${OWN_UID}, \\d+ ms after the process started$`));
@@ -89,7 +89,7 @@ test("the log records a peer the Harness refused, by its user ID", async (t) => 
 	const peer = await dial(harness.socket);
 	await heard(peer);
 	const refusal = `connection: refused user ID ${OWN_UID}, which is not the shell's`;
-	// Once for `start`, which connects to learn the Harness listens, and once for this peer.
+	// Once for `start`, which connects once and says nothing, and once for this peer.
 	assert.deepEqual(logged(harness.state).slice(2), [refusal, refusal]);
 });
 

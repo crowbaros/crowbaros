@@ -82,13 +82,19 @@ export function launch(
 	return { process: child, state, socket, output: () => output, exited };
 }
 
-/** Whether the log in `state` has this process's start, and `listening` after it. */
+/**
+ * Whether the log in `state` has this process's start, and `listening` after
+ * it. Either line may be the one that set the log aside, so the log set
+ * aside is read before the log.
+ */
 function logsListening(state: string, pid: number | undefined): boolean {
-	let log: string;
-	try {
-		log = readFileSync(join(state, "harness.log"), "utf8");
-	} catch {
-		return false;
+	let log = "";
+	for (const name of ["harness.log.1", "harness.log"]) {
+		try {
+			log += readFileSync(join(state, name), "utf8");
+		} catch {
+			// Not there, or not yet.
+		}
 	}
 	const started = log.lastIndexOf(` start: process ${pid},`);
 	return started !== -1 && log.includes(" listening: ", started);
