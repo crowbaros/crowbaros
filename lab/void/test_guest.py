@@ -129,6 +129,50 @@ class SshAndBuild(GuestFixture):
         self.assertIn(f'UserKnownHostsFile={vm.work / "known_hosts"}', args)
         self.assertIn('crowbar@127.0.0.1', args)
 
+    def test_a_run_that_passed_deletes_its_disk(self):
+        vm, _ = BootsBase.boot(self)
+        self.assertTrue(vm.disk.exists())
+        self.assertTrue(vm.discard_disk())
+        self.assertFalse(vm.disk.exists())
+        self.assertTrue(vm.nvram.exists())
+        self.assertTrue(vm.discard_disk())
+
+    def test_a_guest_that_did_not_stop_keeps_its_pid_file_and_its_disk(self):
+        vm, _ = BootsBase.boot(self)
+        vm.pidfile.write_text(f'{os.getpid()}\n')
+        quit_asked = []
+
+        class Qmp:
+            def command(self, name):
+                quit_asked.append(name)
+
+            def close(self):
+                pass
+
+        with patch.object(vm, 'ssh', side_effect=OSError('no answer')), \
+                patch.object(vm, 'qmp', return_value=Qmp()), patch.object(guest.time, 'sleep'):
+            vm.stop()
+        self.assertEqual(quit_asked, ['quit'])
+        self.assertTrue(vm.running())
+        self.assertFalse(vm.discard_disk())
+        self.assertTrue(vm.disk.exists())
+        vm.pidfile.unlink()
+        self.assertTrue(vm.discard_disk())
+
+    def test_no_build_takes_the_last_builds_image_and_programs(self):
+        log = self.root / 'build.log'
+        binaries = {'crowbar-compositor': self.root / 'comp'}
+        binaries['crowbar-compositor'].write_bytes(b'binary')
+        with patch.object(guest.subprocess, 'run', side_effect=AssertionError('built')), \
+                patch.object(self.base, 'binaries', return_value=binaries), \
+                patch.object(self.base, 'sha256', return_value='deadbeef'):
+            self.assertEqual(guest.build_base(log, build=False), {'crowbar-compositor': 'deadbeef'})
+            self.base.BASE_DISK.unlink()
+            with self.assertRaises(RuntimeError) as error:
+                guest.build_base(log, build=False)
+        self.assertIn('--no-build', str(error.exception))
+        self.assertFalse(log.exists())
+
     def test_build_base_builds_with_the_lab_account_and_returns_digests(self):
         log = self.root / 'build.log'
         binaries = {'crowbar-compositor': self.root / 'comp', 'crowbar-probe': self.root / 'probe'}

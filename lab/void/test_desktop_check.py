@@ -1,4 +1,5 @@
 """The desktop check runs every Base boot check and reports each."""
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -173,10 +174,6 @@ class StillDesktopAndBar(unittest.TestCase):
         self.assertFalse(result['passed'], result)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class DisplayUnplugged(unittest.TestCase):
     def test_layer_commits_reads_the_last_report(self):
         log = ('INFO crowbar_compositor: commits so far: layer crowbaros-bar: 3, layer crowbaros-dock: 3 frames=4\n'
@@ -194,3 +191,79 @@ class DisplayUnplugged(unittest.TestCase):
         check = desktop_check.Check(FakeGuest(temporary.name, responder))
         self.addCleanup(check.logfile.close)
         self.assertEqual(check.layer_commits(), {'bar': 9, 'dock': 8, 'wallpaper': 7})
+
+
+class Runs(unittest.TestCase):
+    """What a whole run leaves behind, on a guest that is not there."""
+
+    class Guest:
+        def __init__(self, work):
+            self.work = Path(work)
+            self.discarded = False
+
+        def start(self):
+            pass
+
+        def wait_ssh(self):
+            pass
+
+        def running(self):
+            return False
+
+        def discard_disk(self):
+            self.discarded = True
+            return True
+
+    def main(self, *arguments, passes=True, stopped=None):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        vm = self.Guest(temporary.name)
+
+        def checks(check, built):
+            check.record('stub', passes)
+            if stopped:
+                raise stopped
+
+        with patch.object(base, 'preflight'), patch.object(guest.Guest, 'create', return_value=vm), \
+                patch.object(guest, 'build_base', return_value={}) as build_base, \
+                patch.object(desktop_check.Check, 'checks', checks), \
+                patch('sys.argv', ['desktop_check.py', *arguments]):
+            try:
+                code = desktop_check.main()
+            except BaseException as error:
+                code = error
+        return vm, code, build_base, (vm.work / 'desktop.log').read_text()
+
+    def test_a_run_that_passes_deletes_its_disk_and_one_that_fails_keeps_it(self):
+        vm, code, build_base, log = self.main()
+        self.assertEqual((code, vm.discarded), (0, True))
+        build_base.assert_called_once_with(vm.work / 'build.log', build=True)
+        self.assertIn('RESULT: 1 passed, 0 failed', log)
+        self.assertNotIn('NOT EVIDENCE', log)
+        self.assertTrue((vm.work / 'results.json').exists())
+        vm, code, _, _ = self.main(passes=False)
+        self.assertEqual((code, vm.discarded), (1, False))
+
+    def test_a_run_stopped_partway_did_not_pass_and_keeps_its_disk(self):
+        for stopped in (KeyboardInterrupt(), SystemExit(1), RuntimeError('the guest went away')):
+            vm, code, _, log = self.main(stopped=stopped)
+            self.assertFalse(vm.discarded, stopped)
+            self.assertIn('RESULT: 1 passed, 1 failed', log)
+            rows = json.loads((vm.work / 'results.json').read_text())
+            self.assertEqual([row['passed'] for row in rows], [True, False])
+            # A person's Ctrl-C still ends the program as one.
+            self.assertEqual(code, 1 if isinstance(stopped, Exception) else stopped)
+
+    def test_a_run_with_no_build_leaves_nothing_that_reads_as_evidence(self):
+        vm, code, build_base, log = self.main('--no-build')
+        self.assertEqual(code, 0)
+        build_base.assert_called_once_with(vm.work / 'build.log', build=False)
+        self.assertFalse((vm.work / 'results.json').exists())
+        self.assertTrue((vm.work / 'results-not-evidence.json').exists())
+        self.assertIn('RESULT (NOT EVIDENCE): 1 passed, 0 failed', log)
+        self.assertIn(f'Not evidence: {vm.work}', log)
+        self.assertNotIn('] Evidence:', log)
+
+
+if __name__ == '__main__':
+    unittest.main()

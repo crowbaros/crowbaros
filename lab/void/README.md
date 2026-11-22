@@ -33,7 +33,16 @@ Unix VNC and QMP sockets are in a short directory of its own under the
 system's temporary directory, since a socket's path may be no longer than 107
 bytes and a worktree's run directory can be. Neither check touches Base's own
 `.lab/base/disk.raw`.
-Both reach the guest with Base's SSH key, `.lab/base/id_ed25519`.
+Both reach the guest with Base's SSH key, `.lab/base/id_ed25519`. A run that passes
+deletes its disk, 12 GB a run; a run that fails keeps it.
+
+Either check takes `--no-build`, for trying a change to the check itself
+sooner: it boots the image the last build left and builds nothing. That image must
+be one a check built: a person's own `base/void_base.py build` leaves one
+without the lab account, which refuses the checks' login. Such a run
+says `NOT EVIDENCE` in its log and on its `RESULT` line, and the desktop check
+writes `results-not-evidence.json` in place of `results.json`. A pull request needs a
+run without it.
 
 The host needs what [Base's README](../../base/README.md#what-the-host-needs)
 lists, QEMU's virtio-gpu device included. Avoid running two checks or a Base

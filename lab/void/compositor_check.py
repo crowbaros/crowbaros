@@ -159,7 +159,8 @@ def stop_desktop_services(ev):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.parse_args()
+    guest.add_arguments(parser)
+    args = parser.parse_args()
     void_base.preflight(vm=True, build=True)
     vm = guest.Guest.create(guest.ROOT / ".lab/void-compositor-checks", "crowbaros-compositor-check")
     ev = Evidence(vm)
@@ -169,16 +170,24 @@ def main():
     ev.log(f"Evidence and new guest disk: {vm.work}")
     try:
         build_log = vm.work / "build.log"
-        ev.log(f"Building Base's image; output goes to {build_log}")
-        all_built = guest.build_base(build_log)
+        if args.build:
+            ev.log(f"Building Base's image; output goes to {build_log}")
+        else:
+            ev.log(guest.NOT_EVIDENCE)
+        all_built = guest.build_base(build_log, build=args.build)
         built = {name: all_built[name] for name in COMPOSITOR_BINARIES}
         for name, digest in built.items():
-            ev.log(f"binary {name}: sha256 {digest} (built and tested in Base's Void build root)")
+            ev.log(f"binary {name}: sha256 {digest} (" + ("built and tested in Base's Void build root)"
+                                                         if args.build else "as the last build left it)"))
         vm.start()
         vm.wait_ssh()
         run_checks(ev, built)
-    except Exception as error:  # noqa: BLE001 - record whatever stopped the run
+    except BaseException as error:  # noqa: BLE001 - record whatever stopped the run
+        # A person's Ctrl-C included: a run that did not reach its end did
+        # not pass, and keeps its disk.
         ev.check("the run finished", False, repr(error))
+        if not isinstance(error, Exception):
+            raise
     finally:
         if vm.running():
             ev.log()
@@ -189,7 +198,12 @@ def main():
             vm.stop()
         ev.log()
         failed = [name for name, ok in ev.results if not ok]
-        ev.log(f"RESULT: {len(ev.results) - len(failed)} passed, {len(failed)} failed")
+        if not args.build:
+            ev.log(guest.NOT_EVIDENCE)
+        if not failed and not vm.discard_disk():
+            ev.log("The guest did not stop, so its disk is kept.")
+        mark = "" if args.build else " (NOT EVIDENCE)"
+        ev.log(f"RESULT{mark}: {len(ev.results) - len(failed)} passed, {len(failed)} failed")
         ev.log(f"log: {ev.path}")
         ev.stream.close()
     return 1 if failed else 0
