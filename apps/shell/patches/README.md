@@ -43,7 +43,7 @@ again. Other platforms keep GPUI's behaviour: the patch adds two
 
 ## A destroyed window draws nothing
 
-`gpui-0.2.2-closed-windows.patch`, applied last, is ours. When a Wayland
+`gpui-0.2.2-closed-windows.patch`, applied third, is ours. When a Wayland
 window is dropped, GPUI 0.2.2 destroys its Vulkan surface at once but takes
 the window out of the client's list only in a task that runs later. Events
 already queued for the surface still reach it in between. When the last
@@ -55,5 +55,28 @@ destroyed ignores a resize, a change of transparency, and a draw. The fault is
 GPUI's, so the fix is in GPUI: the shell cannot keep an event from reaching a
 window GPUI has dropped.
 
-All three patches serve both apps: Studio Settings takes the shell's prepared
+## GPUI builds without warnings
+
+`gpui-0.2.2-builds-without-warnings.patch`, applied last, is ours. Each build
+of GPUI 0.2.2 for Wayland printed three warnings and a fourth about a crate it
+depends on. Two of them name code a later Rust will refuse to build. The patch
+changes nothing GPUI does:
+
+- `src/taffy.rs` writes two float literals as `f32`. Rust chose `f32` for
+  them by a fallback it is phasing out
+  ([rust-lang/rust#154024](https://github.com/rust-lang/rust/issues/154024)).
+- `Cargo.toml` asks for `stacksafe` 1.0.2 or later, where GPUI asked for 0.1.
+  The macro of 0.1.4, 1.0.0, and 1.0.1 is built on `proc-macro-error2`
+  2.0.1, the newest there is, which re-exports a private crate
+  ([rust-lang/rust#127909](https://github.com/rust-lang/rust/issues/127909)).
+  From 1.0.2 the macro does without it. `StackSafe` and `#[stacksafe]`, all
+  GPUI uses, are the same in both. Each app's `Cargo.lock` records 1.0.3.
+- `PlatformInputHandler::selected_text_range` in `src/platform.rs` is marked
+  as unused on a build without X11. Only the X11, macOS, and Windows backends
+  call it.
+
+The gpui-probe builds the published crate with no patches, so its build still
+takes `proc-macro-error2` and prints that warning.
+
+All four patches serve both apps: Studio Settings takes the shell's prepared
 source through its `[patch.crates-io]`.

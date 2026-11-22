@@ -1,0 +1,39 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -377,7 +377,7 @@
+ version = "2.0"
+ 
+ [dependencies.stacksafe]
+-version = "0.1"
++version = "1.0.2"
+ 
+ [dependencies.strum]
+ version = "0.27.2"
+--- a/src/platform.rs
++++ b/src/platform.rs
+@@ -876,6 +876,14 @@
+         Self { cx, handler }
+     }
+ 
++    // Only the X11, macOS, and Windows backends ask for this.
++    #[cfg_attr(
++        all(
++            any(target_os = "linux", target_os = "freebsd"),
++            not(feature = "x11")
++        ),
++        allow(dead_code)
++    )]
+     fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
+         self.cx
+             .update(|window, cx| {
+--- a/src/taffy.rs
++++ b/src/taffy.rs
+@@ -309,7 +309,7 @@
+             unit: &Option<u16>,
+         ) -> Vec<taffy::GridTemplateComponent<T>> {
+             // grid-template-columns: repeat(<number>, minmax(0, 1fr));
+-            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0), fr(1.0))])])
++            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0_f32), fr(1.0_f32))])])
+                 .unwrap_or_default()
+         }
+ 
