@@ -16,7 +16,7 @@ interface Options {
 	shellUid: number;
 }
 
-function options(): Options | undefined {
+function parseOptions(): Options | undefined {
 	try {
 		const { values } = parseArgs({
 			options: { state: { type: "string" }, "surface-socket": { type: "string" }, "shell-uid": { type: "string" } },
@@ -47,7 +47,7 @@ async function main(options: Options): Promise<void> {
 	// command the Agent runs keeps that mask, so the mask is left as it is.
 	mkdirSync(options.state, { recursive: true, mode: 0o700 });
 	chmodSync(options.state, 0o700);
-	const log = new Log(join(options.state, "agent.log"));
+	const log = new Log(join(options.state, "harness.log"));
 	const fail = (error: unknown) => {
 		log.error(error);
 		process.exit(1);
@@ -63,7 +63,7 @@ async function main(options: Options): Promise<void> {
 		}
 		writeFileSync(marker, `${process.pid}\n`, { mode: 0o600 });
 		chmodSync(marker, 0o600);
-		const store = await openStore(join(options.state, "agent.sqlite"));
+		const store = await openStore(join(options.state, "harness.sqlite"));
 		// A Harness that was killed leaves its socket behind.
 		if (lstatSync(options.surfaceSocket, { throwIfNoEntry: false })?.isSocket()) rmSync(options.surfaceSocket);
 		const surface = await listen(options.surfaceSocket, options.shellUid, (what) => log.write("connection", what));
@@ -95,9 +95,9 @@ async function main(options: Options): Promise<void> {
 	}
 }
 
-const parsed = options();
-if (parsed === undefined) {
+const options = parseOptions();
+if (options === undefined) {
 	console.error(USAGE);
 	process.exit(2);
 }
-await main(parsed);
+await main(options);

@@ -5,8 +5,10 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tarfile
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -599,13 +601,13 @@ class Desktop(BuildFixture):
 
 
 
-class Agent(BuildFixture):
+class Harness(BuildFixture):
     """What Base's build does with the Harness: npm runs in the build alone,
     from the pinned Node.js, and the image gets that Node.js and one bundled
     file (ADR 0034)."""
 
     def test_the_pinned_node_and_its_npm_check_test_and_bundle_the_harness(self):
-        void_base.bundle_agent()
+        void_base.bundle_harness()
         self.assertEqual(self.commands, [['/node/bin/npm', 'ci'], ['/node/bin/npm', 'run', 'check'],
                                          ['/node/bin/npm', 'test']])
         self.assertEqual(set(self.cwds), {void_base.ROOT / 'agent'})
@@ -939,7 +941,7 @@ class HarnessAnswersCheck(unittest.TestCase):
         self.passes = void_base.harness_answers
 
     def heard(self, **other):
-        lines = {'shell': VERSION, 'root': 'refused', 'person': 'refused',
+        lines = {'shell': VERSION, 'root': 'refused', 'person': 'refused', 'group': 'refused',
                  'other': 'error: Permission denied', 'directory': '1003 1001 2750',
                  'socket': '1003 1001 660', 'shell-account': '1001 1001'}
         lines.update({name.replace('_', '-'): line for name, line in other.items()})
@@ -962,6 +964,18 @@ class HarnessAnswersCheck(unittest.TestCase):
         self.assertFalse(self.passes(self.heard(root=VERSION)))
         self.assertFalse(self.passes(self.heard(person=VERSION)))
 
+    def test_another_user_with_the_shells_group_answered_fails(self):
+        # The directory and the socket let the shell's group in, and the
+        # kernel gives a peer's group ID beside its user ID. The Harness is
+        # to go by the user ID.
+        self.assertFalse(self.passes(self.heard(group=VERSION)))
+        self.assertFalse(self.passes(self.heard(group='error: Permission denied')))
+
+    def test_the_probe_with_the_shells_group_is_another_user(self):
+        command = next(command for name, command, *_ in void_base.CHECKS
+                       if name.startswith('the Harness answers'))
+        self.assertIn('echo "group $(probe crowbar-compositor:crowbar-shell)"', command)
+
     def test_another_account_that_reaches_the_socket_fails(self):
         self.assertFalse(self.passes(self.heard(other='refused')))
         self.assertFalse(self.passes(self.heard(other=VERSION)))
@@ -977,6 +991,36 @@ class HarnessAnswersCheck(unittest.TestCase):
 
     def test_nothing_heard_fails(self):
         self.assertFalse(self.passes(''))
+
+
+class WaitInGuest(unittest.TestCase):
+    """How Base's check waits in the guest for something to hold."""
+
+    def seconds(self, condition, limit):
+        started = time.monotonic()
+        out = subprocess.run(['sh', '-c', void_base.wait_in_guest(condition, limit) + 'echo "tries $n"'],
+                             capture_output=True, text=True, check=True).stdout
+        return time.monotonic() - started, int(out.split()[1])
+
+    def test_a_wait_ends_as_soon_as_what_it_waits_for_holds(self):
+        elapsed, tries = self.seconds('n=$((${n:-0} + 1)); [ "$n" -ge 2 ]', 30)
+        self.assertEqual(tries, 2)
+        self.assertLess(elapsed, 5)
+
+    def test_a_wait_gives_up_when_its_time_is_over_however_long_each_try_takes(self):
+        # A Harness that takes a connection and never answers holds each try
+        # for the probe's whole timeout. Counted in tries, the wait outlasted
+        # the 60 seconds SSH gives a check's command.
+        elapsed, tries = self.seconds('n=$((${n:-0} + 1)); sleep 1; false', 2)
+        self.assertLessEqual(tries, 4)
+        self.assertLess(elapsed, 6)
+
+    def test_every_wait_and_the_probes_after_it_fit_in_the_time_ssh_gives_a_command(self):
+        for name, command, *_ in void_base.CHECKS:
+            if 'Harness' in name:
+                self.assertNotIn('seq ', command, name)
+                probes = command.count('$(probe ')
+                self.assertLess(30 + void_base.PROBE_TIMEOUT * (probes + 1), 60, name)
 
 
 class HarnessRunsCheck(unittest.TestCase):
@@ -996,8 +1040,8 @@ class HarnessRunsCheck(unittest.TestCase):
                  ('env', 'PATH=/home/alex/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin'),
                  ('env', 'LANG=C.UTF-8'), ('env', 'XDG_RUNTIME_DIR=/run/user/1003'),
                  ('env', 'WAYLAND_DISPLAY=wayland-0'), ('env', 'CROWBAR_SESSION=crowbaros'),
-                 ('state', f'700 1003 {state}'), ('state', f'600 1003 {state}/agent.log'),
-                 ('state', f'600 1003 {state}/agent.sqlite'), ('state', f'600 1003 {state}/running'),
+                 ('state', f'700 1003 {state}'), ('state', f'600 1003 {state}/harness.log'),
+                 ('state', f'600 1003 {state}/harness.sqlite'), ('state', f'600 1003 {state}/running'),
                  ('on-path', '')]
         lines = [(name, other.get(name.replace('-', '_'), line)) for name, line in lines
                  if line.split('=')[0] not in without and line.rsplit('/', 1)[-1] not in without]
@@ -1027,9 +1071,9 @@ class HarnessRunsCheck(unittest.TestCase):
         state = '/home/alex/.local/state/crowbaros/agent'
         self.assertFalse(self.passes(self.seen().replace(f'700 1003 {state}\n', f'755 1003 {state}\n')))
         self.assertFalse(self.passes(self.seen().replace('600 1003', '644 1003', 1)))
-        self.assertFalse(self.passes(self.seen().replace(f'600 1003 {state}/agent.log', f'600 0 {state}/agent.log')))
-        self.assertFalse(self.passes(self.seen(without=['agent.log'])))
-        self.assertFalse(self.passes(self.seen(without=['agent.sqlite'])))
+        self.assertFalse(self.passes(self.seen().replace(f'600 1003 {state}/harness.log', f'600 0 {state}/harness.log')))
+        self.assertFalse(self.passes(self.seen(without=['harness.log'])))
+        self.assertFalse(self.passes(self.seen(without=['harness.sqlite'])))
 
     def test_node_or_npm_on_the_path_fails(self):
         self.assertFalse(self.passes(self.seen(on_path='/usr/bin/node')))

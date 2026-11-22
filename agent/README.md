@@ -84,15 +84,17 @@ the Agent will run inherit it.
 
 | File | Contents |
 | --- | --- |
-| `agent.sqlite` | Pi Durable's database, with SQLite's `-wal` and `-shm` files beside it. It keeps Pi Durable's default sync setting |
-| `agent.log` | The log |
+| `harness.sqlite` | Pi Durable's database, with SQLite's `-wal` and `-shm` files beside it. It keeps Pi Durable's default sync setting |
+| `harness.log` | The log, and `harness.log.1`, the one before it |
 | `running` | The process ID of the Harness that is running. It is removed on a stop, so one left behind means the last Harness ended without stopping |
 
 ## The log
 
-`agent.log` gets one line for each event: the time in UTC, the event, and its
-details. An error's line goes on over indented lines that say where it was
-thrown.
+`harness.log` gets one line for each event: the time in UTC, the event, and
+its details. An error's line goes on over indented lines that say where it was
+thrown. A log past 4 MiB is set aside as `harness.log.1` when the next Harness
+starts, in place of the one set aside before it, so a Harness that cannot
+start does not fill the person's disk with its tries.
 
 ```text
 2026-11-21T18:03:11.123Z start: process 812, Pi Durable 1.6.0, Node.js v26.13.1
@@ -135,9 +137,11 @@ fail if a new Node.js changes this.
 
 ### Framing
 
-The surface socket speaks the framing every channel of the Agent speaks
-([ADR 0035](../docs/adr/0035-fulcrum-draws-every-ask-and-holds-what-the-agent-may-take.md)),
-which `src/frames.ts` holds:
+The surface socket speaks the framing every channel of the Agent speaks.
+[ADR 0035](../docs/adr/0035-fulcrum-draws-every-ask-and-holds-what-the-agent-may-take.md)
+gave it to Fulcrum's channels, and the
+[Milestone 3 spec](https://github.com/crowbaros/crowbaros/issues/291) gives
+it to the rest. `src/frames.ts` holds it:
 
 - **A message is a frame**: its length in four bytes, the most significant
   first, and then that many bytes of JSON in UTF-8. Nothing comes between

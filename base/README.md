@@ -171,11 +171,12 @@ disk, that restarting the compositor's
 service leaves one new compositor running, that `seatd`, the compositor, the
 shell, the launcher, and the unlock helper then stay up and the shell's
 service runs the shell, that the compositor answers the unlock helper's
-`lock`, that the Harness answers the version to the shell's account on its
-surface socket and to no other, that it runs as the person with their groups,
-in an app's environment, with its state theirs alone and no Node.js on its
-`PATH`, that runit starts it again after a kill and its log records the
-restart, and that the kernel logged nothing critical.
+`lock`, that the Harness answers the version to the shell's
+account on its surface socket and to no other, another user with the shell's
+group included, that it runs as the person
+with their groups, in an app's environment, with its state theirs alone and
+no Node.js on its `PATH`, that runit starts it again after a kill and its log
+records the restart, and that the kernel logged nothing critical.
 
 The lab's two graphical checks boot a copy of this image under UEFI as well.
 The desktop check runs all of these Base boot checks alongside the desktop

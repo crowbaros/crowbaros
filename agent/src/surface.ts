@@ -5,9 +5,9 @@ import { encode, FrameReader, FrameTooLong } from "./frames.ts";
 import { peerUid } from "./peer.ts";
 
 /** The version of the surface socket's protocol. */
-export const VERSION = 1;
+const VERSION = 1;
 /** The longest frame the Harness takes from the shell, not counting its length. */
-export const MAX_FRAME = 4096;
+const MAX_FRAME = 4096;
 
 /** Whether a frame states the surface socket's version and nothing else. */
 function statesVersion(frame: Buffer): boolean {

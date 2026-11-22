@@ -167,8 +167,8 @@ class Check:
             'unlock.log': 'cat /var/log/crowbar-unlock.log',
             'apps.log': 'cat /var/log/crowbar-apps.log',
             # What the Harness's service printed, then the Harness's own log.
-            'agent.log': 'cat /var/log/crowbar-agent.log; '
-                         f'cat "$(getent passwd {void_base.PERSON_UID} | cut -d: -f6)/{void_base.HARNESS_STATE}/agent.log"',
+            'harness.log': 'cat /var/log/crowbar-agent.log; ' + void_base.PERSON_IN_GUEST
+                           + f'cat "$h/{void_base.HARNESS_STATE}/harness.log"',
             'kernel.log': 'dmesg | tail -200',
         }
         for name, command in commands.items():

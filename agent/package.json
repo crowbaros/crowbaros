@@ -11,7 +11,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "bundle": "node bundle.mjs",
-    "test": "node bundle.mjs && node --test \"test/*.test.ts\""
+    "test": "npm run bundle && node --test \"test/*.test.ts\""
   },
   "dependencies": {
     "@earendil-works/chord": "1.6.0",

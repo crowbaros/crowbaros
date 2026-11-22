@@ -1,7 +1,7 @@
 // What the Harness keeps, and what its log records: the bundled Harness, one
 // process, read from outside by its files and its exit.
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { dial, heard, launch, OWN_UID, scratch, sleep, start, VERSION_FRAME } from "./harness.ts";
@@ -16,8 +16,8 @@ test("the Harness keeps its state and its log where the person alone can read th
 	const harness = await start(t, scratch(t), { umask: 0 });
 	assert.equal(mode(harness.state), 0o700);
 	const kept = readdirSync(harness.state);
-	assert.ok(kept.includes("agent.log"), `no log among ${kept}`);
-	assert.ok(kept.includes("agent.sqlite"), `no database among ${kept}`);
+	assert.ok(kept.includes("harness.log"), `no log among ${kept}`);
+	assert.ok(kept.includes("harness.sqlite"), `no database among ${kept}`);
 	for (const name of kept) assert.equal(mode(join(harness.state, name)), 0o600, name);
 	// The socket takes its owner and its group, and nobody else.
 	assert.equal(mode(harness.socket), 0o660);
@@ -29,7 +29,7 @@ test("the Harness keeps its state and its log where the person alone can read th
  * thrown; they are left out.
  */
 function logged(state: string): string[] {
-	return readFileSync(join(state, "agent.log"), "utf8")
+	return readFileSync(join(state, "harness.log"), "utf8")
 		.trimEnd()
 		.split("\n")
 		.filter((line) => !line.startsWith("    "))
@@ -141,4 +141,24 @@ test("started with anything but its options, the Harness says how it is used and
 		assert.match(harness.output(), /^usage: harness\.mjs --state DIRECTORY --surface-socket PATH --shell-uid USER_ID$/m);
 		assert.equal(existsSync(harness.state), false);
 	}
+});
+
+test("a log that has grown past 4 MiB is set aside at the next start, and the one before it dropped", async (t) => {
+	// A Harness that cannot start is started again each second, and logs each
+	// time: the log must not fill the person's disk.
+	const directory = scratch(t);
+	const state = join(directory, "state");
+	mkdirSync(state);
+	writeFileSync(join(state, "harness.log.1"), "the log before the last\n");
+	writeFileSync(join(state, "harness.log"), "the last log\n".padEnd(4 * 1024 * 1024 + 1, "."));
+	const harness = await start(t, directory);
+	assert.match(readFileSync(join(state, "harness.log.1"), "utf8"), /^the last log\n\.+$/);
+	assert.match(logged(harness.state)[0] ?? "", /^start: /);
+	assert.equal(mode(join(state, "harness.log.1")), 0o600);
+
+	// A log within 4 MiB is added to.
+	harness.process.kill("SIGTERM");
+	await harness.exited;
+	const next = await start(t, directory);
+	assert.equal(logged(next.state).filter((line) => line.startsWith("start: ")).length, 2);
 });

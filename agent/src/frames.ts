@@ -1,4 +1,5 @@
-// The framing every channel of the Agent speaks (ADR 0035): a message is a
+// The framing every channel of the Agent speaks, which ADR 0035 gave
+// Fulcrum's channels and the Milestone 3 spec gives the rest: a message is a
 // frame, its length in four bytes, the most significant first, and then that
 // many bytes of JSON. This file holds the framing alone, and no socket.
 

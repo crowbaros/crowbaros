@@ -546,15 +546,15 @@ AGENT = ROOT / "agent"
 HARNESS = AGENT / "dist/harness.mjs"
 
 
-def bundle_agent():
+def bundle_harness():
     """Type-check, test, and bundle the Harness, with the pinned Node.js and
     the npm that came with it. npm installs exactly what package-lock.json
     names and runs no script a package brings (`agent/.npmrc`). CI's `agent`
     job runs this, and so does every build."""
-    bin = node() / "bin"
-    env = dict(os.environ, PATH=f"{bin}:{os.environ.get('PATH', '')}")
+    tools = node() / "bin"
+    env = dict(os.environ, PATH=f"{tools}:{os.environ.get('PATH', '')}")
     for step in (["ci"], ["run", "check"], ["test"]):
-        run(bin / "npm", *step, cwd=AGENT, env=env)
+        run(tools / "npm", *step, cwd=AGENT, env=env)
     return HARNESS
 
 
@@ -651,7 +651,7 @@ def build(force=False, lab_account=False):
     if not account["password"]:
         print(f"Building with the account `{account['name']}` from {ACCOUNT_FILE}")
     compile_desktop(force)
-    bundle_agent()
+    bundle_harness()
     # Checked on every build, not only after an install: the image is never
     # written from a root that cannot drive NVIDIA's GPUs.
     if lack := missing_from_root(ROOTFS):
@@ -913,14 +913,16 @@ HARNESS_STATE = ".local/state/crowbaros/agent"
 # Harness answers with the same (agent/README.md).
 VERSION_FRAME = "0000000d7b2276657273696f6e223a317d"
 # In the guest, `probe ACCOUNT` connects to the surface socket as that account
-# with no group but its own, states the version, and prints what it is sent,
-# in hexadecimal; `refused` when it is closed having been sent nothing; or why
-# it could not connect.
+# with no group but its own, or `probe ACCOUNT:GROUP` as that account with
+# that group alone, states the version, and prints what it is sent, in
+# hexadecimal; `refused` when it is closed having been sent nothing; or why
+# it could not connect. It waits PROBE_TIMEOUT seconds for either.
+PROBE_TIMEOUT = 3
 PROBE = (
     "probe() { chpst -u \"$1\" python3 -c '\n"
     "import socket, sys\n"
     "s = socket.socket(socket.AF_UNIX)\n"
-    "s.settimeout(3)\n"
+    f"s.settimeout({PROBE_TIMEOUT})\n"
     "try:\n"
     "    s.connect(sys.argv[1])\n"
     "    s.sendall(bytes.fromhex(sys.argv[2]))\n"
@@ -942,29 +944,43 @@ PERSON_IN_GUEST = (f"u=$(getent passwd {PERSON_UID} | cut -d: -f1); "
                    f"h=$(getent passwd {PERSON_UID} | cut -d: -f6); ")
 
 
-def said(out):
-    """What each line of a check's output says, by the word it starts with:
-    every `name rest` line, as `{name: [rest, ...]}`."""
+def wait_in_guest(condition, seconds=30):
+    """In the guest: tries `condition`, a shell command list, five times a
+    second until it holds or `seconds` have passed, however long each try
+    takes. `check` gives each guest command 60 seconds in all."""
+    return (f"t=$(($(date +%s) + {seconds})); until {condition}; do "
+            "[ \"$(date +%s)\" -ge \"$t\" ] && break; sleep 0.2; done; ")
+
+
+def labelled(out):
+    """A check's output by the word each line starts with: every `label rest`
+    line, as `{label: [rest, ...]}`."""
     lines = {}
     for line in out.splitlines():
-        name, _, rest = line.partition(" ")
-        lines.setdefault(name, []).append(rest)
+        label, _, rest = line.partition(" ")
+        lines.setdefault(label, []).append(rest)
     return lines
+
+
+def only(lines, label):
+    """What the one line with this label says, or None when there is no such
+    line or more than one."""
+    return lines[label][0] if len(lines.get(label, [])) == 1 else None
 
 
 def harness_answers(out):
     """Whether the check's output shows the Harness answering the version to
-    the shell's account and refusing root and the person, an account that is
-    none of them kept out of the socket's directory, and the directory and
-    the socket the person's, with the shell's group and nobody else: what
-    each account heard, the owner, group, and mode of both, then the shell's
-    user and group IDs."""
-    lines = said(out)
-    shell = lines.get("shell-account", [""])[0].split()
+    the shell's account and refusing root, the person, and another user with
+    the shell's group; an account that is none of them kept out of the
+    socket's directory; and the directory and the socket the person's, with
+    the shell's group and nobody else: what each peer heard, the owner,
+    group, and mode of both, then the shell's user and group IDs."""
+    lines = labelled(out)
+    shell = (only(lines, "shell-account") or "").split()
     if len(shell) != 2:
         return False
-    return all(lines.get(name) == [value] for name, value in (
-        ("shell", VERSION_FRAME), ("root", "refused"), ("person", "refused"),
+    return all(only(lines, label) == value for label, value in (
+        ("shell", VERSION_FRAME), ("root", "refused"), ("person", "refused"), ("group", "refused"),
         ("other", "error: Permission denied"),
         ("directory", f"{PERSON_UID} {shell[1]} 2750"), ("socket", f"{PERSON_UID} {shell[1]} 660")))
 
@@ -977,13 +993,10 @@ def harness_runs_as_the_person(out):
     process's user, group, and groups, the person's, the program, the home,
     the directory it runs in, the environment, the mode and owner of the
     state and each file in it, then any `node`, `npm`, or `npx` found."""
-    lines = said(out)
-
-    def one(name):
-        return lines[name][0] if len(lines.get(name, [])) == 1 else ""
-
-    up = re.match(r"run: /var/service/crowbar-agent: \(pid \d+\) (\d+)s", one("service"))
-    process, person, home = one("process").split(), one("person").split(), one("home")
+    lines = labelled(out)
+    up = re.match(r"run: /var/service/crowbar-agent: \(pid \d+\) (\d+)s", only(lines, "service") or "")
+    process, person = ((only(lines, label) or "").split() for label in ("process", "person"))
+    home = only(lines, "home")
     env = dict(line.split("=", 1) for line in lines.get("env", []) if "=" in line)
     state = [line.split(" ", 2) for line in lines.get("state", [])]
     if not up or len(process) < 3 or not home or not state or any(len(entry) != 3 for entry in state):
@@ -991,14 +1004,14 @@ def harness_runs_as_the_person(out):
     return int(up[1]) >= STAYED_UP \
         and process[:2] == person[:2] and process[0] == str(PERSON_UID) \
         and set(process[2:]) == set(person[2:]) \
-        and one("program") == HARNESS_NODE and one("cwd") == home \
+        and only(lines, "program") == HARNESS_NODE and only(lines, "cwd") == home \
         and env.get("HOME") == home and env.get("XDG_RUNTIME_DIR") == f"/run/user/{PERSON_UID}" \
         and env.get("WAYLAND_DISPLAY") == "wayland-0" and env.get("CROWBAR_SESSION") == "crowbaros" \
         and bool(env.get("PATH")) and bool(env.get("LANG")) \
         and state[0] == ["700", str(PERSON_UID), f"{home}/{HARNESS_STATE}"] \
         and all(entry[:2] == ["600", str(PERSON_UID)] for entry in state[1:]) \
-        and {"agent.log", "agent.sqlite"} <= {entry[2].rsplit("/", 1)[1] for entry in state[1:]} \
-        and lines.get("on-path") == [""]
+        and {"harness.log", "harness.sqlite"} <= {entry[2].rsplit("/", 1)[1] for entry in state[1:]} \
+        and only(lines, "on-path") == ""
 
 
 def harness_restarted(out):
@@ -1006,10 +1019,10 @@ def harness_restarted(out):
     after a kill, the new one answering the shell's account, and its log
     recording the restart: the service's process before and after, what the
     shell's account heard, then how many times the log says so."""
-    lines = said(out)
-    before, after = lines.get("before", [""])[0], lines.get("after", [""])[0]
+    lines = labelled(out)
+    before, after = only(lines, "before"), only(lines, "after")
     return bool(before) and bool(after) and before != after \
-        and lines.get("shell") == [VERSION_FRAME] and lines.get("logged") == ["1"]
+        and only(lines, "shell") == VERSION_FRAME and only(lines, "logged") == "1"
 
 
 # What a booted base must show, as (name, guest command, test on its output).
@@ -1098,22 +1111,23 @@ CHECKS = [
     # The Harness (ADR 0034) starts at boot, before anyone unlocks. Waits
     # for its answer to the shell's account, for at most 30 seconds. As root
     # the check would pass the directory whatever its mode, so each account
-    # connects as itself, and the compositor's stands for every other.
+    # connects as itself. The compositor's account stands for every other,
+    # and with the shell's group it gets as far as the Harness, which must
+    # refuse it by its user ID.
     ("the Harness answers the shell's account on its socket, and no other",
      PROBE + PERSON_IN_GUEST
-     + f"for i in $(seq 150); do s=$(probe crowbar-shell); [ \"$s\" = {VERSION_FRAME} ] && break; "
-     "sleep 0.2; done; "
-     "echo \"shell $s\"; echo \"root $(probe root)\"; echo \"person $(probe \"$u\")\"; "
-     "echo \"other $(probe crowbar-compositor)\"; "
+     + wait_in_guest(f"s=$(probe crowbar-shell); [ \"$s\" = {VERSION_FRAME} ]")
+     + "echo \"shell $s\"; echo \"root $(probe root)\"; echo \"person $(probe \"$u\")\"; "
+     "echo \"group $(probe crowbar-compositor:crowbar-shell)\"; echo \"other $(probe crowbar-compositor)\"; "
      f"stat -c 'directory %u %g %a' {SURFACE_SOCKET.rsplit('/', 1)[0]}; stat -c 'socket %u %g %a' {SURFACE_SOCKET}; "
      "echo \"shell-account $(id -u crowbar-shell) $(id -g crowbar-shell)\"",
      lambda out: harness_answers(out)),
     # Waits until the service has run for STAYED_UP seconds, for at most 30.
     ("the Harness runs as the person, in an app's environment, with its state theirs alone",
      HARNESS_PID + PERSON_IN_GUEST
-     + "for i in $(seq 150); do o=$(sv status /var/service/crowbar-agent); "
-     f"echo \"$o\" | grep -Eq '^run: [^ ]+ \\(pid [0-9]+\\) ([{STAYED_UP}-9]|[0-9]{{2,}})s' && break; "
-     "sleep 0.2; done; p=$(pid); echo \"service $o\"; "
+     + wait_in_guest("o=$(sv status /var/service/crowbar-agent); echo \"$o\" | "
+                     f"grep -Eq '^run: [^ ]+ \\(pid [0-9]+\\) ([{STAYED_UP}-9]|[0-9]{{2,}})s'")
+     + "p=$(pid); echo \"service $o\"; "
      "echo \"process $(awk '/^(Uid|Gid):/ {print $2} /^Groups:/ {$1=\"\"; print}' /proc/$p/status | xargs)\"; "
      "echo \"person $(id -u \"$u\") $(id -g \"$u\") $(id -G \"$u\")\"; "
      "echo \"program $(readlink /proc/$p/exe)\"; echo \"home $h\"; echo \"cwd $(readlink /proc/$p/cwd)\"; "
@@ -1123,16 +1137,16 @@ CHECKS = [
      "echo \"on-path $(PATH=$(echo \"$e\" | sed -n 's/^PATH=//p') command -v node npm npx | xargs)\"",
      lambda out: harness_runs_as_the_person(out)),
     # runit starts a service again when it exits, however it ended: at once,
-    # or a second later when it had run for less than a second.
-    # Waits for the new Harness's answer, for at most 30 seconds.
+    # or a second later when it had run for less than a second. Waits for the
+    # new Harness's answer, for at most 30 seconds.
     ("the Harness's service starts it again after a kill, and its log records the restart",
      PROBE + HARNESS_PID + PERSON_IN_GUEST
-     + "b=$(pid); kill -KILL \"$b\"; "
-     "for i in $(seq 150); do a=$(pid); s=; [ -n \"$a\" ] && [ \"$a\" != \"$b\" ] && s=$(probe crowbar-shell) "
-     f"&& [ \"$s\" = {VERSION_FRAME} ] && break; sleep 0.2; done; "
-     "echo \"before $b\"; echo \"after $a\"; echo \"shell $s\"; "
+     + "b=$(pid); kill -KILL \"$b\"; s=; "
+     + wait_in_guest("a=$(pid); [ -n \"$a\" ] && [ \"$a\" != \"$b\" ] && s=$(probe crowbar-shell) "
+                     f"&& [ \"$s\" = {VERSION_FRAME} ]")
+     + "echo \"before $b\"; echo \"after $a\"; echo \"shell $s\"; "
      "echo \"logged $(grep -c \"restart: the Harness before this one, process $b, ended without stopping\" "
-     f"\"$h/{HARNESS_STATE}/agent.log\")\"",
+     f"\"$h/{HARNESS_STATE}/harness.log\")\"",
      lambda out: harness_restarted(out)),
     ("network has an address", "ip -4 -o addr show scope global",
      lambda out: "inet " in out),
@@ -1247,7 +1261,7 @@ def main():
     elif args.cmd == "root" and args.action == "key":
         print(root_key())
     elif args.cmd == "agent":
-        print(f"Bundled the Harness at {bundle_agent()}")
+        print(f"Bundled the Harness at {bundle_harness()}")
     elif args.cmd == "root":
         save_root(args.archive) if args.action == "save" else restore_root(args.archive)
 
