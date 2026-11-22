@@ -48,7 +48,7 @@ use crate::{
 };
 
 /// The protocol version the control channel and the unlock authority's
-/// speak. A peer states it in its first frame, and is closed if it states
+/// socket speak. A peer states it in its first frame, and is closed if it states
 /// another.
 pub const VERSION: u32 = 1;
 /// The longest request, in bytes, not counting its length.
@@ -266,8 +266,8 @@ impl State {
     }
 
     /// A request on the unlock authority's connection: `lock` or `unlock`.
-    fn authority_request(&mut self, id: u64, line: &str) -> String {
-        let op = match parse_object(line) {
+    fn authority_request(&mut self, id: u64, request: &str) -> String {
+        let op = match parse_object(request) {
             Ok(request) if request.len() == 1 => match request.get("op") {
                 Some(Value::String(op)) => op.clone(),
                 _ => return error_reply("a request names its op, and nothing else"),
@@ -461,8 +461,8 @@ impl State {
     }
 
     /// One request, and its reply.
-    fn control_request(&mut self, id: u64, line: &str) -> String {
-        let request = match parse_object(line) {
+    fn control_request(&mut self, id: u64, message: &str) -> String {
+        let request = match parse_object(message) {
             Ok(request) => request,
             Err(error) => return error_reply(&format!("not a request: {error}")),
         };

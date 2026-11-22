@@ -61,13 +61,13 @@ fn a_peer_that_states_no_version_or_one_fulcrum_does_not_speak_is_closed() {
     ] {
         let mut control = Control::silent(&compositor.dir.join("control"));
         control.send(first);
-        assert_eq!(control.frame(), None, "{first:?} was answered");
+        assert!(control.closed_without_a_word(), "{first:?} was answered, or left open");
     }
     // One line of JSON, as the channel spoke before, is no frame: its first
     // four bytes are a length far past the limit.
     let mut control = Control::silent(&compositor.dir.join("control"));
     control.stream.write_all(b"{\"op\":\"snapshot\"}\n").unwrap();
-    assert_eq!(control.frame(), None, "a line was answered");
+    assert!(control.closed_without_a_word(), "a line was answered, or left open");
 
     // The shell can connect again.
     assert!(
@@ -247,11 +247,11 @@ fn the_channel_takes_the_shells_user_id_and_no_other() {
     let compositor = Compositor::start_trusting(another_uid(), own_uid());
     let mut control = Control::silent(&compositor.dir.join("control"));
     // The compositor may have closed already, and the write then fails.
-    let mut frame = (VERSION.len() as u32).to_be_bytes().to_vec();
-    frame.extend_from_slice(VERSION.as_bytes());
-    control.stream.write_all(&frame).ok();
-    let answer = control.frame();
-    assert_eq!(answer, None, "the compositor answered a peer that is not the shell");
+    control.try_send(VERSION).ok();
+    assert!(
+        control.closed_without_a_word(),
+        "the compositor answered a peer that is not the shell, or left it open"
+    );
 }
 
 /// The length comes first, so the compositor closes on it without waiting
@@ -274,7 +274,7 @@ fn a_frame_longer_than_the_limit_closes_the_connection() {
     // Nor is the longest length there is, as the first frame.
     let mut control = Control::silent(&compositor.dir.join("control"));
     control.stream.write_all(&[0xff, 0xff, 0xff, 0xff]).unwrap();
-    assert!(control.closed_with_no_reply(), "the connection stayed open");
+    assert!(control.closed_without_a_word(), "the connection stayed open");
 
     // The shell can connect again.
     assert!(

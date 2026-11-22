@@ -226,7 +226,7 @@ fn the_confirm_chord_neither_locks_nor_unlocks_and_no_client_hears_its_enter() {
     );
     assert!(compositor.with(|state| state.locked()), "the chord unlocked");
 
-    // The shell hears no event of the chord: the next line answers its
+    // The shell hears no event of the chord: the next message answers its
     // request.
     control.send(r#"{"op":"snapshot"}"#);
     let reply = control.message();
@@ -289,12 +289,12 @@ fn the_unlock_authority_takes_its_user_id_and_no_other() {
 
     // The compositor may have closed already, and a write then fails.
     for message in [VERSION, r#"{"op":"unlock"}"#] {
-        let mut frame = (message.len() as u32).to_be_bytes().to_vec();
-        frame.extend_from_slice(message.as_bytes());
-        impostor.stream.write_all(&frame).ok();
+        impostor.try_send(message).ok();
     }
-    let answer = impostor.frame();
-    assert_eq!(answer, None, "the compositor answered a peer that is not the authority");
+    assert!(
+        impostor.closed_without_a_word(),
+        "the compositor answered a peer that is not the authority, or left it open"
+    );
     assert!(compositor.with(|state| state.locked()), "an impostor unlocked");
 }
 
@@ -315,16 +315,19 @@ fn the_unlock_authority_states_the_version_first_or_is_closed() {
     for first in [r#"{"op":"unlock"}"#, r#"{"version":2}"#] {
         let mut authority = Control::silent(&path);
         authority.send(first);
-        authority.send(r#"{"op":"unlock"}"#);
-        assert_eq!(authority.frame(), None, "{first} was answered");
+        authority.try_send(r#"{"op":"unlock"}"#).ok();
+        assert!(authority.closed_without_a_word(), "{first} was answered, or left open");
     }
     // One line, as the unlock helper spoke before.
     let mut authority = Control::silent(&path);
     authority.stream.write_all(b"{\"op\":\"unlock\"}\n").unwrap();
-    assert_eq!(authority.frame(), None, "a line was answered");
+    assert!(authority.closed_without_a_word(), "a line was answered, or left open");
     let mut authority = Control::at(&path);
     authority.stream.write_all(&[0, 0, 0x10, 0x01]).unwrap();
-    assert_eq!(authority.frame(), None, "a frame past the limit was answered");
+    assert!(
+        authority.closed_without_a_word(),
+        "a frame past the limit was answered, or left open"
+    );
     assert!(compositor.with(|state| state.locked()), "a refused peer unlocked");
 
     let mut authority = Control::at(&path);

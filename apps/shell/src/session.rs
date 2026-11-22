@@ -263,8 +263,10 @@ impl Frames {
         }
     }
 
-    /// The whole messages that wait now, without waiting for more.
-    fn waiting(&mut self) -> Result<Vec<String>> {
+    /// The whole messages that wait now, without waiting for more, and why
+    /// no more can be read after them, if the frames can no longer be told
+    /// apart.
+    fn waiting(&mut self) -> (Vec<String>, Option<anyhow::Error>) {
         if self.stream.set_nonblocking(true).is_ok() {
             let mut chunk = [0u8; 4096];
             while self.pending.len() <= Self::MAX {
@@ -276,10 +278,13 @@ impl Frames {
             let _ = self.stream.set_nonblocking(false);
         }
         let mut messages = Vec::new();
-        while let Some(message) = self.take()? {
-            messages.push(message);
+        loop {
+            match self.take() {
+                Ok(Some(message)) => messages.push(message),
+                Ok(None) => return (messages, None),
+                Err(error) => return (messages, Some(error)),
+            }
         }
-        Ok(messages)
     }
 }
 
@@ -476,7 +481,7 @@ impl Channel {
             .write_all(&frame(&request))
             .map_err(|error| Failure::Broken(error.into()))?;
         loop {
-            let line = self.reader.next().map_err(|error| {
+            let text = self.reader.next().map_err(|error| {
                 let late = error.downcast_ref::<std::io::Error>().is_some_and(|error| {
                     matches!(
                         error.kind(),
@@ -485,7 +490,7 @@ impl Channel {
                 });
                 if late { Failure::Late } else { Failure::Broken(error) }
             })?;
-            let message: serde_json::Value = serde_json::from_str(&line)?;
+            let message: serde_json::Value = serde_json::from_str(&text)?;
             if message.get("event").is_some() {
                 compositor_event(&message);
                 continue;
@@ -547,17 +552,9 @@ impl Adapter for Compositor {
         let Some(channel) = guard.as_mut() else {
             return;
         };
-        let waiting = match channel.reader.waiting() {
-            Ok(waiting) => waiting,
-            Err(e) => {
-                // The frames cannot be told apart any more.
-                log::warn!("Compositor: {e}");
-                *guard = None;
-                return;
-            }
-        };
-        for line in waiting {
-            match serde_json::from_str::<serde_json::Value>(&line) {
+        let (waiting, broken) = channel.reader.waiting();
+        for text in waiting {
+            match serde_json::from_str::<serde_json::Value>(&text) {
                 Ok(message) => {
                     if message.get("event").is_some() {
                         compositor_event(&message);
@@ -568,6 +565,11 @@ impl Adapter for Compositor {
                 }
                 Err(e) => log::warn!("Compositor: {e}"),
             }
+        }
+        if let Some(e) = broken {
+            // The frames cannot be told apart any more.
+            log::warn!("Compositor: {e}");
+            *guard = None;
         }
     }
 
@@ -1321,9 +1323,18 @@ mod tests {
         let start = Instant::now();
         compositor.wait(Duration::from_secs(10));
         assert!(start.elapsed() < Duration::from_secs(5), "{:?}", start.elapsed());
-        let _later = sender.join().unwrap();
+        let mut later = sender.join().unwrap();
         compositor.pump();
         assert!(matches!(rx.try_recv(), Ok(Event::Toggle)));
+
+        // An event that came before a frame too long to read still reaches
+        // the shell, and then the channel is closed for good.
+        later
+            .write_all(&[framed(r#"{"event":"locked"}"#), vec![0xff, 0xff, 0xff, 0xff]].concat())
+            .unwrap();
+        compositor.pump();
+        assert!(matches!(rx.try_recv(), Ok(Event::Lock(true))));
+        assert!(compositor.closed());
     }
 
     #[test]

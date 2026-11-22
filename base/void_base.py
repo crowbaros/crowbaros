@@ -795,7 +795,7 @@ CHECKS = [
      lambda out: desktop_services_stay_up(out)),
     # The unlock helper and the compositor are two programs that speak one
     # framing (ADR 0035), and the tests of each play the other: here they
-    # meet. This is the suspend hook's command, and the session is locked
+    # meet. This is the suspend hook's command, and the desktop is locked
     # from boot, so it changes nothing.
     ("the compositor answers the unlock helper's lock",
      "/usr/local/bin/crowbar-unlock lock; echo \"exit $?\"",

@@ -42,7 +42,10 @@ def read():
     length = f.read(4)
     if len(length) < 4:
         raise EOFError
-    return f.read(struct.unpack(">I", length)[0])
+    message = f.read(struct.unpack(">I", length)[0])
+    if len(message) < struct.unpack(">I", length)[0]:
+        raise EOFError
+    return message
 s = socket.socket(socket.AF_UNIX)
 s.settimeout(5)
 try:
@@ -54,7 +57,7 @@ try:
     send(sys.argv[2].encode())
     while (message := read()).startswith(b'{"event":'):
         pass
-    print(message.decode())
+    print(message.decode(errors="replace"))
 except (OSError, EOFError):
     pass
 """

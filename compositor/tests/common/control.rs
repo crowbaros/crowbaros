@@ -49,19 +49,43 @@ impl Control {
     /// Sends one message as one frame: its length in four bytes, the most
     /// significant first, and then the message.
     pub fn send(&mut self, message: &str) {
+        self.try_send(message).unwrap();
+    }
+
+    /// Sends one message as one frame, to a compositor that may have closed
+    /// the connection already.
+    pub fn try_send(&mut self, message: &str) -> std::io::Result<()> {
         let mut frame = (message.len() as u32).to_be_bytes().to_vec();
         frame.extend_from_slice(message.as_bytes());
-        self.stream.write_all(&frame).unwrap();
+        self.stream.write_all(&frame)
+    }
+
+    /// What comes next from the compositor.
+    fn next(&mut self) -> Next {
+        let mut length = [0u8; 4];
+        match self.stream.read(&mut length[..1]) {
+            Ok(0) => return Next::Closed,
+            // A reset: the compositor closed with bytes of ours unread.
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => return Next::Closed,
+            Err(_) => return Next::Nothing,
+            Ok(_) => {}
+        }
+        self.stream
+            .read_exact(&mut length[1..])
+            .expect("part of a frame's length");
+        let mut message = vec![0u8; u32::from_be_bytes(length) as usize];
+        self.stream.read_exact(&mut message).expect("part of a frame");
+        Next::Frame(String::from_utf8(message).unwrap())
     }
 
     /// The next frame's message. None once the compositor has closed the
-    /// connection, or when no whole frame comes before the read gives up.
+    /// connection, or when no frame comes before the read gives up: where
+    /// the two must be told apart, see [`Control::closed_without_a_word`].
     pub fn frame(&mut self) -> Option<String> {
-        let mut length = [0u8; 4];
-        self.stream.read_exact(&mut length).ok()?;
-        let mut message = vec![0u8; u32::from_be_bytes(length) as usize];
-        self.stream.read_exact(&mut message).ok()?;
-        Some(String::from_utf8(message).unwrap())
+        match self.next() {
+            Next::Frame(message) => Some(message),
+            Next::Closed | Next::Nothing => None,
+        }
     }
 
     /// The next frame, or none within `wait`.
@@ -100,27 +124,29 @@ impl Control {
     }
 
     /// Whether the compositor closes the connection, having sent nothing
-    /// but snapshot events first.
+    /// but snapshot events first. A connection it leaves open and silent is
+    /// not closed.
     pub fn closed_with_no_reply(&mut self) -> bool {
         loop {
-            let mut length = [0u8; 4];
-            match self.stream.read(&mut length[..1]) {
-                Ok(0) => return true,
-                // A reset: the compositor closed with bytes of ours unread.
-                Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => return true,
-                Err(_) => return false,
-                Ok(_) => {}
-            }
-            if self.stream.read_exact(&mut length[1..]).is_err() {
-                return true;
-            }
-            let mut message = vec![0u8; u32::from_be_bytes(length) as usize];
-            if self.stream.read_exact(&mut message).is_err() {
-                return true;
-            }
-            if !message.starts_with(SNAPSHOT_EVENT.as_bytes()) {
-                return false;
+            match self.next() {
+                Next::Frame(message) if message.starts_with(SNAPSHOT_EVENT) => {}
+                Next::Frame(_) | Next::Nothing => return false,
+                Next::Closed => return true,
             }
         }
     }
+
+    /// Whether the compositor closes the connection having sent nothing at
+    /// all. A connection it leaves open and silent is not closed.
+    pub fn closed_without_a_word(&mut self) -> bool {
+        matches!(self.next(), Next::Closed)
+    }
+}
+
+enum Next {
+    Frame(String),
+    /// The compositor closed the connection.
+    Closed,
+    /// Nothing came before the read gave up, and the connection is open.
+    Nothing,
 }

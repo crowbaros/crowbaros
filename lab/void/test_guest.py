@@ -206,6 +206,10 @@ class FulcrumClient(unittest.TestCase):
                 printed, _ = self.ask([(17, said)])
                 self.assertEqual(printed, '')
 
+    def test_it_prints_nothing_of_a_reply_fulcrum_closed_partway_through(self):
+        printed, _ = self.ask([(17, self.VERSION), (21, b'\x00\x00\x00\x22{"reply":"snapshot"')])
+        self.assertEqual(printed, '')
+
     def test_the_frame_a_check_knocks_with_states_the_version(self):
         self.assertEqual(guest.FULCRUM_VERSION_FRAME, self.VERSION)
 

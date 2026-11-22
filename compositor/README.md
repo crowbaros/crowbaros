@@ -233,7 +233,7 @@ and CrowbarOS has built it in the baseline's place since
 The shell's control channel is a path socket of its own, at
 `--shell-control-socket`, which takes the shell's user ID alone (ADR 0032).
 There the shell learns which windows exist and on which workspace, asks
-Fulcrum to show a workspace or a window, locks the session, and reads and
+Fulcrum to show a workspace or a window, locks the desktop, and reads and
 sets the layout of displays. The requests are a fixed set, and none runs a
 command or loads code. `src/control.rs` serves it.
 
@@ -278,12 +278,12 @@ request below is answered `{"reply":"ok"}` unless the table gives its reply.
 
 | Request | What it does |
 | --- | --- |
-| `{"op":"snapshot"}` | Lists every window with its workspace, the workspace that shows, the window with the keyboard, and whether the session is locked. Its reply: `{"reply":"snapshot","workspace":1,"active":"0x2","locked":false,"windows":[{"id":"0x2","app_id":"foot","title":"~","workspace":1,"attention":false}]}`. `active` is null when no window on the workspace that shows has the keyboard. `attention` marks a window that opened without the keyboard and has not had it since, for the bar to show |
+| `{"op":"snapshot"}` | Lists every window with its workspace, the workspace that shows, the window with the keyboard, and whether the desktop is locked. Its reply: `{"reply":"snapshot","workspace":1,"active":"0x2","locked":false,"windows":[{"id":"0x2","app_id":"foot","title":"~","workspace":1,"attention":false}]}`. `active` is null when no window on the workspace that shows has the keyboard. `attention` marks a window that opened without the keyboard and has not had it since, for the bar to show |
 | `{"op":"focus_workspace","id":2}` | Shows a workspace, from 1 to 9 |
 | `{"op":"focus_window","id":"0x2"}` | Shows a window's workspace, raises the window, and gives it the keyboard |
 | `{"op":"launching"}` | Says the person just started an app from the shell. It changes nothing, since every new window takes the keyboard |
-| `{"op":"lock"}` | Locks the session. It is answered once every display shows the session locked, or after a second where one shows nothing, and the connection is sent nothing in between |
-| `{"op":"unlock"}` | Unlocks the session. Refused where an unlock authority listens |
+| `{"op":"lock"}` | Locks the desktop. It is answered once every display shows it locked, or after a second where one shows nothing, and the connection is sent nothing in between |
+| `{"op":"unlock"}` | Unlocks the desktop. Refused where an unlock authority listens |
 | `{"op":"outputs"}` | Lists each display with its modes. Its reply: `{"reply":"outputs","outputs":[{"name":"HDMI-A-1","identity":"DEL DELL U2723QE ABC1234","width":3840,"height":2160,"refresh":60000,"x":0,"y":0,"scale":150,"modes":[{"width":3840,"height":2160,"refresh":60000}]}]}`. `refresh` is in millihertz and `scale` in 120ths, as fractional scale counts |
 | `{"op":"configure_output","name":"HDMI-A-1","width":2560,"height":1440,"refresh":59951,"x":0,"y":0,"scale":120}` | Sets what it names of a display's mode, place, and scale, and keeps the display's placement for its monitor (`src/layout.rs`). A field it leaves out stays as it is |
 
@@ -293,7 +293,7 @@ Fulcrum also sends the shell events, at any time, which get no reply:
 | --- | --- |
 | `{"event":"snapshot","workspace":2,"active":null,"locked":false,"windows":[]}` | It carries what the snapshot reply does. A connection is sent it once it has stated the version, and again after each turn of the event loop in which something it carries changed, so the bar shows a workspace or a window as it changes, with no asking |
 | `{"event":"launcher"}` | The person tapped Super alone, for the shell to open or close its launcher |
-| `{"event":"locked"}`, `{"event":"unlocked"}` | The session locked or unlocked, whoever asked: Super+L and the idle timer lock it too. A connection that asks is sent the event before its reply |
+| `{"event":"locked"}`, `{"event":"unlocked"}` | The desktop locked or unlocked, whoever asked: Super+L and the idle timer lock it too. A connection that asks is sent the event before its reply |
 
 ADR 0032 accepts these messages.
 
