@@ -647,6 +647,32 @@ def compositor_restarted(out):
         and after[0] not in lines["before"].split() and lines["later"].split() == after
 
 
+# The desktop's services, and how many seconds each must have run. runit
+# starts a service that exits again a second later, so one that cannot start
+# shows as running for a moment, over and over.
+DESKTOP_SERVICES = ("seatd", "crowbar-compositor", "crowbar-shell", "crowbar-launcher",
+                    "crowbar-unlock")
+# One digit: the guest's own pattern for it, in CHECKS, counts on that.
+STAYED_UP = 3
+# The shell's service starts `crowbar-shell-connect`, which waits for the
+# compositor's sockets, for as long as 20 seconds each, and then becomes this
+# program. Until it has, the service is up and the shell is not.
+SHELL_PROGRAM = "/usr/local/bin/crowbaros-shell"
+
+
+def desktop_services_stay_up(out):
+    """Whether the check's output shows each of the desktop's services
+    running, and for at least STAYED_UP seconds, and the shell's service
+    running the shell: `sv status` of the services, then `shell` and the
+    program the shell's service runs."""
+    up = {}
+    for line in out.splitlines():
+        if found := re.match(r"run: /var/service/([^:]+): \(pid \d+\) (\d+)s", line):
+            up[found[1]] = int(found[2])
+    return all(up.get(service, 0) >= STAYED_UP for service in DESKTOP_SERVICES) \
+        and f"shell {SHELL_PROGRAM}" in out.splitlines()
+
+
 # What a booted base must show, as (name, guest command, test on its output).
 CHECKS = [
     ("Void Linux", "cat /etc/os-release",
@@ -709,6 +735,20 @@ CHECKS = [
      "for i in $(seq 50); do a=$(pgrep -u $c | xargs); [ -n \"$a\" ] && [ \"$a\" != \"$b\" ] && break; "
      "sleep 0.2; done; sleep 2; echo \"before $b\"; echo \"after $a\"; echo \"later $(pgrep -u $c | xargs)\"",
      lambda out: compositor_restarted(out)),
+    # After the restart above, which the shell must come back from. Waits
+    # until every service has run for STAYED_UP seconds and the shell's
+    # service runs the shell, for at most 30.
+    ("the desktop's services stay up",
+     "for i in $(seq 150); do "
+     f"o=$(sv status {' '.join('/var/service/' + s for s in DESKTOP_SERVICES)}); "
+     # The program of the process that line of `sv status` names, so the
+     # time it has run and what it runs are one process's.
+     "p=$(echo \"$o\" | sed -n 's|^run: /var/service/crowbar-shell: (pid \\([0-9]*\\)).*|\\1|p'); "
+     "e=$(readlink \"/proc/$p/exe\" 2>/dev/null); "
+     "echo \"$o\" | grep -Evq '^run: [^ ]+ \\(pid [0-9]+\\) "
+     f"([{STAYED_UP}-9]|[0-9]{{2,}})s' || [ \"$e\" != {SHELL_PROGRAM} ] || break; "
+     "sleep 0.2; done; echo \"$o\"; echo \"shell $e\"",
+     lambda out: desktop_services_stay_up(out)),
     ("network has an address", "ip -4 -o addr show scope global",
      lambda out: "inet " in out),
     ("packages keep their groups", "stat -c '%G %n' /usr/bin/wall /var/db/dhcpcd",

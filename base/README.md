@@ -146,8 +146,9 @@ NVIDIA's settings, that NVIDIA's module is built for the running kernel and,
 with no NVIDIA card in the VM, not loaded, that the module is set to save
 video memory across a suspend to `/var/tmp` and that `/var/tmp` is on the
 disk, that restarting the compositor's
-service leaves one new compositor running, and that the kernel logged nothing
-critical.
+service leaves one new compositor running, that `seatd`, the compositor, the
+shell, the launcher, and the unlock helper then stay up and the shell's
+service runs the shell, and that the kernel logged nothing critical.
 
 The lab's two graphical checks boot a copy of this image under UEFI as well.
 The desktop check runs all of these Base boot checks alongside the desktop
