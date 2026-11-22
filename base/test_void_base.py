@@ -111,11 +111,21 @@ class BuildFixture(unittest.TestCase):
         self.commands = []
         self.envs = []
 
+        # What the image step leaves where it was told to write, and whether
+        # it then stops as a failed or interrupted step does.
+        self.image_written = b'the new image'
+        self.image_step_stops = False
+
         def run(*args, **kw):
             self.commands.append([str(a) for a in args])
             self.envs.append(kw.get('env', {}))
+            if any(str(a).endswith('host/image.sh') for a in args):
+                Path(kw['env']['OUT']).write_bytes(self.image_written)
+                if self.image_step_stops:
+                    raise SystemExit('the image step stopped partway')
 
         for name, value in [('WORK', self.work), ('TARGET', self.work / 'target'),
+                            ('BASE_DISK', self.work / 'base.raw'),
                             ('BUILD_ROOT', self.work / 'buildroot'), ('KEY', self.work / 'id_ed25519'),
                             ('ROOTFS', self.work / 'rootfs'), ('run', run),
                             ('install', lambda *args, **kw: None), ('sha256', lambda path: 'digest'),
@@ -194,6 +204,32 @@ class Desktop(BuildFixture):
         script = (Path(void_base.HERE) / 'host/image.sh').read_text()
         self.assertIn('options nvidia $NVIDIA_OPTIONS', script)
         self.assertIn('"$R/etc/modprobe.d/crowbaros-nvidia.conf"', script)
+
+    def test_a_build_that_stops_partway_leaves_the_last_whole_image(self):
+        # The image step writes the disk in several steps. Stopped between
+        # them, it used to leave a part-written disk where `boot` and a
+        # person's `dd` look for the image.
+        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
+        void_base.BASE_DISK.write_bytes(b'the last whole image')
+        self.image_written = b'half of the new image'
+        self.image_step_stops = True
+        with self.assertRaises(SystemExit):
+            void_base.build()
+        self.assertEqual(void_base.BASE_DISK.read_bytes(), b'the last whole image')
+
+    def test_a_first_build_that_stops_partway_leaves_no_image(self):
+        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
+        self.image_step_stops = True
+        with self.assertRaises(SystemExit):
+            void_base.build()
+        self.assertFalse(void_base.BASE_DISK.exists())
+
+    def test_a_finished_build_puts_the_new_image_in_place_of_the_last(self):
+        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
+        void_base.BASE_DISK.write_bytes(b'the last whole image')
+        void_base.build()
+        self.assertEqual(void_base.BASE_DISK.read_bytes(), b'the new image')
+        self.assertEqual([path.name for path in self.work.glob('base.raw*')], ['base.raw'])
 
     def test_the_image_step_gets_each_program_whole(self):
         self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
