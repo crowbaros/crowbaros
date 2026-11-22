@@ -1122,7 +1122,8 @@ CHECKS = [
      f"stat -c 'state %a %u %n' \"$h/{HARNESS_STATE}\" \"$h/{HARNESS_STATE}\"/*; "
      "echo \"on-path $(PATH=$(echo \"$e\" | sed -n 's/^PATH=//p') command -v node npm npx | xargs)\"",
      lambda out: harness_runs_as_the_person(out)),
-    # runit starts a service again a second after it exits, however it ended.
+    # runit starts a service again when it exits, however it ended: at once,
+    # or a second later when it had run for less than a second.
     # Waits for the new Harness's answer, for at most 30 seconds.
     ("the Harness's service starts it again after a kill, and its log records the restart",
      PROBE + HARNESS_PID + PERSON_IN_GUEST
@@ -1192,7 +1193,7 @@ def check():
         passed = result.returncode == 0 and ok(result.stdout)
         failed += not passed
         lines.append(f"{'PASS' if passed else 'FAIL'}: {name}")
-        lines += [f"    $ {command}"] + [f"    {l}" for l in result.stdout.strip().splitlines()]
+        lines += [f"    $ {l}" for l in command.splitlines()] + [f"    {l}" for l in result.stdout.strip().splitlines()]
         if result.stderr.strip():
             lines += [f"    ! {l}" for l in result.stderr.strip().splitlines()]
     stop()

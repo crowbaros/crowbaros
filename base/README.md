@@ -247,7 +247,8 @@ It has no account of its own: it runs as the person.
   `~/.local/state/crowbaros/agent`, readable by the person alone. It makes
   them itself. `/var/log/crowbar-agent.log` holds only what the service's
   script and Node.js itself print.
-- It waits for nothing, and runit starts it again a second after any exit.
+- It waits for nothing. runit starts it again whenever it exits: at once, or
+  a second later when it had run for less than a second.
 
 [`agent/README.md`](../agent/README.md) has the surface socket's framing and
 what the log records.

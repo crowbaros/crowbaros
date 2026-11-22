@@ -1,7 +1,8 @@
 #!/bin/sh
 # The Harness's service (ADR 0034). It starts at boot, whether or not anyone
-# has unlocked, and waits for nothing: runit starts it again a second after
-# any exit. Root makes what the person cannot: their runtime directory, and
+# has unlocked, and waits for nothing. runit starts it again whenever it
+# exits: at once, or a second later when it had run for less than a second.
+# Root makes what the person cannot: their runtime directory, and
 # the directory of the surface socket, which is the person's, so the Harness
 # can bind there, and which only the shell's group may enter besides. A socket
 # made there takes the shell's group. The Harness checks the shell's user ID

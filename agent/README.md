@@ -66,8 +66,10 @@ node dist/harness.mjs --state DIRECTORY --surface-socket PATH --shell-uid USER_I
 Base's `crowbar-agent` service
 ([`base/desktop/agent-run`](../base/desktop/agent-run)) runs it as the person,
 in the environment the launcher gives an app, starting in their home, with
-its state in `~/.local/state/crowbaros/agent`. runit starts it again a second
-after any exit.
+its state in `~/.local/state/crowbaros/agent`. runit starts it again whenever
+it exits: at once, or a second later when it had run for less than a second.
+The [footprint record](../docs/research/harness-footprint-2026-11-22.md) has
+its memory and its start time in the VM.
 
 Told to stop with SIGTERM or SIGINT, it takes no new connection, closes the
 database, removes its socket, and exits with status 0. An error it cannot go
