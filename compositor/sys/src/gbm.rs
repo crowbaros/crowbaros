@@ -178,6 +178,17 @@ impl Device {
     }
 }
 
+#[cfg(test)]
+impl Device {
+    /// A linear buffer for a test, for rendering where the driver makes one.
+    /// NVIDIA's GBM makes no buffer that is both linear and for rendering,
+    /// and answers `EINVAL`; there the buffer is linear alone.
+    pub(crate) fn create_linear_buffer(&self, width: u32, height: u32, format: u32) -> io::Result<Buffer> {
+        self.create_buffer(width, height, format, &[], USE_RENDERING | USE_LINEAR)
+            .or_else(|_| self.create_buffer(width, height, format, &[], USE_LINEAR))
+    }
+}
+
 impl Buffer {
     fn functions(&self) -> &'static Functions {
         self.device.0.functions
@@ -263,9 +274,7 @@ mod tests {
             return;
         };
         let format = u32::from_le_bytes(*b"XR24");
-        let buffer = device
-            .create_buffer(64, 32, format, &[], USE_RENDERING | USE_LINEAR)
-            .unwrap();
+        let buffer = device.create_linear_buffer(64, 32, format).unwrap();
         let planes = buffer.planes();
         assert_eq!(planes.len(), 1);
         assert!(planes[0].stride >= 64 * 4);
