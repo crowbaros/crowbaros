@@ -16,6 +16,7 @@ The [Fedora workflow](../archive/fedora-workflow/README.md) is archived.
 | [NVIDIA suspend record](../research/nvidia-suspend-2026-11-21.md) | Base's image keeping NVIDIA's video memory across suspend, on the RTX 5060 machine |
 | [Still desktop on the RTX 5060](../research/rtx-5060-still-desktop-2026-11-21.md) | A still desktop, locked and unlocked, drawing one frame a minute on the RTX 5060 machine |
 | [Radeon 610M, after the fixes](../research/radeon-610m-rerun-2026-11-21.md) | The integrated Radeon again on `main` with the fixes: a still desktop, which GPU each app draws on, the monitor unplugged, and locked across suspend |
+| [The Harness's footprint](../research/harness-footprint-2026-11-22.md) | The idle Harness's memory and its time from start to answering on its surface socket, under runit in the VM, against ADR 0034's limits |
 | [NVIDIA/DRM record](../research/compositor-nvidia-2026-11-15.md) | GPUI and compositor on Void hardware, resize, and suspend/resume |
 | [shell validation](shell-validation-2026-11-14.md) | Historical shell behavior checks and captures |
 | [Settings validation](studio-settings-validation-2026-11-14.md) | Historical persistence, input, and visual checks |
