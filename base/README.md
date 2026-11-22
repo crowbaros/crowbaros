@@ -238,7 +238,10 @@ It has no account of its own: it runs as the person.
   and `/run/crowbar-agent`, the directory of the surface socket. That
   directory is the person's, so the Harness can bind there, with the shell's
   group and mode 2750, so the shell's account is the only other one that can
-  enter. The Harness serves the shell's UID alone, and refuses root.
+  enter. The Harness serves the shell's UID alone, and refuses root. A
+  program running as the person can enter as the Harness does, and could put
+  a socket of its own there: ADR 0034 accepts that such a program can pose as
+  the Harness.
 - It then becomes the person with `chpst`, with all their groups, and runs
   `/usr/local/lib/crowbar-agent/node` on the bundle through
   `crowbar-launcher as-app`, which gives it the environment the launcher gives

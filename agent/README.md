@@ -130,6 +130,14 @@ read nothing and sent nothing. In Base the socket is
 by the person so the Harness can bind there, with the shell's group and mode
 2750, so the shell's account is the only other one that can enter.
 
+The person's own programs can enter it too, since the Harness is one of them.
+One of them that connects is refused by its user ID. One of them can also
+remove the socket and bind its own there, and the shell would then be talking
+to it: the shell takes what the surface socket sends as the person's, never
+as the system's. [ADR 0034](../docs/adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)
+chose this when it ran the Harness as the person: any program running as the
+person can pose as the Harness, and nothing that needs a yes rests on it.
+
 Node.js has no call for a peer's user ID. `src/peer.ts` asks through
 `node:ffi`, which Node.js 26 marks experimental: it calls the C library's
 `getsockopt` in the process itself, so there is no native addon to build and
