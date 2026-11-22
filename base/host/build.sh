@@ -7,7 +7,8 @@
 # PROJECTS (what to build: `path:subdir` for each, where `subdir` is the part
 # of TARGET that project builds in, or nothing for TARGET itself),
 # CARGO_REGISTRY and CARGO_GIT (the host's downloaded crates; the build is
-# offline and takes exactly what Cargo.lock names).
+# offline and takes exactly what Cargo.lock names). CARGO_BUILD_JOBS, if set,
+# limits how many jobs Cargo runs at once; unset, it runs one for each CPU.
 set -eu
 mount --make-rslave /
 mkdir -p "$B/src" "$B/target" "$B/cargo/registry" "$B/cargo/git"
@@ -18,7 +19,7 @@ mount --bind "$TARGET" "$B/target"
 mount --bind "$CARGO_REGISTRY" "$B/cargo/registry"
 mount --bind "$CARGO_GIT" "$B/cargo/git"
 chroot "$B" /usr/bin/env -i HOME=/root PATH=/usr/bin:/usr/sbin \
-  CARGO_HOME=/cargo CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-3}" PROJECTS="$PROJECTS" \
+  CARGO_HOME=/cargo ${CARGO_BUILD_JOBS:+CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS"} PROJECTS="$PROJECTS" \
   sh -ec '
     rustc --version
     for entry in $PROJECTS; do

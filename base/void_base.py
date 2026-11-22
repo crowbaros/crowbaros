@@ -34,6 +34,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 
 HERE = Path(__file__).resolve().parent
@@ -833,9 +834,26 @@ def check():
                           capture_output=True).stdout.strip()
     preflight(vm=True, build=True)
     build(force=False, lab_account=True)
+    # The image is hashed while its copy boots: the guest writes only the
+    # copy, and hashing 8 GB takes as long as the boot does.
+    hashed = {}
+
+    def hash_image():
+        try:
+            hashed["sha256"] = sha256(BASE_DISK)
+        except OSError as error:
+            hashed["error"] = error
+    # A daemon, so a boot that fails, or a person's Ctrl-C, does not wait
+    # for the rest of the hash.
+    hashing = threading.Thread(target=hash_image, daemon=True)
+    hashing.start()
     to_login = boot()
+    hashing.join()
+    if "error" in hashed:
+        stop()
+        raise SystemExit(f"Could not hash {BASE_DISK}: {hashed['error']}")
     lines = [f"CrowbarOS base boot check, {stamp}, commit {head}",
-             f"disk sha256 {sha256(BASE_DISK)}", f"login prompt after {to_login:.1f}s", ""]
+             f"disk sha256 {hashed['sha256']}", f"login prompt after {to_login:.1f}s", ""]
     failed = 0
     for name, user, command, ok in boot_checks():
         result = ssh(command, user=user)
