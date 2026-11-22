@@ -2,7 +2,7 @@
 // error, in a file the person alone can read. It never holds what a
 // conversation says or what an act printed: callers pass it events and the
 // IDs, counts, and paths that go with them, and nothing they were sent.
-import { closeSync, fchmodSync, fstatSync, openSync, renameSync, writeSync } from "node:fs";
+import { closeSync, fchmodSync, fstatSync, ftruncateSync, openSync, renameSync, writeSync } from "node:fs";
 
 /**
  * A line that would take the log past this size is written to a new log, and
@@ -33,7 +33,13 @@ export class Log {
 		return file;
 	}
 
-	/** One line: the time in UTC, the event, and its details. Written before this returns. */
+	/**
+	 * One line: the time in UTC, the event, and its details. Written before
+	 * this returns, and whole: the kernel may take part of a line, as when
+	 * the disk is nearly full, so the rest is written after it, and a line
+	 * that cannot all be written is taken out again before the error is
+	 * thrown.
+	 */
 	write(event: Event, details: string): void {
 		const line = Buffer.from(`${new Date().toISOString()} ${event}: ${details.replaceAll("\n", "\n    ")}\n`);
 		if (this.#size > 0 && this.#size + line.length > MAX_LOG) {
@@ -42,7 +48,12 @@ export class Log {
 			this.#file = this.#open();
 			this.#size = 0;
 		}
-		writeSync(this.#file, line);
+		try {
+			for (let written = 0; written < line.length; ) written += writeSync(this.#file, line, written);
+		} catch (error) {
+			ftruncateSync(this.#file, this.#size);
+			throw error;
+		}
 		this.#size += line.length;
 	}
 

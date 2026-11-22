@@ -227,6 +227,16 @@ says. Nothing in the desktop runs as root to start an app.
   which checks it against the account with UID 1003 in `/etc/shadow` and only
   then tells the compositor to unlock. zzz's suspend hook locks the desktop through the same helper.
 
+Apps reach the compositor at one ordinary Wayland socket, in a directory only
+the compositor and the person's group may enter, and the compositor takes only
+the person's UID there. The launcher links it into the person's runtime
+directory, `/run/user/1003`, as `wayland-0`, the `WAYLAND_DISPLAY` every app
+gets, so any Wayland app from Void runs as it is. Apps and the shell share one
+clipboard, and a new window takes the keyboard, as on any desktop. The shell reads saved appearance
+through a read-only request to the launcher, and Studio Settings keeps its
+preferences in the person's home. The compositor has no animations, so Studio
+Settings saves the motion preference and says it has no effect here.
+
 ## The Harness's service
 
 `crowbar-agent` ([`desktop/agent-run`](desktop/agent-run)) runs the Harness
@@ -240,8 +250,8 @@ It has no account of its own: it runs as the person.
   group and mode 2750, so the shell's account is the only other one that can
   enter. The Harness serves the shell's UID alone, and refuses root. A
   program running as the person can enter as the Harness does, and could put
-  a socket of its own there: ADR 0034 accepts that such a program can pose as
-  the Harness.
+  a socket of its own there. That follows from ADR 0034 running the Harness
+  as the person, with no isolation inside their account.
 - It then becomes the person with `chpst`, with all their groups, and runs
   `/usr/local/lib/crowbar-agent/node` on the bundle through
   `crowbar-launcher as-app`, which gives it the environment the launcher gives
@@ -256,16 +266,6 @@ It has no account of its own: it runs as the person.
 
 [`agent/README.md`](../agent/README.md) has the surface socket's framing and
 what the log records.
-
-Apps reach the compositor at one ordinary Wayland socket, in a directory only
-the compositor and the person's group may enter, and the compositor takes only
-the person's UID there. The launcher links it into the person's runtime
-directory, `/run/user/1003`, as `wayland-0`, the `WAYLAND_DISPLAY` every app
-gets, so any Wayland app from Void runs as it is. Apps and the shell share one
-clipboard, and a new window takes the keyboard, as on any desktop. The shell reads saved appearance
-through a read-only request to the launcher, and Studio Settings keeps its
-preferences in the person's home. The compositor has no animations, so Studio
-Settings saves the motion preference and says it has no effect here.
 
 ## The person's account
 

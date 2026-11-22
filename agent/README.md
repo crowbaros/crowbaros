@@ -50,7 +50,11 @@ process, as Base's service does, talks to it over a real socket in a
 temporary directory, and reads its log, its files, and how it exits. They
 write frames out by hand, so they do not check the framing against the code
 that frames. None names a Pi Durable type. They need no root: the user ID
-that runs them stands for the shell's.
+that runs them stands for the shell's. A few faults cannot be caused from
+outside the process: a stop at the moment the socket starts to listen, an
+error on the listening socket, a write the kernel takes only part of. For
+those, a test has Node.js load `test/faults.ts` ahead of the bundle, which
+causes the one fault the test names. The Harness never loads it.
 
 ## Running it
 

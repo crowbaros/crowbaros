@@ -49,8 +49,12 @@ async function main(options: Options): Promise<void> {
 	chmodSync(options.state, 0o700);
 	const log = new Log(join(options.state, "harness.log"));
 	const fail = (error: unknown) => {
-		log.error(error);
-		process.exit(1);
+		// Status 1 even when the log itself is what failed.
+		try {
+			log.error(error);
+		} finally {
+			process.exit(1);
+		}
 	};
 	process.on("uncaughtException", fail);
 	process.on("unhandledRejection", fail);
@@ -62,19 +66,22 @@ async function main(options: Options): Promise<void> {
 			log.write("restart", `the Harness before this one, process ${before}, ended without stopping`);
 		}
 		// Told to stop before it listens, it has nothing to close, and has
-		// stopped all the same: the next start is no restart.
-		const stopEarly = (signal: NodeJS.Signals) => {
+		// stopped all the same: the next start is no restart. One listener
+		// for each signal stays from here on, and what it does changes once
+		// the Harness listens: taking a listener off drops a signal that
+		// has come and not yet been handled.
+		let stop: (signal: NodeJS.Signals) => void = (signal) => {
 			rmSync(marker, { force: true });
 			log.write("stop", signal);
 			process.exit(0);
 		};
-		process.on("SIGTERM", stopEarly);
-		process.on("SIGINT", stopEarly);
+		process.on("SIGTERM", (signal) => stop(signal));
+		process.on("SIGINT", (signal) => stop(signal));
 		writeFileSync(marker, `${process.pid}\n`, { mode: 0o600 });
 		chmodSync(marker, 0o600);
-		const store = await openStore(join(options.state, "harness.sqlite"));
 		// A Harness that was killed leaves its socket behind.
 		if (lstatSync(options.surfaceSocket, { throwIfNoEntry: false })?.isSocket()) rmSync(options.surfaceSocket);
+		const store = await openStore(join(options.state, "harness.sqlite"));
 		const surface = await listen(options.surfaceSocket, options.shellUid, (what) => log.write("connection", what));
 		// The owner and the group. Base gives the socket's directory the
 		// shell's group, and the peer's user ID is the check that counts.
@@ -87,7 +94,7 @@ async function main(options: Options): Promise<void> {
 		// Told to stop, as runit does: no new connection is taken, the
 		// database is closed with all it was given, and the socket is gone.
 		let stopping = false;
-		const stop = (signal: NodeJS.Signals) => {
+		stop = (signal) => {
 			if (stopping) return;
 			stopping = true;
 			surface.close();
@@ -97,10 +104,6 @@ async function main(options: Options): Promise<void> {
 				process.exit(0);
 			}, fail);
 		};
-		for (const signal of ["SIGTERM", "SIGINT"] as const) {
-			process.off(signal, stopEarly);
-			process.on(signal, stop);
-		}
 	} catch (error) {
 		fail(error);
 	}

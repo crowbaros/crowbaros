@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { dial, heard, launch, OWN_UID, scratch, sleep, start, VERSION_FRAME } from "./harness.ts";
+import { dial, ended, heard, launch, OWN_UID, scratch, sleep, start, VERSION_FRAME } from "./harness.ts";
 
 /** A file's permission bits. */
 function mode(path: string): number {
@@ -108,6 +108,14 @@ test("told to stop, the Harness stops, and the log says so", async (t) => {
 	assert.match(lines.at(-1) ?? "", /^listening: /);
 });
 
+test("told to stop at the moment it starts to listen, the Harness stops, and the log says so", async (t) => {
+	const harness = launch(t, scratch(t), { fault: "stopped as it listens" });
+	assert.equal(await ended(harness), 0, harness.output());
+	assert.equal(logged(harness.state).at(-1), "stop: SIGTERM");
+	assert.equal(existsSync(harness.socket), false, "the socket is left behind");
+	assert.equal(existsSync(join(harness.state, "running")), false, "the next start would be logged as a restart");
+});
+
 test("a Harness that was killed starts again on the same state, and the log records the restart", async (t) => {
 	const directory = scratch(t);
 	const killed = await start(t, directory);
@@ -131,6 +139,26 @@ test("an error ends the Harness, and the log records it", async (t) => {
 	const harness = launch(t, directory, { socket: join(directory, "missing", "surface") });
 	assert.equal(await harness.exited, 1);
 	assert.match(logged(harness.state).join("\n"), /^error: Error: listen E[A-Z]+: .*missing\/surface$/m);
+});
+
+test("an error on the socket once it listens ends the Harness, and the log records it", async (t) => {
+	const harness = launch(t, scratch(t), { fault: "the listening socket fails" });
+	assert.equal(await ended(harness), 1, harness.output());
+	assert.match(logged(harness.state).join("\n"), /^error: Error: the listening socket failed$/m);
+});
+
+test("a log line the kernel takes in part is written whole", async (t) => {
+	const harness = await start(t, scratch(t), { fault: "a write is taken in part" });
+	// `logged` takes no line that does not start with a time.
+	const lines = logged(harness.state);
+	assert.match(lines[0] ?? "", new RegExp(`^start: process ${harness.process.pid}, Pi Durable`));
+	assert.match(lines[1] ?? "", /^listening: /);
+});
+
+test("a log line that cannot all be written is taken out again, and the log goes on from the line before", async (t) => {
+	const harness = launch(t, scratch(t), { fault: "a write is taken in part, and the next fails" });
+	assert.equal(await ended(harness), 1, harness.output());
+	assert.deepEqual(logged(harness.state), ["error: Error: ENOSPC: no space left on device, write"]);
 });
 
 test("started with anything but its options, the Harness says how it is used and keeps nothing", async (t) => {
@@ -170,7 +198,7 @@ test("a log that reaches 4 MiB while the Harness runs is set aside, and the Harn
 	const state = join(directory, "state");
 	mkdirSync(state);
 	const log = join(state, "harness.log");
-	// Room for the start and for listening, and for no connection after them.
+	// Room for the start, for listening, and for a peer or two after them.
 	writeFileSync(log, "the log so far\n".padEnd(4 * 1024 * 1024 - 400, "."));
 	writeFileSync(join(state, "harness.log.1"), "the log before the last\n");
 	const harness = await start(t, directory, { shellUid: OWN_UID + 1 });
@@ -186,4 +214,14 @@ test("a log that reaches 4 MiB while the Harness runs is set aside, and the Harn
 	const refused = (text: string) => text.split("connection: refused user ID").length - 1;
 	assert.ok(refused(readFileSync(log, "utf8")) > 0, "the new log holds no connection");
 	assert.equal(refused(aside) + refused(readFileSync(log, "utf8")), 9);
+});
+
+test("a log that cannot be set aside ends the Harness with status 1", async (t) => {
+	const directory = scratch(t);
+	const state = join(directory, "state");
+	// A directory where the log before the last goes: the log cannot be renamed onto it.
+	mkdirSync(join(state, "harness.log.1", "in the way"), { recursive: true });
+	writeFileSync(join(state, "harness.log"), "the last log\n".padEnd(4 * 1024 * 1024, "."));
+	const harness = launch(t, directory);
+	assert.equal(await ended(harness), 1, harness.output());
 });

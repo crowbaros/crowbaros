@@ -13,6 +13,16 @@ import { fileURLToPath } from "node:url";
 /** The one file Base's build puts in the image. */
 export const BUNDLE = fileURLToPath(new URL("../dist/harness.mjs", import.meta.url));
 
+/** What a test loads into the Harness's process to cause a fault nothing outside it can. */
+const FAULTS = fileURLToPath(new URL("./faults.ts", import.meta.url));
+
+/** The faults faults.ts causes. */
+export type Fault =
+	| "stopped as it listens"
+	| "the listening socket fails"
+	| "a write is taken in part"
+	| "a write is taken in part, and the next fails";
+
 /** The user ID the tests run as, which stands for the shell's unless a test says otherwise. */
 export const OWN_UID = userInfo().uid;
 
@@ -37,11 +47,14 @@ export function scratch(t: TestContext): string {
 	return directory;
 }
 
-/** Starts the bundled Harness in `directory`, taking `shellUid` for the shell's user ID. */
+/**
+ * Starts the bundled Harness in `directory`, taking `shellUid` for the
+ * shell's user ID, with `fault` caused in its process if one is named.
+ */
 export function launch(
 	t: TestContext,
 	directory: string,
-	options: { shellUid?: number; umask?: number; socket?: string; args?: string[] } = {},
+	options: { shellUid?: number; umask?: number; socket?: string; args?: string[]; fault?: Fault } = {},
 ): Running {
 	const state = join(directory, "state");
 	const socket = options.socket ?? join(directory, "surface");
@@ -49,7 +62,11 @@ export function launch(
 		"--state", state, "--surface-socket", socket, "--shell-uid", String(options.shellUid ?? OWN_UID),
 	];
 	const before = process.umask(options.umask ?? 0o022);
-	const child = spawn(process.execPath, [BUNDLE, ...args], { cwd: directory, stdio: ["ignore", "pipe", "pipe"] });
+	const child = spawn(process.execPath, [...(options.fault ? ["--import", FAULTS] : []), BUNDLE, ...args], {
+		cwd: directory,
+		stdio: ["ignore", "pipe", "pipe"],
+		env: { ...process.env, ...(options.fault ? { HARNESS_TEST_FAULT: options.fault } : {}) },
+	});
 	process.umask(before);
 	let output = "";
 	child.stdout.on("data", (chunk) => (output += chunk));
@@ -68,7 +85,7 @@ export function launch(
 export async function start(
 	t: TestContext,
 	directory: string,
-	options: { shellUid?: number; umask?: number } = {},
+	options: { shellUid?: number; umask?: number; fault?: Fault } = {},
 ): Promise<Running> {
 	const running = launch(t, directory, options);
 	const deadline = Date.now() + 10_000;
@@ -86,6 +103,11 @@ export async function start(
 
 export function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** How the Harness ended, or "still running" if it has not within 10 seconds. */
+export function ended(running: Running): Promise<number | NodeJS.Signals | "still running"> {
+	return Promise.race([running.exited, sleep(10_000).then(() => "still running" as const)]);
 }
 
 /** A connection to a socket, once it is made. */

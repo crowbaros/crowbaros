@@ -76,6 +76,7 @@ sides hold.
 | --- | --- | --- |
 | The compositor check or guest driver in `lab/void/` | `lab/void/compositor_check.py` | The evidence log it writes |
 | The desktop: how `base/` builds or runs the compositor, the shell, or the apps, or the desktop check or guest driver in `lab/void/` | `lab/void/desktop_check.py` | The run's `desktop.log` and `results.json` |
+| The version of Pi Durable or Node.js the Harness runs on ([ADR 0034](docs/adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)) | `lab/void/desktop_check.py` | The run's `desktop.log` and `results.json` |
 | How the compositor serves clients: [`compositor/`](compositor/README.md) | `lab/void/compositor_check.py` | The evidence log it writes |
 | `apps/` | The app's Void build and run steps in its README | Before and after captures; a short recording for motion |
 
@@ -87,8 +88,8 @@ sides hold.
 - When `main` moves while your check runs, rebase, but run the check again only
   if what landed touches a path that check covers. The compositor check covers
   `base/`, `lab/void/`, and `compositor/`. The desktop check covers `base/`,
-  `lab/void/`, `compositor/`, and `apps/`. To see what landed, give the `main`
-  commit your branch sat on when you ran the check:
+  `lab/void/`, `compositor/`, `apps/`, and `agent/`. To see what landed, give
+  the `main` commit your branch sat on when you ran the check:
   `git diff --stat <that commit>..origin/main -- <the paths>`. If it prints
   nothing, the evidence stands. Say in the pull request which `main` commit it
   ran on.

@@ -29,14 +29,18 @@ export class FrameReader {
 	}
 
 	/**
-	 * Each frame these bytes complete, without its length, one at a time.
-	 * Throws `FrameTooLong` as soon as a length over the limit is reached,
-	 * before any of that frame is kept, and after every frame before it has
-	 * been given: what a peer is answered does not depend on how its bytes
-	 * were split.
+	 * Takes these bytes, and gives each frame they complete, without its
+	 * length, one at a time. Giving them throws `FrameTooLong` as soon as a
+	 * length over the limit is reached, before any of that frame is kept,
+	 * and after every frame before it has been given: what a peer is
+	 * answered does not depend on how its bytes were split.
 	 */
-	*read(bytes: Buffer): Generator<Buffer, void, void> {
+	read(bytes: Buffer): Generator<Buffer, void, void> {
 		this.#waiting = Buffer.concat([this.#waiting, bytes]);
+		return this.#frames();
+	}
+
+	*#frames(): Generator<Buffer, void, void> {
 		while (this.#waiting.length >= 4) {
 			const length = this.#waiting.readUInt32BE(0);
 			if (length > this.#limit) throw new FrameTooLong(length, this.#limit);
