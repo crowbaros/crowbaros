@@ -51,8 +51,9 @@ temporary directory, and reads its log, its files, and how it exits. They
 write frames out by hand, so they do not check the framing against the code
 that frames. None names a Pi Durable type. They need no root: the user ID
 that runs them stands for the shell's. A few faults cannot be caused from
-outside the process: a stop at the moment the socket starts to listen, an
-error on the listening socket, a write the kernel takes only part of. For
+outside the process: a stop before the socket listens or at the moment it
+starts to, an error on the listening socket, a write the kernel takes only
+part of. For
 those, a test has Node.js load `test/faults.ts` ahead of the bundle, which
 causes the one fault the test names. The Harness never loads it.
 
@@ -77,7 +78,9 @@ its memory and its start time in the VM.
 
 Told to stop with SIGTERM or SIGINT, it takes no new connection, closes the
 database, removes its socket, and exits with status 0. An error it cannot go
-on from is logged, and it exits with status 1.
+on from is logged, and it exits with status 1. When the log is what failed,
+it prints the error, and Base's service keeps that in
+`/var/log/crowbar-agent.log`.
 
 ## State
 
@@ -138,9 +141,11 @@ The person's own programs can enter it too, since the Harness is one of them.
 One of them that connects is refused by its user ID. One of them can also
 remove the socket and bind its own there, and the shell would then be talking
 to it: the shell takes what the surface socket sends as the person's, never
-as the system's. [ADR 0034](../docs/adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)
-chose this when it ran the Harness as the person: any program running as the
-person can pose as the Harness, and nothing that needs a yes rests on it.
+as the system's. That follows from
+[ADR 0034](../docs/adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)
+running the Harness as the person, with no isolation inside their account.
+The [spec](https://github.com/crowbaros/crowbaros/issues/291) gives the
+surface socket no message that answers an ask, so no yes rests on it.
 
 Node.js has no call for a peer's user ID. `src/peer.ts` asks through
 `node:ffi`, which Node.js 26 marks experimental: it calls the C library's

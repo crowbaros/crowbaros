@@ -49,9 +49,12 @@ async function main(options: Options): Promise<void> {
 	chmodSync(options.state, 0o700);
 	const log = new Log(join(options.state, "harness.log"));
 	const fail = (error: unknown) => {
-		// Status 1 even when the log itself is what failed.
+		// Status 1 even when the log itself is what failed, and then both
+		// errors go where Base's service keeps what the process prints.
 		try {
 			log.error(error);
+		} catch (logging) {
+			console.error(error, logging);
 		} finally {
 			process.exit(1);
 		}

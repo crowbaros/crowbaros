@@ -108,12 +108,20 @@ test("told to stop, the Harness stops, and the log says so", async (t) => {
 	assert.match(lines.at(-1) ?? "", /^listening: /);
 });
 
-test("told to stop at the moment it starts to listen, the Harness stops, and the log says so", async (t) => {
-	const harness = launch(t, scratch(t), { fault: "stopped as it listens" });
-	assert.equal(await ended(harness), 0, harness.output());
-	assert.equal(logged(harness.state).at(-1), "stop: SIGTERM");
-	assert.equal(existsSync(harness.socket), false, "the socket is left behind");
-	assert.equal(existsSync(join(harness.state, "running")), false, "the next start would be logged as a restart");
+test("told to stop before it listens, or at the moment it starts to, the Harness stops, and the log says so", async (t) => {
+	for (const fault of ["stopped before it listens", "stopped as it listens"] as const) {
+		const directory = scratch(t);
+		const harness = launch(t, directory, { fault });
+		assert.equal(await ended(harness), 0, `${fault}: ${harness.output()}`);
+		const lines = logged(harness.state);
+		assert.equal(lines.at(-1), "stop: SIGTERM", fault);
+		assert.equal(lines.some((line) => line.startsWith("listening: ")), fault === "stopped as it listens", fault);
+		assert.equal(existsSync(harness.socket), false, `${fault}: the socket is left behind`);
+
+		// The start after it is a start, and no restart.
+		const next = await start(t, directory);
+		assert.equal(logged(next.state).some((line) => line.startsWith("restart: ")), false, fault);
+	}
 });
 
 test("a Harness that was killed starts again on the same state, and the log records the restart", async (t) => {
@@ -224,4 +232,6 @@ test("a log that cannot be set aside ends the Harness with status 1", async (t) 
 	writeFileSync(join(state, "harness.log"), "the last log\n".padEnd(4 * 1024 * 1024, "."));
 	const harness = launch(t, directory);
 	assert.equal(await ended(harness), 1, harness.output());
+	// Its own log cannot say why, so what it prints does: Base keeps that in the service's log.
+	assert.match(harness.output(), /rename .*harness\.log.* -> .*harness\.log\.1/);
 });

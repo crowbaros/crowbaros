@@ -18,6 +18,7 @@ const FAULTS = fileURLToPath(new URL("./faults.ts", import.meta.url));
 
 /** The faults faults.ts causes. */
 export type Fault =
+	| "stopped before it listens"
 	| "stopped as it listens"
 	| "the listening socket fails"
 	| "a write is taken in part"
@@ -107,7 +108,13 @@ export function sleep(ms: number): Promise<void> {
 
 /** How the Harness ended, or "still running" if it has not within 10 seconds. */
 export function ended(running: Running): Promise<number | NodeJS.Signals | "still running"> {
-	return Promise.race([running.exited, sleep(10_000).then(() => "still running" as const)]);
+	return new Promise((resolve) => {
+		const timer = setTimeout(resolve, 10_000, "still running");
+		running.exited.then((how) => {
+			clearTimeout(timer);
+			resolve(how);
+		});
+	});
 }
 
 /** A connection to a socket, once it is made. */

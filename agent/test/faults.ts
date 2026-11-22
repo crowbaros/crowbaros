@@ -36,7 +36,20 @@ function writeInPart(thenFails: boolean): void {
 	syncBuiltinESMExports();
 }
 
+/** Runs `then` once the Harness has left its `running` marker, which it does before it listens. */
+function onceItIsMarked(then: () => void): void {
+	const writeFileSync = fs.writeFileSync;
+	fs.writeFileSync = ((...args: Parameters<typeof fs.writeFileSync>) => {
+		writeFileSync(...args);
+		if (String(args[0]).endsWith("/running")) then();
+	}) as typeof fs.writeFileSync;
+	syncBuiltinESMExports();
+}
+
 switch (fault) {
+	case "stopped before it listens":
+		onceItIsMarked(() => process.kill(process.pid, "SIGTERM"));
+		break;
 	case "stopped as it listens":
 		asItListens(() => process.kill(process.pid, "SIGTERM"));
 		break;
