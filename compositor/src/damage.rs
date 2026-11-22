@@ -118,6 +118,13 @@ fn onto(damaged: &Rect, size: (i32, i32), rect: &Rect) -> Rect {
     if size.0 <= 0 || size.1 <= 0 {
         return *rect;
     }
+    // Cut to the surface first. A client may damage up to `i32::MAX` each
+    // way, as many do to say "all of it", and that is more than the sums
+    // below can hold.
+    let damaged = damaged.intersection(&Rect::new(0, 0, size.0, size.1));
+    if damaged.is_empty() {
+        return Rect::default();
+    }
     let (sx, sy) = (i64::from(rect.width), i64::from(rect.height));
     let (w, h) = (i64::from(size.0), i64::from(size.1));
     let down = |value: i64, scale: i64, of: i64| (value * scale).div_euclid(of);
@@ -203,6 +210,30 @@ mod tests {
     /// Commits that do not say what they damaged.
     fn whole_surfaces(_: u64, _: u64) -> Damaged {
         None
+    }
+
+    #[test]
+    fn damage_far_past_the_surfaces_edge_is_cut_to_the_surface() {
+        // A window away from the output's corner, at its own size and
+        // stretched: the client's rectangle reaches `i32::MAX`.
+        for (size, a) in [
+            ((200, 100), Rect::new(100, 100, 200, 100)),
+            ((200, 100), Rect::new(100, 100, 300, 150)),
+        ] {
+            for damaged in [
+                Rect::new(0, 0, i32::MAX, i32::MAX),
+                Rect::new(-5, -5, i32::MAX, i32::MAX),
+                Rect::new(i32::MIN + 300, i32::MIN + 300, i32::MAX, i32::MAX),
+            ] {
+                let since = move |_: u64, _: u64| Some((vec![damaged], size));
+                let damage = changed(&[surface(1, a, 4)], &[surface(1, a, 5)], &since);
+                assert_eq!(simplify(damage, OUTPUT), [a], "{damaged:?} at {a:?}: all of the window");
+            }
+            // One wholly past the far corner damages nothing.
+            let since = move |_: u64, _: u64| Some((vec![Rect::new(i32::MAX, i32::MAX, i32::MAX, i32::MAX)], size));
+            let damage = changed(&[surface(1, a, 4)], &[surface(1, a, 5)], &since);
+            assert_eq!(simplify(damage, OUTPUT), [], "past the corner");
+        }
     }
 
     #[test]
