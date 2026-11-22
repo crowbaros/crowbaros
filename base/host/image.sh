@@ -6,7 +6,8 @@
 #       the path any UEFI firmware boots with no boot entry
 #   p2  Btrfs, label $ROOT_LABEL: the Void root; GRUB reads /boot/grub/grub.cfg here
 #
-# Inputs: ROOTFS WORK OUT PUBKEY HOSTNAME ROOT_LABEL ESP_LABEL ESP_MIB ROOT_GIB,
+# Inputs: ROOTFS WORK OUT (void_base.py moves the disk from there into place
+# once this script has finished it) PUBKEY HOSTNAME ROOT_LABEL ESP_LABEL ESP_MIB ROOT_GIB,
 # KVER (the kernel to boot, which void_base.py checked), KERNEL_ARGS (added to
 # the kernel's command line), NVIDIA_OPTIONS (for NVIDIA's `nvidia` module),
 # and for the desktop DESKTOP (base/desktop) and REPO_ROOT. The person's
@@ -183,4 +184,3 @@ dd if="$WORK/esp.img" of="$OUT" bs=1M seek=1 conv=notrunc,sparse status=none
 dd if="$WORK/root.img" of="$OUT" bs=1M seek=$((1 + ESP_MIB)) conv=notrunc,sparse status=none
 rm -f "$WORK/esp.img" "$WORK/root.img"
 rm -rf "$R"
-echo "Built $OUT with kernel $KVER"

@@ -123,7 +123,9 @@ The first `build` on a machine downloads the packages for both roots, and
 compiles the desktop. It shows each install as it goes, and keeps a copy in
 `.lab/base/rootfs.log` and `.lab/base/buildroot.log`. If a build stops partway,
 the next `build` installs that root again: it uses a root only after an install
-of the configured packages finished.
+of the configured packages finished. The image is the same: `build` writes it
+to `.lab/base/base.raw.part` and moves it to `.lab/base/base.raw` once it is
+whole, so a build that stops leaves the last whole image there, or none.
 
 ## What it checks
 

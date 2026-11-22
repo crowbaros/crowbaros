@@ -405,7 +405,12 @@ def build(force=False, lab_account=False):
     xbps = fetch() if lab_packages else None
     if not KEY.exists():
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "crowbaros-base", "-f", KEY)
-    env = dict(os.environ, ROOTFS=str(ROOTFS), WORK=str(WORK), OUT=str(BASE_DISK),
+    # The image is written beside its place and moved there only when it is
+    # whole, so a build that stops partway leaves the last whole image, or
+    # none, where `boot` and a person's `dd` look for one.
+    part = BASE_DISK.with_name(BASE_DISK.name + ".part")
+    part.unlink(missing_ok=True)
+    env = dict(os.environ, ROOTFS=str(ROOTFS), WORK=str(WORK), OUT=str(part),
                PUBKEY=str(KEY) + ".pub", HOSTNAME=CFG["hostname"],
                ROOT_LABEL=CFG["root_label"], ESP_LABEL=CFG["esp_label"],
                ESP_MIB=str(CFG["esp_mib"]), ROOT_GIB=str(CFG["root_gib"]),
@@ -418,6 +423,8 @@ def build(force=False, lab_account=False):
                LAB_PACKAGES=" ".join(lab_packages), XBPS=str(xbps / "usr/bin") if xbps else "",
                REPOS=REPOSITORY, PKGCACHE=str(CACHE / "packages"))
     run(*userns(), "--mount", "sh", HERE / "host/image.sh", *binaries().values(), env=env)
+    part.replace(BASE_DISK)
+    print(f"Built {BASE_DISK} with kernel {env['KVER']}")
     lab = " (the lab account; see the warning above)" if account["password"] else ""
     print(f"The image's person's account is `{account['name']}`{lab}.")
 
