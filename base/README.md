@@ -12,6 +12,8 @@ base/void_base.py boot           # boot a fresh copy of the disk (--window to se
 base/void_base.py ssh [CMD]      # a root shell, or one command
 base/void_base.py console        # the serial console (Ctrl-] to leave)
 base/void_base.py stop           # power off
+base/void_base.py root save|restore ARCHIVE
+                                 # pack the finished Void root, or unpack one in its place
 ```
 
 ## What it builds
@@ -37,6 +39,10 @@ tablet, with no VGA card.
 - The root, the build root, the Cargo target, the disks, the SSH key, and boot
   logs: `.lab/base/`, outside git. The build root and the target are kept, so
   the next build starts from them.
+- CI's cached Void root: `root save` packs the finished root into one archive,
+  inside the user namespace, so every file keeps its owner and group, and
+  `root restore` unpacks one in place of the root there. The build checks a
+  restored root as it checks any other.
 - `check` writes `.lab/base/boot-<time>.log`, with every check, what it ran, and
   the serial console from GRUB to power-off.
 
