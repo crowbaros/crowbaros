@@ -201,17 +201,18 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
 - **A headless backend** that draws each output with the CPU renderer, and
   `crowbar-probe`, the test client, on `fulcrum-wire`'s client side.
 
-The later milestones, as [the plan](docs/PLAN.md) sets them. No hardware
-record has been made yet:
+The later milestones, as [the plan](docs/PLAN.md) sets them. The test machine's
+runs, on its RTX 5060 and on its integrated Radeon with Mesa, are
+[recorded](../docs/development/README.md):
 
 | Milestone | Where it stands |
 | --- | --- |
-| 3 · Buffers and timing | Built. The runs on the test machine's RTX 5060 and on a Mesa machine are next ([how](docs/hardware-runs.md)) |
+| 3 · Buffers and timing | Built, and run on the test machine's RTX 5060 and its integrated Radeon. The run on Jason Alexander's Mesa machine is next ([how](docs/hardware-runs.md)) |
 | 4 · The shell's channel | Built: the control channel, the launcher's key, and the confirm chord, which does nothing until the vision's Milestone 3 decides what it confirms |
 | 5 · Working window manager | Built |
 | 6 · Clipboard and drag and drop | Built: copy and paste, the primary selection, and drag and drop between the shell and every app. Capture waits for a record |
-| 7 · Displays, input, and hardware | Scale, the layout of displays, a readable scale by default, and hotplug. Input devices' settings wait for a record; suspend and mixed scale wait for the hardware runs |
-| 8 · Lock and recovery | Built: the desktop starts locked, the person's password unlocks it through Base's helper, and a compositor restart comes back locked. Locked across suspend waits for the hardware runs |
+| 7 · Displays, input, and hardware | Scale, the layout of displays, a readable scale by default, and hotplug. Suspend and a monitor unplugged are recorded on the test machine. Input devices' settings wait for a record. The Mesa machine's run, mixed scale with two monitors, and a dense panel's scale are still to come |
+| 8 · Lock and recovery | Built: the desktop starts locked, the person's password unlocks it through Base's helper, and a compositor restart comes back locked. Locked across suspend is recorded on the test machine, with one monitor, and waits for a run with two |
 | 9 · CrowbarOS cutover | Done: CrowbarOS's desktop runs on Fulcrum, built into Base's image |
 
 [The plan](docs/PLAN.md) says what each milestone has, the records that decide Fulcrum, and what is next. [Picking up the work](docs/picking-up.md) says where the work paused, how to run everything, and how to start each next piece.
