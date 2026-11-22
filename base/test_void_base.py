@@ -623,6 +623,63 @@ class CompositorRestartCheck(unittest.TestCase):
         self.assertFalse(self.passes(''))
 
 
+class DesktopServicesCheck(unittest.TestCase):
+    """Base's check finds the desktop's services running, and not one that
+    runit starts again each second."""
+
+    def setUp(self):
+        self.passes = void_base.desktop_services_stay_up
+
+    def status(self, shell='/usr/local/bin/crowbaros-shell', **other):
+        """`sv status` of the desktop's services, each up for 12 seconds
+        unless `other` gives its line, then the program the shell's service
+        runs."""
+        states = {service: 'run: {}: (pid 700) 12s' for service in void_base.DESKTOP_SERVICES}
+        states.update({name.replace('_', '-'): line for name, line in other.items()})
+        return ''.join(line.format(f'/var/service/{service}') + '\n'
+                       for service, line in states.items()) + f'shell {shell}\n'
+
+    def test_every_service_up_for_a_while_passes(self):
+        self.assertTrue(self.passes(self.status()))
+        self.assertTrue(self.passes(self.status(seatd='run: {}: (pid 512) 3s; run: log: (pid 511) 3s')))
+
+    def test_a_service_that_is_down_fails(self):
+        self.assertFalse(self.passes(self.status(
+            crowbar_shell='down: {}: 1s, normally up, want up')))
+
+    def test_a_service_runit_has_only_just_started_again_fails(self):
+        # A shell that cannot start is running whenever runit has just started it.
+        self.assertFalse(self.passes(self.status(crowbar_shell='run: {}: (pid 2281) 0s')))
+        self.assertFalse(self.passes(self.status(crowbar_unlock='run: {}: (pid 2281) 2s')))
+
+    def test_a_shell_service_still_waiting_for_the_compositor_fails(self):
+        # The service's program waits for the compositor's sockets before it
+        # becomes the shell: up for 12 seconds, and no shell yet.
+        self.assertFalse(self.passes(self.status(shell='/usr/local/bin/crowbar-helpers')))
+        self.assertFalse(self.passes(self.status(shell='')))
+
+    def test_the_check_looks_for_the_program_the_shells_service_becomes(self):
+        connect = (Path(void_base.HERE) / 'helpers/src/shell_connect.rs').read_text()
+        self.assertIn(f'const SHELL_PROGRAM: &str = "{void_base.SHELL_PROGRAM}";', connect)
+
+    def test_a_service_that_is_not_there_fails(self):
+        self.assertFalse(self.passes(self.status(
+            crowbar_launcher="fail: {}: unable to change to service directory: file does not exist")))
+        self.assertFalse(self.passes(''))
+
+    def test_the_check_asks_about_every_service_of_the_desktop(self):
+        # The services the image step turns on for the desktop, but for
+        # Ctrl+Alt+Del's, which the check of every service covers.
+        script = (Path(void_base.HERE) / 'host/image.sh').read_text()
+        self.assertIn('for service in compositor shell launcher unlock ctrl-alt-del; do', script)
+        self.assertIn('ln -sfn /etc/sv/seatd "$SV/seatd"', script)
+        command = next(command for name, command, *_ in void_base.CHECKS
+                       if name == "the desktop's services stay up")
+        for service in ('seatd', 'crowbar-compositor', 'crowbar-shell', 'crowbar-launcher',
+                        'crowbar-unlock'):
+            self.assertIn(f'/var/service/{service}', command)
+
+
 class RebootCheck(unittest.TestCase):
     """Base's check finds that the person may reboot and power off."""
 
