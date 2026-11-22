@@ -195,6 +195,19 @@ impl State {
         Ok(())
     }
 
+    /// Lets go of a timeline, when its object is destroyed or its client is
+    /// gone. A point a surface already set keeps the timeline, as the
+    /// protocol says, until the commit it belongs to is done with.
+    pub(crate) fn forget_timeline(&mut self, timeline: TimelineId) {
+        self.explicit_sync.timelines.remove(&timeline);
+    }
+
+    /// How many timelines clients hold objects for.
+    #[doc(hidden)]
+    pub fn timelines_held(&self) -> usize {
+        self.explicit_sync.timelines.len()
+    }
+
     /// Checks a commit's points, as the protocol says, on a surface with a
     /// syncobj surface.
     pub(crate) fn check_points(&self, id: SurfaceId, state: &Pending) -> Result<(), ProtocolError> {

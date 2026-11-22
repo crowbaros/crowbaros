@@ -471,9 +471,7 @@ impl State {
             ObjectKind::BufferParams(params) => {
                 self.dmabufs.params.remove(params);
             }
-            ObjectKind::SyncobjTimeline(timeline) => {
-                self.explicit_sync.timelines.remove(timeline);
-            }
+            ObjectKind::SyncobjTimeline(timeline) => self.forget_timeline(*timeline),
             ObjectKind::IdleInhibitor(inhibitor) => self.forget_inhibitor(*inhibitor),
             _ => {}
         }
@@ -619,8 +617,9 @@ impl State {
                     wp_linux_drm_syncobj_surface_v1::Request::decode(opcode, &mut args)
                         .map(|request| Request::SyncobjSurface(*surface, request))
                 }
-                ObjectKind::SyncobjTimeline(_) => {
-                    wp_linux_drm_syncobj_timeline_v1::Request::decode(opcode, &mut args).map(Request::SyncobjTimeline)
+                ObjectKind::SyncobjTimeline(timeline) => {
+                    wp_linux_drm_syncobj_timeline_v1::Request::decode(opcode, &mut args)
+                        .map(|request| Request::SyncobjTimeline(*timeline, request))
                 }
                 ObjectKind::Presentation => {
                     wp_presentation::Request::decode(opcode, &mut args).map(Request::Presentation)
@@ -710,7 +709,9 @@ impl State {
             Request::SyncobjSurface(surface, request) => {
                 self.syncobj_surface_request(client_id, id, surface, request)?
             }
-            Request::SyncobjTimeline(wp_linux_drm_syncobj_timeline_v1::Request::Destroy) => {}
+            Request::SyncobjTimeline(timeline, wp_linux_drm_syncobj_timeline_v1::Request::Destroy) => {
+                self.forget_timeline(timeline);
+            }
             Request::PresentationFeedback(request) => match request {},
             Request::FractionalScaleManager(request) => {
                 self.fractional_scale_manager_request(client_id, id, request)?
@@ -820,7 +821,10 @@ enum Request {
     Presentation(wp_presentation::Request),
     ExplicitSync(wp_linux_drm_syncobj_manager_v1::Request),
     SyncobjSurface(SurfaceId, wp_linux_drm_syncobj_surface_v1::Request),
-    SyncobjTimeline(wp_linux_drm_syncobj_timeline_v1::Request),
+    SyncobjTimeline(
+        crate::explicit_sync::TimelineId,
+        wp_linux_drm_syncobj_timeline_v1::Request,
+    ),
     PresentationFeedback(wp_presentation_feedback::Request),
 }
 
@@ -831,5 +835,53 @@ impl From<ConnectionError> for ProtocolError {
             code: wl_display::error::IMPLEMENTATION,
             message: error.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{os::unix::net::UnixStream, rc::Rc};
+
+    use fulcrum_sys::syncobj::Timeline;
+    use fulcrum_wire::{NewId, codec::Header};
+
+    use super::*;
+    use crate::identity::Identity;
+
+    /// Runs with no DRM device: the timeline has no syncobj behind it, and
+    /// the request is handed to the dispatch as a client's bytes would be.
+    #[test]
+    fn a_timeline_whose_object_is_destroyed_is_let_go() {
+        let mut state = State::new().unwrap();
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let mut client = Client::new(1, stream, Identity::App).unwrap();
+        client
+            .create(
+                NewId(2),
+                Cow::Borrowed(wp_linux_drm_syncobj_timeline_v1::NAME),
+                Some(&wp_linux_drm_syncobj_timeline_v1::INFO),
+                1,
+                ObjectKind::SyncobjTimeline(7),
+            )
+            .unwrap();
+        state.clients.insert(1, client);
+        let device = std::fs::File::open("/dev/null").unwrap();
+        // A surface's point holds a timeline like this, beside the compositor.
+        let point = Rc::new(Timeline::unbacked(device.into()));
+        state.explicit_sync.timelines.insert(7, point.clone());
+
+        let destroy = Incoming {
+            header: Header {
+                object: 2,
+                opcode: 0,
+                size: 8,
+            },
+            body: Vec::new(),
+        };
+        assert!(state.dispatch(1, destroy).is_ok());
+
+        assert_eq!(state.timelines_held(), 0, "the compositor still holds the timeline");
+        assert_eq!(Rc::strong_count(&point), 1, "a point already set lost its timeline");
+        assert!(!state.clients[&1].objects.contains_key(&2));
     }
 }

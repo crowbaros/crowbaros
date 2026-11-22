@@ -2,7 +2,9 @@
 //! signals its release point when it is done with the buffer.
 //!
 //! These need a render node with timeline syncobjs, which CI's machines
-//! have not. Where there is none, each test says so and passes.
+//! have not. Where there is none, each test says so and passes. A unit test
+//! in `src/state.rs` covers, with no device, that a destroyed timeline is
+//! let go.
 
 mod common;
 
@@ -190,6 +192,69 @@ fn a_commit_waits_for_its_acquire_point_and_its_release_point_is_signalled() {
         "drawn before its acquire point"
     );
     assert!(synced.handle.signalled().unwrap() < 2);
+
+    synced.handle.signal(1).unwrap();
+    synced.client.roundtrip().unwrap();
+    compositor.wait_until_still();
+
+    assert_eq!(
+        compositor.screen(0).pixel(60, 60),
+        Some(BLUE),
+        "not drawn after its acquire point"
+    );
+    assert_eq!(
+        synced.handle.signalled().unwrap(),
+        2,
+        "the release point was not signalled"
+    );
+}
+
+/// A client makes and destroys timelines whenever it rebuilds a swapchain.
+/// The compositor lets each go with its object, and a point already set on
+/// a destroyed timeline still counts, as the protocol says.
+#[test]
+fn a_destroyed_timeline_is_let_go_and_a_point_already_set_on_it_still_counts() {
+    let Some((compositor, node)) = compositor() else { return };
+    let mut synced = synced(&compositor, &node);
+    let manager = synced.client.bind(wp_linux_drm_syncobj_manager_v1::NAME, 1).unwrap();
+    for _ in 0..32 {
+        let timeline = synced.client.new_id(wp_linux_drm_syncobj_timeline_v1::NAME);
+        let fd = syncobj::create_exported(node.as_fd()).unwrap();
+        synced
+            .client
+            .request(
+                manager,
+                wp_linux_drm_syncobj_manager_v1::Request::ImportTimeline { id: timeline, fd },
+            )
+            .unwrap();
+        synced
+            .client
+            .request(timeline.0, wp_linux_drm_syncobj_timeline_v1::Request::Destroy)
+            .unwrap();
+    }
+    synced.client.roundtrip().unwrap();
+    assert_eq!(
+        compositor.with(|state| state.timelines_held()),
+        1,
+        "the compositor holds timelines whose objects were destroyed"
+    );
+
+    let buffer = dmabuf_buffer(&mut synced.client, BLUE);
+    point(&mut synced.client, synced.syncobj_surface, synced.timeline, true, 1);
+    point(&mut synced.client, synced.syncobj_surface, synced.timeline, false, 2);
+    synced
+        .client
+        .request(synced.timeline, wp_linux_drm_syncobj_timeline_v1::Request::Destroy)
+        .unwrap();
+    attach_and_commit(&mut synced.client, synced.window.surface, buffer);
+    synced.client.roundtrip().unwrap();
+
+    assert_eq!(compositor.with(|state| state.timelines_held()), 0);
+    assert_eq!(
+        compositor.screen(0).pixel(60, 60),
+        Some(RED),
+        "drawn before its acquire point"
+    );
 
     synced.handle.signal(1).unwrap();
     synced.client.roundtrip().unwrap();
