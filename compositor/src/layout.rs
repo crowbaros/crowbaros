@@ -9,7 +9,7 @@
 //! scale in 120ths as fractional scale counts:
 //!
 //! ```text
-//! {"identity":"DEL DELL U4025QW 8GZGCP3","width":5120,"height":2160,"refresh":59990,"x":0,"y":0,"scale":150}
+//! {"identity":"DEL DELL U4025QW ABC1234","width":5120,"height":2160,"refresh":59990,"x":0,"y":0,"scale":150}
 //! ```
 //!
 //! A monitor it does not name takes its preferred mode, the place to the

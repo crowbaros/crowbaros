@@ -25,7 +25,7 @@
 //! <- {"event":"unlocked"}
 //! <- {"reply":"ok"}
 //! -> {"op":"outputs"}
-//! <- {"reply":"outputs","outputs":[{"name":"HDMI-A-1","identity":"DEL DELL U2723QE 8GZGCP3","width":3840,"height":2160,"refresh":60000,"x":0,"y":0,"scale":150,"modes":[{"width":3840,"height":2160,"refresh":60000}]}]}
+//! <- {"reply":"outputs","outputs":[{"name":"HDMI-A-1","identity":"DEL DELL U2723QE ABC1234","width":3840,"height":2160,"refresh":60000,"x":0,"y":0,"scale":150,"modes":[{"width":3840,"height":2160,"refresh":60000}]}]}
 //! -> {"op":"configure_output","name":"HDMI-A-1","width":2560,"height":1440,"refresh":59951,"x":0,"y":0,"scale":120}
 //! <- {"reply":"ok"}
 //! -> {"op":"anything else"}

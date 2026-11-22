@@ -4,3 +4,5 @@ __pycache__/
 /.lab/
 target/
 /base/account.json
+# Impeccable's hook cache: one machine's paths and sessions.
+**/.impeccable/hook.cache.json
