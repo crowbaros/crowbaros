@@ -179,8 +179,12 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   with its destination, and ends if the session locks or its source goes
   away. Any drag icon follows the pointer below trusted frames.
 - **Limits on each client** (ADR 0032): the apps cannot take the
-  descriptors the shell needs, since a reserve is kept for it, and one
-  client cannot make the compositor hold pools or pixels without end.
+  descriptors the shell needs, since a reserve is kept for it. The reserve
+  covers every connection an app opens, every descriptor an app sends,
+  whatever request carries it, and every descriptor the compositor makes for
+  an app: a keyboard's keymap, linux-dmabuf's format table, and the eventfd
+  of a commit that waits for its acquire point. One client cannot make the
+  compositor hold pools or pixels without end.
 - **The TTY backend**: the seat from seatd, through Fulcrum's own client of
   its socket; displays through the kernel's atomic mode setting; input
   through libinput; and monitors and input devices plugged in and out, heard

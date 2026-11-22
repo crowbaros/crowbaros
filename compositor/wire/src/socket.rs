@@ -202,6 +202,12 @@ impl Connection {
         self.bytes_out.len()
     }
 
+    /// How many descriptors wait for the peer. Each stays open here until
+    /// the first byte of its message is sent.
+    pub fn waiting_fds(&self) -> usize {
+        self.fds_out.len()
+    }
+
     /// Writes as much as the socket takes. Returns whether everything went.
     pub fn flush(&mut self) -> Result<bool, ConnectionError> {
         while !self.bytes_out.is_empty() {
@@ -298,7 +304,9 @@ mod tests {
             let (bytes, fds) = message(object, 1);
             a.queue(bytes, fds).unwrap();
         }
+        assert_eq!(a.waiting_fds(), 3);
         assert!(a.flush().unwrap());
+        assert_eq!(a.waiting_fds(), 0);
         let seen = receive_all(&mut b, 3);
         assert_eq!(seen.iter().map(|(object, _)| *object).collect::<Vec<_>>(), [1, 2, 3]);
         // Each message's descriptor had arrived by the time it was read.

@@ -6,7 +6,10 @@
 //!
 //! A commit whose acquire point is not signalled yet is held, not waited for:
 //! the kernel wakes an eventfd at that point, and the event loop applies the
-//! commit then. A later commit is held behind it, and merges over it. A
+//! commit then. The wait costs the compositor a descriptor, so an app's
+//! commit waits only while the shell's reserve is whole, and is applied at
+//! once when it is not (see `limits.rs`).
+//! A later commit is held behind it, and merges over it. A
 //! dma-buf the compositor copies at the commit is done with then, and its
 //! release point is signalled at once; one the GPU shows uncopied, when other
 //! content replaces it (see `dmabuf.rs`).
@@ -56,8 +59,9 @@ pub(crate) struct Held {
 
 #[derive(Default)]
 pub(crate) struct ExplicitSync {
-    /// The DRM device the timelines are imported on.
-    device: Option<OwnedFd>,
+    /// The DRM device the timelines are imported on. Each timeline shares
+    /// this descriptor, so importing one takes no descriptor.
+    device: Option<Rc<OwnedFd>>,
     pub timelines: HashMap<TimelineId, Rc<Timeline>>,
     next: TimelineId,
     pub held: HashMap<SurfaceId, Held>,
@@ -71,7 +75,7 @@ impl State {
             log::info!("no explicit sync: the DRM device has no timeline syncobjs");
             return;
         }
-        self.explicit_sync.device = Some(device);
+        self.explicit_sync.device = Some(Rc::new(device));
         self.add_global(
             &wp_linux_drm_syncobj_manager_v1::INFO,
             EXPLICIT_SYNC_VERSION,
@@ -117,7 +121,7 @@ impl State {
                         "the compositor has no DRM device".into(),
                     ));
                 };
-                let timeline = Timeline::import(device.as_fd(), fd.as_fd()).map_err(|error| {
+                let timeline = Timeline::import(device, fd.as_fd()).map_err(|error| {
                     fail(
                         wp_linux_drm_syncobj_manager_v1::error::INVALID_TIMELINE,
                         format!("not a timeline: {error}"),
@@ -264,6 +268,7 @@ impl State {
     /// must wait behind a held commit. False if it may be applied now.
     pub(crate) fn hold_commit(&mut self, id: SurfaceId, state: Pending) -> Result<Option<Pending>, ProtocolError> {
         let held = self.explicit_sync.held.remove(&id);
+        let replaces = held.is_some();
         let state = match held {
             Some(held) => {
                 self.event_loop.remove(held.event.as_fd());
@@ -278,6 +283,17 @@ impl State {
         let Some(acquire) = waiting else {
             return Ok(Some(state));
         };
+        // The wait costs an eventfd, which an app may not take from the
+        // shell's reserve. A commit in a held one's place takes its
+        // eventfd's place, and no more. With no room, the commit is applied
+        // now, as it is where the kernel has no eventfd to give: ending the
+        // app would give the shell nothing back.
+        if !replaces
+            && let Some(client) = self.surfaces.get(&id).map(|surface| surface.client)
+            && self.may_hold_descriptor(client).is_err()
+        {
+            return Ok(Some(state));
+        }
         match acquire.timeline.eventfd(acquire.point) {
             Ok(event) => {
                 if self.event_loop.add(event.as_fd(), Token::Held(id), false).is_err() {

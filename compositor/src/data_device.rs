@@ -447,6 +447,15 @@ impl State {
                     return Ok(());
                 }
                 let (client_id, source_object) = (data.client, data.object);
+                // The descriptor goes on to the source's client, and waits
+                // there until that client reads it, where refusing the app
+                // that sent it cannot take it back. So it is passed on only
+                // while that leaves the shell's reserve whole.
+                self.may_hold_descriptor(offer.client).map_err(|over| ProtocolError {
+                    object: 1,
+                    code: fulcrum_wire::protocol::wayland::wl_display::error::NO_MEMORY,
+                    message: format!("no paste: {over}"),
+                })?;
                 if let Some(client) = self.clients.get_mut(&client_id) {
                     client.send(source_object, wl_data_source::Event::Send { mime_type, fd });
                 }

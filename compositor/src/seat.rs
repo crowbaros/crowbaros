@@ -17,7 +17,7 @@ use std::borrow::Cow;
 use fulcrum_sys::xkb::{Keyboard, KeymapNames, Modifiers};
 use fulcrum_wire::{
     Fixed, ObjectId,
-    protocol::wayland::{wl_keyboard, wl_pointer, wl_seat},
+    protocol::wayland::{wl_display, wl_keyboard, wl_pointer, wl_seat},
 };
 
 use crate::{
@@ -138,6 +138,13 @@ impl State {
     ) -> Result<(), ProtocolError> {
         match request {
             wl_seat::Request::GetKeyboard { id } => {
+                // The keymap goes to the client as a descriptor of its own,
+                // which waits here until the client reads it.
+                self.may_hold_descriptor(client_id).map_err(|over| ProtocolError {
+                    object,
+                    code: wl_display::error::NO_MEMORY,
+                    message: format!("no keyboard: {over}"),
+                })?;
                 let Some((file, size)) = self.seat.keyboard.as_ref().and_then(|keyboard| keyboard.keymap().ok()) else {
                     return Err(ProtocolError {
                         object,

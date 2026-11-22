@@ -174,7 +174,7 @@ impl State {
     ) -> Result<(), ProtocolError> {
         match request {
             zwp_primary_selection_offer_v1::Request::Receive { mime_type, fd } => {
-                let Some((_, source)) = self.primary.offers.get(&offer).copied() else {
+                let Some((receiver, source)) = self.primary.offers.get(&offer).copied() else {
                     return Ok(());
                 };
                 let Some(data) = self.primary.sources.get(&source) else {
@@ -184,6 +184,14 @@ impl State {
                     return Ok(());
                 }
                 let (client_id, object) = (data.client, data.object);
+                // As for the selection: the descriptor is passed on to the
+                // source's client only while that leaves the shell's reserve
+                // whole (see `data_device.rs`).
+                self.may_hold_descriptor(receiver).map_err(|over| ProtocolError {
+                    object: 1,
+                    code: fulcrum_wire::protocol::wayland::wl_display::error::NO_MEMORY,
+                    message: format!("no paste: {over}"),
+                })?;
                 if let Some(client) = self.clients.get_mut(&client_id) {
                     client.send(object, zwp_primary_selection_source_v1::Event::Send { mime_type, fd });
                 }

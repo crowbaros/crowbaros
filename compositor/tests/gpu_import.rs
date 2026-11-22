@@ -369,6 +369,7 @@ fn a_held_buffers_release_point_waits_for_its_replacement() {
         return;
     };
     let offered = node.try_clone().unwrap();
+    let node = std::rc::Rc::new(node);
     let compositor = Compositor::start_with(own_uid(), own_uid(), move |state| {
         state.add_output("TEST-1", OUTPUT_SIZE, 60_000);
         state.set_backend(crowbar_compositor::backend::headless::Headless::default());
@@ -387,7 +388,7 @@ fn a_held_buffers_release_point_waits_for_its_replacement() {
     // One timeline the client's GPU signals, and one the compositor does.
     let timeline = |client: &mut Client| {
         let exported = syncobj::create_exported(node.as_fd()).unwrap();
-        let handle = Timeline::import(node.as_fd(), exported.as_fd()).unwrap();
+        let handle = Timeline::import(&node, exported.as_fd()).unwrap();
         let id = client.new_id(wp_linux_drm_syncobj_timeline_v1::NAME);
         client
             .request(

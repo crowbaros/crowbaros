@@ -1,23 +1,63 @@
 //! What one client may make the compositor hold.
 //!
-//! Every connection and every shared-memory pool costs the compositor a
-//! descriptor, and the process has a fixed number. Without limits the
-//! person's apps could take them all, and the compositor would accept
-//! nothing more, not even the shell (CrowbarOS issue 174). So:
+//! Every connection costs the compositor a descriptor, and so does every
+//! descriptor a client sends and every one the compositor makes for a
+//! client. The process has a fixed number. Without limits the person's apps
+//! could take them all, and the compositor would accept nothing more, not
+//! even the shell (CrowbarOS issue 174). So:
 //!
-//! - **A reserve stays free for the shell.** An app is accepted, and an
-//!   app's pool is made, only while more than [`RESERVE`] descriptors are
-//!   left. The shell is accepted down to the last one.
+//! - **A reserve stays free for the shell.** Nothing an app does leaves
+//!   fewer than [`RESERVE`] descriptors. The shell is served down to the
+//!   last one.
 //! - **Each client has a budget** of [`CLIENT_POOLS`] pools,
 //!   [`CLIENT_POOL_BYTES`] bytes of them mapped, and [`CLIENT_PIXEL_BYTES`]
 //!   bytes of pixels: the compositor copies each buffer a client commits,
 //!   and holds the copy until the next. A connection holds at most
 //!   `fulcrum_wire::socket::MAX_FDS_IN` descriptors that no message has taken yet.
 //!
+//! The reserve is kept at every place an app can make the compositor hold
+//! one more descriptor:
+//!
+//! - **A connection.** An app is accepted only while more than the reserve
+//!   is left.
+//! - **A descriptor the app sends**: a pool's file, a dma-buf's plane, the
+//!   pipe a paste is read from, a timeline to import. It is in this process
+//!   from the moment it arrives, whether a request then keeps it, passes it
+//!   on, or drops it. So it is checked where it arrives, once the requests
+//!   that came with it are read, in their order: an app that destroys a
+//!   pool no buffer still uses, and makes another, has taken nothing. If what arrived leaves less
+//!   than the reserve, and less than before it came, the app is refused
+//!   and goes at once, with what its requests took, and what no request
+//!   took is closed. A request moves a descriptor from
+//!   one count to another and adds none. A request that passes a descriptor
+//!   on to another client, as a paste does to the source's, checks the
+//!   reserve itself before it does: refusing the sender afterwards would
+//!   not take the descriptor back.
+//! - **A descriptor the compositor makes for the app**: a keyboard's keymap
+//!   and linux-dmabuf's format table, which wait in the app's connection
+//!   until the app reads them, and the eventfd a commit waits on for its
+//!   acquire point. Each is made only while more than the reserve is left.
+//!   An app that asks for a keymap or a table past it is refused. A commit
+//!   that cannot wait is applied at once, as where the kernel has no
+//!   eventfd to give, and one in a held commit's place takes its eventfd's
+//!   place.
+//!
+//! A timeline takes none: every timeline shares the compositor's one
+//! descriptor of the DRM device. The compositor keeps no descriptor of a
+//! dma-buf once the GPU has imported it.
+//!
+//! [`State::descriptors_held`] counts what clients make the compositor
+//! hold. What the compositor opens for itself, as its display and input
+//! devices and the shell's control channel, and what one request duplicates
+//! and closes again before it returns, are not counted: they come out of
+//! the reserve too.
+//!
 //! An app's connection past the reserve is refused: it is accepted and
-//! closed at once, so it waits in no queue. A pool or a commit over a budget
-//! is a protocol error that ends its client. Nothing over a budget harms
-//! another client.
+//! closed at once, so it waits in no queue. Anything else past the reserve
+//! or over a budget, but a commit's wait, is a protocol error that ends its
+//! client. Nothing over a budget harms another client. The reserve is not a
+//! budget: apps share what is above it, so once one app has taken that
+//! room, the app refused is the one that asks next.
 //!
 //! A pool costs address space, not memory, until its client writes to it, so
 //! the budget of mapped bytes is large. Memory the compositor itself holds
@@ -82,13 +122,19 @@ impl std::fmt::Display for OverBudget {
 }
 
 impl State {
-    /// The descriptors the compositor holds now: its own, its listeners, its
-    /// connections, its pools, and descriptors waiting in connections.
+    /// The descriptors the compositor holds now: its event loop's, its
+    /// listeners, its connections, the descriptors waiting in connections to
+    /// be read as requests or to be sent, its pools, the dma-bufs it reads,
+    /// and the eventfds of held commits.
     pub fn descriptors_held(&self) -> usize {
         // The event loop's epoll and its waker.
         let own = 2;
         let listeners = self.listeners.len();
-        let connections: usize = self.clients.values().map(|client| 1 + client.conn.queued_fds()).sum();
+        let connections: usize = self
+            .clients
+            .values()
+            .map(|client| 1 + client.conn.queued_fds() + client.conn.waiting_fds())
+            .sum();
         let dmabufs = self
             .buffers
             .values()
@@ -100,10 +146,11 @@ impl State {
                 .keys()
                 .map(|params| self.params_descriptors(*params))
                 .sum::<usize>();
-        own + listeners + connections + self.pools.len() + dmabufs
+        let held_commits = self.explicit_sync.held.len();
+        own + listeners + connections + self.pools.len() + dmabufs + held_commits
     }
 
-    fn descriptors_left(&self) -> usize {
+    pub(crate) fn descriptors_left(&self) -> usize {
         self.descriptor_limit.saturating_sub(self.descriptors_held())
     }
 
@@ -115,14 +162,36 @@ impl State {
         Ok(())
     }
 
-    /// Whether a client may hold one more pool of `bytes`.
-    pub(crate) fn may_make_pool(&self, client_id: ClientId, bytes: usize) -> Result<(), OverBudget> {
-        let Some(client) = self.clients.get(&client_id) else {
-            return Ok(());
-        };
-        if client.identity == Identity::App && self.descriptors_left() <= RESERVE {
+    fn is_app(&self, client_id: ClientId) -> bool {
+        self.clients
+            .get(&client_id)
+            .is_some_and(|client| client.identity == Identity::App)
+    }
+
+    /// Whether the compositor may make one more descriptor for a client, or
+    /// keep one that is in a request's hands and so in no count.
+    pub(crate) fn may_hold_descriptor(&self, client_id: ClientId) -> Result<(), OverBudget> {
+        if self.is_app(client_id) && self.descriptors_left() <= RESERVE {
             return Err(OverBudget::Reserve);
         }
+        Ok(())
+    }
+
+    /// Whether what a client has just sent may stay, where `before` were
+    /// left before it arrived. The count already has what is kept. An app
+    /// whose requests let go of as much as it sent has taken nothing, even
+    /// while the shell is using its reserve.
+    pub(crate) fn may_keep_descriptors(&self, client_id: ClientId, before: usize) -> Result<(), OverBudget> {
+        let left = self.descriptors_left();
+        if self.is_app(client_id) && left < RESERVE && left < before {
+            return Err(OverBudget::Reserve);
+        }
+        Ok(())
+    }
+
+    /// Whether a client may hold one more pool of `bytes`. The pool's file
+    /// is a descriptor the client sent, which is checked where it arrives.
+    pub(crate) fn may_make_pool(&self, client_id: ClientId, bytes: usize) -> Result<(), OverBudget> {
         let pools: Vec<_> = self
             .pools
             .iter()
