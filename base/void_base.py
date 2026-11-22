@@ -8,10 +8,13 @@ the roots, the build, the disk, VM runtime files, and boot logs live in
 
 The desktop (Fulcrum, the shell, and Studio Settings) is built and tested in a
 Void build root of its own, so it links Void's own libraries, and goes into the
-image with its runit services from desktop/.
+image with its runit services from desktop/. The Harness, in agent/, is
+bundled into one file with a pinned Node.js, and both go into the image.
 
     void_base.py build [--force] [--lab-account]
-                                   install the Void roots, build the desktop, and write the boot disk
+                                   install the Void roots, build the desktop and the Harness, and
+                                   write the boot disk
+    void_base.py agent             type-check, test, and bundle the Harness with the pinned Node.js
     void_base.py boot [--window]   boot a fresh copy of the disk and wait for it
     void_base.py ssh [CMD]         run a command in the guest as root
     void_base.py console           attach to the guest's serial console
@@ -151,18 +154,17 @@ def userns():
             f"--map-groups=1:{gids[0]}:{gids[1]}"]
 
 
-def fetch():
-    """Where the pinned static xbps is unpacked. Downloads and unpacks it once
-    for each pin, and refuses an archive that does not match the pin."""
+def pinned(name, url, pin, holds):
+    """Where the archive at `url` is unpacked, which holds the file `holds`.
+    Downloads and unpacks it once for each pin, its SHA-256, and refuses an
+    archive that does not match the pin."""
     CACHE.mkdir(parents=True, exist_ok=True)
-    url = CFG["xbps_static_url"]
-    pin = CFG["xbps_static_sha256"]
     # The archive and what is unpacked from it are both kept under the pin's
     # name. A new pin never finds the last one's, and a build in another
     # checkout, with another pin, leaves this one's as it is.
-    target = CACHE / f"xbps-static-{pin}"
-    xbps = target / "usr/bin/xbps-install.static"
-    if xbps.exists():
+    target = CACHE / f"{name}-{pin}"
+    witness = target / holds
+    if witness.exists():
         return target
     tarball = CACHE / f"{pin}-{url.rsplit('/', 1)[1]}"
     if not tarball.exists():
@@ -183,7 +185,7 @@ def fetch():
         tarball.unlink(missing_ok=True)
         raise SystemExit(f"{tarball} did not match the pinned SHA-256; it was removed")
     # Unpacked beside its place and moved there whole, so an unpacking that
-    # stops partway is never taken for the xbps.
+    # stops partway is never taken for the archive's contents.
     unpacking = Path(tempfile.mkdtemp(prefix=target.name + ".", dir=CACHE))
     try:
         with tarfile.open(tarball) as archive:
@@ -193,13 +195,29 @@ def fetch():
             unpacking.rename(target)
         except OSError:
             # Another build unpacked the same pin first, or the directory is
-            # there without the xbps, as a cache restored in part leaves it.
-            if not xbps.exists():
+            # there without the file, as a cache restored in part leaves it.
+            if not witness.exists():
                 shutil.rmtree(target, ignore_errors=True)
                 unpacking.rename(target)
     finally:
         shutil.rmtree(unpacking, ignore_errors=True)
     return target
+
+
+def fetch():
+    """Where the pinned static xbps is unpacked."""
+    return pinned("xbps-static", CFG["xbps_static_url"], CFG["xbps_static_sha256"],
+                  "usr/bin/xbps-install.static")
+
+
+def node():
+    """Where the pinned Node.js is unpacked: Node's own Linux x64 binary at
+    `bin/node`, the npm that came with it at `bin/npm`, and its `LICENSE`.
+    The Harness runs on it in the image, and the build runs npm with it (ADR
+    0034)."""
+    url = CFG["node_url"]
+    top = url.rsplit("/", 1)[1].removesuffix(".tar.xz")
+    return pinned("node", url, CFG["node_sha256"], f"{top}/bin/node") / top
 
 
 def install(target, packages, what, force, missing=lambda: None, repositories=(REPOSITORY,)):
@@ -522,6 +540,24 @@ def compile_desktop(force):
         print(f"{name}: sha256 {sha256(path)}")
 
 
+# The Harness: our TypeScript around Pi Durable, in `agent/`, and the one file
+# the build bundles it into (ADR 0034).
+AGENT = ROOT / "agent"
+HARNESS = AGENT / "dist/harness.mjs"
+
+
+def bundle_agent():
+    """Type-check, test, and bundle the Harness, with the pinned Node.js and
+    the npm that came with it. npm installs exactly what package-lock.json
+    names and runs no script a package brings (`agent/.npmrc`). CI's `agent`
+    job runs this, and so does every build."""
+    bin = node() / "bin"
+    env = dict(os.environ, PATH=f"{bin}:{os.environ.get('PATH', '')}")
+    for step in (["ci"], ["run", "check"], ["test"]):
+        run(bin / "npm", *step, cwd=AGENT, env=env)
+    return HARNESS
+
+
 # The account an image gets with no account file. Its password is in this
 # repository, so the image is for the lab alone.
 LAB_ACCOUNT = {"name": "crowbar", "full_name": "", "password_hash": "", "password": "crowbar",
@@ -615,6 +651,7 @@ def build(force=False, lab_account=False):
     if not account["password"]:
         print(f"Building with the account `{account['name']}` from {ACCOUNT_FILE}")
     compile_desktop(force)
+    bundle_agent()
     # Checked on every build, not only after an install: the image is never
     # written from a root that cannot drive NVIDIA's GPUs.
     if lack := missing_from_root(ROOTFS):
@@ -639,6 +676,8 @@ def build(force=False, lab_account=False):
                KVER=image_kernel(ROOTFS), KERNEL_ARGS=" ".join(CFG["kernel_args"]),
                NVIDIA_OPTIONS=" ".join(CFG["nvidia_options"]),
                DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT), PERSON_UID=str(PERSON_UID),
+               NODE=str(node() / "bin/node"), NODE_LICENSE=str(node() / "LICENSE"),
+               HARNESS=str(HARNESS),
                PERSON=account["name"], PERSON_FULL_NAME=account["full_name"],
                PERSON_PASSWORD_HASH=account["password_hash"], PERSON_PASSWORD=account["password"],
                PERSON_SSH_KEYS="".join(key + "\n" for key in account["ssh_keys"]),
@@ -863,6 +902,116 @@ def desktop_services_stay_up(out):
         and f"shell {SHELL_PROGRAM}" in out.splitlines()
 
 
+# The Harness, as the image holds it and its service, desktop/agent-run, runs
+# it: Node.js's own binary, the surface socket, and its state in the person's
+# home.
+HARNESS_NODE = "/usr/local/lib/crowbar-agent/node"
+SURFACE_SOCKET = "/run/crowbar-agent/surface"
+HARNESS_STATE = ".local/state/crowbaros/agent"
+# `{"version":1}` as a frame, in hexadecimal: its length in four bytes, the
+# most significant first, then the JSON. A peer states it first, and the
+# Harness answers with the same (agent/README.md).
+VERSION_FRAME = "0000000d7b2276657273696f6e223a317d"
+# In the guest, `probe ACCOUNT` connects to the surface socket as that account
+# with no group but its own, states the version, and prints what it is sent,
+# in hexadecimal; `refused` when it is closed having been sent nothing; or why
+# it could not connect.
+PROBE = (
+    "probe() { chpst -u \"$1\" python3 -c '\n"
+    "import socket, sys\n"
+    "s = socket.socket(socket.AF_UNIX)\n"
+    "s.settimeout(3)\n"
+    "try:\n"
+    "    s.connect(sys.argv[1])\n"
+    "    s.sendall(bytes.fromhex(sys.argv[2]))\n"
+    "    heard = b\"\"\n"
+    "    while len(heard) < len(sys.argv[2]) // 2 and (more := s.recv(64)):\n"
+    "        heard += more\n"
+    "    print(heard.hex() or \"refused\")\n"
+    "except (ConnectionResetError, BrokenPipeError):\n"
+    "    print(\"refused\")\n"
+    "except OSError as error:\n"
+    "    print(\"error:\", error.strerror or error)\n"
+    f"' {SURFACE_SOCKET} {VERSION_FRAME} 2>&1; }}; "
+)
+# In the guest, the process the Harness's service runs, or nothing.
+HARNESS_PID = ("pid() { sv status /var/service/crowbar-agent | "
+               "sed -n 's|^run: [^ ]* (pid \\([0-9]*\\)).*|\\1|p'; }; ")
+# In the guest, the person's account name and home.
+PERSON_IN_GUEST = (f"u=$(getent passwd {PERSON_UID} | cut -d: -f1); "
+                   f"h=$(getent passwd {PERSON_UID} | cut -d: -f6); ")
+
+
+def said(out):
+    """What each line of a check's output says, by the word it starts with:
+    every `name rest` line, as `{name: [rest, ...]}`."""
+    lines = {}
+    for line in out.splitlines():
+        name, _, rest = line.partition(" ")
+        lines.setdefault(name, []).append(rest)
+    return lines
+
+
+def harness_answers(out):
+    """Whether the check's output shows the Harness answering the version to
+    the shell's account and refusing root and the person, an account that is
+    none of them kept out of the socket's directory, and the directory and
+    the socket the person's, with the shell's group and nobody else: what
+    each account heard, the owner, group, and mode of both, then the shell's
+    user and group IDs."""
+    lines = said(out)
+    shell = lines.get("shell-account", [""])[0].split()
+    if len(shell) != 2:
+        return False
+    return all(lines.get(name) == [value] for name, value in (
+        ("shell", VERSION_FRAME), ("root", "refused"), ("person", "refused"),
+        ("other", "error: Permission denied"),
+        ("directory", f"{PERSON_UID} {shell[1]} 2750"), ("socket", f"{PERSON_UID} {shell[1]} 660")))
+
+
+def harness_runs_as_the_person(out):
+    """Whether the check's output shows the Harness's service up for
+    STAYED_UP seconds, running the image's Node.js as the person with all
+    their groups, in an app's environment, starting in their home; its state
+    there theirs alone; and no Node.js or npm on its PATH: `sv status`, the
+    process's user, group, and groups, the person's, the program, the home,
+    the directory it runs in, the environment, the mode and owner of the
+    state and each file in it, then any `node`, `npm`, or `npx` found."""
+    lines = said(out)
+
+    def one(name):
+        return lines[name][0] if len(lines.get(name, [])) == 1 else ""
+
+    up = re.match(r"run: /var/service/crowbar-agent: \(pid \d+\) (\d+)s", one("service"))
+    process, person, home = one("process").split(), one("person").split(), one("home")
+    env = dict(line.split("=", 1) for line in lines.get("env", []) if "=" in line)
+    state = [line.split(" ", 2) for line in lines.get("state", [])]
+    if not up or len(process) < 3 or not home or not state or any(len(entry) != 3 for entry in state):
+        return False
+    return int(up[1]) >= STAYED_UP \
+        and process[:2] == person[:2] and process[0] == str(PERSON_UID) \
+        and set(process[2:]) == set(person[2:]) \
+        and one("program") == HARNESS_NODE and one("cwd") == home \
+        and env.get("HOME") == home and env.get("XDG_RUNTIME_DIR") == f"/run/user/{PERSON_UID}" \
+        and env.get("WAYLAND_DISPLAY") == "wayland-0" and env.get("CROWBAR_SESSION") == "crowbaros" \
+        and bool(env.get("PATH")) and bool(env.get("LANG")) \
+        and state[0] == ["700", str(PERSON_UID), f"{home}/{HARNESS_STATE}"] \
+        and all(entry[:2] == ["600", str(PERSON_UID)] for entry in state[1:]) \
+        and {"agent.log", "agent.sqlite"} <= {entry[2].rsplit("/", 1)[1] for entry in state[1:]} \
+        and lines.get("on-path") == [""]
+
+
+def harness_restarted(out):
+    """Whether the check's output shows runit starting the Harness again
+    after a kill, the new one answering the shell's account, and its log
+    recording the restart: the service's process before and after, what the
+    shell's account heard, then how many times the log says so."""
+    lines = said(out)
+    before, after = lines.get("before", [""])[0], lines.get("after", [""])[0]
+    return bool(before) and bool(after) and before != after \
+        and lines.get("shell") == [VERSION_FRAME] and lines.get("logged") == ["1"]
+
+
 # What a booted base must show, as (name, guest command, test on its output).
 CHECKS = [
     ("Void Linux", "cat /etc/os-release",
@@ -946,6 +1095,44 @@ CHECKS = [
     ("the compositor answers the unlock helper's lock",
      "/usr/local/bin/crowbar-unlock lock; echo \"exit $?\"",
      lambda out: out.strip() == "exit 0"),
+    # The Harness (ADR 0034) starts at boot, before anyone unlocks. Waits
+    # for its answer to the shell's account, for at most 30 seconds. As root
+    # the check would pass the directory whatever its mode, so each account
+    # connects as itself, and the compositor's stands for every other.
+    ("the Harness answers the shell's account on its socket, and no other",
+     PROBE + PERSON_IN_GUEST
+     + f"for i in $(seq 150); do s=$(probe crowbar-shell); [ \"$s\" = {VERSION_FRAME} ] && break; "
+     "sleep 0.2; done; "
+     "echo \"shell $s\"; echo \"root $(probe root)\"; echo \"person $(probe \"$u\")\"; "
+     "echo \"other $(probe crowbar-compositor)\"; "
+     f"stat -c 'directory %u %g %a' {SURFACE_SOCKET.rsplit('/', 1)[0]}; stat -c 'socket %u %g %a' {SURFACE_SOCKET}; "
+     "echo \"shell-account $(id -u crowbar-shell) $(id -g crowbar-shell)\"",
+     lambda out: harness_answers(out)),
+    # Waits until the service has run for STAYED_UP seconds, for at most 30.
+    ("the Harness runs as the person, in an app's environment, with its state theirs alone",
+     HARNESS_PID + PERSON_IN_GUEST
+     + "for i in $(seq 150); do o=$(sv status /var/service/crowbar-agent); "
+     f"echo \"$o\" | grep -Eq '^run: [^ ]+ \\(pid [0-9]+\\) ([{STAYED_UP}-9]|[0-9]{{2,}})s' && break; "
+     "sleep 0.2; done; p=$(pid); echo \"service $o\"; "
+     "echo \"process $(awk '/^(Uid|Gid):/ {print $2} /^Groups:/ {$1=\"\"; print}' /proc/$p/status | xargs)\"; "
+     "echo \"person $(id -u \"$u\") $(id -g \"$u\") $(id -G \"$u\")\"; "
+     "echo \"program $(readlink /proc/$p/exe)\"; echo \"home $h\"; echo \"cwd $(readlink /proc/$p/cwd)\"; "
+     "e=$(tr '\\0' '\\n' < /proc/$p/environ); "
+     "echo \"$e\" | grep -E '^(HOME|PATH|LANG|XDG_RUNTIME_DIR|WAYLAND_DISPLAY|CROWBAR_SESSION)=' | sed 's/^/env /'; "
+     f"stat -c 'state %a %u %n' \"$h/{HARNESS_STATE}\" \"$h/{HARNESS_STATE}\"/*; "
+     "echo \"on-path $(PATH=$(echo \"$e\" | sed -n 's/^PATH=//p') command -v node npm npx | xargs)\"",
+     lambda out: harness_runs_as_the_person(out)),
+    # runit starts a service again a second after it exits, however it ended.
+    # Waits for the new Harness's answer, for at most 30 seconds.
+    ("the Harness's service starts it again after a kill, and its log records the restart",
+     PROBE + HARNESS_PID + PERSON_IN_GUEST
+     + "b=$(pid); kill -KILL \"$b\"; "
+     "for i in $(seq 150); do a=$(pid); s=; [ -n \"$a\" ] && [ \"$a\" != \"$b\" ] && s=$(probe crowbar-shell) "
+     f"&& [ \"$s\" = {VERSION_FRAME} ] && break; sleep 0.2; done; "
+     "echo \"before $b\"; echo \"after $a\"; echo \"shell $s\"; "
+     "echo \"logged $(grep -c \"restart: the Harness before this one, process $b, ended without stopping\" "
+     f"\"$h/{HARNESS_STATE}/agent.log\")\"",
+     lambda out: harness_restarted(out)),
     ("network has an address", "ip -4 -o addr show scope global",
      lambda out: "inet " in out),
     ("packages keep their groups", "stat -c '%G %n' /usr/bin/wall /var/db/dhcpcd",
@@ -1034,6 +1221,7 @@ def main():
     sub.add_parser("console")
     sub.add_parser("stop")
     sub.add_parser("check")
+    sub.add_parser("agent")
     root_parser = sub.add_parser("root", help="pack the finished Void root into an archive, "
                                               "or unpack one in its place, as CI's cache does")
     root_parser.add_argument("action", choices=["save", "restore", "key"])
@@ -1057,6 +1245,8 @@ def main():
         check()
     elif args.cmd == "root" and args.action == "key":
         print(root_key())
+    elif args.cmd == "agent":
+        print(f"Bundled the Harness at {bundle_agent()}")
     elif args.cmd == "root":
         save_root(args.archive) if args.action == "save" else restore_root(args.archive)
 
