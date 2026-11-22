@@ -98,10 +98,11 @@ jobs:
 
       - name: Lab scripts compile and pass their tests
         run: |
-          python3 -m py_compile base/*.py lab/void/*.py .github/workflows/*.py
+          python3 -m py_compile base/*.py lab/void/*.py .github/workflows/*.py apps/shell/packaging/*.py
           python3 -m unittest discover -s base -p "test_*.py"
           python3 -m unittest discover -s lab/void -p "test_*.py"
           python3 -m unittest discover -s .github/workflows -p "test_*.py"
+          python3 -m unittest discover -s apps/shell/packaging -p "test_*.py"
 
   shell:
     name: Interface (${{ matrix.project }})
@@ -198,12 +199,11 @@ jobs:
         with:
           persist-credentials: false
 
-      # The Void roots, the build, and the disk need more room than the
-      # runner leaves free. These toolchains are never used here.
-      - name: Make room
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          df -h / | tail -n 1
+      # The Void roots, the build, the image, and the disk take about 25 GB,
+      # and the runner has far more free, so nothing is deleted to make room.
+      # Deleting the runner's unused toolchains took over two minutes.
+      - name: Show the free space
+        run: df -h / | tail -n 1
 
       # The host's Cargo only fetches the crates; Void's own Rust builds them.
       - name: Install Rust
@@ -251,6 +251,38 @@ jobs:
           restore-keys: |
             base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock') }}-
             base-build-
+
+      # Cargo rebuilds a crate whose files are newer than its last build, and
+      # the checkout gives every file the time it was written, so the cached
+      # build would all be built again. That build was made from the main
+      # commit its key ends with. Every file but those that differ from that
+      # commit gets one old time, and Cargo rebuilds only what changed. GPUI's
+      # source is made from prepare-gpui.py and the patches, so it gets the
+      # old time too unless either changed. With no build restored, or that
+      # commit out of reach, every file keeps its new time and all of it
+      # builds. The changed files are listed before any time is set, so a Git
+      # that fails leaves nothing looking older than it is. test_ci.py runs
+      # this script.
+      - name: Give the files the cached build was made from an old time
+        env:
+          RESTORED: ${{ steps.build.outputs.cache-matched-key }}
+        run: |
+          built=${RESTORED##*-}
+          if [ -z "$RESTORED" ] || ! git fetch -q --no-tags --depth=1 origin "$built"; then
+            echo "No cached build to match, so the desktop builds from the start."
+            exit 0
+          fi
+          export LC_ALL=C
+          changed=$(mktemp)
+          git diff -z --name-only --no-renames "$built" HEAD > "$changed"
+          python3 apps/shell/packaging/prepare-gpui.py
+          old=@946684800
+          git ls-files -z | xargs -0 -r touch -h -c -d "$old" --
+          if ! grep -qzE '^apps/shell/(packaging|patches)/' "$changed"; then
+            find apps/shell/gpui-source -exec touch -h -d "$old" {} +
+          fi
+          xargs -0 -r touch -h -c -- < "$changed"
+          echo "Files changed since $built: $(tr -cd '\0' < "$changed" | wc -c)"
 
       - name: Build, boot, and check Base
         run: python3 base/void_base.py check
