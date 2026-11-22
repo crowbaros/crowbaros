@@ -139,9 +139,7 @@ mod tests {
             return;
         };
         let format = u32::from_le_bytes(*b"XR24");
-        let buffer = device
-            .create_buffer(4, 4, format, &[], crate::gbm::USE_RENDERING | crate::gbm::USE_LINEAR)
-            .unwrap();
+        let buffer = device.create_linear_buffer(4, 4, format).unwrap();
         let fd = buffer.export(0).unwrap();
         let mapping = CpuMapping::new(fd, 16).unwrap();
         mapping
