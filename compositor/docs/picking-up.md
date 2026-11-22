@@ -6,15 +6,15 @@ Where the buildout paused, how to run everything, what trips people up, and how 
 
 Fulcrum runs CrowbarOS's desktop on Base's image. It has two kinds of client, the shell and the person's apps ([ADR 0032](../../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md)), each at a socket of its own that takes one user ID. Copy and paste, the primary selection, and drag and drop work between the shell and every app, and a new window takes the keyboard, as on any desktop. The desktop starts locked, the person's password unlocks it through Base's helper, and a compositor restart comes back locked. CrowbarOS's desktop check shows each of these on a copy of Base's image, booted under UEFI.
 
-- **Built:** Milestones 1 to 6, 8, and 9, and Milestone 7 but for input devices' settings. Milestones 3, 7, and 8 have not yet been run on a real GPU.
+- **Built:** Milestones 1 to 6, 8, and 9, and Milestone 7 but for input devices' settings. Milestones 3, 7, and 8 have run on the test machine's RTX 5060 and its integrated Radeon, with one monitor ([the records](../../docs/development/README.md)).
 - **Waiting on CrowbarOS's records:** capture by the shell, input devices' settings, and what Fulcrum offers the Agent ([crowbaros#239](https://github.com/crowbaros/crowbaros/issues/239)).
-- **Waiting on hardware:** the runs on the test machine's RTX 5060 ([crowbaros#227](https://github.com/crowbaros/crowbaros/issues/227)) and on Jason Alexander's Mesa machine ([crowbaros#228](https://github.com/crowbaros/crowbaros/issues/228)).
+- **Waiting on hardware:** the run on Jason Alexander's Mesa machine ([crowbaros#228](https://github.com/crowbaros/crowbaros/issues/228)), and on either machine the rows no record has yet: a second monitor, with mixed scale and locked across suspend, and a dense panel's scale.
 
 ## Next, without a new record
 
 ### The hardware runs
 
-Base's image boots a real machine from a USB disk, and the desktop runs there as it does in the VM. What is missing is a run on each machine, with a dated record.
+Base's image boots a real machine from a USB disk, and the desktop runs there as it does in the VM. The test machine has its runs and records, each with one monitor. What is missing is a run on the Mesa machine, and the rows that need a second monitor or a dense panel, each with a dated record.
 
 1. Build the image with your own account file, write it to a disk, and boot the machine, as [Base on a real machine](../../base/HARDWARE.md) says.
 2. Run each row of [Running Fulcrum on real hardware](hardware-runs.md), and read the compositor's log over SSH.
