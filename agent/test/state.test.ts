@@ -162,3 +162,28 @@ test("a log that has grown past 4 MiB is set aside at the next start, and the on
 	const next = await start(t, directory);
 	assert.equal(logged(next.state).filter((line) => line.startsWith("start: ")).length, 2);
 });
+
+test("a log that reaches 4 MiB while the Harness runs is set aside, and the Harness logs on in a new one", async (t) => {
+	// Every connection is logged, and a peer may connect without end: the log
+	// must not fill the person's disk between one start and the next.
+	const directory = scratch(t);
+	const state = join(directory, "state");
+	mkdirSync(state);
+	const log = join(state, "harness.log");
+	// Room for the start and for listening, and for no connection after them.
+	writeFileSync(log, "the log so far\n".padEnd(4 * 1024 * 1024 - 400, "."));
+	writeFileSync(join(state, "harness.log.1"), "the log before the last\n");
+	const harness = await start(t, directory, { shellUid: OWN_UID + 1 });
+	assert.match(readFileSync(log, "utf8"), /^the log so far\n\.+\d{4}-.* start: /);
+	for (let peers = 0; peers < 8; peers++) await heard(await dial(harness.socket));
+
+	const aside = readFileSync(join(state, "harness.log.1"), "utf8");
+	assert.match(aside, /^the log so far\n/);
+	assert.ok(aside.length <= 4 * 1024 * 1024, `${aside.length} bytes were set aside`);
+	assert.equal(mode(join(state, "harness.log.1")), 0o600);
+	assert.equal(mode(log), 0o600);
+	// Nothing is lost between the two: each of the 9 peers, `start`'s among them, is in one or the other.
+	const refused = (text: string) => text.split("connection: refused user ID").length - 1;
+	assert.ok(refused(readFileSync(log, "utf8")) > 0, "the new log holds no connection");
+	assert.equal(refused(aside) + refused(readFileSync(log, "utf8")), 9);
+});

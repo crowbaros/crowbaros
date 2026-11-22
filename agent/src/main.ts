@@ -61,6 +61,15 @@ async function main(options: Options): Promise<void> {
 		if (before !== undefined) {
 			log.write("restart", `the Harness before this one, process ${before}, ended without stopping`);
 		}
+		// Told to stop before it listens, it has nothing to close, and has
+		// stopped all the same: the next start is no restart.
+		const stopEarly = (signal: NodeJS.Signals) => {
+			rmSync(marker, { force: true });
+			log.write("stop", signal);
+			process.exit(0);
+		};
+		process.on("SIGTERM", stopEarly);
+		process.on("SIGINT", stopEarly);
 		writeFileSync(marker, `${process.pid}\n`, { mode: 0o600 });
 		chmodSync(marker, 0o600);
 		const store = await openStore(join(options.state, "harness.sqlite"));
@@ -88,8 +97,10 @@ async function main(options: Options): Promise<void> {
 				process.exit(0);
 			}, fail);
 		};
-		process.on("SIGTERM", stop);
-		process.on("SIGINT", stop);
+		for (const signal of ["SIGTERM", "SIGINT"] as const) {
+			process.off(signal, stopEarly);
+			process.on(signal, stop);
+		}
 	} catch (error) {
 		fail(error);
 	}

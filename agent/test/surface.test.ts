@@ -60,6 +60,22 @@ test("a frame longer than 4096 bytes closes the connection as soon as its length
 	shell.destroy();
 });
 
+test("a frame too long after the version is answered the same however the bytes are split", async (t) => {
+	const harness = await start(t, scratch(t));
+	const tooLong = Buffer.from([0x00, 0x00, 0x10, 0x01]);
+	// In one piece, the version and the length after it reach the Harness together.
+	const together = await dial(harness.socket);
+	together.write(Buffer.concat([VERSION_FRAME, tooLong]));
+	assert.deepEqual(await heard(together), { bytes: VERSION_FRAME, closed: true });
+	// In two, the version is answered before the length is sent.
+	const apart = await dial(harness.socket);
+	const answer = new Promise<Buffer>((resolve) => apart.once("data", resolve));
+	apart.write(VERSION_FRAME);
+	assert.deepEqual(await answer, VERSION_FRAME);
+	apart.write(tooLong);
+	assert.deepEqual(await heard(apart), { bytes: Buffer.alloc(0), closed: true });
+});
+
 test("the surface socket has no message yet, so a frame after the version closes the connection", async (t) => {
 	const harness = await start(t, scratch(t));
 	for (const second of ['{"version":1}', '{"op":"send","text":"hello"}']) {

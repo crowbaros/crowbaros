@@ -92,9 +92,10 @@ the Agent will run inherit it.
 
 `harness.log` gets one line for each event: the time in UTC, the event, and
 its details. An error's line goes on over indented lines that say where it was
-thrown. A log past 4 MiB is set aside as `harness.log.1` when the next Harness
-starts, in place of the one set aside before it, so a Harness that cannot
-start does not fill the person's disk with its tries.
+thrown. A line that would take the log past 4 MiB starts a new log, and the
+old one is set aside as `harness.log.1`, in place of the one set aside before
+it. So the two stay within 8 MiB, and neither a Harness that cannot start nor
+a peer that connects without end fills the person's disk.
 
 ```text
 2026-11-21T18:03:11.123Z start: process 812, Pi Durable 1.6.0, Node.js v26.13.1

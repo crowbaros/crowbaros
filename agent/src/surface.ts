@@ -50,23 +50,22 @@ function serve(peer: Socket, shellUid: number, say: (what: string) => void): voi
 		if (!closed) say(stated ? "the shell left" : "the shell left before it stated a version");
 	});
 	peer.on("data", (bytes: Buffer) => {
-		let read: Buffer[];
 		try {
-			read = frames.read(bytes);
-		} catch (error) {
-			return close(error instanceof FrameTooLong ? error.message : "a frame could not be read");
-		}
-		for (const frame of read) {
-			if (!stated) {
-				if (!statesVersion(frame)) return close(`the shell's first frame did not state version ${VERSION}`);
-				stated = true;
-				say(`the shell stated version ${VERSION}`);
-				peer.write(encode({ version: VERSION }));
-				continue;
+			for (const frame of frames.read(bytes)) {
+				if (!stated) {
+					if (!statesVersion(frame)) return close(`the shell's first frame did not state version ${VERSION}`);
+					stated = true;
+					say(`the shell stated version ${VERSION}`);
+					peer.write(encode({ version: VERSION }));
+					continue;
+				}
+				// No slice has given the surface socket a message yet, so any
+				// frame after the version is one the Harness does not speak.
+				return close("the surface socket has no message yet");
 			}
-			// No slice has given the surface socket a message yet, so any
-			// frame after the version is one the Harness does not speak.
-			return close("the surface socket has no message yet");
+		} catch (error) {
+			if (!(error instanceof FrameTooLong)) throw error;
+			close(error.message);
 		}
 	});
 }
@@ -79,6 +78,11 @@ export function listen(path: string, shellUid: number, say: (what: string) => vo
 	return new Promise((resolve, reject) => {
 		const server = createServer((peer) => serve(peer, shellUid, say));
 		server.once("error", reject);
-		server.listen(path, () => resolve(server));
+		// An error once it listens is the Harness's to end on and log, as any
+		// other it did not expect.
+		server.listen(path, () => {
+			server.off("error", reject);
+			resolve(server);
+		});
 	});
 }
