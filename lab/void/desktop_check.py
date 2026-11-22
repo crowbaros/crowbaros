@@ -99,13 +99,9 @@ class Check:
         return self.guest.ssh('cat /var/log/crowbar-shell.log', check=False).stdout
 
     def shell_unlock(self):
-        """The compositor's reply when the shell asks it to unlock, passing
-        over the snapshots it sends unasked."""
-        code = ("import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(3); "
-                "s.connect('/run/crowbar-trusted/compositor/control'); "
-                "s.sendall(b'{\"op\":\"unlock\"}\\n'); f=s.makefile('rb'); "
-                "print(next(l for l in f if not l.startswith(b'{\"event\":\"snapshot\",')).decode())")
-        return self.python(code, 'crowbar-shell')
+        """The compositor's reply when the shell asks it to unlock."""
+        return self.run('chpst -u crowbar-shell:crowbar-shell '
+                        + guest.ask_fulcrum('/run/crowbar-trusted/compositor/control', '{"op":"unlock"}'))
 
     def unlock(self, password='crowbar'):
         """The person's password, typed with nothing first, as the lock screen
@@ -499,22 +495,27 @@ print(json.dumps({'processes': found, 'seat_members': seat.gr_mem, 'seat_gid': s
     def socket_refusals(self):
         # Give the app the exact paths and temporarily allow directory traversal:
         # refusal must still come from peer credentials, not just Unix modes.
-        paths = ['/run/crowbar-trusted/compositor/control', '/run/crowbar-trusted/compositor/wayland', '/run/crowbar-launch/socket', '/run/user/1001/crowbaros-shell/control.sock',
-                 '/run/crowbar-unlock/socket', '/run/crowbar-trusted/unlock/compositor']
+        # The compositor's control channel and its unlock socket are knocked
+        # on as their own peers knock, with the frame that states the
+        # version: the compositor would answer that from a peer it took for
+        # the shell or the unlock helper, and a line it refuses from anyone.
+        framed = ['/run/crowbar-trusted/compositor/control', '/run/crowbar-trusted/unlock/compositor']
+        paths = framed + ['/run/crowbar-trusted/compositor/wayland', '/run/crowbar-launch/socket',
+                          '/run/user/1001/crowbaros-shell/control.sock', '/run/crowbar-unlock/socket']
         code = """
 import json, socket
 results = []
 for path in PATHS:
  s = socket.socket(socket.AF_UNIX); s.settimeout(2)
  try:
-  s.connect(path); s.sendall(b'{"op":"snapshot"}\\n')
+  s.connect(path); s.sendall(VERSION if path in FRAMED else b'{"op":"snapshot"}\\n')
   data = s.recv(1024)
   results.append(not data or b'"ok":false' in data.replace(b' ', b''))
  except (PermissionError, ConnectionResetError, BrokenPipeError): results.append(True)
  except TimeoutError: results.append(False)
  finally: s.close()
 print(json.dumps(results))
-""".replace('PATHS', repr(paths))
+""".replace('PATHS', repr(paths)).replace('FRAMED', repr(framed)).replace('VERSION', repr(guest.FULCRUM_VERSION_FRAME))
         directories = ['/run/crowbar-trusted/compositor', '/run/crowbar-launch', '/run/user/1001', '/run/user/1001/crowbaros-shell',
                        '/run/crowbar-unlock', '/run/crowbar-trusted/unlock']
         modes = json.loads(self.python('import os,json; print(json.dumps({p:os.stat(p).st_mode & 0o7777 for p in ' + repr(paths + directories) + '}))'))

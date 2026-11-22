@@ -1,5 +1,5 @@
 //! Just enough JSON for the shell's control channel: one flat object per
-//! line, whose values are strings, whole numbers, booleans, or null.
+//! message, whose values are strings, whole numbers, booleans, or null.
 //!
 //! A request is never more than that, so a nested value is refused rather
 //! than read. Nothing here can panic on what a peer sends.

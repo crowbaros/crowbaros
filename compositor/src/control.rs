@@ -1,70 +1,22 @@
 //! The shell's control channel: how the shell learns which windows exist and
 //! on which workspace, and asks the compositor to show a workspace or a
-//! window.
+//! window. The unlock authority's socket is served here too.
 //!
-//! It is a path socket of its own, checked against the shell's user ID as
-//! the shell's Wayland socket is (ADR 0032). The wire format is the spike's,
-//! which the shell already speaks: one JSON object per line. Each request
-//! gets one reply. The set of requests is fixed, and none runs a command or
-//! loads code.
+//! Each is a path socket of its own, checked against one user ID as the
+//! shell's Wayland socket is (ADR 0032). Both speak the framing in
+//! `frames.rs` (ADR 0035): each message a length and then JSON, and the
+//! version stated in the first frame. The set of requests is fixed, and none
+//! runs a command or loads code. The README lists every message, under "The
+//! control channel".
 //!
-//! ```text
-//! -> {"op":"snapshot"}
-//! <- {"reply":"snapshot","workspace":1,"active":"0x2","windows":[{"id":"0x2","app_id":"foot","title":"~","workspace":1,"attention":false}]}
-//! -> {"op":"focus_workspace","id":2}
-//! <- {"reply":"ok"}
-//! -> {"op":"focus_window","id":"0x2"}
-//! <- {"reply":"ok"}
-//! -> {"op":"launching"}
-//! <- {"reply":"ok"}
-//! <- {"event":"launcher"}
-//! -> {"op":"lock"}
-//! <- {"event":"locked"}
-//! <- {"reply":"ok"}
-//! -> {"op":"unlock"}
-//! <- {"event":"unlocked"}
-//! <- {"reply":"ok"}
-//! -> {"op":"outputs"}
-//! <- {"reply":"outputs","outputs":[{"name":"HDMI-A-1","identity":"DEL DELL U2723QE ABC1234","width":3840,"height":2160,"refresh":60000,"x":0,"y":0,"scale":150,"modes":[{"width":3840,"height":2160,"refresh":60000}]}]}
-//! -> {"op":"configure_output","name":"HDMI-A-1","width":2560,"height":1440,"refresh":59951,"x":0,"y":0,"scale":120}
-//! <- {"reply":"ok"}
-//! -> {"op":"anything else"}
-//! <- {"reply":"error","message":"..."}
-//! ```
+//! Each request gets one reply. The compositor also sends the shell events,
+//! at any time, with no reply. The unlock authority may send `lock` and
+//! `unlock`, and nothing else, and is sent no events. Where it listens, the
+//! shell's `unlock` is refused. A `lock` is answered once every display
+//! shows the session locked, and the connection is sent nothing in between
+//! (see `lock.rs`).
 //!
-//! The compositor also sends events, at any time, one object per line with
-//! no reply: `launcher` when the person taps Super alone, for the shell to
-//! open or close its launcher (ADR 0020's keys). `snapshot` carries what the
-//! snapshot reply does, whenever that changes from what the event last told
-//! the connection, so the bar shows a workspace or window as it changes, with
-//! no asking:
-//!
-//! ```text
-//! <- {"event":"snapshot","workspace":2,"active":null,"locked":false,"windows":[...]}
-//! ```
-//!
-//! A shell connection is told it once it connects, and again after each turn
-//! of the event loop in which something it shows changed. A window that opened
-//! without the keyboard has `attention` in the snapshot until it gets it,
-//! for the bar to show. `launching` says the person just started an app
-//! from the shell. It changes nothing, since every new window takes the
-//! keyboard (see `windows.rs`), and is answered so that the shell's
-//! messages stay as they are. `lock` and `unlock` lock and unlock the session,
-//! and the events `locked` and `unlocked` say it changed, as Super+L and
-//! the idle timer change it too (see `lock.rs`). The snapshot has `locked`.
-//! Where an unlock authority listens, the shell's `unlock` is refused: the
-//! authority has a socket of its own, checked against its user ID, where it
-//! may send `lock` and `unlock`, and nothing else, and hears no events.
-//! ADR 0032 accepts these. A `lock` is answered once every display shows
-//! the session locked, and the connection hears nothing in between (see
-//! `lock.rs`).
-//!
-//! `outputs` and `configure_output` are the shell's interface to the layout
-//! of displays (ADR 0020): a monitor's mode, place, and scale, the scale in
-//! 120ths as fractional scale counts. What `configure_output` sets is kept
-//! for the monitor (see `layout.rs`); a field it leaves out stays as it is.
-//!
-//! A request is at most [`MAX_LINE`] bytes. A connection that sends a longer
+//! A request is at most [`MAX_FRAME`] bytes. A connection that sends a longer
 //! one, or reads no replies until [`MAX_PENDING`] bytes wait for it, is
 //! closed. The shell may hold [`MAX_CONNECTIONS`] at once.
 
@@ -87,6 +39,7 @@ use crate::{
     State,
     connections::peer_uid,
     event_loop::{Readiness, TimerId, TimerKey, Token},
+    frames::{self, TooLong, Unread},
     json::{Value, parse_object, quote},
     lock::LOCK_SHOWN_WITHIN,
     log,
@@ -94,8 +47,12 @@ use crate::{
     workspaces::WORKSPACES,
 };
 
-/// The longest request, in bytes.
-pub const MAX_LINE: usize = 4096;
+/// The protocol version the control channel and the unlock authority's
+/// speak. A peer states it in its first frame, and is closed if it states
+/// another.
+pub const VERSION: u32 = 1;
+/// The longest request, in bytes, not counting its length.
+pub const MAX_FRAME: usize = 4096;
 /// The most reply bytes that may wait for a connection that does not read.
 pub const MAX_PENDING: usize = 1024 * 1024;
 /// How many control connections the shell may hold at once.
@@ -110,8 +67,10 @@ pub(crate) struct ControlConnection {
     /// The unlock authority's connection, not the shell's: it may lock and
     /// unlock, and nothing else, and hears no events.
     authority: bool,
+    /// It stated the version. Until it has, it is sent nothing.
+    versioned: bool,
     stream: UnixStream,
-    input: Vec<u8>,
+    input: Unread,
     output: Vec<u8>,
     /// The socket is watched for room to write.
     writing: bool,
@@ -121,6 +80,14 @@ pub(crate) struct ControlConnection {
     /// session locked, from that `lock`'s reply on, and the timer that ends
     /// the wait (see `lock.rs`).
     held: Option<(Vec<u8>, TimerId)>,
+}
+
+impl ControlConnection {
+    /// Whether it is sent events: the shell's, once it has stated the
+    /// version.
+    fn hears_events(&self) -> bool {
+        self.versioned && !self.authority
+    }
 }
 
 #[derive(Default)]
@@ -217,8 +184,9 @@ impl State {
                 id,
                 ControlConnection {
                     authority,
+                    versioned: false,
                     stream,
-                    input: Vec::new(),
+                    input: Unread::default(),
                     output: Vec::new(),
                     writing: false,
                     told: None,
@@ -229,7 +197,7 @@ impl State {
     }
 
     pub(crate) fn control_ready(&mut self, id: u64, readiness: Readiness) {
-        let mut lines = Vec::new();
+        let mut messages = Vec::new();
         let mut close = readiness.hung_up && !readiness.readable;
         if let Some(connection) = self.controls.connections.get_mut(&id) {
             let mut buffer = [0u8; 4096];
@@ -239,7 +207,7 @@ impl State {
                         close = true;
                         break;
                     }
-                    Ok(read) => connection.input.extend_from_slice(&buffer[..read]),
+                    Ok(read) => connection.input.extend(&buffer[..read]),
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
                     Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
                     Err(_) => {
@@ -247,37 +215,47 @@ impl State {
                         break;
                     }
                 }
-                if connection.input.len() > MAX_LINE * 4 {
+                if connection.input.len() > MAX_FRAME * 4 {
                     break;
                 }
             }
-            while let Some(end) = connection.input.iter().position(|byte| *byte == b'\n') {
-                let line: Vec<u8> = connection.input.drain(..=end).collect();
-                lines.push(line);
-            }
-            if connection.input.len() > MAX_LINE {
-                log::warning!("closed a control connection: a request is longer than {MAX_LINE} bytes");
-                close = true;
+            loop {
+                match connection.input.take(MAX_FRAME) {
+                    Ok(Some(message)) => messages.push(message),
+                    Ok(None) => break,
+                    Err(TooLong(length)) => {
+                        log::warning!(
+                            "closed a control connection: a frame of {length} bytes is longer than {MAX_FRAME}"
+                        );
+                        close = true;
+                        break;
+                    }
+                }
             }
         }
-        for line in lines {
-            // The newline is not part of the request.
-            if line.len() > MAX_LINE + 1 {
-                log::warning!("closed a control connection: a request is longer than {MAX_LINE} bytes");
-                close = true;
+        for message in messages {
+            let Some(connection) = self.controls.connections.get_mut(&id) else {
                 break;
+            };
+            if !connection.versioned {
+                // The first frame states the version, and nothing is done
+                // for a peer that states another or none.
+                if frames::stated_version(&message) != Some(i64::from(VERSION)) {
+                    log::warning!("closed a control connection: its first frame did not state version {VERSION}");
+                    close = true;
+                    break;
+                }
+                connection.versioned = true;
+                self.send_control(id, &frames::version(VERSION));
+                continue;
             }
-            let authority = self
-                .controls
-                .connections
-                .get(&id)
-                .is_some_and(|connection| connection.authority);
-            let reply = match std::str::from_utf8(&line) {
-                Ok(text) if authority => self.authority_request(id, text.trim_end()),
-                Ok(text) => self.control_request(id, text.trim_end()),
+            let authority = connection.authority;
+            let reply = match std::str::from_utf8(&message) {
+                Ok(text) if authority => self.authority_request(id, text),
+                Ok(text) => self.control_request(id, text),
                 Err(_) => error_reply("the request is not UTF-8"),
             };
-            self.send_control(id, format!("{reply}\n").as_bytes());
+            self.send_control(id, &reply);
         }
         if !close {
             close = !self.flush_control(id);
@@ -312,19 +290,19 @@ impl State {
         result.map_or_else(|message| error_reply(&message), |()| ok_reply())
     }
 
-    /// Sends an event to every shell control connection: a line with no
-    /// reply. The unlock authority hears none.
+    /// Sends an event to every shell control connection that has stated the
+    /// version: a message with no reply. The unlock authority hears none.
     pub(crate) fn control_event(&mut self, name: &str) {
-        let line = format!("{{\"event\":{}}}\n", quote(name));
+        let event = format!("{{\"event\":{}}}", quote(name));
         let ids: Vec<u64> = self
             .controls
             .connections
             .iter()
-            .filter(|(_, connection)| !connection.authority)
+            .filter(|(_, connection)| connection.hears_events())
             .map(|(id, _)| *id)
             .collect();
         for id in ids {
-            self.send_control(id, line.as_bytes());
+            self.send_control(id, &event);
             if !self.flush_control(id) {
                 self.close_control(id);
             }
@@ -334,12 +312,7 @@ impl State {
     /// Sends each shell connection the snapshot, where it changed from what
     /// the connection was last told. The event loop calls it once a turn.
     pub(crate) fn tell_shell_of_changes(&mut self) {
-        if self
-            .controls
-            .connections
-            .values()
-            .all(|connection| connection.authority)
-        {
+        if !self.controls.connections.values().any(ControlConnection::hears_events) {
             return;
         }
         let snapshot = self.snapshot_fields();
@@ -347,11 +320,11 @@ impl State {
             .controls
             .connections
             .iter()
-            .filter(|(_, connection)| !connection.authority && connection.told.as_ref() != Some(&snapshot))
+            .filter(|(_, connection)| connection.hears_events() && connection.told.as_ref() != Some(&snapshot))
             .map(|(id, _)| *id)
             .collect();
         for id in ids {
-            self.send_control(id, format!("{{\"event\":\"snapshot\",{snapshot}}}\n").as_bytes());
+            self.send_control(id, &format!("{{\"event\":\"snapshot\",{snapshot}}}"));
             if let Some(connection) = self.controls.connections.get_mut(&id) {
                 connection.told = Some(snapshot.clone());
             }
@@ -361,13 +334,14 @@ impl State {
         }
     }
 
-    /// Queues bytes for a connection: behind its held `lock` reply, if one
-    /// waits, so that what it hears keeps its order.
-    fn send_control(&mut self, id: u64, bytes: &[u8]) {
+    /// Queues a message for a connection, as one frame: behind its held
+    /// `lock` reply, if one waits, so that what it hears keeps its order.
+    fn send_control(&mut self, id: u64, message: &str) {
         if let Some(connection) = self.controls.connections.get_mut(&id) {
+            let frame = frames::frame(message);
             match &mut connection.held {
-                Some((held, _)) => held.extend_from_slice(bytes),
-                None => connection.output.extend_from_slice(bytes),
+                Some((held, _)) => held.extend_from_slice(&frame),
+                None => connection.output.extend_from_slice(&frame),
             }
         }
     }

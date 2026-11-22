@@ -77,9 +77,11 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   and the snapshot's `attention`.
 - **The shell's control channel**: a path socket of its own, checked against
   the shell's user ID, where the shell asks for a snapshot of the windows and
-  shows a workspace or a window. One JSON object per line, as the spike
-  spoke and the shell already speaks. The compositor sends the snapshot as
-  an event whenever it changes, so the bar shows a workspace as it shows.
+  shows a workspace or a window. Each message is a length and then JSON, the
+  framing of every channel of Fulcrum's own (ADR 0035).
+  [The control channel](#the-control-channel) lists its messages. The
+  compositor sends the snapshot as an event whenever it changes, so the bar
+  shows a workspace as it shows.
 - **Redraw on change**: an output is drawn only when something it shows
   changed, then waits for the display, so a still desktop draws nothing and a
   busy client is held to the display's rate. Frame callbacks are answered
@@ -226,6 +228,83 @@ The compositor Milestone 0 brought here, the baseline, is at commit
 and CrowbarOS has built it in the baseline's place since
 [crowbaros#198](https://github.com/crowbaros/crowbaros/pull/198) (ADR 0028).
 
+## The control channel
+
+The shell's control channel is a path socket of its own, at
+`--shell-control-socket`, which takes the shell's user ID alone (ADR 0032).
+There the shell learns which windows exist and on which workspace, asks
+Fulcrum to show a workspace or a window, locks the session, and reads and
+sets the layout of displays. The requests are a fixed set, and none runs a
+command or loads code. `src/control.rs` serves it.
+
+### Framing
+
+Every channel of Fulcrum's own speaks one framing
+([ADR 0035](../docs/adr/0035-fulcrum-draws-every-ask-and-holds-what-the-agent-may-take.md)),
+which `src/frames.rs` holds:
+
+- **A message is a frame**: its length in four bytes, the most significant
+  first, and then that many bytes of JSON in UTF-8. Nothing comes between
+  frames. A request is one flat object whose values are strings, whole
+  numbers, booleans, or null. A reply or an event may also hold lists.
+- **The first frame each way states the protocol version** and nothing else:
+  `{"version":1}`. The peer sends its first. Fulcrum answers with its own,
+  and the channel goes on. A peer whose first frame is anything else, or
+  states a version Fulcrum does not speak, is closed with no answer, and
+  Fulcrum logs why. Until a peer has stated the version, it is sent nothing.
+- **A request is at most 4096 bytes**, not counting its length. A longer
+  frame closes the connection as soon as its length is read. A peer that
+  reads nothing until a mebibyte waits for it is closed too. The shell may
+  hold four connections at once.
+
+The control channel's version is 1. Here the shell connects, is told the
+snapshot, and says the person started an app. The lengths are shown in
+hexadecimal:
+
+```text
+-> 00 00 00 0d {"version":1}
+<- 00 00 00 0d {"version":1}
+<- 00 00 00 4c {"event":"snapshot","workspace":1,"active":null,"locked":false,"windows":[]}
+-> 00 00 00 12 {"op":"launching"}
+<- 00 00 00 0e {"reply":"ok"}
+```
+
+### Messages
+
+Each request gets one reply, in the order the requests came. A request
+Fulcrum does not know or cannot carry out gets
+`{"reply":"error","message":"..."}`, and the channel goes on. Every other
+request below is answered `{"reply":"ok"}` unless the table gives its reply.
+
+| Request | What it does |
+| --- | --- |
+| `{"op":"snapshot"}` | Lists every window with its workspace, the workspace that shows, the window with the keyboard, and whether the session is locked. Its reply: `{"reply":"snapshot","workspace":1,"active":"0x2","locked":false,"windows":[{"id":"0x2","app_id":"foot","title":"~","workspace":1,"attention":false}]}`. `active` is null when no window on the workspace that shows has the keyboard. `attention` marks a window that opened without the keyboard and has not had it since, for the bar to show |
+| `{"op":"focus_workspace","id":2}` | Shows a workspace, from 1 to 9 |
+| `{"op":"focus_window","id":"0x2"}` | Shows a window's workspace, raises the window, and gives it the keyboard |
+| `{"op":"launching"}` | Says the person just started an app from the shell. It changes nothing, since every new window takes the keyboard |
+| `{"op":"lock"}` | Locks the session. It is answered once every display shows the session locked, or after a second where one shows nothing, and the connection is sent nothing in between |
+| `{"op":"unlock"}` | Unlocks the session. Refused where an unlock authority listens |
+| `{"op":"outputs"}` | Lists each display with its modes. Its reply: `{"reply":"outputs","outputs":[{"name":"HDMI-A-1","identity":"DEL DELL U2723QE ABC1234","width":3840,"height":2160,"refresh":60000,"x":0,"y":0,"scale":150,"modes":[{"width":3840,"height":2160,"refresh":60000}]}]}`. `refresh` is in millihertz and `scale` in 120ths, as fractional scale counts |
+| `{"op":"configure_output","name":"HDMI-A-1","width":2560,"height":1440,"refresh":59951,"x":0,"y":0,"scale":120}` | Sets what it names of a display's mode, place, and scale, and keeps the display's placement for its monitor (`src/layout.rs`). A field it leaves out stays as it is |
+
+Fulcrum also sends the shell events, at any time, which get no reply:
+
+| Event | When |
+| --- | --- |
+| `{"event":"snapshot","workspace":2,"active":null,"locked":false,"windows":[]}` | It carries what the snapshot reply does. A connection is sent it once it has stated the version, and again after each turn of the event loop in which something it carries changed, so the bar shows a workspace or a window as it changes, with no asking |
+| `{"event":"launcher"}` | The person tapped Super alone, for the shell to open or close its launcher |
+| `{"event":"locked"}`, `{"event":"unlocked"}` | The session locked or unlocked, whoever asked: Super+L and the idle timer lock it too. A connection that asks is sent the event before its reply |
+
+ADR 0032 accepts these messages.
+
+### The unlock authority's socket
+
+Where `--unlock-socket` is given, the unlock authority has a socket of its
+own, which takes `--unlock-uid` alone. It speaks the same framing and the
+same version, and is served by the same code. The authority may send `lock`
+and `unlock`, with no other field, and nothing else, and it is sent no
+events. Base's `crowbar-unlock` is its one peer.
+
 ## Layout
 
 | Path | Contents |
@@ -252,7 +331,7 @@ and CrowbarOS has built it in the baseline's place since
 | `src/workspaces.rs` | The nine workspaces |
 | `src/modes.rs` | Maximized, fullscreen, and snapped windows |
 | `src/grabs.rs` | Moving and resizing windows with the pointer |
-| `src/control.rs`, `src/json.rs` | The shell's control channel, and the flat JSON it speaks |
+| `src/control.rs`, `src/frames.rs`, `src/json.rs` | The shell's control channel and the unlock authority's socket, the framing of every channel of Fulcrum's own, and the flat JSON a request is |
 | `src/data_device.rs` | Data sources and offers, and the clipboard the shell and the apps share |
 | `src/drag.rs` | Drag targets, action negotiation, drop, and cancellation |
 | `src/primary_selection.rs` | The primary selection, under the clipboard's rules |
@@ -275,7 +354,7 @@ and CrowbarOS has built it in the baseline's place since
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `dl.rs` (libraries loaded at run time), `gles.rs` (EGL and GLES: the context, textures, targets, and draws), `gbm.rs`, `dmabuf.rs` (telling a dma-buf from other files, and reading one with the CPU), `syncobj.rs` (DRM timelines), `drm.rs` (mode setting, dumb buffers, and framebuffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (copying client pixel rows) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients, and apps that copy, paste, drag, and drop (`probe/src/apps.rs`). Base's image carries it for its desktop check |
-| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the limits on each client; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` covers who gets the keys, and `focus.rs` which new window takes them; `seat.rs` covers the pointer and activation; `cursor.rs` and `cursor_shape.rs` cover the pointer's image; `outputs.rs` covers outputs that change size; `data_device.rs`, `primary_selection.rs`, and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `scale.rs` covers outputs at other scales; `layout.rs` covers the layout of displays and the scale a display starts at; `dmabuf.rs` covers linux-dmabuf; `idle_inhibit.rs` covers idle inhibit; `lock.rs` covers the locked session; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `probe_apps.rs` runs the probe's apps as the desktop check does; `shell_outputs.rs` runs the real shell while its only output goes away and comes back, when `CROWBAR_SHELL` names its binary; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate [the plan](docs/PLAN.md) rules out enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. `table.rs`, `connections.rs`, `attacks.rs`, and `descriptors.rs` are ported from the baseline; `protocol.rs` covers what the compositor refuses; `surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the limits on each client; `redraw.rs` is the baseline's, ported; `windows.rs` covers xdg-shell; `layers.rs` covers layer shell; `keyboard.rs` covers who gets the keys, and `focus.rs` which new window takes them; `seat.rs` covers the pointer and activation; `cursor.rs` and `cursor_shape.rs` cover the pointer's image; `outputs.rs` covers outputs that change size; `data_device.rs`, `primary_selection.rs`, and `viewporter.rs` cover those protocols; `nested.rs` runs Fulcrum nested in Fulcrum; `workspaces.rs` and `control.rs` cover the workspaces and the shell's control channel, with its framing; `modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `grabs.rs` covers moving and resizing; `gles.rs` draws each scene with both renderers and compares them; `scale.rs` covers outputs at other scales; `layout.rs` covers the layout of displays and the scale a display starts at; `dmabuf.rs` covers linux-dmabuf; `idle_inhibit.rs` covers idle inhibit; `lock.rs` covers the locked session; `gpu_import.rs` covers dma-bufs the GPU draws where they are; `damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `probe_apps.rs` runs the probe's apps as the desktop check does; `shell_outputs.rs` runs the real shell while its only output goes away and comes back, when `CROWBAR_SHELL` names its binary; `linked.rs` reads the built binary for what it links; `dependencies.rs` fails if a crate [the plan](docs/PLAN.md) rules out enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), [picking up the work](docs/picking-up.md), [how to run Fulcrum on real hardware](docs/hardware-runs.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.
@@ -297,8 +376,8 @@ directory, which only the compositor and the person's group can enter, and
 links the socket into the person's `XDG_RUNTIME_DIR` as `wayland-0`, so any
 Wayland app finds it.
 
-`--shell-control-socket PATH` adds the shell's control channel, from the
-shell's user ID.
+`--shell-control-socket PATH` adds [the shell's control
+channel](#the-control-channel), from the shell's user ID.
 
 For development, a build with the nested feature runs in a window on the
 session it is started from:

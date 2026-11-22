@@ -6,6 +6,8 @@
 //! a test.
 #![allow(dead_code)]
 
+pub mod control;
+
 use std::{
     path::{Path, PathBuf},
     sync::{

@@ -1,67 +1,129 @@
-//! The shell's control channel, as the shell sees it: one JSON object per
-//! line, each request answered by one reply, and events between them.
+//! The shell's control channel, as the shell sees it: each message a frame,
+//! the version stated first, each request answered by one reply, and events
+//! between them.
 
 mod common;
 
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{Read, Write},
     os::unix::net::UnixStream,
-    time::Duration,
 };
 
-use common::{Compositor, another_uid, own_uid};
+use common::{
+    Compositor, another_uid,
+    control::{Control, VERSION},
+    own_uid,
+};
 use crowbar_probe::KeyEvent;
 
-struct Control {
-    reader: BufReader<UnixStream>,
-    writer: UnixStream,
+/// A message is a frame: its length in four bytes, the most significant
+/// first, and then the JSON. The first frame each way states the version.
+#[test]
+fn each_message_is_a_length_and_then_json_and_the_first_states_the_version() {
+    let compositor = Compositor::start();
+    let mut stream = UnixStream::connect(compositor.dir.join("control")).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+
+    stream.write_all(b"\0\0\0\x0d{\"version\":1}").unwrap();
+    let mut answer = [0u8; 17];
+    stream.read_exact(&mut answer).unwrap();
+    assert_eq!(&answer, b"\0\0\0\x0d{\"version\":1}");
+
+    // Before anything is asked, the shell is told the snapshot.
+    let told = br#"{"event":"snapshot","workspace":1,"active":null,"locked":false,"windows":[]}"#;
+    let mut event = vec![0u8; 4 + told.len()];
+    stream.read_exact(&mut event).unwrap();
+    assert_eq!(event[..4], [0, 0, 0, 76]);
+    assert_eq!(&event[4..], told);
+
+    stream.write_all(b"\0\0\0\x12{\"op\":\"launching\"}").unwrap();
+    let mut reply = [0u8; 18];
+    stream.read_exact(&mut reply).unwrap();
+    assert_eq!(&reply, b"\0\0\0\x0e{\"reply\":\"ok\"}");
 }
 
-impl Control {
-    fn connect(compositor: &Compositor) -> Control {
-        let stream = UnixStream::connect(compositor.dir.join("control")).unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        Control {
-            reader: BufReader::new(stream.try_clone().unwrap()),
-            writer: stream,
-        }
+/// A peer whose first frame does not state the version, or states one the
+/// compositor does not speak, is closed, and is sent nothing first.
+#[test]
+fn a_peer_that_states_no_version_or_one_fulcrum_does_not_speak_is_closed() {
+    let compositor = Compositor::start();
+    for first in [
+        r#"{"op":"snapshot"}"#,
+        r#"{"version":2}"#,
+        r#"{"version":0}"#,
+        r#"{"version":"1"}"#,
+        r#"{"version":1,"op":"snapshot"}"#,
+        r#"[1]"#,
+        "version 1",
+        "",
+    ] {
+        let mut control = Control::silent(&compositor.dir.join("control"));
+        control.send(first);
+        assert_eq!(control.frame(), None, "{first:?} was answered");
     }
+    // One line of JSON, as the channel spoke before, is no frame: its first
+    // four bytes are a length far past the limit.
+    let mut control = Control::silent(&compositor.dir.join("control"));
+    control.stream.write_all(b"{\"op\":\"snapshot\"}\n").unwrap();
+    assert_eq!(control.frame(), None, "a line was answered");
 
-    /// Sends one line and reads the reply. The snapshots the compositor
-    /// sends unasked are passed over, as the shell passes events over.
-    fn ask(&mut self, request: &str) -> String {
-        self.writer.write_all(format!("{request}\n").as_bytes()).unwrap();
-        self.line()
-    }
-
-    /// Reads the next line the compositor sent that is not a snapshot event.
-    fn line(&mut self) -> String {
-        loop {
-            let line = self.any_line();
-            if !line.starts_with(SNAPSHOT_EVENT) {
-                return line;
-            }
-        }
-    }
-
-    /// Reads the next snapshot event, passing over anything else.
-    fn snapshot_event(&mut self) -> String {
-        loop {
-            let line = self.any_line();
-            if line.starts_with(SNAPSHOT_EVENT) {
-                return line;
-            }
-        }
-    }
-
-    fn any_line(&mut self) -> String {
-        let mut line = String::new();
-        self.reader.read_line(&mut line).unwrap();
-        line.trim_end().to_string()
-    }
+    // The shell can connect again.
+    assert!(
+        Control::connect(&compositor)
+            .ask(r#"{"op":"snapshot"}"#)
+            .starts_with(r#"{"reply":"snapshot""#)
+    );
 }
 
-const SNAPSHOT_EVENT: &str = r#"{"event":"snapshot","#;
+/// Until it states the version a peer is sent nothing, events included.
+#[test]
+fn a_peer_is_sent_nothing_until_it_states_the_version() {
+    let compositor = Compositor::start();
+    let mut control = Control::silent(&compositor.dir.join("control"));
+    let _client = window(&compositor, "test.early");
+    compositor.key(KEY_LEFTMETA, true);
+    compositor.key(KEY_LEFTMETA, false);
+    assert_eq!(
+        control.frame_within(std::time::Duration::from_millis(300)),
+        None,
+        "a peer that stated no version was sent something"
+    );
+
+    control.send(VERSION);
+    assert_eq!(control.frame().as_deref(), Some(VERSION));
+    // The snapshot as it is now, and not the launcher event it missed.
+    let told = control.frame().unwrap();
+    assert!(told.starts_with(r#"{"event":"snapshot","#), "{told}");
+    assert!(told.contains(r#""app_id":"test.early""#), "{told}");
+    assert_eq!(control.ask(r#"{"op":"launching"}"#), r#"{"reply":"ok"}"#);
+}
+
+/// A socket carries bytes, not frames: a frame may come a byte at a time,
+/// and several may come at once.
+#[test]
+fn a_frame_may_come_in_pieces_and_several_frames_at_once() {
+    let compositor = Compositor::start();
+    let mut control = Control::connect(&compositor);
+    assert!(control.frame().unwrap().starts_with(r#"{"event":"snapshot","#));
+
+    for byte in b"\0\0\0\x12{\"op\":\"launching\"}" {
+        control.stream.write_all(&[*byte]).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_eq!(control.frame().as_deref(), Some(r#"{"reply":"ok"}"#));
+
+    // Two requests and the length of a third in one write, then its rest.
+    control
+        .stream
+        .write_all(b"\0\0\0\x12{\"op\":\"launching\"}\0\0\0\x1f{\"op\":\"focus_workspace\",\"id\":2}\0\0\0\x11")
+        .unwrap();
+    assert_eq!(control.message(), r#"{"reply":"ok"}"#);
+    assert_eq!(control.message(), r#"{"reply":"ok"}"#);
+    control.stream.write_all(br#"{"op":"snapshot"}"#).unwrap();
+    assert!(control.message().starts_with(r#"{"reply":"snapshot","workspace":2,"#));
+}
 
 /// An app with one window, listening to its keyboard.
 fn window(compositor: &Compositor, app_id: &str) -> crowbar_probe::Client {
@@ -163,6 +225,9 @@ fn a_bad_request_gets_an_error_and_the_channel_goes_on() {
         r#"{"op":"focus_window","id":"window"}"#,
         r#"{"op":["snapshot"]}"#,
         r#"{"id":1}"#,
+        // The version is stated once, first.
+        VERSION,
+        "",
     ] {
         let reply = control.ask(request);
         assert!(
@@ -180,32 +245,37 @@ fn a_bad_request_gets_an_error_and_the_channel_goes_on() {
 #[test]
 fn the_channel_takes_the_shells_user_id_and_no_other() {
     let compositor = Compositor::start_trusting(another_uid(), own_uid());
-    let mut control = Control::connect(&compositor);
-    control.writer.write_all(b"{\"op\":\"snapshot\"}\n").ok();
-    let mut line = String::new();
-    let read = control.reader.read_line(&mut line).unwrap_or(0);
-    assert_eq!(read, 0, "the compositor answered a peer that is not the shell: {line}");
+    let mut control = Control::silent(&compositor.dir.join("control"));
+    // The compositor may have closed already, and the write then fails.
+    let mut frame = (VERSION.len() as u32).to_be_bytes().to_vec();
+    frame.extend_from_slice(VERSION.as_bytes());
+    control.stream.write_all(&frame).ok();
+    let answer = control.frame();
+    assert_eq!(answer, None, "the compositor answered a peer that is not the shell");
 }
 
+/// The length comes first, so the compositor closes on it without waiting
+/// for a body it will not read.
 #[test]
-fn a_request_longer_than_the_limit_closes_the_connection() {
+fn a_frame_longer_than_the_limit_closes_the_connection() {
     let compositor = Compositor::start();
+    let limit = crowbar_compositor::control::MAX_FRAME;
+    assert_eq!(limit, 4096);
+
+    // A request of the limit exactly is answered.
     let mut control = Control::connect(&compositor);
-    let long = format!(
-        r#"{{"op":"{}"}}"#,
-        "x".repeat(crowbar_compositor::control::MAX_LINE * 2)
-    );
-    control.writer.write_all(long.as_bytes()).ok();
-    control.writer.write_all(b"\n").ok();
-    // The snapshot it was told on connecting may come first; no reply does.
-    loop {
-        let mut line = String::new();
-        let read = control.reader.read_line(&mut line).unwrap_or(0);
-        if read == 0 {
-            break;
-        }
-        assert!(line.starts_with(SNAPSHOT_EVENT), "the connection stayed open: {line}");
-    }
+    let longest = format!("{:<4096}", r#"{"op":"launching"}"#);
+    assert_eq!(control.ask(&longest), r#"{"reply":"ok"}"#);
+
+    // One byte more is not, though not a byte of the request was sent.
+    control.stream.write_all(&[0, 0, 0x10, 0x01]).unwrap();
+    assert!(control.closed_with_no_reply(), "the connection stayed open");
+
+    // Nor is the longest length there is, as the first frame.
+    let mut control = Control::silent(&compositor.dir.join("control"));
+    control.stream.write_all(&[0xff, 0xff, 0xff, 0xff]).unwrap();
+    assert!(control.closed_with_no_reply(), "the connection stayed open");
+
     // The shell can connect again.
     assert!(
         Control::connect(&compositor)
@@ -255,8 +325,8 @@ fn the_shell_is_told_of_each_change_without_asking() {
     assert!(shown.starts_with(r#"{"event":"snapshot","workspace":2,"#), "{shown}");
 
     // Nothing changed since: the next line is a reply, not another snapshot.
-    control.writer.write_all(b"{\"op\":\"launching\"}\n").unwrap();
-    assert_eq!(control.any_line(), r#"{"reply":"ok"}"#);
+    control.send(r#"{"op":"launching"}"#);
+    assert_eq!(control.frame().as_deref(), Some(r#"{"reply":"ok"}"#));
 }
 
 #[test]
@@ -267,7 +337,7 @@ fn super_tapped_alone_asks_the_shell_for_its_launcher() {
     compositor.key(KEY_LEFTMETA, true);
     compositor.key(KEY_LEFTMETA, false);
 
-    assert_eq!(control.line(), r#"{"event":"launcher"}"#);
+    assert_eq!(control.message(), r#"{"event":"launcher"}"#);
 
     // A chord with Super, or a click with it held, is not a tap.
     compositor.key(KEY_LEFTMETA, true);

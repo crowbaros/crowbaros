@@ -4,44 +4,10 @@
 
 mod common;
 
-use std::{
-    io::{BufRead, BufReader, Write},
-    os::unix::net::UnixStream,
-    path::PathBuf,
-    time::Duration,
-};
+use std::path::PathBuf;
 
-use common::{Compositor, own_uid};
+use common::{Compositor, control::Control, own_uid};
 use crowbar_compositor::geometry::Rect;
-
-struct Control {
-    reader: BufReader<UnixStream>,
-    writer: UnixStream,
-}
-
-impl Control {
-    fn connect(compositor: &Compositor) -> Control {
-        let stream = UnixStream::connect(compositor.dir.join("control")).unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        Control {
-            reader: BufReader::new(stream.try_clone().unwrap()),
-            writer: stream,
-        }
-    }
-
-    /// Sends one line and reads the reply, passing over the snapshots the
-    /// compositor sends unasked.
-    fn ask(&mut self, request: &str) -> String {
-        self.writer.write_all(format!("{request}\n").as_bytes()).unwrap();
-        loop {
-            let mut line = String::new();
-            self.reader.read_line(&mut line).unwrap();
-            if !line.starts_with(r#"{"event":"snapshot","#) {
-                return line.trim_end().to_string();
-            }
-        }
-    }
-}
 
 const OK: &str = r#"{"reply":"ok"}"#;
 /// The monitor the tests plug in.

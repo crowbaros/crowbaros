@@ -66,21 +66,9 @@ GPU = {"wp_linux_drm_syncobj_manager_v1", "zwp_linux_dmabuf_v1"}
 APP_ROW = EVERY_CLIENT | GPU
 SHELL_ALONE = {"zwlr_layer_shell_v1"}
 
-# Asks the shell's control channel for a snapshot, and prints the reply as
-# Python's repr: '' when the compositor closes the connection without one.
-# The events the compositor sends the shell unasked, which start with the
-# third argument, are passed over.
-SNAPSHOT = '{"op":"snapshot"}\n'.encode().hex()
-UNASKED = '{"event":"snapshot",'.encode().hex()
-ASK_CONTROL = ("python3 -c 'import socket, sys\n"
-               "s = socket.socket(socket.AF_UNIX); s.settimeout(5); s.connect(sys.argv[1])\n"
-               "unasked = bytes.fromhex(sys.argv[3]).decode()\n"
-               "try:\n"
-               "    s.sendall(bytes.fromhex(sys.argv[2]))\n"
-               "    print(repr(next((l for l in s.makefile() if not l.startswith(unasked)), \"\")))\n"
-               "except OSError:\n"
-               "    print(repr(\"\"))' "
-               f"{CONTROL_SOCKET} {SNAPSHOT} {UNASKED}")
+# Asks the shell's control channel for a snapshot, and prints the reply:
+# nothing when the compositor closes the connection without one.
+ASK_CONTROL = guest.ask_fulcrum(CONTROL_SOCKET, '{"op":"snapshot"}')
 
 
 def apps_refused():

@@ -8,6 +8,7 @@
 #[allow(unsafe_code)]
 mod crypt;
 mod ctrl_alt_del;
+mod frames;
 mod launcher;
 mod request;
 mod shell_connect;

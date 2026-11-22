@@ -5,13 +5,16 @@ mod common;
 
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Write},
-    os::unix::net::UnixStream,
+    io::Write,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
-use common::{Compositor, another_uid, own_uid};
+use common::{
+    Compositor, another_uid,
+    control::{Control, VERSION},
+    own_uid,
+};
 use crowbar_compositor::{
     State,
     backend::{Backend, Drawn},
@@ -29,42 +32,6 @@ const KEY_SUPER: u32 = 125;
 const KEY_CTRL: u32 = 29;
 const KEY_ALT: u32 = 56;
 const KEY_ENTER: u32 = 28;
-
-struct Control {
-    reader: BufReader<UnixStream>,
-    writer: UnixStream,
-}
-
-impl Control {
-    fn connect(compositor: &Compositor) -> Control {
-        Control::at(&compositor.dir.join("control"))
-    }
-
-    fn at(path: &std::path::Path) -> Control {
-        let stream = UnixStream::connect(path).unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        Control {
-            reader: BufReader::new(stream.try_clone().unwrap()),
-            writer: stream,
-        }
-    }
-
-    fn send(&mut self, request: &str) {
-        self.writer.write_all(format!("{request}\n").as_bytes()).unwrap();
-    }
-
-    /// The next line, passing over the snapshots the compositor sends the
-    /// shell unasked.
-    fn line(&mut self) -> String {
-        loop {
-            let mut line = String::new();
-            self.reader.read_line(&mut line).unwrap();
-            if !line.starts_with(r#"{"event":"snapshot","#) {
-                return line.trim_end().to_string();
-            }
-        }
-    }
-}
 
 fn chord(compositor: &Compositor, keys: &[u32]) {
     for key in keys {
@@ -125,8 +92,8 @@ fn locked_the_lock_screen_is_all_that_shows_and_all_that_hears() {
     let mut client = focused_window(&compositor);
 
     control.send(r#"{"op":"lock"}"#);
-    assert_eq!(control.line(), r#"{"event":"locked"}"#);
-    assert_eq!(control.line(), r#"{"reply":"ok"}"#);
+    assert_eq!(control.message(), r#"{"event":"locked"}"#);
+    assert_eq!(control.message(), r#"{"reply":"ok"}"#);
     assert_eq!(
         compositor.screen(0).pixel(60, 60),
         Some(LOCKED_BACKGROUND),
@@ -152,8 +119,8 @@ fn locked_the_lock_screen_is_all_that_shows_and_all_that_hears() {
 
     // With no unlock authority, the shell's word unlocks.
     control.send(r#"{"op":"unlock"}"#);
-    assert_eq!(control.line(), r#"{"event":"unlocked"}"#);
-    assert_eq!(control.line(), r#"{"reply":"ok"}"#);
+    assert_eq!(control.message(), r#"{"event":"unlocked"}"#);
+    assert_eq!(control.message(), r#"{"reply":"ok"}"#);
     // The lock screen is the shell's to take down; the window has the
     // keyboard back.
     compositor.key(KEY_A, true);
@@ -173,7 +140,7 @@ fn super_l_locks_and_nothing_else_draws_on_another_display() {
     let _client = focused_window(&compositor);
 
     chord(&compositor, &[KEY_SUPER, KEY_L]);
-    assert_eq!(control.line(), r#"{"event":"locked"}"#);
+    assert_eq!(control.message(), r#"{"event":"locked"}"#);
     let mut shell = compositor.shell();
     lock_screen(&mut shell);
 
@@ -187,7 +154,7 @@ fn super_l_locks_and_nothing_else_draws_on_another_display() {
     // Super tapped alone does not open the launcher while locked.
     chord(&compositor, &[KEY_SUPER]);
     control.send(r#"{"op":"snapshot"}"#);
-    let reply = control.line();
+    let reply = control.message();
     assert!(reply.starts_with(r#"{"reply":"snapshot""#), "{reply}");
     assert!(reply.contains(r#""locked":true"#), "{reply}");
 }
@@ -245,8 +212,8 @@ fn the_confirm_chord_neither_locks_nor_unlocks_and_no_client_hears_its_enter() {
     // Locked, it does not unlock, and the lock screen does not hear its
     // Enter either.
     control.send(r#"{"op":"lock"}"#);
-    assert_eq!(control.line(), r#"{"event":"locked"}"#);
-    assert_eq!(control.line(), r#"{"reply":"ok"}"#);
+    assert_eq!(control.message(), r#"{"event":"locked"}"#);
+    assert_eq!(control.message(), r#"{"reply":"ok"}"#);
     let mut shell = compositor.shell();
     lock_screen(&mut shell);
     shell.take_keys().unwrap();
@@ -262,7 +229,7 @@ fn the_confirm_chord_neither_locks_nor_unlocks_and_no_client_hears_its_enter() {
     // The shell hears no event of the chord: the next line answers its
     // request.
     control.send(r#"{"op":"snapshot"}"#);
-    let reply = control.line();
+    let reply = control.message();
     assert!(reply.starts_with(r#"{"reply":"snapshot""#), "{reply}");
 }
 
@@ -284,30 +251,30 @@ fn once_there_is_an_unlock_authority_only_its_word_unlocks() {
 
     // The authority locks, and hears no event: its reply is all it gets.
     authority.send(r#"{"op":"lock"}"#);
-    assert_eq!(authority.line(), r#"{"reply":"ok"}"#);
-    assert_eq!(control.line(), r#"{"event":"locked"}"#);
+    assert_eq!(authority.message(), r#"{"reply":"ok"}"#);
+    assert_eq!(control.message(), r#"{"event":"locked"}"#);
 
     // The shell's word is not enough.
     control.send(r#"{"op":"unlock"}"#);
-    let refused = control.line();
+    let refused = control.message();
     assert!(refused.starts_with(r#"{"reply":"error""#), "{refused}");
     assert!(compositor.with(|state| state.locked()), "the shell unlocked");
 
     // The authority may lock and unlock, and do nothing else.
     authority.send(r#"{"op":"snapshot"}"#);
     assert!(
-        authority.line().starts_with(r#"{"reply":"error""#),
+        authority.message().starts_with(r#"{"reply":"error""#),
         "the authority took a snapshot"
     );
     authority.send(r#"{"op":"unlock","by":"me"}"#);
     assert!(
-        authority.line().starts_with(r#"{"reply":"error""#),
+        authority.message().starts_with(r#"{"reply":"error""#),
         "an unlock took a field"
     );
 
     authority.send(r#"{"op":"unlock"}"#);
-    assert_eq!(authority.line(), r#"{"reply":"ok"}"#);
-    assert_eq!(control.line(), r#"{"event":"unlocked"}"#);
+    assert_eq!(authority.message(), r#"{"reply":"ok"}"#);
+    assert_eq!(control.message(), r#"{"event":"unlocked"}"#);
     compositor.key(KEY_A, true);
     compositor.key(KEY_A, false);
     client.roundtrip().unwrap();
@@ -317,17 +284,53 @@ fn once_there_is_an_unlock_authority_only_its_word_unlocks() {
 #[test]
 fn the_unlock_authority_takes_its_user_id_and_no_other() {
     let compositor = Compositor::start();
-    let mut impostor = Control::at(&with_authority(&compositor, another_uid()));
+    let mut impostor = Control::silent(&with_authority(&compositor, another_uid()));
     compositor.with(|state| state.lock("test"));
 
-    impostor.writer.write_all(b"{\"op\":\"unlock\"}\n").ok();
-    let mut line = String::new();
-    let read = impostor.reader.read_line(&mut line).unwrap_or(0);
-    assert_eq!(
-        read, 0,
-        "the compositor answered a peer that is not the authority: {line}"
-    );
+    // The compositor may have closed already, and a write then fails.
+    for message in [VERSION, r#"{"op":"unlock"}"#] {
+        let mut frame = (message.len() as u32).to_be_bytes().to_vec();
+        frame.extend_from_slice(message.as_bytes());
+        impostor.stream.write_all(&frame).ok();
+    }
+    let answer = impostor.frame();
+    assert_eq!(answer, None, "the compositor answered a peer that is not the authority");
     assert!(compositor.with(|state| state.locked()), "an impostor unlocked");
+}
+
+/// The unlock authority's socket speaks as the shell's control channel
+/// does: frames, the version first, and no frame past the limit.
+#[test]
+fn the_unlock_authority_states_the_version_first_or_is_closed() {
+    let compositor = Compositor::start();
+    let path = with_authority(&compositor, own_uid());
+    compositor.with(|state| state.lock("test"));
+
+    let mut authority = Control::silent(&path);
+    authority.send(VERSION);
+    authority.send(r#"{"op":"lock"}"#);
+    assert_eq!(authority.frame().as_deref(), Some(VERSION));
+    assert_eq!(authority.frame().as_deref(), Some(r#"{"reply":"ok"}"#));
+
+    for first in [r#"{"op":"unlock"}"#, r#"{"version":2}"#] {
+        let mut authority = Control::silent(&path);
+        authority.send(first);
+        authority.send(r#"{"op":"unlock"}"#);
+        assert_eq!(authority.frame(), None, "{first} was answered");
+    }
+    // One line, as the unlock helper spoke before.
+    let mut authority = Control::silent(&path);
+    authority.stream.write_all(b"{\"op\":\"unlock\"}\n").unwrap();
+    assert_eq!(authority.frame(), None, "a line was answered");
+    let mut authority = Control::at(&path);
+    authority.stream.write_all(&[0, 0, 0x10, 0x01]).unwrap();
+    assert_eq!(authority.frame(), None, "a frame past the limit was answered");
+    assert!(compositor.with(|state| state.locked()), "a refused peer unlocked");
+
+    let mut authority = Control::at(&path);
+    authority.send(r#"{"op":"unlock"}"#);
+    assert_eq!(authority.frame().as_deref(), Some(r#"{"reply":"ok"}"#));
+    assert!(!compositor.with(|state| state.locked()));
 }
 
 #[test]
@@ -440,15 +443,6 @@ fn with_held_flips() -> (Compositor, Displays, Client) {
     (compositor, displays, client)
 }
 
-/// The next line, or none within `wait`.
-fn line_within(control: &mut Control, wait: Duration) -> Option<String> {
-    control.writer.set_read_timeout(Some(wait)).unwrap();
-    let mut line = String::new();
-    let read = control.reader.read_line(&mut line);
-    control.writer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    read.ok().filter(|read| *read > 0).map(|_| line.trim_end().to_string())
-}
-
 #[test]
 fn a_lock_is_answered_only_once_every_display_shows_the_session_locked() {
     let (compositor, displays, _client) = with_held_flips();
@@ -465,17 +459,17 @@ fn a_lock_is_answered_only_once_every_display_shows_the_session_locked() {
     // answered while a display still shows the desktop.
     authority.send(r#"{"op":"lock"}"#);
     authority.send(r#"{"op":"snapshot"}"#);
-    assert_eq!(line_within(&mut authority, Duration::from_millis(300)), None);
+    assert_eq!(authority.frame_within(Duration::from_millis(300)), None);
     displays.flip(&compositor, Some(0));
     assert_eq!(
-        line_within(&mut authority, Duration::from_millis(300)),
+        authority.frame_within(Duration::from_millis(300)),
         None,
         "answered while the second display showed the desktop"
     );
 
     displays.flip(&compositor, Some(1));
-    assert_eq!(authority.line(), r#"{"reply":"ok"}"#);
-    let after = authority.line();
+    assert_eq!(authority.message(), r#"{"reply":"ok"}"#);
+    let after = authority.message();
     assert!(after.starts_with(r#"{"reply":"error""#), "{after}");
     for (index, shown) in displays.shown(&compositor).into_iter().enumerate() {
         let shown = shown.unwrap();
@@ -488,7 +482,7 @@ fn a_lock_is_answered_only_once_every_display_shows_the_session_locked() {
     // Once the lock shows, a lock again is answered at once.
     authority.send(r#"{"op":"lock"}"#);
     assert_eq!(
-        line_within(&mut authority, Duration::from_millis(300)).as_deref(),
+        authority.frame_within(Duration::from_millis(300)).as_deref(),
         Some(r#"{"reply":"ok"}"#)
     );
 }
@@ -502,7 +496,7 @@ fn a_display_that_never_shows_a_frame_holds_the_lock_reply_only_so_long() {
     authority.send(r#"{"op":"lock"}"#);
     // The reply still comes, within the bound and well before the unlock
     // helper gives up waiting for it, at five seconds.
-    assert_eq!(authority.line(), r#"{"reply":"ok"}"#);
+    assert_eq!(authority.message(), r#"{"reply":"ok"}"#);
     let waited = asked.elapsed();
     assert!(waited >= LOCK_SHOWN_WITHIN, "answered after {waited:?}");
     assert!(waited < Duration::from_secs(3), "answered after {waited:?}");

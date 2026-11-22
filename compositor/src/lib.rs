@@ -29,6 +29,7 @@ pub mod event_loop;
 mod evidence;
 mod explicit_sync;
 mod fractional_scale;
+mod frames;
 pub mod geometry;
 mod globals;
 mod grabs;
