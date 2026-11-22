@@ -51,6 +51,7 @@ The substrate vision before it is archived, and its code is at the
 ```sh
 python3 -m unittest discover -s base -p "test_*.py"
 python3 -m unittest discover -s lab/void -p "test_*.py"
+python3 -m unittest discover -s .github/workflows -p "test_*.py"   # which jobs CI runs for a change
 base/void_base.py check        # build Base with the desktop, boot it, and check it
 lab/void/compositor_check.py   # the compositor, on a copy of Base's image booted under UEFI
 lab/void/desktop_check.py      # the desktop and Base boot checks, on a copy of Base's image booted under UEFI

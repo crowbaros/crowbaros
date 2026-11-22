@@ -38,6 +38,12 @@ jobs:
       # Docs are any Markdown file, docs/, compositor/docs/, .impeccable/, and
       # LICENSE. Everything else is code. The boot check covers what goes into
       # Base's image: base/, the compositor, and the shell and Studio Settings.
+      # A moved file counts at both its paths (`--no-renames`): Git names a
+      # move by where the file went, and code moved into docs/ is still a
+      # change to the code. Each path is read as it is, ended by a NUL
+      # (`-z`): on a line of its own, Git puts a name with a quote, a
+      # backslash, or a letter outside ASCII in quotes, which no pattern
+      # here starts with. test_ci.py runs this script.
       - name: Classify the changed files
         id: classify
         env:
@@ -47,19 +53,27 @@ jobs:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
         run: |
+          # A path is bytes, and need not be text in any encoding: read and
+          # matched a byte at a time, none can be taken with the NUL after it.
+          export LC_ALL=C
+          files=$(mktemp)
           if [ "$EVENT" = pull_request ]; then
-            files=$(git diff --name-only "$PR_BASE...$PR_HEAD")
+            git diff -z --name-only --no-renames "$PR_BASE...$PR_HEAD" > "$files"
           elif [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            files=$(git diff --name-only "$BEFORE" "$AFTER")
+            git diff -z --name-only --no-renames "$BEFORE" "$AFTER" > "$files"
           else
-            files=$(git ls-files)
+            git ls-files -z > "$files"
           fi
           code=false compositor=false boot=false
-          while IFS= read -r f; do
+          while IFS= read -r -d '' f; do
             case "$f" in
-              ""|*.md|docs/*|compositor/docs/*|.impeccable/*|LICENSE) continue ;;
+              *.md|docs/*|compositor/docs/*|.impeccable/*|LICENSE) continue ;;
             esac
-            echo "$f"
+            # For the log, with every character but letters, digits, and
+            # `._/-` shown as `?`: the runner reads `::` at the start of a
+            # line and `##[` anywhere in one as a command, and a name may
+            # hold either, and a newline before it.
+            printf 'code: %s\n' "${f//[^A-Za-z0-9._\/-]/?}"
             code=true
             case "$f" in
               compositor/*|.github/workflows/compositor.yml) compositor=true ;;
@@ -67,9 +81,7 @@ jobs:
             case "$f" in
               base/*|compositor/*|apps/shell/*|apps/studio-settings/*|.github/workflows/ci.yml) boot=true ;;
             esac
-          done <<EOF
-          $files
-          EOF
+          done < "$files"
           printf 'code=%s\ncompositor=%s\nboot=%s\n' "$code" "$compositor" "$boot" | tee -a "$GITHUB_OUTPUT"
 
   check:
@@ -86,9 +98,10 @@ jobs:
 
       - name: Lab scripts compile and pass their tests
         run: |
-          python3 -m py_compile base/*.py lab/void/*.py
+          python3 -m py_compile base/*.py lab/void/*.py .github/workflows/*.py
           python3 -m unittest discover -s base -p "test_*.py"
           python3 -m unittest discover -s lab/void -p "test_*.py"
+          python3 -m unittest discover -s .github/workflows -p "test_*.py"
 
   shell:
     name: Interface (${{ matrix.project }})
