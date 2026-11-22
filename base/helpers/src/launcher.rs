@@ -557,11 +557,15 @@ mod tests {
 
     #[test]
     fn only_the_person_runs_a_program_as_an_app_and_only_a_program() {
-        let alex = person(Path::new("/home/alex"));
+        // The build runs these tests as root, so the person's user ID is
+        // given here, and is not the one the tests run as.
+        let mut alex = person(Path::new("/home/alex"));
+        alex.uid = 1003;
         let env = ["/usr/bin/env".to_string()];
-        assert!(as_app(&env, alex.uid + 1, &alex, "C.UTF-8").is_err());
+        assert!(as_app(&env, 1003, &alex, "C.UTF-8").is_ok());
+        assert!(as_app(&env, 1001, &alex, "C.UTF-8").is_err());
         assert!(as_app(&env, 0, &alex, "C.UTF-8").is_err());
-        assert!(as_app(&[], alex.uid, &alex, "C.UTF-8").is_err());
+        assert!(as_app(&[], 1003, &alex, "C.UTF-8").is_err());
     }
 
     #[test]

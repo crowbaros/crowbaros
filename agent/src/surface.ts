@@ -37,12 +37,14 @@ function serve(peer: Socket, shellUid: number, say: (what: string) => void): voi
 	const frames = new FrameReader(MAX_FRAME);
 	let stated = false;
 	let closed = false;
-	// What was already written is sent, and nothing more is read.
+	// What was already written is sent, and nothing more is read. A peer
+	// that does not take it within a second is dropped all the same.
 	const close = (why: string) => {
 		closed = true;
 		say(`closed, ${why}`);
 		peer.removeAllListeners("data");
 		peer.end(() => peer.destroy());
+		setTimeout(() => peer.destroy(), 1000).unref();
 	};
 	peer.on("close", () => {
 		if (!closed) say(stated ? "the shell left" : "the shell left before it stated a version");

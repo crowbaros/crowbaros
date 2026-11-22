@@ -58,11 +58,16 @@ sides hold.
   two. Run the jobs' commands before you push code.
 - CI boots Base. Its `Base boots` job runs `base/void_base.py check` on
   GitHub's runner, with KVM, for any change to `base/`, `compositor/`,
-  `apps/shell/`, or `apps/studio-settings/`. Its logs are the run's
+  `apps/shell/`, `apps/studio-settings/`, or `agent/`. Its logs are the run's
   `base-boot-logs` artifact. Run the check yourself when you want to see a boot
   before you push; you need not report it. GitHub does not support a VM inside
   its runners, so if the job stops working, run the check yourself, show its
   `.lab/base/boot-<time>.log`, and open an issue.
+- CI checks the Harness. Its `Harness` job runs `base/void_base.py agent` for
+  any change to [`agent/`](agent/README.md), to the Node.js pin in
+  `base/config.json`, or to `base/void_base.py`: it type-checks `agent/`,
+  tests it, and bundles it into one file, with the pinned Node.js. The tests
+  start the bundle as one process and talk to it over a real socket.
 - A bug fix comes with a test that fails without the fix.
 - CI cannot draw a window or run the graphical guest, so these checks are
   yours to run and report in the pull request:

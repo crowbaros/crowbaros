@@ -76,29 +76,49 @@ class Changes(unittest.TestCase):
     def test_docs_alone_need_no_job(self):
         head = self.commit({'docs/VISION.md': 'The vision, amended\n', 'README.md': 'CrowbarOS, again\n'})
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'false', 'compositor': 'false', 'boot': 'false'})
+                         {'code': 'false', 'compositor': 'false', 'boot': 'false', 'agent': 'false'})
 
     def test_a_lab_script_needs_the_code_jobs_alone(self):
         head = self.commit({'lab/void/guest.py': 'print("another guest")\n'})
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'true', 'compositor': 'false', 'boot': 'false'})
+                         {'code': 'true', 'compositor': 'false', 'boot': 'false', 'agent': 'false'})
 
     def test_the_compositor_needs_its_job_and_the_boot(self):
         head = self.commit({'compositor/src/main.rs': 'fn main() { loop {} }\n'})
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'true', 'boot': 'true', 'agent': 'false'})
+
+    def test_the_harness_needs_its_job_and_the_boot(self):
+        head = self.commit({'agent/src/main.ts': 'await listen();\n'})
+        self.assertEqual(self.needs(base=self.first, head=head),
+                         {'code': 'true', 'compositor': 'false', 'boot': 'true', 'agent': 'true'})
+
+    def test_what_pins_node_and_runs_the_harnesss_job_needs_that_job(self):
+        # Base's configuration pins the Node.js the Harness runs on, and
+        # void_base.py is the command the job runs.
+        for path in ('base/config.json', 'base/void_base.py'):
+            with self.subTest(path=path):
+                before = self.git('rev-parse', 'HEAD')
+                head = self.commit({path: '{"node_url": "another"}\n'})
+                self.assertEqual(self.needs(base=before, head=head),
+                                 {'code': 'true', 'compositor': 'false', 'boot': 'true', 'agent': 'true'})
+
+    def test_base_apart_from_those_needs_the_boot_and_not_the_harnesss_job(self):
+        head = self.commit({'base/host/image.sh': 'set -eu\n'})
+        self.assertEqual(self.needs(base=self.first, head=head),
+                         {'code': 'true', 'compositor': 'false', 'boot': 'true', 'agent': 'false'})
 
     def test_code_moved_into_docs_is_still_a_change_to_the_code(self):
         # Git names a moved file by where it went. Read that way, Base losing
         # a file to docs/ was a change to docs alone, and no job ran.
         head = self.commit(moves=[('base/void_base.py', 'docs/void_base.py')])
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'true', 'compositor': 'false', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'false', 'boot': 'true', 'agent': 'true'})
 
     def test_a_push_that_moves_code_into_docs_is_read_the_same(self):
         after = self.commit(moves=[('compositor/src/main.rs', 'compositor/docs/main.rs')])
         self.assertEqual(self.needs(before=self.first, after=after),
-                         {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'true', 'boot': 'true', 'agent': 'false'})
 
     def test_a_file_git_would_name_in_quotes_is_read_by_its_path(self):
         # Git puts a name with a letter outside ASCII, a quote, or a
@@ -109,17 +129,17 @@ class Changes(unittest.TestCase):
                 before = self.git('rev-parse', 'HEAD')
                 added = self.commit({f'compositor/src/{name}': 'fn main() {}\n' * 20})
                 self.assertEqual(self.needs(base=before, head=added),
-                                 {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                                 {'code': 'true', 'compositor': 'true', 'boot': 'true', 'agent': 'false'})
                 moved = self.commit(moves=[(f'compositor/src/{name}', f'docs/{name}.md')])
                 self.assertEqual(self.needs(before=added, after=moved),
-                                 {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                                 {'code': 'true', 'compositor': 'true', 'boot': 'true', 'agent': 'false'})
 
     def test_a_file_whose_name_is_not_text_is_read_by_its_path(self):
         # A name that ends partway through a UTF-8 character. Read as text,
         # the byte could take the NUL after it, and the file with it.
         head = self.commit({os.fsdecode(b'base/half-a-letter-\xc2'): 'print("Base")\n'})
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'true', 'compositor': 'false', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'false', 'boot': 'true', 'agent': 'false'})
         self.assertIn('code: base/half-a-letter-?\n', self.log)
 
     def test_no_files_name_writes_what_the_runner_would_read_as_a_command(self):
@@ -131,7 +151,7 @@ class Changes(unittest.TestCase):
                             'compositor/src/b\n##[set-output name=code;]false': 'fn main() {}\n',
                             '::add-mask::false': 'a file at the top, named as a command\n'})
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'true', 'boot': 'true', 'agent': 'false'})
         self.assertIn('code: compositor/src/a???add-mask??true\n', self.log)
         self.assertIn('code: ??add-mask??false\n', self.log)
         self.assertNotIn('::', self.log)
@@ -144,7 +164,7 @@ class Changes(unittest.TestCase):
 
     def test_a_push_with_no_commit_before_it_runs_every_job(self):
         self.assertEqual(self.needs(before='0' * 40, after=self.first),
-                         {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'true', 'boot': 'true', 'agent': 'true'})
 
     def test_the_weeks_run_runs_every_job(self):
         head = self.commit({'docs/VISION.md': 'The vision, amended\n'})
