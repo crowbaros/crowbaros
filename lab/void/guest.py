@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import socket
 import struct
@@ -25,6 +26,49 @@ if str(ROOT / "base") not in sys.path:
     sys.path.insert(0, str(ROOT / "base"))
 
 import void_base  # noqa: E402
+
+# A client of one of Fulcrum's own channels, for inside the guest: the shell's
+# control channel or the unlock authority's socket. Each message is a frame, a
+# length in four bytes with the most significant first and then JSON, and each
+# end's first frame states the version (compositor/README.md, "The control
+# channel"). It sends one request and prints its reply, passing over the
+# events the shell is sent unasked. It prints nothing when the compositor
+# closes the connection or states another version.
+FULCRUM_CLIENT = """
+import socket, struct, sys
+def send(message):
+    s.sendall(struct.pack(">I", len(message)) + message)
+def read():
+    length = f.read(4)
+    if len(length) < 4:
+        raise EOFError
+    message = f.read(struct.unpack(">I", length)[0])
+    if len(message) < struct.unpack(">I", length)[0]:
+        raise EOFError
+    return message
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(5)
+try:
+    s.connect(sys.argv[1])
+    f = s.makefile("rb")
+    send(b'{"version":1}')
+    if read() != b'{"version":1}':
+        raise EOFError
+    send(sys.argv[2].encode())
+    while (message := read()).startswith(b'{"event":'):
+        pass
+    print(message.decode(errors="replace"))
+except (OSError, EOFError):
+    pass
+"""
+# The frame that states the version, for a check that only knocks.
+FULCRUM_VERSION_FRAME = b'\x00\x00\x00\x0d{"version":1}'
+
+
+def ask_fulcrum(path, request):
+    """The guest command that sends `request` to Fulcrum's socket at `path`
+    and prints the reply, or nothing if Fulcrum gives none."""
+    return f"python3 -c {shlex.quote(FULCRUM_CLIENT)} {shlex.quote(path)} {shlex.quote(request)}"
 
 
 class Qmp:

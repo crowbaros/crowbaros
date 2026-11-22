@@ -76,7 +76,9 @@ historical behavior evidence, not a current Fedora workflow.
   locked.
 
 These messages, the lock screen's namespace, and the unlock helper's socket
-are accepted in ADR 0032. Desktop shortcuts and window-layout behavior come
+are accepted in ADR 0032. The compositor's README lists the messages and
+their framing, under
+[the control channel](../../compositor/README.md#the-control-channel). Desktop shortcuts and window-layout behavior come
 from the compositor.
 
 `src/session.rs` retains Hyprland, `systemd-run`, and `systemctl` fallback

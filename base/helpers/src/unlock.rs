@@ -14,7 +14,7 @@
 //! does. `crowbar-unlock hash PASSWORD` prints a hash for /etc/shadow, as the
 //! image build sets the lab's password.
 
-use crate::{crypt, request, sys};
+use crate::{crypt, frames, request, sys};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -118,24 +118,22 @@ impl Authority for System {
     }
 }
 
+/// The protocol version of the compositor's unlock socket that the helper
+/// speaks (`compositor/README.md`, "The control channel").
+const COMPOSITOR_VERSION: u32 = 1;
+
 /// Sends `lock` or `unlock` to the compositor at `path`, and returns its
 /// refusal, if any.
 pub fn tell_compositor(path: &Path, op: &str) -> Result<(), String> {
-    let reply = (|| -> std::io::Result<Vec<u8>> {
+    let reply = (|| -> std::io::Result<Value> {
         let mut connection = UnixStream::connect(path)?;
         connection.set_read_timeout(Some(Duration::from_secs(5)))?;
         connection.set_write_timeout(Some(Duration::from_secs(5)))?;
-        connection.write_all(format!("{}\n", json!({ "op": op })).as_bytes())?;
-        let mut line = Vec::new();
-        std::io::BufRead::read_until(
-            &mut std::io::BufReader::new(connection.take(request::MAX_REQUEST as u64 + 1)),
-            b'\n',
-            &mut line,
-        )?;
-        Ok(line)
+        frames::state_version(&mut connection, COMPOSITOR_VERSION)?;
+        frames::write(&mut connection, &json!({ "op": op }))?;
+        frames::read(&mut connection)
     })()
     .map_err(|e| e.to_string())?;
-    let reply: Value = serde_json::from_slice(&reply).map_err(|e| e.to_string())?;
     if reply["reply"] == "ok" {
         return Ok(());
     }
@@ -346,6 +344,81 @@ mod tests {
         // Each wrong password is paused for before the next is heard.
         assert!(waits[2].1 >= std::time::Duration::from_millis(900), "{waits:?}");
         assert_eq!(fake.pauses, 3);
+    }
+
+    /// Plays the compositor at its unlock socket for one connection: reads
+    /// as many bytes as `hears`, checks them, and sends `says`, a step at a
+    /// time. The bytes are those of the compositor's README.
+    fn compositor(
+        steps: Vec<(&'static [u8], &'static [u8])>,
+    ) -> (crate::sys::tests::TempDir, std::thread::JoinHandle<()>) {
+        let dir = crate::sys::tests::TempDir::new();
+        let listener = UnixListener::bind(dir.0.join("compositor")).unwrap();
+        let served = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            for (hears, says) in steps {
+                let mut heard = vec![0u8; hears.len()];
+                stream.read_exact(&mut heard).unwrap();
+                assert_eq!(heard, hears, "{}", String::from_utf8_lossy(&heard));
+                stream.write_all(says).unwrap();
+            }
+        });
+        (dir, served)
+    }
+
+    const VERSION: &[u8] = b"\0\0\0\x0d{\"version\":1}";
+
+    /// The helper speaks the compositor's framing: a length in four bytes
+    /// and then JSON, the version first, and nothing asked until the
+    /// compositor has stated the same version.
+    #[test]
+    fn the_compositor_is_told_in_frames_once_both_have_stated_the_version() {
+        for (op, frame) in [
+            ("lock", b"\0\0\0\x0d{\"op\":\"lock\"}".as_slice()),
+            ("unlock", b"\0\0\0\x0f{\"op\":\"unlock\"}".as_slice()),
+        ] {
+            let (dir, served) = compositor(vec![(VERSION, VERSION), (frame, b"\0\0\0\x0e{\"reply\":\"ok\"}")]);
+            assert_eq!(tell_compositor(&dir.0.join("compositor"), op), Ok(()));
+            served.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn the_compositors_refusal_is_the_helpers_error() {
+        let (dir, served) = compositor(vec![
+            (VERSION, VERSION),
+            (
+                b"\0\0\0\x0f{\"op\":\"unlock\"}",
+                b"\0\0\0\x25{\"reply\":\"error\",\"message\":\"not now\"}",
+            ),
+        ]);
+        assert_eq!(
+            tell_compositor(&dir.0.join("compositor"), "unlock"),
+            Err("not now".to_string())
+        );
+        served.join().unwrap();
+    }
+
+    /// A compositor that states another version, states none, or sends a
+    /// frame longer than a reply may be, is asked nothing: the helper
+    /// gives up, and a wait for more would be a hang.
+    #[test]
+    fn a_compositor_that_does_not_state_the_helpers_version_is_asked_nothing() {
+        let line: &[u8] = b"{\"reply\":\"ok\"}\n";
+        for says in [
+            b"\0\0\0\x0d{\"version\":2}".as_slice(),
+            b"\0\0\0\x0e{\"reply\":\"ok\"}",
+            b"\0\0\x10\x01",
+            line,
+            b"",
+        ] {
+            let (dir, served) = compositor(vec![(VERSION, says)]);
+            let start = std::time::Instant::now();
+            let told = tell_compositor(&dir.0.join("compositor"), "unlock");
+            assert!(told.is_err(), "{:?}", String::from_utf8_lossy(says));
+            assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+            served.join().unwrap();
+        }
     }
 
     #[test]

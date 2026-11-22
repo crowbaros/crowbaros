@@ -3,8 +3,12 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
+import struct
 import subprocess
+import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -145,6 +149,69 @@ class SshAndBuild(GuestFixture):
             with self.assertRaises(RuntimeError) as error:
                 guest.build_base(log)
         self.assertIn(str(log), str(error.exception))
+
+
+
+
+class FulcrumClient(unittest.TestCase):
+    """The checks' client of Fulcrum's own channels, against a socket that
+    plays Fulcrum. The bytes are those of the compositor's README."""
+
+    VERSION = b'\x00\x00\x00\x0d{"version":1}'
+
+    def ask(self, says, request='{"op":"snapshot"}'):
+        """What the client prints, and what Fulcrum heard, when Fulcrum says
+        each of `says` in turn, each after as many bytes as the one before."""
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = str(Path(directory.name) / 'control')
+        listener = socket.socket(socket.AF_UNIX)
+        listener.bind(path)
+        listener.listen(1)
+        heard = []
+
+        def fulcrum():
+            connection, _ = listener.accept()
+            with connection:
+                connection.settimeout(5)
+                for hears, said in says:
+                    heard.append(connection.recv(hears, socket.MSG_WAITALL))
+                    connection.sendall(said)
+        served = threading.Thread(target=fulcrum)
+        served.start()
+        command = guest.ask_fulcrum(path, request).replace('python3', sys.executable, 1)
+        printed = subprocess.run(command, shell=True, text=True, capture_output=True, timeout=20)
+        served.join()
+        listener.close()
+        self.assertEqual(printed.stderr, '')
+        return printed.stdout, heard
+
+    def test_it_states_the_version_then_asks_in_a_frame_and_prints_the_reply(self):
+        reply = b'{"reply":"snapshot","workspace":1}'
+        printed, heard = self.ask([(17, self.VERSION),
+                                   (21, struct.pack('>I', len(reply)) + reply)])
+        self.assertEqual(heard, [self.VERSION, b'\x00\x00\x00\x11{"op":"snapshot"}'])
+        self.assertEqual(printed, reply.decode() + '\n')
+
+    def test_it_passes_over_the_events_the_shell_is_sent_unasked(self):
+        event = b'{"event":"snapshot","workspace":1}'
+        reply = b'{"reply":"error","message":"no"}'
+        frames = b''.join(struct.pack('>I', len(m)) + m for m in (event, b'{"event":"locked"}', reply))
+        printed, _ = self.ask([(17, self.VERSION + frames[:9]), (21, frames[9:])], '{"op":"unlock"}')
+        self.assertEqual(printed, reply.decode() + '\n')
+
+    def test_it_prints_nothing_when_fulcrum_closes_or_states_another_version(self):
+        for said in (b'', b'\x00\x00\x00\x0d{"version":2}', b'{"reply":"snapshot"}\n'):
+            with self.subTest(said=said):
+                printed, _ = self.ask([(17, said)])
+                self.assertEqual(printed, '')
+
+    def test_it_prints_nothing_of_a_reply_fulcrum_closed_partway_through(self):
+        printed, _ = self.ask([(17, self.VERSION), (21, b'\x00\x00\x00\x22{"reply":"snapshot"')])
+        self.assertEqual(printed, '')
+
+    def test_the_frame_a_check_knocks_with_states_the_version(self):
+        self.assertEqual(guest.FULCRUM_VERSION_FRAME, self.VERSION)
 
 
 if __name__ == '__main__':

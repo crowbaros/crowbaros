@@ -16,6 +16,12 @@ for each helper, and the binary takes the helper from the name it runs by:
 Each checks its peer with `SO_PEERCRED`. Their runit services are in
 [`../desktop/`](../desktop/).
 
+On its own socket a helper takes one line of JSON and answers with one. To
+the compositor, `crowbar-unlock` speaks the compositor's framing
+(`src/frames.rs`): a length and then JSON, with the version stated first, as
+[the control channel](../../compositor/README.md#the-control-channel) has
+it.
+
 ## Build and test
 
 Base's build builds and tests it in its Void build root with the compositor

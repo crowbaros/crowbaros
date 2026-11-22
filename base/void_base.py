@@ -793,6 +793,13 @@ CHECKS = [
      f"([{STAYED_UP}-9]|[0-9]{{2,}})s' || [ \"$e\" != {SHELL_PROGRAM} ] || break; "
      "sleep 0.2; done; echo \"$o\"; echo \"shell $e\"",
      lambda out: desktop_services_stay_up(out)),
+    # The unlock helper and the compositor are two programs that speak one
+    # framing (ADR 0035), and the tests of each play the other: here they
+    # meet. This is the suspend hook's command, and the desktop is locked
+    # from boot, so it changes nothing.
+    ("the compositor answers the unlock helper's lock",
+     "/usr/local/bin/crowbar-unlock lock; echo \"exit $?\"",
+     lambda out: out.strip() == "exit 0"),
     ("network has an address", "ip -4 -o addr show scope global",
      lambda out: "inet " in out),
     ("packages keep their groups", "stat -c '%G %n' /usr/bin/wall /var/db/dhcpcd",

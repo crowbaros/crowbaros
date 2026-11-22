@@ -769,6 +769,33 @@ class SshCheck(unittest.TestCase):
                                      'PubkeyAuthentication yes\n'))
 
 
+class UnlockHelperCheck(unittest.TestCase):
+    """Base's check has the unlock helper lock through the compositor that
+    booted: the two speak one framing (ADR 0035), and the tests of each play
+    the other."""
+
+    def setUp(self):
+        checks = {name: (command, ok) for name, command, ok, *_ in void_base.CHECKS}
+        self.command, self.passes = checks["the compositor answers the unlock helper's lock"]
+
+    def test_it_runs_the_helper_the_suspend_hook_runs(self):
+        hook = (void_base.ROOT / 'base/desktop/zzz-lock').read_text()
+        self.assertIn('/usr/local/bin/crowbar-unlock lock', hook)
+        self.assertIn('/usr/local/bin/crowbar-unlock lock', self.command)
+
+    def test_a_lock_the_compositor_answered_passes(self):
+        self.assertTrue(self.passes('exit 0\n'))
+
+    def test_a_lock_the_compositor_refused_or_never_answered_fails(self):
+        self.assertFalse(self.passes('exit 1\n'))
+        self.assertFalse(self.passes(''))
+
+    def test_it_comes_after_the_compositor_is_seen_to_stay_up(self):
+        names = [name for name, *_ in void_base.CHECKS]
+        self.assertLess(names.index("the desktop's services stay up"),
+                        names.index("the compositor answers the unlock helper's lock"))
+
+
 class NvidiaCheck(unittest.TestCase):
     """Base's check sees NVIDIA's driver built into the image, and, in a VM
     with no NVIDIA card, left unloaded."""

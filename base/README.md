@@ -154,7 +154,8 @@ video memory across a suspend to `/var/tmp` and that `/var/tmp` is on the
 disk, that restarting the compositor's
 service leaves one new compositor running, that `seatd`, the compositor, the
 shell, the launcher, and the unlock helper then stay up and the shell's
-service runs the shell, and that the kernel logged nothing critical.
+service runs the shell, that the compositor answers the unlock helper's
+`lock`, and that the kernel logged nothing critical.
 
 The lab's two graphical checks boot a copy of this image under UEFI as well.
 The desktop check runs all of these Base boot checks alongside the desktop

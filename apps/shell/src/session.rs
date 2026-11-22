@@ -192,31 +192,67 @@ fn snapshot_from(message: serde_json::Value) -> Result<Snapshot> {
     })
 }
 
-/// The lines the compositor sends, read whole: what has arrived of a line
-/// waits here for the rest, whichever of a request or the pump reads next.
-struct Lines {
-    stream: UnixStream,
-    pending: Vec<u8>,
+/// The protocol version of the compositor's control channel that the shell
+/// speaks. Each end states it in its first frame.
+const CONTROL_VERSION: u32 = 1;
+
+/// One message as the compositor's control channel frames it: its length in
+/// four bytes, the most significant first, and then the JSON
+/// (`compositor/README.md`, "The control channel").
+fn frame(message: &serde_json::Value) -> Vec<u8> {
+    let message = message.to_string();
+    let mut frame = (message.len() as u32).to_be_bytes().to_vec();
+    frame.extend_from_slice(message.as_bytes());
+    frame
 }
 
-impl Lines {
-    /// The longest line read.
+/// The frames the compositor sends, read whole: what has arrived of a frame
+/// waits here for the rest, whichever of a request or the pump reads next.
+struct Frames {
+    stream: UnixStream,
+    pending: Vec<u8>,
+    /// The compositor stated the version: its first frame, which is not
+    /// handed on.
+    versioned: bool,
+}
+
+impl Frames {
+    /// The longest message read.
     const MAX: usize = 4 * 1024 * 1024;
 
-    fn take(&mut self) -> Option<String> {
-        let end = self.pending.iter().position(|byte| *byte == b'\n')?;
-        let line: Vec<u8> = self.pending.drain(..=end).collect();
-        Some(String::from_utf8_lossy(&line).into_owned())
+    /// The next whole message that waits, if one does. An error for a frame
+    /// longer than [`Self::MAX`], as soon as its length has come, and for a
+    /// first frame that does not state the shell's version.
+    fn take(&mut self) -> Result<Option<String>> {
+        loop {
+            let Some(length) = self.pending.first_chunk::<4>() else {
+                return Ok(None);
+            };
+            let length = u32::from_be_bytes(*length) as usize;
+            if length > Self::MAX {
+                bail!("A frame from the compositor is too long")
+            }
+            if self.pending.len() < 4 + length {
+                return Ok(None);
+            }
+            let frame: Vec<u8> = self.pending.drain(..4 + length).collect();
+            let message = String::from_utf8_lossy(&frame[4..]).into_owned();
+            if self.versioned {
+                return Ok(Some(message));
+            }
+            let stated = serde_json::from_str::<serde_json::Value>(&message).ok();
+            if stated != Some(serde_json::json!({ "version": CONTROL_VERSION })) {
+                bail!("The compositor does not speak version {CONTROL_VERSION} of the control channel")
+            }
+            self.versioned = true;
+        }
     }
 
-    /// The next line, as long as the stream's read timeout waits for it.
+    /// The next message, as long as the stream's read timeout waits for it.
     fn next(&mut self) -> Result<String> {
         loop {
-            if let Some(line) = self.take() {
-                return Ok(line);
-            }
-            if self.pending.len() > Self::MAX {
-                bail!("A line from the compositor is too long")
+            if let Some(message) = self.take()? {
+                return Ok(message);
             }
             let mut chunk = [0u8; 4096];
             let read = self.stream.read(&mut chunk)?;
@@ -227,8 +263,10 @@ impl Lines {
         }
     }
 
-    /// The whole lines that wait now, without waiting for more.
-    fn waiting(&mut self) -> Vec<String> {
+    /// The whole messages that wait now, without waiting for more, and why
+    /// no more can be read after them, if the frames can no longer be told
+    /// apart.
+    fn waiting(&mut self) -> (Vec<String>, Option<anyhow::Error>) {
         if self.stream.set_nonblocking(true).is_ok() {
             let mut chunk = [0u8; 4096];
             while self.pending.len() <= Self::MAX {
@@ -239,7 +277,14 @@ impl Lines {
             }
             let _ = self.stream.set_nonblocking(false);
         }
-        std::iter::from_fn(|| self.take()).collect()
+        let mut messages = Vec::new();
+        loop {
+            match self.take() {
+                Ok(Some(message)) => messages.push(message),
+                Ok(None) => return (messages, None),
+                Err(error) => return (messages, Some(error)),
+            }
+        }
     }
 }
 
@@ -307,16 +352,17 @@ impl Adapter for Hyprland {
 /// The shell's end of the compositor's control channel.
 ///
 /// The shell's wrapper connects to the compositor's control channel and hands
-/// the shell the socket in `CROWBAR_SHELL_CONTROL_FD`. The wire format is one
-/// JSON object per line: a request gets one reply, and the compositor may
-/// send events at any time. See `compositor/src/control.rs`.
+/// the shell the socket in `CROWBAR_SHELL_CONTROL_FD`. Each message is a
+/// frame, and each end's first frame states the version. A request gets one
+/// reply, and the compositor may send events at any time. See "The control
+/// channel" in `compositor/README.md`.
 pub struct Compositor {
     /// The socket. `None` once it has failed.
     channel: Mutex<Option<Channel>>,
 }
 
 struct Channel {
-    reader: Lines,
+    reader: Frames,
     writer: UnixStream,
     /// Replies still to come to requests that gave up waiting for them.
     /// Replies come in the order of the requests, so these are the next
@@ -347,18 +393,27 @@ impl From<serde_json::Error> for Failure {
 }
 
 impl Compositor {
+    /// Takes the socket and states the shell's version on it. The
+    /// compositor's own version is checked when its first frame is read. If
+    /// the version cannot be sent, the channel is closed from the start.
     pub fn new(stream: UnixStream) -> Result<Self> {
         stream.set_read_timeout(Some(Duration::from_millis(500)))?;
         stream.set_write_timeout(Some(Duration::from_millis(500)))?;
+        let mut channel = Channel {
+            reader: Frames {
+                stream: stream.try_clone()?,
+                pending: Vec::new(),
+                versioned: false,
+            },
+            writer: stream,
+            owed: 0,
+        };
+        let stated = channel
+            .writer
+            .write_all(&frame(&serde_json::json!({ "version": CONTROL_VERSION })))
+            .inspect_err(|e| log::warn!("Compositor: could not state the version: {e}"));
         Ok(Self {
-            channel: Mutex::new(Some(Channel {
-                reader: Lines {
-                    stream: stream.try_clone()?,
-                    pending: Vec::new(),
-                },
-                writer: stream,
-                owed: 0,
-            })),
+            channel: Mutex::new(stated.ok().map(|()| channel)),
         })
     }
 
@@ -421,12 +476,12 @@ impl Compositor {
 
 impl Channel {
     fn exchange(&mut self, request: serde_json::Value) -> Result<serde_json::Value, Failure> {
-        // A write that fails may have sent part of the line.
+        // A write that fails may have sent part of the frame.
         self.writer
-            .write_all(format!("{request}\n").as_bytes())
+            .write_all(&frame(&request))
             .map_err(|error| Failure::Broken(error.into()))?;
         loop {
-            let line = self.reader.next().map_err(|error| {
+            let text = self.reader.next().map_err(|error| {
                 let late = error.downcast_ref::<std::io::Error>().is_some_and(|error| {
                     matches!(
                         error.kind(),
@@ -435,7 +490,7 @@ impl Channel {
                 });
                 if late { Failure::Late } else { Failure::Broken(error) }
             })?;
-            let message: serde_json::Value = serde_json::from_str(&line)?;
+            let message: serde_json::Value = serde_json::from_str(&text)?;
             if message.get("event").is_some() {
                 compositor_event(&message);
                 continue;
@@ -497,8 +552,9 @@ impl Adapter for Compositor {
         let Some(channel) = guard.as_mut() else {
             return;
         };
-        for line in channel.reader.waiting() {
-            match serde_json::from_str::<serde_json::Value>(&line) {
+        let (waiting, broken) = channel.reader.waiting();
+        for text in waiting {
+            match serde_json::from_str::<serde_json::Value>(&text) {
                 Ok(message) => {
                     if message.get("event").is_some() {
                         compositor_event(&message);
@@ -509,6 +565,11 @@ impl Adapter for Compositor {
                 }
                 Err(e) => log::warn!("Compositor: {e}"),
             }
+        }
+        if let Some(e) = broken {
+            // The frames cannot be told apart any more.
+            log::warn!("Compositor: {e}");
+            *guard = None;
         }
     }
 
@@ -1040,31 +1101,112 @@ mod tests {
         }
     }
 
-    /// Plays the compositor: for each expected request, checks it and sends
-    /// the scripted lines back.
-    fn scripted(script: Vec<(&'static str, &'static str)>) -> (Compositor, JoinHandle<()>) {
-        let (ours, theirs) = UnixStream::pair().unwrap();
+    /// One message as the compositor's README frames it: its length in four
+    /// bytes, the most significant first, and then the JSON.
+    fn framed(message: &str) -> Vec<u8> {
+        let mut frame = (message.len() as u32).to_be_bytes().to_vec();
+        frame.extend_from_slice(message.as_bytes());
+        frame
+    }
+
+    /// The next frame's message, as the compositor reads it.
+    fn read_frame(stream: &mut UnixStream) -> String {
+        let mut length = [0u8; 4];
+        stream.read_exact(&mut length).unwrap();
+        let mut message = vec![0u8; u32::from_be_bytes(length) as usize];
+        stream.read_exact(&mut message).unwrap();
+        String::from_utf8(message).unwrap()
+    }
+
+    const VERSION: &str = r#"{"version":1}"#;
+
+    /// Plays the compositor's half of the exchange of versions.
+    fn exchange_versions(stream: &mut UnixStream) {
+        assert_eq!(read_frame(stream), VERSION);
+        stream.write_all(&framed(VERSION)).unwrap();
+    }
+
+    /// Plays the compositor: after the exchange of versions, for each
+    /// expected request, checks it and sends the scripted messages back,
+    /// each a frame.
+    fn scripted(script: Vec<(&'static str, &'static [&'static str])>) -> (Compositor, JoinHandle<()>) {
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
         let peer = std::thread::spawn(move || {
-            let mut reader = BufReader::new(theirs.try_clone().unwrap());
-            let mut writer = theirs;
-            for (expected, reply) in script {
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                let sent: serde_json::Value = serde_json::from_str(&line).unwrap();
+            exchange_versions(&mut theirs);
+            for (expected, replies) in script {
+                let sent: serde_json::Value = serde_json::from_str(&read_frame(&mut theirs)).unwrap();
                 let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
                 assert_eq!(sent, expected);
-                writer.write_all(reply.as_bytes()).unwrap();
+                for reply in replies {
+                    theirs.write_all(&framed(reply)).unwrap();
+                }
             }
         });
         (Compositor::new(ours).unwrap(), peer)
+    }
+
+    /// The first thing the shell sends is the version, and each message
+    /// either way is a length and then JSON. The bytes are the README's.
+    #[test]
+    fn the_shell_states_the_version_first_and_each_message_is_a_frame() {
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
+        let peer = std::thread::spawn(move || {
+            let mut version = [0u8; 17];
+            theirs.read_exact(&mut version).unwrap();
+            assert_eq!(&version, b"\0\0\0\x0d{\"version\":1}");
+            theirs.write_all(b"\0\0\0\x0d{\"version\":1}").unwrap();
+            let mut request = [0u8; 22];
+            theirs.read_exact(&mut request).unwrap();
+            assert_eq!(&request, b"\0\0\0\x12{\"op\":\"launching\"}");
+            theirs.write_all(b"\0\0\0\x0e{\"reply\":\"ok\"}").unwrap();
+            theirs
+        });
+        let compositor = Compositor::new(ours).unwrap();
+        compositor.launching().unwrap();
+        let _peer_end = peer.join().unwrap();
+    }
+
+    /// A compositor whose first frame is not the version the shell speaks
+    /// is not one to talk to: the channel is closed for good, whether a
+    /// request or the pump read that frame.
+    #[test]
+    fn a_compositor_that_states_another_version_or_none_is_given_up() {
+        for first in [r#"{"version":2}"#, r#"{"reply":"ok"}"#, r#"{"event":"launcher"}"#, "version 1"] {
+            let (ours, mut theirs) = UnixStream::pair().unwrap();
+            theirs.write_all(&framed(first)).unwrap();
+            theirs.write_all(&framed(r#"{"reply":"ok"}"#)).unwrap();
+            let compositor = Compositor::new(ours).unwrap();
+            assert!(compositor.launching().is_err(), "{first}");
+            assert!(compositor.closed(), "{first}");
+
+            let (ours, mut theirs) = UnixStream::pair().unwrap();
+            theirs.write_all(&framed(first)).unwrap();
+            let compositor = Compositor::new(ours).unwrap();
+            compositor.pump();
+            assert!(compositor.closed(), "{first}, read by the pump");
+        }
+    }
+
+    /// A length past what the shell reads ends the channel at once: the
+    /// shell does not wait for that much to come.
+    #[test]
+    fn a_frame_longer_than_the_shell_reads_closes_the_channel() {
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
+        theirs.write_all(&framed(VERSION)).unwrap();
+        theirs.write_all(&[0x00, 0x40, 0x00, 0x01]).unwrap();
+        let compositor = Compositor::new(ours).unwrap();
+        let start = Instant::now();
+        assert!(compositor.launching().is_err());
+        assert!(compositor.closed());
+        assert!(start.elapsed() < Duration::from_millis(400), "{:?}", start.elapsed());
     }
 
     /// With no display, the shell asks again until one comes, and makes no
     /// layer before then (#271).
     #[test]
     fn the_shell_waits_for_a_display() {
-        const NONE: &str = "{\"reply\":\"outputs\",\"outputs\":[]}\n";
-        const ONE: &str = "{\"reply\":\"outputs\",\"outputs\":[{\"name\":\"Virtual-1\"}]}\n";
+        const NONE: &[&str] = &[r#"{"reply":"outputs","outputs":[]}"#];
+        const ONE: &[&str] = &[r#"{"reply":"outputs","outputs":[{"name":"Virtual-1"}]}"#];
         const ASK: &str = r#"{"op":"outputs"}"#;
         let (compositor, peer) = scripted(vec![(ASK, NONE), (ASK, NONE), (ASK, ONE)]);
         let mut pauses = 0;
@@ -1109,22 +1251,31 @@ mod tests {
         let (ours, mut theirs) = UnixStream::pair().unwrap();
         let compositor = Compositor::new(ours).unwrap();
 
+        exchange_versions(&mut theirs);
+
         // An event that waits with no request is read by the pump.
-        theirs.write_all(b"{\"event\":\"launcher\"}\n").unwrap();
+        theirs.write_all(&framed(r#"{"event":"launcher"}"#)).unwrap();
         compositor.pump();
         assert!(matches!(rx.try_recv(), Ok(Event::Toggle)));
 
-        // Half a line waits for the rest, and nothing is lost.
-        theirs.write_all(b"{\"event\":\"laun").unwrap();
+        // Half a frame waits for the rest, and nothing is lost: here its
+        // length and some of its message, and then no more than the length.
+        let launcher = framed(r#"{"event":"launcher"}"#);
+        theirs.write_all(&launcher[..14]).unwrap();
         compositor.pump();
         assert!(rx.try_recv().is_err());
-        theirs.write_all(b"cher\"}\n").unwrap();
+        theirs.write_all(&launcher[14..]).unwrap();
+        theirs.write_all(&launcher[..2]).unwrap();
+        compositor.pump();
+        assert!(matches!(rx.try_recv(), Ok(Event::Toggle)));
+        assert!(rx.try_recv().is_err());
+        theirs.write_all(&launcher[2..]).unwrap();
         compositor.pump();
         assert!(matches!(rx.try_recv(), Ok(Event::Toggle)));
 
         // The compositor locking and unlocking the session reaches the shell.
         theirs
-            .write_all(b"{\"event\":\"locked\"}\n{\"event\":\"unlocked\"}\n")
+            .write_all(&[framed(r#"{"event":"locked"}"#), framed(r#"{"event":"unlocked"}"#)].concat())
             .unwrap();
         compositor.pump();
         assert!(matches!(rx.try_recv(), Ok(Event::Lock(true))));
@@ -1132,14 +1283,13 @@ mod tests {
 
         let mut later = theirs.try_clone().unwrap();
         // Half an event that a request's reply follows is read with it.
-        theirs.write_all(b"{\"event\":\"laun").unwrap();
+        theirs.write_all(&launcher[..14]).unwrap();
         compositor.pump();
         let peer = std::thread::spawn(move || {
-            let mut reader = BufReader::new(theirs.try_clone().unwrap());
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            assert_eq!(line, "{\"op\":\"launching\"}\n");
-            theirs.write_all(b"cher\"}\n{\"reply\":\"ok\"}\n").unwrap();
+            assert_eq!(read_frame(&mut theirs), r#"{"op":"launching"}"#);
+            theirs
+                .write_all(&[&launcher[14..], &framed(r#"{"reply":"ok"}"#)].concat())
+                .unwrap();
         });
         compositor.launching().unwrap();
         peer.join().unwrap();
@@ -1148,10 +1298,10 @@ mod tests {
         // A snapshot the compositor sends unasked reaches the shell as one
         // it asked for would (#273).
         later
-            .write_all(
-                b"{\"event\":\"snapshot\",\"workspace\":2,\"active\":\"0x2\",\"locked\":false,\
-                  \"windows\":[{\"id\":\"0x2\",\"app_id\":\"foot\",\"title\":\"~\",\"workspace\":2,\"attention\":false}]}\n",
-            )
+            .write_all(&framed(concat!(
+                r#"{"event":"snapshot","workspace":2,"active":"0x2","locked":false,"#,
+                r#""windows":[{"id":"0x2","app_id":"foot","title":"~","workspace":2,"attention":false}]}"#
+            )))
             .unwrap();
         compositor.pump();
         match rx.try_recv() {
@@ -1167,26 +1317,34 @@ mod tests {
         // Waiting for events ends as soon as one comes.
         let sender = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(50));
-            later.write_all(b"{\"event\":\"launcher\"}\n").unwrap();
+            later.write_all(&framed(r#"{"event":"launcher"}"#)).unwrap();
             later
         });
         let start = Instant::now();
         compositor.wait(Duration::from_secs(10));
         assert!(start.elapsed() < Duration::from_secs(5), "{:?}", start.elapsed());
-        let _later = sender.join().unwrap();
+        let mut later = sender.join().unwrap();
         compositor.pump();
         assert!(matches!(rx.try_recv(), Ok(Event::Toggle)));
+
+        // An event that came before a frame too long to read still reaches
+        // the shell, and then the channel is closed for good.
+        later
+            .write_all(&[framed(r#"{"event":"locked"}"#), vec![0xff, 0xff, 0xff, 0xff]].concat())
+            .unwrap();
+        compositor.pump();
+        assert!(matches!(rx.try_recv(), Ok(Event::Lock(true))));
+        assert!(compositor.closed());
     }
 
     #[test]
     fn a_window_that_wants_attention_is_marked_in_the_snapshot() {
         let (compositor, peer) = scripted(vec![(
             r#"{"op":"snapshot"}"#,
-            concat!(
+            &[concat!(
                 r#"{"reply":"snapshot","workspace":1,"active":null,"windows":["#,
                 r#"{"id":"0x1","app_id":"org.example.Notes","title":"Notes","workspace":3,"attention":true}]}"#,
-                "\n"
-            ),
+            )],
         )]);
         let snapshot = compositor.snapshot().unwrap();
         peer.join().unwrap();
@@ -1197,12 +1355,11 @@ mod tests {
     fn a_snapshot_reply_becomes_the_shells_snapshot() {
         let (compositor, peer) = scripted(vec![(
             r#"{"op":"snapshot"}"#,
-            concat!(
+            &[concat!(
                 r#"{"reply":"snapshot","workspace":2,"active":"0x2","windows":["#,
                 r#"{"id":"0x1","app_id":"org.example.Terminal","title":"Terminal","workspace":1},"#,
                 r#"{"id":"0x2","app_id":"com.crowbaros.StudioSettings","title":"Studio \"Settings\"","workspace":2}]}"#,
-                "\n"
-            ),
+            )],
         )]);
 
         let snapshot = compositor.snapshot().unwrap();
@@ -1239,11 +1396,8 @@ mod tests {
     #[test]
     fn focus_requests_use_the_compositors_wire_format() {
         let (compositor, peer) = scripted(vec![
-            (r#"{"id":3,"op":"focus_workspace"}"#, "{\"reply\":\"ok\"}\n"),
-            (
-                r#"{"id":"0x1f","op":"focus_window"}"#,
-                "{\"reply\":\"ok\"}\n",
-            ),
+            (r#"{"id":3,"op":"focus_workspace"}"#, &[r#"{"reply":"ok"}"#]),
+            (r#"{"id":"0x1f","op":"focus_window"}"#, &[r#"{"reply":"ok"}"#]),
         ]);
 
         compositor.focus_workspace(3).unwrap();
@@ -1256,7 +1410,7 @@ mod tests {
     fn an_event_that_arrives_before_the_reply_is_skipped() {
         let (compositor, peer) = scripted(vec![(
             r#"{"id":1,"op":"focus_workspace"}"#,
-            "{\"event\":\"confirm\"}\n{\"reply\":\"ok\"}\n",
+            &[r#"{"event":"confirm"}"#, r#"{"reply":"ok"}"#],
         )]);
 
         compositor.focus_workspace(1).unwrap();
@@ -1268,7 +1422,7 @@ mod tests {
     fn a_refusal_from_the_compositor_is_an_error() {
         let (compositor, peer) = scripted(vec![(
             r#"{"id":"0x99","op":"focus_window"}"#,
-            "{\"reply\":\"error\",\"message\":\"no such window\"}\n",
+            &[r#"{"reply":"error","message":"no such window"}"#],
         )]);
 
         let error = compositor.focus_window("0x99").unwrap_err();
@@ -1280,15 +1434,12 @@ mod tests {
     #[test]
     fn a_control_channel_descriptor_is_adopted_and_used() {
         use std::os::fd::IntoRawFd;
-        let (ours, theirs) = UnixStream::pair().unwrap();
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
         let peer = std::thread::spawn(move || {
-            let mut reader = BufReader::new(theirs.try_clone().unwrap());
-            let mut writer = theirs;
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            let sent: serde_json::Value = serde_json::from_str(&line).unwrap();
+            exchange_versions(&mut theirs);
+            let sent: serde_json::Value = serde_json::from_str(&read_frame(&mut theirs)).unwrap();
             assert_eq!(sent, serde_json::json!({"op": "focus_workspace", "id": 2}));
-            writer.write_all(b"{\"reply\":\"ok\"}\n").unwrap();
+            theirs.write_all(&framed(r#"{"reply":"ok"}"#)).unwrap();
         });
         let descriptor = ours.into_raw_fd().to_string();
 
@@ -1463,20 +1614,19 @@ mod tests {
     /// waiting must not be read as the answer to the next request.
     #[test]
     fn a_late_reply_is_skipped_and_the_next_request_gets_its_own() {
-        let (ours, theirs) = UnixStream::pair().unwrap();
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
         let peer = std::thread::spawn(move || {
-            let mut reader = BufReader::new(theirs.try_clone().unwrap());
-            let mut writer = theirs;
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
+            exchange_versions(&mut theirs);
+            read_frame(&mut theirs);
             // Busy past the shell's wait, as on the way back from the console.
             std::thread::sleep(Duration::from_millis(800));
-            writer.write_all(b"{\"reply\":\"error\",\"message\":\"the late one\"}\n").unwrap();
-            line.clear();
-            reader.read_line(&mut line).unwrap();
-            assert!(line.contains("focus_window"), "{line}");
-            writer.write_all(b"{\"reply\":\"ok\"}\n").unwrap();
-            writer
+            theirs
+                .write_all(&framed(r#"{"reply":"error","message":"the late one"}"#))
+                .unwrap();
+            let next = read_frame(&mut theirs);
+            assert!(next.contains("focus_window"), "{next}");
+            theirs.write_all(&framed(r#"{"reply":"ok"}"#)).unwrap();
+            theirs
         });
         let compositor = Compositor::new(ours).unwrap();
 
@@ -1490,18 +1640,17 @@ mod tests {
 
     #[test]
     fn a_late_reply_that_comes_while_no_request_waits_is_skipped_too() {
-        let (ours, theirs) = UnixStream::pair().unwrap();
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
         let peer = std::thread::spawn(move || {
-            let mut reader = BufReader::new(theirs.try_clone().unwrap());
-            let mut writer = theirs;
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
+            exchange_versions(&mut theirs);
+            read_frame(&mut theirs);
             std::thread::sleep(Duration::from_millis(800));
-            writer.write_all(b"{\"reply\":\"error\",\"message\":\"the late one\"}\n").unwrap();
-            line.clear();
-            reader.read_line(&mut line).unwrap();
-            writer.write_all(b"{\"reply\":\"ok\"}\n").unwrap();
-            writer
+            theirs
+                .write_all(&framed(r#"{"reply":"error","message":"the late one"}"#))
+                .unwrap();
+            read_frame(&mut theirs);
+            theirs.write_all(&framed(r#"{"reply":"ok"}"#)).unwrap();
+            theirs
         });
         let compositor = Compositor::new(ours).unwrap();
 
@@ -1525,17 +1674,16 @@ mod tests {
 
     #[test]
     fn display_bridge_forwards_outputs_and_configure_output_and_refuses_everything_else() {
-        let outputs_reply = concat!(
+        const OUTPUTS: &[&str] = &[concat!(
             r#"{"reply":"outputs","outputs":[{"name":"Virtual-1","identity":"QEMU","#,
             r#""width":1280,"height":960,"refresh":60000,"x":0,"y":0,"scale":120,"#,
             r#""modes":[{"width":1280,"height":960,"refresh":60000}]}]}"#,
-            "\n"
-        );
+        )];
         let (compositor, peer) = scripted(vec![
-            (r#"{"op":"outputs"}"#, outputs_reply),
+            (r#"{"op":"outputs"}"#, OUTPUTS),
             (
                 r#"{"name":"Virtual-1","op":"configure_output","scale":150}"#,
-                "{\"reply\":\"ok\"}\n",
+                &[r#"{"reply":"ok"}"#],
             ),
         ]);
 
