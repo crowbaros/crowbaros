@@ -75,6 +75,9 @@ changes nothing GPUI does:
   as unused on a build without X11. Only the X11, macOS, and Windows backends
   call it.
 
+The shell's `tests/gpui_source.rs` fails when the prepared source or either
+lockfile loses one of the three.
+
 The gpui-probe builds the published crate with no patches, so its build still
 takes `proc-macro-error2` and prints that warning.
 
