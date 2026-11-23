@@ -7,7 +7,7 @@ to Void.
 
 | App | Current role |
 | --- | --- |
-| [shell/](shell/README.md) | Workspace bar, dock, launcher, and wallpaper; starting point for the trusted shell |
+| [shell/](shell/README.md) | Workspace bar, dock, launcher, wallpaper, and the Agent's surface; starting point for the trusted shell |
 | [studio-settings/](studio-settings/README.md) | Appearance preview, Save/Undo, and restored preferences on CrowbarOS's desktop |
 | [gpui-probe/](gpui-probe/README.md) | Optional GPUI rendering/input reference |
 

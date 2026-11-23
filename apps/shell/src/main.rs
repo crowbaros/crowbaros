@@ -143,6 +143,8 @@ struct Model {
     preferences: Preferences,
     launcher: Option<WindowHandle<Launcher>>,
     lock: Option<WindowHandle<LockScreen>>,
+    /// The Agent's surface, while it is up.
+    agent: Option<WindowHandle<AgentSurface>>,
     apps: Vec<AppEntry>,
     tx: session::Sender,
     clock: String,
@@ -983,6 +985,209 @@ fn toggle_launcher(model: Entity<Model>, cx: &mut App) {
         Err(e) => log::error!("Opening launcher: {e}"),
     }
 }
+/// What the summon gesture, Super+Space, does (ADR 0035). The shell holds
+/// whether the Agent's surface is up, and the compositor says with each
+/// gesture whether the keyboard is in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Gesture {
+    /// Bring the surface up, with the keyboard.
+    Show,
+    /// The surface is up and the keyboard elsewhere: bring it back.
+    TakeKeyboard,
+    /// The keyboard is in the surface: put it away, and give the keyboard
+    /// back to the window that had it.
+    PutAway,
+}
+fn gesture_does(up: bool, keyboard_in_surface: bool) -> Gesture {
+    match (up, keyboard_in_surface) {
+        (false, _) => Gesture::Show,
+        (true, false) => Gesture::TakeKeyboard,
+        (true, true) => Gesture::PutAway,
+    }
+}
+/// How wide the Agent's surface is on a display: about a third of it.
+fn agent_surface_width(display_width: f32) -> f32 {
+    (display_width / 3.).round()
+}
+const AGENT_HEADER_HEIGHT: f32 = 48.;
+/// The Agent's surface (ADR 0035): a drawer on the right of the display the
+/// pointer was on at the summon, the display's full height, above every
+/// window and taking no room from any. The summon gesture or its close
+/// control puts it away; Escape does not. No Harness is behind it yet, so it
+/// shows its empty state. Its look is built from `DESIGN.md`'s tokens until
+/// the design pass.
+struct AgentSurface {
+    model: Entity<Model>,
+    focus: FocusHandle,
+}
+impl AgentSurface {
+    /// Puts the surface away. The keyboard goes back to the window that had
+    /// it, if the surface holds it.
+    fn put_away(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        log::info!("SHELL agent-surface open=false");
+        self.model.update(cx, |m, _| m.agent = None);
+        session::agent_keyboard(false);
+        window.remove_window();
+    }
+}
+impl Render for AgentSurface {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let m = self.model.read(cx);
+        let p = m.palette();
+        let mark = ImageSource::Resource(Resource::Embedded(
+            bar_mark_asset(&m.preferences).into(),
+        ));
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .track_focus(&self.focus)
+            .key_context("AgentSurface")
+            .font_family("Manrope")
+            .text_size(px(13.))
+            .text_color(rgb(p.text))
+            .bg(rgb(p.canvas))
+            .border_l_1()
+            .border_color(rgb(p.line))
+            .child(
+                div()
+                    .flex_none()
+                    .h(px(AGENT_HEADER_HEIGHT))
+                    .pl(px(16.))
+                    .pr(px(12.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .border_b_1()
+                    .border_color(rgb(p.line))
+                    .child(img(mark).size(px(16.)).object_fit(ObjectFit::Contain))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Agent"),
+                    )
+                    .child(
+                        div()
+                            .id("close-agent-surface")
+                            .size(px(30.))
+                            .rounded(px(10.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(rgb(p.surface)))
+                            .child(icon("close", p.muted, 14.))
+                            .on_click(cx.listener(|this, _, w, cx| this.put_away(w, cx))),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .px(px(24.))
+                    .flex()
+                    .flex_col()
+                    .justify_center()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("No conversation yet"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .line_height(px(18.))
+                            .text_color(rgb(p.muted))
+                            .child(
+                                "This surface cannot reach the Agent yet. Until it can, \
+                                 talk to the Agent from a terminal with crowbar-agent.",
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .px(px(24.))
+                    .py(px(16.))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .border_t_1()
+                    .border_color(rgb(p.line))
+                    .text_size(px(12.))
+                    .text_color(rgb(p.muted))
+                    .child(palette_keycap("Super", p))
+                    .child(palette_keycap("Space", p))
+                    .child(div().ml(px(4.)).child("put away")),
+            )
+    }
+}
+/// Brings the Agent's surface up on the display the gesture named, a third
+/// of it wide, and asks the compositor to give it the keyboard. The
+/// compositor puts a surface of this namespace on the display the pointer
+/// was on at the gesture.
+fn show_agent_surface(model: &Entity<Model>, summon: &session::Summon, cx: &mut App) {
+    // The launcher holds the keyboard while it is open.
+    close_launcher(model, cx);
+    let width = agent_surface_width(summon.width);
+    log::info!(
+        "SHELL agent-surface open=true output={} width={width}",
+        summon.output
+    );
+    let surface = model.clone();
+    let result = cx.open_window(
+        layer(
+            "agent",
+            Layer::Overlay,
+            Anchor::TOP | Anchor::BOTTOM | Anchor::RIGHT,
+            width,
+            0.,
+            Some(-1.),
+            KeyboardInteractivity::OnDemand,
+        ),
+        move |w, cx| {
+            let focus = cx.focus_handle();
+            w.focus(&focus);
+            cx.new(|_| AgentSurface {
+                model: surface,
+                focus,
+            })
+        },
+    );
+    match result {
+        Ok(w) => {
+            model.update(cx, |m, _| m.agent = Some(w));
+            session::agent_keyboard(true);
+        }
+        Err(e) => log::error!("Opening the Agent's surface: {e}"),
+    }
+}
+/// The summon gesture: the surface comes up, takes the keyboard back, or is
+/// put away.
+fn summoned(model: &Entity<Model>, summon: session::Summon, cx: &mut App) {
+    // A surface the compositor closed, as one whose display went away, is
+    // no longer up.
+    let agent = model.read(cx).agent;
+    let up = agent.is_some_and(|w| w.update(cx, |_, _, _| ()).is_ok());
+    if !up {
+        model.update(cx, |m, _| m.agent = None);
+    }
+    match (gesture_does(up, summon.keyboard), agent) {
+        (Gesture::PutAway, Some(w)) => {
+            let _ = w.update(cx, |view, w, cx| view.put_away(w, cx));
+        }
+        (Gesture::TakeKeyboard, _) => {
+            log::info!("SHELL agent-surface keyboard=true");
+            session::agent_keyboard(true)
+        }
+        (Gesture::Show | Gesture::PutAway, _) => show_agent_surface(model, &summon, cx),
+    }
+}
 /// The lock screen: shown while the compositor has the session locked, and
 /// all it shows (ADR 0032). Where an unlock helper checks the person's
 /// password, its entry takes it at once, and Enter sends it to the helper,
@@ -1534,6 +1739,7 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
     for e in events {
         match e {
             session::Event::Toggle => toggle_launcher(model.clone(), cx),
+            session::Event::Summon(summon) => summoned(model, summon, cx),
             session::Event::Quit => cx.quit(),
             session::Event::Snapshot(s) => {
                 if model.read(cx).snapshot == s {
@@ -1693,6 +1899,7 @@ fn main() -> anyhow::Result<()> {
             },
             launcher: None,
             lock: None,
+            agent: None,
             apps: catalog::discover(),
             tx,
             clock: now.bar,
@@ -1804,7 +2011,8 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod lock_tests {
     use super::{
-        AppEntry, Assets, DockPinState, LockLayout, MAX_VISIBLE_DOTS, Preferences, asset,
+        AppEntry, Assets, DockPinState, Gesture, LockLayout, MAX_VISIBLE_DOTS, Preferences,
+        agent_surface_width, asset, gesture_does,
         background_asset, bar_mark_asset, bar_workspaces, dock_pin_state, nightwatch_size,
         lock_screen_changes, occupied_workspaces, person_label_from, session,
         theme::{Theme, Wallpaper},
@@ -1831,6 +2039,26 @@ mod lock_tests {
         };
         assert!(lock_screen_changes(&locked, false));
         assert!(!lock_screen_changes(&locked, true));
+    }
+
+    /// The summon gesture brings the Agent's surface up, brings the keyboard
+    /// back to it from a window, and puts it away only when the keyboard is
+    /// in it (ADR 0035).
+    #[test]
+    fn the_summon_gesture_shows_the_agents_surface_returns_the_keyboard_or_puts_it_away() {
+        assert_eq!(gesture_does(false, false), Gesture::Show);
+        assert_eq!(gesture_does(true, false), Gesture::TakeKeyboard);
+        assert_eq!(gesture_does(true, true), Gesture::PutAway);
+        // The compositor says the keyboard is in a surface the shell no
+        // longer has, as one whose display went away: it is shown again.
+        assert_eq!(gesture_does(false, true), Gesture::Show);
+    }
+
+    #[test]
+    fn the_agents_surface_is_a_third_of_its_display() {
+        assert_eq!(agent_surface_width(1280.), 427.);
+        assert_eq!(agent_surface_width(2560.), 853.);
+        assert_eq!(agent_surface_width(1024.), 341.);
     }
 
     #[test]

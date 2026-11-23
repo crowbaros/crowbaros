@@ -28,7 +28,7 @@ The substrate vision before it is archived, and its code is at the
 | Compositor | Our own ([ADR 0015](docs/adr/0015-our-own-compositor-on-smithay.md)), named Fulcrum, built in [`compositor/`](compositor/) ([ADR 0031](docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)), written from the ground up with Smithay as its reference ([ADR 0028](docs/adr/0028-the-compositor-is-written-from-the-ground-up.md)). The desktop runs on it |
 | Shell and Studio Settings | The desktop on Base, with separate runit services and saved appearance, booted under UEFI by the desktop check. [Earlier lab record](docs/development/void-desktop-smoke-2026-11-15.md), [apps](apps/) |
 | Brand and design system | Approved. [Brand kit](docs/branding/), [DESIGN.md](DESIGN.md) |
-| The Agent | Started: the Harness runs from boot as the person, in [`agent/`](agent/README.md) ([ADR 0034](docs/adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)). The person signs in to a Model and talks to the Agent from any terminal with [`crowbar-agent`](agent/client/README.md). It has no act yet, and no surface on the desktop. See the [vision](docs/VISION.md#the-agent) |
+| The Agent | Started: the Harness runs from boot as the person, in [`agent/`](agent/README.md) ([ADR 0034](docs/adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)). The person signs in to a Model and talks to the Agent from any terminal with [`crowbar-agent`](agent/client/README.md). Super+Space brings up the Agent's surface, a drawer the [shell](apps/shell/README.md) draws, which shows its empty state: it cannot reach the Harness yet. The Agent has no act yet. See the [vision](docs/VISION.md#the-agent) |
 
 ## Repository map
 

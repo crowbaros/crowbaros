@@ -41,9 +41,22 @@ pub struct Snapshot {
     /// The compositor locked the session: the lock screen shows.
     pub locked: bool,
 }
+/// The summon gesture, Super+Space, as the compositor tells of it.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Summon {
+    /// The display the pointer was on.
+    pub output: String,
+    /// That display's size on the desktop, in logical pixels.
+    pub width: f32,
+    pub height: f32,
+    /// The keyboard is in the Agent's surface.
+    pub keyboard: bool,
+}
 #[derive(Clone, Debug)]
 pub enum Event {
     Toggle,
+    /// The person made the summon gesture.
+    Summon(Summon),
     /// The compositor locked the session, or unlocked it.
     Lock(bool),
     Quit,
@@ -98,6 +111,11 @@ pub trait Adapter: Send + Sync {
     fn lock(&self, _locked: bool) -> Result<()> {
         bail!("This compositor does not lock")
     }
+    /// Asks the compositor to give the Agent's surface the keyboard, or to
+    /// give it back to the window that had it.
+    fn agent_keyboard(&self, _to_surface: bool) -> Result<()> {
+        bail!("This compositor has no Agent's surface")
+    }
     /// Whether `outputs` answers. A compositor that does not is taken to
     /// have a display.
     fn reports_outputs(&self) -> bool {
@@ -121,30 +139,41 @@ pub fn deliver_events_to(tx: Sender) {
     let _ = EVENTS.set(tx);
 }
 
-/// One event the compositor sent: `launcher` opens or closes the launcher,
-/// as Super tapped alone asks (ADR 0032), and `snapshot` says what the
-/// windows and workspaces are now, so the bar shows a change at once.
+/// One event the compositor sent, passed on to the interface.
 fn compositor_event(message: &serde_json::Value) {
     let event = &message["event"];
     if event.as_str() != Some("snapshot") {
         log::info!("SHELL event=compositor-event name={event}");
     }
-    let Some(tx) = EVENTS.get() else {
-        return;
+    if let (Some(tx), Some(event)) = (EVENTS.get(), shell_event(message)) {
+        let _ = tx.send(event);
+    }
+}
+
+/// What an event of the compositor's is to the shell: `launcher` opens or
+/// closes the launcher, as Super tapped alone asks (ADR 0032); `summon` is
+/// the summon gesture, for the Agent's surface (ADR 0035); and `snapshot`
+/// says what the windows and workspaces are now, so the bar shows a change
+/// at once. None for an event the shell does not know, or cannot read.
+fn shell_event(message: &serde_json::Value) -> Option<Event> {
+    let unread = |what: &str, error: &dyn std::fmt::Display| {
+        log::warn!("Compositor: a {what} event: {error}");
+        None
     };
-    let _ = match event.as_str() {
-        Some("launcher") => tx.send(Event::Toggle),
-        Some("locked") => tx.send(Event::Lock(true)),
-        Some("unlocked") => tx.send(Event::Lock(false)),
-        Some("snapshot") => match snapshot_from(message.clone()) {
-            Ok(snapshot) => tx.send(Event::Snapshot(snapshot)),
-            Err(e) => {
-                log::warn!("Compositor: a snapshot event: {e}");
-                Ok(())
-            }
+    match message["event"].as_str()? {
+        "launcher" => Some(Event::Toggle),
+        "locked" => Some(Event::Lock(true)),
+        "unlocked" => Some(Event::Lock(false)),
+        "summon" => match serde_json::from_value(message.clone()) {
+            Ok(summon) => Some(Event::Summon(summon)),
+            Err(e) => unread("summon", &e),
         },
-        _ => Ok(()),
-    };
+        "snapshot" => match snapshot_from(message.clone()) {
+            Ok(snapshot) => Some(Event::Snapshot(snapshot)),
+            Err(e) => unread("snapshot", &e),
+        },
+        _ => None,
+    }
 }
 
 /// A snapshot, from the compositor's snapshot reply or event.
@@ -533,6 +562,11 @@ impl Adapter for Compositor {
         self.request(serde_json::json!({ "op": op })).map(drop)
     }
 
+    fn agent_keyboard(&self, to_surface: bool) -> Result<()> {
+        let op = if to_surface { "focus_agent" } else { "unfocus_agent" };
+        self.request(serde_json::json!({ "op": op })).map(drop)
+    }
+
     fn reports_outputs(&self) -> bool {
         true
     }
@@ -658,6 +692,16 @@ pub fn lock(locked: bool) {
     std::thread::spawn(move || {
         if let Err(e) = connection().and_then(|c| c.lock(locked)) {
             log::warn!("Lock: {e}");
+        }
+    });
+}
+/// Asks the compositor to give the Agent's surface the keyboard, as a summon
+/// does, or to give it back to the window that had it, as putting the
+/// surface away does (ADR 0035).
+pub fn agent_keyboard(to_surface: bool) {
+    std::thread::spawn(move || {
+        if let Err(e) = connection().and_then(|c| c.agent_keyboard(to_surface)) {
+            log::warn!("Agent's surface keyboard: {e}");
         }
     });
 }
@@ -1402,6 +1446,49 @@ mod tests {
 
         compositor.focus_workspace(3).unwrap();
         compositor.focus_window("0x1f").unwrap();
+
+        peer.join().unwrap();
+    }
+
+    /// The summon gesture reaches the shell with the display the pointer
+    /// was on, its size, and where the keyboard is. The message is the
+    /// compositor README's.
+    #[test]
+    fn the_summon_gesture_reaches_the_shell_with_its_display_and_the_keyboard() {
+        let message: serde_json::Value = serde_json::from_str(
+            r#"{"event":"summon","output":"HDMI-A-1","width":2560,"height":1440,"keyboard":false}"#,
+        )
+        .unwrap();
+        match shell_event(&message) {
+            Some(Event::Summon(summon)) => assert_eq!(
+                summon,
+                Summon {
+                    output: "HDMI-A-1".into(),
+                    width: 2560.,
+                    height: 1440.,
+                    keyboard: false,
+                }
+            ),
+            other => panic!("{other:?}"),
+        }
+        // One the shell cannot read is dropped, and no other event is one.
+        for other in [r#"{"event":"summon"}"#, r#"{"event":"summon","output":1}"#] {
+            let message: serde_json::Value = serde_json::from_str(other).unwrap();
+            assert!(shell_event(&message).is_none(), "{other}");
+        }
+        let launcher = serde_json::json!({"event": "launcher"});
+        assert!(matches!(shell_event(&launcher), Some(Event::Toggle)));
+    }
+
+    #[test]
+    fn the_agents_surface_asks_for_the_keyboard_and_gives_it_back_in_the_compositors_wire_format() {
+        let (compositor, peer) = scripted(vec![
+            (r#"{"op":"focus_agent"}"#, &[r#"{"reply":"ok"}"#]),
+            (r#"{"op":"unfocus_agent"}"#, &[r#"{"reply":"ok"}"#]),
+        ]);
+
+        compositor.agent_keyboard(true).unwrap();
+        compositor.agent_keyboard(false).unwrap();
 
         peer.join().unwrap();
     }
