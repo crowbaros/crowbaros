@@ -142,4 +142,19 @@ impl State {
         let focus = self.seat.keyboard_focus.map(|focus| self.root_of(focus));
         focus.is_some() && focus == self.agent_surface()
     }
+
+    /// The window that has the keyboard, or had it when the Agent's surface
+    /// took it, if that window is still on the workspace that shows.
+    pub(crate) fn window_for_desktop_context(&self) -> Option<SurfaceId> {
+        let focus = if self.agent_has_keyboard() {
+            self.agent.keyboard_before
+        } else {
+            self.seat.keyboard_focus
+        };
+        focus.map(|focus| self.root_of(focus)).filter(|root| {
+            self.windows
+                .iter()
+                .any(|window| window.surface == *root && window.workspace == self.workspace)
+        })
+    }
 }

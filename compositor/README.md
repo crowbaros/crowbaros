@@ -291,7 +291,7 @@ request below is answered `{"reply":"ok"}` unless the table gives its reply.
 
 | Request | What it does |
 | --- | --- |
-| `{"op":"snapshot"}` | Lists every window with its workspace, the workspace that shows, the window with the keyboard, and whether the desktop is locked. Its reply: `{"reply":"snapshot","workspace":1,"active":"0x2","locked":false,"windows":[{"id":"0x2","app_id":"foot","title":"~","workspace":1,"attention":false}]}`. `active` is null when no window on the workspace that shows has the keyboard. `attention` marks a window that opened without the keyboard and has not had it since, for the bar to show |
+| `{"op":"snapshot"}` | Lists every window with its workspace, the workspace that shows, the window with the keyboard, and whether the desktop is locked. Its reply: `{"reply":"snapshot","workspace":1,"active":"0x2","locked":false,"windows":[{"id":"0x2","app_id":"foot","title":"~","workspace":1,"attention":false,"fullscreen":false}]}`. `active` is null when no window on the workspace that shows has the keyboard. `attention` marks a window that opened without the keyboard and has not had it since, for the bar to show, and `fullscreen` marks a window that covers its output |
 | `{"op":"focus_workspace","id":2}` | Shows a workspace, from 1 to 9 |
 | `{"op":"focus_window","id":"0x2"}` | Shows a window's workspace, raises the window, and gives it the keyboard |
 | `{"op":"focus_agent"}` | Gives the Agent's surface the keyboard. The shell asks as it makes the surface, so one not shown yet takes the keyboard when it shows. Refused while the desktop is locked |
@@ -328,6 +328,20 @@ own, which takes `--unlock-uid` alone. It speaks the same framing and the
 same version, and is served by the same code. The authority may send `lock`
 and `unlock`, with no other field, and nothing else, and it is sent no
 events. Base's `crowbar-unlock` is its one peer.
+
+### The Harness's socket
+
+Where `--agent-socket` is given, the Harness has a socket of its own
+([ADR 0035](../docs/adr/0035-fulcrum-draws-every-ask-and-holds-what-the-agent-may-take.md)),
+which takes the person's user ID (`--apps-uid`) alone. It speaks the same
+framing and the same version, and is served by the same code. A new
+connection from the person's user ID replaces the old one; a peer with any
+other user ID is refused and leaves the live connection alone. It is sent no
+events.
+
+| Request | What it does |
+| --- | --- |
+| `{"op":"snapshot"}` | The desktop context: the workspace that shows, the window with the keyboard (or the one that had it when the Agent's surface took it, while still on the workspace that shows), whether the desktop is locked, every window by workspace, and every display. Never window contents. Its reply: `{"reply":"snapshot","workspace":1,"active":"0x2","locked":false,"windows":[{"id":"0x2","app_id":"foot","title":"~","workspace":1}],"displays":[{"name":"HDMI-A-1","width":3840,"height":2160,"x":0,"y":0,"scale":150}]}` |
 
 ## Layout
 
@@ -379,7 +393,7 @@ events. Base's `crowbar-unlock` is its one peer.
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `dl.rs` (libraries loaded at run time), `gles.rs` (EGL and GLES: the context, textures, targets, and draws), `gbm.rs`, `dmabuf.rs` (telling a dma-buf from other files, and reading one with the CPU), `syncobj.rs` (DRM timelines), `drm.rs` (mode setting, dumb buffers, and framebuffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (copying client pixel rows) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients, and apps that copy, paste, drag, and drop (`probe/src/apps.rs`). Base's image carries it for its desktop check |
-| `tests/` | Tests that run the compositor in-process against real client connections. The files in `suite/` are the modules of one test binary, `suite/main.rs`, and their tests run side by side in one process; a file directly in `tests/` is a binary of its own, for a test that needs the process to itself. `suite/table.rs`, `suite/connections.rs`, `suite/attacks.rs`, and `descriptors.rs` are ported from the baseline; `suite/protocol.rs` covers what the compositor refuses; `suite/surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the limits on each client; `suite/redraw.rs` is the baseline's, ported; `suite/windows.rs` covers xdg-shell; `suite/layers.rs` covers layer shell; `suite/keyboard.rs` covers who gets the keys, and `suite/focus.rs` which new window takes them; `suite/seat.rs` covers the pointer and activation; `suite/cursor.rs` and `suite/cursor_shape.rs` cover the pointer's image; `suite/outputs.rs` covers outputs that change size; `suite/data_device.rs`, `suite/primary_selection.rs`, and `suite/viewporter.rs` cover those protocols; `suite/nested.rs` runs Fulcrum nested in Fulcrum; `suite/workspaces.rs` and `suite/control.rs` cover the workspaces and the shell's control channel, with its framing; `suite/summon.rs` covers the summon gesture and the Agent's surface; `suite/modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `suite/grabs.rs` covers moving and resizing; `suite/gles.rs` draws each scene with both renderers and compares them; `suite/scale.rs` covers outputs at other scales; `suite/layout.rs` covers the layout of displays and the scale a display starts at; `suite/dmabuf.rs` covers linux-dmabuf; `suite/idle_inhibit.rs` covers idle inhibit; `suite/lock.rs` covers the locked session; `suite/gpu_import.rs` covers dma-bufs the GPU draws where they are; `suite/damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `suite/probe_apps.rs` runs the probe's apps as the desktop check does; `shell_outputs.rs` runs the real shell while its only output goes away and comes back, when `CROWBAR_SHELL` names its binary; `suite/linked.rs` reads the built binary for what it links; `suite/dependencies.rs` fails if a crate [the plan](docs/PLAN.md) rules out enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. The files in `suite/` are the modules of one test binary, `suite/main.rs`, and their tests run side by side in one process; a file directly in `tests/` is a binary of its own, for a test that needs the process to itself. `suite/table.rs`, `suite/connections.rs`, `suite/attacks.rs`, and `descriptors.rs` are ported from the baseline; `suite/protocol.rs` covers what the compositor refuses; `suite/surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the limits on each client; `suite/redraw.rs` is the baseline's, ported; `suite/windows.rs` covers xdg-shell; `suite/layers.rs` covers layer shell; `suite/keyboard.rs` covers who gets the keys, and `suite/focus.rs` which new window takes them; `suite/seat.rs` covers the pointer and activation; `suite/cursor.rs` and `suite/cursor_shape.rs` cover the pointer's image; `suite/outputs.rs` covers outputs that change size; `suite/data_device.rs`, `suite/primary_selection.rs`, and `suite/viewporter.rs` cover those protocols; `suite/nested.rs` runs Fulcrum nested in Fulcrum; `suite/workspaces.rs` and `suite/control.rs` cover the workspaces and the shell's control channel, with its framing; `suite/summon.rs` covers the summon gesture and the Agent's surface; `suite/agent_socket.rs` covers the Harness's socket and its desktop-context snapshot; `suite/modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `suite/grabs.rs` covers moving and resizing; `suite/gles.rs` draws each scene with both renderers and compares them; `suite/scale.rs` covers outputs at other scales; `suite/layout.rs` covers the layout of displays and the scale a display starts at; `suite/dmabuf.rs` covers linux-dmabuf; `suite/idle_inhibit.rs` covers idle inhibit; `suite/lock.rs` covers the locked session; `suite/gpu_import.rs` covers dma-bufs the GPU draws where they are; `suite/damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `suite/probe_apps.rs` runs the probe's apps as the desktop check does; `shell_outputs.rs` runs the real shell while its only output goes away and comes back, when `CROWBAR_SHELL` names its binary; `suite/linked.rs` reads the built binary for what it links; `suite/dependencies.rs` fails if a crate [the plan](docs/PLAN.md) rules out enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), [picking up the work](docs/picking-up.md), [how to run Fulcrum on real hardware](docs/hardware-runs.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.
@@ -402,7 +416,8 @@ links the socket into the person's `XDG_RUNTIME_DIR` as `wayland-0`, so any
 Wayland app finds it.
 
 `--shell-control-socket PATH` adds [the shell's control
-channel](#the-control-channel), from the shell's user ID.
+channel](#the-control-channel), from the shell's user ID. `--agent-socket PATH` adds [the Harness's
+socket](#the-harnesss-socket), from the person's user ID (`--apps-uid`).
 
 For development, a build with the nested feature runs in a window on the
 session it is started from:

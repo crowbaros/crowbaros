@@ -64,10 +64,27 @@ pub(crate) struct ControlListener {
     uid: u32,
 }
 
+/// Which of Fulcrum's own framed channels a connection belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChannelKind {
+    Shell,
+    Authority,
+    Agent,
+}
+
+impl ChannelKind {
+    fn label(self) -> &'static str {
+        match self {
+            ChannelKind::Shell => "shell control",
+            ChannelKind::Authority => "unlock authority",
+            ChannelKind::Agent => "agent",
+        }
+    }
+}
+
 pub(crate) struct ControlConnection {
-    /// The unlock authority's connection, not the shell's: it may lock and
-    /// unlock, and nothing else, and hears no events.
-    authority: bool,
+    /// Which channel this peer connected on.
+    kind: ChannelKind,
     /// It stated the version. Until it has, it is sent nothing.
     versioned: bool,
     stream: UnixStream,
@@ -87,7 +104,7 @@ impl ControlConnection {
     /// Whether it is sent events: the shell's, once it has stated the
     /// version.
     fn hears_events(&self) -> bool {
-        self.versioned && !self.authority
+        self.versioned && self.kind == ChannelKind::Shell
     }
 }
 
@@ -96,6 +113,8 @@ pub(crate) struct Controls {
     listener: Option<ControlListener>,
     /// The unlock authority's listener, where one is named.
     authority: Option<ControlListener>,
+    /// The Harness's listener, where one is named (ADR 0035).
+    agent: Option<ControlListener>,
     connections: HashMap<u64, ControlConnection>,
     next: u64,
 }
@@ -132,13 +151,22 @@ impl State {
         Ok(())
     }
 
-    pub(crate) fn accept_control(&mut self, authority: bool) {
-        let part = if authority { "unlock authority" } else { "shell control" };
+    /// Listens for the Harness at `socket`, from the person's user ID `uid`
+    /// alone (ADR 0035). A new connection replaces the old one.
+    pub fn listen_for_agent(&mut self, socket: &Path, uid: u32) -> io::Result<()> {
+        let listener = control_listener(socket)?;
+        self.event_loop.add(listener.as_fd(), Token::AgentListener, false)?;
+        self.controls.agent = Some(ControlListener { listener, uid });
+        Ok(())
+    }
+
+    pub(crate) fn accept_control(&mut self, kind: ChannelKind) {
+        let part = kind.label();
         loop {
-            let listening = if authority {
-                &self.controls.authority
-            } else {
-                &self.controls.listener
+            let listening = match kind {
+                ChannelKind::Shell => &self.controls.listener,
+                ChannelKind::Authority => &self.controls.authority,
+                ChannelKind::Agent => &self.controls.agent,
             };
             let Some(control) = listening else {
                 return;
@@ -147,7 +175,7 @@ impl State {
                 Ok(accepted) => accepted,
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => return,
                 Err(error) => {
-                    log::warning!("the control channel could not accept: {error}");
+                    log::warning!("the {part} channel could not accept: {error}");
                     return;
                 }
             };
@@ -158,19 +186,33 @@ impl State {
                     continue;
                 }
                 Err(error) => {
-                    log::warning!("could not read a control peer's user ID: {error}");
+                    log::warning!("could not read a {part} peer's user ID: {error}");
                     continue;
                 }
             }
-            let held = self
-                .controls
-                .connections
-                .values()
-                .filter(|connection| connection.authority == authority)
-                .count();
-            if held >= MAX_CONNECTIONS {
-                log::warning!("refused a {part} connection: it holds {MAX_CONNECTIONS}");
-                continue;
+            if kind == ChannelKind::Agent {
+                // ADR 0035: a new Harness connection replaces the old one.
+                let previous: Vec<u64> = self
+                    .controls
+                    .connections
+                    .iter()
+                    .filter(|(_, connection)| connection.kind == ChannelKind::Agent)
+                    .map(|(id, _)| *id)
+                    .collect();
+                for old in previous {
+                    self.close_control(old);
+                }
+            } else {
+                let held = self
+                    .controls
+                    .connections
+                    .values()
+                    .filter(|connection| connection.kind == kind)
+                    .count();
+                if held >= MAX_CONNECTIONS {
+                    log::warning!("refused a {part} connection: it holds {MAX_CONNECTIONS}");
+                    continue;
+                }
             }
             if stream.set_nonblocking(true).is_err() {
                 continue;
@@ -184,7 +226,7 @@ impl State {
             self.controls.connections.insert(
                 id,
                 ControlConnection {
-                    authority,
+                    kind,
                     versioned: false,
                     stream,
                     input: Unread::default(),
@@ -250,10 +292,13 @@ impl State {
                 self.send_control(id, &frames::version(VERSION));
                 continue;
             }
-            let authority = connection.authority;
+            let kind = connection.kind;
             let reply = match std::str::from_utf8(&message) {
-                Ok(text) if authority => self.authority_request(id, text),
-                Ok(text) => self.control_request(id, text),
+                Ok(text) => match kind {
+                    ChannelKind::Shell => self.control_request(id, text),
+                    ChannelKind::Authority => self.authority_request(id, text),
+                    ChannelKind::Agent => self.agent_request(text),
+                },
                 Err(_) => error_reply("the request is not UTF-8"),
             };
             self.send_control(id, &reply);
@@ -289,6 +334,77 @@ impl State {
             _ => Err(format!("the unlock authority may lock and unlock, and not {op:?}")),
         };
         result.map_or_else(|message| error_reply(&message), |()| ok_reply())
+    }
+
+    /// A request on the Harness's connection (ADR 0035).
+    fn agent_request(&mut self, request: &str) -> String {
+        let parsed = match parse_object(request) {
+            Ok(parsed) => parsed,
+            Err(error) => return error_reply(&format!("not a request: {error}")),
+        };
+        let op = match parsed.get("op") {
+            Some(Value::String(op)) => op.clone(),
+            _ => return error_reply("a request names its op"),
+        };
+        let only = |fields: &[&str]| -> Result<(), String> {
+            match parsed
+                .keys()
+                .find(|key| *key != "op" && !fields.contains(&key.as_str()))
+            {
+                Some(key) => Err(format!("{op} takes no field {key:?}")),
+                None => Ok(()),
+            }
+        };
+        let result = match op.as_str() {
+            "snapshot" => only(&[]).map(|()| self.agent_snapshot_reply()),
+            _ => Err(format!("the Harness channel has no op {op:?}")),
+        };
+        result.unwrap_or_else(|message| error_reply(&message))
+    }
+
+    /// The desktop context snapshot for the Harness: the workspace, the window
+    /// with the keyboard (or the one that had it before the Agent's surface
+    /// took it), every window by workspace, and the displays. Never contents.
+    fn agent_snapshot_reply(&self) -> String {
+        let active = self
+            .window_for_desktop_context()
+            .map_or_else(|| "null".to_string(), |root| quote(&window_id(root)));
+        let windows: Vec<String> = self
+            .windows
+            .iter()
+            .map(|window| {
+                let requests = self.xdg.get(&window.surface).map(|xdg| &xdg.toplevel);
+                format!(
+                    r#"{{"id":{},"app_id":{},"title":{},"workspace":{}}}"#,
+                    quote(&window_id(window.surface)),
+                    quote(requests.map_or("", |requests| requests.app_id.as_str())),
+                    quote(requests.map_or("", |requests| requests.title.as_str())),
+                    window.workspace
+                )
+            })
+            .collect();
+        let displays: Vec<String> = self
+            .outputs
+            .iter()
+            .map(|output| {
+                format!(
+                    r#"{{"name":{},"width":{},"height":{},"x":{},"y":{},"scale":{}}}"#,
+                    quote(&output.name),
+                    output.size.0,
+                    output.size.1,
+                    output.position.0,
+                    output.position.1,
+                    output.scale_120
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"reply":"snapshot","workspace":{},"active":{active},"locked":{},"windows":[{}],"displays":[{}]}}"#,
+            self.workspace,
+            self.locked(),
+            windows.join(","),
+            displays.join(",")
+        )
     }
 
     /// Sends an event to every shell control connection that has stated the
@@ -466,7 +582,7 @@ impl State {
             if let Some((_, timer)) = connection.held {
                 self.event_loop.cancel_timer(timer);
             }
-            log::info!("shell control disconnected id={id}");
+            log::info!("{} disconnected id={id}", connection.kind.label());
         }
     }
 
@@ -568,12 +684,13 @@ impl State {
             .map(|window| {
                 let requests = self.xdg.get(&window.surface).map(|xdg| &xdg.toplevel);
                 format!(
-                    "{{\"id\":{},\"app_id\":{},\"title\":{},\"workspace\":{},\"attention\":{}}}",
+                    r#"{{"id":{},"app_id":{},"title":{},"workspace":{},"attention":{},"fullscreen":{}}}"#,
                     quote(&window_id(window.surface)),
                     quote(requests.map_or("", |requests| requests.app_id.as_str())),
                     quote(requests.map_or("", |requests| requests.title.as_str())),
                     window.workspace,
-                    window.attention
+                    window.attention,
+                    window.mode == crate::modes::Mode::Fullscreen
                 )
             })
             .collect();
