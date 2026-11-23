@@ -339,3 +339,25 @@ test("a Model that fails for a moment is asked again, and the client is told whi
 	assert.equal(events.at(-1)?.event, "done");
 	assert.equal(model.requests().length, 2);
 });
+
+test("a turn the Harness was told to stop in the middle of goes on when it starts again", async (t) => {
+	const directory = scratch(t);
+	const model = await stub(t, directory, [{ text: "One two three", stall: true }, { text: "The whole answer, the second time." }]);
+	const harness = await start(t, directory);
+	pointAt(harness.state, model.url);
+	const person = await client(harness.person);
+	const { conversation } = await person.ask({ op: "start" });
+	await person.ask({ op: "send", conversation, text: "Count." });
+	await person.until((message) => message.event === "text");
+	harness.process.kill("SIGTERM");
+	assert.equal(await harness.exited, 0);
+
+	// Nobody sends anything: the Harness asks the Model again by itself.
+	const next = await start(t, directory);
+	const again = await client(next.person);
+	for (let tries = 0; tries < 200 && (await again.ask({ op: "list" })).conversations[0].working; tries++) await sleep(50);
+	const [turn] = (await again.ask({ op: "resume", conversation })).turns as Message[];
+	assert.equal(turn?.state, "done");
+	assert.match(turn?.answer, /The whole answer, the second time\.$/);
+	assert.equal(model.requests().length, 2);
+});

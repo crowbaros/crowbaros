@@ -167,20 +167,21 @@ function standing(view: ConversationView): Standing {
 			turn.state = "working";
 			turn.answer += textOf(live.generation?.message?.content);
 			if (live.generation?.retry) turn.retry = { error: live.generation.retry.error, at: live.generation.retry.at };
-		} else if (turn.last?.stopReason === "aborted") {
-			turn.state = "stopped";
-		} else if (turn.last?.stopReason === "error") {
-			turn.state = "failed";
-			turn.error = turn.last.errorMessage ?? "the Model gave no answer";
-		} else if (turn.last === undefined) {
-			// Ended with no answer at all: stopped before the Model said
-			// anything, or no Model to ask.
-			const failure = newest ? live?.runFailure : undefined;
-			if (failure === undefined || failure.reason === "aborted") turn.state = "stopped";
+		} else if (newest && live?.runFailure) {
+			// Why the newest turn ended with no answer, which its last
+			// answer alone does not say: one cut short by a stop of the
+			// Harness looks stopped, and may have failed since.
+			const { reason, detail } = live.runFailure;
+			if (reason === "aborted") turn.state = "stopped";
 			else {
 				turn.state = "failed";
-				turn.error = failure.reason === "no_model" ? "the Model it was sent to is not there" : (failure.detail ?? failure.reason);
+				turn.error = reason === "no_model" ? "the Model it was sent to is not there" : (detail ?? turn.last?.errorMessage ?? reason);
 			}
+		} else if (turn.last?.stopReason === "aborted" || turn.last === undefined) {
+			turn.state = "stopped";
+		} else if (turn.last.stopReason === "error") {
+			turn.state = "failed";
+			turn.error = turn.last.errorMessage ?? "the Model gave no answer";
 		}
 		delete turn.last;
 	}

@@ -85,7 +85,15 @@ export class ModelAccess {
 		// the providers' catalogs in a part that costs less memory.
 		const { builtinProviders } = await import("@earendil-works/pi-ai/providers/all");
 		for (const provider of builtinProviders()) models.setProvider(provider);
-		return new ModelAccess(state, models, credentials);
+		const access = new ModelAccess(state, models, credentials);
+		// A turn the last Harness left unfinished goes on as soon as the
+		// store opens, so the endpoint it was sent to must be there by then.
+		try {
+			access.#fromEndpoint();
+		} catch (error) {
+			if (!(error instanceof Refused)) throw error;
+		}
+		return access;
 	}
 
 	#read(): Settings {
