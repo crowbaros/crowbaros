@@ -28,7 +28,7 @@ The substrate vision before it is archived, and its code is at the
 | Compositor | Our own ([ADR 0015](docs/adr/0015-our-own-compositor-on-smithay.md)), named Fulcrum, built in [`compositor/`](compositor/) ([ADR 0031](docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)), written from the ground up with Smithay as its reference ([ADR 0028](docs/adr/0028-the-compositor-is-written-from-the-ground-up.md)). The desktop runs on it |
 | Shell and Studio Settings | The desktop on Base, with separate runit services and saved appearance, booted under UEFI by the desktop check. [Earlier lab record](docs/development/void-desktop-smoke-2026-11-15.md), [apps](apps/) |
 | Brand and design system | Approved. [Brand kit](docs/branding/), [DESIGN.md](DESIGN.md) |
-| The Agent | Not started. See the [vision](docs/VISION.md#the-agent) |
+| The Agent | Started: the Harness runs from boot as the person and answers the version on its surface socket, in [`agent/`](agent/README.md) ([ADR 0034](docs/adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)). It holds no conversation yet. See the [vision](docs/VISION.md#the-agent) |
 
 ## Repository map
 
@@ -37,6 +37,7 @@ The substrate vision before it is archived, and its code is at the
 | [`base/`](base/) | Plain Void Linux with the desktop on it, built without root, that boots under UEFI in a VM or [on a real machine](base/HARDWARE.md) |
 | [`apps/`](apps/) | The GPUI interfaces: desktop shell, Studio Settings, and the GPUI probe |
 | [`compositor/`](compositor/) | Fulcrum, the Wayland compositor: its own Cargo project, with its own CI workflow |
+| [`agent/`](agent/README.md) | The Harness: our TypeScript around Pi Durable, bundled into one file that Base runs on a pinned Node.js |
 | [`lab/`](lab/) | The Void lab: the compositor check and the desktop check, both on Base's image |
 | [`docs/VISION.md`](docs/VISION.md) | The vision, the plan of record |
 | [`docs/adr/`](docs/adr/) | Decision records |
@@ -52,7 +53,8 @@ The substrate vision before it is archived, and its code is at the
 python3 -m unittest discover -s base -p "test_*.py"
 python3 -m unittest discover -s lab/void -p "test_*.py"
 python3 -m unittest discover -s .github/workflows -p "test_*.py"   # which jobs CI runs for a change
-base/void_base.py check        # build Base with the desktop, boot it, and check it
+base/void_base.py agent        # type-check, test, and bundle the Harness, with the Node.js Base pins
+base/void_base.py check        # build Base with the desktop and the Harness, boot it, and check it
 lab/void/compositor_check.py   # the compositor, on a copy of Base's image booted under UEFI
 lab/void/desktop_check.py      # the desktop and Base boot checks, on a copy of Base's image booted under UEFI
 ```
@@ -60,7 +62,7 @@ lab/void/desktop_check.py      # the desktop and Base boot checks, on a copy of 
 The compositor's own build and test commands are in its
 [README](compositor/README.md#build-and-test). The GPUI apps are separate Cargo projects with their own pinned
 dependencies. See [`apps/`](apps/README.md) for how to build and run
-them.
+them. The Harness's are in its [README](agent/README.md#build-and-test).
 
 ## Working in this repository
 

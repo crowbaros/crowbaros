@@ -34,6 +34,7 @@ jobs:
       code: ${{ steps.classify.outputs.code }}
       compositor: ${{ steps.classify.outputs.compositor }}
       boot: ${{ steps.classify.outputs.boot }}
+      agent: ${{ steps.classify.outputs.agent }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,7 +44,10 @@ jobs:
 
       # Docs are any Markdown file, docs/, compositor/docs/, .impeccable/, and
       # LICENSE. Everything else is code. The boot check covers what goes into
-      # Base's image: base/, the compositor, and the shell and Studio Settings.
+      # Base's image: base/, the compositor, the shell and Studio Settings, and
+      # the Harness in agent/. The Harness's job covers agent/, and the two
+      # files of Base it runs with: config.json pins its Node.js, and
+      # void_base.py is the command the job runs.
       # A moved file counts at both its paths (`--no-renames`): Git names a
       # move by where the file went, and code moved into docs/ is still a
       # change to the code. Each path is read as it is, ended by a NUL
@@ -70,7 +74,7 @@ jobs:
           else
             git ls-files -z > "$files"
           fi
-          code=false compositor=false boot=false
+          code=false compositor=false boot=false agent=false
           while IFS= read -r -d '' f; do
             case "$f" in
               *.md|docs/*|compositor/docs/*|.impeccable/*|LICENSE) continue ;;
@@ -85,10 +89,13 @@ jobs:
               compositor/*|.github/workflows/compositor.yml) compositor=true ;;
             esac
             case "$f" in
-              base/*|compositor/*|apps/shell/*|apps/studio-settings/*|.github/workflows/ci.yml) boot=true ;;
+              base/*|compositor/*|apps/shell/*|apps/studio-settings/*|agent/*|.github/workflows/ci.yml) boot=true ;;
+            esac
+            case "$f" in
+              agent/*|base/config.json|base/void_base.py|.github/workflows/ci.yml) agent=true ;;
             esac
           done < "$files"
-          printf 'code=%s\ncompositor=%s\nboot=%s\n' "$code" "$compositor" "$boot" | tee -a "$GITHUB_OUTPUT"
+          printf 'code=%s\ncompositor=%s\nboot=%s\nagent=%s\n' "$code" "$compositor" "$boot" "$agent" | tee -a "$GITHUB_OUTPUT"
 
   check:
     name: Lab scripts
@@ -180,6 +187,25 @@ jobs:
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
 
+  # The Harness (ADR 0034), by the command Base's build runs: type-checked,
+  # tested, and bundled into one file, with the Node.js Base pins, checked by
+  # its SHA-256, and the npm that came with it. Its tests start the bundle as
+  # one process and talk to it over a real socket.
+  agent:
+    name: Harness
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check, test, and bundle the Harness
+        run: python3 base/void_base.py agent
+
   # The compositor's own workflow (ADR 0031), run when its code changes.
   compositor:
     name: Compositor
@@ -190,9 +216,10 @@ jobs:
   # Base's boot check, the same command a person runs: build Base and its
   # desktop, boot the image under UEFI with KVM, check it, and power it off.
   # GitHub's runners offer /dev/kvm, but GitHub does not support a VM inside
-  # them (ADR 0033). The Void packages, the crates, and the desktop's Cargo
-  # build are cached from main, so a run reinstalls the Void roots from the
-  # cached packages and rebuilds only what changed.
+  # them (ADR 0033). The Void packages, the pinned Node.js, the crates, and
+  # the desktop's Cargo build are cached from main, so a run reinstalls the
+  # Void roots from the cached packages and rebuilds only what changed. The
+  # Harness's packages come from npm on every run.
   boot:
     name: Base boots
     needs: changes
@@ -428,7 +455,7 @@ jobs:
   gate:
     name: CI passed
     if: always()
-    needs: [changes, check, shell, helpers, compositor, boot]
+    needs: [changes, check, shell, helpers, agent, compositor, boot]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

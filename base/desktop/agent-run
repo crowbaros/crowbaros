@@ -1,0 +1,34 @@
+#!/bin/sh
+# The Harness's service (ADR 0034). It starts at boot, whether or not anyone
+# has unlocked, and waits for nothing. runit starts it again whenever it
+# exits: at once, or a second later when it had run for less than a second.
+# Root makes what the person cannot: their runtime directory, and
+# the directory of the surface socket, which is the person's, so the Harness
+# can bind there, and which only the shell's group may enter besides. A socket
+# made there takes the shell's group. The Harness checks the shell's user ID
+# as well. A program running as the person can enter as the Harness does, and
+# pose as it there: ADR 0034 runs the Harness as the person, with no
+# isolation inside their account. The Harness runs as the person, with their
+# groups, in the environment the launcher gives an app, starting in their
+# home. Its state and its log are in the person's home, which the Harness
+# makes for itself.
+set -eu
+exec >>/var/log/crowbar-agent.log 2>&1
+PERSON_UID=1003
+PERSON=$(getent passwd "$PERSON_UID" | cut -d: -f1)
+test -n "$PERSON" || { echo "no account has user ID $PERSON_UID"; exit 1; }
+PERSON_HOME=$(getent passwd "$PERSON_UID" | cut -d: -f6)
+SHELL_UID=$(id -u crowbar-shell)
+# This file holds what this script and the Harness's process print, never
+# the Harness's own log. It is the person's alone all the same.
+chown "$PERSON:$PERSON" /var/log/crowbar-agent.log
+chmod 0600 /var/log/crowbar-agent.log
+install -d -o "$PERSON" -g "$PERSON" -m 0700 "/run/user/$PERSON_UID"
+install -d -o "$PERSON" -g crowbar-shell -m 2750 /run/crowbar-agent
+# chpst gives the person's own group alone unless it is told the rest.
+exec chpst -u "$PERSON:$(id -Gn "$PERSON" | tr ' ' ':')" \
+  /usr/local/bin/crowbar-launcher as-app \
+  /usr/local/lib/crowbar-agent/node --disable-warning=ExperimentalWarning \
+  /usr/local/lib/crowbar-agent/harness.mjs \
+  --state "$PERSON_HOME/.local/state/crowbaros/agent" \
+  --surface-socket /run/crowbar-agent/surface --shell-uid "$SHELL_UID"

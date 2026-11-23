@@ -5,8 +5,10 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tarfile
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -254,8 +256,8 @@ class RootfsTrust(unittest.TestCase):
         self.assertFalse(build_root.with_name('buildroot.done').exists())
 
 
-class StaticXbps(unittest.TestCase):
-    """The static xbps the builds run is the one the configuration pins."""
+class PinFixture(unittest.TestCase):
+    """A cache of the test's own, and a curl that serves what each address is given."""
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -275,13 +277,21 @@ class StaticXbps(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
+    def tar(self, path, data):
+        """An archive of one file."""
+        out = io.BytesIO()
+        with tarfile.open(fileobj=out, mode='w') as tar:
+            info = tarfile.TarInfo(path)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        return out.getvalue()
+
+
+class StaticXbps(PinFixture):
+    """The static xbps the builds run is the one the configuration pins."""
+
     def archive(self, program):
-        data = io.BytesIO()
-        with tarfile.open(fileobj=data, mode='w') as tar:
-            info = tarfile.TarInfo('usr/bin/xbps-install.static')
-            info.size = len(program)
-            tar.addfile(info, io.BytesIO(program))
-        return data.getvalue()
+        return self.tar('usr/bin/xbps-install.static', program)
 
     def pin(self, name, program):
         """Pins an archive whose xbps-install is `program`, which its address
@@ -377,6 +387,52 @@ class StaticXbps(unittest.TestCase):
         self.assertEqual(self.program(), b'the xbps')
 
 
+class PinnedNode(PinFixture):
+    """The Node.js the Harness runs on is the one the configuration pins
+    (ADR 0034)."""
+
+    def pin(self, version, program):
+        """Pins an archive of this version, as nodejs.org lays one out, whose
+        `node` is `program`."""
+        top = f'node-v{version}-linux-x64'
+        archive = self.tar(f'{top}/bin/node', program)
+        url = f'https://example.org/dist/v{version}/{top}.tar.xz'
+        void_base.CFG['node_url'] = url
+        void_base.CFG['node_sha256'] = hashlib.sha256(archive).hexdigest()
+        self.downloads[url] = archive
+
+    def test_the_pinned_node_is_downloaded_and_unpacked_once(self):
+        self.pin('1.2.3', b'the node')
+        self.assertEqual((void_base.node() / 'bin/node').read_bytes(), b'the node')
+        self.assertEqual((void_base.node() / 'bin/node').read_bytes(), b'the node')
+        self.assertEqual(self.downloads, {})
+
+    def test_a_download_that_is_not_the_pinned_node_is_refused_and_not_kept(self):
+        self.pin('1.2.3', b'the node')
+        self.downloads[void_base.CFG['node_url']] = self.tar('node-v1.2.3-linux-x64/bin/node', b'another node')
+        with self.assertRaises(SystemExit):
+            void_base.node()
+        self.assertEqual(list(self.cache.iterdir()), [])
+
+    def test_a_new_pin_runs_the_new_node(self):
+        self.pin('1.2.3', b'the old node')
+        old = void_base.node()
+        self.pin('1.2.4', b'the new node')
+        self.assertEqual((void_base.node() / 'bin/node').read_bytes(), b'the new node')
+        self.assertEqual((old / 'bin/node').read_bytes(), b'the old node')
+
+    def test_the_pin_is_nodes_own_linux_x64_binary_at_an_exact_version(self):
+        cfg = json.loads((Path(void_base.HERE) / 'config.json').read_text())
+        self.assertRegex(cfg['node_url'],
+                         r'^https://nodejs\.org/dist/v(\d+\.\d+\.\d+)/node-v\1-linux-x64\.tar\.xz$')
+        self.assertRegex(cfg['node_sha256'], r'^[0-9a-f]{64}$')
+
+    def test_voids_own_nodejs_is_in_no_root(self):
+        cfg = json.loads((Path(void_base.HERE) / 'config.json').read_text())
+        for packages in ('packages', 'lab_packages', 'build_packages'):
+            self.assertFalse([name for name in cfg[packages] if name.startswith('nodejs')], packages)
+
+
 class BuildFixture(unittest.TestCase):
     """A build with every outside step recorded instead of run."""
 
@@ -386,6 +442,7 @@ class BuildFixture(unittest.TestCase):
         self.work = Path(temporary.name) / 'a checkout with spaces/.lab/base'
         self.commands = []
         self.envs = []
+        self.cwds = []
 
         # What the image step leaves where it was told to write, and whether
         # it then stops as a failed or interrupted step does.
@@ -395,6 +452,7 @@ class BuildFixture(unittest.TestCase):
         def run(*args, **kw):
             self.commands.append([str(a) for a in args])
             self.envs.append(kw.get('env', {}))
+            self.cwds.append(kw.get('cwd'))
             if any(str(a).endswith('host/image.sh') for a in args):
                 Path(kw['env']['OUT']).write_bytes(self.image_written)
                 if self.image_step_stops:
@@ -406,7 +464,7 @@ class BuildFixture(unittest.TestCase):
                             ('ROOTFS', self.work / 'rootfs'), ('run', run),
                             ('install', lambda *args, **kw: None), ('sha256', lambda path: 'digest'),
                             ('preflight', lambda **kw: None), ('rootfs', lambda force: None),
-                            ('fetch', lambda: Path('/xbps-static')),
+                            ('fetch', lambda: Path('/xbps-static')), ('node', lambda: Path('/node')),
                             ('ACCOUNT_FILE', Path(temporary.name) / 'account.json')]:
             p = patch.object(void_base, name, value)
             p.start()
@@ -541,6 +599,47 @@ class Desktop(BuildFixture):
         image, _ = self.image_step()
         self.assertIn('--mount', image[:image.index('sh')])
 
+
+
+class Harness(BuildFixture):
+    """What Base's build does with the Harness: npm runs in the build alone,
+    from the pinned Node.js, and the image gets that Node.js and one bundled
+    file (ADR 0034)."""
+
+    def test_the_pinned_node_and_its_npm_check_test_and_bundle_the_harness(self):
+        void_base.bundle_harness()
+        self.assertEqual(self.commands, [['/node/bin/npm', 'ci'], ['/node/bin/npm', 'run', 'check'],
+                                         ['/node/bin/npm', 'test']])
+        self.assertEqual(set(self.cwds), {void_base.ROOT / 'agent'})
+        for env in self.envs:
+            # npm's own `node`, and the one its scripts run, is the pinned one.
+            self.assertEqual(env['PATH'].split(':')[0], '/node/bin')
+
+    def test_npm_runs_no_script_a_package_brings(self):
+        settings = (void_base.ROOT / 'agent/.npmrc').read_text().split()
+        self.assertIn('ignore-scripts=true', settings)
+
+    def test_the_harnesss_dependencies_are_pinned_to_exact_versions(self):
+        package = json.loads((void_base.ROOT / 'agent/package.json').read_text())
+        versions = {**package['dependencies'], **package['devDependencies']}
+        self.assertIn('@earendil-works/pi-durable', package['dependencies'])
+        for name, version in versions.items():
+            self.assertRegex(version, r'^\d+\.\d+\.\d+$', name)
+        self.assertTrue((void_base.ROOT / 'agent/package-lock.json').exists())
+
+    def test_the_image_step_gets_the_pinned_node_and_the_bundle_the_build_made(self):
+        self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
+        void_base.build()
+        image, env = self.image_step()
+        self.assertEqual([env['NODE'], env['NODE_LICENSE']], ['/node/bin/node', '/node/LICENSE'])
+        self.assertEqual(env['HARNESS'], str(void_base.ROOT / 'agent/dist/harness.mjs'))
+        self.assertLess(self.commands.index(['/node/bin/npm', 'test']), self.commands.index(image))
+
+    def test_the_root_has_the_libraries_nodes_own_binary_links(self):
+        # Beside libc: `ldd` on the pinned binary names these two and libgcc,
+        # which glibc brings.
+        for package in ('libstdc++', 'libatomic'):
+            self.assertIn(package, void_base.CFG['packages'])
 
 
 class Account(BuildFixture):
@@ -822,13 +921,192 @@ class DesktopServicesCheck(unittest.TestCase):
         # The services the image step turns on for the desktop, but for
         # Ctrl+Alt+Del's, which the check of every service covers.
         script = (Path(void_base.HERE) / 'host/image.sh').read_text()
-        self.assertIn('for service in compositor shell launcher unlock ctrl-alt-del; do', script)
+        self.assertIn('for service in compositor shell launcher unlock ctrl-alt-del agent; do', script)
         self.assertIn('ln -sfn /etc/sv/seatd "$SV/seatd"', script)
         command = next(command for name, command, *_ in void_base.CHECKS
                        if name == "the desktop's services stay up")
         for service in ('seatd', 'crowbar-compositor', 'crowbar-shell', 'crowbar-launcher',
                         'crowbar-unlock'):
             self.assertIn(f'/var/service/{service}', command)
+
+
+VERSION = '0000000d7b2276657273696f6e223a317d'
+
+
+class HarnessAnswersCheck(unittest.TestCase):
+    """Base's check finds the Harness answering the shell's account on its
+    surface socket, and no other account."""
+
+    def setUp(self):
+        self.passes = void_base.harness_answers
+
+    def heard(self, **other):
+        lines = {'shell': VERSION, 'root': 'refused', 'person': 'refused', 'group': 'refused',
+                 'other': 'error: Permission denied', 'directory': '1003 1001 2750',
+                 'socket': '1003 1001 660', 'shell-account': '1001 1001'}
+        lines.update({name.replace('_', '-'): line for name, line in other.items()})
+        return ''.join(f'{name} {line}\n' for name, line in lines.items())
+
+    def test_the_shell_answered_and_everyone_else_refused_passes(self):
+        self.assertTrue(self.passes(self.heard()))
+
+    def test_the_frame_is_the_version_written_out_by_hand(self):
+        self.assertEqual(bytes.fromhex(VERSION), b'\x00\x00\x00\x0d{"version":1}')
+        self.assertEqual(void_base.VERSION_FRAME, VERSION)
+
+    def test_a_shell_that_is_not_answered_the_version_fails(self):
+        for shell in ('refused', '', 'error: Connection refused', '0000000d7b2276657273696f6e223a327d'):
+            self.assertFalse(self.passes(self.heard(shell=shell)), shell)
+
+    def test_root_or_the_person_answered_fails(self):
+        # Root passes the directory whatever its mode, and the person owns
+        # it: the Harness's own check of the peer is what refuses them.
+        self.assertFalse(self.passes(self.heard(root=VERSION)))
+        self.assertFalse(self.passes(self.heard(person=VERSION)))
+
+    def test_another_user_with_the_shells_group_answered_fails(self):
+        # The directory and the socket let the shell's group in, and the
+        # kernel gives a peer's group ID beside its user ID. The Harness is
+        # to go by the user ID.
+        self.assertFalse(self.passes(self.heard(group=VERSION)))
+        self.assertFalse(self.passes(self.heard(group='error: Permission denied')))
+
+    def test_the_probe_with_the_shells_group_is_another_user(self):
+        command = next(command for name, command, *_ in void_base.CHECKS
+                       if name.startswith('the Harness answers'))
+        self.assertIn('echo "group $(probe crowbar-compositor:crowbar-shell)"', command)
+
+    def test_another_account_that_reaches_the_socket_fails(self):
+        self.assertFalse(self.passes(self.heard(other='refused')))
+        self.assertFalse(self.passes(self.heard(other=VERSION)))
+
+    def test_a_directory_others_may_enter_fails(self):
+        self.assertFalse(self.passes(self.heard(directory='1003 1001 2755')))
+        self.assertFalse(self.passes(self.heard(directory='1003 1003 2750')))
+        self.assertFalse(self.passes(self.heard(directory='0 1001 2750')))
+
+    def test_a_socket_the_shell_could_not_write_to_or_others_could_fails(self):
+        self.assertFalse(self.passes(self.heard(socket='1003 1003 660')))
+        self.assertFalse(self.passes(self.heard(socket='1003 1001 666')))
+
+    def test_nothing_heard_fails(self):
+        self.assertFalse(self.passes(''))
+
+
+class WaitInGuest(unittest.TestCase):
+    """How Base's check waits in the guest for something to hold."""
+
+    def seconds(self, condition, limit):
+        started = time.monotonic()
+        out = subprocess.run(['sh', '-c', void_base.wait_in_guest(condition, limit) + 'echo "tries $n"'],
+                             capture_output=True, text=True, check=True).stdout
+        return time.monotonic() - started, int(out.split()[1])
+
+    def test_a_wait_ends_as_soon_as_what_it_waits_for_holds(self):
+        elapsed, tries = self.seconds('n=$((${n:-0} + 1)); [ "$n" -ge 2 ]', 30)
+        self.assertEqual(tries, 2)
+        self.assertLess(elapsed, 5)
+
+    def test_a_wait_gives_up_when_its_time_is_over_however_long_each_try_takes(self):
+        # A Harness that takes a connection and never answers holds each try
+        # for the probe's whole timeout. Counted in tries, the wait outlasted
+        # the 60 seconds SSH gives a check's command.
+        elapsed, tries = self.seconds('n=$((${n:-0} + 1)); sleep 1; false', 2)
+        self.assertLessEqual(tries, 4)
+        self.assertLess(elapsed, 6)
+
+    def test_every_wait_and_the_probes_after_it_fit_in_the_time_ssh_gives_a_command(self):
+        for name, command, *_ in void_base.CHECKS:
+            if 'Harness' in name:
+                self.assertNotIn('seq ', command, name)
+                probes = command.count('$(probe ')
+                self.assertLess(30 + void_base.PROBE_TIMEOUT * (probes + 1), 60, name)
+
+
+class HarnessRunsCheck(unittest.TestCase):
+    """Base's check finds the Harness's service running the pinned Node.js as
+    the person, with an app's environment, in their home, with its state
+    theirs alone."""
+
+    def setUp(self):
+        self.passes = void_base.harness_runs_as_the_person
+
+    def seen(self, without=(), **other):
+        state = '/home/alex/.local/state/crowbaros/agent'
+        lines = [('service', 'run: /var/service/crowbar-agent: (pid 812) 7s'),
+                 ('process', '1003 1003 1003 12 101'), ('person', '1003 1003 1003 101 12'),
+                 ('program', '/usr/local/lib/crowbar-agent/node'), ('home', '/home/alex'),
+                 ('cwd', '/home/alex'), ('env', 'HOME=/home/alex'),
+                 ('env', 'PATH=/home/alex/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin'),
+                 ('env', 'LANG=C.UTF-8'), ('env', 'XDG_RUNTIME_DIR=/run/user/1003'),
+                 ('env', 'WAYLAND_DISPLAY=wayland-0'), ('env', 'CROWBAR_SESSION=crowbaros'),
+                 ('state', f'700 1003 {state}'), ('state', f'600 1003 {state}/harness.log'),
+                 ('state', f'600 1003 {state}/harness.sqlite'), ('state', f'600 1003 {state}/running'),
+                 ('on-path', '')]
+        lines = [(name, other.get(name.replace('-', '_'), line)) for name, line in lines
+                 if line.split('=')[0] not in without and line.rsplit('/', 1)[-1] not in without]
+        return ''.join(f'{name} {line}'.rstrip() + '\n' for name, line in lines)
+
+    def test_the_person_running_it_at_home_passes(self):
+        self.assertTrue(self.passes(self.seen()))
+
+    def test_another_account_or_other_groups_fails(self):
+        self.assertFalse(self.passes(self.seen(process='0 0 0')))
+        self.assertFalse(self.passes(self.seen(process='1003 1003 1003')))
+        self.assertFalse(self.passes(self.seen(process='1001 1001 1001', person='1001 1001 1001')))
+
+    def test_a_service_runit_has_only_just_started_again_fails(self):
+        self.assertFalse(self.passes(self.seen(service='run: /var/service/crowbar-agent: (pid 812) 1s')))
+        self.assertFalse(self.passes(self.seen(service='down: /var/service/crowbar-agent: 1s, normally up')))
+
+    def test_another_program_or_another_directory_fails(self):
+        self.assertFalse(self.passes(self.seen(program='/usr/bin/node')))
+        self.assertFalse(self.passes(self.seen(cwd='/')))
+
+    def test_an_environment_that_is_not_an_apps_fails(self):
+        for name in ('HOME', 'PATH', 'LANG', 'XDG_RUNTIME_DIR', 'WAYLAND_DISPLAY', 'CROWBAR_SESSION'):
+            self.assertFalse(self.passes(self.seen(without=[name])), name)
+
+    def test_state_others_can_read_or_no_state_fails(self):
+        state = '/home/alex/.local/state/crowbaros/agent'
+        self.assertFalse(self.passes(self.seen().replace(f'700 1003 {state}\n', f'755 1003 {state}\n')))
+        self.assertFalse(self.passes(self.seen().replace('600 1003', '644 1003', 1)))
+        self.assertFalse(self.passes(self.seen().replace(f'600 1003 {state}/harness.log', f'600 0 {state}/harness.log')))
+        self.assertFalse(self.passes(self.seen(without=['harness.log'])))
+        self.assertFalse(self.passes(self.seen(without=['harness.sqlite'])))
+
+    def test_node_or_npm_on_the_path_fails(self):
+        self.assertFalse(self.passes(self.seen(on_path='/usr/bin/node')))
+
+    def test_the_check_looks_where_the_service_puts_things(self):
+        service = (Path(void_base.HERE) / 'desktop/agent-run').read_text()
+        self.assertIn(void_base.HARNESS_NODE, service)
+        self.assertIn(f'--surface-socket {void_base.SURFACE_SOCKET} ', service)
+        self.assertIn(f'--state "$PERSON_HOME/{void_base.HARNESS_STATE}"', service)
+        image = (Path(void_base.HERE) / 'host/image.sh').read_text()
+        self.assertIn(f'"$R{void_base.HARNESS_NODE}"', image)
+
+
+class HarnessRestartCheck(unittest.TestCase):
+    """Base's check finds runit starting a killed Harness again, which
+    answers, and says in its log that it restarted."""
+
+    def setUp(self):
+        self.passes = void_base.harness_restarted
+
+    def test_a_new_harness_that_answers_and_logged_the_restart_passes(self):
+        self.assertTrue(self.passes(f'before 812\nafter 1290\nshell {VERSION}\nlogged 1\n'))
+
+    def test_the_same_process_or_none_fails(self):
+        self.assertFalse(self.passes(f'before 812\nafter 812\nshell {VERSION}\nlogged 1\n'))
+        self.assertFalse(self.passes(f'before 812\nafter\nshell {VERSION}\nlogged 1\n'))
+        self.assertFalse(self.passes(f'before\nafter 1290\nshell {VERSION}\nlogged 1\n'))
+
+    def test_a_new_harness_that_does_not_answer_fails(self):
+        self.assertFalse(self.passes('before 812\nafter 1290\nshell refused\nlogged 1\n'))
+
+    def test_a_restart_the_log_does_not_record_fails(self):
+        self.assertFalse(self.passes(f'before 812\nafter 1290\nshell {VERSION}\nlogged 0\n'))
 
 
 class RebootCheck(unittest.TestCase):

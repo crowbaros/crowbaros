@@ -1,0 +1,143 @@
+"""The Harness's footprint, measured in the guest as root: how long from runit
+starting its service until the shell's account is answered the version on the
+surface socket, and what the idle process holds in memory."""
+import os
+import pwd
+import re
+import socket
+import statistics
+import subprocess
+import sys
+import time
+
+SOCKET = "/run/crowbar-agent/surface"
+FRAME = bytes.fromhex("0000000d7b2276657273696f6e223a317d")
+SERVICE = "/var/service/crowbar-agent"
+SHELL = pwd.getpwnam("crowbar-shell")
+
+
+def answered():
+    """Whether the Harness answers the version, within a second of being asked."""
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(1)
+    try:
+        s.connect(SOCKET)
+        s.sendall(FRAME)
+        heard = b""
+        while len(heard) < len(FRAME):
+            more = s.recv(64)
+            if not more:
+                break
+            heard += more
+        return heard == FRAME
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def pid():
+    out = subprocess.run(["sv", "status", SERVICE], capture_output=True, text=True).stdout
+    found = re.match(r"run: \S+ \(pid (\d+)\)", out)
+    return int(found[1]) if found else None
+
+
+def until_answered(act):
+    """Seconds from `act` until the shell's account is answered. A child that
+    is the shell's account, with no other group, asks every millisecond, and
+    only once `act` is done: a Harness that `act` kills cannot answer for the
+    one that follows it."""
+    go, went = os.pipe()
+    read, write = os.pipe()
+    child = os.fork()
+    if child == 0:
+        os.close(went)
+        os.close(read)
+        os.setgroups([])
+        os.setgid(SHELL.pw_gid)
+        os.setuid(SHELL.pw_uid)
+        os.read(go, 1)
+        deadline = time.monotonic() + 30
+        while not answered():
+            if time.monotonic() > deadline:
+                os._exit(1)
+            time.sleep(0.001)
+        os.write(write, repr(time.monotonic()).encode())
+        os._exit(0)
+    os.close(go)
+    os.close(write)
+    started = time.monotonic()
+    act()
+    os.write(went, b"g")
+    at = os.read(read, 64)
+    os.waitpid(child, 0)
+    if not at:
+        raise SystemExit("The Harness did not answer the shell's account within 30 seconds")
+    return float(at) - started
+
+
+def down():
+    subprocess.run(["sv", "down", SERVICE], check=True)
+    deadline = time.monotonic() + 30
+    while pid() is not None or os.path.exists(SOCKET):
+        if time.monotonic() > deadline:
+            raise SystemExit("The Harness or its socket was still there 30 seconds after sv down")
+        time.sleep(0.01)
+
+
+def up():
+    subprocess.run(["sv", "up", SERVICE], check=True)
+
+
+def age(process):
+    """Seconds since the process started: its start in clock ticks after
+    boot, the 22nd field of its stat, against the time since boot."""
+    stat = open(f"/proc/{process}/stat").read()
+    started = int(stat.rsplit(")", 1)[1].split()[19]) / os.sysconf("SC_CLK_TCK")
+    return float(open("/proc/uptime").read().split()[0]) - started
+
+
+def memory(process):
+    rollup = open(f"/proc/{process}/smaps_rollup").read()
+    return {name: int(re.search(rf"^{name}:\s+(\d+) kB", rollup, re.M)[1])
+            for name in ("Rss", "Pss", "Pss_Anon", "Pss_File")}
+
+
+def show(name, seconds):
+    ms = sorted(round(s * 1000) for s in seconds)
+    print(f"{name}: median {round(statistics.median(ms))} ms, least {ms[0]}, most {ms[-1]}, of {len(ms)}: {ms}")
+
+
+if sys.argv[1] == "start":
+    # runsv starts a service at once unless it last started it less than a
+    # second before it exited, and then it waits a second. So each Harness
+    # here runs for a second and a half before it is stopped or killed, but
+    # in the last series, which shows that wait.
+    warm, cold, killed, paced = [], [], [], []
+    for _ in range(10):
+        time.sleep(1.5)
+        down()
+        warm.append(until_answered(up))
+    for _ in range(5):
+        time.sleep(1.5)
+        down()
+        os.sync()
+        open("/proc/sys/vm/drop_caches", "w").write("3\n")
+        cold.append(until_answered(up))
+    for _ in range(5):
+        time.sleep(1.5)
+        process = pid()
+        killed.append(until_answered(lambda: os.kill(process, 9)))
+    time.sleep(1.5)
+    for _ in range(5):
+        down()
+        paced.append(until_answered(up))
+    show("sv up to answered", warm)
+    show("sv up to answered, page cache dropped first", cold)
+    show("kill -9 to answered", killed)
+    show("sv up to answered, stopped within a second of its start", paced[1:])
+elif sys.argv[1] == "memory":
+    process = pid()
+    values = memory(process)
+    print(f"process {process}, up {age(process):.0f} s: " + ", ".join(
+        f"{name} {kb / 1024:.1f} MiB" for name, kb in values.items()))

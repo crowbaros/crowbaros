@@ -16,6 +16,7 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::UnixListener;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -26,6 +27,8 @@ const APPS_LOG: &str = "/var/log/crowbar-apps.log";
 /// The compositor's socket for apps, as Base links it into the person's
 /// runtime directory.
 const WAYLAND_DISPLAY: &str = "wayland-0";
+/// Where Void keeps the system's `LANG`.
+const LOCALE: &str = "/etc/locale.conf";
 const MAX_PREFERENCES: usize = 64 << 10;
 /// How long `gio launch` may take to start an app.
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(8);
@@ -125,18 +128,38 @@ pub fn app_environment(person: &Account, locale: &str) -> Vec<(String, String)> 
     .collect()
 }
 
+/// A program as the launcher starts an app: with the person's environment
+/// and nothing of this process's, starting in the person's home.
+fn app_command(program: &str, person: &Account, locale: &str) -> Command {
+    let mut command = Command::new(program);
+    command
+        .env_clear()
+        .envs(app_environment(person, locale))
+        .current_dir(&person.dir);
+    command
+}
+
 /// `gio launch` for this entry, as the launcher itself, so as the person,
 /// with the person's environment and nothing of the launcher's.
 fn launch_command(entry: &Path, person: &Account) -> Command {
-    let mut command = Command::new("/usr/bin/gio");
+    let mut command = app_command("/usr/bin/gio", person, &system_locale(Path::new(LOCALE)));
+    command.arg("launch").arg(entry).stdin(Stdio::null());
     command
-        .arg("launch")
-        .arg(entry)
-        .env_clear()
-        .envs(app_environment(person, &system_locale(Path::new("/etc/locale.conf"))))
-        .current_dir(&person.dir)
-        .stdin(Stdio::null());
-    command
+}
+
+/// `crowbar-launcher as-app PROGRAM [ARGS]`: the program, as the launcher
+/// starts an app. It changes no account, so only a process that is already
+/// the person's, with user ID `runner`, gets one.
+pub fn as_app(command: &[String], runner: u32, person: &Account, locale: &str) -> Result<Command, String> {
+    let Some((program, args)) = command.split_first() else {
+        return Err("usage: crowbar-launcher as-app PROGRAM [ARGS]".into());
+    };
+    if runner != person.uid {
+        return Err("Only the person's account runs a program as an app".into());
+    }
+    let mut command = app_command(program, person, locale);
+    command.args(args);
+    Ok(command)
 }
 
 fn dispatch(request: serde_json::Map<String, Value>, person: &Account, run: &mut Run) -> Result<Value, String> {
@@ -214,13 +237,21 @@ fn run_launch(command: &mut Command) -> Result<(), String> {
     }
 }
 
-/// `crowbar-launcher`, as runit starts it.
+/// `crowbar-launcher`, as runit starts it, or `crowbar-launcher as-app`, as
+/// the Harness's service does.
 pub fn main(args: &[String]) -> Result<(), String> {
+    let uid = crate::PERSON_UID;
+    if let Some(("as-app", command)) = args.split_first().map(|(first, rest)| (first.as_str(), rest)) {
+        let person = sys::require(sys::account_by_uid(uid), &format!("with user ID {uid}"))?;
+        let mut command = as_app(command, sys::uid(), &person, &system_locale(Path::new(LOCALE)))?;
+        // Only returns when the program could not be run.
+        let error = command.exec();
+        return Err(format!("{:?}: {error}", command.get_program()));
+    }
     if !args.is_empty() {
-        return Err("usage: crowbar-launcher".into());
+        return Err("usage: crowbar-launcher [as-app PROGRAM [ARGS]]".into());
     }
     let shell = sys::require(sys::account_by_name(SHELL), SHELL)?;
-    let uid = crate::PERSON_UID;
     let person = sys::require(sys::account_by_uid(uid), &format!("with user ID {uid}"))?;
     // Root's socket in root's directory, which the shell's group may enter:
     // the person, and so every app, may neither replace nor remove it. The
@@ -488,6 +519,53 @@ mod tests {
         assert_eq!(env["LANG"], "en_GB.UTF-8");
         alex.shell = String::new();
         assert_eq!(environment(&alex)["SHELL"], "/bin/sh");
+    }
+
+    #[test]
+    fn a_program_run_as_an_app_gets_the_apps_environment_alone_and_starts_in_the_persons_home() {
+        let home = TempDir::new();
+        let alex = person(&home.0);
+        let run = |program: &str| {
+            let command = [program.to_string()];
+            let out = as_app(&command, alex.uid, &alex, "en_GB.UTF-8")
+                .unwrap()
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{program}: {out:?}");
+            String::from_utf8(out.stdout).unwrap()
+        };
+        let mut got: Vec<String> = run("/usr/bin/env").lines().map(str::to_string).collect();
+        let mut app: Vec<String> = app_environment(&alex, "en_GB.UTF-8")
+            .into_iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect();
+        got.sort();
+        app.sort();
+        assert_eq!(got, app);
+        assert!(got.contains(&"CROWBAR_SESSION=crowbaros".to_string()));
+        assert_eq!(Path::new(run("/bin/pwd").trim_end()), home.0.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn a_program_run_as_an_app_is_given_its_arguments() {
+        let home = TempDir::new();
+        let alex = person(&home.0);
+        let command = ["/bin/echo", "--state", "a b"].map(str::to_string);
+        let out = as_app(&command, alex.uid, &alex, "C.UTF-8").unwrap().output().unwrap();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "--state a b\n");
+    }
+
+    #[test]
+    fn only_the_person_runs_a_program_as_an_app_and_only_a_program() {
+        // The build runs these tests as root, so the person's user ID is
+        // given here, and is not the one the tests run as.
+        let mut alex = person(Path::new("/home/alex"));
+        alex.uid = 1003;
+        let env = ["/usr/bin/env".to_string()];
+        assert!(as_app(&env, 1003, &alex, "C.UTF-8").is_ok());
+        assert!(as_app(&env, 1001, &alex, "C.UTF-8").is_err());
+        assert!(as_app(&env, 0, &alex, "C.UTF-8").is_err());
+        assert!(as_app(&[], 1003, &alex, "C.UTF-8").is_err());
     }
 
     #[test]

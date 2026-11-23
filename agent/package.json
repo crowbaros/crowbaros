@@ -1,0 +1,26 @@
+{
+  "name": "crowbar-agent",
+  "version": "0.1.0",
+  "description": "The Harness: Pi Durable, and CrowbarOS's own code around it. Part of CrowbarOS.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=26.13.1"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "bundle": "node bundle.mjs",
+    "test": "npm run bundle && node --test \"test/*.test.ts\""
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.6.0",
+    "@earendil-works/pi-ai": "1.6.0",
+    "@earendil-works/pi-durable": "1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}

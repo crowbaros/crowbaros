@@ -1,0 +1,76 @@
+# From base/void_base.py check's log, .lab/base/boot-20261123T001502Z.log: its head, the three
+# checks of the Harness, and its count.
+
+CrowbarOS base boot check, 20261123T001502Z, commit 07e1bde3
+disk sha256 955aaa512247cf9b914f2da1c2b95379757b9d4e20812e35cb9046b366aa706a
+login prompt after 7.5s
+
+PASS: the Harness answers the shell's account on its socket, and no other
+    $ probe() { chpst -u "$1" python3 -c '
+    $ import socket, sys
+    $ s = socket.socket(socket.AF_UNIX)
+    $ s.settimeout(3)
+    $ try:
+    $     s.connect(sys.argv[1])
+    $     s.sendall(bytes.fromhex(sys.argv[2]))
+    $     heard = b""
+    $     while len(heard) < len(sys.argv[2]) // 2 and (more := s.recv(64)):
+    $         heard += more
+    $     print(heard.hex() or "refused")
+    $ except (ConnectionResetError, BrokenPipeError):
+    $     print("refused")
+    $ except OSError as error:
+    $     print("error:", error.strerror or error)
+    $ ' /run/crowbar-agent/surface 0000000d7b2276657273696f6e223a317d 2>&1; }; u=$(getent passwd 1003 | cut -d: -f1); h=$(getent passwd 1003 | cut -d: -f6); t=$(($(date +%s) + 30)); until s=$(probe crowbar-shell); [ "$s" = 0000000d7b2276657273696f6e223a317d ]; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done; echo "shell $s"; echo "root $(probe root)"; echo "person $(probe "$u")"; echo "group $(probe crowbar-compositor:crowbar-shell)"; echo "other $(probe crowbar-compositor)"; stat -c 'directory %u %g %a' /run/crowbar-agent; stat -c 'socket %u %g %a' /run/crowbar-agent/surface; echo "shell-account $(id -u crowbar-shell) $(id -g crowbar-shell)"
+    shell 0000000d7b2276657273696f6e223a317d
+    root refused
+    person refused
+    group refused
+    other error: Permission denied
+    directory 1003 1001 2750
+    socket 1003 1001 660
+    shell-account 1001 1001
+PASS: the Harness runs as the person, in an app's environment, with its state theirs alone
+    $ pid() { sv status /var/service/crowbar-agent | sed -n 's|^run: [^ ]* (pid \([0-9]*\)).*|\1|p'; }; u=$(getent passwd 1003 | cut -d: -f1); h=$(getent passwd 1003 | cut -d: -f6); t=$(($(date +%s) + 30)); until o=$(sv status /var/service/crowbar-agent); echo "$o" | grep -Eq '^run: [^ ]+ \(pid [0-9]+\) ([3-9]|[0-9]{2,})s'; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done; p=$(pid); echo "service $o"; echo "process $(awk '/^(Uid|Gid):/ {print $2} /^Groups:/ {$1=""; print}' /proc/$p/status | xargs)"; echo "person $(id -u "$u") $(id -g "$u") $(id -G "$u")"; echo "program $(readlink /proc/$p/exe)"; echo "home $h"; echo "cwd $(readlink /proc/$p/cwd)"; e=$(tr '\0' '\n' < /proc/$p/environ); echo "$e" | grep -E '^(HOME|PATH|LANG|XDG_RUNTIME_DIR|WAYLAND_DISPLAY|CROWBAR_SESSION)=' | sed 's/^/env /'; stat -c 'state %a %u %n' "$h/.local/state/crowbaros/agent" "$h/.local/state/crowbaros/agent"/*; echo "on-path $(PATH=$(echo "$e" | sed -n 's/^PATH=//p') command -v node npm npx | xargs)"
+    service run: /var/service/crowbar-agent: (pid 627) 32s
+    process 1003 1003 4 995 1003
+    person 1003 1003 1003 4 995
+    program /usr/local/lib/crowbar-agent/node
+    home /home/crowbar
+    cwd /home/crowbar
+    env CROWBAR_SESSION=crowbaros
+    env HOME=/home/crowbar
+    env LANG=en_US.UTF-8
+    env PATH=/home/crowbar/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin
+    env WAYLAND_DISPLAY=wayland-0
+    env XDG_RUNTIME_DIR=/run/user/1003
+    state 700 1003 /home/crowbar/.local/state/crowbaros/agent
+    state 600 1003 /home/crowbar/.local/state/crowbaros/agent/harness.log
+    state 600 1003 /home/crowbar/.local/state/crowbaros/agent/harness.sqlite
+    state 600 1003 /home/crowbar/.local/state/crowbaros/agent/harness.sqlite-shm
+    state 600 1003 /home/crowbar/.local/state/crowbaros/agent/harness.sqlite-wal
+    state 600 1003 /home/crowbar/.local/state/crowbaros/agent/running
+    on-path
+PASS: the Harness's service starts it again after a kill, and its log records the restart
+    $ probe() { chpst -u "$1" python3 -c '
+    $ import socket, sys
+    $ s = socket.socket(socket.AF_UNIX)
+    $ s.settimeout(3)
+    $ try:
+    $     s.connect(sys.argv[1])
+    $     s.sendall(bytes.fromhex(sys.argv[2]))
+    $     heard = b""
+    $     while len(heard) < len(sys.argv[2]) // 2 and (more := s.recv(64)):
+    $         heard += more
+    $     print(heard.hex() or "refused")
+    $ except (ConnectionResetError, BrokenPipeError):
+    $     print("refused")
+    $ except OSError as error:
+    $     print("error:", error.strerror or error)
+    $ ' /run/crowbar-agent/surface 0000000d7b2276657273696f6e223a317d 2>&1; }; pid() { sv status /var/service/crowbar-agent | sed -n 's|^run: [^ ]* (pid \([0-9]*\)).*|\1|p'; }; u=$(getent passwd 1003 | cut -d: -f1); h=$(getent passwd 1003 | cut -d: -f6); b=$(pid); kill -KILL "$b"; s=; t=$(($(date +%s) + 30)); until a=$(pid); [ -n "$a" ] && [ "$a" != "$b" ] && s=$(probe crowbar-shell) && [ "$s" = 0000000d7b2276657273696f6e223a317d ]; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done; echo "before $b"; echo "after $a"; echo "shell $s"; echo "logged $(grep -c "restart: the Harness before this one, process $b, ended without stopping" "$h/.local/state/crowbaros/agent/harness.log")"
+    before 627
+    after 1342
+    shell 0000000d7b2276657273696f6e223a317d
+    logged 1
+
+27 of 27 checks passed

@@ -20,7 +20,6 @@ pub struct Account {
 }
 
 /// This process's real user ID.
-#[cfg(test)]
 pub fn uid() -> u32 {
     // SAFETY: getuid cannot fail.
     unsafe { libc::getuid() }

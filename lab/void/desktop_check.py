@@ -166,6 +166,9 @@ class Check:
             'launcher.log': 'cat /var/log/crowbar-launcher.log',
             'unlock.log': 'cat /var/log/crowbar-unlock.log',
             'apps.log': 'cat /var/log/crowbar-apps.log',
+            # What the Harness's service printed, then the Harness's own log.
+            'harness.log': 'cat /var/log/crowbar-agent.log; ' + void_base.PERSON_IN_GUEST
+                           + f'cat "$h/{void_base.HARNESS_STATE}/harness.log"',
             'kernel.log': 'dmesg | tail -200',
         }
         for name, command in commands.items():
