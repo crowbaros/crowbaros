@@ -15,7 +15,8 @@ use input::TextInput;
 use state::{ClipboardOp, FileClipboard, Location, Pane, SavedState, ViewMode};
 use std::{
     borrow::Cow,
-    collections::HashSet,
+    cell::RefCell,
+    collections::{HashMap, HashSet},
     ffi::OsString,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
@@ -150,6 +151,9 @@ enum Overlay {
     ConfirmDelete(Entry),
 }
 
+/// An image's size as read from its header, with the file's size and modified time at the read.
+type ImageSizeRead = (u64, Option<SystemTime>, Option<(u32, u32)>);
+
 struct FilesApp {
     focus: FocusHandle,
     home: PathBuf,
@@ -172,6 +176,8 @@ struct FilesApp {
     cached_preview_path: Option<PathBuf>,
     /// The images decoded for the last frame, so those that leave the screen are released.
     images_on_screen: HashSet<PathBuf>,
+    /// Image sizes read from file headers, by path, with the size and time they were read at.
+    image_sizes: RefCell<HashMap<PathBuf, ImageSizeRead>>,
     cached_preview_text: Option<String>,
 }
 
@@ -233,6 +239,7 @@ impl FilesApp {
             error: None,
             cached_preview_path: None,
             images_on_screen: HashSet::new(),
+            image_sizes: RefCell::new(HashMap::new()),
             cached_preview_text: None,
         };
         app.refresh_inspector_preview();
@@ -307,7 +314,9 @@ impl FilesApp {
         let mut shown = HashSet::new();
         if self.saved.view_mode == ViewMode::Grid {
             for pane in &self.panes {
-                let chosen = fs_model::thumbnail_choices(&pane.entries, fs_model::THUMBNAIL_BUDGET_PIXELS);
+                let chosen = fs_model::thumbnail_choices(&pane.entries, fs_model::THUMBNAIL_BUDGET_PIXELS, |e| {
+                    self.image_size(e)
+                });
                 shown.extend(
                     pane.entries
                         .iter()
@@ -319,16 +328,38 @@ impl FilesApp {
         }
         if self.saved.show_inspector
             && let Some(entry) = self.pane().selected_entry()
-            && entry.can_preview_image()
+            && self.can_preview_image(entry)
         {
             shown.insert(entry.path.clone());
         }
         if let Some(Overlay::QuickPreview(entry, _)) = &self.overlay
-            && entry.can_preview_image()
+            && self.can_preview_image(entry)
         {
             shown.insert(entry.path.clone());
         }
         shown
+    }
+
+    /// An image's size, read once from the start of its file when it is first shown, and again only
+    /// if the file changes. `None` for anything Files does not decode.
+    fn image_size(&self, entry: &Entry) -> Option<(u32, u32)> {
+        if !entry.is_previewable_image() {
+            return None;
+        }
+        let mut sizes = self.image_sizes.borrow_mut();
+        if let Some((size, modified, dims)) = sizes.get(&entry.path)
+            && (*size, *modified) == (entry.size, entry.modified)
+        {
+            return *dims;
+        }
+        let dims = fs_model::still_image_size(&entry.path);
+        sizes.insert(entry.path.clone(), (entry.size, entry.modified, dims));
+        dims
+    }
+
+    /// Whether the inspector or quick preview may decode this image.
+    fn can_preview_image(&self, entry: &Entry) -> bool {
+        self.image_size(entry).is_some_and(fs_model::fits_preview)
     }
 
     /// GPUI keeps every decoded image until it is told to let go. Files lets go of each one when it
@@ -359,10 +390,7 @@ impl FilesApp {
     ) {
         self.clear_notices();
         self.overlay = None;
-        // A rename or new folder belongs to the folder it was started in.
-        if self.prompt.take().is_some() {
-            window.focus(&self.focus);
-        }
+        self.end_prompt(window);
         let show_hidden = self.saved.show_hidden;
         let sf = self.sort_field;
         let so = self.sort_order;
@@ -481,6 +509,13 @@ impl FilesApp {
         let handle = self.prompt_input.read(cx).focus_handle(cx);
         window.focus(&handle);
         cx.notify();
+    }
+
+    /// A rename or new folder belongs to the folder it was started in, so leaving the folder ends it.
+    fn end_prompt(&mut self, window: &mut Window) {
+        if self.prompt.take().is_some() {
+            window.focus(&self.focus);
+        }
     }
 
     fn close_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -841,6 +876,7 @@ impl FilesApp {
         let sf = self.sort_field;
         let so = self.sort_order;
         if self.pane_mut().go_up(show_hidden, sf, so) {
+            self.end_prompt(window);
             self.overlay = None;
             self.refresh_inspector_preview();
             self.update_title(window);
@@ -853,6 +889,7 @@ impl FilesApp {
         let sf = self.sort_field;
         let so = self.sort_order;
         if self.pane_mut().go_back(show_hidden, sf, so) {
+            self.end_prompt(window);
             self.overlay = None;
             self.refresh_inspector_preview();
             self.update_title(window);
@@ -865,6 +902,7 @@ impl FilesApp {
         let sf = self.sort_field;
         let so = self.sort_order;
         if self.pane_mut().go_forward(show_hidden, sf, so) {
+            self.end_prompt(window);
             self.overlay = None;
             self.refresh_inspector_preview();
             self.update_title(window);
@@ -1667,7 +1705,8 @@ impl FilesApp {
             return self.render_list_pane(pane_idx, p, cx);
         }
 
-        let thumbnails = fs_model::thumbnail_choices(&pane.entries, fs_model::THUMBNAIL_BUDGET_PIXELS);
+        let thumbnails =
+            fs_model::thumbnail_choices(&pane.entries, fs_model::THUMBNAIL_BUDGET_PIXELS, |e| self.image_size(e));
         let mut grid = div()
             .id(("pane-grid", pane_idx))
             .flex_1()
@@ -2196,7 +2235,7 @@ impl FilesApp {
         };
 
         // Preview stage (top center)
-        let preview_stage = if entry.can_preview_image() {
+        let preview_stage = if self.can_preview_image(&entry) {
             div()
                 .h(px(200.))
                 .flex_shrink_0()
@@ -2813,7 +2852,7 @@ impl FilesApp {
             }
 
             Overlay::QuickPreview(entry, text_opt) => {
-                let body: AnyElement = if entry.can_preview_image() {
+                let body: AnyElement = if self.can_preview_image(entry) {
                     div()
                         .flex_1()
                         .min_h(px(0.))

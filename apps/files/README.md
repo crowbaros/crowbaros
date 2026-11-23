@@ -10,7 +10,9 @@ demand.
 - **Three views**: Finder-style Miller columns (`Ctrl+1`), a detail list with
   item counts, sizes, and modified dates (`Ctrl+2`, default), and a preview
   grid with image thumbnails (`Ctrl+3`). Thumbnails are for still images, and
-  stop at a budget of 64 megapixels, about 256 MB decoded, a pane.
+  stop at a budget of 64 megapixels, about 256 MB decoded, a pane. Files learns
+  an image's size from the start of its file, and never decodes a GIF or an
+  animated WebP, since every frame would be decoded.
 - **Inspector pane**: Live preview of images up to 40 megapixels and of
   text/code files,
   file metadata, and a primary `Open folder` / `Open` / `Restore` action
