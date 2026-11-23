@@ -16,7 +16,7 @@ use state::{ClipboardOp, FileClipboard, Location, Pane, SavedState, ViewMode};
 use std::{
     borrow::Cow,
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     ffi::OsString,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
@@ -151,9 +151,6 @@ enum Overlay {
     ConfirmDelete(Entry),
 }
 
-/// An image's size as read from its header, with the file's size and modified time at the read.
-type ImageSizeRead = (u64, Option<SystemTime>, Option<(u32, u32)>);
-
 struct FilesApp {
     focus: FocusHandle,
     home: PathBuf,
@@ -177,7 +174,7 @@ struct FilesApp {
     /// The images decoded for the last frame, so those that leave the screen are released.
     images_on_screen: HashSet<PathBuf>,
     /// Image sizes read from file headers, by path, with the size and time they were read at.
-    image_sizes: RefCell<HashMap<PathBuf, ImageSizeRead>>,
+    image_sizes: RefCell<fs_model::ImageSizes>,
     /// Images whose file changed since GPUI decoded them, to be decoded again.
     stale_images: RefCell<HashSet<PathBuf>>,
     /// The pane a prompt was opened in. Switching panes ends it.
@@ -243,7 +240,7 @@ impl FilesApp {
             error: None,
             cached_preview_path: None,
             images_on_screen: HashSet::new(),
-            image_sizes: RefCell::new(HashMap::new()),
+            image_sizes: RefCell::new(fs_model::ImageSizes::default()),
             stale_images: RefCell::new(HashSet::new()),
             prompt_pane: 0,
             cached_preview_text: None,
@@ -354,22 +351,22 @@ impl FilesApp {
         }
         // The file as it is now, not as it was listed: it may have been replaced since.
         let meta = std::fs::metadata(&entry.path).ok()?;
-        let now = (meta.len(), meta.modified().ok());
-        let mut sizes = self.image_sizes.borrow_mut();
-        match sizes.get(&entry.path) {
-            Some((size, modified, dims)) if (*size, *modified) == now => return *dims,
-            // Changed on disk: whatever GPUI decoded from it is stale too.
-            Some(_) => {
-                self.stale_images.borrow_mut().insert(entry.path.clone());
-            }
-            None => {}
+        let listed = || {
+            self.panes
+                .iter()
+                .flat_map(|pane| pane.entries.iter().map(|e| e.path.clone()))
+                .collect()
+        };
+        let (dims, changed) =
+            self.image_sizes
+                .borrow_mut()
+                .get(&entry.path, (meta.len(), meta.modified().ok()), listed, || {
+                    fs_model::still_image_size(&entry.path)
+                });
+        if changed {
+            // Whatever GPUI decoded from the old file is stale too.
+            self.stale_images.borrow_mut().insert(entry.path.clone());
         }
-        let dims = fs_model::still_image_size(&entry.path);
-        // A long session would otherwise keep every image path it ever showed.
-        if sizes.len() >= 4_096 {
-            sizes.clear();
-        }
-        sizes.insert(entry.path.clone(), (now.0, now.1, dims));
         dims
     }
 
@@ -735,13 +732,16 @@ impl FilesApp {
             return;
         };
         self.clear_notices();
-        let result = match clip.op {
-            ClipboardOp::Copy => fs_model::copy_entry(&clip.path, &dst_dir),
-            ClipboardOp::Cut => fs_model::move_entry(&clip.path, &dst_dir),
+        let (result, cut_spent) = match clip.op {
+            ClipboardOp::Copy => (fs_model::copy_entry(&clip.path, &dst_dir), false),
+            ClipboardOp::Cut => match fs_model::move_entry(&clip.path, &dst_dir) {
+                Ok(dest) => (Ok(dest), true),
+                // A move that published a copy but kept its original is spent all the same: pasted
+                // again, it would make a second copy. One that moved nothing can be tried again.
+                Err(failure) => (Err(failure.message), failure.copied),
+            },
         };
-        // A cut is used up by its paste, even a failed one: a move that copied but kept its
-        // original must not be pasted again into a second copy.
-        if clip.op == ClipboardOp::Cut {
+        if cut_spent {
             self.clipboard = None;
         }
         match result {

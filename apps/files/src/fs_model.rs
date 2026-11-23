@@ -160,6 +160,49 @@ fn riff_webp_first_chunk(head: &[u8]) -> Option<WebPStart> {
     })
 }
 
+/// Image sizes read from file headers, by path, each with the file's size and time at the read.
+#[derive(Default)]
+pub struct ImageSizes {
+    read: std::collections::HashMap<PathBuf, (ImageFingerprint, Option<(u32, u32)>)>,
+    /// How many paths may be cached before the next trim: at least `LIMIT`.
+    room: usize,
+}
+
+/// A file's size and modified time: if either changes, the file is not the one that was read.
+pub type ImageFingerprint = (u64, Option<SystemTime>);
+
+impl ImageSizes {
+    /// Past this many paths, the cache keeps only what is still listed.
+    pub const LIMIT: usize = 4_096;
+
+    /// The size of the image at `path`, whose file now has `fingerprint`, read with `read` only if
+    /// it is not known for that fingerprint. Also says whether a size known before was for an older
+    /// file. When the cache is full it keeps only the paths `listed` gives, so the images on screen
+    /// are never read again for want of room.
+    pub fn get(
+        &mut self,
+        path: &Path,
+        fingerprint: ImageFingerprint,
+        listed: impl FnOnce() -> std::collections::HashSet<PathBuf>,
+        read: impl FnOnce() -> Option<(u32, u32)>,
+    ) -> (Option<(u32, u32)>, bool) {
+        let changed = match self.read.get(path) {
+            Some((known, dims)) if *known == fingerprint => return (*dims, false),
+            Some(_) => true,
+            None => false,
+        };
+        if self.read.len() >= self.room.max(Self::LIMIT) {
+            let listed = listed();
+            self.read.retain(|p, _| listed.contains(p));
+            // What is listed stays; leave room past it, rather than trimming on every read.
+            self.room = self.read.len() * 2;
+        }
+        let dims = read();
+        self.read.insert(path.to_path_buf(), (fingerprint, dims));
+        (dims, changed)
+    }
+}
+
 /// Which entries get a Grid thumbnail: still images, in order, while their decoded pixels fit the
 /// budget. `size_of` gives an image's size, or `None` when it should not be decoded.
 pub fn thumbnail_choices(
@@ -1046,7 +1089,7 @@ fn copy_node(src: &Path, dst: &Path, started: &mut bool) -> io::Result<()> {
             let _ = fs::File::open(dst).and_then(|d| d.set_modified(modified));
         }
         // Last, so a read-only folder can still be filled.
-        return fs::set_permissions(dst, meta.permissions());
+        return fs::set_permissions(dst, without_set_id(&meta));
     }
     if !kind.is_file() {
         return Err(not_a_file(src));
@@ -1079,7 +1122,7 @@ fn copy_node(src: &Path, dst: &Path, started: &mut bool) -> io::Result<()> {
     if let Ok(modified) = before.modified() {
         let _ = output.set_modified(modified);
     }
-    output.set_permissions(before.permissions())
+    output.set_permissions(without_set_id(&before))
 }
 
 fn not_a_file(path: &Path) -> io::Error {
@@ -1087,6 +1130,12 @@ fn not_a_file(path: &Path) -> io::Error {
         "{} is a pipe, socket, or device, which Files does not copy",
         path.display()
     ))
+}
+
+/// The permissions a copy gets: the original's, less setuid and setgid, as `cp` does. A copy is
+/// owned by whoever copies it, and must not run as them with bits meant for the original's owner.
+fn without_set_id(meta: &Metadata) -> fs::Permissions {
+    fs::Permissions::from_mode(meta.permissions().mode() & 0o1777)
 }
 
 /// Whether a file was written to between two looks at it.
@@ -1234,9 +1283,22 @@ pub fn copy_entry(src: &Path, dst_dir: &Path) -> Result<PathBuf, String> {
     published.map_err(failed)
 }
 
-pub fn move_entry(src: &Path, dst_dir: &Path) -> Result<PathBuf, String> {
+/// A move that failed. `copied` says a whole copy was published and the original stayed.
+#[derive(Debug)]
+pub struct MoveFailure {
+    pub message: String,
+    pub copied: bool,
+}
+
+impl From<String> for MoveFailure {
+    fn from(message: String) -> Self {
+        MoveFailure { message, copied: false }
+    }
+}
+
+pub fn move_entry(src: &Path, dst_dir: &Path) -> Result<PathBuf, MoveFailure> {
     if is_real_folder(src) && is_ancestor(src, dst_dir) {
-        return Err("Cannot move a folder into itself.".into());
+        return Err(String::from("Cannot move a folder into itself.").into());
     }
     let name = file_name_of(src)?;
     if src.parent().is_some_and(|parent| same_folder(parent, dst_dir)) {
@@ -1245,12 +1307,13 @@ pub fn move_entry(src: &Path, dst_dir: &Path) -> Result<PathBuf, String> {
     let (dst, copied) = move_into(src, dst_dir, name, |_| Ok(()), |_| {})
         .map_err(|e| format!("Could not move “{}”: {e}", name.to_string_lossy()))?;
     if let Some(was) = copied {
-        remove_original(src, &was).map_err(|e| {
-            format!(
+        remove_original(src, &was).map_err(|e| MoveFailure {
+            message: format!(
                 "Copied “{}” to {}, but did not remove the original: {e}",
                 name.to_string_lossy(),
                 dst.display()
-            )
+            ),
+            copied: true,
         })?;
     }
     Ok(dst)
@@ -2018,6 +2081,39 @@ mod tests {
         assert!(!info.exists());
         write_new(&info, b"[Trash Info]", |file, body| file.write_all(body)).unwrap();
         assert_eq!(fs::read_to_string(&info).unwrap(), "[Trash Info]");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_full_size_cache_never_rereads_what_is_still_listed() {
+        let paths: Vec<PathBuf> = (0..5_000).map(|i| PathBuf::from(format!("/pics/{i}.jpg"))).collect();
+        let listed = || paths.iter().cloned().collect::<std::collections::HashSet<_>>();
+        let mut cache = ImageSizes::default();
+        let mut reads = 0;
+        for _pass in 0..2 {
+            for path in &paths {
+                cache.get(path, (1, None), listed, || {
+                    reads += 1;
+                    Some((1, 1))
+                });
+            }
+        }
+        assert_eq!(reads, 5_000);
+
+        // A file that changed is read again, and said to have changed.
+        let (_, changed) = cache.get(&paths[0], (2, None), listed, || Some((2, 2)));
+        assert!(changed);
+    }
+
+    #[test]
+    fn a_copy_drops_setuid_and_setgid() {
+        let root = temp_dir("setid");
+        let tool = root.join("tool");
+        fs::write(&tool, "#!/bin/sh").unwrap();
+        fs::set_permissions(&tool, fs::Permissions::from_mode(0o6755)).unwrap();
+        let copy = duplicate_entry(&tool).unwrap();
+        assert_eq!(fs::metadata(&copy).unwrap().permissions().mode() & 0o7777, 0o755);
 
         let _ = fs::remove_dir_all(&root);
     }
