@@ -1,0 +1,29 @@
+$ crowbar-agent --version
+crowbar-agent 0.1.0
+(exit status 0)
+
+$ crowbar-agent status
+Signed in to OpenAI Codex (openai-codex), with OAuth.
+The Agent uses GPT-6.2 Sol (gpt-6.2-sol), from OpenAI Codex.
+(exit status 0)
+
+$ crowbar-agent --list
+wfxzy8vd  3 minutes ago   1 turn   in one sentence, what is Void Linux?
+(exit status 0)
+
+$ crowbar-agent --resume wfxzy8vd
+> in one sentence, what is Void Linux?
+Void Linux is an independent, rolling-release Linux distribution that uses the XBPS package manager and runit instead of systemd.
+(exit status 0)
+
+# The state of the Harness, and its person socket: mode, owner, path
+700 jmartin /home/jmartin/.local/state/crowbaros/agent
+600 jmartin /home/jmartin/.local/state/crowbaros/agent/credentials.json
+600 jmartin /home/jmartin/.local/state/crowbaros/agent/harness.log
+600 jmartin /home/jmartin/.local/state/crowbaros/agent/harness.sqlite
+600 jmartin /home/jmartin/.local/state/crowbaros/agent/harness.sqlite-shm
+600 jmartin /home/jmartin/.local/state/crowbaros/agent/harness.sqlite-wal
+600 jmartin /home/jmartin/.local/state/crowbaros/agent/running
+600 jmartin /home/jmartin/.local/state/crowbaros/agent/settings.json
+700 jmartin /run/user/1003/crowbar-agent
+600 jmartin /run/user/1003/crowbar-agent/person

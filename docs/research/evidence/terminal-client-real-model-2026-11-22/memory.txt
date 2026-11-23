@@ -1,0 +1,21 @@
+# The Harness's memory, from /proc/<pid>/smaps_rollup, in kB.
+# The process is /usr/local/lib/crowbar-agent/node, as runit starts it.
+
+== process 822, the Harness of this boot, after the sign-in and the turn
+Rss:              126632 kB
+Pss:              123245 kB
+Pss_Anon:          67692 kB
+
+== process 3138, 40 seconds after `sv restart crowbar-agent`: signed in, nothing connected since it started
+Rss:              104156 kB
+Pss:              100922 kB
+Pss_Anon:          53776 kB
+
+== process 3138, after one `crowbar-agent status`
+Rss:              104272 kB
+Pss:              101039 kB
+Pss_Anon:          53892 kB
+
+# For comparison, the desktop check of the same commit, in the VM, with no
+# Model signed in (desktop.log, "the idle Harness holds less memory than ADR
+# 0034 allows"): VmRSS 102220 kB.
