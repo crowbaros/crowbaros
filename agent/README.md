@@ -10,17 +10,19 @@ name, type, or ID crosses one.
 
 This is part of
 [Milestone 3](https://github.com/crowbaros/crowbaros/issues/291). The Harness
-holds conversations, reaches a Model the person signed in to, and streams
-each answer to the person's clients on its person socket. The first client
-is the terminal's: [`crowbar-agent`](client/README.md). The Agent has no act
-yet, and the shell's surface socket has no message yet.
+holds conversations, reaches a Model the person signed in to, asks Fulcrum for
+desktop context when a message arrives, and streams each answer to both the
+shell's drawer on its surface socket and the person's clients on its person
+socket (the terminal's [`crowbar-agent`](client/README.md) first). The Agent
+has no act yet.
 
 | Path | Contents |
 | --- | --- |
 | `src/main.ts` | The process: its options, its state, starting and stopping |
 | `src/channel.ts` | What both sockets share: the one user ID served, the framing, and the version |
+| `src/fulcrum.ts` | Fulcrum's Harness socket: connecting with backoff, asking for desktop context, and formatting it for the Model |
 | `src/surface.ts` | The surface socket, where the shell reaches the Harness |
-| `src/person.ts` | The person socket's messages |
+| `src/person.ts` | The person socket's messages, and the shared conversation channel |
 | `src/conversations.ts` | Conversations as clients follow them |
 | `src/models.ts` | Reaching a Model: pi-ai's providers, signing in, and the Model in use |
 | `src/credentials.ts` | The credential store |
@@ -73,7 +75,7 @@ names. The Harness never loads it.
 
 ```sh
 node dist/harness.mjs --state DIRECTORY --surface-socket PATH --shell-uid USER_ID \
-  --person-socket PATH --person-uid USER_ID
+  --person-socket PATH --person-uid USER_ID [--fulcrum-socket PATH]
 ```
 
 - `--state`: where the Harness keeps its database, its credentials, and its
@@ -83,22 +85,27 @@ node dist/harness.mjs --state DIRECTORY --surface-socket PATH --shell-uid USER_I
 - `--person-socket`: where it listens for the person's clients. It makes the
   socket's directory, the person's alone.
 - `--person-uid`: the one user ID it serves there.
+- `--fulcrum-socket`: optional. Fulcrum's Harness socket. When given, the
+  Harness connects with backoff, works while Fulcrum is absent, and asks for
+  a desktop snapshot whenever a message arrives.
 
 Base's `crowbar-agent` service
 ([`base/desktop/agent-run`](../base/desktop/agent-run)) runs it as the person,
 in the environment the launcher gives an app, starting in their home, with
-its state in `~/.local/state/crowbaros/agent` and its person socket at
-`/run/user/<the person's user ID>/crowbar-agent/person`. runit starts it again
-whenever it exits: at once, or a second later when it had run for less than a
-second. The [footprint record](../docs/research/harness-footprint-2026-11-22.md)
+its state in `~/.local/state/crowbaros/agent`, its person socket at
+`/run/user/<the person's user ID>/crowbar-agent/person`, and Fulcrum's
+Harness socket at `/run/crowbar-trusted/agent/compositor`. runit starts it
+again whenever it exits: at once, or a second later when it had run for less
+than a second. The [footprint record](../docs/research/harness-footprint-2026-11-22.md)
 has its memory and its start time in the VM before it reached any Model, and
 Base's boot check holds the idle Harness to ADR 0034's 150 MiB on every run.
 
-Told to stop with SIGTERM or SIGINT, it takes no new connection, closes the
-database, removes its sockets, and exits with status 0. A turn it was working
-on goes on when it starts again. An error it cannot go on from is logged, and
-it exits with status 1. When the log is what failed, it prints the error, and
-Base's service keeps that in `/var/log/crowbar-agent.log`.
+Told to stop with SIGTERM or SIGINT, it takes no new connection, closes its
+connection to Fulcrum and the database, removes its sockets, and exits with
+status 0. A turn it was working on goes on when it starts again. An error it
+cannot go on from is logged, and it exits with status 1. When the log is what
+failed, it prints the error, and Base's service keeps that in
+`/var/log/crowbar-agent.log`.
 
 ### On a developer's machine
 
@@ -170,7 +177,7 @@ a peer that connects without end fills the person's disk.
 | `start` | The process started |
 | `restart` | This start found that the Harness before it ended without stopping: it was killed, it crashed, or the machine lost power |
 | `listening` | A socket takes connections: the person socket, then the surface socket |
-| `connection` | A peer connected, stated the version, left, was refused, or was closed, with why. The shell is "the shell", and a client of the person's "a client" |
+| `connection` | A peer connected, stated the version, left, was refused, or was closed, with why; or the Harness connected to or disconnected from Fulcrum. The shell is "the shell", and a client of the person's "a client" |
 | `conversation` | A conversation started, by its ID |
 | `turn` | A turn began, or ended: `done`, `stopped`, or `failed` |
 | `sign-in` | The person signed in to a provider or out of one, a sign-in failed or was cancelled, or the Model in use changed, by the provider's name |
@@ -195,7 +202,8 @@ nothing to load. The tests fail if a new Node.js changes this.
 
 ### Framing
 
-Both sockets speak the framing every channel of the Agent speaks.
+Both listening sockets and the Harness's connection to Fulcrum speak the
+framing every channel of the Agent speaks.
 [ADR 0035](../docs/adr/0035-fulcrum-draws-every-ask-and-holds-what-the-agent-may-take.md)
 gave it to Fulcrum's channels, and the
 [Milestone 3 spec](https://github.com/crowbaros/crowbaros/issues/291) gives
@@ -209,9 +217,9 @@ it to the rest. `src/frames.ts` holds it, and `src/channel.ts` serves it:
   own. A peer whose first frame is anything else, or states a version the
   Harness does not speak, is closed with no answer, and the log says why.
 - **A frame from the peer has a longest length**, not counting its four
-  bytes: 4096 bytes on the surface socket, and a mebibyte on the person
-  socket, for a long message of the person's. A longer frame closes the
-  connection as soon as its length is read.
+  bytes: a mebibyte on both the surface socket and the person socket, for a
+  long message of the person's. A longer frame closes the connection as soon
+  as its length is read.
 - **A peer that reads nothing** until 16 MiB waits for it is closed.
 
 Each socket's version is 1. The lengths are shown in hexadecimal:
@@ -238,11 +246,12 @@ running the Harness as the person, with no isolation inside their account.
 The [spec](https://github.com/crowbaros/crowbaros/issues/291) gives the
 surface socket no message that answers an ask, so no yes rests on it.
 
-It has no message yet. The slice that builds the Agent's surface
-([#295](https://github.com/crowbaros/crowbaros/issues/295)) gives it the
-person socket's conversation messages, so the drawer is a second client of
-the same conversations. Until then, a frame after the version is one the
-Harness does not speak, and it closes the connection.
+The surface socket speaks the conversation messages below (`start`, `list`,
+`resume`, `send`, `stop`) and `status`, sharing the same conversations with
+the person socket so the drawer and `crowbar-agent` are clients of the same
+conversations. Sign-in and Model-choice requests (`login`, `answer`, `cancel`,
+`logout`, `models`, `model`) are refused with `code: "request"`; signing in
+stays on the person socket (`crowbar-agent login`).
 
 ### The person socket
 
@@ -262,7 +271,20 @@ A client only relays. The conversations are the Harness's, and a turn goes on
 whether or not any client is connected: **a client that goes away stops
 nothing**, and only `stop` stops a turn.
 
-## The person socket's messages
+### Fulcrum's Harness socket (desktop context)
+
+When `--fulcrum-socket` is given, the Harness dials Fulcrum's Harness socket
+([`compositor/README.md`](../compositor/README.md#the-harnesss-socket)) with
+exponential backoff (100 ms up to 5 s) and keeps working while Fulcrum is
+absent or restarts. When a `send` request arrives on either the surface socket
+or the person socket, the Harness asks Fulcrum for `{"op":"snapshot"}` and
+prepends the resulting desktop context — active window title and `app_id`,
+every open window by workspace, and the displays, never window contents — to
+the message sent to the Model. The structured `context` object is kept with
+the turn and included on `message` events and `resumed` turns so the drawer
+can display what desktop context each message carried.
+
+## The conversation and person messages
 
 A request is one JSON object with an `op`. Each request gets one reply, in
 the order the requests came, and the reply comes before any event the request
@@ -275,14 +297,14 @@ A request the Harness will not carry out gets
 
 | `code` | When |
 | --- | --- |
-| `request` | The Harness has no such request, or the request lacks a field |
+| `request` | The Harness has no such request (or the surface socket does not allow it), or the request lacks a field |
 | `no-conversation` | There is no conversation with that ID |
 | `working` | The Agent is still working on the message before this one |
 | `no-model` | No Model is signed in, or none is chosen |
 | `signing-in` | A sign-in is already under way |
 | `refused` | A sign-in, a sign-out, or a choice of Model that cannot be made, with why |
 
-### Conversations
+### Conversations (surface socket and person socket)
 
 A conversation has an ID of the Harness's own: eight letters and digits, such
 as `k3f9q2xz`. A turn is one message from the person and the Agent's answer
@@ -296,13 +318,14 @@ message, so every client of a conversation shows the same thing.
 | --- | --- | --- |
 | `{"op":"start"}` | `{"reply":"started","conversation":"k3f9q2xz"}` | Starts a conversation, and follows it |
 | `{"op":"list"}` | `{"reply":"conversations","conversations":[...]}` | Lists every conversation, the newest first. Each is `{"conversation":"k3f9q2xz","started":1795395526,"title":"How do I…","turns":2,"working":false}`: when it started, in seconds since 1970, how its first message begins, how many turns it has, and whether one is working |
-| `{"op":"resume","conversation":"k3f9q2xz"}` | `{"reply":"resumed","conversation":"k3f9q2xz","earlier":false,"turns":[...]}` | Follows a conversation, and gives it as it stands: its newest turns, the oldest first, and whether it has turns before them. Each is `{"turn":1,"message":"...","answer":"...","state":"done"}`. `state` is `working`, `done`, `stopped`, or `failed`, and a failed turn has `error`, which says why. A turn that is working has its answer so far, and its events follow |
-| `{"op":"send","conversation":"k3f9q2xz","text":"..."}` | `{"reply":"sent","conversation":"k3f9q2xz","turn":2}` | Sends a message of the person's, which begins a turn. The Model in use answers it. With no `conversation`, the message starts one, which the client then follows, and the reply has its ID. A message that is refused starts none |
+| `{"op":"resume","conversation":"k3f9q2xz"}` | `{"reply":"resumed","conversation":"k3f9q2xz","earlier":false,"turns":[...]}` | Follows a conversation, and gives it as it stands: its newest turns, the oldest first, and whether it has turns before them. Each is `{"turn":1,"message":"...","answer":"...","state":"done"}`, with optional `context` when desktop context was sent with that message. `state` is `working`, `done`, `stopped`, or `failed`, and a failed turn has `error`, which says why. A turn that is working has its answer so far, and its events follow |
+| `{"op":"send","conversation":"k3f9q2xz","text":"..."}` | `{"reply":"sent","conversation":"k3f9q2xz","turn":2}` | Sends a message of the person's, which begins a turn. The Model in use answers it, carrying desktop context from Fulcrum when available. With no `conversation`, the message starts one, which the client then follows, and the reply has its ID. A message that is refused starts none |
 | `{"op":"stop","conversation":"k3f9q2xz","turn":2}` | `{"reply":"ok"}` | Stops the turn that is working. It is answered once the turn has stopped. With no turn working, it stops nothing. `turn` is the turn the client means, and may be left out: with it, the stop does nothing unless that is the conversation's newest turn. A stop and a message for one conversation are taken one at a time, so a stop that comes as its turn ends never stops the turn after |
+| `{"op":"status"}` | `{"reply":"status","model":{...},"signed_in":[...]}` | The Model in use, as `{"provider":"anthropic","provider_name":"Anthropic","model":"...","name":"..."}`, and each sign-in, as `{"provider":"anthropic","name":"Anthropic","how":"OAuth"}`, where `how` is `OAuth` or `API key`. With no Model in use, `model` is null and `missing` says why |
 
 | Event | When |
 | --- | --- |
-| `{"event":"message","conversation":"k3f9q2xz","turn":2,"text":"..."}` | A turn began, with the person's message. The client that sent it gets this too |
+| `{"event":"message","conversation":"k3f9q2xz","turn":2,"text":"...","context":{...}}` | A turn began, with the person's message and optional desktop `context` (`workspace`, `active`, `locked`, `windows`, `displays`). The client that sent it gets this too |
 | `{"event":"text","conversation":"k3f9q2xz","turn":2,"text":"..."}` | The next piece of the answer |
 | `{"event":"start-over","conversation":"k3f9q2xz","turn":2}` | The Model is asked again, and the answer starts over: the `text` before this is no part of it |
 | `{"event":"retry","conversation":"k3f9q2xz","turn":2,"message":"...","seconds":2}` | The Model failed, and is asked again after that many seconds |
@@ -322,7 +345,7 @@ frame, without its length:
 <- {"event":"done","conversation":"k3f9q2xz","turn":1}
 ```
 
-### Signing in
+### Signing in (person socket alone)
 
 The Harness does the sign-in, through pi-ai's providers, and keeps the
 credential. The client shows the Harness's questions and sends back what the
@@ -337,7 +360,6 @@ that question ends `signed-in`, with no Model chosen.
 | `{"op":"answer","question":2,"text":"..."}` | `{"reply":"ok"}` | Answers a `question` event, by its number: what the person typed, or the `id` of the option they picked |
 | `{"op":"cancel"}` | `{"reply":"ok"}` | Cancels this client's sign-in |
 | `{"op":"logout","provider":"anthropic"}` | `{"reply":"signed-out","provider":"anthropic","provider_name":"Anthropic"}` | Signs out, and removes the credential. With no `provider`, the only one signed in to |
-| `{"op":"status"}` | `{"reply":"status","model":{...},"signed_in":[...]}` | The Model in use, as `{"provider":"anthropic","provider_name":"Anthropic","model":"...","name":"..."}`, and each sign-in, as `{"provider":"anthropic","name":"Anthropic","how":"OAuth"}`, where `how` is `OAuth` or `API key`. With no Model in use, `model` is null and `missing` says why |
 | `{"op":"models"}` | `{"reply":"models","models":[...]}` | Every Model of every provider signed in to, each as `status` gives the Model in use, with `in_use` |
 | `{"op":"model","provider":"anthropic","model":"..."}` | `{"reply":"model", ..., "in_use":true}` | Chooses that Model, and gives it as `status` does. `in_use` is false while [an endpoint file](#one-endpoint-by-hand) is there, which goes on being the Model in use |
 
@@ -386,7 +408,8 @@ the code the provider shows, in answer to the `code` question.
 - **A turn the Harness is stopped in the middle of** goes on when it starts
   again: the Model is asked again, with no client connected.
 - **The Agent is told what it is** before every conversation, in
-  `src/store.ts`: the Agent built into CrowbarOS, with no act yet.
+  `src/store.ts`: the Agent built into CrowbarOS, with desktop context on
+  messages when Fulcrum answers, and no act yet.
 - **Requests carry no attribution** to pi or to CrowbarOS.
 
 ### One endpoint, by hand

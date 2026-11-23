@@ -16,7 +16,14 @@ export function events(conversation: string, before: Map<number, Turn>, turns: r
 	for (const turn of turns) {
 		const known = before.get(turn.turn);
 		const about = { conversation, turn: turn.turn };
-		if (known === undefined) out.push({ event: "message", ...about, text: turn.message });
+		if (known === undefined) {
+			out.push({
+				event: "message",
+				...about,
+				text: turn.message,
+				...(turn.context !== undefined ? { context: turn.context } : {}),
+			});
+		}
 		// Already ended, and told so: nothing of an ended turn changes.
 		if (known !== undefined && known.state !== "working") continue;
 		// The Model was asked again, and its answer starts over from nothing:
