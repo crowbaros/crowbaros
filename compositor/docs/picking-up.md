@@ -33,7 +33,7 @@ Base's image boots a real machine from a USB disk, and the desktop runs there as
 
 1. A change reaches Base when its pull request merges. Run the guest check, and the desktop check if the desktop changes, and attach the evidence.
 2. When the shell, the image, or the lab needs its own half of the change, it goes in the same pull request.
-3. A new global is offered to every client unless `src/policy.rs` refuses it to one. Refusing one takes an entry in `APPS_REFUSED` or `SHELL_REFUSED`, a test of who is refused it, and the matching list in `lab/void/compositor_check.py`, which reads `APPS_REFUSED`. A global the compositor makes for every client also goes in the lists of `tests/table.rs` and `lab/void/compositor_check.py`.
+3. A new global is offered to every client unless `src/policy.rs` refuses it to one. Refusing one takes an entry in `APPS_REFUSED` or `SHELL_REFUSED`, a test of who is refused it, and the matching list in `lab/void/compositor_check.py`, which reads `APPS_REFUSED`. A global the compositor makes for every client also goes in the lists of `tests/suite/table.rs` and `lab/void/compositor_check.py`.
 
 ## Things that trip people up
 
