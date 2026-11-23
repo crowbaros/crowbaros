@@ -31,6 +31,8 @@ pub struct Client {
     /// It opened without the keyboard and has not had it since: the bar
     /// shows it wants attention. Only the CrowbarOS compositor says so.
     pub attention: bool,
+    /// Whether the window is fullscreen (covering the bar).
+    pub fullscreen: bool,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Snapshot {
@@ -64,6 +66,8 @@ pub enum Event {
     /// The unlock helper's answer to the person's password: `Ok` once the
     /// compositor unlocked, or why not.
     Unlock(Result<(), String>),
+    /// An event from the Harness on the surface socket.
+    Agent(crate::agent::AgentEvent),
 }
 /// The shell's events, from any thread to the interface. Sending one wakes
 /// the interface at once: it does not look for them on a timer.
@@ -185,6 +189,8 @@ fn snapshot_from(message: serde_json::Value) -> Result<Snapshot> {
         workspace: i32,
         #[serde(default)]
         attention: bool,
+        #[serde(default)]
+        fullscreen: bool,
     }
     #[derive(Deserialize)]
     struct Reply {
@@ -204,6 +210,7 @@ fn snapshot_from(message: serde_json::Value) -> Result<Snapshot> {
             title: w.title,
             workspace: Workspace { id: w.workspace },
             attention: w.attention,
+            fullscreen: w.fullscreen,
         })
         .collect();
     let active = clients
@@ -938,7 +945,10 @@ pub fn send(command: &str) -> Result<()> {
     s.write_all(command.as_bytes())?;
     Ok(())
 }
-pub fn server(tx: Sender) -> Result<File> {
+pub fn server(
+    tx: Sender,
+    agent_view: std::sync::Arc<Mutex<crate::agent::AgentViewSnapshot>>,
+) -> Result<File> {
     let dir = runtime()?;
     let lock = OpenOptions::new()
         .create(true)
@@ -965,6 +975,12 @@ pub fn server(tx: Sender) -> Result<File> {
                     b"snapshot" => {
                         if let Ok(snapshot) = snapshot() {
                             let _ = serde_json::to_writer(&mut s, &snapshot);
+                        }
+                        continue;
+                    }
+                    b"agent" => {
+                        if let Ok(view) = agent_view.lock() {
+                            let _ = serde_json::to_writer(&mut s, &*view);
                         }
                         continue;
                     }
@@ -1423,6 +1439,7 @@ mod tests {
             title: "Studio \"Settings\"".into(),
             workspace: Workspace { id: 2 },
             attention: false,
+            fullscreen: false,
         };
         assert_eq!(
             snapshot,
@@ -1435,6 +1452,7 @@ mod tests {
                         title: "Terminal".into(),
                         workspace: Workspace { id: 1 },
                         attention: false,
+                        fullscreen: false,
                     },
                     studio.clone(),
                 ],
@@ -1617,6 +1635,7 @@ mod tests {
             title: "Terminal".into(),
             workspace: Workspace { id: 1 },
             attention: false,
+            fullscreen: false,
         };
         assert_eq!(
             snapshot,
@@ -1661,6 +1680,7 @@ mod tests {
                     title: "Terminal".into(),
                     workspace: Workspace { id: 1 },
                     attention: false,
+                    fullscreen: false,
                 },
                 Client {
                     address: "0x2".into(),
@@ -1668,6 +1688,7 @@ mod tests {
                     title: "Notes".into(),
                     workspace: Workspace { id: 0 },
                     attention: false,
+                    fullscreen: false,
                 },
             ]
         );

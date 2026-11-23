@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+mod agent;
 mod catalog;
 mod input;
 mod session;
@@ -6,9 +7,9 @@ mod theme;
 use catalog::AppEntry;
 use gpui::{layer_shell::*, prelude::*, *};
 use futures::StreamExt;
-use std::{borrow::Cow, path::PathBuf, time::Duration};
+use std::{borrow::Cow, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 use theme::{Palette, Preferences};
-actions!(shell, [Next, Previous, Open, Close, Unlock]);
+actions!(shell, [Next, Previous, Open, Close, Unlock, SendMessage]);
 struct Assets;
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
@@ -145,6 +146,11 @@ struct Model {
     lock: Option<WindowHandle<LockScreen>>,
     /// The Agent's surface, while it is up.
     agent: Option<WindowHandle<AgentSurface>>,
+    /// The floating Agent mark shown over a fullscreen window.
+    mark_overlay: Option<WindowHandle<MarkOverlay>>,
+    agent_state: agent::AgentState,
+    agent_tx: Option<agent::CommandSender>,
+    agent_view: Arc<Mutex<agent::AgentViewSnapshot>>,
     apps: Vec<AppEntry>,
     tx: session::Sender,
     clock: String,
@@ -166,6 +172,18 @@ fn layer(
     zone: Option<f32>,
     keyboard: KeyboardInteractivity,
 ) -> WindowOptions {
+    layer_with_margin(name, kind, anchor, width, height, zone, None, keyboard)
+}
+fn layer_with_margin(
+    name: &str,
+    kind: Layer,
+    anchor: Anchor,
+    width: f32,
+    height: f32,
+    zone: Option<f32>,
+    margin: Option<(Pixels, Pixels, Pixels, Pixels)>,
+    keyboard: KeyboardInteractivity,
+) -> WindowOptions {
     WindowOptions {
         titlebar: None,
         app_id: Some("com.crowbaros.Shell".into()),
@@ -179,10 +197,78 @@ fn layer(
             layer: kind,
             anchor,
             exclusive_zone: zone.map(px),
+            margin,
             keyboard_interactivity: keyboard,
             ..Default::default()
         }),
         ..Default::default()
+    }
+}
+fn render_mark_pill(mark: agent::Mark, p: Palette) -> Option<Stateful<Div>> {
+    match mark {
+        agent::Mark::Idle => None,
+        agent::Mark::Working => Some(
+            div()
+                .id("agent-mark")
+                .h(px(18.))
+                .px(px(7.))
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .rounded(px(4.))
+                .bg(rgb(p.surface))
+                .border_1()
+                .border_color(rgb(p.accent))
+                .text_size(px(10.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(p.text))
+                .child(div().size(px(6.)).rounded_full().bg(rgb(p.accent)))
+                .child("Working"),
+        ),
+        agent::Mark::Done => Some(
+            div()
+                .id("agent-mark")
+                .h(px(18.))
+                .px(px(7.))
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .rounded(px(4.))
+                .bg(rgb(p.accent))
+                .text_size(px(10.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(p.on_accent))
+                .child(div().size(px(6.)).rounded_full().bg(rgb(p.on_accent)))
+                .child("Done"),
+        ),
+    }
+}
+struct MarkOverlay {
+    model: Entity<Model>,
+}
+impl Render for MarkOverlay {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let m = self.model.read(cx);
+        let p = m.palette();
+        let pill = render_mark_pill(m.agent_state.mark, p);
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_end()
+            .font_family("Manrope")
+            .when_some(pill, |d, badge| {
+                d.child(
+                    div()
+                        .px(px(4.))
+                        .py(px(3.))
+                        .rounded(px(7.))
+                        .bg(rgb(p.canvas))
+                        .border_1()
+                        .border_color(rgb(p.line))
+                        .child(badge),
+                )
+            })
     }
 }
 struct Background {
@@ -373,6 +459,9 @@ impl Render for Bar {
                     .items_center()
                     .justify_end()
                     .gap(px(4.))
+                    .when_some(render_mark_pill(m.agent_state.mark, p), |d, pill| {
+                        d.child(pill)
+                    })
                     .child(
                         div()
                             .id("lock")
@@ -1010,24 +1099,126 @@ fn agent_surface_width(display_width: f32) -> f32 {
     (display_width / 3.).round()
 }
 const AGENT_HEADER_HEIGHT: f32 = 48.;
+/// Keeps the `crowbar-shell`-only control-socket snapshot of the drawer and
+/// mark up to date.
+fn sync_agent_view(model: &Entity<Model>, cx: &App) {
+    let m = model.read(cx);
+    if let Ok(mut view) = m.agent_view.lock() {
+        view.drawer_up = m.agent.is_some();
+        view.mark_overlay = m.mark_overlay.is_some();
+        view.state = m.agent_state.clone();
+    }
+}
+/// Opens or removes the floating fullscreen mark overlay to match whether a
+/// fullscreen window is covering the bar while the mark is active.
+fn sync_mark_overlay(model: &Entity<Model>, cx: &mut App) {
+    let (want, existing, mark) = {
+        let m = model.read(cx);
+        let want = agent::should_show_mark_overlay(
+            m.agent_state.mark,
+            &m.snapshot,
+            m.agent.is_some(),
+        );
+        (want, m.mark_overlay, m.agent_state.mark)
+    };
+    if want && existing.is_none() {
+        let overlay_model = model.clone();
+        match cx.open_window(
+            layer_with_margin(
+                "mark",
+                Layer::Overlay,
+                Anchor::TOP | Anchor::RIGHT,
+                112.,
+                28.,
+                Some(-1.),
+                Some((px(8.), px(12.), px(0.), px(0.))),
+                KeyboardInteractivity::None,
+            ),
+            move |_, cx| cx.new(|_| MarkOverlay { model: overlay_model }),
+        ) {
+            Ok(w) => {
+                model.update(cx, |m, _| m.mark_overlay = Some(w));
+                log::info!("SHELL agent-mark overlay=true state={}", mark.label());
+            }
+            Err(e) => log::error!("Opening the Agent mark overlay: {e}"),
+        }
+    } else if !want {
+        if let Some(w) = model.update(cx, |m, _| m.mark_overlay.take()) {
+            log::info!("SHELL agent-mark overlay=false state={}", mark.label());
+            let _ = w.update(cx, |_, w, _| w.remove_window());
+        }
+    }
+    sync_agent_view(model, cx);
+}
 /// The Agent's surface (ADR 0035): a drawer on the right of the display the
 /// pointer was on at the summon, the display's full height, above every
 /// window and taking no room from any. The summon gesture or its close
-/// control puts it away; Escape does not. No Harness is behind it yet, so it
-/// shows its empty state. Its look is built from `DESIGN.md`'s tokens until
-/// the design pass.
+/// control puts it away; Escape does not. Putting the drawer away stops
+/// nothing: a working turn finishes behind it and the mark shows `done`.
 struct AgentSurface {
     model: Entity<Model>,
-    focus: FocusHandle,
+    input: Entity<input::TextInput>,
+    scroll: ScrollHandle,
+    _input_sub: Subscription,
 }
 impl AgentSurface {
     /// Puts the surface away. The keyboard goes back to the window that had
-    /// it, if the surface holds it.
+    /// it, if the surface holds it. A working turn keeps going behind it.
     fn put_away(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         log::info!("SHELL agent-surface up=false");
-        self.model.update(cx, |m, _| m.agent = None);
+        let prev_mark = self.model.read(cx).agent_state.mark;
+        let cleared = self.model.update(cx, |m, _| {
+            m.agent = None;
+            m.agent_state.on_drawer_closed()
+        });
+        if cleared {
+            log::info!(
+                "SHELL agent-mark state={} prev={}",
+                self.model.read(cx).agent_state.mark.label(),
+                prev_mark.label()
+            );
+        }
+        sync_mark_overlay(&self.model, cx);
         session::agent_keyboard(false);
         window.remove_window();
+        cx.refresh_windows();
+    }
+    fn send(&mut self, cx: &mut Context<Self>) {
+        let query = self.input.read(cx).query();
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let (tx, conversation, can_send) = {
+            let m = self.model.read(cx);
+            (
+                m.agent_tx.clone(),
+                m.agent_state.conversation.clone(),
+                m.agent_state.connected && !m.agent_state.working(),
+            )
+        };
+        if !can_send {
+            return;
+        }
+        if let Some(tx) = tx {
+            tx.send_message(conversation, trimmed.to_string());
+            self.input.update(cx, |input, cx| input.clear(cx));
+            self.scroll.scroll_to_bottom();
+            cx.notify();
+        }
+    }
+    fn stop_turn(&mut self, cx: &mut Context<Self>) {
+        let (tx, conversation, turn) = {
+            let m = self.model.read(cx);
+            (
+                m.agent_tx.clone(),
+                m.agent_state.conversation.clone(),
+                m.agent_state.current_turn(),
+            )
+        };
+        if let (Some(tx), Some(conversation)) = (tx, conversation) {
+            tx.stop_turn(conversation, turn);
+        }
     }
 }
 impl Render for AgentSurface {
@@ -1037,12 +1228,260 @@ impl Render for AgentSurface {
         let mark = ImageSource::Resource(Resource::Embedded(
             bar_mark_asset(&m.preferences).into(),
         ));
+        let state = m.agent_state.clone();
+        let working = state.working();
+        let draft = self.input.read(cx).query();
+        let can_send = state.connected && !working && !draft.trim().is_empty();
+        self.input.update(cx, |input, _| input.palette = p);
+
+        let header_sub = if let Some(model) = &state.model {
+            model.name.clone()
+        } else if !state.configured || !state.connected {
+            "Offline".into()
+        } else {
+            "No Model".into()
+        };
+
+        let mut body = div()
+            .id("agent-conversation")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .px(px(16.))
+            .py(px(16.))
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .bg(rgb(p.canvas));
+
+        if !state.turns.is_empty() {
+            for turn in &state.turns {
+                let mut turn_col = div().flex().flex_col().gap(px(8.));
+                // Person's message.
+                turn_col = turn_col.child(
+                    div()
+                        .w_full()
+                        .px(px(12.))
+                        .py(px(10.))
+                        .rounded(px(8.))
+                        .bg(rgb(p.surface))
+                        .border_1()
+                        .border_color(rgb(p.line))
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(p.muted))
+                                .child("You"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .line_height(px(19.))
+                                .text_color(rgb(p.text))
+                                .child(turn.message.clone()),
+                        ),
+                );
+                // Desktop context carried with the message.
+                if let Some(ctx) = &turn.context {
+                    let lines = agent::format_context_summary(ctx);
+                    let mut ctx_box = div()
+                        .w_full()
+                        .pl(px(10.))
+                        .py(px(4.))
+                        .border_l_2()
+                        .border_color(rgb(p.line))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(
+                            div()
+                                .text_size(px(10.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(p.muted))
+                                .child("Desktop context"),
+                        );
+                    for line in lines {
+                        ctx_box = ctx_box.child(
+                            div()
+                                .font_family("IBM Plex Mono")
+                                .text_size(px(10.5))
+                                .line_height(px(15.))
+                                .text_color(rgb(p.muted))
+                                .child(line),
+                        );
+                    }
+                    turn_col = turn_col.child(ctx_box);
+                }
+                // Agent's answer and turn status.
+                let state_label = match &turn.state {
+                    agent::TurnState::Working => Some("Working…"),
+                    agent::TurnState::Done => None,
+                    agent::TurnState::Stopped => Some("Stopped"),
+                    agent::TurnState::Failed(_) => Some("Could not answer"),
+                };
+                let mut answer_box = div().w_full().flex().flex_col().gap(px(4.)).child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(p.accent))
+                                .child("Agent"),
+                        )
+                        .when_some(state_label, |row, label| {
+                            row.child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .text_color(rgb(p.muted))
+                                    .child(label),
+                            )
+                        }),
+                );
+                if !turn.answer.is_empty() {
+                    answer_box = answer_box.child(
+                        div()
+                            .text_size(px(13.))
+                            .line_height(px(19.5))
+                            .text_color(rgb(p.text))
+                            .child(turn.answer.clone()),
+                    );
+                } else if matches!(turn.state, agent::TurnState::Working) {
+                    answer_box = answer_box.child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(p.muted))
+                            .child("Thinking…"),
+                    );
+                }
+                if let Some(retry) = &turn.retry {
+                    answer_box = answer_box.child(
+                        div()
+                            .text_size(px(11.5))
+                            .line_height(px(16.))
+                            .text_color(rgb(p.muted))
+                            .child(retry.clone()),
+                    );
+                }
+                if let agent::TurnState::Failed(err) = &turn.state {
+                    answer_box = answer_box.child(
+                        div()
+                            .mt(px(2.))
+                            .px(px(10.))
+                            .py(px(8.))
+                            .rounded(px(6.))
+                            .bg(rgb(p.surface))
+                            .border_1()
+                            .border_color(rgb(p.line))
+                            .text_size(px(12.))
+                            .line_height(px(17.))
+                            .text_color(rgb(p.text))
+                            .child(err.clone()),
+                    );
+                }
+                turn_col = turn_col.child(answer_box);
+                body = body.child(turn_col);
+            }
+        } else if !state.configured || !state.connected {
+            body = body.child(
+                div()
+                    .pt(px(12.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Agent is not reachable"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .line_height(px(18.))
+                            .text_color(rgb(p.muted))
+                            .child(
+                                "The Harness is not connected right now. The drawer will \
+                                 reconnect automatically once it is running.",
+                            ),
+                    ),
+            );
+        } else if state.model.is_none() {
+            let reason = state.missing_model.clone().unwrap_or_else(|| {
+                "Sign in to a Model from a terminal to talk with the Agent.".into()
+            });
+            body = body.child(
+                div()
+                    .pt(px(12.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("No Model signed in"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .line_height(px(18.))
+                            .text_color(rgb(p.muted))
+                            .child(reason),
+                    )
+                    .child(
+                        div()
+                            .px(px(10.))
+                            .py(px(7.))
+                            .rounded(px(6.))
+                            .bg(rgb(p.surface))
+                            .border_1()
+                            .border_color(rgb(p.line))
+                            .font_family("IBM Plex Mono")
+                            .text_size(px(11.5))
+                            .text_color(rgb(p.text))
+                            .child("crowbar-agent login"),
+                    ),
+            );
+        } else {
+            body = body.child(
+                div()
+                    .pt(px(12.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Start a conversation"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .line_height(px(18.))
+                            .text_color(rgb(p.muted))
+                            .child(
+                                "Each message carries your current desktop context: active window, \
+                                 open windows by workspace, and displays — never window contents.",
+                            ),
+                    ),
+            );
+        }
+
         div()
             .size_full()
             .flex()
             .flex_col()
-            .track_focus(&self.focus)
             .key_context("AgentSurface")
+            .on_action(cx.listener(|this, _: &SendMessage, _, cx| this.send(cx)))
             .font_family("Manrope")
             .text_size(px(13.))
             .text_color(rgb(p.text))
@@ -1065,9 +1504,24 @@ impl Render for AgentSurface {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_size(px(14.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Agent"),
+                            .flex()
+                            .items_baseline()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Agent"),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(p.muted))
+                                    .text_ellipsis()
+                                    .child(header_sub),
+                            ),
                     )
                     .child(
                         div()
@@ -1083,47 +1537,115 @@ impl Render for AgentSurface {
                             .on_click(cx.listener(|this, _, w, cx| this.put_away(w, cx))),
                     ),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .px(px(24.))
-                    .flex()
-                    .flex_col()
-                    .justify_center()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .text_size(px(14.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("No conversation yet"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .line_height(px(18.))
-                            .text_color(rgb(p.muted))
-                            .child(
-                                "This surface cannot reach the Agent yet. Until it can, \
-                                 talk to the Agent from a terminal with crowbar-agent.",
-                            ),
-                    ),
-            )
+            .child(body)
+            .when_some(
+                state.error.clone().or_else(|| {
+                    if state.turns.is_empty() {
+                        None
+                    } else if !state.configured || !state.connected {
+                        Some("Agent is not reachable right now. Reconnecting once the Harness is running.".into())
+                    } else if state.model.is_none() {
+                        Some(state.missing_model.clone().unwrap_or_else(|| {
+                            "No Model is signed in. Run `crowbar-agent login` in a terminal.".into()
+                        }))
+                    } else {
+                        None
+                    }
+                }),
+                |d, err| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .px(px(16.))
+                        .py(px(8.))
+                        .border_t_1()
+                        .border_color(rgb(p.line))
+                        .bg(rgb(p.surface))
+                        .text_size(px(11.5))
+                        .line_height(px(16.))
+                        .text_color(rgb(p.text))
+                        .child(err),
+                )
+            })
             .child(
                 div()
                     .flex_none()
-                    .px(px(24.))
-                    .py(px(16.))
+                    .px(px(12.))
+                    .py(px(10.))
                     .flex()
-                    .items_center()
-                    .gap(px(4.))
+                    .flex_col()
+                    .gap(px(8.))
                     .border_t_1()
                     .border_color(rgb(p.line))
-                    .text_size(px(12.))
-                    .text_color(rgb(p.muted))
-                    .child(palette_keycap("Super", p))
-                    .child(palette_keycap("Space", p))
-                    .child(div().ml(px(4.)).child("put away")),
+                    .child(
+                        div()
+                            .w_full()
+                            .pl(px(10.))
+                            .pr(px(6.))
+                            .py(px(6.))
+                            .rounded(px(8.))
+                            .bg(rgb(p.surface))
+                            .border_1()
+                            .border_color(rgb(p.line))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(div().flex_1().min_w_0().child(self.input.clone()))
+                            .when(working, |row| {
+                                row.child(
+                                    div()
+                                        .id("stop-agent-turn")
+                                        .px(px(8.))
+                                        .h(px(26.))
+                                        .rounded(px(6.))
+                                        .bg(rgb(p.canvas))
+                                        .border_1()
+                                        .border_color(rgb(p.line))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .cursor_pointer()
+                                        .text_size(px(11.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(rgb(p.text))
+                                        .child("Stop")
+                                        .on_click(cx.listener(|this, _, _, cx| this.stop_turn(cx))),
+                                )
+                            })
+                            .when(!working, |row| {
+                                row.child(
+                                    div()
+                                        .id("send-agent-message")
+                                        .size(px(26.))
+                                        .rounded(px(6.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .when(can_send, |btn| {
+                                            btn.bg(rgb(p.accent))
+                                                .cursor_pointer()
+                                                .child(icon("arrow", p.on_accent, 14.))
+                                        })
+                                        .when(!can_send, |btn| {
+                                            btn.child(icon("arrow", p.muted, 14.))
+                                        })
+                                        .on_click(cx.listener(|this, _, _, cx| this.send(cx))),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .text_size(px(11.))
+                            .text_color(rgb(p.muted))
+                            .child(palette_keycap("Enter", p))
+                            .child("send")
+                            .child(div().ml(px(6.)).child(palette_keycap("Super", p)))
+                            .child(palette_keycap("Space", p))
+                            .child("put away"),
+                    ),
             )
     }
 }
@@ -1149,18 +1671,41 @@ fn show_agent_surface(model: &Entity<Model>, summon: &session::Summon, cx: &mut 
             KeyboardInteractivity::OnDemand,
         ),
         move |w, cx| {
-            let focus = cx.focus_handle();
-            w.focus(&focus);
-            cx.new(|_| AgentSurface {
-                model: surface,
-                focus,
+            let input = cx.new(|cx| input::TextInput::with_placeholder("Ask the Agent…", 16384, cx));
+            w.focus(&input.focus_handle(cx));
+            let scroll = ScrollHandle::new();
+            cx.new(|cx| {
+                let input_sub = cx.observe(&input, |_, _, cx| cx.notify());
+                AgentSurface {
+                    model: surface,
+                    input,
+                    scroll,
+                    _input_sub: input_sub,
+                }
             })
         },
     );
     match result {
         Ok(w) => {
-            model.update(cx, |m, _| m.agent = Some(w));
+            let prev_mark = model.read(cx).agent_state.mark;
+            let (tx, cleared) = model.update(cx, |m, _| {
+                m.agent = Some(w);
+                let cleared = m.agent_state.on_drawer_opened();
+                (m.agent_tx.clone(), cleared)
+            });
+            if cleared {
+                log::info!(
+                    "SHELL agent-mark state={} prev={}",
+                    model.read(cx).agent_state.mark.label(),
+                    prev_mark.label()
+                );
+            }
+            if let Some(tx) = tx {
+                tx.refresh_status();
+            }
+            sync_mark_overlay(model, cx);
             session::agent_keyboard(true);
+            cx.refresh_windows();
         }
         Err(e) => log::error!("Summoning the Agent's surface: {e}"),
     }
@@ -1182,6 +1727,14 @@ fn summoned(model: &Entity<Model>, summon: session::Summon, cx: &mut App) {
         Gesture::Show => show_agent_surface(model, &summon, cx),
         Gesture::TakeKeyboard => {
             log::info!("SHELL agent-surface keyboard=true");
+            if let Some(w) = agent {
+                let _ = w.update(cx, |view, w, cx| {
+                    w.focus(&view.input.focus_handle(cx));
+                });
+            }
+            if let Some(tx) = model.read(cx).agent_tx.clone() {
+                tx.refresh_status();
+            }
             session::agent_keyboard(true)
         }
         Gesture::PutAway => {
@@ -1755,9 +2308,36 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 if lock_changes {
                     set_lock_screen(model, locked, cx);
                 }
+                sync_mark_overlay(model, cx);
                 refresh = true
             }
-            session::Event::Lock(locked) => set_lock_screen(model, locked, cx),
+            session::Event::Lock(locked) => {
+                set_lock_screen(model, locked, cx);
+                model.update(cx, |m, _| m.snapshot.locked = locked);
+                sync_mark_overlay(model, cx);
+            }
+            session::Event::Agent(agent_event) => {
+                let prev_mark = model.read(cx).agent_state.mark;
+                let changed = model.update(cx, |m, _| {
+                    let up = m.agent.is_some();
+                    m.agent_state.apply(agent_event, up)
+                });
+                let next_mark = model.read(cx).agent_state.mark;
+                if next_mark != prev_mark {
+                    log::info!(
+                        "SHELL agent-mark state={} prev={}",
+                        next_mark.label(),
+                        prev_mark.label()
+                    );
+                }
+                sync_mark_overlay(model, cx);
+                if changed {
+                    if let Some(w) = model.read(cx).agent {
+                        let _ = w.update(cx, |view, _, _| view.scroll.scroll_to_bottom());
+                    }
+                    refresh = true;
+                }
+            }
             session::Event::Unlock(result) => {
                 if let Some(w) = model.read(cx).lock {
                     let _ = w.update(cx, |v, _, cx| v.answered(result, cx));
@@ -1838,7 +2418,14 @@ fn main() -> anyhow::Result<()> {
     session::connect();
     let (tx, rx) = session::channel();
     session::deliver_events_to(tx.clone());
-    let _lock = session::server(tx.clone())?;
+    let agent_tx = agent::start_from_env(tx.clone());
+    let agent_configured = agent_tx.is_some();
+    let agent_view = Arc::new(Mutex::new(agent::AgentViewSnapshot {
+        drawer_up: false,
+        mark_overlay: false,
+        state: agent::AgentState::new(agent_configured),
+    }));
+    let _lock = session::server(tx.clone(), agent_view.clone())?;
     session::start_display_bridge();
     let watcher = tx.clone();
     std::thread::spawn(move || {
@@ -1876,6 +2463,7 @@ fn main() -> anyhow::Result<()> {
                 Cow::Borrowed(include_bytes!("../fonts/Manrope-Regular.ttf")),
                 Cow::Borrowed(include_bytes!("../fonts/Manrope-SemiBold.ttf")),
                 Cow::Borrowed(include_bytes!("../fonts/Manrope-Bold.ttf")),
+                Cow::Borrowed(include_bytes!("../fonts/IBMPlexMono-Regular.ttf")),
             ])
             .expect("Bundled fonts");
         input::bind(cx);
@@ -1887,6 +2475,7 @@ fn main() -> anyhow::Result<()> {
             KeyBinding::new("enter", Open, Some("Launcher")),
             KeyBinding::new("escape", Close, Some("Launcher")),
             KeyBinding::new("enter", Unlock, Some("Lock")),
+            KeyBinding::new("enter", SendMessage, Some("AgentSurface")),
         ]);
         let now = ClockDisplay::now();
         let model = cx.new(|_| Model {
@@ -1903,6 +2492,10 @@ fn main() -> anyhow::Result<()> {
             launcher: None,
             lock: None,
             agent: None,
+            mark_overlay: None,
+            agent_state: agent::AgentState::new(agent_configured),
+            agent_tx,
+            agent_view,
             apps: catalog::discover(),
             tx,
             clock: now.bar,
@@ -2217,6 +2810,7 @@ mod lock_tests {
             title: "Terminal".into(),
             workspace: session::Workspace { id: ws },
             attention,
+            fullscreen: false,
         };
         assert!(occupied_workspaces(&[]).is_empty());
         assert_eq!(bar_workspaces(1, &[]), vec![1, 2, 3, 4]);
@@ -2257,6 +2851,7 @@ mod lock_tests {
             title: "Terminal".into(),
             workspace: session::Workspace { id: 1 },
             attention: false,
+            fullscreen: false,
         };
         let settings_client = session::Client {
             address: "0x2".into(),
@@ -2264,6 +2859,7 @@ mod lock_tests {
             title: "Settings".into(),
             workspace: session::Workspace { id: 1 },
             attention: false,
+            fullscreen: false,
         };
 
         let empty = session::Snapshot::default();
