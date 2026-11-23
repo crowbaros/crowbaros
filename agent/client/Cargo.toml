@@ -1,0 +1,17 @@
+[package]
+name = "crowbar-agent"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "The person's way to the Agent from any terminal: a client of the Harness's person socket. Part of CrowbarOS."
+
+[[bin]]
+name = "crowbar-agent"
+path = "src/main.rs"
+
+[dependencies]
+# Waiting on the socket and the terminal at once, Ctrl-C, and the terminal's
+# echo: what std does not offer.
+libc = "0.2"
+serde_json = "1"
