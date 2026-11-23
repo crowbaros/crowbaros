@@ -237,6 +237,27 @@ jobs:
           sudo ln -sf /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/edk2/x64/OVMF_CODE.4m.fd
           sudo ln -sf /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/edk2/x64/OVMF_VARS.4m.fd
 
+      # The build copies the Void root to make the image, and the boot copies
+      # the image to make its disk: 3.5 GB each time. On Btrfs, where a
+      # person's checkout usually is, `cp --reflink` shares the data and
+      # copies nothing. The runner's disk is ext4, so the build's work
+      # directory gets a Btrfs of its own, in a sparse file that takes only
+      # the space written to it, and with `discard` gives back what is
+      # deleted. It is mounted outside the checkout, with `.lab/base` a link
+      # to it: the build binds the checkout into its Void build root from
+      # inside a user namespace, which may not bind a directory that has a
+      # mount of the runner's own under it. The link is made before anything
+      # is restored into it.
+      - name: Give the build a filesystem that copies by reference
+        run: |
+          sudo truncate -s 60G "$RUNNER_TEMP/lab.btrfs"
+          sudo mkfs.btrfs -q "$RUNNER_TEMP/lab.btrfs"
+          mkdir -p .lab "$RUNNER_TEMP/lab"
+          sudo mount -o loop,noatime,discard "$RUNNER_TEMP/lab.btrfs" "$RUNNER_TEMP/lab"
+          sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/lab"
+          ln -s "$RUNNER_TEMP/lab" .lab/base
+          df -h / .lab/base/
+
       # The Void root takes about two and a half minutes to install, most of
       # it NVIDIA's DKMS build. Main saves the root it installed, keyed on
       # what decides the root and on the week, so a cached root is never more
@@ -322,6 +343,10 @@ jobs:
 
       - name: Build, boot, and check Base
         run: python3 base/void_base.py check
+
+      - name: Show the space the build took
+        if: always()
+        run: df -h / .lab/base/ || df -h /
 
       - name: Keep the logs
         if: always()
