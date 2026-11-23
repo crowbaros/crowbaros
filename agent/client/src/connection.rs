@@ -113,6 +113,8 @@ pub struct Connection {
     /// Events that came while a reply was waited for.
     events: VecDeque<Value>,
     interrupts: RawFd,
+    /// Where the person types: standard input.
+    input: RawFd,
     /// What the person typed that does not make a whole line yet.
     typed: Vec<u8>,
     typing_ended: bool,
@@ -188,6 +190,7 @@ impl Connection {
             received: Vec::new(),
             events: VecDeque::new(),
             interrupts,
+            input: 0,
             typed: Vec::new(),
             typing_ended: false,
             typed_ahead: false,
@@ -261,6 +264,11 @@ impl Connection {
     /// Waits for the next thing to happen: an event, Ctrl-C, or, as
     /// `typing` has it, a line from the person or the end of their typing.
     pub fn next(&mut self, typing: Typing) -> Result<Happening> {
+        // A line is wanted, so whatever waits in the terminal is looked at
+        // afresh: it may have been dropped since it was seen there.
+        if typing == Typing::Wanted {
+            self.typed_ahead = false;
+        }
         loop {
             if let Some(event) = self.events.pop_front() {
                 return Ok(Happening::Event(event));
@@ -272,7 +280,6 @@ impl Connection {
                 return Ok(Happening::Event(message));
             }
             if typing == Typing::Wanted {
-                self.typed_ahead = false;
                 if let Some(end) = self.typed.iter().position(|&byte| byte == b'\n') {
                     let line: Vec<u8> = self.typed.drain(..=end).collect();
                     return Ok(Happening::Line(
@@ -299,7 +306,7 @@ impl Connection {
                 Typing::UntilItEnds => !self.typing_ended && !self.typed_ahead && self.typed.is_empty(),
             };
             if looked_at {
-                waited.push(0);
+                waited.push(self.input);
             }
             let ready = sys::readable(&waited)?;
             if ready[0] {
@@ -307,17 +314,22 @@ impl Connection {
                 sys::read(self.interrupts, &mut byte)?;
                 return Ok(Happening::Interrupt);
             }
+            // What the Harness sent comes before anything typed, which
+            // stays the terminal's until nothing of the Harness's waits: a
+            // turn another client began is then on the screen before a line
+            // is taken, and Ctrl-C in it drops that line as a terminal does.
             if ready[1] {
                 self.receive()?;
+                continue;
             }
             if ready.get(2) == Some(&true) {
                 // Something typed, and no line is wanted: it is left where it is.
-                if typing == Typing::UntilItEnds && sys::waiting(0).is_some_and(|count| count > 0) {
+                if typing == Typing::UntilItEnds && sys::waiting(self.input).is_some_and(|count| count > 0) {
                     self.typed_ahead = true;
                     continue;
                 }
                 let mut bytes = [0u8; 4096];
-                match sys::read(0, &mut bytes)? {
+                match sys::read(self.input, &mut bytes)? {
                     0 => self.typing_ended = true,
                     count => self.typed.extend_from_slice(&bytes[..count]),
                 }
@@ -399,6 +411,29 @@ mod tests {
             harness.request(json!({"op": "send"})).unwrap(),
             json!({"reply": "sent", "turn": 2})
         );
+    }
+
+    #[test]
+    fn what_the_harness_sent_is_given_before_anything_typed_is_read() {
+        // A turn another client began, and a line the person had typed, both there at once at the prompt.
+        let (mut harness, _quiet) = against(0, &[r#"{"event":"message","turn":2}"#]);
+        let (typing, mut keys) = UnixStream::pair().unwrap();
+        harness.input = typing.as_raw_fd();
+        keys.write_all(b"a draft\n").unwrap();
+        sys::readable(&[harness.stream.as_raw_fd()]).unwrap();
+        assert!(
+            matches!(harness.next(Typing::Wanted).unwrap(), Happening::Event(event) if event == json!({"event": "message", "turn": 2}))
+        );
+        // The line is the terminal's still, which drops it at Ctrl-C.
+        assert_eq!(sys::waiting(harness.input), Some(8));
+        assert!(harness.typed.is_empty());
+        // Seen there while the turn is watched, it is left there.
+        harness.events.push_back(json!({"event": "done", "turn": 2}));
+        harness.typed_ahead = true;
+        assert!(matches!(harness.next(Typing::Wanted).unwrap(), Happening::Event(_)));
+        // And looked at afresh once a line is wanted, though an event came first: it may have been dropped since.
+        assert!(!harness.typed_ahead);
+        assert!(matches!(harness.next(Typing::Wanted).unwrap(), Happening::Line(line) if line == "a draft"));
     }
 
     #[test]

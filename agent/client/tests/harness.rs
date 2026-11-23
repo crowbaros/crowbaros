@@ -500,6 +500,29 @@ fn ctrl_d_leaves_a_client_that_shows_another_clients_turn_and_the_turn_goes_on()
 
 #[test]
 #[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
+fn ctrl_d_at_a_terminal_leaves_on_the_line_the_answer_ended() {
+    let lab = Lab::with_model(r#"[{"text": "Here."}, {"text": "One two three", "stall": true}]"#);
+    assert_eq!(lab.run(&["Hello?"], "").status, 0);
+    let conversation = only_conversation(&lab);
+    // At a terminal the client prompts, and ends the prompt's line when it leaves from it.
+    let (mut keys, screen) = terminal();
+    let mut shown = lab.agent(&["--resume", &conversation]);
+    shown.stdin(screen);
+    let mut shown = Running::start(shown);
+    shown.wait_for_out("> Hello?\nHere.\n");
+    let mut other = Running::start(lab.agent(&["--resume", &conversation, "Count."]));
+    shown.wait_for_out("\n> Count.\nOne");
+    // Left while a turn is shown, there is no prompt's line to end: only the one prompt was written.
+    keys.write_all(&[0x04]).expect("Ctrl-D");
+    assert_eq!(shown.ended(), 0);
+    assert_eq!(shown.out.lock().unwrap().as_str(), "> Hello?\nHere.\n\n> Count.\nOne\n");
+    assert_eq!(shown.err.lock().unwrap().as_str(), "> ");
+    other.signal(libc::SIGINT);
+    assert_eq!(other.ended(), 130);
+}
+
+#[test]
+#[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
 fn ctrl_d_after_ctrl_c_still_waits_for_another_clients_turn_to_stop() {
     let lab = Lab::with_model(r#"[{"text": "Here."}, {"text": "One two three", "stall": true}]"#);
     assert_eq!(lab.run(&["Hello?"], "").status, 0);
