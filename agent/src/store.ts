@@ -35,11 +35,15 @@ export interface Turn {
 	turn: number;
 	/** What the person said. */
 	message: string;
-	/** The answer so far, or the whole of it once the turn has ended. */
+	/**
+	 * The answer so far, or the whole of it once the turn has ended. When
+	 * the Model is asked again, the answer starts over: it is the newest
+	 * try's alone.
+	 */
 	answer: string;
 	/** `working` until the turn ends: with the whole answer, stopped by the person, or failed. */
 	state: "working" | "done" | "stopped" | "failed";
-	/** Why a failed turn failed, in the Model's or its provider's words. */
+	/** Why a failed turn failed: in the Model's or its provider's words, or the Harness's own. */
 	error?: string;
 	/** While the Model's last try failed and another waits: why, and when the next is made, in milliseconds since 1970. */
 	retry?: { error: string; at: number };
@@ -115,7 +119,7 @@ const MESSAGE = "crowbar.message";
  * What the Agent is told of itself before every conversation. It has no act
  * yet, and says so when asked for one.
  */
-const STANDING = [
+const ABOUT_THE_AGENT = [
 	"You are the Agent built into CrowbarOS, a small operating system on Void Linux.",
 	"You are at the side of the person who uses this machine, and you talk with them in plain text.",
 	"You cannot yet read files, run commands, or act on the desktop. When the person asks for one of those, say so plainly, and help with what you know.",
@@ -142,6 +146,18 @@ interface Answer {
 }
 
 /**
+ * Why a turn failed, from why Pi Durable ended its run. Only a Model's own
+ * failure is told in the words that came with it; the rest are the
+ * Harness's, so none of Pi Durable's names for them crosses a socket.
+ */
+function whyFailed(reason: string, words: string | undefined): string {
+	if (reason === "model_error") return words ?? "the Model gave no answer";
+	if (reason === "no_model") return "the Model it was sent to is not there";
+	if (reason === "interrupted" || reason === "restart_limit") return "the Harness was stopped too often while the Model answered";
+	return "the Harness could not go on with it";
+}
+
+/**
  * A conversation's turns, from Pi Durable's view of it: each message of the
  * person's, the answers after it, and the answer still being made.
  */
@@ -154,7 +170,8 @@ function standing(view: ConversationView): Standing {
 			const turn = (entry.data as { turn?: unknown } | undefined)?.turn;
 			turns.push({ turn: typeof turn === "number" ? turn : 0, message: textOf(first?.content), answer: "", state: "done" });
 		} else if (entry.kind === "pi.assistant" && current && first) {
-			current.answer += textOf(first.content);
+			// The newest try's answer alone: one cut short before it stays in the database, and is not shown.
+			current.answer = textOf(first.content);
 			current.last = first;
 		}
 	}
@@ -165,7 +182,7 @@ function standing(view: ConversationView): Standing {
 		const newest = index === turns.length - 1;
 		if (newest && live?.run) {
 			turn.state = "working";
-			turn.answer += textOf(live.generation?.message?.content);
+			if (live.generation?.message) turn.answer = textOf(live.generation.message.content);
 			if (live.generation?.retry) turn.retry = { error: live.generation.retry.error, at: live.generation.retry.at };
 		} else if (newest && live?.runFailure) {
 			// Why the newest turn ended with no answer, which its last
@@ -175,7 +192,7 @@ function standing(view: ConversationView): Standing {
 			if (reason === "aborted") turn.state = "stopped";
 			else {
 				turn.state = "failed";
-				turn.error = reason === "no_model" ? "the Model it was sent to is not there" : (detail ?? turn.last?.errorMessage ?? reason);
+				turn.error = whyFailed(reason, detail ?? turn.last?.errorMessage);
 			}
 		} else if (turn.last?.stopReason === "aborted" || turn.last === undefined) {
 			turn.state = "stopped";
@@ -198,7 +215,7 @@ export async function openStore(path: string, models: Models): Promise<Store> {
 	closeSync(openSync(path, "a", 0o600));
 	chmodSync(path, 0o600);
 	const registry = createRegistry();
-	registry.install(defineExtension({ name: "crowbaros", sections: [section("crowbaros", () => STANDING, { tag: false })] }));
+	registry.install(defineExtension({ name: "crowbaros", sections: [section("crowbaros", () => ABOUT_THE_AGENT, { tag: false })] }));
 	const context = BACKGROUND_CONTEXT;
 	const harness = await Harness.open(await openNodeSqliteStorage(path), { models, registry, identity: { attribution: null } }, context);
 	// Goes on with whatever turn the last Harness left unfinished.
@@ -259,7 +276,8 @@ export async function openStore(path: string, models: Models): Promise<Store> {
 						entry: { kind: MESSAGE, data: { turn } },
 					});
 					kept.turns = turn;
-					if (turn === 1) kept.title = text.trim().split("\n", 1)[0]?.slice(0, 80) ?? "";
+					// By whole characters: half of one would be text no client could read.
+					if (turn === 1) kept.title = Array.from(text.trim().split("\n", 1)[0] ?? "").slice(0, 80).join("");
 					return { turn, submission };
 				}, context);
 				const ended = (async (): Promise<Turn["state"]> => {

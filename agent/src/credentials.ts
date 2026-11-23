@@ -3,8 +3,8 @@
 // the person's alone (ADR 0034). pi-ai reads and writes them through this,
 // and refreshes an OAuth token inside `modify`, so two requests never
 // refresh one token twice.
-import { chmodSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
+import { keep, readKept } from "./kept.ts";
 
 export class FileCredentials implements CredentialStore {
 	#path: string;
@@ -16,22 +16,11 @@ export class FileCredentials implements CredentialStore {
 	}
 
 	#all(): Record<string, Credential> {
-		let text: string;
-		try {
-			text = readFileSync(this.#path, "utf8");
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
-			throw error;
-		}
-		return JSON.parse(text) as Record<string, Credential>;
+		return readKept<Record<string, Credential>>(this.#path, {});
 	}
 
-	/** Written beside the file and moved over it, so a write that stops partway loses no sign-in. */
 	#keep(all: Record<string, Credential>): void {
-		const beside = `${this.#path}.new`;
-		writeFileSync(beside, `${JSON.stringify(all, null, "\t")}\n`, { mode: 0o600 });
-		chmodSync(beside, 0o600);
-		renameSync(beside, this.#path);
+		keep(this.#path, all);
 	}
 
 	#next<T>(work: () => Promise<T>): Promise<T> {

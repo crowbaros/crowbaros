@@ -1,7 +1,7 @@
 // The person socket, as a client of the person's meets it: the bundled
 // Harness, one process, over a real socket, with the stub Model for a Model.
 import assert from "node:assert/strict";
-import { readFileSync, rmSync, statSync } from "node:fs";
+import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { client, dial, heard, type Message, OWN_UID, pointAt, scratch, sleep, start, stub, VERSION_FRAME } from "./harness.ts";
@@ -241,17 +241,17 @@ test("the person signs in with an API key, picks a Model, and signs out, and the
 	assert.deepEqual(await person.ask({ op: "login", provider: "openai" }), { reply: "ok" });
 	// OpenAI takes a key or a sign-in in the browser, so the Harness asks which.
 	const how = await person.hear();
-	assert.equal(how.event, "prompt");
+	assert.equal(how.event, "question");
 	assert.equal(how.kind, "select");
 	assert.deepEqual(how.options.map((option: Message) => option.id), ["oauth", "api_key"]);
-	assert.deepEqual(await person.ask({ op: "answer", prompt: how.prompt, text: "api_key" }), { reply: "ok" });
+	assert.deepEqual(await person.ask({ op: "answer", question: how.question, text: "api_key" }), { reply: "ok" });
 	const key = await person.hear();
-	assert.deepEqual([key.event, key.kind], ["prompt", "secret"]);
-	assert.deepEqual(await person.ask({ op: "answer", prompt: key.prompt, text: "sk-a-key-for-the-test" }), { reply: "ok" });
+	assert.deepEqual([key.event, key.kind], ["question", "secret"]);
+	assert.deepEqual(await person.ask({ op: "answer", question: key.question, text: "sk-a-key-for-the-test" }), { reply: "ok" });
 	const which = await person.hear();
-	assert.deepEqual([which.event, which.kind, which.message], ["prompt", "select", "Which Model should the Agent use?"]);
+	assert.deepEqual([which.event, which.kind, which.message], ["question", "select", "Which Model should the Agent use?"]);
 	const picked = which.options[0] as { id: string; label: string };
-	await person.ask({ op: "answer", prompt: which.prompt, text: picked.id });
+	await person.ask({ op: "answer", question: which.question, text: picked.id });
 	assert.deepEqual(await person.hear(), { event: "signed-in", provider: "openai", provider_name: "OpenAI", model: picked.id, name: picked.label });
 
 	const kept = join(harness.state, "credentials.json");
@@ -276,6 +276,7 @@ test("the person signs in with an API key, picks a Model, and signs out, and the
 		provider_name: "OpenAI",
 		model: other.model,
 		name: other.name,
+		in_use: true,
 	});
 	assert.equal((await person.ask({ op: "model", provider: "openai", model: "no-such-model" })).reply, "error");
 	assert.equal((await person.ask({ op: "status" })).model.model, other.model);
@@ -292,21 +293,21 @@ test("a sign-in in a browser is relayed a step at a time, and ends when the clie
 	// With no provider named, the Harness asks which.
 	await person.ask({ op: "login" });
 	const provider = await person.hear();
-	assert.deepEqual([provider.event, provider.kind], ["prompt", "select"]);
+	assert.deepEqual([provider.event, provider.kind], ["question", "select"]);
 	assert.ok(provider.options.length > 30, `${provider.options.length} providers`);
 	assert.ok(provider.options.some((option: Message) => option.id === "anthropic" && option.label === "Anthropic"));
-	await person.ask({ op: "answer", prompt: provider.prompt, text: "anthropic" });
+	await person.ask({ op: "answer", question: provider.question, text: "anthropic" });
 	const how = await person.hear();
-	await person.ask({ op: "answer", prompt: how.prompt, text: "oauth" });
+	await person.ask({ op: "answer", question: how.question, text: "oauth" });
 	// Anthropic's own question: in a browser here, or with a code from a browser elsewhere.
 	const method = await person.hear();
 	assert.equal(method.kind, "select");
-	await person.ask({ op: "answer", prompt: method.prompt, text: "copy_code" });
+	await person.ask({ op: "answer", question: method.question, text: "copy_code" });
 	const browser = await person.hear();
 	assert.equal(browser.event, "browser");
 	assert.match(browser.url, /^https:\/\/claude\.ai\/oauth\/authorize\?/);
 	const code = await person.hear();
-	assert.deepEqual([code.event, code.kind], ["prompt", "code"]);
+	assert.deepEqual([code.event, code.kind], ["question", "code"]);
 
 	// One sign-in at a time, whichever client began it.
 	const other = await client(harness.person);
@@ -357,7 +358,139 @@ test("a turn the Harness was told to stop in the middle of goes on when it start
 	const again = await client(next.person);
 	for (let tries = 0; tries < 200 && (await again.ask({ op: "list" })).conversations[0].working; tries++) await sleep(50);
 	const [turn] = (await again.ask({ op: "resume", conversation })).turns as Message[];
-	assert.equal(turn?.state, "done");
-	assert.match(turn?.answer, /The whole answer, the second time\.$/);
+	// The answer is the second try's alone: the piece the first got out is not joined to it.
+	assert.deepEqual(turn, { turn: 1, message: "Count.", answer: "The whole answer, the second time.", state: "done" });
 	assert.equal(model.requests().length, 2);
+});
+
+test("a turn whose Model is gone when the Harness starts again fails, and says so", async (t) => {
+	const directory = scratch(t);
+	const model = await stub(t, directory, [{ text: "One two three", stall: true }]);
+	const harness = await start(t, directory);
+	pointAt(harness.state, model.url);
+	const person = await client(harness.person);
+	const { conversation } = await person.ask({ op: "start" });
+	await person.ask({ op: "send", conversation, text: "Count." });
+	await person.until((message) => message.event === "text");
+	harness.process.kill("SIGTERM");
+	assert.equal(await harness.exited, 0);
+	rmSync(join(harness.state, "endpoint.json"));
+
+	const next = await start(t, directory);
+	const again = await client(next.person);
+	for (let tries = 0; tries < 200 && (await again.ask({ op: "list" })).conversations[0].working; tries++) await sleep(50);
+	// Not stopped, though its last answer was cut short by the stop: nobody stopped it.
+	assert.deepEqual((await again.ask({ op: "resume", conversation })).turns, [
+		{ turn: 1, message: "Count.", answer: "One", state: "failed", error: "the Model it was sent to is not there" },
+	]);
+});
+
+test("an answer that is cut short starts over when the Model is asked again", async (t) => {
+	const directory = scratch(t);
+	const model = await stub(t, directory, [{ text: "Half an answer", cut: true }, { text: "A whole answer." }]);
+	const harness = await start(t, directory);
+	pointAt(harness.state, model.url);
+	const person = await client(harness.person);
+	const { conversation } = await person.ask({ op: "start" });
+	await person.ask({ op: "send", conversation, text: "Hello?" });
+	const events = await person.until(ended);
+	const kinds = events.map((message) => message.event);
+	const over = kinds.indexOf("start-over");
+	assert.deepEqual(events[over], { event: "start-over", conversation, turn: 1 });
+	// What came before it is the first try's, and what comes after is the whole of the second's.
+	assert.equal(answer(events.slice(0, over), 1), "Half");
+	assert.equal(answer(events.slice(over), 1), "A whole answer.");
+	assert.ok(kinds.includes("retry"), kinds.join(" "));
+	assert.equal(kinds.at(-1), "done");
+	assert.deepEqual((await person.ask({ op: "resume", conversation })).turns, [
+		{ turn: 1, message: "Hello?", answer: "A whole answer.", state: "done" },
+	]);
+});
+
+test("a Model that cannot be reached is asked again, and then the turn fails and the Harness goes on", async (t) => {
+	const harness = await start(t, scratch(t));
+	// Nothing listens on port 9 of this machine.
+	pointAt(harness.state, "http://127.0.0.1:9/v1");
+	const person = await client(harness.person);
+	const { conversation } = await person.ask({ op: "start" });
+	await person.ask({ op: "send", conversation, text: "Anyone?" });
+	const events: Message[] = [];
+	// Three more tries, 2, 4, and 8 seconds apart.
+	for (let heard = await person.hear(); ; heard = await person.hear()) {
+		events.push(heard);
+		if (ended(heard)) break;
+	}
+	assert.deepEqual(events.filter((message) => message.event === "retry").map((message) => message.seconds), [2, 4, 8]);
+	assert.equal(events.at(-1)?.event, "failed");
+	assert.match(events.at(-1)?.message, /connect/i);
+	assert.equal((await person.ask({ op: "list" })).conversations[0].working, false);
+});
+
+test("a message with no conversation named starts one, and a message that is refused starts none", async (t) => {
+	const directory = scratch(t);
+	const model = await stub(t, directory, [{ text: "Hello." }]);
+	const harness = await start(t, directory);
+	const person = await client(harness.person);
+	assert.equal((await person.ask({ op: "send", text: "Hello?" })).code, "no-model");
+	assert.deepEqual((await person.ask({ op: "list" })).conversations, []);
+
+	pointAt(harness.state, model.url);
+	const sent = await person.ask({ op: "send", text: "Hello?" });
+	assert.equal(sent.reply, "sent");
+	assert.equal(sent.turn, 1);
+	// The client follows the conversation its message started.
+	const events = await person.until(ended);
+	assert.equal(answer(events, 1), "Hello.");
+	assert.deepEqual((await person.ask({ op: "list" })).conversations.map((one: Message) => [one.conversation, one.turns]), [[sent.conversation, 1]]);
+});
+
+test("a title is cut between characters, never inside one", async (t) => {
+	const directory = scratch(t);
+	const model = await stub(t, directory, [{ text: "Yes." }]);
+	const harness = await start(t, directory);
+	pointAt(harness.state, model.url);
+	const person = await client(harness.person);
+	// The 80th character is one that takes two of JavaScript's units.
+	const message = `${"a".repeat(79)}\u{1F600} and more`;
+	await person.ask({ op: "send", text: message });
+	await person.until(ended);
+	const [{ title }] = (await person.ask({ op: "list" })).conversations;
+	assert.equal(title, `${"a".repeat(79)}\u{1F600}`);
+});
+
+test("a file of the Harness's state that is not JSON is told to the client, and neither ends the Harness nor reaches its log", async (t) => {
+	const harness = await start(t, scratch(t));
+	const person = await client(harness.person);
+	writeFileSync(join(harness.state, "settings.json"), '{"model": sk-not-json');
+	const settings = join(harness.state, "settings.json");
+	assert.deepEqual(await person.ask({ op: "status" }), {
+		reply: "status",
+		model: null,
+		missing: `${settings} is not JSON. Put it right, or remove it.`,
+		signed_in: [],
+	});
+	assert.equal((await person.ask({ op: "send", text: "Hello?" })).code, "no-model");
+	rmSync(settings);
+	const credentials = join(harness.state, "credentials.json");
+	writeFileSync(credentials, "sk-not-json-either");
+	assert.deepEqual(await person.ask({ op: "models" }), {
+		reply: "error",
+		code: "refused",
+		message: `${credentials} is not JSON. Put it right, or remove it.`,
+	});
+	assert.equal((await person.ask({ op: "list" })).reply, "conversations");
+	assert.doesNotMatch(readFileSync(join(harness.state, "harness.log"), "utf8"), /sk-not-json|error:/);
+});
+
+test("a Model chosen while an endpoint file is there is not yet the Model in use, and the reply says so", async (t) => {
+	const directory = scratch(t);
+	const model = await stub(t, directory, []);
+	const harness = await start(t, directory);
+	const person = await client(harness.person);
+	writeFileSync(join(harness.state, "credentials.json"), JSON.stringify({ openai: { type: "api_key", key: "sk-a-key-for-the-test" } }));
+	const [first] = (await person.ask({ op: "models" })).models as Message[];
+	assert.equal((await person.ask({ op: "model", provider: "openai", model: first?.model })).in_use, true);
+	pointAt(harness.state, model.url);
+	assert.equal((await person.ask({ op: "model", provider: "openai", model: first?.model })).in_use, false);
+	assert.equal((await person.ask({ op: "status" })).model.provider, "endpoint");
 });

@@ -36,10 +36,10 @@ function parseOptions(): Options | undefined {
 				"person-uid": { type: "string" },
 			},
 		});
-		const { state, "surface-socket": surfaceSocket, "shell-uid": shell, "person-socket": personSocket, "person-uid": person } = values;
-		const uid = /^\d{1,9}$/;
-		if (!state || !surfaceSocket || !personSocket || !shell || !person || !uid.test(shell) || !uid.test(person)) return undefined;
-		return { state, surfaceSocket, shellUid: Number(shell), personSocket, personUid: Number(person) };
+		const { state, "surface-socket": surfaceSocket, "shell-uid": shellUid, "person-socket": personSocket, "person-uid": personUid } = values;
+		const userId = /^\d{1,9}$/;
+		if (!state || !surfaceSocket || !personSocket || !shellUid || !personUid || !userId.test(shellUid) || !userId.test(personUid)) return undefined;
+		return { state, surfaceSocket, shellUid: Number(shellUid), personSocket, personUid: Number(personUid) };
 	} catch {
 		return undefined;
 	}

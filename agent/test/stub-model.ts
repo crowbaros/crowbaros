@@ -18,6 +18,7 @@
 //     {"text": "Hello there."}                  the answer, streamed a word at a time
 //     {"text": "One two", "pause_ms": 50}       the same, with a pause before each word after the first
 //     {"text": "One two", "stall": true}        the first word, and then nothing until the peer goes away
+//     {"text": "One two", "cut": true}          the first word, and then the connection drops
 //     {"status": 401, "message": "No such key"} an error, as an API gives one
 //
 // `--requests FILE` gets each request's body, one line of JSON for each, so a
@@ -27,7 +28,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { parseArgs } from "node:util";
 
 type Reply =
-	| { text: string; pause_ms?: number; stall?: boolean }
+	| { text: string; pause_ms?: number; stall?: boolean; cut?: boolean }
 	| { status: number; message: string };
 
 const { values } = parseArgs({
@@ -95,6 +96,8 @@ async function answer(request: IncomingMessage, response: ServerResponse): Promi
 		response.write(chunk(model, { content: word }, null));
 		// The rest never comes: the answer ends when the peer stops waiting for it.
 		if (reply.stall) return;
+		// Nor here, and the peer is left with half an answer.
+		if (reply.cut) return void setTimeout(() => response.destroy(), 150);
 	}
 	response.write(chunk(model, {}, "stop"));
 	response.write(

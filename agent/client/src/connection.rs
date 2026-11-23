@@ -30,6 +30,29 @@ pub fn socket_path() -> PathBuf {
     runtime.join("crowbar-agent/person")
 }
 
+/// A field of a message that is text, or nothing where it is not.
+pub fn text<'a>(message: &'a Value, field: &str) -> &'a str {
+    message.get(field).and_then(Value::as_str).unwrap_or_default()
+}
+
+/// What a client does when no Model answers: the Harness says why, and the
+/// client says what to type.
+pub const NO_MODEL: &str = "Sign in to one with `crowbar-agent login`, or choose one with `crowbar-agent model`.";
+
+/// When a reply is an error, says it to the person, and gives its code.
+pub fn refused(reply: &Value) -> Option<&str> {
+    if text(reply, "reply") != "error" {
+        return None;
+    }
+    let hint = if text(reply, "code") == "no-model" {
+        format!(" {NO_MODEL}")
+    } else {
+        String::new()
+    };
+    eprintln!("crowbar-agent: {}{hint}", text(reply, "message"));
+    Some(text(reply, "code"))
+}
+
 /// What the client waited for, and got.
 pub enum Happening {
     /// An event from the Harness.
@@ -42,8 +65,8 @@ pub enum Happening {
     Interrupt,
 }
 
-pub struct Session {
-    harness: UnixStream,
+pub struct Connection {
+    stream: UnixStream,
     /// Bytes from the Harness that do not make a whole frame yet.
     received: Vec<u8>,
     /// Events that came while a reply was waited for.
@@ -74,20 +97,20 @@ fn framed(received: &mut Vec<u8>) -> Result<Option<Value>> {
     Ok(Some(message))
 }
 
-impl Session {
+impl Connection {
     /// Connects to the Harness and states the version. An error says why
     /// not, in words for the person.
-    pub fn connect() -> std::result::Result<Session, String> {
+    pub fn connect() -> std::result::Result<Connection, String> {
         let path = socket_path();
-        let harness = UnixStream::connect(&path).map_err(|error| {
+        let stream = UnixStream::connect(&path).map_err(|error| {
             format!(
                 "The Harness is not running: nothing answers at {} ({error}).",
                 path.display()
             )
         })?;
         let interrupts = sys::interrupts().map_err(|error| format!("Could not listen for Ctrl-C: {error}."))?;
-        let mut session = Session {
-            harness,
+        let mut connection = Connection {
+            stream,
             received: Vec::new(),
             events: VecDeque::new(),
             interrupts,
@@ -95,9 +118,9 @@ impl Session {
             typing_ended: false,
         };
         let stated = json!({ "version": VERSION });
-        let answered = session.write(&stated).and_then(|()| session.message());
+        let answered = connection.write(&stated).and_then(|()| connection.message());
         match answered {
-            Ok(answer) if answer == stated => Ok(session),
+            Ok(answer) if answer == stated => Ok(connection),
             // The Harness closes a peer it does not serve, or whose version it does not speak, and says nothing.
             _ => Err(format!(
                 "The Harness at {} closed the connection: it serves another account, or speaks another version than {VERSION}.",
@@ -110,14 +133,14 @@ impl Session {
         let message = message.to_string();
         let length =
             u32::try_from(message.len()).map_err(|_| Error::new(ErrorKind::InvalidInput, "too long to frame"))?;
-        self.harness
+        self.stream
             .write_all(&[&length.to_be_bytes(), message.as_bytes()].concat())
     }
 
     /// Reads more from the Harness. An error at its end.
     fn receive(&mut self) -> Result<()> {
         let mut bytes = [0u8; 65536];
-        let count = self.harness.read(&mut bytes)?;
+        let count = self.stream.read(&mut bytes)?;
         if count == 0 {
             return Err(Error::new(
                 ErrorKind::UnexpectedEof,
@@ -184,7 +207,7 @@ impl Session {
                     return Ok(Happening::Line(String::from_utf8_lossy(&line).to_string()));
                 }
             }
-            let mut waited = vec![self.interrupts, self.harness.as_raw_fd()];
+            let mut waited = vec![self.interrupts, self.stream.as_raw_fd()];
             if typing {
                 waited.push(0);
             }

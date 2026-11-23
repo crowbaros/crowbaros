@@ -5,7 +5,8 @@
 import type { Channel, Connection } from "./channel.ts";
 import type { Conversations } from "./conversations.ts";
 import type { Event } from "./log.ts";
-import { type Asking, type ModelAccess, Refused } from "./models.ts";
+import { Refused } from "./kept.ts";
+import type { InUse, ModelAccess, Question } from "./models.ts";
 import type { Store, Turn } from "./store.ts";
 
 /** The longest frame the Harness takes from a client: room for a long message of the person's. */
@@ -35,6 +36,11 @@ function optional(request: Request, field: string): string | undefined {
 	return request[field] === undefined || request[field] === null ? undefined : text(request, field);
 }
 
+/** The Model in use as a message shows it. */
+function named({ providerName, ...model }: InUse): object {
+	return { ...model, provider_name: providerName };
+}
+
 /** A turn as a reply shows it. What waits for another try is an event's to tell. */
 function shown({ retry: _retry, ...turn }: Turn): Omit<Turn, "retry"> {
 	return turn;
@@ -53,8 +59,10 @@ export function person(uid: number, conversations: Conversations, store: Store, 
 		let following: { conversation: string; leave(): void } | undefined;
 		/** Events kept back while a request of this client's is answered, so its reply comes first. */
 		let held: object[] | undefined;
-		/** This client's sign-in, while one is under way. */
-		let signIn: { cancel: AbortController; asked: Map<number, { resolve(answer: string): void }>; prompts: number } | undefined;
+		/** This client's sign-in, while one is under way: its questions that wait for an answer, by their numbers. */
+		let signIn: { cancel: AbortController; waiting: Map<number, { resolve(answer: string): void }>; questions: number } | undefined;
+		/** Whether this client has left. What a request of its was waiting for may come after. */
+		let gone = false;
 		/** Requests are answered one at a time, in the order they came. */
 		let answering: Promise<void> = Promise.resolve();
 
@@ -69,29 +77,31 @@ export function person(uid: number, conversations: Conversations, store: Store, 
 			// Resuming the conversation it already follows leaves nothing: it is one follower still.
 			if (following !== undefined && following.conversation !== conversation) following.leave();
 			following = { conversation, leave: followed.leave };
+			// It left while the conversation was found, and nothing else will end the following.
+			if (gone) followed.leave();
 			return followed;
 		};
 
 		/** Takes a sign-in through its steps, and tells the client how it ended. */
 		const runSignIn = async (provider: string | undefined, mine: NonNullable<typeof signIn>) => {
 			const cancelled = mine.cancel.signal;
-			const ask = (asking: Asking, withdrawn?: AbortSignal) =>
+			const put = (question: Question, withdrawn?: AbortSignal) =>
 				new Promise<string>((resolve, reject) => {
-					const prompt = ++mine.prompts;
+					const number = ++mine.questions;
 					const end = (why: string, tell: boolean) => {
-						if (!mine.asked.delete(prompt)) return;
-						if (tell) told({ event: "withdrawn", prompt });
+						if (!mine.waiting.delete(number)) return;
+						if (tell) told({ event: "withdrawn", question: number });
 						reject(new Error(why));
 					};
 					cancelled.throwIfAborted();
-					mine.asked.set(prompt, { resolve });
+					mine.waiting.set(number, { resolve });
 					cancelled.addEventListener("abort", () => end("the sign-in was cancelled", false), { once: true });
 					// Something else answered it, as when the browser came back before the person pasted a code.
 					withdrawn?.addEventListener("abort", () => end("the question was withdrawn", true), { once: true });
-					told({ event: "prompt", prompt, ...asking });
+					told({ event: "question", question: number, ...question });
 				});
 			try {
-				const { provider: id, name, model } = await access.signIn(provider, { ask, tell: told }, cancelled);
+				const { provider: id, name, model } = await access.signIn(provider, { put, tell: told }, cancelled);
 				say("sign-in", `signed in to ${id}`);
 				told({ event: "signed-in", provider: id, provider_name: name, ...(model ? { model: model.model, name: model.name } : {}) });
 			} catch (error) {
@@ -123,10 +133,17 @@ export function person(uid: number, conversations: Conversations, store: Store, 
 					return { reply: "resumed", conversation, earlier, turns: turns.map(shown) };
 				}
 				case "send": {
-					const conversation = text(request, "conversation");
 					const message = text(request, "text");
+					const given = optional(request, "conversation");
 					const model = await access.inUse();
 					if ("missing" in model) throw new Declined("no-model", model.missing);
+					// With no conversation named, the message starts one, which
+					// this client then follows. A message that is refused starts none.
+					const conversation = given ?? (await store.start());
+					if (given === undefined) {
+						await follow(conversation);
+						say("conversation", `${conversation} started`);
+					}
 					const sent = await store.send(conversation, message, model);
 					if (sent === undefined) throw new Declined("no-conversation", `There is no conversation ${conversation}.`);
 					if (sent === "working") throw new Declined("working", "The Agent is still working on the message before this one.");
@@ -147,36 +164,33 @@ export function person(uid: number, conversations: Conversations, store: Store, 
 					const inUse = await access.inUse();
 					const signed_in = await access.signedIn();
 					if ("missing" in inUse) return { reply: "status", model: null, missing: inUse.missing, signed_in };
-					const { providerName, ...model } = inUse;
-					return { reply: "status", model: { ...model, provider_name: providerName }, signed_in };
+					return { reply: "status", model: named(inUse), signed_in };
 				}
 				case "models": {
 					const inUse = await access.inUse();
-					const models = (await access.available()).map(({ providerName, ...model }) => ({
-						...model,
-						provider_name: providerName,
-						in_use: !("missing" in inUse) && inUse.provider === model.provider && inUse.model === model.model,
-					}));
-					return { reply: "models", models };
+					const same = (model: InUse) => !("missing" in inUse) && inUse.provider === model.provider && inUse.model === model.model;
+					return { reply: "models", models: (await access.available()).map((model) => ({ ...named(model), in_use: same(model) })) };
 				}
 				case "model": {
-					const { providerName, ...model } = await access.choose(text(request, "provider"), text(request, "model"));
-					say("sign-in", `the Model in use is one of ${model.provider}'s`);
-					return { reply: "model", ...model, provider_name: providerName };
+					const chosen = await access.choose(text(request, "provider"), text(request, "model"));
+					say("sign-in", `the Model chosen is one of ${chosen.provider}'s`);
+					// An endpoint file goes on being the Model in use, whatever is chosen.
+					const inUse = await access.inUse();
+					return { reply: "model", ...named(chosen), in_use: !("missing" in inUse) && inUse.provider === chosen.provider && inUse.model === chosen.model };
 				}
 				case "login": {
 					const provider = optional(request, "provider");
 					if (signingIn) throw new Declined("signing-in", "A sign-in is already under way.");
 					signingIn = true;
-					signIn = { cancel: new AbortController(), asked: new Map(), prompts: 0 };
+					signIn = { cancel: new AbortController(), waiting: new Map(), questions: 0 };
 					void runSignIn(provider, signIn);
 					return { reply: "ok" };
 				}
 				case "answer": {
-					const asked = signIn?.asked.get(request.prompt as number);
-					if (asked === undefined || typeof request.text !== "string") throw new Declined("request", "No such question waits for an answer.");
-					signIn?.asked.delete(request.prompt as number);
-					asked.resolve(request.text);
+					const waiting = signIn?.waiting.get(request.question as number);
+					if (waiting === undefined || typeof request.text !== "string") throw new Declined("request", "No such question waits for an answer.");
+					signIn?.waiting.delete(request.question as number);
+					waiting.resolve(request.text);
 					return { reply: "ok" };
 				}
 				case "cancel":
@@ -220,6 +234,7 @@ export function person(uid: number, conversations: Conversations, store: Store, 
 				});
 			},
 			left() {
+				gone = true;
 				following?.leave();
 				signIn?.cancel.abort();
 			},

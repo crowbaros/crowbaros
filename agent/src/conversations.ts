@@ -19,7 +19,10 @@ function events(conversation: string, before: Map<number, Turn>, turns: readonly
 		if (known === undefined) out.push({ event: "message", ...about, text: turn.message });
 		// Already ended, and told so: nothing of an ended turn changes.
 		if (known !== undefined && known.state !== "working") continue;
-		const more = turn.answer.slice(known?.answer.length ?? 0);
+		// The Model was asked again, and its answer starts over from nothing.
+		const over = known !== undefined && !turn.answer.startsWith(known.answer);
+		if (over) out.push({ event: "start-over", ...about });
+		const more = over ? turn.answer : turn.answer.slice(known?.answer.length ?? 0);
 		if (more !== "") out.push({ event: "text", ...about, text: more });
 		if (turn.retry !== undefined && turn.retry.at !== known?.retry?.at) {
 			out.push({ event: "retry", ...about, message: turn.retry.error, seconds: Math.max(0, Math.round((turn.retry.at - Date.now()) / 1000)) });

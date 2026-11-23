@@ -24,6 +24,7 @@ yet, and the shell's surface socket has no message yet.
 | `src/conversations.ts` | Conversations as clients follow them |
 | `src/models.ts` | Reaching a Model: pi-ai's providers, signing in, and the Model in use |
 | `src/credentials.ts` | The credential store |
+| `src/kept.ts` | How the small files of the Harness's state are read and written |
 | `src/frames.ts` | The framing, with no socket |
 | `src/peer.ts` | The user ID at the other end of a socket |
 | `src/store.ts` | Pi Durable and its database. Nothing outside this file names Pi Durable |
@@ -131,6 +132,11 @@ since the commands the Agent will run inherit it.
 
 Any program running as the person can read the credentials: ADR 0034 runs the
 Harness as the person, with no isolation inside their account.
+
+`credentials.json` and `settings.json` are written beside their place and
+moved there, so a write that stops partway loses nothing. One that a person
+has edited into something that is not JSON is told to the client, by its
+path, and the Harness goes on.
 
 ## The log
 
@@ -290,25 +296,24 @@ message, so every client of a conversation shows the same thing.
 | `{"op":"start"}` | `{"reply":"started","conversation":"k3f9q2xz"}` | Starts a conversation, and follows it |
 | `{"op":"list"}` | `{"reply":"conversations","conversations":[...]}` | Lists every conversation, the newest first. Each is `{"conversation":"k3f9q2xz","started":1795395526,"title":"How do I…","turns":2,"working":false}`: when it started, in seconds since 1970, how its first message begins, how many turns it has, and whether one is working |
 | `{"op":"resume","conversation":"k3f9q2xz"}` | `{"reply":"resumed","conversation":"k3f9q2xz","earlier":false,"turns":[...]}` | Follows a conversation, and gives it as it stands: its newest turns, the oldest first, and whether it has turns before them. Each is `{"turn":1,"message":"...","answer":"...","state":"done"}`. `state` is `working`, `done`, `stopped`, or `failed`, and a failed turn has `error`, which says why. A turn that is working has its answer so far, and its events follow |
-| `{"op":"send","conversation":"k3f9q2xz","text":"..."}` | `{"reply":"sent","conversation":"k3f9q2xz","turn":2}` | Sends a message of the person's, which begins a turn. The Model in use answers it |
+| `{"op":"send","conversation":"k3f9q2xz","text":"..."}` | `{"reply":"sent","conversation":"k3f9q2xz","turn":2}` | Sends a message of the person's, which begins a turn. The Model in use answers it. With no `conversation`, the message starts one, which the client then follows, and the reply has its ID. A message that is refused starts none |
 | `{"op":"stop","conversation":"k3f9q2xz"}` | `{"reply":"ok"}` | Stops the turn that is working. It is answered once the turn has stopped. With no turn working, it stops nothing |
 
 | Event | When |
 | --- | --- |
 | `{"event":"message","conversation":"k3f9q2xz","turn":2,"text":"..."}` | A turn began, with the person's message. The client that sent it gets this too |
 | `{"event":"text","conversation":"k3f9q2xz","turn":2,"text":"..."}` | The next piece of the answer |
+| `{"event":"start-over","conversation":"k3f9q2xz","turn":2}` | The Model is asked again, and the answer starts over: the `text` before this is no part of it |
 | `{"event":"retry","conversation":"k3f9q2xz","turn":2,"message":"...","seconds":2}` | The Model failed, and is asked again after that many seconds |
 | `{"event":"done","conversation":"k3f9q2xz","turn":2}` | The turn ended, with the whole answer |
 | `{"event":"stopped","conversation":"k3f9q2xz","turn":2}` | The turn ended because a client stopped it |
-| `{"event":"failed","conversation":"k3f9q2xz","turn":2,"message":"..."}` | The turn ended because the Model gave no answer, with why in the Model's or its provider's words |
+| `{"event":"failed","conversation":"k3f9q2xz","turn":2,"message":"..."}` | The turn ended with no answer, with why: in the Model's or its provider's words when the Model failed, and otherwise in the Harness's |
 
-Here a client starts a conversation and sends a message. Each line is one
+Here a client sends the first message of a conversation. Each line is one
 frame, without its length:
 
 ```text
--> {"op":"start"}
-<- {"reply":"started","conversation":"k3f9q2xz"}
--> {"op":"send","conversation":"k3f9q2xz","text":"Hello, Agent."}
+-> {"op":"send","text":"Hello, Agent."}
 <- {"reply":"sent","conversation":"k3f9q2xz","turn":1}
 <- {"event":"message","conversation":"k3f9q2xz","turn":1,"text":"Hello, Agent."}
 <- {"event":"text","conversation":"k3f9q2xz","turn":1,"text":"Hello"}
@@ -326,17 +331,17 @@ it, and ends when that client cancels it or goes away.
 | Request | Reply | What it does |
 | --- | --- | --- |
 | `{"op":"login","provider":"anthropic"}` | `{"reply":"ok"}` | Begins a sign-in to that provider, by pi-ai's name for it. With no `provider`, the Harness asks which. The reply says only that it began: events carry the rest |
-| `{"op":"answer","prompt":2,"text":"..."}` | `{"reply":"ok"}` | Answers a `prompt` event: what the person typed, or the `id` of the option they picked |
+| `{"op":"answer","question":2,"text":"..."}` | `{"reply":"ok"}` | Answers a `question` event, by its number: what the person typed, or the `id` of the option they picked |
 | `{"op":"cancel"}` | `{"reply":"ok"}` | Cancels this client's sign-in |
 | `{"op":"logout","provider":"anthropic"}` | `{"reply":"signed-out","provider":"anthropic","provider_name":"Anthropic"}` | Signs out, and removes the credential. With no `provider`, the only one signed in to |
 | `{"op":"status"}` | `{"reply":"status","model":{...},"signed_in":[...]}` | The Model in use, as `{"provider":"anthropic","provider_name":"Anthropic","model":"...","name":"..."}`, and each sign-in, as `{"provider":"anthropic","name":"Anthropic","how":"OAuth"}`, where `how` is `OAuth` or `API key`. With no Model in use, `model` is null and `missing` says why |
 | `{"op":"models"}` | `{"reply":"models","models":[...]}` | Every Model of every provider signed in to, each as `status` gives the Model in use, with `in_use` |
-| `{"op":"model","provider":"anthropic","model":"..."}` | `{"reply":"model", ...}` | Makes that the Model in use, and gives it as `status` does |
+| `{"op":"model","provider":"anthropic","model":"..."}` | `{"reply":"model", ..., "in_use":true}` | Chooses that Model, and gives it as `status` does. `in_use` is false while [an endpoint file](#one-endpoint-by-hand) is there, which goes on being the Model in use |
 
 | Event | When |
 | --- | --- |
-| `{"event":"prompt","prompt":2,"kind":"select","message":"...","options":[{"id":"oauth","label":"..."}]}` | A question for the person. `kind` is `select`, to pick one of `options`; `text`; `secret`, which the client must not show as it is typed; or `code`, a code or an address to paste from a browser. All but `select` may have a `placeholder` |
-| `{"event":"withdrawn","prompt":2}` | The question no longer needs an answer, as when the browser came back before the person pasted a code |
+| `{"event":"question","question":2,"kind":"select","message":"...","options":[{"id":"oauth","label":"..."}]}` | A question for the person, numbered within its sign-in. `kind` is `select`, to pick one of `options`; `text`; `secret`, which the client must not show as it is typed; or `code`, a code or an address to paste from a browser. All but `select` may have a `placeholder` |
+| `{"event":"withdrawn","question":2}` | The question no longer needs an answer, as when the browser came back before the person pasted a code |
 | `{"event":"browser","url":"...","message":"..."}` | An address to open in a browser. The client opens one when it runs on a desktop, and shows the address either way |
 | `{"event":"code","code":"BD4A-FE0E","url":"..."}` | A code to enter at an address, for a sign-in from another device |
 | `{"event":"notice","message":"..."}` | Something to show the person |
@@ -365,9 +370,16 @@ the code the provider shows, in answer to the `code` question.
   Model in use when its message is sent, whichever answered the turns before.
 - **With no Model in use**, `send` is refused with `no-model` and begins no
   turn, and `status` says why. The Harness goes on.
-- **A Model that fails**, or cannot be reached, is asked again up to three
-  times, with a `retry` event each time, and then the turn ends `failed`. The
-  Harness goes on.
+- **A Model that fails for a moment**, or cannot be reached, is asked again
+  up to three times, 2, 4, and 8 seconds apart, with a `retry` event each
+  time, and then the turn ends `failed`. A failure that asking again would
+  not mend, such as a key the provider refuses, ends the turn at once. The
+  Harness goes on either way.
+- **An answer that is cut short** starts over when the Model is asked again,
+  with a `start-over` event. The conversation keeps the newest try's answer
+  alone.
+- **A turn the Harness is stopped in the middle of** goes on when it starts
+  again: the Model is asked again, with no client connected.
 - **The Agent is told what it is** before every conversation, in
   `src/store.ts`: the Agent built into CrowbarOS, with no act yet.
 - **Requests carry no attribution** to pi or to CrowbarOS.
@@ -409,6 +421,7 @@ replies, given in order, and read again at each request:
 | `{"text":"Hello there."}` | Answers with the text, a word at a time |
 | `{"text":"One two","pause_ms":50}` | The same, with a pause before each word after the first |
 | `{"text":"One two","stall":true}` | Sends the first word, and then nothing until the Harness goes away: a turn to stop |
+| `{"text":"One two","cut":true}` | Sends the first word, and then drops the connection: an answer cut short |
 | `{"status":401,"message":"No such key"}` | Fails as an API does |
 
 A request past the script's end fails, and says so. `--requests` gets each

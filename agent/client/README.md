@@ -33,6 +33,9 @@ crowbar-agent model [PROVIDER/MODEL]  # list the Models signed in to, or choose 
 - **A conversation starts with its first message.** `crowbar-agent` with no
   argument asks for a line, sends it, writes the answer, and asks again.
   Ctrl-D leaves. `--resume ID` shows the conversation's newest turns first.
+- **An answer that starts over** is said so on standard error, and written
+  again from its start: when the Model is cut short and asked again, what it
+  had written is no part of the answer.
 - **Ctrl-C stops the turn** the Agent is working on, and the client waits for
   the turn to end. Between turns, Ctrl-C leaves.
 - **A client that goes away stops nothing.** When its terminal closes or its
@@ -52,7 +55,7 @@ crowbar-agent model [PROVIDER/MODEL]  # list the Models signed in to, or choose 
 | Exit status | When |
 | --- | --- |
 | 0 | The turn was answered, or the command was carried out |
-| 1 | The Model gave no answer, no Model is signed in, the Harness refused the request, or no Harness answers. `status` also exits 1 with no Model in use |
+| 1 | The Model gave no answer, no Model is signed in, the Harness refused the request, or no Harness answers. A conversation ends this way when its newest turn got no answer. `status` also exits 1 with no Model in use |
 | 2 | The command line asks for nothing the client does |
 | 130 | Ctrl-C stopped the turn, or cancelled the sign-in |
 
@@ -93,7 +96,7 @@ Model.
 | Path | Contents |
 | --- | --- |
 | `src/main.rs` | The command line |
-| `src/session.rs` | The connection, and waiting on the Harness, the terminal, and Ctrl-C at once |
+| `src/connection.rs` | The connection, and waiting on the Harness, the terminal, and Ctrl-C at once |
 | `src/talk.rs` | A turn, a conversation, and the list |
 | `src/sign_in.rs` | Signing in and out, and the Model in use |
 | `src/sys.rs` | The kernel calls std does not offer, and all of the client's `unsafe` code |

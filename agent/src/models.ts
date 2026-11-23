@@ -3,7 +3,7 @@
 // every step of a sign-in is taken here, and the credentials are kept in the
 // Harness's state (credentials.ts). README.md has the files and the messages.
 import { randomUUID } from "node:crypto";
-import { chmodSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
@@ -11,6 +11,7 @@ import { registerLazyBedrockProvider } from "@earendil-works/pi-ai/lazy-bedrock-
 import { registerLazyOAuthFlows } from "@earendil-works/pi-ai/lazy-oauth";
 import { createModels, createProvider, type MutableModels } from "@earendil-works/pi-ai/models";
 import { FileCredentials } from "./credentials.ts";
+import { keep, readKept, Refused } from "./kept.ts";
 
 /** The provider an endpoint file makes. No sign-in reaches it. */
 const ENDPOINT = "endpoint";
@@ -28,7 +29,7 @@ export interface InUse {
 }
 
 /** A question a sign-in puts to the person. `code` is a code or an address to paste. */
-export type Asking =
+export type Question =
 	| { kind: "text" | "secret" | "code"; message: string; placeholder?: string }
 	| { kind: "select"; message: string; options: { id: string; label: string; description?: string }[] };
 
@@ -43,12 +44,9 @@ export type Telling =
 /** The person's side of a sign-in, which a client relays. */
 export interface Relay {
 	/** Resolves with what the person answered, or the ID of what they picked. Rejects once `withdrawn` or the sign-in is cancelled. */
-	ask(asking: Asking, withdrawn?: AbortSignal): Promise<string>;
+	put(question: Question, withdrawn?: AbortSignal): Promise<string>;
 	tell(telling: Telling): void;
 }
-
-/** A sign-in the person can be told about: no fault of the Harness. */
-export class Refused extends Error {}
 
 interface Settings {
 	/** The Model the person chose. */
@@ -97,19 +95,11 @@ export class ModelAccess {
 	}
 
 	#read(): Settings {
-		try {
-			return JSON.parse(readFileSync(this.#settings, "utf8")) as Settings;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
-			throw error;
-		}
+		return readKept<Settings>(this.#settings, {});
 	}
 
 	#keep(settings: Settings): void {
-		const beside = `${this.#settings}.new`;
-		writeFileSync(beside, `${JSON.stringify(settings, null, "\t")}\n`, { mode: 0o600 });
-		chmodSync(beside, 0o600);
-		renameSync(beside, this.#settings);
+		keep(this.#settings, settings);
 	}
 
 	/**
@@ -168,9 +158,14 @@ export class ModelAccess {
 		return { provider: ENDPOINT, providerName: `the endpoint at ${url}`, model, name: model };
 	}
 
+	/** A provider's name for a person to read. */
+	#providerName(provider: string): string {
+		return this.models.getProvider(provider)?.name ?? provider;
+	}
+
 	#named(provider: string, model: string): InUse | undefined {
 		const found = this.models.getModel(provider, model);
-		return found && { provider, providerName: this.models.getProvider(provider)?.name ?? provider, model, name: found.name };
+		return found && { provider, providerName: this.#providerName(provider), model, name: found.name };
 	}
 
 	/** The Model the Agent uses, or `missing`, a sentence that says why there is none. */
@@ -178,24 +173,25 @@ export class ModelAccess {
 		try {
 			const endpoint = this.#fromEndpoint();
 			if (endpoint) return endpoint;
+			const chosen = this.#read().model;
+			const signedIn = await this.#credentials.list();
+			if (chosen && signedIn.some(({ providerId }) => providerId === chosen.provider)) {
+				const named = this.#named(chosen.provider, chosen.model);
+				if (named) return named;
+			}
+			return { missing: signedIn.length === 0 ? "No Model is signed in." : "No Model is chosen." };
 		} catch (error) {
+			// A file of the Harness's state that cannot be read: the reason is the sentence.
 			if (error instanceof Refused) return { missing: error.message };
 			throw error;
 		}
-		const chosen = this.#read().model;
-		const signedIn = await this.#credentials.list();
-		if (chosen && signedIn.some(({ providerId }) => providerId === chosen.provider)) {
-			const named = this.#named(chosen.provider, chosen.model);
-			if (named) return named;
-		}
-		return { missing: signedIn.length === 0 ? "No Model is signed in." : "No Model is chosen." };
 	}
 
 	/** Each provider the person is signed in to, and how. */
 	async signedIn(): Promise<{ provider: string; name: string; how: "API key" | "OAuth" }[]> {
 		return (await this.#credentials.list()).map(({ providerId, type }) => ({
 			provider: providerId,
-			name: this.models.getProvider(providerId)?.name ?? providerId,
+			name: this.#providerName(providerId),
 			how: type === "oauth" ? "OAuth" : "API key",
 		}));
 	}
@@ -204,7 +200,7 @@ export class ModelAccess {
 	async available(): Promise<InUse[]> {
 		const all: InUse[] = [];
 		for (const { providerId } of await this.#credentials.list()) {
-			const providerName = this.models.getProvider(providerId)?.name ?? providerId;
+			const providerName = this.#providerName(providerId);
 			for (const model of await this.models.getAvailable(providerId)) {
 				all.push({ provider: providerId, providerName, model: model.id, name: model.name });
 			}
@@ -231,7 +227,7 @@ export class ModelAccess {
 		const offered = this.models.getProviders().filter((one) => one.id !== ENDPOINT && (one.auth.oauth || one.auth.apiKey?.login));
 		const id =
 			named ??
-			(await relay.ask({
+			(await relay.put({
 				kind: "select",
 				message: "Which provider do you want to sign in to?",
 				options: offered.map((one) => ({ id: one.id, label: one.name })),
@@ -241,7 +237,7 @@ export class ModelAccess {
 		const { oauth, apiKey } = provider.auth;
 		const type =
 			oauth && apiKey?.login
-				? ((await relay.ask({
+				? ((await relay.put({
 						kind: "select",
 						message: `How do you want to sign in to ${provider.name}?`,
 						options: [
@@ -259,7 +255,7 @@ export class ModelAccess {
 			{
 				signal: cancelled,
 				prompt: (prompt: AuthPrompt) =>
-					relay.ask(
+					relay.put(
 						prompt.type === "select"
 							? { kind: "select", message: prompt.message, options: prompt.options.map((option) => ({ ...option })) }
 							: {
@@ -298,7 +294,7 @@ export class ModelAccess {
 		let model = before?.provider === provider.id ? models.find((one) => one.id === before.model) : undefined;
 		if (model === undefined && models.length === 1) model = models[0];
 		if (model === undefined && models.length > 1) {
-			const picked = await relay.ask({
+			const picked = await relay.put({
 				kind: "select",
 				message: "Which Model should the Agent use?",
 				options: models.map((one) => ({ id: one.id, label: one.name })),

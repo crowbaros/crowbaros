@@ -6,13 +6,13 @@
 //! `unsafe` code lives in `sys` alone.
 #![deny(unsafe_code)]
 
-mod session;
+mod connection;
 mod sign_in;
 #[allow(unsafe_code)]
 mod sys;
 mod talk;
 
-use session::Session;
+use connection::Connection;
 use std::process::ExitCode;
 use talk::Ended;
 
@@ -31,7 +31,7 @@ Ctrl-C stops the turn the Agent is working on. Ctrl-D leaves.";
 
 /// What the command line asks for.
 #[derive(Debug, PartialEq)]
-enum Asked {
+enum Command {
     /// A conversation, a line at a time: a new one, or the one named.
     Talk {
         resumed: Option<String>,
@@ -60,7 +60,7 @@ enum Asked {
 /// `status`, and `model` are commands only as the first word: a request
 /// that starts with one of them is put in quotes with the rest of it, or
 /// after `--`.
-fn asked(args: &[String]) -> Result<Asked, String> {
+fn command(args: &[String]) -> Result<Command, String> {
     let (mut resumed, mut list, mut words) = (None, false, Vec::new());
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -70,8 +70,8 @@ fn asked(args: &[String]) -> Result<Asked, String> {
             continue;
         }
         match arg.as_str() {
-            "--help" | "-h" => return Ok(Asked::Help),
-            "--version" => return Ok(Asked::Version),
+            "--help" | "-h" => return Ok(Command::Help),
+            "--version" => return Ok(Command::Version),
             "--list" => list = true,
             "--resume" => {
                 resumed = Some(
@@ -82,7 +82,7 @@ fn asked(args: &[String]) -> Result<Asked, String> {
             }
             "--" => {
                 words.extend(rest.by_ref().cloned());
-                return Ok(Asked::Once {
+                return Ok(Command::Once {
                     resumed,
                     message: words.join(" "),
                 });
@@ -98,27 +98,27 @@ fn asked(args: &[String]) -> Result<Asked, String> {
     };
     if list || resumed.is_some() {
         return match (list, words.is_empty()) {
-            (true, true) if resumed.is_none() => Ok(Asked::List),
+            (true, true) if resumed.is_none() => Ok(Command::List),
             (true, _) => Err("--list takes nothing else".to_string()),
-            (false, true) => Ok(Asked::Talk { resumed }),
-            (false, false) => Ok(Asked::Once {
+            (false, true) => Ok(Command::Talk { resumed }),
+            (false, false) => Ok(Command::Once {
                 resumed,
                 message: words.join(" "),
             }),
         };
     }
     match words.first().map(String::as_str) {
-        None => Ok(Asked::Talk { resumed: None }),
-        Some("login") => Ok(Asked::Login {
+        None => Ok(Command::Talk { resumed: None }),
+        Some("login") => Ok(Command::Login {
             provider: one("login")?,
         }),
-        Some("logout") => Ok(Asked::Logout {
+        Some("logout") => Ok(Command::Logout {
             provider: one("logout")?,
         }),
-        Some("status") if words.len() == 1 => Ok(Asked::Status),
+        Some("status") if words.len() == 1 => Ok(Command::Status),
         Some("status") => Err("status takes nothing else".to_string()),
-        Some("model") => Ok(Asked::Model { chosen: one("model")? }),
-        Some(_) => Ok(Asked::Once {
+        Some("model") => Ok(Command::Model { chosen: one("model")? }),
+        Some(_) => Ok(Command::Once {
             resumed: None,
             message: words.join(" "),
         }),
@@ -127,12 +127,12 @@ fn asked(args: &[String]) -> Result<Asked, String> {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let asked = match asked(&args) {
-        Ok(Asked::Help) => {
+    let asked = match command(&args) {
+        Ok(Command::Help) => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
         }
-        Ok(Asked::Version) => {
+        Ok(Command::Version) => {
             println!("crowbar-agent {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
         }
@@ -142,22 +142,22 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let mut session = match Session::connect() {
-        Ok(session) => session,
+    let mut harness = match Connection::connect() {
+        Ok(harness) => harness,
         Err(why) => {
             eprintln!("crowbar-agent: {why}");
             return ExitCode::FAILURE;
         }
     };
     let ended = match &asked {
-        Asked::Talk { resumed } => talk::repl(&mut session, resumed.as_deref()),
-        Asked::Once { resumed, message } => talk::once(&mut session, resumed.as_deref(), message),
-        Asked::List => talk::list(&mut session),
-        Asked::Login { provider } => sign_in::login(&mut session, provider.as_deref()),
-        Asked::Logout { provider } => sign_in::logout(&mut session, provider.as_deref()),
-        Asked::Status => sign_in::status(&mut session),
-        Asked::Model { chosen } => sign_in::model(&mut session, chosen.as_deref()),
-        Asked::Help | Asked::Version => Ok(Ended::Done),
+        Command::Talk { resumed } => talk::repl(&mut harness, resumed.as_deref()),
+        Command::Once { resumed, message } => talk::once(&mut harness, resumed.as_deref(), message),
+        Command::List => talk::list(&mut harness),
+        Command::Login { provider } => sign_in::login(&mut harness, provider.as_deref()),
+        Command::Logout { provider } => sign_in::logout(&mut harness, provider.as_deref()),
+        Command::Status => sign_in::status(&mut harness),
+        Command::Model { chosen } => sign_in::model(&mut harness, chosen.as_deref()),
+        Command::Help | Command::Version => Ok(Ended::Done),
     };
     match ended {
         Ok(Ended::Done) => ExitCode::SUCCESS,
@@ -176,17 +176,17 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
-    fn read(line: &[&str]) -> Result<Asked, String> {
-        asked(&line.iter().map(|word| word.to_string()).collect::<Vec<_>>())
+    fn read(line: &[&str]) -> Result<Command, String> {
+        command(&line.iter().map(|word| word.to_string()).collect::<Vec<_>>())
     }
 
     #[test]
     fn the_command_line_is_read_as_the_usage_has_it() {
         let id = || Some("k3f9q2xz".to_string());
-        assert_eq!(read(&[]), Ok(Asked::Talk { resumed: None }));
+        assert_eq!(read(&[]), Ok(Command::Talk { resumed: None }));
         assert_eq!(
             read(&["what is my hostname?"]),
-            Ok(Asked::Once {
+            Ok(Command::Once {
                 resumed: None,
                 message: "what is my hostname?".into()
             })
@@ -194,59 +194,59 @@ mod tests {
         // Words that were not put in quotes are one request all the same.
         assert_eq!(
             read(&["what", "time", "is", "it"]),
-            Ok(Asked::Once {
+            Ok(Command::Once {
                 resumed: None,
                 message: "what time is it".into()
             })
         );
-        assert_eq!(read(&["--list"]), Ok(Asked::List));
-        assert_eq!(read(&["--resume", "k3f9q2xz"]), Ok(Asked::Talk { resumed: id() }));
+        assert_eq!(read(&["--list"]), Ok(Command::List));
+        assert_eq!(read(&["--resume", "k3f9q2xz"]), Ok(Command::Talk { resumed: id() }));
         assert_eq!(
             read(&["--resume", "k3f9q2xz", "and then?"]),
-            Ok(Asked::Once {
+            Ok(Command::Once {
                 resumed: id(),
                 message: "and then?".into()
             })
         );
-        assert_eq!(read(&["login"]), Ok(Asked::Login { provider: None }));
+        assert_eq!(read(&["login"]), Ok(Command::Login { provider: None }));
         assert_eq!(
             read(&["login", "anthropic"]),
-            Ok(Asked::Login {
+            Ok(Command::Login {
                 provider: Some("anthropic".into())
             })
         );
-        assert_eq!(read(&["logout"]), Ok(Asked::Logout { provider: None }));
-        assert_eq!(read(&["status"]), Ok(Asked::Status));
-        assert_eq!(read(&["model"]), Ok(Asked::Model { chosen: None }));
+        assert_eq!(read(&["logout"]), Ok(Command::Logout { provider: None }));
+        assert_eq!(read(&["status"]), Ok(Command::Status));
+        assert_eq!(read(&["model"]), Ok(Command::Model { chosen: None }));
         assert_eq!(
             read(&["model", "openrouter/anthropic/claude"]),
-            Ok(Asked::Model {
+            Ok(Command::Model {
                 chosen: Some("openrouter/anthropic/claude".into())
             })
         );
-        assert_eq!(read(&["--help"]), Ok(Asked::Help));
-        assert_eq!(read(&["--version"]), Ok(Asked::Version));
+        assert_eq!(read(&["--help"]), Ok(Command::Help));
+        assert_eq!(read(&["--version"]), Ok(Command::Version));
     }
 
     #[test]
     fn a_request_that_starts_with_a_commands_name_goes_after_two_dashes_or_in_quotes() {
         assert_eq!(
             read(&["--", "status", "of", "my", "disk"]),
-            Ok(Asked::Once {
+            Ok(Command::Once {
                 resumed: None,
                 message: "status of my disk".into()
             })
         );
         assert_eq!(
             read(&["status of my disk"]),
-            Ok(Asked::Once {
+            Ok(Command::Once {
                 resumed: None,
                 message: "status of my disk".into()
             })
         );
         assert_eq!(
             read(&["--", "--list"]),
-            Ok(Asked::Once {
+            Ok(Command::Once {
                 resumed: None,
                 message: "--list".into()
             })
@@ -254,7 +254,7 @@ mod tests {
         // A dash inside a request is the request's.
         assert_eq!(
             read(&["what", "does", "-h", "do"]),
-            Ok(Asked::Once {
+            Ok(Command::Once {
                 resumed: None,
                 message: "what does -h do".into()
             })

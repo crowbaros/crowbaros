@@ -3,24 +3,16 @@
 //! client only relays: it shows the Harness's questions, sends back what
 //! the person types, and opens a browser when there is one.
 
-use crate::session::{Happening, Session};
+use crate::connection::{Connection, Happening, NO_MODEL, refused, text};
 use crate::sys;
 use crate::talk::Ended;
 use serde_json::{Value, json};
 use std::io::Result;
 use std::process::{Command, Stdio};
 
-fn text<'a>(message: &'a Value, field: &str) -> &'a str {
-    message.get(field).and_then(Value::as_str).unwrap_or_default()
-}
-
 /// Says a reply that is an error, and whether it was one.
-fn refused(reply: &Value) -> bool {
-    let error = text(reply, "reply") == "error";
-    if error {
-        eprintln!("crowbar-agent: {}", text(reply, "message"));
-    }
-    error
+fn is_refused(reply: &Value) -> bool {
+    refused(reply).is_some()
 }
 
 /// Opens an address in the person's browser, when the client runs on a
@@ -47,8 +39,8 @@ fn open_browser(url: &str) -> bool {
 }
 
 /// A question of the Harness's that waits for the person's answer.
-struct Asked {
-    prompt: u64,
+struct Question {
+    number: u64,
     /// What may be picked, when the question is a choice.
     options: Vec<String>,
     /// Held while a secret is typed, so the terminal does not show it.
@@ -68,7 +60,7 @@ fn picked<'a>(options: &'a [String], answer: &str) -> Option<&'a str> {
         .map(String::as_str)
 }
 
-fn ask(event: &Value) -> Asked {
+fn show(event: &Value) -> Question {
     let options: Vec<&Value> = event
         .get("options")
         .and_then(Value::as_array)
@@ -86,21 +78,21 @@ fn ask(event: &Value) -> Asked {
     }
     let kind = text(event, "kind");
     eprint!("{}", if kind == "select" { "Its number or name: " } else { "> " });
-    Asked {
-        prompt: event.get("prompt").and_then(Value::as_u64).unwrap_or(0),
+    Question {
+        number: event.get("question").and_then(Value::as_u64).unwrap_or(0),
         options: options.iter().map(|option| text(option, "id").to_string()).collect(),
         hidden: (kind == "secret").then(sys::Hidden::typing),
     }
 }
 
 /// `crowbar-agent login [PROVIDER]`.
-pub fn login(session: &mut Session, provider: Option<&str>) -> Result<Ended> {
-    if refused(&session.request(json!({ "op": "login", "provider": provider }))?) {
+pub fn login(harness: &mut Connection, provider: Option<&str>) -> Result<Ended> {
+    if is_refused(&harness.request(json!({ "op": "login", "provider": provider }))?) {
         return Ok(Ended::Failed);
     }
-    let mut asked: Option<Asked> = None;
+    let mut asked: Option<Question> = None;
     loop {
-        let event = match session.next(asked.is_some())? {
+        let event = match harness.next(asked.is_some())? {
             Happening::Event(event) => event,
             Happening::Line(line) => {
                 let Some(question) = asked.take() else { continue };
@@ -118,22 +110,22 @@ pub fn login(session: &mut Session, provider: Option<&str>) -> Result<Ended> {
                     drop(question.hidden);
                     eprintln!();
                 }
-                session.send(json!({ "op": "answer", "prompt": question.prompt, "text": answer }))?;
+                harness.send(json!({ "op": "answer", "question": question.number, "text": answer }))?;
                 continue;
             }
             Happening::EndOfInput | Happening::Interrupt => {
                 asked = None;
                 eprintln!();
-                session.send(json!({ "op": "cancel" }))?;
+                harness.send(json!({ "op": "cancel" }))?;
                 continue;
             }
         };
         match text(&event, "event") {
-            "prompt" => asked = Some(ask(&event)),
+            "question" => asked = Some(show(&event)),
             "withdrawn" => {
                 if asked
                     .as_ref()
-                    .is_some_and(|question| Some(question.prompt) == event.get("prompt").and_then(Value::as_u64))
+                    .is_some_and(|question| Some(question.number) == event.get("question").and_then(Value::as_u64))
                 {
                     asked = None;
                     eprintln!();
@@ -182,9 +174,9 @@ pub fn login(session: &mut Session, provider: Option<&str>) -> Result<Ended> {
 }
 
 /// `crowbar-agent logout [PROVIDER]`.
-pub fn logout(session: &mut Session, provider: Option<&str>) -> Result<Ended> {
-    let reply = session.request(json!({ "op": "logout", "provider": provider }))?;
-    if refused(&reply) {
+pub fn logout(harness: &mut Connection, provider: Option<&str>) -> Result<Ended> {
+    let reply = harness.request(json!({ "op": "logout", "provider": provider }))?;
+    if is_refused(&reply) {
         return Ok(Ended::Failed);
     }
     eprintln!("Signed out of {}.", text(&reply, "provider_name"));
@@ -193,9 +185,9 @@ pub fn logout(session: &mut Session, provider: Option<&str>) -> Result<Ended> {
 
 /// `crowbar-agent status`: the Model the Agent uses, and each sign-in.
 /// Fails when the Agent has no Model to use.
-pub fn status(session: &mut Session) -> Result<Ended> {
-    let reply = session.request(json!({ "op": "status" }))?;
-    if refused(&reply) {
+pub fn status(harness: &mut Connection) -> Result<Ended> {
+    let reply = harness.request(json!({ "op": "status" }))?;
+    if is_refused(&reply) {
         return Ok(Ended::Failed);
     }
     for signed_in in reply.get("signed_in").and_then(Value::as_array).into_iter().flatten() {
@@ -217,10 +209,7 @@ pub fn status(session: &mut Session) -> Result<Ended> {
             Ok(Ended::Done)
         }
         None => {
-            println!(
-                "{} Sign in to one with `crowbar-agent login`, or choose one with `crowbar-agent model`.",
-                text(&reply, "missing")
-            );
+            println!("{} {NO_MODEL}", text(&reply, "missing"));
             Ok(Ended::Failed)
         }
     }
@@ -236,10 +225,10 @@ fn article(how: &str) -> String {
 
 /// `crowbar-agent model [PROVIDER/MODEL]`: the Models the person is signed
 /// in to, or the one of them the Agent is to use.
-pub fn model(session: &mut Session, chosen: Option<&str>) -> Result<Ended> {
+pub fn model(harness: &mut Connection, chosen: Option<&str>) -> Result<Ended> {
     let Some(chosen) = chosen else {
-        let reply = session.request(json!({ "op": "models" }))?;
-        if refused(&reply) {
+        let reply = harness.request(json!({ "op": "models" }))?;
+        if is_refused(&reply) {
             return Ok(Ended::Failed);
         }
         let models = reply
@@ -271,15 +260,23 @@ pub fn model(session: &mut Session, chosen: Option<&str>) -> Result<Ended> {
         eprintln!("crowbar-agent: Name a Model as `crowbar-agent model` lists it: PROVIDER/MODEL.");
         return Ok(Ended::Failed);
     };
-    let reply = session.request(json!({ "op": "model", "provider": provider, "model": model }))?;
-    if refused(&reply) {
+    let reply = harness.request(json!({ "op": "model", "provider": provider, "model": model }))?;
+    if is_refused(&reply) {
         return Ok(Ended::Failed);
     }
-    eprintln!(
-        "The Agent uses {}, from {}.",
-        text(&reply, "name"),
-        text(&reply, "provider_name")
-    );
+    if reply.get("in_use") == Some(&Value::Bool(true)) {
+        eprintln!(
+            "The Agent uses {}, from {}.",
+            text(&reply, "name"),
+            text(&reply, "provider_name")
+        );
+    } else {
+        // An endpoint file in the Harness's state is the Model in use for as long as it is there.
+        eprintln!(
+            "{} is chosen. The Agent goes on using the Model `crowbar-agent status` shows, until the endpoint file in the Harness's state is removed.",
+            text(&reply, "name")
+        );
+    }
     Ok(Ended::Done)
 }
 

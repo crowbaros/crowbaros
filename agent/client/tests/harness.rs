@@ -416,7 +416,9 @@ fn with_no_model_signed_in_the_client_says_so_and_the_harness_goes_on() {
         (status.status, status.out),
         (1, format!("No Model is signed in. {hint}"))
     );
-    assert_eq!(lab.run(&["--list"], "").status, 0);
+    // The Harness goes on, and the message that was refused started no conversation.
+    let listed = lab.run(&["--list"], "");
+    assert_eq!((listed.status, listed.err.as_str()), (0, "No conversations yet.\n"));
 }
 
 #[test]
@@ -431,6 +433,47 @@ fn a_model_that_fails_fails_the_turn_with_the_reason() {
     );
     let conversation = only_conversation(&lab);
     assert_eq!(lab.run(&["--resume", &conversation, "And now?"], "").out, "Here.\n");
+}
+
+#[test]
+#[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
+fn a_conversation_that_is_piped_in_ends_as_its_newest_turn_did() {
+    let lab =
+        Lab::with_model(r#"[{"text": "Here."}, {"status": 401, "message": "No such key"}, {"text": "Here again."}]"#);
+    let failed = lab.run(&[], "First?\nSecond?\n");
+    assert_eq!((failed.status, failed.out.as_str()), (1, "Here.\n"), "{failed:?}");
+    let conversation = only_conversation(&lab);
+    let answered = lab.run(&["--resume", &conversation], "Third?\n");
+    assert_eq!(answered.status, 0, "{answered:?}");
+    // What was typed is not echoed down a pipe: the turn that failed shows its message and no answer.
+    assert_eq!(
+        answered.out, "> First?\nHere.\n> Second?\nHere again.\n",
+        "{answered:?}"
+    );
+}
+
+#[test]
+#[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
+fn an_answer_that_is_cut_short_starts_over_and_the_client_says_so() {
+    let lab = Lab::with_model(r#"[{"text": "Half an answer", "cut": true}, {"text": "A whole answer."}]"#);
+    let ran = lab.run(&["Hello?"], "");
+    assert_eq!(
+        (ran.status, ran.out.as_str()),
+        (0, "Half\nA whole answer.\n"),
+        "{ran:?}"
+    );
+    assert!(
+        ran.err
+            .contains("The Model is asked again, and its answer starts over.\n"),
+        "{ran:?}"
+    );
+    assert!(ran.err.contains("Trying again in 2 seconds.\n"), "{ran:?}");
+    // The conversation keeps the answer that was whole.
+    let conversation = only_conversation(&lab);
+    assert_eq!(
+        lab.run(&["--resume", &conversation], "").out,
+        "> Hello?\nA whole answer.\n"
+    );
 }
 
 #[test]

@@ -3,7 +3,7 @@
 //! reads the same in foot, on a console, over SSH, and down a pipe. All else
 //! the client says goes to standard error.
 
-use crate::session::{Happening, Session};
+use crate::connection::{Connection, Happening, refused, text};
 use serde_json::{Value, json};
 use std::io::{IsTerminal, Result, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,28 +18,6 @@ pub enum Ended {
     Stopped,
     /// The Agent was still at work on the message before it.
     Refused,
-}
-
-/// What a client does when no Model answers: the Harness says why, and the
-/// client says what to type.
-const NO_MODEL: &str = "Sign in to one with `crowbar-agent login`, or choose one with `crowbar-agent model`.";
-
-fn text<'a>(message: &'a Value, field: &str) -> &'a str {
-    message.get(field).and_then(Value::as_str).unwrap_or_default()
-}
-
-/// Says a reply that is an error, and gives it back as one.
-fn refused(reply: &Value) -> Option<&str> {
-    if text(reply, "reply") != "error" {
-        return None;
-    }
-    let hint = if text(reply, "code") == "no-model" {
-        format!(" {NO_MODEL}")
-    } else {
-        String::new()
-    };
-    eprintln!("crowbar-agent: {}{hint}", text(reply, "message"));
-    Some(text(reply, "code"))
 }
 
 /// The answer as it is written out, which knows whether its last line has ended.
@@ -72,9 +50,10 @@ impl Answer {
 }
 
 /// Sends one message of the person's, and writes the answer as it comes,
-/// until the turn ends.
-fn turn(session: &mut Session, conversation: &str, message: &str) -> Result<Ended> {
-    let reply = session.request(json!({ "op": "send", "conversation": conversation, "text": message }))?;
+/// until the turn ends. With no conversation yet, the message starts one,
+/// and `conversation` is then its ID.
+fn turn(harness: &mut Connection, conversation: &mut Option<String>, message: &str) -> Result<Ended> {
+    let reply = harness.request(json!({ "op": "send", "conversation": conversation, "text": message }))?;
     if let Some(code) = refused(&reply) {
         return Ok(if code == "working" {
             Ended::Refused
@@ -82,26 +61,29 @@ fn turn(session: &mut Session, conversation: &str, message: &str) -> Result<Ende
             Ended::Failed
         });
     }
-    watch(
-        session,
-        conversation,
+    let begun = text(&reply, "conversation").to_string();
+    let ended = watch(
+        harness,
+        &begun,
         reply.get("turn").and_then(Value::as_u64),
         Answer::new(),
-    )
+    );
+    *conversation = Some(begun);
+    ended
 }
 
 /// Writes a turn's answer as it comes, until the turn ends. Ctrl-C stops
 /// the turn: the Harness is asked to, and the turn's own end is waited for.
 /// A second Ctrl-C does not wait.
-fn watch(session: &mut Session, conversation: &str, turn: Option<u64>, mut answer: Answer) -> Result<Ended> {
+fn watch(harness: &mut Connection, conversation: &str, turn: Option<u64>, mut answer: Answer) -> Result<Ended> {
     let mut stopping = false;
     loop {
-        let event = match session.next(false)? {
+        let event = match harness.next(false)? {
             Happening::Event(event) => event,
             Happening::Interrupt if stopping => return Ok(Ended::Stopped),
             Happening::Interrupt => {
                 stopping = true;
-                session.send(json!({ "op": "stop", "conversation": conversation }))?;
+                harness.send(json!({ "op": "stop", "conversation": conversation }))?;
                 continue;
             }
             Happening::Line(_) | Happening::EndOfInput => continue,
@@ -111,6 +93,10 @@ fn watch(session: &mut Session, conversation: &str, turn: Option<u64>, mut answe
         }
         match text(&event, "event") {
             "text" => answer.write(text(&event, "text"))?,
+            "start-over" => {
+                answer.end()?;
+                eprintln!("The Model is asked again, and its answer starts over.");
+            }
             "retry" => {
                 answer.end()?;
                 let seconds = event.get("seconds").and_then(Value::as_u64).unwrap_or(0);
@@ -138,21 +124,11 @@ fn watch(session: &mut Session, conversation: &str, turn: Option<u64>, mut answe
     }
 }
 
-/// Starts a conversation, and gives its ID.
-fn start(session: &mut Session) -> Result<Option<String>> {
-    let reply = session.request(json!({ "op": "start" }))?;
-    Ok(if refused(&reply).is_some() {
-        None
-    } else {
-        Some(text(&reply, "conversation").to_string())
-    })
-}
-
 /// Follows a conversation that is already there, and shows it as it
 /// stands, when `shown`. Gives the turn that is still working, if one is,
 /// and the answer as far as it was written.
-fn resume(session: &mut Session, conversation: &str, shown: bool) -> Result<Option<(Option<u64>, Answer)>> {
-    let reply = session.request(json!({ "op": "resume", "conversation": conversation }))?;
+fn resume(harness: &mut Connection, conversation: &str, shown: bool) -> Result<Option<(Option<u64>, Answer)>> {
+    let reply = harness.request(json!({ "op": "resume", "conversation": conversation }))?;
     if refused(&reply).is_some() {
         return Ok(None);
     }
@@ -192,30 +168,34 @@ fn resume(session: &mut Session, conversation: &str, shown: bool) -> Result<Opti
 }
 
 /// `crowbar-agent [--resume ID] "<request>"`: one turn, and out.
-pub fn once(session: &mut Session, resumed: Option<&str>, message: &str) -> Result<Ended> {
-    let conversation = match resumed {
-        Some(conversation) => resume(session, conversation, false)?.map(|_| conversation.to_string()),
-        None => start(session)?,
-    };
-    match conversation {
-        Some(conversation) => turn(session, &conversation, message),
-        None => Ok(Ended::Failed),
+pub fn once(harness: &mut Connection, resumed: Option<&str>, message: &str) -> Result<Ended> {
+    let mut conversation = None;
+    if let Some(resumed) = resumed {
+        match resume(harness, resumed, false)? {
+            Some(_) => conversation = Some(resumed.to_string()),
+            None => return Ok(Ended::Failed),
+        }
     }
+    turn(harness, &mut conversation, message)
 }
 
 /// `crowbar-agent [--resume ID]`: a conversation, a line at a time. A
 /// conversation starts with its first message, so leaving at once leaves
-/// none behind. Ctrl-D leaves, and so does Ctrl-C between turns.
-pub fn repl(session: &mut Session, resumed: Option<&str>) -> Result<Ended> {
+/// none behind. Ctrl-D leaves, and so does Ctrl-C between turns. It ends as
+/// a failure when its newest turn got no answer.
+pub fn repl(harness: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
     let prompted = std::io::stdin().is_terminal();
     let mut conversation = None;
+    // How the newest turn ended, which is how the client ends: a failed turn
+    // at the end of what was piped in is a failure.
+    let mut last = Ended::Done;
     if let Some(resumed) = resumed {
-        let Some((working, answer)) = resume(session, resumed, true)? else {
+        let Some((working, answer)) = resume(harness, resumed, true)? else {
             return Ok(Ended::Failed);
         };
         // A turn another client left working is this client's to watch, and to stop.
         if working.is_some() {
-            watch(session, resumed, working, answer)?;
+            watch(harness, resumed, working, answer)?;
         }
         conversation = Some(resumed.to_string());
     }
@@ -224,13 +204,17 @@ pub fn repl(session: &mut Session, resumed: Option<&str>) -> Result<Ended> {
             eprint!("> ");
         }
         let line = loop {
-            match session.next(true)? {
+            match harness.next(true)? {
                 Happening::Line(line) => break line,
                 Happening::EndOfInput | Happening::Interrupt => {
                     if prompted {
                         eprintln!();
                     }
-                    return Ok(Ended::Done);
+                    return Ok(if last == Ended::Failed {
+                        Ended::Failed
+                    } else {
+                        Ended::Done
+                    });
                 }
                 // What another client of this conversation says, and the answer to it.
                 Happening::Event(event) => match text(&event, "event") {
@@ -247,13 +231,7 @@ pub fn repl(session: &mut Session, resumed: Option<&str>) -> Result<Ended> {
         if line.trim().is_empty() {
             continue;
         }
-        if conversation.is_none() {
-            conversation = start(session)?;
-        }
-        let Some(conversation) = &conversation else {
-            return Ok(Ended::Failed);
-        };
-        turn(session, conversation, &line)?;
+        last = turn(harness, &mut conversation, &line)?;
     }
 }
 
@@ -269,8 +247,8 @@ fn ago(seconds: u64) -> String {
 }
 
 /// `crowbar-agent --list`: each conversation on a line, the newest first.
-pub fn list(session: &mut Session) -> Result<Ended> {
-    let reply = session.request(json!({ "op": "list" }))?;
+pub fn list(harness: &mut Connection) -> Result<Ended> {
+    let reply = harness.request(json!({ "op": "list" }))?;
     if refused(&reply).is_some() {
         return Ok(Ended::Failed);
     }
