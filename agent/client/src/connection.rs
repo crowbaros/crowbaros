@@ -113,7 +113,7 @@ pub struct Connection {
     /// Events that came while a reply was waited for.
     events: VecDeque<Value>,
     interrupts: RawFd,
-    /// Where the person types: standard input.
+    /// Where the person types: standard input, which is never closed here.
     input: RawFd,
     /// What the person typed that does not make a whole line yet.
     typed: Vec<u8>,
@@ -301,6 +301,9 @@ impl Connection {
             let mut waited = vec![self.interrupts, self.stream.as_raw_fd()];
             let looked_at = match typing {
                 Typing::Waits => false,
+                // Not while part of a message of the Harness's is here and the rest on its way:
+                // it comes before anything typed, as a whole one does.
+                _ if !self.received.is_empty() => false,
                 Typing::Wanted => true,
                 // Its end is read once, and cannot be seen past anything typed before it.
                 Typing::UntilItEnds => !self.typing_ended && !self.typed_ahead && self.typed.is_empty(),
@@ -434,6 +437,30 @@ mod tests {
         // And looked at afresh once a line is wanted, though an event came first: it may have been dropped since.
         assert!(!harness.typed_ahead);
         assert!(matches!(harness.next(Typing::Wanted).unwrap(), Happening::Line(line) if line == "a draft"));
+    }
+
+    #[test]
+    fn a_message_of_the_harnesss_that_comes_in_two_parts_is_given_before_anything_typed() {
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
+        let (quiet, _kept) = UnixStream::pair().unwrap();
+        let mut harness = Connection::over(ours, quiet.as_raw_fd());
+        let (typing, mut keys) = UnixStream::pair().unwrap();
+        harness.input = typing.as_raw_fd();
+        // The start of a long message another client sent, and a line the person typed, both there. The rest comes after.
+        let message = r#"{"event":"message","turn":2}"#;
+        let framed = [&(message.len() as u32).to_be_bytes(), message.as_bytes()].concat();
+        theirs.write_all(&framed[..10]).unwrap();
+        keys.write_all(b"a draft\n").unwrap();
+        let rest = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            theirs.write_all(&framed[10..]).unwrap();
+            theirs
+        });
+        assert!(
+            matches!(harness.next(Typing::Wanted).unwrap(), Happening::Event(event) if event == json!({"event": "message", "turn": 2}))
+        );
+        assert_eq!(sys::waiting(harness.input), Some(8));
+        let _theirs = rest.join().unwrap();
     }
 
     #[test]

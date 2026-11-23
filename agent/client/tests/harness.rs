@@ -514,6 +514,9 @@ fn ctrl_d_at_a_terminal_leaves_on_the_line_the_answer_ended() {
     shown.wait_for_out("\n> Count.\nOne");
     // Left while a turn is shown, there is no prompt's line to end: only the one prompt was written.
     keys.write_all(&[0x04]).expect("Ctrl-D");
+    wait_for("the client to leave", || {
+        shown.child.try_wait().expect("crowbar-agent is waited for").is_some()
+    });
     assert_eq!(shown.ended(), 0);
     assert_eq!(shown.out.lock().unwrap().as_str(), "> Hello?\nHere.\n\n> Count.\nOne\n");
     assert_eq!(shown.err.lock().unwrap().as_str(), "> ");
