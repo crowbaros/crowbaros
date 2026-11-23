@@ -11,7 +11,9 @@
 # isolation inside their account. The Harness runs as the person, with their
 # groups, in the environment the launcher gives an app, starting in their
 # home. Its state and its log are in the person's home, which the Harness
-# makes for itself.
+# makes for itself. So is the directory of the person socket, in the
+# person's runtime directory, where their own clients reach the Harness, the
+# terminal's `crowbar-agent` first, and where it serves their user ID alone.
 set -eu
 exec >>/var/log/crowbar-agent.log 2>&1
 PERSON_UID=1003
@@ -31,4 +33,5 @@ exec chpst -u "$PERSON:$(id -Gn "$PERSON" | tr ' ' ':')" \
   /usr/local/lib/crowbar-agent/node --disable-warning=ExperimentalWarning \
   /usr/local/lib/crowbar-agent/harness.mjs \
   --state "$PERSON_HOME/.local/state/crowbaros/agent" \
-  --surface-socket /run/crowbar-agent/surface --shell-uid "$SHELL_UID"
+  --surface-socket /run/crowbar-agent/surface --shell-uid "$SHELL_UID" \
+  --person-socket "/run/user/$PERSON_UID/crowbar-agent/person" --person-uid "$PERSON_UID"
