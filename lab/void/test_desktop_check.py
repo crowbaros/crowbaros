@@ -265,18 +265,17 @@ class Runs(unittest.TestCase):
             self.discarded = True
             return True
 
-    def main(self, *arguments, passes=True, stopped=None, env=None):
+    def main(self, *arguments, passes=True, stopped=None):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         vm = self.Guest(temporary.name)
 
-        def checks(check, built, credential=None):
+        def checks(check, built):
             check.record('stub', passes)
             if stopped:
                 raise stopped
 
-        test_env = {'ANTHROPIC_API_KEY': 'test-only-credential'} if env is None else env
-        with patch.dict(desktop_check.os.environ, test_env, clear=True), \
+        with patch.dict(desktop_check.os.environ, {}, clear=True), \
                 patch.object(base, 'preflight'), patch.object(guest.Guest, 'create', return_value=vm), \
                 patch.object(guest, 'build_base', return_value={}) as build_base, \
                 patch.object(desktop_check.Check, 'checks', checks), \
@@ -287,6 +286,13 @@ class Runs(unittest.TestCase):
                 code = error
         log = (vm.work / 'desktop.log').read_text() if (vm.work / 'desktop.log').exists() else ''
         return vm, code, build_base, log
+
+    def test_a_run_needs_no_model_key_in_the_environment(self):
+        # main() runs with the environment emptied: no key, and still a build.
+        vm, code, build_base, log = self.main()
+        self.assertEqual(code, 0)
+        build_base.assert_called_once()
+        self.assertNotIn('API_KEY', log)
 
     def test_a_run_that_passes_deletes_its_disk_and_one_that_fails_keeps_it(self):
         vm, code, build_base, log = self.main()
@@ -320,59 +326,50 @@ class Runs(unittest.TestCase):
 
 
 
-class RealModelCredentialAndTyping(unittest.TestCase):
-    """The desktop check requires a real Model credential from the host
-    environment, fails calmly before building without one, encodes QMP text
-    cleanly, and catches any credential leak into evidence."""
+class StubModelAndTyping(unittest.TestCase):
+    """The desktop check needs no Model key: the drawer talks to the stub
+    Model in the guest, and what the Harness sent is read from the stub's
+    record of requests. It also encodes QMP text cleanly."""
 
-    def test_missing_credential_exits_and_names_what_it_needs(self):
-        with self.assertRaises(SystemExit) as stopped:
-            desktop_check.real_model_credential({})
-        message = str(stopped.exception)
-        self.assertIn('ANTHROPIC_API_KEY', message)
-        self.assertIn('OPENAI_API_KEY', message)
-        self.assertIn('GEMINI_API_KEY', message)
-        self.assertIn('CROWBAR_AGENT_PROVIDER', message)
-        self.assertIn('CROWBAR_AGENT_API_KEY', message)
+    def test_the_stub_model_and_its_answer_are_what_the_check_points_at(self):
+        self.assertTrue(base.STUB_MODEL.is_file())
+        self.assertIn('foot', desktop_check.DRAWER_ANSWER)
 
-    def test_main_stops_before_building_when_no_credential_is_set(self):
-        with patch.dict(desktop_check.os.environ, {}, clear=True), \
-                patch.object(base, 'preflight') as preflight, \
-                patch.object(guest, 'build_base') as build_base, \
-                patch('sys.argv', ['desktop_check.py']):
-            with self.assertRaises(SystemExit) as stopped:
-                desktop_check.main()
-        self.assertIn('ANTHROPIC_API_KEY', str(stopped.exception))
-        preflight.assert_not_called()
-        build_base.assert_not_called()
+    def stub_record(self, *user_messages, system='You are the Agent.'):
+        """A stub record of one request per user message, each the whole
+        conversation up to it, as the chat API carries it."""
+        lines, messages = [], [{'role': 'system', 'content': system}]
+        for content in user_messages:
+            messages = messages + [{'role': 'user', 'content': content}]
+            lines.append(json.dumps({'model': 'stub-1', 'stream': True, 'messages': messages}))
+            messages = messages + [{'role': 'assistant', 'content': 'An answer.'}]
+        return '\n'.join(lines) + '\n'
 
-    def test_explicit_provider_and_key_win_over_ambient_keys(self):
-        cred = desktop_check.real_model_credential({
-            'ANTHROPIC_API_KEY': 'ambient-anthropic',
-            'CROWBAR_AGENT_PROVIDER': 'openai',
-            'CROWBAR_AGENT_API_KEY': 'explicit-openai',
-            'CROWBAR_AGENT_MODEL': 'gpt-4o-mini',
-        })
-        self.assertEqual(cred, {
-            'provider': 'openai',
-            'api_key': 'explicit-openai',
-            'model': 'gpt-4o-mini',
-        })
+    def test_the_stub_record_shows_desktop_context_sent_with_the_question(self):
+        prompt = 'what is the exact app_id of my active window?'
+        context = ('[Desktop context]\nWorkspace: 1\nActive window: ~ (app_id: foot)\n'
+                   'Displays:\n- Virtual-1: 1280x960 at (0, 0), scale 1x\n\n')
+        sent = desktop_check.stub_requests_audit(
+            self.stub_record([{'type': 'text', 'text': context + prompt}]), prompt, 'crowbarsecretwindow1')
+        self.assertEqual(sent, {'asked': 1, 'has_desktop_context': True, 'has_active_foot': True,
+                                'has_display': True, 'has_sentinel': False})
 
-    def test_explicit_key_without_provider_is_refused(self):
-        with self.assertRaises(SystemExit) as stopped:
-            desktop_check.real_model_credential({'CROWBAR_AGENT_API_KEY': 'sk-test'})
-        self.assertIn('CROWBAR_AGENT_PROVIDER', str(stopped.exception))
-
-    def test_standard_provider_env_vars_are_detected(self):
-        self.assertEqual(
-            desktop_check.real_model_credential({'GEMINI_API_KEY': 'gem-key'}),
-            {'provider': 'google', 'api_key': 'gem-key', 'model': None},
-        )
-        self.assertEqual(
-            desktop_check.real_model_credential({'OPENAI_API_KEY': 'oa-key', 'CROWBAR_AGENT_MODEL': 'gpt-4o-mini'}),
-            {'provider': 'openai', 'api_key': 'oa-key', 'model': 'gpt-4o-mini'},
-        )
+    def test_the_stub_record_catches_a_question_sent_with_no_context_or_with_window_contents(self):
+        prompt = 'what is the exact app_id of my active window?'
+        bare = desktop_check.stub_requests_audit(self.stub_record(prompt), prompt, 'crowbarsecretwindow1')
+        self.assertEqual((bare['asked'], bare['has_desktop_context']), (1, False))
+        # Context in the system prompt, or in an earlier message, is not
+        # context sent with this question.
+        context = '[Desktop context]\nActive window: ~ (app_id: foot)\nDisplays:\n- Virtual-1: 1x1\n\n'
+        elsewhere = desktop_check.stub_requests_audit(
+            self.stub_record(context + 'hello', prompt, system=context), prompt, 'x')
+        self.assertEqual((elsewhere['asked'], elsewhere['has_desktop_context']), (1, False))
+        leaked = desktop_check.stub_requests_audit(
+            self.stub_record(context + prompt + ' crowbarsecretwindow1'), prompt, 'crowbarsecretwindow1')
+        self.assertTrue(leaked['has_sentinel'])
+        # A question asked twice is caught as two requests.
+        twice = desktop_check.stub_requests_audit(self.stub_record(context + prompt, context + prompt), prompt, 'x')
+        self.assertEqual(twice['asked'], 2)
 
     def test_qmp_keys_for_text_maps_spaces_punctuation_and_case(self):
         self.assertEqual(
@@ -392,18 +389,7 @@ class RealModelCredentialAndTyping(unittest.TestCase):
         )
         self.assertIsNone(desktop_check.turn_state_kind({}))
 
-    def test_evidence_has_secret_detects_leaks_and_ignores_binary_artifacts(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        work = Path(temporary.name)
-        (work / 'desktop.log').write_text('clean log\n')
-        (work / 'shot.png').write_bytes(b'PNG secret-xyz')
-        self.assertEqual(desktop_check.evidence_has_secret(work, 'secret-xyz'), [])
-        (work / 'harness.log').write_text('oops secret-xyz leaked\n')
-        self.assertEqual(desktop_check.evidence_has_secret(work, 'secret-xyz'), ['harness.log'])
-
-    def test_embedded_guest_scripts_compile_cleanly(self):
-        compile(desktop_check.HARNESS_LOGIN_SCRIPT, '<HARNESS_LOGIN_SCRIPT>', 'exec')
+    def test_embedded_guest_script_compiles_cleanly(self):
         compile(desktop_check.HARNESS_AUDIT_SCRIPT, '<HARNESS_AUDIT_SCRIPT>', 'exec')
 
     def test_harness_audit_script_verifies_exact_turn_context_and_rejects_decoy(self):
@@ -412,8 +398,6 @@ class RealModelCredentialAndTyping(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         work = Path(temporary.name)
         db = work / 'harness.sqlite'
-        log = work / 'harness.log'
-        log.write_text('started\n')
 
         prompt = 'what is the exact app_id of my active window?'
         full_user_content = (
@@ -478,8 +462,6 @@ class RealModelCredentialAndTyping(unittest.TestCase):
             'turn': 1,
             'prompt': prompt,
             'sentinel': 'crowbarsecretwindowabcdef',
-            'secret': 'sk-test-secret-123',
-            'logs': [str(log)],
         }
         res = subprocess.run(
             [sys.executable, '-c', desktop_check.HARNESS_AUDIT_SCRIPT],
@@ -510,8 +492,6 @@ class RealModelCredentialAndTyping(unittest.TestCase):
         self.assertTrue(audit2['has_active_foot'])
         self.assertTrue(audit2['has_display'])
         self.assertFalse(audit2['has_sentinel'])
-        self.assertFalse(audit2['has_secret_in_db'])
-        self.assertFalse(audit2['has_secret_in_logs'])
 
         # Missing or null turn must fail closed rather than widening to the whole conversation.
         for bad_turn in (None, 0, True, '1'):
@@ -523,45 +503,6 @@ class RealModelCredentialAndTyping(unittest.TestCase):
             audit_bad = json.loads(res_bad.stdout)
             self.assertFalse(audit_bad['has_desktop_context'], f'turn={bad_turn!r} should fail closed')
 
-    def test_check_scrubs_secret_from_logs_results_and_diagnostics(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        secret = 'sk-never-write-this'
-        vm = FakeGuest(temporary.name, lambda user, cmd: (0, f'diag saw {secret}\n', ''))
-        check = desktop_check.Check(vm, secret=secret)
-        check.qmp = type('Q', (), {'screendump': lambda *a, **kw: None})()
-        self.addCleanup(check.logfile.close)
-        check.log(f'echo {secret}')
-        check.record('checked', True, f'detail {secret}')
-        check.diagnostics()
-        self.assertEqual(desktop_check.evidence_has_secret(vm.work, secret), [])
-        self.assertNotIn(secret, (vm.work / 'desktop.log').read_text())
-        self.assertNotIn(secret, (vm.work / 'harness.log').read_text())
-        self.assertEqual(check.results[0]['detail'], 'detail [REDACTED]')
-
-    def test_main_scrubs_secret_from_uncaught_exception_in_results(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        secret = "sk-exception-'secret'\\999"
-        vm = Runs.Guest(temporary.name)
-
-        def boom(check, built, credential=None):
-            raise RuntimeError(f'boom "quoted" with {secret}')
-
-        with patch.dict(desktop_check.os.environ, {'ANTHROPIC_API_KEY': secret}, clear=True), \
-                patch.object(base, 'preflight'), patch.object(guest.Guest, 'create', return_value=vm), \
-                patch.object(guest, 'build_base', return_value={}), \
-                patch.object(desktop_check.Check, 'checks', boom), \
-                patch('sys.argv', ['desktop_check.py']):
-            code = desktop_check.main()
-        self.assertEqual(code, 1)
-        self.assertEqual(desktop_check.evidence_has_secret(vm.work, secret), [])
-        for filename in ('results.json', 'desktop.log'):
-            text = (vm.work / filename).read_text()
-            self.assertNotIn(secret, text)
-            self.assertNotIn(repr(secret)[1:-1], text)
-            self.assertNotIn("sk-exception-", text)
-            self.assertIn('[REDACTED]', text)
 
 if __name__ == '__main__':
     unittest.main()
