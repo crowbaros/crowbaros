@@ -2,6 +2,9 @@ name: CI
 
 # Every pull request and every push to main runs this workflow, so "CI passed"
 # is always reported: it is the one check main's ruleset requires (ADR 0033).
+# It also runs on main as each week starts, with every job: that run installs
+# the week's Void root and saves it, so the week's first pull requests restore
+# it, and it shows what a week of Void's updates did to main.
 # A required check that a path filter skips would leave a pull request
 # waiting on it forever, so the filtering happens in the `changes` job
 # instead, and each job runs only when the change needs it. A change to docs
@@ -11,6 +14,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Monday, just after the week the Void root's cache key names begins (UTC).
+    - cron: "7 0 * * 1"
 
 permissions:
   contents: read
@@ -233,21 +239,29 @@ jobs:
 
       # The Void root takes about two and a half minutes to install, most of
       # it NVIDIA's DKMS build. Main saves the root it installed, keyed on
-      # the files that decide what is installed and on the week, so a cached
-      # root is never more than a week behind Void. Only that exact key is
-      # restored, never a root installed from other files. void_base.py packs
-      # and unpacks it in its user namespace, so owners and groups hold, and
-      # the build checks a restored root as it checks any other.
-      - name: Name the week
-        id: week
-        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+      # what decides the root and on the week, so a cached root is never more
+      # than a week behind Void. `root key` names what decides it: the code
+      # in void_base.py that installs, checks, and packs the root, what that
+      # code reads from config.json, and rootfs.sh, and nothing else in
+      # void_base.py, so a change to a boot check restores the same root.
+      # Only that exact key is restored, never a root installed from
+      # anything else. The digest is read on a line of its own, so a
+      # `root key` that fails stops the job and names no root. void_base.py
+      # packs and unpacks the root in its user namespace, so owners and
+      # groups hold, and the build checks a restored root as it checks any
+      # other.
+      - name: Name the Void root
+        id: name
+        run: |
+          digest=$(python3 base/void_base.py root key)
+          echo "root=$digest-$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
 
       - name: Restore the Void root
         id: root
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/crowbaros/root.tar.zst
-          key: base-root-${{ hashFiles('base/config.json', 'base/host/rootfs.sh', 'base/void_base.py') }}-${{ steps.week.outputs.week }}
+          key: base-root-${{ steps.name.outputs.root }}
 
       - name: Unpack the Void root
         if: steps.root.outputs.cache-hit == 'true'
@@ -318,10 +332,11 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
 
-      # Only main saves, so every pull request starts from main's build and
-      # the caches stay inside the repository's 10 GB.
+      # Only main saves, on a push or as the week starts, so every pull
+      # request starts from main's build and the caches stay inside the
+      # repository's 10 GB.
       - name: Save the Void packages
-        if: github.event_name == 'push' && steps.packages.outputs.cache-hit != 'true'
+        if: github.event_name != 'pull_request' && steps.packages.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/crowbaros/void
@@ -330,18 +345,19 @@ jobs:
       # Saved only when the check passed, so a cached root is one Base booted
       # from.
       - name: Pack the Void root
-        if: github.event_name == 'push' && steps.root.outputs.cache-hit != 'true'
+        if: github.event_name != 'pull_request' && steps.root.outputs.cache-hit != 'true'
         run: python3 base/void_base.py root save ~/.cache/crowbaros/root.tar.zst
 
       - name: Save the Void root
-        if: github.event_name == 'push' && steps.root.outputs.cache-hit != 'true'
+        if: github.event_name != 'pull_request' && steps.root.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/crowbaros/root.tar.zst
           key: ${{ steps.root.outputs.cache-primary-key }}
 
+      # The week's run may find the build of its own commit already saved.
       - name: Save the desktop's build
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request' && steps.build.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -349,6 +365,38 @@ jobs:
             ~/.cargo/git
             .lab/base/target
           key: ${{ steps.build.outputs.cache-primary-key }}
+
+  # Every boot on main saves the desktop's build under its own commit, about
+  # 0.7 GB each time. Past 10 GB GitHub drops the caches used longest ago,
+  # which may be the Void root or the packages. So main keeps its newest two
+  # builds: two, for a pull request that is restoring one as the next is
+  # saved. Two runs on main may delete the same build, and the one that
+  # finds it gone goes on; a delete that fails for any other reason leaves
+  # more builds than main keeps, which fails the job. Three may be left, as
+  # another run may save one meanwhile. A job of its own, as no other job's token can
+  # write, and it checks out and runs nothing from the repository.
+  prune:
+    name: Old builds
+    needs: boot
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Delete main's builds that newer ones replace
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          old=$(gh cache list --ref refs/heads/main --key base-build- --sort created_at \
+            --order desc --limit 100 --json id --jq '.[2:][].id')
+          for id in $old; do
+            gh cache delete "$id" || echo "Build $id was not deleted."
+          done
+          left=$(gh cache list --ref refs/heads/main --key base-build- --limit 100 --json id --jq length)
+          echo "Builds main keeps: $left"
+          [ "$left" -le 3 ]
 
   # The one required check. It passes when every job the change needed
   # passed, and a job the change did not need counts as passed.

@@ -61,11 +61,11 @@ class Changes(unittest.TestCase):
         return self.git('rev-parse', 'HEAD')
 
     def needs(self, **event):
-        """What the job reports for a pull request (`base`, `head`) or a push
-        (`before`, `after`)."""
+        """What the job reports for a pull request (`base`, `head`), a push
+        (`before`, `after`), or the week's run (`event='schedule'`)."""
         self.output.write_text('')
         env = dict(self.env, GITHUB_OUTPUT=str(self.output),
-                   EVENT='pull_request' if 'head' in event else 'push',
+                   EVENT=event.get('event', 'pull_request' if 'head' in event else 'push'),
                    PR_BASE=event.get('base', ''), PR_HEAD=event.get('head', ''),
                    BEFORE=event.get('before', ''), AFTER=event.get('after', ''))
         self.log = subprocess.run(
@@ -144,6 +144,11 @@ class Changes(unittest.TestCase):
 
     def test_a_push_with_no_commit_before_it_runs_every_job(self):
         self.assertEqual(self.needs(before='0' * 40, after=self.first),
+                         {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+
+    def test_the_weeks_run_runs_every_job(self):
+        head = self.commit({'docs/VISION.md': 'The vision, amended\n'})
+        self.assertEqual(self.needs(event='schedule', after=head),
                          {'code': 'true', 'compositor': 'true', 'boot': 'true'})
 
 

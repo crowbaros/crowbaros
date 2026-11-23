@@ -14,6 +14,7 @@ base/void_base.py console        # the serial console (Ctrl-] to leave)
 base/void_base.py stop           # power off
 base/void_base.py root save|restore ARCHIVE
                                  # pack the finished Void root, or unpack one in its place
+base/void_base.py root key       # name what installs the Void root, as CI's cache keys it
 ```
 
 ## What it builds
@@ -42,7 +43,15 @@ tablet, with no VGA card.
 - CI's cached Void root: `root save` packs the finished root into one archive,
   inside the user namespace, so every file keeps its owner and group, and
   `root restore` unpacks one in place of the root there. The build checks a
-  restored root as it checks any other.
+  restored root as it checks any other. `root key` prints the digest CI keys
+  the archive on: the code in `void_base.py` that installs, checks, packs,
+  and unpacks the root, found by following what those functions name, each
+  value that code reads from `config.json` (the packages, the repository, and
+  the pinned xbps), and `host/rootfs.sh`. A change to anything else in
+  `void_base.py` leaves the key as it was. `void_base.py` holds only imports,
+  definitions, and assignments at its top level, and reads `CFG` only as
+  `CFG["key"]`, so that the key can follow it; `root key` refuses anything
+  else.
 - `check` writes `.lab/base/boot-<time>.log`, with every check, what it ran, and
   the serial console from GRUB to power-off.
 

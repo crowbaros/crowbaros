@@ -50,7 +50,9 @@ sides hold.
 ## Checks
 
 - CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml). It runs on every
-  pull request and every push to `main`. Its `changes` job decides which jobs
+  pull request and every push to `main`, and on `main` as each week starts.
+  A failure then is a week of Void's updates meeting `main`: whoever sees it
+  first fixes it, before other work. Its `changes` job decides which jobs
   a change needs, and `CI passed` passes when they all do. `CI passed` is the
   one check `main`'s ruleset requires. A change to docs alone runs only those
   two. Run the jobs' commands before you push code.
