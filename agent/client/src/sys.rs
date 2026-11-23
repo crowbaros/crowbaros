@@ -70,6 +70,16 @@ pub fn readable(descriptors: &[RawFd]) -> Result<Vec<bool>> {
     }
 }
 
+/// How many bytes wait to be read on a descriptor, with none of them read,
+/// or nothing where the kernel cannot say. A descriptor that is readable
+/// with no byte waiting is at its end.
+pub fn waiting(descriptor: RawFd) -> Option<usize> {
+    let mut count: libc::c_int = 0;
+    // SAFETY: FIONREAD writes one `int`, which `count` is.
+    let asked = unsafe { libc::ioctl(descriptor, libc::FIONREAD, &mut count) };
+    (asked == 0).then_some(count.max(0) as usize)
+}
+
 /// Reads what waits on a descriptor, up to `into`'s length, with no buffer
 /// between: what `readable` says of the descriptor stays true of it. Zero
 /// bytes is its end.

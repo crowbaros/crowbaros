@@ -15,6 +15,7 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -258,6 +259,25 @@ impl Running {
     }
 }
 
+/// A terminal of the test's own. What is written to the first is typed at
+/// it, and the second is the terminal a client is given for its input.
+fn terminal() -> (fs::File, OwnedFd) {
+    let (mut keys, mut screen) = (0, 0);
+    // SAFETY: `openpty` writes two descriptors, and takes nothing else here.
+    let opened = unsafe {
+        libc::openpty(
+            &mut keys,
+            &mut screen,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(opened, 0, "a terminal for the test");
+    // SAFETY: both descriptors are open, and nothing else owns them.
+    unsafe { (fs::File::from_raw_fd(keys), OwnedFd::from_raw_fd(screen)) }
+}
+
 /// The ID of the one conversation `--list` shows.
 fn only_conversation(lab: &Lab) -> String {
     let listed = lab.run(&["--list"], "");
@@ -476,6 +496,87 @@ fn ctrl_d_leaves_a_client_that_shows_another_clients_turn_and_the_turn_goes_on()
     assert!(lab.run(&["--list"], "").out.ends_with("(working)\n"));
     other.signal(libc::SIGINT);
     assert_eq!(other.ended(), 130);
+}
+
+#[test]
+#[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
+fn ctrl_d_after_ctrl_c_still_waits_for_another_clients_turn_to_stop() {
+    let lab = Lab::with_model(r#"[{"text": "Here."}, {"text": "One two three", "stall": true}]"#);
+    assert_eq!(lab.run(&["Hello?"], "").status, 0);
+    let conversation = only_conversation(&lab);
+    let mut shown = Running::start(lab.agent(&["--resume", &conversation]));
+    shown.wait_for_out("> Hello?\nHere.\n");
+    let mut other = Running::start(lab.agent(&["--resume", &conversation, "Count."]));
+    shown.wait_for_out("\n> Count.\nOne");
+    // The Harness is slow to stop the turn: Ctrl-C has asked, and Ctrl-D comes before it has.
+    let harness = lab.children[0].id() as libc::pid_t;
+    // SAFETY: the process is this test's own child, which it has not waited for.
+    unsafe { libc::kill(harness, libc::SIGSTOP) };
+    shown.signal(libc::SIGINT);
+    std::thread::sleep(Duration::from_millis(300));
+    drop(shown.child.stdin.take());
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        shown.child.try_wait().unwrap().is_none(),
+        "the client left before the turn it asked to stop had stopped"
+    );
+    // SAFETY: as above.
+    unsafe { libc::kill(harness, libc::SIGCONT) };
+    shown.wait_for_err("Stopped.\n");
+    assert_eq!(shown.ended(), 0);
+    assert_eq!(other.ended(), 130);
+}
+
+#[test]
+#[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
+fn a_line_typed_during_another_clients_turn_is_sent_after_it_and_ctrl_c_drops_it() {
+    let script = r#"[{"text": "Here."}, {"text": "One two three", "stall": true}, {"text": "Next."}]"#;
+    // Down a pipe, where nothing drops what was written: the line waits for the turn on the screen, and is sent once.
+    let lab = Lab::with_model(script);
+    assert_eq!(lab.run(&["Hello?"], "").status, 0);
+    let conversation = only_conversation(&lab);
+    let mut shown = Running::start(lab.agent(&["--resume", &conversation]));
+    shown.wait_for_out("> Hello?\nHere.\n");
+    let mut other = Running::start(lab.agent(&["--resume", &conversation, "Count."]));
+    shown.wait_for_out("\n> Count.\nOne");
+    let mut typing = shown.child.stdin.take().expect("its input");
+    typing.write_all(b"And then?\n").expect("typing");
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        lab.requests().lines().count(),
+        2,
+        "the line was sent before the turn ended"
+    );
+    other.signal(libc::SIGINT);
+    assert_eq!(other.ended(), 130);
+    shown.wait_for_out("Next.\n");
+    drop(typing);
+    assert_eq!(shown.ended(), 0);
+    assert_eq!(lab.requests().matches("And then?").count(), 1);
+
+    // At a terminal, Ctrl-C drops what was typed and not yet read, as it does for any program.
+    let lab = Lab::with_model(script);
+    assert_eq!(lab.run(&["Hello?"], "").status, 0);
+    let conversation = only_conversation(&lab);
+    let (mut keys, screen) = terminal();
+    let mut shown = lab.agent(&["--resume", &conversation]);
+    shown.stdin(screen);
+    let mut shown = Running::start(shown);
+    shown.wait_for_out("> Hello?\nHere.\n");
+    let mut other = Running::start(lab.agent(&["--resume", &conversation, "Count."]));
+    shown.wait_for_out("\n> Count.\nOne");
+    keys.write_all(b"draft of a message\n").expect("typing");
+    std::thread::sleep(Duration::from_millis(300));
+    // The key, which has the terminal drop the draft, and the signal the key sends a program in the foreground.
+    keys.write_all(&[0x03]).expect("Ctrl-C");
+    std::thread::sleep(Duration::from_millis(100));
+    shown.signal(libc::SIGINT);
+    shown.wait_for_err("Stopped.\n");
+    assert_eq!(other.ended(), 130);
+    // Ctrl-D, at the prompt it is back at.
+    keys.write_all(&[0x04]).expect("Ctrl-D");
+    assert_eq!(shown.ended(), 0);
+    assert!(!lab.requests().contains("draft of a message"), "{}", lab.requests());
 }
 
 #[test]

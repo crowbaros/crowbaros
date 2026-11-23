@@ -47,7 +47,8 @@ crowbar-agent model [PROVIDER/MODEL]  # list the Models signed in to, or choose 
   to a message, the client says the message may still be answered.
 - **A turn another client begins** in the conversation is shown as it comes,
   with its message, and Ctrl-C stops it too. Ctrl-D leaves, and that turn
-  goes on.
+  goes on. A line typed while it is shown is sent when it ends, and Ctrl-C
+  drops it, as a terminal does.
 - **A client that goes away stops nothing.** When its terminal closes or its
   SSH connection drops, the turn goes on in the Harness. `--list` shows it as
   working, and `--resume ID` picks it up, where Ctrl-C stops it.

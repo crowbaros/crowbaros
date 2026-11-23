@@ -89,7 +89,8 @@ fn turn(harness: &mut Connection, conversation: &mut Option<String>, message: &s
 ///
 /// `typing` is `Waits`, or `UntilItEnds` for a turn the person did not
 /// begin: the end of their typing then leaves the turn to go on, and gives
-/// nothing.
+/// nothing. Once the person has asked for the turn to stop, its end is
+/// waited for whatever they type.
 fn watch(
     harness: &mut Connection,
     conversation: &str,
@@ -99,7 +100,7 @@ fn watch(
 ) -> Result<Option<Ended>> {
     let mut stopping = false;
     loop {
-        let event = match harness.next(typing)? {
+        let event = match harness.next(if stopping { Typing::Waits } else { typing })? {
             Happening::Event(event) => event,
             Happening::Interrupt if stopping => return Ok(Some(Ended::Stopped)),
             Happening::Interrupt => {
@@ -218,6 +219,15 @@ pub fn once(harness: &mut Connection, resumed: Option<&str>, message: &str) -> R
     turn(harness, &mut conversation, message)
 }
 
+/// How a conversation the person left ends: as a failure when its newest turn got no answer.
+fn left(last: Ended) -> Ended {
+    if last == Ended::Failed {
+        Ended::Failed
+    } else {
+        Ended::Done
+    }
+}
+
 /// `crowbar-agent [--resume ID]`: a conversation, a line at a time. A
 /// conversation starts with its first message, so leaving at once leaves
 /// none behind. Ctrl-D leaves, and so does Ctrl-C between turns. It ends as
@@ -251,11 +261,7 @@ pub fn repl(harness: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
                     if prompted {
                         eprintln!();
                     }
-                    return Ok(if last == Ended::Failed {
-                        Ended::Failed
-                    } else {
-                        Ended::Done
-                    });
+                    return Ok(left(last));
                 }
                 // What another client of this conversation says begins a turn
                 // this client shows, so it is this client's to watch, and
@@ -273,9 +279,12 @@ pub fn repl(harness: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
                         answer,
                         Typing::UntilItEnds,
                     )?;
-                    // With the person's typing at its end, the wait for a line finds it so, and leaves.
-                    last = watched.unwrap_or(last);
-                    if prompted && watched.is_some() {
+                    // Ctrl-D while it was shown: the client leaves as it does at the prompt, on a line the answer has ended.
+                    let Some(ended) = watched else {
+                        return Ok(left(last));
+                    };
+                    last = ended;
+                    if prompted {
                         eprint!("> ");
                     }
                 }

@@ -87,9 +87,10 @@ pub enum Typing {
     Waits,
     /// A line of it is what is waited for.
     Wanted,
-    /// It is read and kept for when a line is wanted, so that its end is
-    /// seen: Ctrl-D, or the end of what was piped in, with no line left
-    /// that was typed before it.
+    /// It waits in the terminal, unread, and its end is what is waited
+    /// for: Ctrl-D, or the end of what was piped in, with nothing typed
+    /// before it. What is typed stays the terminal's, so Ctrl-C drops it as
+    /// a terminal does, and its end is not seen past it.
     UntilItEnds,
 }
 
@@ -115,6 +116,10 @@ pub struct Connection {
     /// What the person typed that does not make a whole line yet.
     typed: Vec<u8>,
     typing_ended: bool,
+    /// Whether something typed was seen to wait in the terminal while only
+    /// the end of typing was waited for. It is left there, and not looked
+    /// at again until a line is wanted.
+    typed_ahead: bool,
     /// How many replies are still to come to requests `send` did not wait
     /// for. The Harness answers in the order it was asked, so they come
     /// before the reply to any request made since.
@@ -185,6 +190,7 @@ impl Connection {
             interrupts,
             typed: Vec::new(),
             typing_ended: false,
+            typed_ahead: false,
             owed: 0,
         }
     }
@@ -266,6 +272,7 @@ impl Connection {
                 return Ok(Happening::Event(message));
             }
             if typing == Typing::Wanted {
+                self.typed_ahead = false;
                 if let Some(end) = self.typed.iter().position(|&byte| byte == b'\n') {
                     let line: Vec<u8> = self.typed.drain(..=end).collect();
                     return Ok(Happening::Line(
@@ -285,8 +292,13 @@ impl Connection {
                 return Ok(Happening::EndOfInput);
             }
             let mut waited = vec![self.interrupts, self.stream.as_raw_fd()];
-            // Its end is read once: after it, standard input has nothing more to wait for.
-            if typing != Typing::Waits && !self.typing_ended {
+            let looked_at = match typing {
+                Typing::Waits => false,
+                Typing::Wanted => true,
+                // Its end is read once, and cannot be seen past anything typed before it.
+                Typing::UntilItEnds => !self.typing_ended && !self.typed_ahead && self.typed.is_empty(),
+            };
+            if looked_at {
                 waited.push(0);
             }
             let ready = sys::readable(&waited)?;
@@ -299,6 +311,11 @@ impl Connection {
                 self.receive()?;
             }
             if ready.get(2) == Some(&true) {
+                // Something typed, and no line is wanted: it is left where it is.
+                if typing == Typing::UntilItEnds && sys::waiting(0).is_some_and(|count| count > 0) {
+                    self.typed_ahead = true;
+                    continue;
+                }
                 let mut bytes = [0u8; 4096];
                 match sys::read(0, &mut bytes)? {
                     0 => self.typing_ended = true,
