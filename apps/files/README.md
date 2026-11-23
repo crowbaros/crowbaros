@@ -8,9 +8,11 @@ demand.
 ## Features
 
 - **Three views**: Finder-style Miller columns (`Ctrl+1`), a detail list with
-  item counts, sizes, modified dates, and inline image thumbnails (`Ctrl+2`,
-  default), and a preview grid (`Ctrl+3`).
-- **Inspector pane**: Live preview of folders, images, and text/code files,
+  item counts, sizes, and modified dates (`Ctrl+2`, default), and a preview
+  grid with image thumbnails (`Ctrl+3`). Thumbnails are for still images, and
+  stop at a budget of 64 megapixels, about 256 MB decoded, a pane.
+- **Inspector pane**: Live preview of images up to 40 megapixels and of
+  text/code files,
   file metadata, and a primary `Open folder` / `Open` / `Restore` action
   (`Ctrl+I` to toggle).
 - **Space quick preview**: Instant full-size preview overlay for images,

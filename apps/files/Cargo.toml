@@ -17,6 +17,8 @@ unicode-segmentation = "1"
 # GPUI 0.2.2 -> zed-async-tar -> xattr 0.2.3 references ENOATTR, removed in
 # libc 0.2.190.
 libc = "=0.2.189"
+# GPUI's own image crate, to read an image's size from its header before anything decodes it.
+image = { version = "=0.25.10", default-features = false }
 
 [profile.release]
 opt-level = 2

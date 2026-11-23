@@ -63,6 +63,8 @@ not a build dependency):
 python3 apps/shell/packaging/prepare-gpui.py
 cargo build --release --locked --manifest-path apps/shell/Cargo.toml
 cargo test --release --locked --manifest-path apps/shell/Cargo.toml
+cargo build --release --locked --manifest-path apps/files/Cargo.toml
+cargo test --release --locked --manifest-path apps/files/Cargo.toml
 cargo build --release --locked --manifest-path apps/studio-settings/Cargo.toml
 cargo test --release --locked --manifest-path apps/studio-settings/Cargo.toml
 ```

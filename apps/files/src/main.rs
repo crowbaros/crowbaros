@@ -7,15 +7,20 @@ mod theme;
 use fs_model::{Entry, SidebarEntry, SortField, SortOrder};
 use gpui::{
     AnyElement, App, Application, AssetSource, Bounds, Context, Div, Entity, FocusHandle, Focusable, FontWeight,
-    KeyBinding, MouseButton, MouseDownEvent, ObjectFit, ScrollHandle, SharedString, Stateful, Svg, TitlebarOptions,
-    Window, WindowBounds, WindowOptions, actions, div, img, prelude::*, px, rgb, rgba, size, svg,
+    ImgResourceLoader, KeyBinding, MouseButton, MouseDownEvent, ObjectFit, Resource, ScrollHandle, SharedString,
+    Stateful, Svg, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, img, prelude::*, px, rgb, rgba,
+    size, svg,
 };
 use input::TextInput;
 use state::{ClipboardOp, FileClipboard, Location, Pane, SavedState, ViewMode};
 use std::{
     borrow::Cow,
+    collections::HashSet,
+    ffi::OsString,
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::Arc,
     time::SystemTime,
 };
 use theme::{Palette, Preferences};
@@ -165,6 +170,8 @@ struct FilesApp {
     status: Option<String>,
     error: Option<String>,
     cached_preview_path: Option<PathBuf>,
+    /// The images decoded for the last frame, so those that leave the screen are released.
+    images_on_screen: HashSet<PathBuf>,
     cached_preview_text: Option<String>,
 }
 
@@ -225,6 +232,7 @@ impl FilesApp {
             status: None,
             error: None,
             cached_preview_path: None,
+            images_on_screen: HashSet::new(),
             cached_preview_text: None,
         };
         app.refresh_inspector_preview();
@@ -293,6 +301,50 @@ impl FilesApp {
         }
     }
 
+    /// The images this frame shows: Grid thumbnails within their budget, and the selected image in
+    /// the inspector or quick preview.
+    fn images_to_show(&self) -> HashSet<PathBuf> {
+        let mut shown = HashSet::new();
+        if self.saved.view_mode == ViewMode::Grid {
+            for pane in &self.panes {
+                let chosen = fs_model::thumbnail_choices(&pane.entries, fs_model::THUMBNAIL_BUDGET_PIXELS);
+                shown.extend(
+                    pane.entries
+                        .iter()
+                        .zip(chosen)
+                        .filter(|(_, chosen)| *chosen)
+                        .map(|(entry, _)| entry.path.clone()),
+                );
+            }
+        }
+        if self.saved.show_inspector
+            && let Some(entry) = self.pane().selected_entry()
+            && entry.can_preview_image()
+        {
+            shown.insert(entry.path.clone());
+        }
+        if let Some(Overlay::QuickPreview(entry, _)) = &self.overlay
+            && entry.can_preview_image()
+        {
+            shown.insert(entry.path.clone());
+        }
+        shown
+    }
+
+    /// GPUI keeps every decoded image until it is told to let go. Files lets go of each one when it
+    /// leaves the screen, so memory follows what is shown, not every image ever opened.
+    fn release_images_off_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let shown = self.images_to_show();
+        for path in self.images_on_screen.difference(&shown) {
+            let resource = Resource::Path(Arc::from(path.as_path()));
+            if let Some(Ok(image)) = window.get_asset::<ImgResourceLoader>(&resource, cx) {
+                cx.drop_image(image, Some(window));
+            }
+            cx.remove_asset::<ImgResourceLoader>(&resource);
+        }
+        self.images_on_screen = shown;
+    }
+
     fn clear_notices(&mut self) {
         self.status = None;
         self.error = None;
@@ -307,6 +359,10 @@ impl FilesApp {
     ) {
         self.clear_notices();
         self.overlay = None;
+        // A rename or new folder belongs to the folder it was started in.
+        if self.prompt.take().is_some() {
+            window.focus(&self.focus);
+        }
         let show_hidden = self.saved.show_hidden;
         let sf = self.sort_field;
         let so = self.sort_order;
@@ -352,7 +408,8 @@ impl FilesApp {
             .stderr(Stdio::null())
             .spawn()
         {
-            Ok(_) => {
+            Ok(child) => {
+                reap(child);
                 self.status = Some(format!(
                     "Opened {}",
                     path.file_name().and_then(|n| n.to_str()).unwrap_or("file")
@@ -389,7 +446,10 @@ impl FilesApp {
                     .spawn()
             });
         match spawned {
-            Ok(_) => self.status = Some("Opened terminal".into()),
+            Ok(child) => {
+                reap(child);
+                self.status = Some("Opened terminal".into());
+            }
             Err(e) => self.error = Some(format!("Could not open terminal: {e}")),
         }
         cx.notify();
@@ -518,12 +578,11 @@ impl FilesApp {
             return;
         }
         match fs_model::move_to_trash(&entry.path) {
-            Ok(_) => {
-                self.status = Some(format!("Moved “{}” to Trash", entry.name));
-                self.reload_all(None, cx);
-            }
+            Ok(_) => self.status = Some(format!("Moved “{}” to Trash", entry.name)),
             Err(e) => self.error = Some(e),
         }
+        // A failed trash can still have changed the disk; show what is there now.
+        self.reload_all(None, cx);
         cx.notify();
     }
 
@@ -1126,17 +1185,14 @@ impl FilesApp {
                 .flex()
                 .items_center()
                 .child(crumbs)
-                .child(
-                    div()
-                        .id("header-drag")
-                        .flex_1()
-                        .h_full()
-                        .on_mouse_down(MouseButton::Left, |event, window, _| {
-                            if event.click_count == 1 {
-                                window.start_window_move();
-                            }
-                        }),
-                )
+                .child(div().id("header-drag").flex_1().h_full().on_mouse_down(
+                    MouseButton::Left,
+                    |event, window, _| {
+                        if event.click_count == 1 {
+                            window.start_window_move();
+                        }
+                    },
+                ))
                 .into_any_element()
         };
 
@@ -1455,31 +1511,16 @@ impl FilesApp {
             )
     }
 
+    /// List and Columns rows show an icon, never a thumbnail: each row would decode its image whole.
     fn render_entry_icon(&self, entry: &Entry, p: Palette, selected: bool, size_px: f32) -> Div {
-        if entry.is_previewable_image() {
-            div()
-                .size(px(size_px + 2.))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .overflow_hidden()
-                .rounded(px(2.))
-                .child(
-                    img(entry.path.clone())
-                        .size(px(size_px + 2.))
-                        .object_fit(ObjectFit::Cover),
-                )
-        } else {
-            let color = if entry.is_dir || selected { p.signal_fg } else { p.muted };
-            div()
-                .size(px(size_px + 2.))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(icon(entry.icon_name(), color, size_px))
-        }
+        let color = if entry.is_dir || selected { p.signal_fg } else { p.muted };
+        div()
+            .size(px(size_px + 2.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(icon(entry.icon_name(), color, size_px))
     }
 
     fn render_list_pane(&self, pane_idx: usize, p: Palette, cx: &mut Context<Self>) -> AnyElement {
@@ -1626,6 +1667,7 @@ impl FilesApp {
             return self.render_list_pane(pane_idx, p, cx);
         }
 
+        let thumbnails = fs_model::thumbnail_choices(&pane.entries, fs_model::THUMBNAIL_BUDGET_PIXELS);
         let mut grid = div()
             .id(("pane-grid", pane_idx))
             .flex_1()
@@ -1642,7 +1684,7 @@ impl FilesApp {
             let selected = is_active_pane && pane.selected == Some(idx);
             let entry_open = entry.clone();
             let entry_ctx = entry.clone();
-            let thumb = if entry.is_previewable_image() {
+            let thumb = if thumbnails[idx] {
                 div()
                     .w(px(76.))
                     .h(px(58.))
@@ -2154,7 +2196,7 @@ impl FilesApp {
         };
 
         // Preview stage (top center)
-        let preview_stage = if entry.is_previewable_image() {
+        let preview_stage = if entry.can_preview_image() {
             div()
                 .h(px(200.))
                 .flex_shrink_0()
@@ -2389,6 +2431,8 @@ impl FilesApp {
                 Some(
                     div()
                         .id("view-backdrop")
+                        // Nothing under a backdrop takes a click meant to dismiss it.
+                        .occlude()
                         .absolute()
                         .inset_0()
                         .flex()
@@ -2482,6 +2526,8 @@ impl FilesApp {
                 Some(
                     div()
                         .id("sort-backdrop")
+                        // Nothing under a backdrop takes a click meant to dismiss it.
+                        .occlude()
                         .absolute()
                         .inset_0()
                         .flex()
@@ -2638,17 +2684,19 @@ impl FilesApp {
                                 },
                             )),
                         )
-                        .child(
-                            row("ctx-trash", "Move to Trash", "Del").on_click(cx.listener(move |this, _, _, cx| {
+                        .child(row("ctx-trash", "Move to Trash", "Del").on_click(cx.listener(
+                            move |this, _, _, cx| {
                                 this.overlay = None;
                                 this.trash_entry(e_trash.clone(), cx);
-                            })),
-                        );
+                            },
+                        )));
                 }
 
                 Some(
                     div()
                         .id("ctx-backdrop")
+                        // Nothing under a backdrop takes a click meant to dismiss it.
+                        .occlude()
                         .absolute()
                         .inset_0()
                         .bg(rgba(0x00000055))
@@ -2673,6 +2721,8 @@ impl FilesApp {
                 Some(
                     div()
                         .id("del-backdrop")
+                        // Nothing under a backdrop takes a click meant to dismiss it.
+                        .occlude()
                         .absolute()
                         .inset_0()
                         .bg(rgba(0x00000080))
@@ -2763,7 +2813,7 @@ impl FilesApp {
             }
 
             Overlay::QuickPreview(entry, text_opt) => {
-                let body: AnyElement = if entry.is_previewable_image() {
+                let body: AnyElement = if entry.can_preview_image() {
                     div()
                         .flex_1()
                         .min_h(px(0.))
@@ -2813,6 +2863,8 @@ impl FilesApp {
                 Some(
                     div()
                         .id("preview-backdrop")
+                        // Nothing under a backdrop takes a click meant to dismiss it.
+                        .occlude()
                         .absolute()
                         .inset_0()
                         .bg(rgba(0x00000099))
@@ -2924,6 +2976,8 @@ impl FilesApp {
                 Some(
                     div()
                         .id("help-backdrop")
+                        // Nothing under a backdrop takes a click meant to dismiss it.
+                        .occlude()
                         .absolute()
                         .inset_0()
                         .bg(rgba(0x00000090))
@@ -2983,8 +3037,9 @@ impl FilesApp {
 }
 
 impl Render for FilesApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_appearance_if_changed(cx);
+        self.release_images_off_screen(window, cx);
         let p = self.palette();
         let center_bar = self.render_center_bars(p, cx);
         let footer_notice = self.render_footer_notice(p, cx);
@@ -3093,23 +3148,85 @@ enum CliAction {
     Launch(PathBuf),
 }
 
-fn parse_cli(args: &[String], home: &Path) -> Result<CliAction, String> {
+/// Waits for a child in the background, so it does not linger as a zombie.
+fn reap(mut child: std::process::Child) {
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+}
+
+fn parse_cli(args: &[OsString], home: &Path) -> Result<CliAction, String> {
     match args {
         [] => Ok(CliAction::Launch(home.to_path_buf())),
-        [arg] if arg == "--version" || arg == "-V" => {
+        [arg] if *arg == "--version" || *arg == "-V" => {
             println!("crowbaros-files {} (GPUI 0.2.2; Wayland)", env!("CARGO_PKG_VERSION"));
             Ok(CliAction::ExitOk)
         }
-        [arg] if arg == "--help" || arg == "-h" => {
+        [arg] if *arg == "--help" || *arg == "-h" => {
             println!("Usage: crowbaros-files [--version] [PATH|file://URI]");
             Ok(CliAction::ExitOk)
         }
-        [arg] if !arg.starts_with('-') => {
+        [arg] if !arg.as_bytes().starts_with(b"-") => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| home.to_path_buf());
-            Ok(CliAction::Launch(fs_model::expand_path(arg, home, &cwd)))
+            if let Some(uri) = arg.to_str().filter(|a| a.starts_with("file://")) {
+                return Ok(CliAction::Launch(fs_model::expand_path(uri, home, &cwd)));
+            }
+            // A path is taken as given, byte for byte, spaces and all.
+            Ok(CliAction::Launch(fs_model::normalize_path(&cwd.join(arg))))
         }
         _ => Err("Usage: crowbaros-files [--version] [PATH]".into()),
     }
+}
+
+/// Files' own keys. Every context the root can be in binds Escape, so the keyboard always has a
+/// way out.
+fn key_bindings() -> Vec<KeyBinding> {
+    vec![
+        KeyBinding::new("enter", PromptSubmit, Some("FilesPrompt")),
+        KeyBinding::new("escape", PromptCancel, Some("FilesPrompt")),
+        KeyBinding::new("up", MoveUp, Some("FilesBrowser")),
+        KeyBinding::new("down", MoveDown, Some("FilesBrowser")),
+        KeyBinding::new("left", MoveLeft, Some("FilesBrowser")),
+        KeyBinding::new("right", MoveRight, Some("FilesBrowser")),
+        KeyBinding::new("home", SelectFirst, Some("FilesBrowser")),
+        KeyBinding::new("end", SelectLast, Some("FilesBrowser")),
+        KeyBinding::new("enter", OpenSelected, Some("FilesBrowser")),
+        KeyBinding::new("space", QuickPreview, Some("FilesBrowser")),
+        KeyBinding::new("backspace", GoUp, Some("FilesBrowser")),
+        KeyBinding::new("alt-left", GoBack, Some("FilesBrowser")),
+        KeyBinding::new("alt-right", GoForward, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-1", ViewColumns, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-2", ViewList, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-3", ViewGrid, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-l", FocusPath, Some("FilesBrowser")),
+        KeyBinding::new("/", FocusSearch, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-c", CopyItem, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-x", CutItem, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-v", PasteItem, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-d", DuplicateItem, Some("FilesBrowser")),
+        KeyBinding::new("f2", RenameItem, Some("FilesBrowser")),
+        KeyBinding::new("delete", TrashItem, Some("FilesBrowser")),
+        KeyBinding::new("shift-delete", DeletePermanent, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-shift-n", NewFolder, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-p", TogglePin, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-h", ToggleHidden, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-i", ToggleInspector, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-alt-n", ToggleSplit, Some("FilesBrowser")),
+        KeyBinding::new("tab", SwitchPane, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-shift-t", OpenTerminal, Some("FilesBrowser")),
+        KeyBinding::new("alt-enter", OpenContextMenu, Some("FilesBrowser")),
+        KeyBinding::new("?", ToggleHelp, Some("FilesBrowser")),
+        KeyBinding::new("f5", Refresh, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-r", Refresh, Some("FilesBrowser")),
+        KeyBinding::new("escape", CancelOverlay, Some("FilesBrowser")),
+        KeyBinding::new("ctrl-q", Quit, Some("FilesBrowser")),
+        KeyBinding::new("escape", CancelOverlay, Some("FilesOverlay")),
+        KeyBinding::new("escape", CancelOverlay, Some("FilesPrompting")),
+        KeyBinding::new("ctrl-q", Quit, Some("FilesPrompting")),
+        KeyBinding::new("space", QuickPreview, Some("FilesOverlay")),
+        KeyBinding::new("?", ToggleHelp, Some("FilesOverlay")),
+        KeyBinding::new("ctrl-q", Quit, Some("FilesOverlay")),
+    ]
 }
 
 /// Browser keys apply only while nothing else has the keyboard: while a prompt is open they would
@@ -3127,7 +3244,7 @@ fn root_key_context(prompt_open: bool, overlay_open: bool) -> &'static str {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let home = fs_model::home_dir();
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let initial_dir = match parse_cli(&args, &home) {
         Ok(CliAction::ExitOk) => return,
         Ok(CliAction::Launch(path)) => path,
@@ -3148,50 +3265,7 @@ fn main() {
             .expect("bundled fonts must load");
 
         input::bind_keys(cx);
-        cx.bind_keys([
-            KeyBinding::new("enter", PromptSubmit, Some("FilesPrompt")),
-            KeyBinding::new("escape", PromptCancel, Some("FilesPrompt")),
-            KeyBinding::new("up", MoveUp, Some("FilesBrowser")),
-            KeyBinding::new("down", MoveDown, Some("FilesBrowser")),
-            KeyBinding::new("left", MoveLeft, Some("FilesBrowser")),
-            KeyBinding::new("right", MoveRight, Some("FilesBrowser")),
-            KeyBinding::new("home", SelectFirst, Some("FilesBrowser")),
-            KeyBinding::new("end", SelectLast, Some("FilesBrowser")),
-            KeyBinding::new("enter", OpenSelected, Some("FilesBrowser")),
-            KeyBinding::new("space", QuickPreview, Some("FilesBrowser")),
-            KeyBinding::new("backspace", GoUp, Some("FilesBrowser")),
-            KeyBinding::new("alt-left", GoBack, Some("FilesBrowser")),
-            KeyBinding::new("alt-right", GoForward, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-1", ViewColumns, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-2", ViewList, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-3", ViewGrid, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-l", FocusPath, Some("FilesBrowser")),
-            KeyBinding::new("/", FocusSearch, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-c", CopyItem, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-x", CutItem, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-v", PasteItem, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-d", DuplicateItem, Some("FilesBrowser")),
-            KeyBinding::new("f2", RenameItem, Some("FilesBrowser")),
-            KeyBinding::new("delete", TrashItem, Some("FilesBrowser")),
-            KeyBinding::new("shift-delete", DeletePermanent, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-shift-n", NewFolder, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-p", TogglePin, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-h", ToggleHidden, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-i", ToggleInspector, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-alt-n", ToggleSplit, Some("FilesBrowser")),
-            KeyBinding::new("tab", SwitchPane, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-shift-t", OpenTerminal, Some("FilesBrowser")),
-            KeyBinding::new("alt-enter", OpenContextMenu, Some("FilesBrowser")),
-            KeyBinding::new("?", ToggleHelp, Some("FilesBrowser")),
-            KeyBinding::new("f5", Refresh, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-r", Refresh, Some("FilesBrowser")),
-            KeyBinding::new("escape", CancelOverlay, Some("FilesBrowser")),
-            KeyBinding::new("ctrl-q", Quit, Some("FilesBrowser")),
-            KeyBinding::new("escape", CancelOverlay, Some("FilesOverlay")),
-            KeyBinding::new("space", QuickPreview, Some("FilesOverlay")),
-            KeyBinding::new("?", ToggleHelp, Some("FilesOverlay")),
-            KeyBinding::new("ctrl-q", Quit, Some("FilesOverlay")),
-        ]);
+        cx.bind_keys(key_bindings());
 
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
@@ -3223,6 +3297,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_root_context_has_a_way_out() {
+        let bindings = key_bindings();
+        for (prompt, overlay) in [(false, false), (true, false), (false, true)] {
+            let context = root_key_context(prompt, overlay);
+            assert!(
+                bindings.iter().any(|b| {
+                    b.predicate().is_some_and(|p| p.to_string() == context)
+                        && b.keystrokes().iter().map(|k| k.unparse()).collect::<Vec<_>>() == ["escape"]
+                }),
+                "{context} has no Escape"
+            );
+        }
+    }
+
+    #[test]
     fn browser_keys_stand_down_while_a_prompt_or_overlay_is_open() {
         assert_eq!(root_key_context(false, false), "FilesBrowser");
         assert_eq!(root_key_context(true, false), "FilesPrompting");
@@ -3246,5 +3335,12 @@ mod tests {
             CliAction::Launch(p) if p == Path::new("/tmp/demo")
         ));
         assert!(parse_cli(&["--bogus".into()], home).is_err());
+
+        use std::os::unix::ffi::OsStringExt;
+        let odd = OsString::from_vec(b"/tmp/caf\xe9 ".to_vec());
+        assert!(matches!(
+            parse_cli(&[odd], home).unwrap(),
+            CliAction::Launch(p) if p.as_os_str().as_bytes() == b"/tmp/caf\xe9 "
+        ));
     }
 }

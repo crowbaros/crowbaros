@@ -75,7 +75,7 @@ recovery screen.
 - `docs/architecture/capability-model.md`: declarative UI, point and say, the
   powerbox, and what a "yes" requires.
 - `docs/branding/crowbaros-brand-kit/`: approved assets, tokens and visual studies.
-- `apps/shell/`, `apps/studio-settings/`: the implemented native surfaces.
+- `apps/shell/`, `apps/files/`, `apps/studio-settings/`: the implemented native surfaces.
 - `apps/gpui-probe/`: pinned GPUI 0.2.2 API and validated rendering/input baseline.
 - `docs/development/`: lab workflow, validation records, and Intel hardware Vulkan evidence.
 - `docs/archive/fedora-blueprint/`: the superseded Fedora plan. Not current.

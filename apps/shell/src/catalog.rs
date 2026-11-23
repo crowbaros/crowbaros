@@ -22,7 +22,7 @@ impl AppEntry {
     pub fn icon(&self) -> &'static str {
         if self.id.contains("StudioSettings") {
             "settings"
-        } else if self.id.contains("Files") {
+        } else if self.id == "com.crowbaros.Files.desktop" {
             "files"
         } else if self.id.contains("chromium") || self.id.contains("browser") {
             "browser"
@@ -289,7 +289,7 @@ mod tests {
         let entry = parse(
             "com.crowbaros.Files.desktop".into(),
             "/usr/share/applications/com.crowbaros.Files.desktop".into(),
-            "[Desktop Entry]\nType=Application\nName=Files\nExec=crowbaros-files %U\nStartupWMClass=com.crowbaros.Files\n",
+            "[Desktop Entry]\nType=Application\nName=Files\nExec=crowbaros-files %u\nStartupWMClass=com.crowbaros.Files\n",
             "en_US",
         )
         .unwrap();

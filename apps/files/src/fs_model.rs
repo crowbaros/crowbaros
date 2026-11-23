@@ -83,6 +83,32 @@ pub struct Entry {
     pub category: FileCategory,
     pub kind_label: String,
     pub trash_original: Option<PathBuf>,
+    /// An image's width times height, read from its header. Decoding it takes four bytes a pixel.
+    pub pixels: Option<u64>,
+}
+
+/// The most pixels one image may have for Files to decode it for a preview: 40 MP, 160 MB decoded.
+pub const PREVIEW_MAX_PIXELS: u64 = 40_000_000;
+/// The most pixels a pane's Grid thumbnails may hold decoded together: 64 MP, 256 MB.
+pub const THUMBNAIL_BUDGET_PIXELS: u64 = 64_000_000;
+
+/// Which entries get a Grid thumbnail: still images, in order, while their decoded pixels fit the
+/// budget. A GIF decodes every frame, so it never gets one.
+pub fn thumbnail_choices(entries: &[Entry], budget: u64) -> Vec<bool> {
+    let mut left = budget;
+    entries
+        .iter()
+        .map(|entry| {
+            let still = entry.is_previewable_image() && extension_lower(&entry.path).as_deref() != Some("gif");
+            match entry.pixels {
+                Some(pixels) if still && pixels <= left => {
+                    left -= pixels;
+                    true
+                }
+                _ => false,
+            }
+        })
+        .collect()
 }
 
 impl Entry {
@@ -110,6 +136,12 @@ impl Entry {
             extension_lower(&self.path).as_deref(),
             Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp")
         )
+    }
+
+    /// Whether the inspector or quick preview may decode this image: one whose size is known and
+    /// not too large.
+    pub fn can_preview_image(&self) -> bool {
+        self.is_previewable_image() && self.pixels.is_some_and(|pixels| pixels <= PREVIEW_MAX_PIXELS)
     }
 
     pub fn is_previewable_text(&self) -> bool {
@@ -455,21 +487,36 @@ fn build_entry(path: PathBuf, show_hidden_for_count: bool) -> Option<Entry> {
     } else {
         classify(&path, is_dir)
     };
-    Some(Entry {
-        name,
-        path,
-        is_dir,
-        is_symlink,
-        symlink_target,
-        size: target_meta.len(),
-        child_count,
-        modified: target_meta.modified().ok(),
-        mode: target_meta.permissions().mode(),
-        hidden,
-        category,
-        kind_label,
-        trash_original: None,
-    })
+    Some(
+        Entry {
+            name,
+            path,
+            is_dir,
+            is_symlink,
+            symlink_target,
+            size: target_meta.len(),
+            child_count,
+            modified: target_meta.modified().ok(),
+            mode: target_meta.permissions().mode(),
+            hidden,
+            category,
+            kind_label,
+            trash_original: None,
+            pixels: None,
+        }
+        .with_pixels(),
+    )
+}
+
+impl Entry {
+    fn with_pixels(mut self) -> Self {
+        if self.is_previewable_image() {
+            self.pixels = image::image_dimensions(&self.path)
+                .ok()
+                .map(|(w, h)| u64::from(w) * u64::from(h));
+        }
+        self
+    }
 }
 
 pub fn sort_entries(entries: &mut [Entry], field: SortField, order: SortOrder) {
@@ -785,23 +832,36 @@ fn rename_noreplace(src: &Path, dst: &Path) -> io::Result<()> {
         return Ok(());
     }
     let err = io::Error::last_os_error();
-    // A filesystem without RENAME_NOREPLACE answers EINVAL. Fall back to a checked rename there.
+    // A filesystem without RENAME_NOREPLACE, such as NFS, answers EINVAL.
     if err.raw_os_error() == Some(libc::EINVAL) {
+        return rename_noreplace_fallback(src, dst);
+    }
+    Err(err)
+}
+
+/// For a filesystem without RENAME_NOREPLACE. A file or link is linked to its new name, which
+/// fails if the name is taken, then unlinked from the old one. A folder is renamed: rename(2) puts
+/// a folder only over an empty folder, never over a file, a link, or a folder with contents.
+fn rename_noreplace_fallback(src: &Path, dst: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(src)?.is_dir() {
         if fs::symlink_metadata(dst).is_ok() {
             return Err(io::Error::from(io::ErrorKind::AlreadyExists));
         }
         return fs::rename(src, dst);
     }
-    Err(err)
+    fs::hard_link(src, dst)?;
+    fs::remove_file(src)
 }
 
 /// The name to try on attempt `idx`: `name`, then `stem (copy).ext`, `stem (copy 2).ext`, …
-fn candidate_name(name: &OsStr, idx: usize) -> OsString {
+/// A folder's name is never split at a dot.
+fn candidate_name(name: &OsStr, idx: usize, is_folder: bool) -> OsString {
     if idx == 0 {
         return name.to_os_string();
     }
     let bytes = name.as_bytes();
     let split = match bytes.iter().rposition(|b| *b == b'.') {
+        _ if is_folder => bytes.len(),
         Some(0) | None => bytes.len(),
         Some(dot) => dot,
     };
@@ -817,11 +877,16 @@ fn candidate_name(name: &OsStr, idx: usize) -> OsString {
 }
 
 /// Calls `place` with each free-looking name in `dir` until it succeeds. `place` must create its
-/// target atomically and fail with `AlreadyExists` when the name is taken, so nothing is ever
+/// target atomically and fail with `AlreadyExists` only when that name is taken, so nothing is ever
 /// overwritten.
-fn place_new(dir: &Path, name: &OsStr, mut place: impl FnMut(&Path) -> io::Result<()>) -> io::Result<PathBuf> {
+fn place_new(
+    dir: &Path,
+    name: &OsStr,
+    is_folder: bool,
+    mut place: impl FnMut(&Path) -> io::Result<()>,
+) -> io::Result<PathBuf> {
     for idx in 0..10_000 {
-        let target = dir.join(candidate_name(name, idx));
+        let target = dir.join(candidate_name(name, idx, is_folder));
         match place(&target) {
             Ok(()) => return Ok(target),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
@@ -829,6 +894,11 @@ fn place_new(dir: &Path, name: &OsStr, mut place: impl FnMut(&Path) -> io::Resul
         }
     }
     Err(io::Error::other("every free name is taken"))
+}
+
+/// A folder itself, not a link to one.
+fn is_real_folder(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
 }
 
 pub fn create_folder(dir: &Path, name: &str) -> Result<PathBuf, String> {
@@ -857,71 +927,134 @@ pub fn rename_entry(src: &Path, new_name: &str) -> Result<PathBuf, String> {
     }
 }
 
-/// Copies `src` to `dst`, which must not exist. On failure it removes what it made, and only that.
+/// Copies `src` to `dst`, which must not exist. On failure it removes what it made, and only that:
+/// nothing another program put in a new folder meanwhile.
+///
+/// It fails with `AlreadyExists` only when `dst` itself is taken. A clash further in, as on a drive
+/// that ignores case, is a failure of this copy, not a reason to try another name.
 fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
-    let mut created = false;
-    let result = copy_node(src, dst, &mut created);
-    if result.is_err() && created {
-        let _ = remove_partial_copy(dst);
-    }
-    result
+    let mut made = Vec::new();
+    let Err(err) = copy_node(src, dst, &mut made) else {
+        return Ok(());
+    };
+    remove_made(&made);
+    Err(copy_failure(err, !made.is_empty()))
 }
 
-fn copy_node(src: &Path, dst: &Path, created: &mut bool) -> io::Result<()> {
+/// What a failed copy reports. `AlreadyExists` survives only if the copy made nothing, which means
+/// its own target was taken and `place_new` should try another name.
+fn copy_failure(err: io::Error, made_anything: bool) -> io::Error {
+    if err.kind() == io::ErrorKind::AlreadyExists && made_anything {
+        io::Error::other(format!("two names inside clash on the destination: {err}"))
+    } else {
+        err
+    }
+}
+
+fn copy_node(src: &Path, dst: &Path, made: &mut Vec<PathBuf>) -> io::Result<()> {
     let meta = fs::symlink_metadata(src)?;
     let kind = meta.file_type();
     if kind.is_symlink() {
         std::os::unix::fs::symlink(fs::read_link(src)?, dst)?;
-        *created = true;
+        made.push(dst.to_path_buf());
         return Ok(());
     }
     if kind.is_dir() {
         fs::DirBuilder::new().mode(0o700).create(dst)?;
-        *created = true;
+        made.push(dst.to_path_buf());
         for item in fs::read_dir(src)? {
             let item = item?;
-            copy_node(&item.path(), &dst.join(item.file_name()), &mut true)?;
+            copy_node(&item.path(), &dst.join(item.file_name()), made)?;
+        }
+        if let Ok(modified) = meta.modified() {
+            let _ = fs::File::open(dst).and_then(|d| d.set_modified(modified));
         }
         // Last, so a read-only folder can still be filled.
         return fs::set_permissions(dst, meta.permissions());
     }
-    if !kind.is_file() {
+    // Opened without blocking and checked once open, so a pipe swapped in for a file never blocks.
+    let mut input = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(src)?;
+    let before = input.metadata()?;
+    if !before.is_file() {
         return Err(io::Error::other(format!(
             "{} is a pipe, socket, or device, which Files does not copy",
             src.display()
         )));
     }
-    let mut input = fs::File::open(src)?;
     let mut output = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(dst)?;
-    *created = true;
+    made.push(dst.to_path_buf());
     io::copy(&mut input, &mut output)?;
-    output.set_permissions(meta.permissions())
+    if changed_since(&before, &input.metadata()?) {
+        return Err(io::Error::other(format!(
+            "{} changed while it was being copied",
+            src.display()
+        )));
+    }
+    output.set_modified(before.modified()?)?;
+    output.set_permissions(before.permissions())
 }
 
-/// Removes a copy this module made and could not finish, read-only folders included.
-fn remove_partial_copy(path: &Path) -> io::Result<()> {
-    let meta = fs::symlink_metadata(path)?;
-    if meta.is_dir() {
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-        for item in fs::read_dir(path)? {
-            remove_partial_copy(&item?.path())?;
+/// Whether a file was written to between two looks at it.
+fn changed_since(before: &Metadata, after: &Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    (
+        before.size(),
+        before.mtime(),
+        before.mtime_nsec(),
+        before.ctime(),
+        before.ctime_nsec(),
+    ) != (
+        after.size(),
+        after.mtime(),
+        after.mtime_nsec(),
+        after.ctime(),
+        after.ctime_nsec(),
+    )
+}
+
+/// Removes what a failed copy made, newest first, read-only folders included. A folder that now
+/// holds something the copy did not make stays.
+fn remove_made(made: &[PathBuf]) {
+    for path in made {
+        if fs::symlink_metadata(path).is_ok_and(|m| m.is_dir()) {
+            let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
         }
-        fs::remove_dir(path)
-    } else {
-        fs::remove_file(path)
+    }
+    for path in made.iter().rev() {
+        let _ = match fs::symlink_metadata(path) {
+            Ok(m) if m.is_dir() => fs::remove_dir(path),
+            Ok(_) => fs::remove_file(path),
+            Err(_) => Ok(()),
+        };
     }
 }
 
-fn remove_tree(target: &Path) -> io::Result<()> {
-    let meta = fs::symlink_metadata(target)?;
-    if meta.is_dir() {
-        fs::remove_dir_all(target)
+/// The device and inode of what is at `path`, without following a link.
+fn identity(path: &Path) -> io::Result<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::symlink_metadata(path)?;
+    Ok((meta.dev(), meta.ino()))
+}
+
+/// Removes the original after a copy between filesystems, unless something else now stands at its
+/// path, which then stays.
+fn remove_original(src: &Path, was: (u64, u64)) -> io::Result<()> {
+    if identity(src)? != was {
+        return Err(io::Error::other(
+            "it was replaced while it was being copied, so it was kept",
+        ));
+    }
+    if is_real_folder(src) {
+        fs::remove_dir_all(src)
     } else {
-        fs::remove_file(target)
+        fs::remove_file(src)
     }
 }
 
@@ -944,30 +1077,37 @@ fn is_ancestor(src: &Path, dst_dir: &Path) -> bool {
     dst_canon == src_canon || dst_canon.starts_with(&src_canon)
 }
 
+fn same_folder(a: &Path, b: &Path) -> bool {
+    a == b || matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+}
+
 pub fn copy_entry(src: &Path, dst_dir: &Path) -> Result<PathBuf, String> {
-    if src.is_dir() && is_ancestor(src, dst_dir) {
+    let is_folder = is_real_folder(src);
+    if is_folder && is_ancestor(src, dst_dir) {
         return Err("Cannot copy a folder into itself.".into());
     }
     let name = file_name_of(src)?;
-    place_new(dst_dir, name, |dst| copy_tree(src, dst))
+    place_new(dst_dir, name, is_folder, |dst| copy_tree(src, dst))
         .map_err(|e| format!("Could not copy “{}”: {e}", name.to_string_lossy()))
 }
 
 pub fn move_entry(src: &Path, dst_dir: &Path) -> Result<PathBuf, String> {
-    if src.is_dir() && is_ancestor(src, dst_dir) {
+    let is_folder = is_real_folder(src);
+    if is_folder && is_ancestor(src, dst_dir) {
         return Err("Cannot move a folder into itself.".into());
     }
     let name = file_name_of(src)?;
-    if src.parent() == Some(dst_dir) {
+    if src.parent().is_some_and(|parent| same_folder(parent, dst_dir)) {
         return Ok(src.to_path_buf());
     }
+    let was = identity(src).map_err(|e| format!("Cannot read {}: {e}", src.display()))?;
     let mut copied = false;
-    let dst = place_new(dst_dir, name, |dst| move_noreplace(src, dst, &mut copied))
+    let dst = place_new(dst_dir, name, is_folder, |dst| move_noreplace(src, dst, &mut copied))
         .map_err(|e| format!("Could not move “{}”: {e}", name.to_string_lossy()))?;
     if copied {
-        remove_tree(src).map_err(|e| {
+        remove_original(src, was).map_err(|e| {
             format!(
-                "Copied “{}” to {}, but could not remove the original: {e}",
+                "Copied “{}” to {}, but did not remove the original: {e}",
                 name.to_string_lossy(),
                 dst.display()
             )
@@ -986,11 +1126,13 @@ pub fn move_to_trash_in(src: &Path, trash: &Path) -> Result<PathBuf, String> {
     let info_dir = trash.join("info");
     fs::create_dir_all(&files_dir).map_err(|e| format!("Cannot create Trash/files: {e}"))?;
     fs::create_dir_all(&info_dir).map_err(|e| format!("Cannot create Trash/info: {e}"))?;
-    if is_ancestor(src, trash) {
+    let is_folder = is_real_folder(src);
+    if is_folder && is_ancestor(src, trash) {
         return Err("This folder holds the Trash, so it cannot go in the Trash.".into());
     }
 
     let name = file_name_of(src)?;
+    let was = identity(src).map_err(|e| format!("Cannot read {}: {e}", src.display()))?;
     let original = std::path::absolute(src).map_err(|e| format!("Cannot resolve {}: {e}", src.display()))?;
     let now: DateTime<Local> = SystemTime::now().into();
     let info_body = format!(
@@ -1000,7 +1142,7 @@ pub fn move_to_trash_in(src: &Path, trash: &Path) -> Result<PathBuf, String> {
     );
 
     let mut copied = false;
-    let dst = place_new(&files_dir, name, |dst| {
+    let dst = place_new(&files_dir, name, is_folder, |dst| {
         // Reserve the name with its .trashinfo first, atomically, as the Trash specification asks.
         let info_path = info_dir.join(trashinfo_name(file_name_of(dst).map_err(io::Error::other)?));
         let mut info = fs::OpenOptions::new()
@@ -1020,9 +1162,9 @@ pub fn move_to_trash_in(src: &Path, trash: &Path) -> Result<PathBuf, String> {
 
     if copied {
         // The Trash holds a full copy. Keep it, whatever happens to the original.
-        remove_tree(src).map_err(|e| {
+        remove_original(src, was).map_err(|e| {
             format!(
-                "A copy of “{}” is in the Trash, but the original could not be fully removed: {e}",
+                "A copy of “{}” is in the Trash, but the original was not fully removed: {e}",
                 name.to_string_lossy()
             )
         })?;
@@ -1044,13 +1186,16 @@ pub fn restore_from_trash_in(trash_file: &Path, trash: &Path) -> Result<PathBuf,
         .ok_or_else(|| "Invalid original directory.".to_string())?;
     fs::create_dir_all(parent).map_err(|e| format!("Cannot recreate parent folder: {e}"))?;
     let orig_name = original.file_name().unwrap_or(name);
+    let was = identity(trash_file).map_err(|e| format!("Cannot read {}: {e}", trash_file.display()))?;
     let mut copied = false;
-    let dst = place_new(parent, orig_name, |dst| move_noreplace(trash_file, dst, &mut copied))
-        .map_err(|e| format!("Could not restore “{}”: {e}", orig_name.to_string_lossy()))?;
+    let dst = place_new(parent, orig_name, is_real_folder(trash_file), |dst| {
+        move_noreplace(trash_file, dst, &mut copied)
+    })
+    .map_err(|e| format!("Could not restore “{}”: {e}", orig_name.to_string_lossy()))?;
     if copied {
-        remove_tree(trash_file).map_err(|e| {
+        remove_original(trash_file, was).map_err(|e| {
             format!(
-                "Restored a copy to {}, but could not remove it from the Trash: {e}",
+                "Restored a copy to {}, but did not remove it from the Trash: {e}",
                 dst.display()
             )
         })?;
@@ -1367,7 +1512,11 @@ mod tests {
         fs::create_dir_all(trash.join("files")).unwrap();
         fs::create_dir_all(trash.join("info")).unwrap();
         fs::write(trash.join("files/photo.png"), "png").unwrap();
-        fs::write(trash.join("info/photo.png.trashinfo"), "[Trash Info]\nPath=Pictures/photo.png\n").unwrap();
+        fs::write(
+            trash.join("info/photo.png.trashinfo"),
+            "[Trash Info]\nPath=Pictures/photo.png\n",
+        )
+        .unwrap();
 
         let restored = restore_from_trash_in(&trash.join("files/photo.png"), &trash).unwrap();
         assert_eq!(restored, root.join("Pictures/photo.png"));
@@ -1392,7 +1541,10 @@ mod tests {
     fn file_uris_with_a_host_keep_their_path() {
         let home = Path::new("/home/alex");
         assert_eq!(expand_path("file://laptop/tmp/x", home, home), PathBuf::from("/tmp/x"));
-        assert_eq!(expand_path("file://localhost/tmp/x", home, home), PathBuf::from("/tmp/x"));
+        assert_eq!(
+            expand_path("file://localhost/tmp/x", home, home),
+            PathBuf::from("/tmp/x")
+        );
     }
 
     #[test]
@@ -1425,9 +1577,18 @@ mod tests {
         fs::create_dir(&src).unwrap();
         fs::write(src.join("song.flac"), "la").unwrap();
 
+        let then = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        fs::File::options()
+            .write(true)
+            .open(src.join("song.flac"))
+            .unwrap()
+            .set_modified(then)
+            .unwrap();
+
         let moved = move_entry(&src, &other).unwrap();
         assert!(!src.exists());
         assert_eq!(fs::read_to_string(moved.join("song.flac")).unwrap(), "la");
+        assert_eq!(fs::metadata(moved.join("song.flac")).unwrap().modified().unwrap(), then);
 
         let trash = root.join("Trash");
         let trashed = move_to_trash_in(&moved, &trash).unwrap();
@@ -1437,6 +1598,185 @@ mod tests {
         assert_eq!(fs::read_to_string(restored.join("song.flac")).unwrap(), "la");
 
         let _ = fs::remove_dir_all(&other);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_clash_inside_a_copy_is_a_failure_not_a_taken_name() {
+        let clash = || io::Error::from(io::ErrorKind::AlreadyExists);
+        assert_eq!(copy_failure(clash(), false).kind(), io::ErrorKind::AlreadyExists);
+        assert_ne!(copy_failure(clash(), true).kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn a_failed_copy_spares_what_another_program_put_in_its_folder() {
+        let root = temp_dir("spare-foreign");
+        let dst = root.join("copy");
+        fs::create_dir(&dst).unwrap();
+        fs::write(dst.join("a.txt"), "made").unwrap();
+        fs::write(dst.join("theirs.txt"), "not ours").unwrap();
+
+        remove_made(&[dst.clone(), dst.join("a.txt")]);
+        assert!(!dst.join("a.txt").exists());
+        assert_eq!(fs::read_to_string(dst.join("theirs.txt")).unwrap(), "not ours");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_write_between_two_looks_counts_as_a_change() {
+        let root = temp_dir("changed");
+        let file = root.join("doc.txt");
+        fs::write(&file, "one").unwrap();
+        let before = fs::metadata(&file).unwrap();
+        assert!(!changed_since(&before, &fs::metadata(&file).unwrap()));
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .unwrap()
+            .write_all(b"two")
+            .unwrap();
+        assert!(changed_since(&before, &fs::metadata(&file).unwrap()));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_original_replaced_during_a_copy_is_kept() {
+        let root = temp_dir("replaced");
+        let src = root.join("doc.txt");
+        fs::write(&src, "old").unwrap();
+        let was = identity(&src).unwrap();
+        // Saved the usual way: a new file renamed over the old one.
+        fs::write(root.join("doc.txt.new"), "new").unwrap();
+        fs::rename(root.join("doc.txt.new"), &src).unwrap();
+
+        assert!(remove_original(&src, was).is_err());
+        assert_eq!(fs::read_to_string(&src).unwrap(), "new");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_fallback_rename_never_replaces_either() {
+        let root = temp_dir("fallback");
+        fs::write(root.join("a"), "a").unwrap();
+        fs::write(root.join("b"), "b").unwrap();
+        fs::create_dir(root.join("dir")).unwrap();
+
+        let err = rename_noreplace_fallback(&root.join("a"), &root.join("b")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(root.join("a")).unwrap(), "a");
+        assert_eq!(fs::read_to_string(root.join("b")).unwrap(), "b");
+        assert!(rename_noreplace_fallback(&root.join("dir"), &root.join("b")).is_err());
+        assert_eq!(fs::read_to_string(root.join("b")).unwrap(), "b");
+
+        rename_noreplace_fallback(&root.join("a"), &root.join("c")).unwrap();
+        assert!(!root.join("a").exists());
+        assert_eq!(fs::read_to_string(root.join("c")).unwrap(), "a");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn links_are_judged_as_links_not_as_their_folders() {
+        let root = temp_dir("links");
+        let home = root.join("home");
+        let trash = home.join(".local/share/Trash");
+        fs::create_dir_all(&trash).unwrap();
+        fs::create_dir(home.join("docs")).unwrap();
+        fs::write(home.join("docs/x.txt"), "x").unwrap();
+        std::os::unix::fs::symlink(&home, root.join("shortcut")).unwrap();
+        std::os::unix::fs::symlink(home.join("docs"), home.join("link")).unwrap();
+
+        // A link to the folder holding the Trash can go in the Trash; the folder stays.
+        move_to_trash_in(&root.join("shortcut"), &trash).unwrap();
+        assert!(home.join("docs/x.txt").exists());
+
+        // Pasting a cut item into the folder it is already in, by another path, leaves it alone.
+        let same = move_entry(&home.join("link/x.txt"), &home.join("docs")).unwrap();
+        assert_eq!(same, home.join("link/x.txt"));
+        assert!(home.join("docs/x.txt").exists());
+        assert!(!home.join("docs/x (copy).txt").exists());
+
+        // A link to a folder copies into that folder as a link.
+        let copied = copy_entry(&home.join("link"), &home.join("docs")).unwrap();
+        assert!(fs::symlink_metadata(&copied).unwrap().file_type().is_symlink());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_folder_with_a_dot_duplicates_whole_and_files_keep_their_times() {
+        let root = temp_dir("dup");
+        fs::create_dir(root.join("v1.0")).unwrap();
+        let dup = duplicate_entry(&root.join("v1.0")).unwrap();
+        assert_eq!(dup.file_name().unwrap(), "v1.0 (copy)");
+
+        let file = root.join("old.txt");
+        fs::write(&file, "x").unwrap();
+        let then = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(then)
+            .unwrap();
+        let copy = duplicate_entry(&file).unwrap();
+        assert_eq!(fs::metadata(&copy).unwrap().modified().unwrap(), then);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn image_entry(name: &str, pixels: Option<u64>) -> Entry {
+        let path = PathBuf::from(format!("/pics/{name}"));
+        let (category, kind_label) = classify(&path, false);
+        Entry {
+            name: name.into(),
+            path,
+            is_dir: false,
+            is_symlink: false,
+            symlink_target: None,
+            size: 0,
+            child_count: None,
+            modified: None,
+            mode: 0o644,
+            hidden: false,
+            category,
+            kind_label,
+            trash_original: None,
+            pixels,
+        }
+    }
+
+    #[test]
+    fn grid_thumbnails_stay_within_their_budget_and_skip_gifs() {
+        let mp = 1_000_000;
+        let entries = vec![
+            image_entry("a.jpg", Some(30 * mp)),
+            image_entry("b.gif", Some(mp)),
+            image_entry("c.png", Some(30 * mp)),
+            image_entry("d.jpg", Some(30 * mp)),
+            image_entry("e.png", Some(4 * mp)),
+            image_entry("f.png", None),
+            image_entry("notes.txt", None),
+        ];
+        assert_eq!(
+            thumbnail_choices(&entries, THUMBNAIL_BUDGET_PIXELS),
+            vec![true, false, true, false, true, false, false]
+        );
+        assert!(image_entry("big.jpg", Some(PREVIEW_MAX_PIXELS)).can_preview_image());
+        assert!(!image_entry("huge.jpg", Some(PREVIEW_MAX_PIXELS + 1)).can_preview_image());
+        assert!(!image_entry("unknown.jpg", None).can_preview_image());
+    }
+
+    #[test]
+    fn an_image_size_comes_from_its_header() {
+        let root = temp_dir("pixels");
+        image::RgbaImage::new(3, 2).save(root.join("tiny.png")).unwrap();
+        let entries = read_directory(&root, false, SortField::Name, SortOrder::Asc).unwrap();
+        assert_eq!(entries[0].pixels, Some(6));
+
         let _ = fs::remove_dir_all(&root);
     }
 
