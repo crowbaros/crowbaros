@@ -9,7 +9,7 @@ Fulcrum is the CrowbarOS Wayland compositor, written from the ground up in Rust.
 [The vision](../../docs/VISION.md) is a small desktop with an Agent at the person's side. Its Milestone 2, a desktop, is the compositor running the shell and Studio Settings on Base, in the VM and on real hardware. Fulcrum is the part of that desktop that owns the pixels and the input. The vision needs three things of it, as [ADR 0032](../../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md) says:
 
 - **No app can pass for the shell.** Only the shell draws the bar, the dock, the launcher, the wallpaper, and the lock screen, and only the shell arranges the desktop through the control channel.
-- **The compositor owns the summon gesture.** Every chord with Super is the compositor's, and no client hears it. Which key summons the Agent is the vision's Milestone 3 to decide.
+- **The compositor owns the summon gesture.** Every chord with Super is the compositor's, and no client hears it. The gesture is Super+Space ([ADR 0035](../../docs/adr/0035-fulcrum-draws-every-ask-and-holds-what-the-agent-may-take.md)): Fulcrum tells the shell, which shows the Agent's surface, puts it away, or moves the keyboard.
 - **A yes comes from the person's own hand.** The confirm chord, Ctrl+Alt+Enter, is the compositor's and reaches no client. What it confirms is Milestone 3's to decide; until then it does nothing.
 
 Everything else is what a person expects of a desktop: windows that open where they look and take the keyboard, nine workspaces, copy and paste and drag and drop between their apps, displays that keep their layout, a lock that holds across a restart and a suspend, and the GPU drawing, on NVIDIA's driver and on Mesa.

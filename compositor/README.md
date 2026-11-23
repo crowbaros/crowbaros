@@ -75,6 +75,18 @@ terminal, and Void's own `foot` and `wayland-info` run on it. What is built:
   Super tapped alone sends the shell a `launcher` event on its control
   channel. ADR 0032 accepts the launcher event, the `launching` request,
   and the snapshot's `attention`.
+- **The summon gesture and the Agent's surface**
+  ([ADR 0035](../docs/adr/0035-fulcrum-draws-every-ask-and-holds-what-the-agent-may-take.md)):
+  Super+Space sends the shell a `summon` event, and no client hears the
+  Space. Locked, the gesture is dropped. The Agent's surface is the shell's
+  layer surface of namespace `crowbaros-agent`, which the shell shows by
+  making it and puts away by destroying it. Made with no output, it goes on
+  the display the pointer was on at the gesture. An overlay, it is above
+  every window, a fullscreen one included, and reserves no room. The shell
+  holds its state. Fulcrum keeps only what the shell cannot know: the
+  display of the last gesture, and what had the keyboard when the surface
+  took it, so that the shell's `unfocus_agent` can give it back. After an
+  unlock the surface is up as it was, with the keyboard if it held it.
 - **The shell's control channel**: a path socket of its own, checked against
   the shell's user ID, where the shell asks for a snapshot of the windows and
   shows a workspace or a window. Each message is a length and then JSON, the
@@ -234,7 +246,8 @@ The shell's control channel is a path socket of its own, at
 `--shell-control-socket`, which takes the shell's user ID alone (ADR 0032).
 There the shell learns which windows exist and on which workspace, asks
 Fulcrum to show a workspace or a window, locks the desktop, and reads and
-sets the layout of displays. The requests are a fixed set, and none runs a
+sets the layout of displays, and moves the keyboard to the Agent's surface
+and back. The requests are a fixed set, and none runs a
 command or loads code. `src/control.rs` serves it.
 
 ### Framing
@@ -281,6 +294,8 @@ request below is answered `{"reply":"ok"}` unless the table gives its reply.
 | `{"op":"snapshot"}` | Lists every window with its workspace, the workspace that shows, the window with the keyboard, and whether the desktop is locked. Its reply: `{"reply":"snapshot","workspace":1,"active":"0x2","locked":false,"windows":[{"id":"0x2","app_id":"foot","title":"~","workspace":1,"attention":false}]}`. `active` is null when no window on the workspace that shows has the keyboard. `attention` marks a window that opened without the keyboard and has not had it since, for the bar to show |
 | `{"op":"focus_workspace","id":2}` | Shows a workspace, from 1 to 9 |
 | `{"op":"focus_window","id":"0x2"}` | Shows a window's workspace, raises the window, and gives it the keyboard |
+| `{"op":"focus_agent"}` | Gives the Agent's surface the keyboard. The shell asks as it makes the surface, so one not shown yet takes the keyboard when it shows. Refused while the desktop is locked |
+| `{"op":"unfocus_agent"}` | Takes the keyboard from the Agent's surface, or from nothing where the surface has just gone, and gives it to the window that had it when the surface took it, if that window is still on the workspace that shows. A keyboard that is in a window stays there. Refused while the desktop is locked |
 | `{"op":"launching"}` | Says the person just started an app from the shell. It changes nothing, since every new window takes the keyboard |
 | `{"op":"lock"}` | Locks the desktop. It is answered once every display shows it locked, or after a second where one shows nothing, and the connection is sent nothing in between |
 | `{"op":"unlock"}` | Unlocks the desktop. Refused where an unlock authority listens |
@@ -293,9 +308,11 @@ Fulcrum also sends the shell events, at any time, which get no reply:
 | --- | --- |
 | `{"event":"snapshot","workspace":2,"active":null,"locked":false,"windows":[]}` | It carries what the snapshot reply does. A connection is sent it once it has stated the version, and again after each turn of the event loop in which something it carries changed, so the bar shows a workspace or a window as it changes, with no asking |
 | `{"event":"launcher"}` | The person tapped Super alone, for the shell to open or close its launcher |
+| `{"event":"summon","output":"HDMI-A-1","width":2560,"height":1440,"keyboard":false}` | The person pressed Super+Space, the summon gesture. It names the display the pointer is on, with its size on the desktop, in logical units, and says whether the Agent's surface has the keyboard. The shell decides what the gesture does: show the surface, bring the keyboard back to it, or put it away. Not sent while the desktop is locked |
 | `{"event":"locked"}`, `{"event":"unlocked"}` | The desktop locked or unlocked, whoever asked: Super+L and the idle timer lock it too. A connection that asks is sent the event before its reply |
 
-ADR 0032 accepts these messages.
+ADR 0032 accepts these messages, and ADR 0035 the summon gesture's:
+`summon`, `focus_agent`, and `unfocus_agent`.
 
 ### The unlock authority's socket
 
@@ -324,6 +341,7 @@ events. Base's `crowbar-unlock` is its one peer.
 | `src/limits.rs` | What one client may make the compositor hold, and the reserve kept for the shell |
 | `src/xdg.rs`, `src/windows.rs` | xdg-shell, and where windows go and what each output shows |
 | `src/layer.rs` | The shell's layer surfaces and the room they reserve |
+| `src/agent.rs` | The summon gesture, and what Fulcrum keeps for the Agent's surface |
 | `src/cursor.rs` | The pointer's image |
 | `src/cursor_shape.rs` | Cursor shapes a client names |
 | `src/xcursor.rs` | Cursor images read from the system's XCursor theme |
@@ -354,7 +372,7 @@ events. Base's `crowbar-unlock` is its one peer.
 | `sys/` | `fulcrum-sys`: the only crate with `unsafe` code. Every binding to the kernel and to C goes here: `dl.rs` (libraries loaded at run time), `gles.rs` (EGL and GLES: the context, textures, targets, and draws), `gbm.rs`, `dmabuf.rs` (telling a dma-buf from other files, and reading one with the CPU), `syncobj.rs` (DRM timelines), `drm.rs` (mode setting, dumb buffers, and framebuffers, by ioctl), `libinput.rs`, `xkb.rs` (libxkbcommon), and `shm.rs` (copying client pixel rows) |
 | `src/log.rs` | One line per event to standard error, at the level `FULCRUM_LOG` sets |
 | `probe/` | `crowbar-probe`: test clients, and apps that copy, paste, drag, and drop (`probe/src/apps.rs`). Base's image carries it for its desktop check |
-| `tests/` | Tests that run the compositor in-process against real client connections. The files in `suite/` are the modules of one test binary, `suite/main.rs`, and their tests run side by side in one process; a file directly in `tests/` is a binary of its own, for a test that needs the process to itself. `suite/table.rs`, `suite/connections.rs`, `suite/attacks.rs`, and `descriptors.rs` are ported from the baseline; `suite/protocol.rs` covers what the compositor refuses; `suite/surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the limits on each client; `suite/redraw.rs` is the baseline's, ported; `suite/windows.rs` covers xdg-shell; `suite/layers.rs` covers layer shell; `suite/keyboard.rs` covers who gets the keys, and `suite/focus.rs` which new window takes them; `suite/seat.rs` covers the pointer and activation; `suite/cursor.rs` and `suite/cursor_shape.rs` cover the pointer's image; `suite/outputs.rs` covers outputs that change size; `suite/data_device.rs`, `suite/primary_selection.rs`, and `suite/viewporter.rs` cover those protocols; `suite/nested.rs` runs Fulcrum nested in Fulcrum; `suite/workspaces.rs` and `suite/control.rs` cover the workspaces and the shell's control channel, with its framing; `suite/modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `suite/grabs.rs` covers moving and resizing; `suite/gles.rs` draws each scene with both renderers and compares them; `suite/scale.rs` covers outputs at other scales; `suite/layout.rs` covers the layout of displays and the scale a display starts at; `suite/dmabuf.rs` covers linux-dmabuf; `suite/idle_inhibit.rs` covers idle inhibit; `suite/lock.rs` covers the locked session; `suite/gpu_import.rs` covers dma-bufs the GPU draws where they are; `suite/damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `suite/probe_apps.rs` runs the probe's apps as the desktop check does; `shell_outputs.rs` runs the real shell while its only output goes away and comes back, when `CROWBAR_SHELL` names its binary; `suite/linked.rs` reads the built binary for what it links; `suite/dependencies.rs` fails if a crate [the plan](docs/PLAN.md) rules out enters `Cargo.lock` |
+| `tests/` | Tests that run the compositor in-process against real client connections. The files in `suite/` are the modules of one test binary, `suite/main.rs`, and their tests run side by side in one process; a file directly in `tests/` is a binary of its own, for a test that needs the process to itself. `suite/table.rs`, `suite/connections.rs`, `suite/attacks.rs`, and `descriptors.rs` are ported from the baseline; `suite/protocol.rs` covers what the compositor refuses; `suite/surfaces.rs` checks pixels, held commits, and the shared-memory attacks; `exhaustion.rs` checks the limits on each client; `suite/redraw.rs` is the baseline's, ported; `suite/windows.rs` covers xdg-shell; `suite/layers.rs` covers layer shell; `suite/keyboard.rs` covers who gets the keys, and `suite/focus.rs` which new window takes them; `suite/seat.rs` covers the pointer and activation; `suite/cursor.rs` and `suite/cursor_shape.rs` cover the pointer's image; `suite/outputs.rs` covers outputs that change size; `suite/data_device.rs`, `suite/primary_selection.rs`, and `suite/viewporter.rs` cover those protocols; `suite/nested.rs` runs Fulcrum nested in Fulcrum; `suite/workspaces.rs` and `suite/control.rs` cover the workspaces and the shell's control channel, with its framing; `suite/summon.rs` covers the summon gesture and the Agent's surface; `suite/modes.rs` covers maximized, fullscreen, and snapped windows and their frames; `suite/grabs.rs` covers moving and resizing; `suite/gles.rs` draws each scene with both renderers and compares them; `suite/scale.rs` covers outputs at other scales; `suite/layout.rs` covers the layout of displays and the scale a display starts at; `suite/dmabuf.rs` covers linux-dmabuf; `suite/idle_inhibit.rs` covers idle inhibit; `suite/lock.rs` covers the locked session; `suite/gpu_import.rs` covers dma-bufs the GPU draws where they are; `suite/damage.rs` holds each frame drawn where it changed beside the frame drawn whole; `suite/probe_apps.rs` runs the probe's apps as the desktop check does; `shell_outputs.rs` runs the real shell while its only output goes away and comes back, when `CROWBAR_SHELL` names its binary; `suite/linked.rs` reads the built binary for what it links; `suite/dependencies.rs` fails if a crate [the plan](docs/PLAN.md) rules out enters `Cargo.lock` |
 | `docs/` | [The plan](docs/PLAN.md), [picking up the work](docs/picking-up.md), [how to run Fulcrum on real hardware](docs/hardware-runs.md), and dated records of what was run |
 
 Only `sys/` may hold `unsafe` code. Every other crate forbids it.

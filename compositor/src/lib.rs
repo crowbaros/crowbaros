@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod agent;
 pub mod backend;
 mod client;
 pub mod connections;
