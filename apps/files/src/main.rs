@@ -823,11 +823,19 @@ impl FilesApp {
 
     // ── Action handlers ───────────────────────────────────────────────────────
 
+    /// How far Up and Down move: a row of Grid as the active pane shows it, else one item.
+    fn row_step(&self) -> usize {
+        match (self.saved.view_mode, self.pane_scrolls.get(self.active_pane)) {
+            (ViewMode::Grid, Some(scroll)) => grid_columns(f32::from(scroll.bounds().size.width)),
+            _ => 1,
+        }
+    }
+
     fn on_move_up(&mut self, _: &MoveUp, _: &mut Window, cx: &mut Context<Self>) {
         if self.overlay.is_some() {
             return;
         }
-        let step = if self.saved.view_mode == ViewMode::Grid { -4 } else { -1 };
+        let step = -(self.row_step() as isize);
         self.pane_mut().move_selection(step);
         self.refresh_inspector_preview();
         self.scroll_selected_into_view();
@@ -838,7 +846,7 @@ impl FilesApp {
         if self.overlay.is_some() {
             return;
         }
-        let step = if self.saved.view_mode == ViewMode::Grid { 4 } else { 1 };
+        let step = self.row_step() as isize;
         self.pane_mut().move_selection(step);
         self.refresh_inspector_preview();
         self.scroll_selected_into_view();
@@ -1750,11 +1758,11 @@ impl FilesApp {
             .min_h(px(0.))
             .overflow_y_scroll()
             .track_scroll(&self.pane_scrolls[pane_idx])
-            .p(px(14.))
+            .p(px(GRID_PADDING))
             .flex()
             .flex_wrap()
             .content_start()
-            .gap(px(10.));
+            .gap(px(GRID_GAP));
 
         for (idx, entry) in pane.entries.iter().enumerate() {
             let selected = is_active_pane && pane.selected == Some(idx);
@@ -1792,7 +1800,7 @@ impl FilesApp {
             grid = grid.child(
                 div()
                     .id(("grid-tile", pane_idx * 100_000 + idx))
-                    .w(px(124.))
+                    .w(px(GRID_TILE))
                     .h(px(106.))
                     .p(px(8.))
                     .flex()
@@ -3259,6 +3267,16 @@ fn parse_cli(args: &[OsString], home: &Path) -> Result<CliAction, String> {
 
 /// Files' own keys. Every context the root can be in binds Escape, so the keyboard always has a
 /// way out.
+const GRID_PADDING: f32 = 14.;
+const GRID_TILE: f32 = 124.;
+const GRID_GAP: f32 = 10.;
+
+/// How many tiles a row of Grid holds in a pane `width` wide, as its layout wraps them.
+fn grid_columns(width: f32) -> usize {
+    let room = width - 2. * GRID_PADDING + GRID_GAP;
+    ((room / (GRID_TILE + GRID_GAP)).floor() as usize).max(1)
+}
+
 fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("enter", PromptSubmit, Some("FilesPrompt")),
@@ -3374,6 +3392,19 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grid_steps_by_the_columns_its_pane_shows() {
+        // Padding 14 each side, tiles 124 wide with 10 between them.
+        assert_eq!(grid_columns(28. + 124.), 1);
+        assert_eq!(grid_columns(28. + 124. * 2. + 10.), 2);
+        assert_eq!(grid_columns(28. + 124. * 2. + 10. - 1.), 1);
+        assert_eq!(grid_columns(28. + 124. * 4. + 30.), 4);
+        assert_eq!(grid_columns(28. + 124. * 7. + 60.), 7);
+        // Not laid out yet, or narrower than a tile: one at a time.
+        assert_eq!(grid_columns(0.), 1);
+        assert_eq!(grid_columns(60.), 1);
+    }
 
     #[test]
     fn every_root_context_has_a_way_out() {
