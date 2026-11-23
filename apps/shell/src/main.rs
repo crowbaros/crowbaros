@@ -1171,6 +1171,7 @@ struct AgentSurface {
     model: Entity<Model>,
     input: Entity<input::TextInput>,
     scroll: ScrollHandle,
+    submitted_draft: Option<String>,
     _input_sub: Subscription,
 }
 impl AgentSurface {
@@ -1214,7 +1215,10 @@ impl AgentSurface {
             }
         });
         if let Some(tx) = tx {
-            tx.send_message(conversation, trimmed.to_string());
+            let message = trimmed.to_string();
+            self.submitted_draft = Some(query);
+            sync_agent_view(&self.model, cx);
+            tx.send_message(conversation, message);
             cx.notify();
         }
     }
@@ -1702,6 +1706,7 @@ fn show_agent_surface(model: &Entity<Model>, summon: &session::Summon, cx: &mut 
                     model: surface,
                     input,
                     scroll,
+                    submitted_draft: None,
                     _input_sub: input_sub,
                 }
             })
@@ -2370,7 +2375,11 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 if is_sent {
                     if let Some(w) = model.read(cx).agent {
                         let _ = w.update(cx, |view, _, cx| {
-                            view.input.update(cx, |input, cx| input.clear(cx));
+                            if let Some(submitted) = view.submitted_draft.take() {
+                                if view.input.read(cx).query() == submitted {
+                                    view.input.update(cx, |input, cx| input.clear(cx));
+                                }
+                            }
                             view.scroll.scroll_to_bottom();
                             cx.notify();
                         });

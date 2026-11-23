@@ -71,6 +71,8 @@ export interface ClientChannelOptions {
  * desktop context from Fulcrum; sign-in and Model choice stay on the person
  * socket alone.
  */
+const SIGN_IN_OPS = new Set(["models", "model", "login", "answer", "cancel", "logout"]);
+
 export function clientChannel(options: ClientChannelOptions): Channel {
 	const { uid, peer, whose, allowSignIn, conversations, store, access, say, fulcrum } = options;
 	/** One sign-in at a time, whichever client began it. */
@@ -139,7 +141,6 @@ export function clientChannel(options: ClientChannelOptions): Channel {
 			}
 		};
 
-		const SIGN_IN_OPS = new Set(["models", "model", "login", "answer", "cancel", "logout"]);
 		const answer = async (request: Request): Promise<object> => {
 			if (!allowSignIn && typeof request.op === "string" && SIGN_IN_OPS.has(request.op)) {
 				throw new Declined("request", `The Harness has no request "${request.op}".`);

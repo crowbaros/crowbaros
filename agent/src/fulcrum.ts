@@ -82,7 +82,7 @@ export function parseDesktopContext(raw: unknown): DesktopContext | undefined {
 	const windows: DesktopWindow[] = [];
 	for (const item of record.windows) {
 		if (!isWindow(item)) return undefined;
-		windows.push({ id: item.id, app_id: item.app_id, title: item.title, workspace: item.workspace });
+		windows.push({ id: item.id, app_id: sanitizeLabel(item.app_id), title: sanitizeLabel(item.title), workspace: item.workspace });
 	}
 	const displays: DesktopDisplay[] = [];
 	for (const item of record.displays) {
@@ -108,11 +108,12 @@ function formatScale(scale120: number): string {
 
 const MAX_LABEL_CHARS = 200;
 
-/** Collapses control characters and caps length on app-supplied window metadata. */
+/** Collapses control/line-separator characters and caps code points on app-supplied metadata. */
 function sanitizeLabel(value: string): string {
-	const clean = value.replace(/[\x00-\x1f\x7f]+/g, " ").trim();
-	if (clean.length <= MAX_LABEL_CHARS) return clean;
-	return `${Array.from(clean).slice(0, MAX_LABEL_CHARS - 1).join("")}…`;
+	const clean = value.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, " ").trim();
+	const chars = Array.from(clean);
+	if (chars.length <= MAX_LABEL_CHARS) return clean;
+	return `${chars.slice(0, MAX_LABEL_CHARS - 1).join("")}…`;
 }
 
 function formatWindow(window: DesktopWindow): string {
@@ -308,6 +309,7 @@ export class FulcrumClient {
 					const idx = this.#pending.indexOf(entry);
 					if (idx !== -1) this.#pending.splice(idx, 1);
 					resolve(undefined);
+					this.#say("Fulcrum snapshot timed out; reconnecting");
 					// Drop the connection so a late reply cannot shift into a later request.
 					if (this.#socket === socket) socket.destroy();
 				}, timeoutMs),

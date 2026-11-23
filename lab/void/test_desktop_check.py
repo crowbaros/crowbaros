@@ -416,25 +416,38 @@ class RealModelCredentialAndTyping(unittest.TestCase):
         log.write_text('started\n')
 
         prompt = 'what is the exact app_id of my active window?'
-        decoy_payload = json.dumps({
-            'conversation': 'decoy111',
-            'content': '[Desktop context]\nActive window: ~ (app_id: foot)\nDisplays:\n- Virtual-1: 1280x960 at (0, 0), scale 1x\n\nhello from stub',
-        })
-        target_missing_ctx = json.dumps({
-            'conversation': 'real2222',
-            'content': prompt,
-            'answer': 'Your window is foot.',
-        })
+        full_user_content = (
+            '[Desktop context]\nWorkspace: 1\nActive window: ~ (app_id: foot)\n'
+            'Windows by workspace:\n- Workspace 1: ~ (app_id: foot) [active]\n'
+            'Displays:\n- Virtual-1: 1280x960 at (0, 0), scale 1x\n\n' + prompt
+        )
         conn = sqlite3.connect(db)
-        conn.execute('CREATE TABLE entries (id INTEGER PRIMARY KEY, body TEXT)')
-        conn.execute('INSERT INTO entries (body) VALUES (?)', (decoy_payload,))
-        conn.execute('INSERT INTO entries (body) VALUES (?)', (target_missing_ctx,))
+        conn.execute('CREATE TABLE documents (id INTEGER PRIMARY KEY, kind TEXT NOT NULL)')
+        conn.execute('CREATE TABLE document_revisions (document_id INTEGER NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, content TEXT NOT NULL)')
+        conn.execute('CREATE TABLE entries (id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL, record TEXT NOT NULL)')
+        conn.execute('INSERT INTO documents (id, kind) VALUES (2, ?)', ('"crowbar.conversations"',))
+        # Decoy conversation (at=3) in base revision; target conversation (at=9) in delta revision.
+        conn.execute(
+            'INSERT INTO document_revisions (document_id, seq, kind, content) VALUES (2, 1, ?, ?)',
+            ('base', json.dumps({'conversations': {'decoy111': {'at': 3, 'started': 1, 'title': '', 'turns': 1}}})),
+        )
+        conn.execute(
+            'INSERT INTO document_revisions (document_id, seq, kind, content) VALUES (2, 2, ?, ?)',
+            ('delta', json.dumps([['s', ['conversations', 'real2222'], {'at': 9, 'started': 2, 'title': '', 'turns': 1}]])),
+        )
+        # Even if decoy (at=3) repeats the EXACT SAME prompt with full desktop
+        # context, target (at=9) has only a plain prompt with no context and MUST fail.
+        conn.execute(
+            'INSERT INTO entries (id, conversation_id, record) VALUES (1, 3, ?)',
+            (json.dumps({'content': full_user_content}),),
+        )
+        conn.execute(
+            'INSERT INTO entries (id, conversation_id, record) VALUES (2, 9, ?)',
+            (json.dumps({'content': prompt, 'answer': 'Your window is foot.'}),),
+        )
         conn.commit()
         conn.close()
 
-        # Even though the decoy has [Desktop context] + foot + Virtual-1 and
-        # the target's answer mentions "foot", the audit must fail because the
-        # target prompt itself carried no desktop context.
         spec = {
             'db': str(db),
             'conversation': 'real2222',
@@ -453,17 +466,12 @@ class RealModelCredentialAndTyping(unittest.TestCase):
         self.assertFalse(audit['has_active_foot'])
         self.assertFalse(audit['has_display'])
 
-        # Now store the real message carrying formatted desktop context.
-        target_with_ctx = json.dumps({
-            'conversation': 'real2222',
-            'content': (
-                '[Desktop context]\nWorkspace: 1\nActive window: ~ (app_id: foot)\n'
-                'Windows by workspace:\n- Workspace 1: ~ (app_id: foot) [active]\n'
-                'Displays:\n- Virtual-1: 1280x960 at (0, 0), scale 1x\n\n' + prompt
-            ),
-        })
+        # Now add the real target entry carrying desktop context on conversation_id=9.
         conn = sqlite3.connect(db)
-        conn.execute('INSERT INTO entries (body) VALUES (?)', (target_with_ctx,))
+        conn.execute(
+            'INSERT INTO entries (id, conversation_id, record) VALUES (3, 9, ?)',
+            (json.dumps({'content': full_user_content}),),
+        )
         conn.commit()
         conn.close()
 
@@ -495,6 +503,27 @@ class RealModelCredentialAndTyping(unittest.TestCase):
         self.assertNotIn(secret, (vm.work / 'desktop.log').read_text())
         self.assertNotIn(secret, (vm.work / 'harness.log').read_text())
         self.assertEqual(check.results[0]['detail'], 'detail [REDACTED]')
+
+    def test_main_scrubs_secret_from_uncaught_exception_in_results(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        secret = 'sk-exception-secret-999'
+        vm = Runs.Guest(temporary.name)
+
+        def boom(check, built, credential=None):
+            raise RuntimeError(f'boom with {secret}')
+
+        with patch.dict(desktop_check.os.environ, {'ANTHROPIC_API_KEY': secret}, clear=True), \
+                patch.object(base, 'preflight'), patch.object(guest.Guest, 'create', return_value=vm), \
+                patch.object(guest, 'build_base', return_value={}), \
+                patch.object(desktop_check.Check, 'checks', boom), \
+                patch('sys.argv', ['desktop_check.py']):
+            code = desktop_check.main()
+        self.assertEqual(code, 1)
+        self.assertEqual(desktop_check.evidence_has_secret(vm.work, secret), [])
+        results_text = (vm.work / 'results.json').read_text()
+        self.assertNotIn(secret, results_text)
+        self.assertIn('[REDACTED]', results_text)
 
 if __name__ == '__main__':
     unittest.main()

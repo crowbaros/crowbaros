@@ -9,7 +9,7 @@ import { readFileSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
-import { FulcrumClient, formatDesktopContext } from "../src/fulcrum.ts";
+import { FulcrumClient, formatDesktopContext, parseDesktopContext } from "../src/fulcrum.ts";
 import { client, pointAt, scratch, sleep, start, stub } from "./harness.ts";
 
 interface FakeFulcrum {
@@ -317,4 +317,16 @@ test("formatDesktopContext sanitizes control characters and caps long window tit
 	assert.ok(!activeLine.includes("\r"), activeLine);
 	assert.ok(activeLine.includes("(app_id: foot bad)"), activeLine);
 	assert.ok(activeLine.length < 260, `expected capped active line, got length ${activeLine.length}`);
+
+	// parseDesktopContext applies the same normalization so drawer and Model see identical values.
+	const parsed = parseDesktopContext({
+		reply: "snapshot",
+		workspace: 1,
+		active: "0x1",
+		locked: false,
+		windows: [{ id: "0x1", app_id: "foot\u2028bad", title: "Hello\u0085World", workspace: 1 }],
+		displays: [{ name: "Virtual-1", width: 1280, height: 960, x: 0, y: 0, scale: 120 }],
+	});
+	assert.equal(parsed?.active?.app_id, "foot bad");
+	assert.equal(parsed?.active?.title, "Hello World");
 });

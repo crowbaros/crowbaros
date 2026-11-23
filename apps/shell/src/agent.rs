@@ -365,8 +365,8 @@ impl AgentState {
                     return false;
                 }
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
-                    let calm = calm_turn_error(&message);
-                    existing.retry = Some(format!("{calm} Trying again in {seconds}s…"));
+                    let reason = calm_retry_reason(&message);
+                    existing.retry = Some(format!("{reason} Trying again in {seconds}s…"));
                     return true;
                 }
                 false
@@ -450,26 +450,50 @@ impl AgentState {
     }
 }
 
-/// Maps raw network or provider failure diagnostics into calm, person-facing copy.
-pub fn calm_turn_error(raw: &str) -> String {
-    let lower = raw.to_ascii_lowercase();
-    if lower.contains("econnrefused")
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(needle) {
+        let abs = start + pos;
+        let end = abs + needle.len();
+        let before_ok = abs == 0 || !bytes[abs - 1].is_ascii_alphanumeric();
+        let after_ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs + needle.len();
+    }
+    false
+}
+
+fn is_network_error(lower: &str) -> bool {
+    lower.contains("econnrefused")
         || lower.contains("enotfound")
         || lower.contains("etimedout")
         || lower.contains("econnreset")
         || lower.contains("fetch failed")
-        || lower.contains("network")
-        || lower.contains("unreachable")
+        || lower.contains("network error")
+        || lower.contains("network unreachable")
+        || lower.contains("host unreachable")
+        || lower.contains("connection refused")
         || lower.contains("could not connect")
-    {
+}
+
+fn is_auth_error(lower: &str) -> bool {
+    contains_word(lower, "401")
+        || contains_word(lower, "403")
+        || contains_word(lower, "unauthorized")
+        || lower.contains("invalid api key")
+        || lower.contains("authentication failed")
+}
+
+/// Maps raw network or provider failure diagnostics into calm, person-facing copy.
+pub fn calm_turn_error(raw: &str) -> String {
+    let lower = raw.to_ascii_lowercase();
+    if is_network_error(&lower) {
         return "Could not reach the Model right now. Check your connection and try again.".into();
     }
-    if lower.contains("401")
-        || lower.contains("403")
-        || lower.contains("unauthorized")
-        || lower.contains("invalid api key")
-        || lower.contains("authentication")
-    {
+    if is_auth_error(&lower) {
         return "The Model refused the current sign-in. Run `crowbar-agent login` in a terminal to sign in again.".into();
     }
     let clean = raw.trim();
@@ -477,6 +501,22 @@ pub fn calm_turn_error(raw: &str) -> String {
         "The Model could not answer right now.".into()
     } else {
         clean.to_string()
+    }
+}
+
+fn calm_retry_reason(raw: &str) -> String {
+    let lower = raw.to_ascii_lowercase();
+    if is_network_error(&lower) {
+        "Could not reach the Model.".into()
+    } else if is_auth_error(&lower) {
+        "The Model refused the current sign-in.".into()
+    } else {
+        let clean = raw.trim();
+        if clean.is_empty() {
+            "The Model did not answer.".into()
+        } else {
+            clean.to_string()
+        }
     }
 }
 
@@ -686,13 +726,12 @@ fn parse_turn(value: &serde_json::Value) -> Option<Turn> {
     let state = match value.get("state").and_then(|v| v.as_str()) {
         Some("working") => TurnState::Working,
         Some("stopped") => TurnState::Stopped,
-        Some("failed") => TurnState::Failed(
+        Some("failed") => TurnState::Failed(calm_turn_error(
             value
                 .get("error")
                 .and_then(|v| v.as_str())
-                .unwrap_or("The turn failed.")
-                .to_string(),
-        ),
+                .unwrap_or("The turn failed."),
+        )),
         _ => TurnState::Done,
     };
     Some(Turn {
@@ -1096,6 +1135,25 @@ mod tests {
         assert!(state.turns.is_empty());
         assert_eq!(state.mark, Mark::Idle);
         assert!(state.can_send());
+
+        // Numbers containing 401/403 must not be misclassified as sign-in errors.
+        let token_err = "prompt is too long: 204031 tokens > 200000 maximum (140123 input)";
+        assert_eq!(calm_turn_error(token_err), token_err);
+        // Word-bounded 401/403 status codes map calmly to sign-in guidance.
+        assert!(calm_turn_error("HTTP 401 Unauthorized").contains("crowbar-agent login"));
+        // Resumed failed turns apply the same calm mapping.
+        let resumed = parse_turn(&serde_json::json!({
+            "turn": 1,
+            "message": "hi",
+            "answer": "",
+            "state": "failed",
+            "error": "TypeError: fetch failed (ECONNREFUSED)"
+        }))
+        .unwrap();
+        match resumed.state {
+            TurnState::Failed(msg) => assert!(msg.contains("Could not reach the Model"), "{msg}"),
+            other => panic!("expected Failed, got {other:?}"),
+        }
     }
 
     #[test]

@@ -643,6 +643,7 @@ class Check:
         # Mount a small RAM-only tmpfs on the Harness state directory before
         # signing in so the host's real credential never touches the guest's
         # raw disk image (even if the run fails and retains the disk).
+        reconnects = self.shell_log().count('SHELL agent-socket connected=true')
         self.run(
             f'uid=$(id -u {shlex.quote(person)}) && gid=$(id -g {shlex.quote(person)}) && '
             f'mkdir -p {shlex.quote(state_dir)} && '
@@ -650,7 +651,8 @@ class Check:
             f'sv restart crowbar-agent'
         )
         self.wait('shell reconnects to Harness on RAM-backed state dir',
-                  lambda: (v := self.agent_view()) and v['state']['connected'] and v)
+                  lambda: self.shell_log().count('SHELL agent-socket connected=true') > reconnects
+                  and (v := self.agent_view()) and v['state']['connected'] and v)
 
         try:
             signed = self.sign_in_harness(credential)
@@ -675,7 +677,7 @@ class Check:
             turns_before = len(ready_view['state']['turns'])
             working_marks = self.shell_log().count('SHELL agent-mark state=working')
             prompt_text = (
-                'what is the exact app_id of my active window and what display is it on? '
+                'what is the exact app_id of my active window and what windows are open? '
                 'answer in two short sentences.'
             )
             self.type(prompt_text)
@@ -780,12 +782,15 @@ class Check:
                        not audit['has_secret_in_db'] and not audit['has_secret_in_logs'])
         finally:
             # Remove the temporary credential from guest RAM before diagnostics run.
-            rm_res = self.guest.ssh(
-                f'rm -f {shlex.quote(state_dir + "/credentials.json")} {shlex.quote(state_dir + "/settings.json")}',
-                check=False, timeout=10,
-            )
-            if rm_res.returncode != 0:
-                self.log(f'warning: cleanup rm returned {rm_res.returncode}')
+            try:
+                rm_res = self.guest.ssh(
+                    f'rm -f {shlex.quote(state_dir + "/credentials.json")} {shlex.quote(state_dir + "/settings.json")}',
+                    check=False, timeout=10,
+                )
+                if rm_res.returncode != 0:
+                    self.log(f'warning: cleanup rm returned {rm_res.returncode}')
+            except (OSError, subprocess.TimeoutExpired) as cleanup_err:
+                self.log(f'warning: cleanup rm failed: {cleanup_err}')
 
     def compositor_restart(self):
         """The compositor's service restarts while the person uses the desktop.
@@ -1291,12 +1296,21 @@ def evidence_has_secret(work_dir, secret):
 # guest. Reads the credential JSON from stdin alone and prints only the
 # signed-in provider and Model metadata.
 HARNESS_LOGIN_SCRIPT = """
-import json, socket, struct, sys
+import json, socket, struct, sys, time
 
 cred = json.load(sys.stdin)
-sock = socket.socket(socket.AF_UNIX)
-sock.settimeout(30)
-sock.connect(cred["socket"])
+deadline = time.monotonic() + 5.0
+while True:
+    sock = socket.socket(socket.AF_UNIX)
+    sock.settimeout(30)
+    try:
+        sock.connect(cred["socket"])
+        break
+    except OSError:
+        sock.close()
+        if time.monotonic() >= deadline:
+            raise
+        time.sleep(0.1)
 reader = sock.makefile("rb")
 
 def send(obj):
@@ -1360,15 +1374,6 @@ import json, pathlib, re, sqlite3, sys
 
 spec = json.load(sys.stdin)
 conn = sqlite3.connect(spec["db"])
-blobs = []
-for (table,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"):
-    for row in conn.execute(f'SELECT * FROM "{table}"'):
-        for cell in row:
-            if isinstance(cell, str):
-                blobs.append(cell)
-            elif isinstance(cell, (bytes, bytearray)):
-                blobs.append(cell.decode("utf-8", errors="ignore"))
-conn.close()
 
 def extract_strings(value, out):
     if isinstance(value, str):
@@ -1386,23 +1391,66 @@ def extract_strings(value, out):
         for v in value:
             extract_strings(v, out)
 
-decoded_strings = []
-for blob in blobs:
-    extract_strings(blob, decoded_strings)
+# Resolve the Harness conversation ID to its stored conversation row ID via
+# the `crowbar.conversations` document (base + delta revisions).
+conv = spec.get("conversation") or ""
+target_at = None
+tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+if conv and {"documents", "document_revisions", "entries"}.issubset(tables):
+    doc_ids = [
+        row[0]
+        for row in conn.execute("SELECT id FROM documents WHERE kind = '\"crowbar.conversations\"'")
+    ]
+    for doc_id in doc_ids:
+        for (kind, content_raw) in conn.execute(
+            "SELECT kind, content FROM document_revisions WHERE document_id = ? ORDER BY seq",
+            (doc_id,),
+        ):
+            try:
+                content = json.loads(content_raw)
+            except ValueError:
+                continue
+            if kind == "base" and isinstance(content, dict):
+                entry = (content.get("conversations") or {}).get(conv)
+                if isinstance(entry, dict) and isinstance(entry.get("at"), int):
+                    target_at = entry["at"]
+            elif kind == "delta" and isinstance(content, list):
+                for op in content:
+                    if not isinstance(op, list) or len(op) < 3:
+                        continue
+                    path, val = op[1], op[2]
+                    if path == ["conversations", conv] and isinstance(val, dict) and isinstance(val.get("at"), int):
+                        target_at = val["at"]
+                    elif path == ["conversations", conv, "at"] and isinstance(val, int):
+                        target_at = val
+
+target_strings = []
+if target_at is not None:
+    for (record,) in conn.execute("SELECT record FROM entries WHERE conversation_id = ?", (target_at,)):
+        extract_strings(record, target_strings)
+
+# Full-DB scan solely for negative checks (no window-content sentinel, no secret).
+blobs = []
+for table in sorted(tables):
+    for row in conn.execute(f'SELECT * FROM "{table}"'):
+        for cell in row:
+            if isinstance(cell, str):
+                blobs.append(cell)
+            elif isinstance(cell, (bytes, bytearray)):
+                blobs.append(cell.decode("utf-8", errors="ignore"))
+conn.close()
 
 prompt = spec["prompt"]
-matching_prompts = [s for s in decoded_strings if prompt in s and "[Desktop context]" in s]
+matching_prompts = [s for s in target_strings if prompt in s and "[Desktop context]" in s]
 active_re = re.compile(r"^Active window: .*\(app_id: foot\)$", re.MULTILINE)
 display_re = re.compile(r"^Displays:\n(?:- .*\n)*- Virtual-1:", re.MULTILINE)
 
+has_conversation = target_at is not None
 has_desktop_context = bool(matching_prompts)
 has_active_foot = any(active_re.search(s) for s in matching_prompts)
 has_display = any(display_re.search(s) for s in matching_prompts)
 
 joined = "\n".join(blobs)
-conv = spec.get("conversation") or ""
-has_conversation = bool(conv) and conv in joined
-
 log_texts = []
 for path in spec["logs"]:
     p = pathlib.Path(path)
@@ -1446,7 +1494,7 @@ def main():
         # Whatever stopped the run, a person's Ctrl-C included: a run that
         # did not reach its end did not pass, and keeps its disk.
         if all(row['passed'] for row in check.results):
-            check.results.append({'name': 'smoke run completed', 'passed': False, 'detail': repr(error)})
+            check.results.append({'name': 'smoke run completed', 'passed': False, 'detail': check._scrub(repr(error))})
         check.log(f'FAIL: {error!r}')
         if not isinstance(error, Exception):
             raise
