@@ -29,7 +29,7 @@ pub(crate) struct Agent {
 
 impl State {
     /// The summon gesture: the shell is told, with the display the pointer
-    /// is on, that display's size on the desktop, and whether the Agent's
+    /// is on, that display's width on the desktop, and whether the Agent's
     /// surface has the keyboard. The shell decides what the gesture does.
     pub(crate) fn summon(&mut self) {
         let Some(output) = self
@@ -38,11 +38,11 @@ impl State {
         else {
             return;
         };
-        let (number, (width, height)) = (output.number, output.logical_size());
+        let (number, (width, _)) = (output.number, output.logical_size());
         let keyboard = self.agent_has_keyboard();
         log::info!("summon output={} keyboard={keyboard}", output.name);
         let fields = format!(
-            "\"output\":{},\"width\":{width},\"height\":{height},\"keyboard\":{keyboard}",
+            "\"output\":{},\"width\":{width},\"keyboard\":{keyboard}",
             quote(&output.name)
         );
         self.agent.summoned_on = Some(number);
@@ -88,11 +88,7 @@ impl State {
         if focus.is_some() && focus != self.agent_surface() {
             return Ok(());
         }
-        let window = before.filter(|before| {
-            self.windows
-                .iter()
-                .any(|window| window.surface == *before && window.workspace == self.workspace)
-        });
+        let window = before.filter(|before| self.window_is_shown(*before));
         self.set_keyboard_focus(window);
         Ok(())
     }

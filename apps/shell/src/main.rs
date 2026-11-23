@@ -1024,7 +1024,7 @@ impl AgentSurface {
     /// Puts the surface away. The keyboard goes back to the window that had
     /// it, if the surface holds it.
     fn put_away(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        log::info!("SHELL agent-surface open=false");
+        log::info!("SHELL agent-surface up=false");
         self.model.update(cx, |m, _| m.agent = None);
         session::agent_keyboard(false);
         window.remove_window();
@@ -1134,7 +1134,7 @@ impl Render for AgentSurface {
 fn show_agent_surface(model: &Entity<Model>, summon: &session::Summon, cx: &mut App) {
     let width = agent_surface_width(summon.width);
     log::info!(
-        "SHELL agent-surface open=true output={} width={width}",
+        "SHELL agent-surface up=true output={} width={width}",
         summon.output
     );
     let surface = model.clone();
@@ -1162,7 +1162,7 @@ fn show_agent_surface(model: &Entity<Model>, summon: &session::Summon, cx: &mut 
             model.update(cx, |m, _| m.agent = Some(w));
             session::agent_keyboard(true);
         }
-        Err(e) => log::error!("Opening the Agent's surface: {e}"),
+        Err(e) => log::error!("Summoning the Agent's surface: {e}"),
     }
 }
 /// The summon gesture: the surface comes up, takes the keyboard back, or is
@@ -1178,15 +1178,17 @@ fn summoned(model: &Entity<Model>, summon: session::Summon, cx: &mut App) {
     if !up {
         model.update(cx, |m, _| m.agent = None);
     }
-    match (gesture_does(up, summon.keyboard), agent) {
-        (Gesture::PutAway, Some(w)) => {
-            let _ = w.update(cx, |view, w, cx| view.put_away(w, cx));
-        }
-        (Gesture::TakeKeyboard, _) => {
+    match gesture_does(up, summon.keyboard) {
+        Gesture::Show => show_agent_surface(model, &summon, cx),
+        Gesture::TakeKeyboard => {
             log::info!("SHELL agent-surface keyboard=true");
             session::agent_keyboard(true)
         }
-        (Gesture::Show | Gesture::PutAway, _) => show_agent_surface(model, &summon, cx),
+        Gesture::PutAway => {
+            if let Some(w) = agent {
+                let _ = w.update(cx, |view, w, cx| view.put_away(w, cx));
+            }
+        }
     }
 }
 /// The lock screen: shown while the compositor has the session locked, and

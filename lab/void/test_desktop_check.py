@@ -211,6 +211,8 @@ class AgentSurface(unittest.TestCase):
         self.assertTrue(desktop_check.like((243, 249, 249), light))
         self.assertFalse(desktop_check.like((241, 247, 249), light))
         self.assertFalse(desktop_check.like(desktop_check.CANVAS['dark'], light))
+        # No colour at all is like none.
+        self.assertFalse(desktop_check.like((), light))
 
     def test_a_pixel_is_read_from_the_display_asked_for(self):
         class Screens:
@@ -224,6 +226,10 @@ class AgentSurface(unittest.TestCase):
         self.assertTrue((check.work / 'second.png').exists())
         with self.assertRaises(ValueError):
             check.pixel('first', 3, 2)
+        # A point the picture does not have is an error, not a colour.
+        for x, y in ((7, 2), (3, 5)):
+            with self.assertRaises(ValueError):
+                check.pixel('second', x, y, head=1)
 
     def test_a_log_is_counted_by_its_lines_and_a_log_without_the_text_counts_none(self):
         asked = []

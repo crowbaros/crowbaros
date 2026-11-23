@@ -116,7 +116,9 @@ class Check:
         """Captures a display as `name`, and returns the colour of one of its
         pixels: red, green, and blue."""
         self.capture(name, head)
-        _, _, rows = guest.png_pixels(self.work / f'{name}.png')
+        width, height, rows = guest.png_pixels(self.work / f'{name}.png')
+        if not (0 <= x < width and 0 <= y < height):
+            raise ValueError(f'{name}.png is {width} by {height}, and has no pixel at {x},{y}')
         return tuple(rows[y][3 * x:3 * x + 3])
 
     def count(self, text, log='/var/log/crowbar-compositor.log'):
@@ -419,7 +421,7 @@ class Check:
         says what each did, and a pixel of the drawer's ground says what the
         display shows there."""
         shown = 'agent surface shown output='
-        opened, away, back = (f'SHELL agent-surface {what}' for what in ('open=true', 'open=false', 'keyboard=true'))
+        opened, away, back = (f'SHELL agent-surface {what}' for what in ('up=true', 'up=false', 'keyboard=true'))
         shell = lambda text: self.shell_log().count(text)
         active = lambda: self.snapshot()['active']['address']
         preferences = self.preferences()
@@ -454,7 +456,9 @@ class Check:
         self.check('Super+Space brings the Agent\'s surface up on the right of the display the pointer is on, '
                    'its full height and a third of its width',
                    told and 'output=Virtual-1 at=853,0 size=427x960' in placed and drawn('11-agent-surface'), placed)
-        self.check('summoning gives the Agent\'s surface the keyboard', not active())
+        # That it went to the drawer, Fulcrum says with the gesture that
+        # puts the drawer away, below.
+        self.check('summoning takes the keyboard from the window that had it', not active())
         self.key('esc')
         time.sleep(1)
         self.check('Escape does not put the Agent\'s surface away', not shell(away) and drawn('11-after-escape'))
@@ -471,8 +475,8 @@ class Check:
                    told and not shell(away))
         told = summon(away, keyboard=True)
         self.wait('the window that had the keyboard has it back', lambda: active() == clicked)
-        self.check('with the keyboard in the Agent\'s surface, Super+Space puts it away, '
-                   'and the window that had the keyboard has it back',
+        self.check('summoning gave the Agent\'s surface the keyboard: with it there, Super+Space puts the surface '
+                   'away, and the window that had the keyboard has it back',
                    told and active() == clicked and not drawn('12-put-away'))
 
         # Over a fullscreen window, which covers the bar: its frame shows at
@@ -545,10 +549,10 @@ class Check:
         # by identity, so the second takes the place saved for the first,
         # over it. The person would move it in Studio Settings; so does this.
         self.displays({'op': 'configure_output', 'name': 'Virtual-2', 'x': 1280, 'y': 0})
-        placed = {o['name']: (o['x'], o['y'], o['width'], o['height'], o['scale'])
+        layout = {o['name']: (o['x'], o['y'], o['width'], o['height'], o['scale'])
                   for o in self.displays({'op': 'outputs'})['outputs']}
         self.check('the second display is to the right of the first',
-                   placed == {'Virtual-1': (0, 0, 1280, 960, 120), 'Virtual-2': (1280, 0, 1024, 768, 120)}, str(placed))
+                   layout == {'Virtual-1': (0, 0, 1280, 960, 120), 'Virtual-2': (1280, 0, 1024, 768, 120)}, str(layout))
         time.sleep(2)
         for output, (x, y), head, place, width, point in (
                 ('Virtual-2', (1280 + 500, 300), 1, 'at=1963,0 size=341x768', 341, (1024 - 30, 600)),
@@ -559,7 +563,7 @@ class Check:
             self.wait(f'the Agent\'s surface shows on {output}', lambda: self.count(shown) > shows)
             self.wait('the Agent\'s surface takes the keyboard', lambda: not active())
             placed = self.run(f"grep -e '{shown}' /var/log/crowbar-compositor.log | tail -1").strip()
-            asked = f'SHELL agent-surface open=true output={output} width={width}'
+            asked = f'SHELL agent-surface up=true output={output} width={width}'
             self.check(f'with two displays, Super+Space brings the Agent\'s surface up on {output}, where the pointer is',
                        told and f'output={output} {place}' in placed and asked in self.shell_log()
                        and drawn(f'17-summoned-on-{output}', head, point), placed)
@@ -928,7 +932,7 @@ DRAWER_POINT = (1250, 700)
 
 def like(colour, expected):
     """Whether two colours are the same to within what a renderer rounds."""
-    return all(abs(a - b) <= 2 for a, b in zip(colour, expected))
+    return len(colour) == len(expected) == 3 and all(abs(a - b) <= 2 for a, b in zip(colour, expected))
 
 
 # How long a desktop is given to settle, as GPUI keeps presenting for a second

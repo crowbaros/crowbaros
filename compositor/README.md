@@ -308,11 +308,18 @@ Fulcrum also sends the shell events, at any time, which get no reply:
 | --- | --- |
 | `{"event":"snapshot","workspace":2,"active":null,"locked":false,"windows":[]}` | It carries what the snapshot reply does. A connection is sent it once it has stated the version, and again after each turn of the event loop in which something it carries changed, so the bar shows a workspace or a window as it changes, with no asking |
 | `{"event":"launcher"}` | The person tapped Super alone, for the shell to open or close its launcher |
-| `{"event":"summon","output":"HDMI-A-1","width":2560,"height":1440,"keyboard":false}` | The person pressed Super+Space, the summon gesture. It names the display the pointer is on, with its size on the desktop, in logical units, and says whether the Agent's surface has the keyboard. The shell decides what the gesture does: show the surface, bring the keyboard back to it, or put it away. Not sent while the desktop is locked |
+| `{"event":"summon","output":"HDMI-A-1","width":2560,"keyboard":false}` | The person pressed Super+Space, the summon gesture. It names the display the pointer is on, with its width on the desktop, in logical units, and says whether the Agent's surface has the keyboard. The shell decides what the gesture does: show the surface, bring the keyboard back to it, or put it away. Not sent while the desktop is locked |
 | `{"event":"locked"}`, `{"event":"unlocked"}` | The desktop locked or unlocked, whoever asked: Super+L and the idle timer lock it too. A connection that asks is sent the event before its reply |
 
-ADR 0032 accepts these messages, and ADR 0035 the summon gesture's:
-`summon`, `focus_agent`, and `unfocus_agent`.
+ADR 0032 accepts these messages but the summon gesture's: `summon`,
+`focus_agent`, and `unfocus_agent`. ADR 0035, which is proposed, decides
+that Fulcrum takes the gesture and tells the shell, and that the shell shows
+the Agent's surface, puts it away, and moves the keyboard by asking. It
+leaves each message to the
+[Milestone 3 spec](https://github.com/crowbaros/crowbaros/issues/291), which
+has them written here. The spec names requests to show and hide the surface;
+the shell asks for those through layer shell, by making the surface and
+destroying it, so the control channel carries only the keyboard's two.
 
 ### The unlock authority's socket
 

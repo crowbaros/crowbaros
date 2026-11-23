@@ -46,9 +46,8 @@ pub struct Snapshot {
 pub struct Summon {
     /// The display the pointer was on.
     pub output: String,
-    /// That display's size on the desktop, in logical pixels.
+    /// That display's width on the desktop, in logical pixels.
     pub width: f32,
-    pub height: f32,
     /// The keyboard is in the Agent's surface.
     pub keyboard: bool,
 }
@@ -697,13 +696,23 @@ pub fn lock(locked: bool) {
 }
 /// Asks the compositor to give the Agent's surface the keyboard, as a summon
 /// does, or to give it back to the window that had it, as putting the
-/// surface away does (ADR 0035).
+/// surface away does (ADR 0035). The requests reach the compositor in the
+/// order they were made, from one thread: the last one is where the keyboard
+/// ends up.
 pub fn agent_keyboard(to_surface: bool) {
-    std::thread::spawn(move || {
-        if let Err(e) = connection().and_then(|c| c.agent_keyboard(to_surface)) {
-            log::warn!("Agent's surface keyboard: {e}");
-        }
+    static REQUESTS: OnceLock<std::sync::mpsc::Sender<bool>> = OnceLock::new();
+    let requests = REQUESTS.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for to_surface in rx {
+                if let Err(e) = connection().and_then(|c| c.agent_keyboard(to_surface)) {
+                    log::warn!("Agent's surface keyboard: {e}");
+                }
+            }
+        });
+        tx
     });
+    let _ = requests.send(to_surface);
 }
 /// Whether an unlock helper checks the person's password. Where one does,
 /// the compositor takes its word to unlock, and not the shell's.
@@ -1451,12 +1460,12 @@ mod tests {
     }
 
     /// The summon gesture reaches the shell with the display the pointer
-    /// was on, its size, and where the keyboard is. The message is the
+    /// was on, its width, and where the keyboard is. The message is the
     /// compositor README's.
     #[test]
     fn the_summon_gesture_reaches_the_shell_with_its_display_and_the_keyboard() {
         let message: serde_json::Value = serde_json::from_str(
-            r#"{"event":"summon","output":"HDMI-A-1","width":2560,"height":1440,"keyboard":false}"#,
+            r#"{"event":"summon","output":"HDMI-A-1","width":2560,"keyboard":false}"#,
         )
         .unwrap();
         match shell_event(&message) {
@@ -1465,7 +1474,6 @@ mod tests {
                 Summon {
                     output: "HDMI-A-1".into(),
                     width: 2560.,
-                    height: 1440.,
                     keyboard: false,
                 }
             ),

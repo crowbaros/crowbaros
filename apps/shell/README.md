@@ -90,8 +90,8 @@ historical behavior evidence, not a current Fedora workflow.
   locked.
 
 These messages, the lock screen's namespace, and the unlock helper's socket
-are accepted in ADR 0032, and the summon gesture's messages and the Agent's
-surface's namespace, `crowbaros-agent`, in ADR 0035. The compositor's README lists the messages and
+are accepted in ADR 0032. The summon gesture's messages and the Agent's
+surface's namespace, `crowbaros-agent`, follow ADR 0035, which is proposed. The compositor's README lists the messages and
 their framing, under
 [the control channel](../../compositor/README.md#the-control-channel). Desktop shortcuts and window-layout behavior come
 from the compositor.

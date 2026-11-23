@@ -112,13 +112,7 @@ impl State {
             .seat
             .desktop_keyboard_focus
             .map(|focus| self.root_of(focus))
-            .filter(|focus| {
-                self.agent_surface() == Some(*focus)
-                    || self
-                        .windows
-                        .iter()
-                        .any(|w| w.surface == *focus && w.workspace == self.workspace)
-            });
+            .filter(|focus| self.agent_surface() == Some(*focus) || self.window_is_shown(*focus));
         self.set_keyboard_focus(before);
         self.refresh_pointer_focus();
         self.control_event("unlocked");

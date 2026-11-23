@@ -72,6 +72,11 @@ impl State {
         self.queue_redraw_all();
     }
 
+    /// Whether a surface is a window on the workspace showing.
+    pub(crate) fn window_is_shown(&self, surface: SurfaceId) -> bool {
+        self.workspace_of(surface) == Some(self.workspace)
+    }
+
     /// The workspace each window is on, as the shell is told it.
     pub(crate) fn workspace_of(&self, surface: SurfaceId) -> Option<u32> {
         self.windows

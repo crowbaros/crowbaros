@@ -64,7 +64,7 @@ fn super_space_tells_the_shell_and_no_app_hears_it() {
 
     assert_eq!(
         control.message(),
-        r#"{"event":"summon","output":"TEST-1","width":1280,"height":800,"keyboard":false}"#
+        r#"{"event":"summon","output":"TEST-1","width":1280,"keyboard":false}"#
     );
     assert!(!keys(&mut app).contains(&KEY_SPACE), "an app heard the summon gesture");
     let next = control.ask(r#"{"op":"launching"}"#);
@@ -157,7 +157,7 @@ fn the_agents_surface_comes_up_on_the_display_the_pointer_was_on_at_the_summon()
     chord(&compositor, &[KEY_SUPER, KEY_SPACE]);
     assert_eq!(
         control.message(),
-        r#"{"event":"summon","output":"TEST-2","width":900,"height":600,"keyboard":false}"#
+        r#"{"event":"summon","output":"TEST-2","width":900,"keyboard":false}"#
     );
     compositor.pointer(10, 10);
     let surface = drawer(&mut shell, 900);
@@ -189,7 +189,7 @@ const OK: &str = r#"{"reply":"ok"}"#;
 /// The gesture's event, on the one test display, with the keyboard in the
 /// Agent's surface or not.
 fn summoned(keyboard: bool) -> String {
-    format!(r#"{{"event":"summon","output":"TEST-1","width":1280,"height":800,"keyboard":{keyboard}}}"#)
+    format!(r#"{{"event":"summon","output":"TEST-1","width":1280,"keyboard":{keyboard}}}"#)
 }
 
 /// Summoning gives the Agent's surface the keyboard because the shell asks:
