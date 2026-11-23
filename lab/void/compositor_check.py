@@ -38,7 +38,10 @@ DESKTOP_SERVICES = (
 SHELL_SOCKET = "/run/crowbar/compositor-shell/wayland"
 CONTROL_SOCKET = "/run/crowbar/compositor-shell/control"
 APPS_SOCKET = "/run/crowbar-apps/wayland-0"
-SHELL_DIR, APPS_DIR = SHELL_SOCKET.rsplit("/", 1)[0], APPS_SOCKET.rsplit("/", 1)[0]
+AGENT_SOCKET = "/run/crowbar/compositor-agent/compositor"
+SHELL_DIR, APPS_DIR, AGENT_DIR = (
+    path.rsplit("/", 1)[0] for path in (SHELL_SOCKET, APPS_SOCKET, AGENT_SOCKET)
+)
 # LIBSEAT_BACKEND names the seat manager outright. Void builds libseat with an
 # elogind backend as well; this guest runs no elogind. The compositor logs
 # each frame it draws at the debug level.
@@ -69,6 +72,7 @@ SHELL_ALONE = {"zwlr_layer_shell_v1"}
 # Asks the shell's control channel for a snapshot, and prints the reply:
 # nothing when the compositor closes the connection without one.
 ASK_CONTROL = guest.ask_fulcrum(CONTROL_SOCKET, '{"op":"snapshot"}')
+ASK_AGENT = guest.ask_fulcrum(AGENT_SOCKET, '{"op":"snapshot"}')
 
 
 def apps_refused():
@@ -241,13 +245,15 @@ def run_checks(ev, built):
         ev.run(f"install -d -o {COMPOSITOR} -g {COMPOSITOR} -m 700 /run/user/1000; "
                "install -d -m 755 /run/crowbar; "
                f"install -d -o {COMPOSITOR} -g {SHELL} -m 2750 {SHELL_DIR}; "
-               f"install -d -o {COMPOSITOR} -g {PERSON} -m 2750 {APPS_DIR}")
+               f"install -d -o {COMPOSITOR} -g {PERSON} -m 2750 {APPS_DIR}; "
+               f"install -d -o {COMPOSITOR} -g {PERSON} -m 2750 {AGENT_DIR}")
         # The shell that becomes the compositor first lists the descriptors it was
         # started with, so that a later check can tell them from the ones the
         # compositor opened.
         ev.run(f"openvt -c 2 -s -f -- {AS_COMPOSITOR} sh -c "
                f"'echo /proc/$$/fd/* >/tmp/started-with; exec crowbar-compositor --backend tty --shell-socket {SHELL_SOCKET} --shell-uid {SHELL_UID} "
                f"--shell-control-socket {CONTROL_SOCKET} --apps-socket {APPS_SOCKET} --apps-uid {PERSON_UID} "
+               f"--agent-socket {AGENT_SOCKET} "
                ">/tmp/compositor.log 2>&1'")
         up = wait_for(ev, "the compositor", lambda: "compositor is up" in ev.compositor_log())
         log = ev.compositor_log()
@@ -312,8 +318,8 @@ def run_checks(ev, built):
         ev.log("== the compositor's sockets: only the apps' socket answers the person's account")
         sockets = ev.run("find / -xdev -type s 2>/dev/null; find /run /tmp /dev -type s 2>/dev/null").split()
         sockets = sorted(set(sockets))
-        ours = (SHELL_SOCKET, CONTROL_SOCKET, APPS_SOCKET)
-        ev.check("the compositor made its three sockets and no other",
+        ours = (SHELL_SOCKET, CONTROL_SOCKET, APPS_SOCKET, AGENT_SOCKET)
+        ev.check("the compositor made its four sockets and no other",
                  all(path in sockets for path in ours)
                  and not ev.run("ls -A /run/user/1000").strip()
                  and not [path for path in sockets if "wayland" in path and path not in ours])
@@ -352,6 +358,22 @@ def run_checks(ev, built):
         refused = ev.compositor_log().count("refused a peer with the wrong user ID") - before
         ev.check("a peer that is not the person, root or the shell, is refused at the apps' socket",
                  "ANSWERED" not in others and "asked" in others and refused >= 2, f"the compositor logged {refused}")
+        # Fulcrum's Harness socket: serves the person's user ID alone, and
+        # refuses root and the shell even with its path exposed.
+        agent_snap = ev.run(f"{AS_APP} {ASK_AGENT} 2>&1", check=False)
+        ev.check("the person's user ID is served on Fulcrum's Harness socket",
+                 '"reply":"snapshot"' in agent_snap, agent_snap.strip())
+        try:
+            ev.run(f"chmod o+rx {AGENT_DIR}; chmod o+rw {AGENT_SOCKET}")
+            before = ev.compositor_log().count("refused a peer with the wrong user ID")
+            agent_root = ev.run(f"{ASK_AGENT} 2>&1", check=False)
+            agent_shell = ev.run(f"chpst -u {SHELL}:{SHELL} {ASK_AGENT} 2>&1", check=False)
+        finally:
+            ev.run(f"chmod 2750 {AGENT_DIR}; chmod 660 {AGENT_SOCKET}")
+        refused = ev.compositor_log().count("refused a peer with the wrong user ID") - before
+        ev.check("a peer that is not the person, root or the shell, is refused at Fulcrum's Harness socket",
+                 "snapshot" not in agent_root and "snapshot" not in agent_shell and refused >= 2,
+                 f"the compositor logged {refused}")
 
         ev.log()
         ev.log("== what the shell is offered, and its control channel (wayland-info inside the guest)")

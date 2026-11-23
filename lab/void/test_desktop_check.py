@@ -19,7 +19,7 @@ class FakeGuest:
         self.responder = responder
         self.calls = []
 
-    def ssh(self, command, check=True, timeout=120, user='root'):
+    def ssh(self, command, check=True, timeout=120, user='root', input=None):
         self.calls.append((user, command))
         returncode, stdout, stderr = self.responder(user, command)
         return subprocess.CompletedProcess([], returncode, stdout, stderr)
@@ -265,17 +265,19 @@ class Runs(unittest.TestCase):
             self.discarded = True
             return True
 
-    def main(self, *arguments, passes=True, stopped=None):
+    def main(self, *arguments, passes=True, stopped=None, env=None):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         vm = self.Guest(temporary.name)
 
-        def checks(check, built):
+        def checks(check, built, credential=None):
             check.record('stub', passes)
             if stopped:
                 raise stopped
 
-        with patch.object(base, 'preflight'), patch.object(guest.Guest, 'create', return_value=vm), \
+        test_env = {'ANTHROPIC_API_KEY': 'test-only-credential'} if env is None else env
+        with patch.dict(desktop_check.os.environ, test_env, clear=True), \
+                patch.object(base, 'preflight'), patch.object(guest.Guest, 'create', return_value=vm), \
                 patch.object(guest, 'build_base', return_value={}) as build_base, \
                 patch.object(desktop_check.Check, 'checks', checks), \
                 patch('sys.argv', ['desktop_check.py', *arguments]):
@@ -283,7 +285,8 @@ class Runs(unittest.TestCase):
                 code = desktop_check.main()
             except BaseException as error:
                 code = error
-        return vm, code, build_base, (vm.work / 'desktop.log').read_text()
+        log = (vm.work / 'desktop.log').read_text() if (vm.work / 'desktop.log').exists() else ''
+        return vm, code, build_base, log
 
     def test_a_run_that_passes_deletes_its_disk_and_one_that_fails_keeps_it(self):
         vm, code, build_base, log = self.main()
@@ -315,6 +318,80 @@ class Runs(unittest.TestCase):
         self.assertIn(f'Not evidence: {vm.work}', log)
         self.assertNotIn('] Evidence:', log)
 
+
+
+class RealModelCredentialAndTyping(unittest.TestCase):
+    """The desktop check requires a real Model credential from the host
+    environment, fails calmly before building without one, encodes QMP text
+    cleanly, and catches any credential leak into evidence."""
+
+    def test_missing_credential_exits_and_names_what_it_needs(self):
+        with self.assertRaises(SystemExit) as stopped:
+            desktop_check.real_model_credential({})
+        message = str(stopped.exception)
+        self.assertIn('ANTHROPIC_API_KEY', message)
+        self.assertIn('OPENAI_API_KEY', message)
+        self.assertIn('GEMINI_API_KEY', message)
+        self.assertIn('CROWBAR_AGENT_PROVIDER', message)
+        self.assertIn('CROWBAR_AGENT_API_KEY', message)
+
+    def test_main_stops_before_building_when_no_credential_is_set(self):
+        with patch.dict(desktop_check.os.environ, {}, clear=True), \
+                patch.object(base, 'preflight') as preflight, \
+                patch.object(guest, 'build_base') as build_base, \
+                patch('sys.argv', ['desktop_check.py']):
+            with self.assertRaises(SystemExit) as stopped:
+                desktop_check.main()
+        self.assertIn('ANTHROPIC_API_KEY', str(stopped.exception))
+        preflight.assert_not_called()
+        build_base.assert_not_called()
+
+    def test_explicit_provider_and_key_win_over_ambient_keys(self):
+        cred = desktop_check.real_model_credential({
+            'ANTHROPIC_API_KEY': 'ambient-anthropic',
+            'CROWBAR_AGENT_PROVIDER': 'openai',
+            'CROWBAR_AGENT_API_KEY': 'explicit-openai',
+            'CROWBAR_AGENT_MODEL': 'gpt-4o-mini',
+        })
+        self.assertEqual(cred, {
+            'provider': 'openai',
+            'api_key': 'explicit-openai',
+            'model': 'gpt-4o-mini',
+        })
+
+    def test_explicit_key_without_provider_is_refused(self):
+        with self.assertRaises(SystemExit) as stopped:
+            desktop_check.real_model_credential({'CROWBAR_AGENT_API_KEY': 'sk-test'})
+        self.assertIn('CROWBAR_AGENT_PROVIDER', str(stopped.exception))
+
+    def test_standard_provider_env_vars_are_detected(self):
+        self.assertEqual(
+            desktop_check.real_model_credential({'GEMINI_API_KEY': 'gem-key'}),
+            {'provider': 'google', 'api_key': 'gem-key', 'model': None},
+        )
+        self.assertEqual(
+            desktop_check.real_model_credential({'OPENAI_API_KEY': 'oa-key', 'CROWBAR_AGENT_MODEL': 'gpt-4o-mini'}),
+            {'provider': 'openai', 'api_key': 'oa-key', 'model': 'gpt-4o-mini'},
+        )
+
+    def test_qmp_keys_for_text_maps_spaces_punctuation_and_case(self):
+        self.assertEqual(
+            desktop_check.qmp_keys_for_text('Hi app_id?'),
+            [('shift', 'h'), ('i',), ('spc',), ('a',), ('p',), ('p',),
+             ('shift', 'minus'), ('i',), ('d',), ('shift', 'slash')],
+        )
+        with self.assertRaises(ValueError):
+            desktop_check.qmp_keys_for_text('bad\n')
+
+    def test_evidence_has_secret_detects_leaks_and_ignores_binary_artifacts(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        work = Path(temporary.name)
+        (work / 'desktop.log').write_text('clean log\n')
+        (work / 'shot.png').write_bytes(b'PNG secret-xyz')
+        self.assertEqual(desktop_check.evidence_has_secret(work, 'secret-xyz'), [])
+        (work / 'harness.log').write_text('oops secret-xyz leaked\n')
+        self.assertEqual(desktop_check.evidence_has_secret(work, 'secret-xyz'), ['harness.log'])
 
 if __name__ == '__main__':
     unittest.main()
