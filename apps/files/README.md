@@ -32,8 +32,8 @@ demand.
   `.crowbaros-files-<pid>-<n>.partial`, and appears under its own name only when
   whole; if Files is killed mid-copy, that hidden copy is left for the person to
   delete. A move or a trash between filesystems removes the original only once
-  the copy is whole, and keeps it if it changed meanwhile. Copies drop setuid
-  and setgid, as `cp` does. Files does not copy pipes, sockets, or devices, and
+  the copy is whole, and keeps it if it changed meanwhile. Copied files drop
+  setuid and setgid, as `cp` does. Files does not copy pipes, sockets, or devices, and
   never reads them for a preview.
 
 ## Build and run on Void

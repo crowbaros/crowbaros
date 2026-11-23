@@ -360,7 +360,7 @@ impl FilesApp {
         let (dims, changed) =
             self.image_sizes
                 .borrow_mut()
-                .get(&entry.path, (meta.len(), meta.modified().ok()), listed, || {
+                .get(&entry.path, fs_model::image_fingerprint(&meta), listed, || {
                     fs_model::still_image_size(&entry.path)
                 });
         if changed {
@@ -380,7 +380,7 @@ impl FilesApp {
     fn release_images_off_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let shown = self.images_to_show();
         let stale = std::mem::take(&mut *self.stale_images.borrow_mut());
-        for path in self.images_on_screen.difference(&shown).chain(&stale) {
+        for path in fs_model::images_to_release(&self.images_on_screen, &shown, &stale) {
             let resource = Resource::Path(Arc::from(path.as_path()));
             if let Some(Ok(image)) = window.get_asset::<ImgResourceLoader>(&resource, cx) {
                 cx.drop_image(image, Some(window));
@@ -732,6 +732,16 @@ impl FilesApp {
             return;
         };
         self.clear_notices();
+        if fs_model::item_identity(&clip.path) != clip.identity {
+            self.clipboard = None;
+            self.error = Some(format!(
+                "“{}” is not what was {} any more; nothing was pasted.",
+                clip.path.display(),
+                if clip.op == ClipboardOp::Cut { "cut" } else { "copied" }
+            ));
+            cx.notify();
+            return;
+        }
         let (result, cut_spent) = match clip.op {
             ClipboardOp::Copy => (fs_model::copy_entry(&clip.path, &dst_dir), false),
             ClipboardOp::Cut => match fs_model::move_entry(&clip.path, &dst_dir) {
@@ -997,6 +1007,7 @@ impl FilesApp {
         };
         self.clipboard = Some(FileClipboard {
             op: ClipboardOp::Copy,
+            identity: fs_model::item_identity(&entry.path),
             path: entry.path,
         });
         self.status = Some(format!("Copied “{}”", entry.name));
@@ -1012,6 +1023,7 @@ impl FilesApp {
         };
         self.clipboard = Some(FileClipboard {
             op: ClipboardOp::Cut,
+            identity: fs_model::item_identity(&entry.path),
             path: entry.path,
         });
         self.status = Some(format!("Cut “{}”", entry.name));

@@ -77,6 +77,9 @@ pub enum ClipboardOp {
 pub struct FileClipboard {
     pub op: ClipboardOp,
     pub path: PathBuf,
+    /// The device and inode of what was cut or copied, so a paste never acts on something else
+    /// that has taken its path since.
+    pub identity: Option<(u64, u64)>,
 }
 
 #[derive(Clone, Debug)]

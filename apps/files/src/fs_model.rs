@@ -168,8 +168,41 @@ pub struct ImageSizes {
     room: usize,
 }
 
-/// A file's size and modified time: if either changes, the file is not the one that was read.
-pub type ImageFingerprint = (u64, Option<SystemTime>);
+/// Which file is at a path, and its state: device, inode, size, and modified and changed times. If
+/// any differs, the file is not the one that was read, or it may read differently now (a change of
+/// permissions moves the changed time).
+pub type ImageFingerprint = (u64, u64, u64, Option<SystemTime>, i64, i64);
+
+pub fn image_fingerprint(meta: &Metadata) -> ImageFingerprint {
+    use std::os::unix::fs::MetadataExt;
+    (
+        meta.dev(),
+        meta.ino(),
+        meta.len(),
+        meta.modified().ok(),
+        meta.ctime(),
+        meta.ctime_nsec(),
+    )
+}
+
+/// The decoded images to let go of: those shown before and not now, and those shown before whose
+/// file has changed. An image never shown was never decoded, so it has nothing to let go of.
+pub fn images_to_release(
+    shown_before: &std::collections::HashSet<PathBuf>,
+    shown_now: &std::collections::HashSet<PathBuf>,
+    changed: &std::collections::HashSet<PathBuf>,
+) -> std::collections::HashSet<PathBuf> {
+    shown_before
+        .iter()
+        .filter(|path| !shown_now.contains(*path) || changed.contains(*path))
+        .cloned()
+        .collect()
+}
+
+/// The device and inode of what is at `path`, without following a link.
+pub fn item_identity(path: &Path) -> Option<(u64, u64)> {
+    identity(path).ok()
+}
 
 impl ImageSizes {
     /// Past this many paths, the cache keeps only what is still listed.
@@ -1089,7 +1122,8 @@ fn copy_node(src: &Path, dst: &Path, started: &mut bool) -> io::Result<()> {
             let _ = fs::File::open(dst).and_then(|d| d.set_modified(modified));
         }
         // Last, so a read-only folder can still be filled.
-        return fs::set_permissions(dst, without_set_id(&meta));
+        // A folder keeps setgid, which makes new files in it take its group, as `cp -r` keeps it.
+        return fs::set_permissions(dst, meta.permissions());
     }
     if !kind.is_file() {
         return Err(not_a_file(src));
@@ -1132,8 +1166,8 @@ fn not_a_file(path: &Path) -> io::Error {
     ))
 }
 
-/// The permissions a copy gets: the original's, less setuid and setgid, as `cp` does. A copy is
-/// owned by whoever copies it, and must not run as them with bits meant for the original's owner.
+/// The permissions a copied file gets: the original's, less setuid and setgid, as `cp` does. A copy
+/// is owned by whoever copies it, and must not run as them with bits meant for the original's owner.
 fn without_set_id(meta: &Metadata) -> fs::Permissions {
     fs::Permissions::from_mode(meta.permissions().mode() & 0o1777)
 }
@@ -2093,7 +2127,7 @@ mod tests {
         let mut reads = 0;
         for _pass in 0..2 {
             for path in &paths {
-                cache.get(path, (1, None), listed, || {
+                cache.get(path, (0, 0, 1, None, 0, 0), listed, || {
                     reads += 1;
                     Some((1, 1))
                 });
@@ -2102,8 +2136,66 @@ mod tests {
         assert_eq!(reads, 5_000);
 
         // A file that changed is read again, and said to have changed.
-        let (_, changed) = cache.get(&paths[0], (2, None), listed, || Some((2, 2)));
+        let (_, changed) = cache.get(&paths[0], (0, 0, 2, None, 0, 0), listed, || Some((2, 2)));
         assert!(changed);
+    }
+
+    #[test]
+    fn only_images_that_were_shown_are_released() {
+        let set = |names: &[&str]| {
+            names
+                .iter()
+                .map(PathBuf::from)
+                .collect::<std::collections::HashSet<_>>()
+        };
+        let released = images_to_release(&set(&["a", "b", "c"]), &set(&["b", "c", "d"]), &set(&["c", "gif"]));
+        // a left the screen; c changed while shown; gif changed but was never decoded.
+        assert_eq!(released, set(&["a", "c"]));
+    }
+
+    #[test]
+    fn a_fingerprint_sees_a_same_size_same_time_replacement_and_a_permission_change() {
+        let root = temp_dir("fingerprint");
+        let pic = root.join("pic.bmp");
+        fs::write(&pic, "one").unwrap();
+        let then = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        fs::File::options()
+            .write(true)
+            .open(&pic)
+            .unwrap()
+            .set_modified(then)
+            .unwrap();
+        let first = image_fingerprint(&fs::metadata(&pic).unwrap());
+
+        fs::write(root.join("new.bmp"), "two").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(root.join("new.bmp"))
+            .unwrap()
+            .set_modified(then)
+            .unwrap();
+        fs::rename(root.join("new.bmp"), &pic).unwrap();
+        let replaced = image_fingerprint(&fs::metadata(&pic).unwrap());
+        assert_ne!(first, replaced);
+
+        fs::set_permissions(&pic, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_ne!(replaced, image_fingerprint(&fs::metadata(&pic).unwrap()));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn what_takes_a_cut_items_path_is_not_the_cut_item() {
+        let root = temp_dir("cut-identity");
+        let report = root.join("Report");
+        fs::create_dir(&report).unwrap();
+        let cut = item_identity(&report);
+        fs::rename(&report, root.join("Report old")).unwrap();
+        fs::create_dir(&report).unwrap();
+        assert_ne!(item_identity(&report), cut);
+        assert_eq!(item_identity(&root.join("Report old")), cut);
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
