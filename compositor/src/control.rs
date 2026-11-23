@@ -1,6 +1,7 @@
 //! The shell's control channel: how the shell learns which windows exist and
-//! on which workspace, and asks the compositor to show a workspace or a
-//! window. The unlock authority's socket is served here too.
+//! on which workspace, asks the compositor to show a workspace or a window,
+//! and moves the keyboard to the Agent's surface and back (see `agent.rs`).
+//! The unlock authority's socket is served here too.
 //!
 //! Each is a path socket of its own, checked against one user ID as the
 //! shell's Wayland socket is (ADR 0032). Both speak the framing in
@@ -293,7 +294,16 @@ impl State {
     /// Sends an event to every shell control connection that has stated the
     /// version: a message with no reply. The unlock authority hears none.
     pub(crate) fn control_event(&mut self, name: &str) {
-        let event = format!("{{\"event\":{}}}", quote(name));
+        self.send_control_event(format!("{{\"event\":{}}}", quote(name)));
+    }
+
+    /// The same, for an event that carries fields: `fields` is the rest of
+    /// its object, as JSON.
+    pub(crate) fn control_event_with(&mut self, name: &str, fields: &str) {
+        self.send_control_event(format!("{{\"event\":{},{fields}}}", quote(name)));
+    }
+
+    fn send_control_event(&mut self, event: String) {
         let ids: Vec<u64> = self
             .controls
             .connections
@@ -498,6 +508,12 @@ impl State {
                 self.focus_window(surface);
                 Ok(ok_reply())
             }),
+            "focus_agent" => only(&[], &request)
+                .and_then(|()| self.focus_agent())
+                .map(|()| ok_reply()),
+            "unfocus_agent" => only(&[], &request)
+                .and_then(|()| self.unfocus_agent())
+                .map(|()| ok_reply()),
             "outputs" => only(&[], &request).map(|()| self.outputs_reply()),
             "lock" => only(&[], &request).map(|()| {
                 self.lock("shell");

@@ -45,6 +45,7 @@ mod protocol;
 mod redraw;
 mod scale;
 mod seat;
+mod summon;
 mod surfaces;
 mod table;
 mod viewporter;

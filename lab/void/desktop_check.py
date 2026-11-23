@@ -109,8 +109,22 @@ class Check:
         self.type(password)
         self.key('ret')
 
-    def capture(self, name):
-        self.qmp.screendump(self.work / f'{name}.png', 0)
+    def capture(self, name, head=0):
+        self.qmp.screendump(self.work / f'{name}.png', head)
+
+    def pixel(self, name, x, y, head=0):
+        """Captures a display as `name`, and returns the colour of one of its
+        pixels: red, green, and blue."""
+        self.capture(name, head)
+        width, height, rows = guest.png_pixels(self.work / f'{name}.png')
+        if not (0 <= x < width and 0 <= y < height):
+            raise ValueError(f'{name}.png is {width} by {height}, and has no pixel at {x},{y}')
+        return tuple(rows[y][3 * x:3 * x + 3])
+
+    def count(self, text, log='/var/log/crowbar-compositor.log'):
+        """How many lines of a log in the guest hold `text`."""
+        result = self.guest.ssh(f'grep -c -e {shlex.quote(text)} {log}', check=False)
+        return int(result.stdout.strip() or 0)
 
     def person(self):
         """The person's account name and home: every app runs as it."""
@@ -398,6 +412,164 @@ class Check:
         self.wait('Chromium takes focus', lambda: self.snapshot()['active']['address'] == browser['address'], timeout=15)
         time.sleep(1.5)
         self.capture('07-chromium')
+        self.agent_surface()
+
+    def agent_surface(self):
+        """The summon gesture, Super+Space, and the Agent's surface (#294): a
+        drawer on the right of the display the pointer is on. It runs last,
+        since it plugs a second display in. What the shell and Fulcrum log
+        says what each did, and a pixel of the drawer's ground says what the
+        display shows there."""
+        shown = 'agent surface shown output='
+        opened, away, back = (f'SHELL agent-surface {what}' for what in ('up=true', 'up=false', 'keyboard=true'))
+        shell = lambda text: self.shell_log().count(text)
+        active = lambda: self.snapshot()['active']['address']
+        preferences = self.preferences()
+        ground = (0x11, 0x11, 0x11) if preferences['studio'] else CANVAS[preferences['theme']]
+        drawn = lambda name, head=0, point=DRAWER_POINT: like(self.pixel(name, *point, head=head), ground)
+        self.run('pkill -x chromium; true')
+        self.wait('Chromium closes',
+                  lambda: not any('chromium' in c['class'].lower() for c in self.snapshot()['clients']))
+        self.click(660, 935)  # Terminal dock entry.
+        terminal = self.wait('Terminal launched for the Agent\'s surface',
+                             lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
+        self.wait('Terminal has the keyboard', lambda: active() == terminal['address'])
+
+        def summon(waits_for, output='Virtual-1', keyboard=False):
+            """Super+Space, once the shell has done what the gesture asks.
+            Fulcrum logs the display it named and where the keyboard was."""
+            told = f'summon output={output} keyboard={str(keyboard).lower()}'
+            gestures, before = self.count(told), shell(waits_for)
+            self.key('meta_l', 'spc')
+            self.wait(f'Super+Space: {waits_for}', lambda: shell(waits_for) > before)
+            return self.count(told) == gestures + 1
+
+        # Up: on the right of the only display, its full height, a third of
+        # its width, with the keyboard.
+        self.check('nothing of the Agent\'s surface shows before it is summoned',
+                   not drawn('10-before-summon') and not shell(opened))
+        shows = self.count(shown)
+        told = summon(opened)
+        self.wait('the Agent\'s surface shows', lambda: self.count(shown) > shows)
+        self.wait('the Agent\'s surface takes the keyboard', lambda: not active())
+        placed = self.run(f"grep -e '{shown}' /var/log/crowbar-compositor.log | tail -1").strip()
+        self.check('Super+Space brings the Agent\'s surface up on the right of the display the pointer is on, '
+                   'its full height and a third of its width',
+                   told and 'output=Virtual-1 at=853,0 size=427x960' in placed and drawn('11-agent-surface'), placed)
+        # That it went to the drawer, Fulcrum says with the gesture that
+        # puts the drawer away, below.
+        self.check('summoning takes the keyboard from the window that had it', not active())
+        self.key('esc')
+        time.sleep(1)
+        self.check('Escape does not put the Agent\'s surface away', not shell(away) and drawn('11-after-escape'))
+        self.still('a still desktop with the Agent\'s surface up commits nothing and draws nothing')
+
+        # A click on a window gives it the keyboard, and the drawer stays.
+        self.click(150, 300)
+        clicked = self.wait('the clicked window takes the keyboard', active)
+        self.check('a click on a window gives it the keyboard and leaves the Agent\'s surface up',
+                   not shell(away) and drawn('11-window-clicked'))
+        told = summon(back)
+        self.wait('the keyboard returns to the Agent\'s surface', lambda: not active())
+        self.check('with the keyboard in a window, Super+Space returns it to the Agent\'s surface',
+                   told and not shell(away))
+        told = summon(away, keyboard=True)
+        self.wait('the window that had the keyboard has it back', lambda: active() == clicked)
+        self.check('summoning gave the Agent\'s surface the keyboard: with it there, Super+Space puts the surface '
+                   'away, and the window that had the keyboard has it back',
+                   told and active() == clicked and not drawn('12-put-away'))
+
+        # Over a fullscreen window, which covers the bar: its frame shows at
+        # the display's top edge, where the bar's ground was.
+        self.click(660, 935)
+        self.wait('Terminal has the keyboard', lambda: active() == terminal['address'])
+        self.check('the bar shows above a window that is not fullscreen', drawn('13-before-fullscreen', point=(300, 1)))
+        self.key('meta_l', 'f')
+        self.wait('Terminal goes fullscreen', lambda: not drawn('13-fullscreen', point=(300, 1)))
+        self.check('a fullscreen window covers where the Agent\'s surface comes up', not drawn('13-fullscreen'))
+        shows = self.count(shown)
+        summon(opened)
+        self.wait('the Agent\'s surface shows over the fullscreen window', lambda: self.count(shown) > shows)
+        self.wait('the Agent\'s surface takes the keyboard', lambda: not active())
+        self.check('the Agent\'s surface comes up over a fullscreen window, which stays fullscreen',
+                   drawn('14-over-fullscreen') and not drawn('14-over-fullscreen', point=(300, 1)))
+        # The close control, at the right of the drawer's header.
+        closes = shell(away)
+        self.click(1253, 24)
+        self.wait('the close control puts the Agent\'s surface away', lambda: shell(away) > closes)
+        self.wait('Terminal has the keyboard back', lambda: active() == terminal['address'])
+        self.check('the close control puts the Agent\'s surface away, and the window that had the keyboard has it back',
+                   not drawn('15-closed-by-its-control'))
+        self.key('meta_l', 'f')
+        self.wait('Terminal leaves fullscreen', lambda: drawn('15-after-fullscreen', point=(300, 1)))
+
+        # Super tapped alone is still the launcher's.
+        launcher, surfaces = shell('SHELL launcher open=true'), shell(opened)
+        self.key('meta_l')
+        self.wait('Super opens the launcher', lambda: shell('SHELL launcher open=true') > launcher)
+        self.check('Super tapped alone still opens the launcher, and not the Agent\'s surface', shell(opened) == surfaces)
+        closed = shell('SHELL launcher open=false')
+        self.key('meta_l')
+        self.wait('Super closes the launcher', lambda: shell('SHELL launcher open=false') > closed)
+
+        # Locked, the gesture does nothing, and the drawer is as it was after:
+        # up with the keyboard, and then put away.
+        summon(opened)
+        self.wait('the Agent\'s surface takes the keyboard', lambda: not active())
+        for name, up in (('up', True), ('put away', False)):
+            gestures = self.count('summon output=')
+            logged = [shell(text) for text in (opened, away, back)]
+            self.key('meta_l', 'l')
+            self.wait('Super+L locks', lambda: self.snapshot().get('locked'))
+            self.key('meta_l', 'spc')
+            time.sleep(1.5)
+            self.capture(f'16-locked-with-the-surface-{name.replace(" ", "-")}')
+            self.check(f'Super+Space does nothing while the desktop is locked, with the Agent\'s surface {name}',
+                       self.snapshot()['locked'] and self.count('summon output=') == gestures
+                       and [shell(text) for text in (opened, away, back)] == logged)
+            self.unlock()
+            self.wait('the password unlocks', lambda: not self.snapshot().get('locked'))
+            time.sleep(1)
+            self.check(f'after unlock the Agent\'s surface is {name}, as it was',
+                       [shell(text) for text in (opened, away, back)] == logged
+                       and drawn(f'16-unlocked-with-the-surface-{name.replace(" ", "-")}') == up
+                       and bool(active()) != up)
+            if up:
+                told = summon(away, keyboard=True)
+                self.wait('Terminal has the keyboard back', lambda: active() == terminal['address'])
+                self.check('after unlock the Agent\'s surface still has the keyboard, and gives it back', told)
+
+        # A second display, to the right of the first: the drawer comes up
+        # on whichever the pointer is on. QEMU's tablet covers both.
+        connected = self.count('output connected name=Virtual-2')
+        self.guest.plug_monitor(1, 1024, 768)
+        self.wait('the second display comes up',
+                  lambda: self.count('output connected name=Virtual-2') > connected)
+        # QEMU gives both monitors one identity, and the layout keeps a place
+        # by identity, so the second takes the place saved for the first,
+        # over it. The person would move it in Studio Settings; so does this.
+        self.displays({'op': 'configure_output', 'name': 'Virtual-2', 'x': 1280, 'y': 0})
+        layout = {o['name']: (o['x'], o['y'], o['width'], o['height'], o['scale'])
+                  for o in self.displays({'op': 'outputs'})['outputs']}
+        self.check('the second display is to the right of the first',
+                   layout == {'Virtual-1': (0, 0, 1280, 960, 120), 'Virtual-2': (1280, 0, 1024, 768, 120)}, str(layout))
+        time.sleep(2)
+        for output, (x, y), head, place, width, point in (
+                ('Virtual-2', (1280 + 500, 300), 1, 'at=1963,0 size=341x768', 341, (1024 - 30, 600)),
+                ('Virtual-1', (600, 400), 0, 'at=853,0 size=427x960', 427, DRAWER_POINT)):
+            self.qmp.pointer(x / (1280 + 1024), y / 960)
+            shows = self.count(shown)
+            told = summon(opened, output=output)
+            self.wait(f'the Agent\'s surface shows on {output}', lambda: self.count(shown) > shows)
+            self.wait('the Agent\'s surface takes the keyboard', lambda: not active())
+            placed = self.run(f"grep -e '{shown}' /var/log/crowbar-compositor.log | tail -1").strip()
+            asked = f'SHELL agent-surface up=true output={output} width={width}'
+            self.check(f'with two displays, Super+Space brings the Agent\'s surface up on {output}, where the pointer is',
+                       told and f'output={output} {place}' in placed and asked in self.shell_log()
+                       and drawn(f'17-summoned-on-{output}', head, point), placed)
+            self.capture(f'17-other-display-while-on-{output}', 1 - head)
+            summon(away, output=output, keyboard=True)
+            self.wait('the Agent\'s surface is put away', lambda: not drawn(f'17-put-away-on-{output}', head, point))
 
     def compositor_restart(self):
         """The compositor's service restarts while the person uses the desktop.
@@ -748,6 +920,19 @@ print(json.dumps({
         log = self.guest.ssh('grep "layer crowbaros-bar drew" /var/log/crowbar-compositor.log',
                              check=False).stdout
         return [float(ms) for ms in re.findall(r'drew ([\d.]+) ms after the workspaces changed', log)]
+
+
+# The ground of the shell's surfaces in each saved theme: the canvas of
+# `apps/shell/src/theme.rs`, as red, green, and blue.
+CANVAS = {'dark': (0x08, 0x0d, 0x12), 'light': (0xf4, 0xf7, 0xf9), 'warm-paper': (0xf7, 0xf2, 0xe8)}
+# A point of the first display that the Agent's surface covers with its
+# ground alone: in its right third, below its text and above its foot.
+DRAWER_POINT = (1250, 700)
+
+
+def like(colour, expected):
+    """Whether two colours are the same to within what a renderer rounds."""
+    return len(colour) == len(expected) == 3 and all(abs(a - b) <= 2 for a, b in zip(colour, expected))
 
 
 # How long a desktop is given to settle, as GPUI keeps presenting for a second

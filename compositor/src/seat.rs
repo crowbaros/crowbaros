@@ -49,6 +49,7 @@ const KEY_1: u32 = 2;
 const KEY_9: u32 = 10;
 const KEY_F: u32 = 33;
 const KEY_L: u32 = 38;
+const KEY_SPACE: u32 = 57;
 const KEY_UP: u32 = 103;
 const KEY_LEFT: u32 = 105;
 const KEY_RIGHT: u32 = 106;
@@ -321,6 +322,7 @@ impl State {
                 self.apply_keyboard_focus(surface);
             }
         } else if !lock_screen {
+            self.note_focus_for_agent(surface);
             self.seat.desktop_keyboard_focus = surface;
             self.refresh_keyboard_focus();
         }
@@ -511,6 +513,8 @@ impl State {
     /// | Super+F | Makes it fullscreen, or restores it |
     /// | Super+Left, Super+Right | Snaps it to that half, or restores it |
     /// | Super+Down | Restores it |
+    /// | Super+L | Locks the desktop |
+    /// | Super+Space | The summon gesture: tells the shell (see `agent.rs`) |
     ///
     /// Super tapped alone, pressed and let go with nothing else between,
     /// asks the shell for its launcher (see `handle_key`). Every other chord
@@ -519,6 +523,7 @@ impl State {
         use crate::modes::Mode;
         match key {
             KEY_L => return self.lock("key"),
+            KEY_SPACE => return self.summon(),
             KEY_UP => return self.toggle_mode(Mode::Maximized),
             KEY_F => return self.toggle_mode(Mode::Fullscreen),
             KEY_LEFT => return self.toggle_mode(Mode::Left),

@@ -96,6 +96,8 @@ pub struct State {
     /// Each output's usable area, after its layers reserved their room.
     pub(crate) usable: HashMap<u64, crate::geometry::Rect>,
     pub(crate) seat: crate::seat::Seat,
+    /// What is kept for the Agent's surface (see `agent.rs`).
+    pub(crate) agent: crate::agent::Agent,
     /// The workspace showing.
     pub(crate) workspace: u32,
     pub(crate) controls: crate::control::Controls,
@@ -158,6 +160,7 @@ impl State {
             layers: Vec::new(),
             usable: HashMap::new(),
             seat: crate::seat::Seat::new(),
+            agent: crate::agent::Agent::default(),
             workspace: 1,
             controls: crate::control::Controls::default(),
             explicit_sync: crate::explicit_sync::ExplicitSync::default(),

@@ -1,7 +1,7 @@
 # CrowbarOS desktop shell
 
 The Rust/GPUI desktop slice: workspace bar, dock, installed-application search,
-and Signal Feather wallpaper. The interface and its assets carry forward to
+Signal Feather wallpaper, and the Agent's surface. The interface and its assets carry forward to
 Void; Fedora packaging and session hooks are
 [archived](../../docs/archive/fedora-workflow/README.md).
 
@@ -46,7 +46,7 @@ historical behavior evidence, not a current Fedora workflow.
 
 - The bar and dock reserve 24 and 48 pixels through Wayland layer surfaces.
   Only the shell is offered layer shell, so no app can draw the bar, the dock,
-  the launcher, the wallpaper, or the lock screen.
+  the launcher, the wallpaper, the lock screen, or the Agent's surface.
 - Applications search supports keyboard navigation; closing the launcher returns focus.
 - Workspace and window focus requests go over the compositor's control
   channel, and the compositor tells the shell of each change to the windows
@@ -56,6 +56,20 @@ historical behavior evidence, not a current Fedora workflow.
 - Super tapped alone toggles the launcher, an app the shell launches takes the
   keyboard with its first window, and the bar and dock mark a window that
   wants attention.
+- Super+Space, the summon gesture, brings up the Agent's surface
+  ([ADR 0035](../../docs/adr/0035-fulcrum-draws-every-ask-and-holds-what-the-agent-may-take.md)):
+  a drawer on the right of the display the pointer is on, that display's
+  full height and a third of its width, above every window, a fullscreen one
+  included, and taking no room from any. The compositor tells the shell of
+  each gesture, with the display and whether the keyboard is in the drawer,
+  and the shell holds whether the drawer is up. A gesture brings the drawer
+  up with the keyboard; with the drawer up and the keyboard in a window, it
+  brings the keyboard back; with the keyboard in the drawer, it puts the
+  drawer away and the window that had the keyboard has it back. The drawer's
+  close control puts it away too. Escape does not. Locking leaves the drawer
+  as it is, and it is up or put away after unlock as it was. No Harness is
+  behind it yet: it shows its empty state, built from
+  [`DESIGN.md`](../../DESIGN.md)'s tokens until the design pass.
 - The desktop starts locked. While the compositor has it locked, the shell
   shows its lock screen, and the bar's lock button and Super+L lock it. The
   lock screen takes the person's password at once and sends it to Base's
@@ -76,7 +90,8 @@ historical behavior evidence, not a current Fedora workflow.
   locked.
 
 These messages, the lock screen's namespace, and the unlock helper's socket
-are accepted in ADR 0032. The compositor's README lists the messages and
+are accepted in ADR 0032. The summon gesture's messages and the Agent's
+surface's namespace, `crowbaros-agent`, follow ADR 0035, which is proposed. The compositor's README lists the messages and
 their framing, under
 [the control channel](../../compositor/README.md#the-control-channel). Desktop shortcuts and window-layout behavior come
 from the compositor.

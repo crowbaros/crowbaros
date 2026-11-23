@@ -114,15 +114,12 @@ impl State {
                 ObjectKind::Output(number) => number,
                 _ => unreachable!("the dispatch checked the argument's interface"),
             },
-            // The compositor chooses: the first output.
-            None => match self.outputs.first() {
-                Some(output) => output.number,
-                None => {
-                    // With no output there is nowhere to show it. It is made
-                    // and closed at once.
-                    0
-                }
-            },
+            // The compositor chooses: the first output, or for the Agent's
+            // surface the one it was summoned on (see `agent.rs`). With no
+            // output there is nowhere to show it. It is made and closed at
+            // once.
+            None if namespace == crate::agent::AGENT_NAMESPACE => self.output_for_agent_surface().unwrap_or(0),
+            None => self.outputs.first().map_or(0, |output| output.number),
         };
         let client = self.clients.get_mut(&client_id).expect("the client is dispatching");
         client.create(
@@ -314,6 +311,7 @@ impl State {
                 message: "a buffer was committed before a configure was acknowledged".into(),
             });
         }
+        let shown = has_buffer && !layer.mapped;
         layer.mapped = has_buffer;
         if !has_buffer {
             // An unmapped layer surface starts again from its first commit.
@@ -334,6 +332,9 @@ impl State {
                 self.seat.desktop_keyboard_focus = None;
             }
             self.refresh_keyboard_focus();
+        }
+        if shown {
+            self.layer_shown(surface);
         }
         self.queue_redraw(output);
         Ok(())

@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zlib
 
 LAB = Path(__file__).resolve().parent
 ROOT = LAB.parents[1]
@@ -127,6 +128,60 @@ class Qmp:
     def close(self):
         self.file.close()
         self.sock.close()
+
+
+def png_pixels(path):
+    """The pixels of a screendump: its width, its height, and its rows, each
+    the bytes of its pixels, three a pixel. It reads what QEMU writes and no
+    more: eight bits a channel, RGB or RGBA, not interlaced."""
+    data = Path(path).read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError(f"{path} is not a PNG")
+    at, packed, header = 8, b"", None
+    while at < len(data):
+        length, kind = struct.unpack(">I4s", data[at:at + 8])
+        body = data[at + 8:at + 8 + length]
+        if kind == b"IHDR":
+            header = struct.unpack(">IIBBBBB", body)
+        elif kind == b"IDAT":
+            packed += body
+        at += 12 + length
+    width, height, depth, colour, _, _, interlace = header
+    if depth != 8 or colour not in (2, 6) or interlace:
+        raise ValueError(f"{path}: a PNG of depth {depth}, colour type {colour}, "
+                         f"interlace {interlace} is not one this reads")
+    channels = 3 if colour == 2 else 4
+    stride = width * channels
+    raw = zlib.decompress(packed)
+    rows, above = [], bytes(stride)
+    for y in range(height):
+        start = y * (stride + 1)
+        kind, row = raw[start], bytearray(raw[start + 1:start + 1 + stride])
+        # Each filter adds a prediction from the pixel to the left, the row
+        # above, or both, as the PNG specification's section 9 has them.
+        if kind == 1:
+            for i in range(channels, stride):
+                row[i] = (row[i] + row[i - channels]) & 255
+        elif kind == 2:
+            row = bytearray((a + b) & 255 for a, b in zip(row, above))
+        elif kind == 3:
+            for i in range(stride):
+                left = row[i - channels] if i >= channels else 0
+                row[i] = (row[i] + ((left + above[i]) >> 1)) & 255
+        elif kind == 4:
+            for i in range(stride):
+                left = row[i - channels] if i >= channels else 0
+                corner = above[i - channels] if i >= channels else 0
+                estimate = left + above[i] - corner
+                near = min((abs(estimate - left), 0, left), (abs(estimate - above[i]), 1, above[i]),
+                           (abs(estimate - corner), 2, corner))
+                row[i] = (row[i] + near[2]) & 255
+        elif kind != 0:
+            raise ValueError(f"{path}: row {y} has the unknown filter {kind}")
+        above = bytes(row)
+        rows.append(above if channels == 3 else
+                    bytes(c for i in range(0, stride, 4) for c in above[i:i + 3]))
+    return width, height, rows
 
 
 def build_base(log_path, build=True):

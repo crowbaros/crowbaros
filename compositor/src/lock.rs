@@ -99,7 +99,8 @@ impl State {
     }
 
     /// Unlocks the desktop, as the unlock authority, or the shell where there
-    /// is none, asks. The window that had the keyboard has it back.
+    /// is none, asks. The window that had the keyboard has it back, or the
+    /// Agent's surface if it had it.
     pub fn unlock(&mut self) {
         if !self.lock.locked {
             return;
@@ -111,11 +112,7 @@ impl State {
             .seat
             .desktop_keyboard_focus
             .map(|focus| self.root_of(focus))
-            .filter(|window| {
-                self.windows
-                    .iter()
-                    .any(|w| w.surface == *window && w.workspace == self.workspace)
-            });
+            .filter(|focus| self.agent_surface() == Some(*focus) || self.window_is_shown(*focus));
         self.set_keyboard_focus(before);
         self.refresh_pointer_focus();
         self.control_event("unlocked");

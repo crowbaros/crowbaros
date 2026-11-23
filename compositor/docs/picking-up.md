@@ -7,7 +7,7 @@ Where the buildout paused, how to run everything, what trips people up, and how 
 Fulcrum runs CrowbarOS's desktop on Base's image. It has two kinds of client, the shell and the person's apps ([ADR 0032](../../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md)), each at a socket of its own that takes one user ID. Copy and paste, the primary selection, and drag and drop work between the shell and every app, and a new window takes the keyboard, as on any desktop. The desktop starts locked, the person's password unlocks it through Base's helper, and a compositor restart comes back locked. CrowbarOS's desktop check shows each of these on a copy of Base's image, booted under UEFI.
 
 - **Built:** Milestones 1 to 6, 8, and 9, and Milestone 7 but for input devices' settings. Milestones 3, 7, and 8 have run on the test machine's RTX 5060 and its integrated Radeon, with one monitor ([the records](../../docs/development/README.md)).
-- **Waiting on CrowbarOS's records:** capture by the shell, input devices' settings, and what Fulcrum offers the Agent ([crowbaros#239](https://github.com/crowbaros/crowbaros/issues/239)).
+- **Waiting on CrowbarOS's records:** capture by the shell, and input devices' settings. What Fulcrum offers the Agent is [ADR 0035](../../docs/adr/0035-fulcrum-draws-every-ask-and-holds-what-the-agent-may-take.md), proposed. Of it, the summon gesture is built: Super+Space, and the keyboard's way to the Agent's surface and back.
 - **Waiting on hardware:** the run on Jason Alexander's Mesa machine ([crowbaros#228](https://github.com/crowbaros/crowbaros/issues/228)), and on either machine the rows no record has yet: a second monitor, with mixed scale and locked across suspend, and a dense panel's scale.
 
 ## Next, without a new record

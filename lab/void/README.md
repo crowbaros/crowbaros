@@ -16,7 +16,7 @@ tag.
 | --- | --- |
 | `compositor_check.py` | The check of the [compositor](../../compositor/README.md) on a TTY in Base's image |
 | `desktop_check.py` | The desktop check and Base boot checks, on a fresh copy of Base's image, with retained diagnostics |
-| `guest.py` | What both checks share: isolated UEFI VM runs on a copy of Base's disk, QMP input/screendumps, VNC monitor hotplug, and SSH |
+| `guest.py` | What both checks share: isolated UEFI VM runs on a copy of Base's disk, QMP input/screendumps and their pixels, VNC monitor hotplug, and SSH |
 | `test_*.py` | Unit tests for the guest driver and the checks |
 
 ```sh
@@ -123,7 +123,18 @@ Super+1 to 9 show within two frames, by the times Fulcrum logs. It unplugs
 the only display, by forcing its connector off in sysfs while QEMU raises a
 hotplug event, and plugs it in
 again: the shell must stop once without panicking, wait for a display, and
-draw its layers when it comes back (#271). It checks that
+draw its layers when it comes back (#271). It summons the Agent's surface with Super+Space and checks where it comes
+up, by what Fulcrum and the shell log and by a pixel of the drawer's ground
+in a screenshot: on the right of the display, its full height and a third of
+its width, with the keyboard; Escape leaving it up; a click on a window
+taking the keyboard and leaving it up; the gesture bringing the keyboard
+back, then putting the drawer away with the keyboard back in the window that
+had it; the drawer over a fullscreen window; its close control; Super alone
+still opening the launcher; the gesture doing nothing while locked, with the
+drawer up or put away after unlock as it was; and, with a second display
+plugged in, the drawer on whichever display the pointer is on. A still
+desktop with the drawer up must commit and draw nothing, too. That part
+runs last, since it leaves the second display plugged in. It checks that
 apps run as the person at the ordinary socket for apps, that copy and paste, the primary
 selection, and drag and drop work between two apps, and that the shell's
 sockets, its control channel, and the unlock helper refuse an app. An error
