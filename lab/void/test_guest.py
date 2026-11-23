@@ -1,4 +1,5 @@
 """The lab's guest driver: isolated UEFI runs of Base's image."""
+import base64
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
+import zlib
 
 import guest
 
@@ -256,6 +258,72 @@ class FulcrumClient(unittest.TestCase):
 
     def test_the_frame_a_check_knocks_with_states_the_version(self):
         self.assertEqual(guest.FULCRUM_VERSION_FRAME, self.VERSION)
+
+
+class Screendumps(unittest.TestCase):
+    """What a check reads of a screendump: its pixels."""
+
+    # A picture 7 wide and 5 high whose pixel at x, y is `self.pixel(x, y)`,
+    # written by ImageMagick as RGB and as RGBA. Its rows use the Sub and
+    # Paeth filters.
+    RGB = base64.b64decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAcAAAAFCAIAAAAG+GGPAAAAQElEQVQI113KQQ3AMAzAwFjbazwq'
+        'DUvJlEzIhMFQDME4eN+okl8nE09cjq2TL3DgbB1dFyYuvLsmJhbm9hYWvj/92i0N0PEt+wAAAABJ'
+        'RU5ErkJggg==')
+    RGBA = base64.b64decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAcAAAAFCAYAAACJmvbYAAAAPUlEQVQI12NkOMHwn+u/KgM2zML4'
+        'hoGB8b8qA+N/LzTMjC6Zz8D4fwqU1kCXnALFOxkY/0/BpnMnFN9jAAB/8S4MCb4H2gAAAABJRU5E'
+        'rkJggg==')
+
+    @staticmethod
+    def pixel(x, y):
+        return bytes((10 * x + y, 200 - 20 * y - x, (37 * x * (y + 1)) % 256))
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.path = Path(temporary.name) / 'screen.png'
+
+    def picture(self):
+        return [b''.join(self.pixel(x, y) for x in range(7)) for y in range(5)]
+
+    def test_a_png_another_program_wrote_reads_as_its_pixels(self):
+        for name, data in (('RGB', self.RGB), ('RGBA', self.RGBA)):
+            self.path.write_bytes(data)
+            self.assertEqual(guest.png_pixels(self.path), (7, 5, self.picture()), name)
+
+    def test_every_filter_a_row_may_use_is_undone(self):
+        """QEMU's screendumps also use Up, and a PNG may use Average. Each row
+        here is filtered by hand, as the PNG specification's section 9 says:
+        None, Up, Average, Up, None."""
+        rows = self.picture()
+        filtered = b''
+        for y, kind in enumerate((0, 2, 3, 2, 0)):
+            row, above = rows[y], rows[y - 1] if y else bytes(21)
+            left = bytes(3) + row[:-3]
+            predicted = {0: bytes(21), 2: above,
+                         3: bytes((a + b) // 2 for a, b in zip(left, above))}[kind]
+            filtered += bytes([kind]) + bytes((v - p) & 255 for v, p in zip(row, predicted))
+        chunk = lambda kind, body: (struct.pack('>I', len(body)) + kind + body
+                                    + struct.pack('>I', zlib.crc32(kind + body)))
+        packed = zlib.compress(filtered)
+        self.path.write_bytes(b'\x89PNG\r\n\x1a\n'
+                              + chunk(b'IHDR', struct.pack('>IIBBBBB', 7, 5, 8, 2, 0, 0, 0))
+                              # In two chunks, as a larger picture's data comes.
+                              + chunk(b'IDAT', packed[:9]) + chunk(b'IDAT', packed[9:])
+                              + chunk(b'IEND', b''))
+        self.assertEqual(guest.png_pixels(self.path), (7, 5, rows))
+
+    def test_a_file_that_is_no_png_or_one_it_cannot_read_is_an_error(self):
+        self.path.write_bytes(b'P6 not a PNG')
+        with self.assertRaises(ValueError):
+            guest.png_pixels(self.path)
+        # Sixteen bits a channel.
+        header = bytearray(self.RGB)
+        header[24] = 16
+        self.path.write_bytes(bytes(header))
+        with self.assertRaises(ValueError):
+            guest.png_pixels(self.path)
 
 
 if __name__ == '__main__':

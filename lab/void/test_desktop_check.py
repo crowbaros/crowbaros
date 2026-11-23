@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import desktop_check
 import guest
+import test_guest
 
 base = guest.void_base
 
@@ -191,6 +192,50 @@ class DisplayUnplugged(unittest.TestCase):
         check = desktop_check.Check(FakeGuest(temporary.name, responder))
         self.addCleanup(check.logfile.close)
         self.assertEqual(check.layer_commits(), {'bar': 9, 'dock': 8, 'wallpaper': 7})
+
+
+class AgentSurface(unittest.TestCase):
+    """What the Agent's surface checks read: a pixel of a screenshot, and
+    how often a log says something."""
+
+    def make_check(self, responder):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        check = desktop_check.Check(FakeGuest(temporary.name, responder))
+        self.addCleanup(check.logfile.close)
+        return check
+
+    def test_a_colour_is_like_another_only_within_what_a_renderer_rounds(self):
+        light = desktop_check.CANVAS['light']
+        self.assertEqual(light, (244, 247, 249))
+        self.assertTrue(desktop_check.like((243, 249, 249), light))
+        self.assertFalse(desktop_check.like((241, 247, 249), light))
+        self.assertFalse(desktop_check.like(desktop_check.CANVAS['dark'], light))
+
+    def test_a_pixel_is_read_from_the_display_asked_for(self):
+        class Screens:
+            def screendump(self, path, head):
+                # The picture of test_guest's Screendumps, on the second head only.
+                Path(path).write_bytes(test_guest.Screendumps.RGB if head == 1 else b'no picture')
+
+        check = self.make_check(lambda user, command: (1, '', ''))
+        check.qmp = Screens()
+        self.assertEqual(check.pixel('second', 3, 2, head=1), (32, 157, 77))
+        self.assertTrue((check.work / 'second.png').exists())
+        with self.assertRaises(ValueError):
+            check.pixel('first', 3, 2)
+
+    def test_a_log_is_counted_by_its_lines_and_a_log_without_the_text_counts_none(self):
+        asked = []
+
+        def responder(user, command):
+            asked.append(command)
+            # grep prints 0 and exits 1 when no line matches.
+            return (0, '3\n', '') if 'summon output=' in command else (1, '0\n', '')
+        check = self.make_check(responder)
+        self.assertEqual(check.count('summon output='), 3)
+        self.assertEqual(check.count("agent's surface"), 0)
+        self.assertEqual(asked[0], "grep -c -e 'summon output=' /var/log/crowbar-compositor.log")
 
 
 class Runs(unittest.TestCase):

@@ -1132,8 +1132,6 @@ impl Render for AgentSurface {
 /// compositor puts a surface of this namespace on the display the pointer
 /// was on at the gesture.
 fn show_agent_surface(model: &Entity<Model>, summon: &session::Summon, cx: &mut App) {
-    // The launcher holds the keyboard while it is open.
-    close_launcher(model, cx);
     let width = agent_surface_width(summon.width);
     log::info!(
         "SHELL agent-surface open=true output={} width={width}",
@@ -1170,6 +1168,9 @@ fn show_agent_surface(model: &Entity<Model>, summon: &session::Summon, cx: &mut 
 /// The summon gesture: the surface comes up, takes the keyboard back, or is
 /// put away.
 fn summoned(model: &Entity<Model>, summon: session::Summon, cx: &mut App) {
+    // The launcher holds the keyboard while it is open, over whatever the
+    // gesture gives it to.
+    close_launcher(model, cx);
     // A surface the compositor closed, as one whose display went away, is
     // no longer up.
     let agent = model.read(cx).agent;
