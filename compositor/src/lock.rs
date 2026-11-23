@@ -84,6 +84,7 @@ impl State {
         self.cancel_drag();
         self.seat.drag_press = None;
         self.lock.locked = true;
+        self.arm_idle_timer();
         // Every draw from the next on shows the session locked.
         self.lock.locked_from = self
             .outputs
@@ -117,6 +118,7 @@ impl State {
         self.refresh_pointer_focus();
         self.control_event("unlocked");
         self.input_seen();
+        self.arm_idle_timer();
         self.queue_redraw_all();
     }
 
@@ -165,7 +167,7 @@ impl State {
     }
 
     /// Locks the session after this long without input, or never. The idle
-    /// timer counts from now.
+    /// timer counts from now, or from the unlock while the session is locked.
     pub fn lock_after_idle(&mut self, after: Option<Duration>) {
         self.lock.idle_after = after;
         self.lock.last_input = Instant::now();
@@ -177,9 +179,14 @@ impl State {
         self.lock.last_input = Instant::now();
     }
 
+    /// Sets the idle timer in place of the one there was, or none while the
+    /// session is locked: there is nothing left for it to do until unlock.
     fn arm_idle_timer(&mut self) {
         if let Some(timer) = self.lock.timer.take() {
             self.event_loop.cancel_timer(timer);
+        }
+        if self.lock.locked {
+            return;
         }
         if let Some(after) = self.lock.idle_after {
             let deadline = self.lock.last_input + after;
@@ -188,9 +195,9 @@ impl State {
     }
 
     /// The idle timer ran out: the session locks if nothing happened since,
-    /// unless a shown surface inhibits idle. The timer is set again.
+    /// unless a shown surface inhibits idle. The timer is set again while
+    /// the session is not locked.
     pub(crate) fn idle_timer(&mut self) {
-        self.lock.timer = None;
         let Some(after) = self.lock.idle_after else {
             return;
         };

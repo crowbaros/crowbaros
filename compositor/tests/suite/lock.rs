@@ -195,6 +195,64 @@ fn the_session_locks_itself_when_idle_unless_a_shown_surface_inhibits_it() {
     );
 }
 
+/// How long the idle tests leave the session before it locks itself.
+const IDLE: Duration = Duration::from_millis(200);
+
+/// Turns the loop until the session is locked.
+fn turn_until_locked(state: &mut State) {
+    let give_up = Instant::now() + Duration::from_secs(10);
+    while !state.locked() {
+        assert!(Instant::now() < give_up, "idle did not lock");
+        state.turn(Some(Duration::from_secs(1))).unwrap();
+    }
+}
+
+/// Whether the loop sleeps through a whole turn of twice the idle time:
+/// nothing is ready, and no timer runs out.
+fn sleeps(state: &mut State) -> bool {
+    let started = Instant::now();
+    state.turn(Some(IDLE * 2)).unwrap();
+    started.elapsed() >= IDLE * 2
+}
+
+#[test]
+fn the_loop_sleeps_once_the_session_locked_itself_and_unlock_starts_the_timer_again() {
+    let mut state = State::new().unwrap();
+    state.lock_after_idle(Some(IDLE));
+    turn_until_locked(&mut state);
+    assert!(sleeps(&mut state), "the loop woke while the session was locked");
+
+    // The time without input counts from the unlock: the session was locked
+    // for longer than it takes to lock itself.
+    let unlocked = Instant::now();
+    state.unlock();
+    turn_until_locked(&mut state);
+    assert!(unlocked.elapsed() >= IDLE, "the session locked before it was idle");
+    assert!(
+        sleeps(&mut state),
+        "the loop woke after the session locked itself again"
+    );
+}
+
+#[test]
+fn no_idle_timer_runs_while_the_session_is_locked_by_other_means() {
+    // Locked by a request, with the timer running.
+    let mut state = State::new().unwrap();
+    state.lock_after_idle(Some(IDLE));
+    state.lock("test");
+    assert!(sleeps(&mut state), "the loop woke for the timer set before the lock");
+    state.unlock();
+    turn_until_locked(&mut state);
+
+    // Locked before it is told to lock when idle.
+    let mut state = State::new().unwrap();
+    state.lock("test");
+    state.lock_after_idle(Some(IDLE));
+    assert!(sleeps(&mut state), "the loop woke for a timer set while locked");
+    state.unlock();
+    turn_until_locked(&mut state);
+}
+
 #[test]
 fn the_confirm_chord_neither_locks_nor_unlocks_and_no_client_hears_its_enter() {
     let compositor = Compositor::start();
