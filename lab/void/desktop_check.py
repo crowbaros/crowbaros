@@ -758,7 +758,8 @@ BAR_FOLLOWS = 2 * 1000 / 60
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.parse_args()
+    guest.add_arguments(parser)
+    args = parser.parse_args()
     # What building and booting the image need, before the build spends its time.
     void_base.preflight(vm=True, build=True)
     vm = guest.Guest.create(guest.ROOT / '.lab/void-desktop-checks', 'crowbaros-desktop-check')
@@ -766,15 +767,22 @@ def main():
     check.log(f'Evidence and new guest disk: {vm.work}')
     try:
         build_log = vm.work / 'build.log'
-        check.log(f"Building the image with Base's build; its output goes to {build_log}")
-        built = guest.build_base(build_log)
+        if args.build:
+            check.log(f"Building the image with Base's build; its output goes to {build_log}")
+        else:
+            check.log(guest.NOT_EVIDENCE)
+        built = guest.build_base(build_log, build=args.build)
         vm.start()
         vm.wait_ssh()
         check.checks(built)
-    except Exception as error:
+    except BaseException as error:
+        # Whatever stopped the run, a person's Ctrl-C included: a run that
+        # did not reach its end did not pass, and keeps its disk.
         if all(row['passed'] for row in check.results):
             check.results.append({'name': 'smoke run completed', 'passed': False, 'detail': repr(error)})
         check.log(f'FAIL: {error!r}')
+        if not isinstance(error, Exception):
+            raise
     finally:
         if vm.running():
             check.diagnostics()
@@ -782,9 +790,15 @@ def main():
         if check.qmp is not None:
             check.qmp.close()
         failed = sum(not row['passed'] for row in check.results)
-        (vm.work / 'results.json').write_text(json.dumps(check.results, indent=2) + '\n')
-        check.log(f'RESULT: {len(check.results)-failed} passed, {failed} failed')
-        check.log(f'Evidence: {vm.work}')
+        results = 'results.json' if args.build else 'results-not-evidence.json'
+        (vm.work / results).write_text(json.dumps(check.results, indent=2) + '\n')
+        if not args.build:
+            check.log(guest.NOT_EVIDENCE)
+        if not failed and not vm.discard_disk():
+            check.log('The guest did not stop, so its disk is kept.')
+        mark = '' if args.build else ' (NOT EVIDENCE)'
+        check.log(f'RESULT{mark}: {len(check.results)-failed} passed, {failed} failed')
+        check.log(f'{"Evidence" if args.build else "Not evidence"}: {vm.work}')
         check.logfile.close()
     return int(failed != 0)
 

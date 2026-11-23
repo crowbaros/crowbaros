@@ -3,6 +3,7 @@
 Both the compositor check and the desktop check use this module. Every run
 owns a directory with its own copy of Base's disk, firmware variables, SSH
 port, and Unix QMP and VNC sockets, and reaches the guest with Base's SSH key.
+A run that passes deletes its disk.
 The sockets are in a short directory of the run's own under the system's
 temporary directory, since a Unix socket's path is at most 107 bytes and a
 worktree's run directory can be longer than that.
@@ -128,16 +129,42 @@ class Qmp:
         self.sock.close()
 
 
-def build_base(log_path):
-    """Build Base's image with the lab account, logging output to `log_path`."""
-    with Path(log_path).open("w") as log:
-        result = subprocess.run(
-            [sys.executable, void_base.HERE / "void_base.py", "build", "--lab-account"],
-            stdout=log, stderr=subprocess.STDOUT,
-        )
-    if result.returncode:
-        raise RuntimeError(f"Base's build failed; see {log_path}")
+def build_base(log_path, build=True):
+    """Build Base's image with the lab account, logging output to `log_path`,
+    and return each program's digest. Without `build`, the image and the
+    programs are taken as the last build left them."""
+    if not build:
+        lack = [path for path in (void_base.BASE_DISK, *void_base.binaries().values())
+                if not path.exists()]
+        if lack:
+            raise RuntimeError(f"--no-build needs the last build's {lack[0]}; run without it first")
+        # The image must be one a check built, with the lab account: after a
+        # person's own `void_base.py build`, the guest refuses the checks' login.
+    else:
+        with Path(log_path).open("w") as log:
+            result = subprocess.run(
+                [sys.executable, void_base.HERE / "void_base.py", "build", "--lab-account"],
+                stdout=log, stderr=subprocess.STDOUT,
+            )
+        if result.returncode:
+            raise RuntimeError(f"Base's build failed; see {log_path}")
     return {name: void_base.sha256(path) for name, path in void_base.binaries().items()}
+
+
+# What a run made with `--no-build` says of itself, in its log and in the name
+# of its results: it shows what the checks make of an image built earlier,
+# from files that may have changed since, so it is no evidence for a pull
+# request.
+NOT_EVIDENCE = ("NOT EVIDENCE: --no-build booted the image the last build left, which this run "
+                "did not build from the files as they are now")
+
+
+def add_arguments(parser):
+    """The options both checks take."""
+    parser.add_argument("--no-build", dest="build", action="store_false",
+                        help="boot the image the last build left, to try a change to the check "
+                             "itself sooner. The run says it is not evidence, and a pull "
+                             "request needs a run without this")
 
 
 class Guest:
@@ -290,6 +317,16 @@ class Guest:
         finally:
             shutil.rmtree(self.sockets, ignore_errors=True)
 
+    def discard_disk(self):
+        """Delete the run's disk, 12 GB a run, and say whether it is gone. A
+        run that passed has no use for it; one that failed keeps it, to be
+        booted and looked at. A guest that did not stop keeps its disk too:
+        it is still writing it."""
+        if self.running():
+            return False
+        self.disk.unlink(missing_ok=True)
+        return True
+
     def _stop(self):
         if not self.running():
             return
@@ -318,6 +355,8 @@ class Guest:
                 pass
         for _ in range(50):
             if not self.running():
+                # Only a guest that is gone loses its PID file: one that
+                # outlives all of this is still known to be running.
+                self.pidfile.unlink(missing_ok=True)
                 break
             time.sleep(0.2)
-        self.pidfile.unlink(missing_ok=True)
