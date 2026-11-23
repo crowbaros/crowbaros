@@ -80,6 +80,19 @@ pub fn refused(reply: &Value) -> Option<Cow<'_, str>> {
     Some(text(reply, "code"))
 }
 
+/// What `next` does with the person's typing while it waits.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Typing {
+    /// It waits in the terminal, unread.
+    Waits,
+    /// A line of it is what is waited for.
+    Wanted,
+    /// It is read and kept for when a line is wanted, so that its end is
+    /// seen: Ctrl-D, or the end of what was piped in, with no line left
+    /// that was typed before it.
+    UntilItEnds,
+}
+
 /// What the client waited for, and got.
 pub enum Happening {
     /// An event from the Harness.
@@ -239,10 +252,9 @@ impl Connection {
         Ok(())
     }
 
-    /// Waits for the next thing to happen: an event, Ctrl-C, or, when
-    /// `typing` is wanted, a line from the person. What the person types
-    /// while no line is wanted waits in the terminal.
-    pub fn next(&mut self, typing: bool) -> Result<Happening> {
+    /// Waits for the next thing to happen: an event, Ctrl-C, or, as
+    /// `typing` has it, a line from the person or the end of their typing.
+    pub fn next(&mut self, typing: Typing) -> Result<Happening> {
         loop {
             if let Some(event) = self.events.pop_front() {
                 return Ok(Happening::Event(event));
@@ -253,7 +265,7 @@ impl Connection {
                 }
                 return Ok(Happening::Event(message));
             }
-            if typing {
+            if typing == Typing::Wanted {
                 if let Some(end) = self.typed.iter().position(|&byte| byte == b'\n') {
                     let line: Vec<u8> = self.typed.drain(..=end).collect();
                     return Ok(Happening::Line(
@@ -269,8 +281,12 @@ impl Connection {
                     return Ok(Happening::Line(String::from_utf8_lossy(&line).to_string()));
                 }
             }
+            if typing == Typing::UntilItEnds && self.typing_ended && self.typed.is_empty() {
+                return Ok(Happening::EndOfInput);
+            }
             let mut waited = vec![self.interrupts, self.stream.as_raw_fd()];
-            if typing {
+            // Its end is read once: after it, standard input has nothing more to wait for.
+            if typing != Typing::Waits && !self.typing_ended {
                 waited.push(0);
             }
             let ready = sys::readable(&waited)?;
@@ -353,13 +369,15 @@ mod tests {
             json!({"reply": "sent", "turn": 2})
         );
         assert!(
-            matches!(harness.next(false).unwrap(), Happening::Event(event) if event == json!({"event": "stopped", "turn": 1}))
+            matches!(harness.next(Typing::Waits).unwrap(), Happening::Event(event) if event == json!({"event": "stopped", "turn": 1}))
         );
 
         // One that `next` gave is not waited for again.
         let (mut harness, _quiet) = against(1, &[r#"{"reply":"ok"}"#, r#"{"reply":"sent","turn":2}"#]);
         harness.send(json!({"op": "stop"})).unwrap();
-        assert!(matches!(harness.next(false).unwrap(), Happening::Event(reply) if reply == json!({"reply": "ok"})));
+        assert!(
+            matches!(harness.next(Typing::Waits).unwrap(), Happening::Event(reply) if reply == json!({"reply": "ok"}))
+        );
         assert_eq!(
             harness.request(json!({"op": "send"})).unwrap(),
             json!({"reply": "sent", "turn": 2})

@@ -252,7 +252,9 @@ export async function openStore(path: string, models: Models): Promise<Store> {
 	/**
 	 * One send or stop of a conversation at a time, each done before the
 	 * next begins. A stop that finds its turn the newest has stopped it, or
-	 * found nothing to stop, before a message can begin the turn after.
+	 * found nothing to stop, before a message can begin the turn after. So
+	 * a message sent while a stop is under way waits for it, and then begins
+	 * its turn.
 	 */
 	const lines = new Map<string, Promise<void>>();
 	const inLine = <T>(conversation: string, work: () => Promise<T>): Promise<T> => {

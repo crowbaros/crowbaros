@@ -3,7 +3,7 @@
 //! client only relays: it shows the Harness's questions, sends back what
 //! the person types, and opens a browser when there is one.
 
-use crate::connection::{Connection, Happening, NO_MODEL, refused, text};
+use crate::connection::{Connection, Happening, NO_MODEL, Typing, refused, text};
 use crate::sys;
 use crate::talk::Ended;
 use serde_json::{Value, json};
@@ -121,7 +121,8 @@ pub fn login(harness: &mut Connection, provider: Option<&str>) -> Result<Ended> 
     let mut asked: Option<Question> = None;
     let mut cancelling = false;
     loop {
-        let event = match harness.next(asked.is_some())? {
+        let typing = if asked.is_some() { Typing::Wanted } else { Typing::Waits };
+        let event = match harness.next(typing)? {
             Happening::Event(event) => event,
             Happening::Line(line) => {
                 let Some(question) = asked.take() else { continue };

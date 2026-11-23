@@ -458,6 +458,28 @@ fn ctrl_c_stops_a_turn_another_client_began_while_this_one_shows_it() {
 
 #[test]
 #[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
+fn ctrl_d_leaves_a_client_that_shows_another_clients_turn_and_the_turn_goes_on() {
+    let lab = Lab::with_model(r#"[{"text": "Here."}, {"text": "One two three", "stall": true}]"#);
+    assert_eq!(lab.run(&["Hello?"], "").status, 0);
+    let conversation = only_conversation(&lab);
+    let mut shown = Running::start(lab.agent(&["--resume", &conversation]));
+    shown.wait_for_out("> Hello?\nHere.\n");
+    let mut other = Running::start(lab.agent(&["--resume", &conversation, "Count."]));
+    shown.wait_for_out("\n> Count.\nOne");
+    // Ctrl-D, while the other client's turn is on the screen: this client leaves, and stops nothing.
+    drop(shown.child.stdin.take());
+    wait_for("the client to leave", || {
+        shown.child.try_wait().expect("crowbar-agent is waited for").is_some()
+    });
+    assert_eq!(shown.ended(), 0);
+    assert_eq!(shown.err.lock().unwrap().as_str(), "");
+    assert!(lab.run(&["--list"], "").out.ends_with("(working)\n"));
+    other.signal(libc::SIGINT);
+    assert_eq!(other.ended(), 130);
+}
+
+#[test]
+#[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
 fn a_second_ctrl_c_leaves_a_sign_in_the_harness_does_not_answer() {
     let mut lab = Lab::empty();
     lab.harness(uid());
@@ -662,6 +684,20 @@ fn the_person_signs_in_with_an_api_key_and_signs_out() {
     );
     assert!(!fs::read_to_string(&kept).unwrap().contains("sk-a-key"));
     assert_eq!(lab.run(&["status"], "").status, 1);
+
+    // Left at the choice of a Model, by Ctrl-D: signed in all the same, and told which Models none is chosen of.
+    let left = lab.run(&["login", "openai"], "api_key\nsk-a-key-for-the-test\n");
+    assert_eq!(left.status, 0, "{left:?}");
+    assert!(
+        left.err
+            .ends_with("Signed in to OpenAI. None of its Models is chosen: choose one with `crowbar-agent model`.\n"),
+        "{left:?}"
+    );
+    assert!(
+        lab.run(&["status"], "")
+            .out
+            .starts_with("Signed in to OpenAI (openai), with an API key.\n")
+    );
 }
 
 #[test]

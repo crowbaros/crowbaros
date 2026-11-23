@@ -3,7 +3,7 @@
 //! reads the same in foot, on a console, over SSH, and down a pipe. All else
 //! the client says goes to standard error.
 
-use crate::connection::{Connection, Happening, refused, text};
+use crate::connection::{Connection, Happening, Typing, refused, text};
 use serde_json::{Value, json};
 use std::io::{ErrorKind, IsTerminal, Result, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -59,7 +59,7 @@ fn turn(harness: &mut Connection, conversation: &mut Option<String>, message: &s
             // Ctrl-C before the Harness said the turn began. Leaving stops no turn, and this one may yet begin.
             if error.kind() == ErrorKind::Interrupted {
                 eprintln!(
-                    "crowbar-agent: Left before the Harness answered. The message was sent, and the Agent may still answer it: `crowbar-agent --list` shows whether it did."
+                    "crowbar-agent: Left before the Harness answered. The message was sent, and the Agent may still answer it: `crowbar-agent --list` shows the conversation if it began one, and `--resume` what became of it."
                 );
             }
         })?;
@@ -76,27 +76,43 @@ fn turn(harness: &mut Connection, conversation: &mut Option<String>, message: &s
         &begun,
         reply.get("turn").and_then(Value::as_u64),
         Answer::new(),
+        Typing::Waits,
     );
     *conversation = Some(begun);
-    ended
+    // The person's typing waits, so the turn was watched to its end.
+    ended.map(|ended| ended.unwrap_or(Ended::Done))
 }
 
 /// Writes a turn's answer as it comes, until the turn ends. Ctrl-C stops
 /// the turn: the Harness is asked to, and the turn's own end is waited for.
 /// A second Ctrl-C does not wait.
-fn watch(harness: &mut Connection, conversation: &str, turn: Option<u64>, mut answer: Answer) -> Result<Ended> {
+///
+/// `typing` is `Waits`, or `UntilItEnds` for a turn the person did not
+/// begin: the end of their typing then leaves the turn to go on, and gives
+/// nothing.
+fn watch(
+    harness: &mut Connection,
+    conversation: &str,
+    turn: Option<u64>,
+    mut answer: Answer,
+    typing: Typing,
+) -> Result<Option<Ended>> {
     let mut stopping = false;
     loop {
-        let event = match harness.next(false)? {
+        let event = match harness.next(typing)? {
             Happening::Event(event) => event,
-            Happening::Interrupt if stopping => return Ok(Ended::Stopped),
+            Happening::Interrupt if stopping => return Ok(Some(Ended::Stopped)),
             Happening::Interrupt => {
                 stopping = true;
                 // By its number, so a stop that comes after this turn ended does not reach the one after it.
                 harness.send(json!({ "op": "stop", "conversation": conversation, "turn": turn }))?;
                 continue;
             }
-            Happening::Line(_) | Happening::EndOfInput => continue,
+            Happening::EndOfInput => {
+                answer.end()?;
+                return Ok(None);
+            }
+            Happening::Line(_) => continue,
         };
         if event.get("turn").and_then(Value::as_u64) != turn {
             continue;
@@ -117,17 +133,17 @@ fn watch(harness: &mut Connection, conversation: &str, turn: Option<u64>, mut an
             }
             "done" => {
                 answer.end()?;
-                return Ok(Ended::Done);
+                return Ok(Some(Ended::Done));
             }
             "stopped" => {
                 answer.end()?;
                 eprintln!("Stopped.");
-                return Ok(Ended::Stopped);
+                return Ok(Some(Ended::Stopped));
             }
             "failed" => {
                 answer.end()?;
                 eprintln!("crowbar-agent: The Model gave no answer: {}", text(&event, "message"));
-                return Ok(Ended::Failed);
+                return Ok(Some(Ended::Failed));
             }
             _ => {}
         }
@@ -220,7 +236,7 @@ pub fn repl(harness: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
         last = stood.last;
         // A turn another client left working is this client's to watch, and to stop.
         if stood.working.is_some() {
-            last = watch(harness, resumed, stood.working, stood.answer)?;
+            last = watch(harness, resumed, stood.working, stood.answer, Typing::Waits)?.unwrap_or(last);
         }
         conversation = Some(resumed.to_string());
     }
@@ -229,7 +245,7 @@ pub fn repl(harness: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
             eprint!("> ");
         }
         let line = loop {
-            match harness.next(true)? {
+            match harness.next(Typing::Wanted)? {
                 Happening::Line(line) => break line,
                 Happening::EndOfInput | Happening::Interrupt => {
                     if prompted {
@@ -243,14 +259,23 @@ pub fn repl(harness: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
                 }
                 // What another client of this conversation says begins a turn
                 // this client shows, so it is this client's to watch, and
-                // Ctrl-C stops it, as it stops any turn on the screen. What
+                // Ctrl-C stops it, as it stops any turn on the screen. Ctrl-D
+                // leaves, as it does at the prompt, and the turn goes on. What
                 // is left of a turn this client stopped watching is not shown.
                 Happening::Event(event) if text(&event, "event") == "message" => {
                     let mut answer = Answer::new();
                     answer.write(&format!("\n> {}\n", text(&event, "text")))?;
                     let turn = event.get("turn").and_then(Value::as_u64);
-                    last = watch(harness, &text(&event, "conversation"), turn, answer)?;
-                    if prompted {
+                    let watched = watch(
+                        harness,
+                        &text(&event, "conversation"),
+                        turn,
+                        answer,
+                        Typing::UntilItEnds,
+                    )?;
+                    // With the person's typing at its end, the wait for a line finds it so, and leaves.
+                    last = watched.unwrap_or(last);
+                    if prompted && watched.is_some() {
                         eprint!("> ");
                     }
                 }

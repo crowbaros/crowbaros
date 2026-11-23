@@ -309,7 +309,7 @@ export class ModelAccess {
 				throw error;
 			}
 			model = models.find((one) => one.id === picked);
-			if (model === undefined) throw new Refused(`${provider.name} has no Model named ${picked}. You are signed in, and no Model is chosen.`);
+			if (model === undefined) throw new Refused(`${provider.name} has no Model named ${picked}. You are signed in, and none of its Models is chosen.`);
 		}
 		if (model === undefined) return { provider: provider.id, name: provider.name };
 		return { provider: provider.id, name: provider.name, model: await this.choose(provider.id, model.id) };
