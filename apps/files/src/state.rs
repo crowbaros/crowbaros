@@ -77,9 +77,18 @@ pub enum ClipboardOp {
 pub struct FileClipboard {
     pub op: ClipboardOp,
     pub path: PathBuf,
-    /// The device and inode of what was cut or copied, so a paste never acts on something else
-    /// that has taken its path since.
+    /// The device and inode of what was cut or copied. A cut's paste checks it (see
+    /// [`FileClipboard::may_paste`]).
     pub identity: Option<(u64, u64)>,
+}
+
+impl FileClipboard {
+    /// Whether a paste may go ahead, given the device and inode now at the path. A cut moves the
+    /// item itself, so it must still be that item. A copy takes the path's contents as they are
+    /// now: an editor's save gives the file a new inode without making it something else.
+    pub fn may_paste(&self, now: Option<(u64, u64)>) -> bool {
+        self.op == ClipboardOp::Copy || now == self.identity
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -332,6 +341,21 @@ impl SavedState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cut_pastes_only_the_item_it_cut_and_a_copy_pastes_the_path_as_it_is() {
+        let taken = |op| FileClipboard {
+            op,
+            path: PathBuf::from("/home/alex/Report"),
+            identity: Some((1, 100)),
+        };
+        assert!(taken(ClipboardOp::Cut).may_paste(Some((1, 100))));
+        // Another item now holds the path, or nothing does.
+        assert!(!taken(ClipboardOp::Cut).may_paste(Some((1, 200))));
+        assert!(!taken(ClipboardOp::Cut).may_paste(None));
+        // Saved again by an editor: a new inode, the same document.
+        assert!(taken(ClipboardOp::Copy).may_paste(Some((1, 200))));
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn temp_dir(label: &str) -> PathBuf {

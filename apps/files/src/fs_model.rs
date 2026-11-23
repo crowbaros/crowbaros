@@ -2178,6 +2178,8 @@ mod tests {
         let replaced = image_fingerprint(&fs::metadata(&pic).unwrap());
         assert_ne!(first, replaced);
 
+        // Older kernels move ctime only at the clock's coarse tick; give it one.
+        std::thread::sleep(std::time::Duration::from_millis(20));
         fs::set_permissions(&pic, fs::Permissions::from_mode(0o600)).unwrap();
         assert_ne!(replaced, image_fingerprint(&fs::metadata(&pic).unwrap()));
 

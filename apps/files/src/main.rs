@@ -740,10 +740,7 @@ impl FilesApp {
             return;
         };
         self.clear_notices();
-        // A cut moves the item itself, so it must still be that item. A copy takes the path's
-        // contents as they are now, which an editor's save gives a new inode without making it
-        // something else.
-        if clip.op == ClipboardOp::Cut && fs_model::item_identity(&clip.path) != clip.identity {
+        if !clip.may_paste(fs_model::item_identity(&clip.path)) {
             self.clipboard = None;
             self.error = Some(format!(
                 "“{}” is not what was cut any more; nothing was moved.",
