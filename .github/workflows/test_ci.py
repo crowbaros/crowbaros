@@ -169,7 +169,7 @@ class Changes(unittest.TestCase):
     def test_the_weeks_run_runs_every_job(self):
         head = self.commit({'docs/VISION.md': 'The vision, amended\n'})
         self.assertEqual(self.needs(event='schedule', after=head),
-                         {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'true', 'boot': 'true', 'agent': 'true'})
 
 
 # The old time the step gives a file, and a stand-in for prepare-gpui.py.
