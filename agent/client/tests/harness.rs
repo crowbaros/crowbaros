@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 fn uid() -> u32 {
@@ -213,27 +214,34 @@ struct Running {
     child: Child,
     out: Arc<Mutex<String>>,
     err: Arc<Mutex<String>>,
+    /// The threads that read its output and its errors.
+    readers: Vec<JoinHandle<()>>,
 }
 
-fn collect(stream: impl Read + Send + 'static) -> Arc<Mutex<String>> {
+fn collect(stream: impl Read + Send + 'static) -> (Arc<Mutex<String>>, JoinHandle<()>) {
     let collected = Arc::new(Mutex::new(String::new()));
     let into = collected.clone();
-    std::thread::spawn(move || {
+    let reader = std::thread::spawn(move || {
         let mut stream = stream;
         let mut bytes = [0u8; 4096];
         while let Ok(count @ 1..) = stream.read(&mut bytes) {
             into.lock().unwrap().push_str(&String::from_utf8_lossy(&bytes[..count]));
         }
     });
-    collected
+    (collected, reader)
 }
 
 impl Running {
     fn start(mut command: Command) -> Running {
         let mut child = command.spawn().expect("crowbar-agent runs");
-        let out = collect(child.stdout.take().expect("its output"));
-        let err = collect(child.stderr.take().expect("its errors"));
-        Running { child, out, err }
+        let (out, out_reader) = collect(child.stdout.take().expect("its output"));
+        let (err, err_reader) = collect(child.stderr.take().expect("its errors"));
+        Running {
+            child,
+            out,
+            err,
+            readers: vec![out_reader, err_reader],
+        }
     }
 
     fn signal(&self, signal: libc::c_int) {
@@ -253,9 +261,14 @@ impl Running {
         });
     }
 
-    /// Waits for it to end, and gives its exit status, or -1 for a signal.
+    /// Waits for it to end and for all it wrote to be collected, and gives
+    /// its exit status, or -1 for a signal.
     fn ended(&mut self) -> i32 {
-        self.child.wait().expect("crowbar-agent ends").code().unwrap_or(-1)
+        let status = self.child.wait().expect("crowbar-agent ends");
+        for reader in self.readers.drain(..) {
+            reader.join().expect("all it wrote is collected");
+        }
+        status.code().unwrap_or(-1)
     }
 }
 

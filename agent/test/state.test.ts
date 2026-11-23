@@ -214,15 +214,15 @@ test("a log that reaches 4 MiB while the Harness runs is set aside, and the Harn
 	const state = join(directory, "state");
 	mkdirSync(state);
 	const log = join(state, "harness.log");
-	// Room for the start, for listening, and for a peer or two after them.
-	writeFileSync(log, "the log so far\n".padEnd(4 * 1024 * 1024 - 400, "."));
+	// Room for the start, for listening twice, and for a peer or two after them.
+	writeFileSync(log, "the log so far\n".padEnd(4 * 1024 * 1024 - 600, "."));
 	writeFileSync(join(state, "harness.log.1"), "the log before the last\n");
 	const harness = await start(t, directory, { shellUid: OWN_UID + 1 });
-	assert.match(readFileSync(log, "utf8"), /^the log so far\n\.+\d{4}-.* start: /);
 	for (let peers = 0; peers < 8; peers++) await heard(await dial(harness.socket));
 
 	const aside = readFileSync(join(state, "harness.log.1"), "utf8");
-	assert.match(aside, /^the log so far\n/);
+	// The Harness added its start to the log there was. Which line after it set the log aside does not matter.
+	assert.match(aside, /^the log so far\n\.+\d{4}-.* start: /);
 	assert.ok(aside.length <= 4 * 1024 * 1024, `${aside.length} bytes were set aside`);
 	assert.equal(mode(join(state, "harness.log.1")), 0o600);
 	assert.equal(mode(log), 0o600);
