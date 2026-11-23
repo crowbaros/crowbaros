@@ -247,7 +247,7 @@ class Check:
         self.check("the person's password unlocks the session", 'SHELL unlock ok=true' in shell_log())
         self.capture('01-boot')
         self.check('fresh guest has no saved preferences', self.preferences() is None)
-        self.click(660, 935)  # Terminal dock entry (Applications · Chromium · Terminal · Settings).
+        self.click(680, 935)  # Terminal dock entry (Applications · Files · Chromium · Terminal · Settings).
         terminal = self.wait('terminal launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
         self.check('Terminal launch through the shell', bool(terminal))
         self.wait('launched window focus', lambda: self.snapshot()['active']['address'] == terminal['address'])
@@ -280,7 +280,7 @@ class Check:
         self.key('ctrl', 'q')
         self.wait('Studio Settings closes after the launcher check',
                   lambda: not any(c['class'] == settings_class for c in self.snapshot()['clients']))
-        self.click(660, 935)  # Return focus to Terminal before checking the lock.
+        self.click(680, 935)  # Return focus to Terminal before checking the lock.
         self.wait('Terminal has the keyboard again', lambda: self.snapshot()['active']['address'] == terminal['address'])
         self.key('meta_l', 'l')
         self.wait('Super+L locks', lambda: self.snapshot().get('locked') and 'SHELL lock open=true' in shell_log())
@@ -312,11 +312,11 @@ class Check:
         self.unlock()
         self.wait('the password unlocks after the suspend hook', lambda: not self.snapshot().get('locked'))
         terminal = self.compositor_restart()
-        self.click(700, 935)
+        self.click(720, 935)
         settings = self.wait('Settings launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == settings_class), None))
         self.check('Settings launch through the shell', bool(settings))
         self.capture('02-settings-before')
-        self.click(660, 935)
+        self.click(680, 935)
         self.wait('Terminal focus', lambda: self.snapshot()['active']['address'] == terminal['address'])
         self.check('dock focuses an existing app without duplicating it',
                    len([c for c in self.snapshot()['clients'] if c['class'] == 'foot']) == 1)
@@ -326,7 +326,7 @@ class Check:
         self.click(60, 12)
         self.wait('workspace 1', lambda: self.snapshot()['workspace'] == 1)
         self.bar_follows_workspaces()
-        self.click(700, 935)
+        self.click(720, 935)
         self.wait('Settings focus', lambda: self.snapshot()['active']['address'] == settings['address'])
         # Settings initially focuses Dark. Tab, Space chooses Light, Ctrl+S saves.
         self.key('tab')
@@ -346,7 +346,7 @@ class Check:
         self.check('Undo keeps saved preferences unchanged', self.preferences() == saved)
         self.key('ctrl', 'q')
         self.wait('Settings closes cleanly', lambda: not any(c['class'] == settings['class'] for c in self.snapshot()['clients']))
-        self.click(700, 935)
+        self.click(720, 935)
         self.wait('Settings restores saved appearance', lambda: 'event=opened theme=Light' in self.app_log())
         self.check('Settings relaunch restores saved appearance', self.preferences() == saved)
         self.identities()
@@ -389,7 +389,7 @@ class Check:
         self.check("the file in the person's home survives the reboot",
                    self.run(f'cat {kept}').strip() == token)
         log_offset = len(self.app_log())
-        self.click(700, 935)
+        self.click(720, 935)
         self.wait('Settings restored Light after reboot', lambda: 'event=opened theme=Light' in self.app_log()[log_offset:])
         self.wait('Settings after reboot', lambda: any(c['class'] == settings['class'] for c in self.snapshot()['clients']))
         self.check('post-reboot session uses the same built binaries', self.run('sha256sum /usr/local/bin/crowbaros-studio-settings').startswith(built['crowbaros-studio-settings']))
@@ -406,14 +406,31 @@ class Check:
         self.wait('Dark preview before Displays capture', lambda: 'event=preview theme=Dark' in self.app_log()[log_offset:])
         self.click(136, 204)
         self.capture('06-settings-displays-dark')
-        # Verify Chromium is configured as the default browser and launches natively from the dock
+        # Verify Files is configured as the default directory handler and launches natively from the dock
         person = self.person()[0]
+        dir_handler = self.run(f"su -s /bin/sh {person} -c 'xdg-mime query default inode/directory'").strip()
+        self.check('Files is configured as the default directory handler',
+                   dir_handler == 'com.crowbaros.Files.desktop',
+                   f'inode/directory={dir_handler!r}')
+        self.click(600, 935)  # Files dock entry
+        files_app = self.wait(
+            'Files launched through the shell',
+            lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'com.crowbaros.Files'), None),
+            timeout=20,
+        )
+        self.check('Files launches natively on Fulcrum from the dock', bool(files_app))
+        self.wait('Files takes focus', lambda: self.snapshot()['active']['address'] == files_app['address'], timeout=15)
+        self.capture('06b-files')
+        self.run('pkill -x crowbaros-files; true')
+        self.wait('Files closes',
+                  lambda: not any(c['class'] == 'com.crowbaros.Files' for c in self.snapshot()['clients']))
+        # Verify Chromium is configured as the default browser and launches natively from the dock
         default_browser = self.run(f"su -s /bin/sh {person} -c 'xdg-settings get default-web-browser'").strip()
         https_handler = self.run(f"su -s /bin/sh {person} -c 'xdg-mime query default x-scheme-handler/https'").strip()
         self.check('Chromium is configured as the default browser',
                    default_browser == 'chromium.desktop' and https_handler == 'chromium.desktop',
                    f'browser={default_browser!r} https={https_handler!r}')
-        self.click(620, 935)  # Chromium dock entry
+        self.click(640, 935)  # Chromium dock entry
         browser = self.wait(
             'Chromium launched through the shell',
             lambda: next((c for c in self.snapshot()['clients'] if 'chromium' in c['class'].lower()), None),
@@ -442,7 +459,7 @@ class Check:
         self.run('pkill -x chromium; true')
         self.wait('Chromium closes',
                   lambda: not any('chromium' in c['class'].lower() for c in self.snapshot()['clients']))
-        self.click(660, 935)  # Terminal dock entry.
+        self.click(680, 935)  # Terminal dock entry.
         terminal = self.wait('Terminal launched for the Agent\'s surface',
                              lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
         self.wait('Terminal has the keyboard', lambda: active() == terminal['address'])
@@ -493,7 +510,7 @@ class Check:
 
         # Over a fullscreen window, which covers the bar: its frame shows at
         # the display's top edge, where the bar's ground was.
-        self.click(660, 935)
+        self.click(680, 935)
         self.wait('Terminal has the keyboard', lambda: active() == terminal['address'])
         self.check('the bar shows above a window that is not fullscreen', drawn('13-before-fullscreen', point=(300, 1)))
         self.key('meta_l', 'f')
@@ -811,7 +828,7 @@ class Check:
         self.wait('the password unlocks after the compositor restarts', lambda: not self.snapshot().get('locked'))
         self.check("the person's password unlocks the desktop after the compositor restarts",
                    'session unlocked' in self.compositor_log()[log_offset:])
-        self.click(660, 935)  # Terminal dock entry.
+        self.click(680, 935)  # Terminal dock entry.
         terminal = self.wait('Terminal launched after the compositor restarts',
                              lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
         self.wait('the new Terminal takes the keyboard', lambda: self.snapshot()['active']['address'] == terminal['address'])

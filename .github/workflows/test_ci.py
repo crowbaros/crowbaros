@@ -88,6 +88,11 @@ class Changes(unittest.TestCase):
         self.assertEqual(self.needs(base=self.first, head=head),
                          {'code': 'true', 'compositor': 'true', 'boot': 'true', 'agent': 'false'})
 
+    def test_files_app_needs_the_code_jobs_and_the_boot(self):
+        head = self.commit({'apps/files/src/main.rs': 'fn main() {}\n'})
+        self.assertEqual(self.needs(base=self.first, head=head),
+                         {'code': 'true', 'compositor': 'false', 'boot': 'true', 'agent': 'false'})
+
     def test_the_harness_needs_its_job_and_the_boot(self):
         head = self.commit({'agent/src/main.ts': 'await listen();\n'})
         self.assertEqual(self.needs(base=self.first, head=head),

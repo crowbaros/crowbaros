@@ -574,6 +574,8 @@ class Desktop(BuildFixture):
         self.assertTrue(all(' ' in path for path in programs))
 
     def test_the_desktops_helpers_are_one_program_built_with_the_desktop(self):
+        self.assertIn('apps/files', dict(void_base.PROJECTS))
+        self.assertEqual(void_base.PROGRAMS['crowbaros-files'], 'apps/files')
         self.assertIn('base/helpers', dict(void_base.PROJECTS))
         self.assertEqual(void_base.binaries()['crowbar-helpers'].name, 'crowbar-helpers')
 
