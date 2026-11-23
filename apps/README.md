@@ -1,7 +1,8 @@
 # Apps: the GPUI interfaces
 
 Native Rust/GPUI interfaces built against the [design system](../DESIGN.md) and
-[product brief](../PRODUCT.md). Their portable source, tests, fonts, licenses,
+[product brief](../PRODUCT.md). Jason Alexander designed and built the shell and
+Studio Settings. Their portable source, tests, fonts, licenses,
 assets, and pinned dependencies carry forward to Void.
 
 | App | Current role |

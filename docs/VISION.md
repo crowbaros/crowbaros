@@ -28,7 +28,7 @@ help or by hand.
 | Base | Void Linux, with runit and xbps, kept small |
 | Compositor | Ours: a Wayland compositor named [Fulcrum](../compositor/README.md), written from the ground up with Smithay as its reference ([ADR 0015](adr/0015-our-own-compositor-on-smithay.md), [ADR 0028](adr/0028-the-compositor-is-written-from-the-ground-up.md), [ADR 0031](adr/0031-the-compositor-is-built-in-this-repository-again.md)) |
 | Shell | The bar, launcher, dock, and wallpaper, from Jason Alexander's [design system](../DESIGN.md) and [shell](../apps/shell/README.md) |
-| Default apps | A handful. [Studio Settings](../apps/studio-settings/README.md) is the first. Which others is open |
+| Default apps | A handful. [Studio Settings](../apps/studio-settings/README.md) is the first, and [Files](../apps/files/README.md), our own file manager, the second. Which others is open |
 | The Agent | Running from boot, one gesture away |
 
 Nothing else is installed.
@@ -88,8 +88,8 @@ Agent's reach makes a real risk, a new record decides what to do about it.
   ([the Harness](../agent/README.md#reaching-a-model)).
 - **Life without a model.** What does the desktop do when no model is
   reachable?
-- **The default apps.** A terminal, a browser, files, a text editor? Which,
-  and whose?
+- **The default apps.** Files is our own. A terminal, a browser, a text
+  editor? Which, and whose?
 - **Acting in other apps.** How does the Agent work in an app it did not write?
   Through an accessibility interface, the compositor, or not at all?
 - **Taking it back.** How does a person undo what the Agent did? Base's root is

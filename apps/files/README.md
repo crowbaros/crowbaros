@@ -3,7 +3,7 @@
 CrowbarOS's default file manager (`crowbaros-files`): a quiet, keyboard-first
 native Rust/GPUI window that follows CrowbarOS's appearance preferences
 (`Dark`, `Light`, `Warm Paper`, and neutral `Studio Mode`) and reads folders on
-demand without crawling the filesystem in the background.
+demand.
 
 ## Features
 
@@ -20,7 +20,10 @@ demand without crawling the filesystem in the background.
 - **Split pane**: Side-by-side browsing (`Ctrl+Alt+N`, `Tab` to switch).
 - **Safe file operations**: Copy, cut, paste, duplicate, rename, new folder,
   and FreeDesktop Trash with restore. Operations never overwrite an existing
-  target.
+  target, even one that appears while they run. A move or a trash between
+  filesystems copies first and removes the original only once the copy is
+  whole; a copy that fails partway removes what it made. Files does not copy
+  pipes, sockets, or devices, and never reads them for a preview.
 
 ## Build and run on Void
 
@@ -66,3 +69,12 @@ target/release/crowbaros-files ~/Code
 | ? | Shortcuts help |
 | Escape | Dismiss overlay, prompt, or search |
 | Ctrl+Q | Quit |
+
+## Licensing
+
+Files' source is MIT ([LICENSE](LICENSE)). `src/input.rs` adapts GPUI 0.2.2's
+input example and keeps its Apache-2.0 terms
+([licenses/GPUI-APACHE-2.0](licenses/GPUI-APACHE-2.0)). Files uses the shell's
+Manrope and IBM Plex Mono fonts, which keep their OFL notices in
+[`apps/shell/fonts/`](../shell/fonts/). Its icons are original
+([assets/README.md](assets/README.md)).

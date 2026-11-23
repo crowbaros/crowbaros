@@ -505,9 +505,12 @@ impl FilesApp {
     }
 
     fn trash_selected(&mut self, cx: &mut Context<Self>) {
-        let Some(entry) = self.pane().selected_entry().cloned() else {
-            return;
-        };
+        if let Some(entry) = self.pane().selected_entry().cloned() {
+            self.trash_entry(entry, cx);
+        }
+    }
+
+    fn trash_entry(&mut self, entry: Entry, cx: &mut Context<Self>) {
         self.clear_notices();
         if self.pane().location.is_trash() {
             self.overlay = Some(Overlay::ConfirmDelete(entry));
@@ -766,10 +769,6 @@ impl FilesApp {
     }
 
     fn on_open_selected(&mut self, _: &OpenSelected, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(Overlay::ConfirmDelete(entry)) = self.overlay.clone() {
-            self.confirm_delete_permanent(&entry, cx);
-            return;
-        }
         if self.overlay.is_some() {
             return;
         }
@@ -991,7 +990,7 @@ impl FilesApp {
         } else {
             let mut crumbs = div()
                 .id("breadcrumb-bar")
-                .flex_1()
+                .min_w(px(0.))
                 .h_full()
                 .flex()
                 .items_center()
@@ -1118,7 +1117,27 @@ impl FilesApp {
                         );
                 }
             }
-            crumbs.into_any_element()
+            // The space after the path moves the window. It is the header's only drag area, so a
+            // press on a button or a crumb reaches that control and nothing else.
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .h_full()
+                .flex()
+                .items_center()
+                .child(crumbs)
+                .child(
+                    div()
+                        .id("header-drag")
+                        .flex_1()
+                        .h_full()
+                        .on_mouse_down(MouseButton::Left, |event, window, _| {
+                            if event.click_count == 1 {
+                                window.start_window_move();
+                            }
+                        }),
+                )
+                .into_any_element()
         };
 
         let header_btn = |id: &'static str, ic: &'static str, active: bool| {
@@ -1146,11 +1165,6 @@ impl FilesApp {
             .bg(rgb(p.canvas))
             .border_b_1()
             .border_color(rgb(p.line))
-            .on_mouse_down(MouseButton::Left, |event, window, _| {
-                if event.click_count == 1 {
-                    window.start_window_move();
-                }
-            })
             .child(left_area)
             .child(
                 div()
@@ -2555,6 +2569,7 @@ impl FilesApp {
                 } else {
                     let e_open = entry.clone();
                     let e_pin = entry.clone();
+                    let e_trash = entry.clone();
                     menu = menu
                         .child(
                             row("ctx-open", if entry.is_dir { "Open folder" } else { "Open" }, "Enter").on_click(
@@ -2624,9 +2639,9 @@ impl FilesApp {
                             )),
                         )
                         .child(
-                            row("ctx-trash", "Move to Trash", "Del").on_click(cx.listener(|this, _, _, cx| {
+                            row("ctx-trash", "Move to Trash", "Del").on_click(cx.listener(move |this, _, _, cx| {
                                 this.overlay = None;
-                                this.trash_selected(cx);
+                                this.trash_entry(e_trash.clone(), cx);
                             })),
                         );
                 }
@@ -2988,7 +3003,7 @@ impl Render for FilesApp {
             .bg(rgb(p.canvas))
             .text_color(rgb(p.text))
             .font_family("Manrope")
-            .key_context("FilesBrowser")
+            .key_context(root_key_context(self.prompt.is_some(), self.overlay.is_some()))
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::on_move_up))
             .on_action(cx.listener(Self::on_move_down))
@@ -3097,6 +3112,18 @@ fn parse_cli(args: &[String], home: &Path) -> Result<CliAction, String> {
     }
 }
 
+/// Browser keys apply only while nothing else has the keyboard: while a prompt is open they would
+/// eat typed characters, and while an overlay is open they would act on a selection it hides.
+fn root_key_context(prompt_open: bool, overlay_open: bool) -> &'static str {
+    if prompt_open {
+        "FilesPrompting"
+    } else if overlay_open {
+        "FilesOverlay"
+    } else {
+        "FilesBrowser"
+    }
+}
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let home = fs_model::home_dir();
@@ -3160,6 +3187,10 @@ fn main() {
             KeyBinding::new("ctrl-r", Refresh, Some("FilesBrowser")),
             KeyBinding::new("escape", CancelOverlay, Some("FilesBrowser")),
             KeyBinding::new("ctrl-q", Quit, Some("FilesBrowser")),
+            KeyBinding::new("escape", CancelOverlay, Some("FilesOverlay")),
+            KeyBinding::new("space", QuickPreview, Some("FilesOverlay")),
+            KeyBinding::new("?", ToggleHelp, Some("FilesOverlay")),
+            KeyBinding::new("ctrl-q", Quit, Some("FilesOverlay")),
         ]);
 
         cx.on_window_closed(|cx| {
@@ -3190,6 +3221,14 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_keys_stand_down_while_a_prompt_or_overlay_is_open() {
+        assert_eq!(root_key_context(false, false), "FilesBrowser");
+        assert_eq!(root_key_context(true, false), "FilesPrompting");
+        assert_eq!(root_key_context(true, true), "FilesPrompting");
+        assert_eq!(root_key_context(false, true), "FilesOverlay");
+    }
 
     #[test]
     fn cli_parses_version_and_paths() {

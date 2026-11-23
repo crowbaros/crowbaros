@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT AND Apache-2.0
 // Adapted from GPUI 0.2.2 examples/input.rs (Copyright Zed Industries, Apache-2.0)
 // and apps/shell/src/input.rs.
 use std::ops::Range;

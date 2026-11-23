@@ -150,7 +150,7 @@ jobs:
             libfontconfig-dev libfreetype-dev
 
       # Rebuilds the patched GPUI source from the pinned crate and checks its
-      # checksum. Both apps build with it. See apps/shell/README.md.
+      # checksum. The apps build with it. See apps/shell/README.md.
       - name: Prepare GPUI
         working-directory: apps/shell
         run: python3 packaging/prepare-gpui.py

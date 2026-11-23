@@ -68,7 +68,7 @@ REPOSITORY = CFG["void_repository"]
 # installs from it.
 NONFREE = REPOSITORY + "/nonfree"
 # What the desktop is built from: each Cargo project, and the part of the
-# target directory it builds in. The two apps share theirs.
+# target directory it builds in. The three apps share theirs.
 PROJECTS = [("compositor", "compositor"), ("apps/shell", ""), ("apps/files", ""), ("apps/studio-settings", ""),
             ("base/helpers", "helpers"), ("agent/client", "agent-client")]
 # The programs the image holds, and the project each comes from. The probe is

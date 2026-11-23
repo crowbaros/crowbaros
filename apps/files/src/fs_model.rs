@@ -6,8 +6,13 @@ use std::{
     cmp::Ordering,
     collections::VecDeque,
     env,
+    ffi::{CString, OsStr, OsString},
     fs::{self, Metadata},
-    os::unix::fs::PermissionsExt,
+    io::{self, Write},
+    os::unix::{
+        ffi::{OsStrExt, OsStringExt},
+        fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
+    },
     path::{Component, Path, PathBuf},
     time::SystemTime,
 };
@@ -98,7 +103,7 @@ impl Entry {
     }
 
     pub fn is_previewable_image(&self) -> bool {
-        if self.is_dir {
+        if self.is_dir || self.category != FileCategory::Image {
             return false;
         }
         matches!(
@@ -329,7 +334,7 @@ pub fn display_path(path: &Path, home: &Path) -> String {
     }
 }
 
-pub fn decode_percent(input: &str) -> String {
+fn decode_percent_bytes(input: &str) -> Vec<u8> {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -346,7 +351,12 @@ pub fn decode_percent(input: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    out
+}
+
+/// Decodes a percent-encoded path byte for byte, so names that are not UTF-8 survive.
+fn decode_percent_path(input: &str) -> PathBuf {
+    PathBuf::from(OsString::from_vec(decode_percent_bytes(input)))
 }
 
 pub fn encode_percent_path(path: &Path) -> String {
@@ -365,9 +375,9 @@ pub fn encode_percent_path(path: &Path) -> String {
 pub fn expand_path(raw: &str, home: &Path, current: &Path) -> PathBuf {
     let trimmed = raw.trim();
     if let Some(uri) = trimmed.strip_prefix("file://") {
-        // file:///path or file://localhost/path
-        let stripped = uri.strip_prefix("localhost").unwrap_or(uri);
-        return normalize_path(Path::new(&decode_percent(stripped)));
+        // file:///path, file://localhost/path, or file://host/path: the path starts at the first slash.
+        let path = uri.find('/').map_or("/", |at| &uri[at..]);
+        return normalize_path(&decode_percent_path(path));
     }
     if trimmed.is_empty() || trimmed == "~" {
         return home.to_path_buf();
@@ -391,6 +401,12 @@ pub fn normalize_path(path: &Path) -> PathBuf {
             Component::RootDir => out.push("/"),
             Component::CurDir => {}
             Component::ParentDir => {
+                // `link/..` is the parent of the link's target, not the folder holding the link.
+                if fs::symlink_metadata(&out).is_ok_and(|m| m.file_type().is_symlink())
+                    && let Ok(real) = fs::canonicalize(&out)
+                {
+                    out = real;
+                }
                 out.pop();
             }
             Component::Normal(seg) => out.push(seg),
@@ -426,13 +442,19 @@ fn build_entry(path: PathBuf, show_hidden_for_count: bool) -> Option<Entry> {
         sym_meta
     };
     let is_dir = target_meta.is_dir();
+    let is_special = !is_dir && !target_meta.is_file();
     let hidden = name.starts_with('.');
     let child_count = if is_dir {
         shallow_child_count(&path, show_hidden_for_count)
     } else {
         None
     };
-    let (category, kind_label) = classify(&path, is_dir);
+    // Pipes, sockets, and devices are never previewed or opened for reading.
+    let (category, kind_label) = if is_special {
+        (FileCategory::Binary, "Special file".into())
+    } else {
+        classify(&path, is_dir)
+    };
     Some(Entry {
         name,
         path,
@@ -593,11 +615,23 @@ pub fn read_recents(home: &Path, max_items: usize) -> Vec<Entry> {
     found
 }
 
-fn parse_trashinfo_path(info_path: &Path) -> Option<PathBuf> {
-    let text = fs::read_to_string(info_path).ok()?;
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("Path=") {
-            return Some(PathBuf::from(decode_percent(rest.trim())));
+fn trashinfo_name(name: &OsStr) -> OsString {
+    let mut info = name.to_os_string();
+    info.push(".trashinfo");
+    info
+}
+
+/// Reads the original location from a `.trashinfo` file. A relative path is relative to the
+/// folder that holds the Trash, as the FreeDesktop Trash specification says.
+fn parse_trashinfo_path(info_path: &Path, trash: &Path) -> Option<PathBuf> {
+    let text = fs::read(info_path).ok()?;
+    for line in text.split(|b| *b == b'\n') {
+        if let Some(rest) = line.strip_prefix(b"Path=") {
+            let path = decode_percent_path(std::str::from_utf8(rest).ok()?.trim());
+            if path.is_absolute() {
+                return Some(path);
+            }
+            return Some(trash.parent().unwrap_or(Path::new("/")).join(path));
         }
     }
     None
@@ -613,9 +647,9 @@ pub fn read_trash() -> Vec<Entry> {
     let mut entries = Vec::new();
     for item in rd.flatten() {
         let path = item.path();
+        let info_path = info_dir.join(trashinfo_name(&item.file_name()));
         if let Some(mut entry) = build_entry(path, true) {
-            let info_path = info_dir.join(format!("{}.trashinfo", entry.name));
-            entry.trash_original = parse_trashinfo_path(&info_path);
+            entry.trash_original = parse_trashinfo_path(&info_path, &root);
             entries.push(entry);
         }
     }
@@ -669,7 +703,16 @@ pub fn search_below(root: &Path, query: &str, show_hidden: bool, max_results: us
 }
 
 pub fn read_text_preview(path: &Path, max_bytes: usize, max_lines: usize) -> Option<String> {
-    let file = fs::File::open(path).ok()?;
+    // Opening without blocking, then checking the kind, keeps a pipe named like a text file
+    // from freezing the window.
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
     let mut buf = Vec::new();
     use std::io::Read;
     file.take(max_bytes as u64).read_to_end(&mut buf).ok()?;
@@ -701,53 +744,101 @@ pub fn rename_stem_end(name: &str, is_dir: bool) -> usize {
 }
 
 pub fn validate_entry_name(name: &str) -> Result<String, String> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
+    // The name is kept as typed: spaces at either end are part of it.
+    if name.trim().is_empty() {
         return Err("Name cannot be empty.".into());
     }
-    if trimmed == "." || trimmed == ".." {
+    if name == "." || name == ".." {
         return Err("Invalid name.".into());
     }
-    if trimmed.contains('/') || trimmed.contains('\0') {
+    if name.contains('/') || name.contains('\0') {
         return Err("Name cannot contain slashes.".into());
     }
-    Ok(trimmed.to_string())
+    Ok(name.to_string())
 }
 
-pub fn unique_destination(dir: &Path, name: &str) -> PathBuf {
-    let candidate = dir.join(name);
-    if !candidate.exists() && fs::symlink_metadata(&candidate).is_err() {
-        return candidate;
-    }
-    let is_dir_like = !name.contains('.') || name.starts_with('.');
-    let (stem, ext) = if is_dir_like {
-        (name, "")
-    } else {
-        let dot = name.rfind('.').unwrap_or(name.len());
-        (&name[..dot], &name[dot..])
+fn file_name_of(path: &Path) -> Result<&OsStr, String> {
+    path.file_name().ok_or_else(|| "This item has no name.".to_string())
+}
+
+fn is_cross_device(err: &io::Error) -> bool {
+    err.raw_os_error() == Some(libc::EXDEV)
+}
+
+/// Renames `src` to `dst` and never replaces what is at `dst`, even if it appears after a check:
+/// an existing target fails with `AlreadyExists`.
+fn rename_noreplace(src: &Path, dst: &Path) -> io::Result<()> {
+    let from = CString::new(src.as_os_str().as_bytes())?;
+    let to = CString::new(dst.as_os_str().as_bytes())?;
+    // SAFETY: both paths are NUL-terminated C strings that outlive the call.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
     };
-    for idx in 1..10_000 {
-        let next_name = if idx == 1 {
-            format!("{stem} (copy){ext}")
-        } else {
-            format!("{stem} (copy {idx}){ext}")
-        };
-        let next = dir.join(next_name);
-        if !next.exists() && fs::symlink_metadata(&next).is_err() {
-            return next;
+    if rc == 0 {
+        return Ok(());
+    }
+    let err = io::Error::last_os_error();
+    // A filesystem without RENAME_NOREPLACE answers EINVAL. Fall back to a checked rename there.
+    if err.raw_os_error() == Some(libc::EINVAL) {
+        if fs::symlink_metadata(dst).is_ok() {
+            return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+        }
+        return fs::rename(src, dst);
+    }
+    Err(err)
+}
+
+/// The name to try on attempt `idx`: `name`, then `stem (copy).ext`, `stem (copy 2).ext`, …
+fn candidate_name(name: &OsStr, idx: usize) -> OsString {
+    if idx == 0 {
+        return name.to_os_string();
+    }
+    let bytes = name.as_bytes();
+    let split = match bytes.iter().rposition(|b| *b == b'.') {
+        Some(0) | None => bytes.len(),
+        Some(dot) => dot,
+    };
+    let (stem, ext) = bytes.split_at(split);
+    let mut out = stem.to_vec();
+    if idx == 1 {
+        out.extend_from_slice(b" (copy)");
+    } else {
+        out.extend_from_slice(format!(" (copy {idx})").as_bytes());
+    }
+    out.extend_from_slice(ext);
+    OsString::from_vec(out)
+}
+
+/// Calls `place` with each free-looking name in `dir` until it succeeds. `place` must create its
+/// target atomically and fail with `AlreadyExists` when the name is taken, so nothing is ever
+/// overwritten.
+fn place_new(dir: &Path, name: &OsStr, mut place: impl FnMut(&Path) -> io::Result<()>) -> io::Result<PathBuf> {
+    for idx in 0..10_000 {
+        let target = dir.join(candidate_name(name, idx));
+        match place(&target) {
+            Ok(()) => return Ok(target),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
         }
     }
-    dir.join(format!("{stem} (copy-overflow){ext}"))
+    Err(io::Error::other("every free name is taken"))
 }
 
 pub fn create_folder(dir: &Path, name: &str) -> Result<PathBuf, String> {
     let valid = validate_entry_name(name)?;
     let target = dir.join(&valid);
-    if target.exists() || fs::symlink_metadata(&target).is_ok() {
-        return Err(format!("“{valid}” already exists."));
+    match fs::create_dir(&target) {
+        Ok(()) => Ok(target),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(format!("“{valid}” already exists.")),
+        Err(e) => Err(format!("Could not create folder: {e}")),
     }
-    fs::create_dir(&target).map_err(|e| format!("Could not create folder: {e}"))?;
-    Ok(target)
 }
 
 pub fn rename_entry(src: &Path, new_name: &str) -> Result<PathBuf, String> {
@@ -759,32 +850,92 @@ pub fn rename_entry(src: &Path, new_name: &str) -> Result<PathBuf, String> {
     if target == src {
         return Ok(target);
     }
-    if target.exists() || fs::symlink_metadata(&target).is_ok() {
-        return Err(format!("“{valid}” already exists."));
+    match rename_noreplace(src, &target) {
+        Ok(()) => Ok(target),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(format!("“{valid}” already exists.")),
+        Err(e) => Err(format!("Could not rename: {e}")),
     }
-    fs::rename(src, &target).map_err(|e| format!("Could not rename: {e}"))?;
-    Ok(target)
 }
 
-fn copy_recursive(src: &Path, dst: &Path) -> Result<(), String> {
-    let meta = fs::symlink_metadata(src).map_err(|e| format!("Cannot read {}: {e}", src.display()))?;
-    if meta.file_type().is_symlink() {
-        let link = fs::read_link(src).map_err(|e| format!("Cannot read symlink: {e}"))?;
-        std::os::unix::fs::symlink(link, dst).map_err(|e| format!("Cannot copy symlink: {e}"))?;
+/// Copies `src` to `dst`, which must not exist. On failure it removes what it made, and only that.
+fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
+    let mut created = false;
+    let result = copy_node(src, dst, &mut created);
+    if result.is_err() && created {
+        let _ = remove_partial_copy(dst);
+    }
+    result
+}
+
+fn copy_node(src: &Path, dst: &Path, created: &mut bool) -> io::Result<()> {
+    let meta = fs::symlink_metadata(src)?;
+    let kind = meta.file_type();
+    if kind.is_symlink() {
+        std::os::unix::fs::symlink(fs::read_link(src)?, dst)?;
+        *created = true;
         return Ok(());
     }
-    if meta.is_dir() {
-        fs::create_dir(dst).map_err(|e| format!("Cannot create {}: {e}", dst.display()))?;
-        let _ = fs::set_permissions(dst, meta.permissions());
-        let rd = fs::read_dir(src).map_err(|e| format!("Cannot read {}: {e}", src.display()))?;
-        for item in rd.flatten() {
-            copy_recursive(&item.path(), &dst.join(item.file_name()))?;
+    if kind.is_dir() {
+        fs::DirBuilder::new().mode(0o700).create(dst)?;
+        *created = true;
+        for item in fs::read_dir(src)? {
+            let item = item?;
+            copy_node(&item.path(), &dst.join(item.file_name()), &mut true)?;
         }
-        return Ok(());
+        // Last, so a read-only folder can still be filled.
+        return fs::set_permissions(dst, meta.permissions());
     }
-    fs::copy(src, dst).map_err(|e| format!("Cannot copy {}: {e}", src.display()))?;
-    let _ = fs::set_permissions(dst, meta.permissions());
-    Ok(())
+    if !kind.is_file() {
+        return Err(io::Error::other(format!(
+            "{} is a pipe, socket, or device, which Files does not copy",
+            src.display()
+        )));
+    }
+    let mut input = fs::File::open(src)?;
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(dst)?;
+    *created = true;
+    io::copy(&mut input, &mut output)?;
+    output.set_permissions(meta.permissions())
+}
+
+/// Removes a copy this module made and could not finish, read-only folders included.
+fn remove_partial_copy(path: &Path) -> io::Result<()> {
+    let meta = fs::symlink_metadata(path)?;
+    if meta.is_dir() {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+        for item in fs::read_dir(path)? {
+            remove_partial_copy(&item?.path())?;
+        }
+        fs::remove_dir(path)
+    } else {
+        fs::remove_file(path)
+    }
+}
+
+fn remove_tree(target: &Path) -> io::Result<()> {
+    let meta = fs::symlink_metadata(target)?;
+    if meta.is_dir() {
+        fs::remove_dir_all(target)
+    } else {
+        fs::remove_file(target)
+    }
+}
+
+/// Moves `src` to `dst` without replacing anything. Only between filesystems does it copy, and then
+/// it reports whether it did, so the caller removes the original last.
+fn move_noreplace(src: &Path, dst: &Path, copied: &mut bool) -> io::Result<()> {
+    match rename_noreplace(src, dst) {
+        Err(e) if is_cross_device(&e) => {
+            copy_tree(src, dst)?;
+            *copied = true;
+            Ok(())
+        }
+        other => other,
+    }
 }
 
 fn is_ancestor(src: &Path, dst_dir: &Path) -> bool {
@@ -797,35 +948,32 @@ pub fn copy_entry(src: &Path, dst_dir: &Path) -> Result<PathBuf, String> {
     if src.is_dir() && is_ancestor(src, dst_dir) {
         return Err("Cannot copy a folder into itself.".into());
     }
-    let name = src
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| "Invalid source path.".to_string())?;
-    let dst = unique_destination(dst_dir, name);
-    copy_recursive(src, &dst)?;
-    Ok(dst)
+    let name = file_name_of(src)?;
+    place_new(dst_dir, name, |dst| copy_tree(src, dst))
+        .map_err(|e| format!("Could not copy “{}”: {e}", name.to_string_lossy()))
 }
 
 pub fn move_entry(src: &Path, dst_dir: &Path) -> Result<PathBuf, String> {
     if src.is_dir() && is_ancestor(src, dst_dir) {
         return Err("Cannot move a folder into itself.".into());
     }
-    let name = src
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| "Invalid source path.".to_string())?;
+    let name = file_name_of(src)?;
     if src.parent() == Some(dst_dir) {
         return Ok(src.to_path_buf());
     }
-    let dst = unique_destination(dst_dir, name);
-    match fs::rename(src, &dst) {
-        Ok(()) => Ok(dst),
-        Err(_) => {
-            copy_recursive(src, &dst)?;
-            delete_permanently(src)?;
-            Ok(dst)
-        }
+    let mut copied = false;
+    let dst = place_new(dst_dir, name, |dst| move_noreplace(src, dst, &mut copied))
+        .map_err(|e| format!("Could not move “{}”: {e}", name.to_string_lossy()))?;
+    if copied {
+        remove_tree(src).map_err(|e| {
+            format!(
+                "Copied “{}” to {}, but could not remove the original: {e}",
+                name.to_string_lossy(),
+                dst.display()
+            )
+        })?;
     }
+    Ok(dst)
 }
 
 pub fn duplicate_entry(src: &Path) -> Result<PathBuf, String> {
@@ -838,37 +986,46 @@ pub fn move_to_trash_in(src: &Path, trash: &Path) -> Result<PathBuf, String> {
     let info_dir = trash.join("info");
     fs::create_dir_all(&files_dir).map_err(|e| format!("Cannot create Trash/files: {e}"))?;
     fs::create_dir_all(&info_dir).map_err(|e| format!("Cannot create Trash/info: {e}"))?;
+    if is_ancestor(src, trash) {
+        return Err("This folder holds the Trash, so it cannot go in the Trash.".into());
+    }
 
-    let name = src
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| "Invalid path.".to_string())?;
-    let dst = unique_destination(&files_dir, name);
-    let dst_name = dst
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| "Invalid trash target.".to_string())?;
-
-    let info_path = info_dir.join(format!("{dst_name}.trashinfo"));
+    let name = file_name_of(src)?;
+    let original = std::path::absolute(src).map_err(|e| format!("Cannot resolve {}: {e}", src.display()))?;
     let now: DateTime<Local> = SystemTime::now().into();
     let info_body = format!(
         "[Trash Info]\nPath={}\nDeletionDate={}\n",
-        encode_percent_path(src),
+        encode_percent_path(&original),
         now.format("%Y-%m-%dT%H:%M:%S")
     );
-    fs::write(&info_path, info_body).map_err(|e| format!("Cannot write trashinfo: {e}"))?;
 
-    if let Err(err) = fs::rename(src, &dst) {
-        // Cross-device move fallback.
-        if let Err(copy_err) = copy_recursive(src, &dst) {
+    let mut copied = false;
+    let dst = place_new(&files_dir, name, |dst| {
+        // Reserve the name with its .trashinfo first, atomically, as the Trash specification asks.
+        let info_path = info_dir.join(trashinfo_name(file_name_of(dst).map_err(io::Error::other)?));
+        let mut info = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&info_path)?;
+        let placed = info
+            .write_all(info_body.as_bytes())
+            .and_then(|()| move_noreplace(src, dst, &mut copied));
+        if placed.is_err() {
             let _ = fs::remove_file(&info_path);
-            return Err(format!("Could not move to Trash ({err}): {copy_err}"));
         }
-        if let Err(rm_err) = delete_permanently(src) {
-            let _ = delete_permanently(&dst);
-            let _ = fs::remove_file(&info_path);
-            return Err(rm_err);
-        }
+        placed
+    })
+    .map_err(|e| format!("Could not move “{}” to Trash: {e}", name.to_string_lossy()))?;
+
+    if copied {
+        // The Trash holds a full copy. Keep it, whatever happens to the original.
+        remove_tree(src).map_err(|e| {
+            format!(
+                "A copy of “{}” is in the Trash, but the original could not be fully removed: {e}",
+                name.to_string_lossy()
+            )
+        })?;
     }
     Ok(dst)
 }
@@ -878,25 +1035,25 @@ pub fn move_to_trash(src: &Path) -> Result<PathBuf, String> {
 }
 
 pub fn restore_from_trash_in(trash_file: &Path, trash: &Path) -> Result<PathBuf, String> {
-    let name = trash_file
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| "Invalid trash item.".to_string())?;
-    let info_path = trash.join("info").join(format!("{name}.trashinfo"));
-    let original = parse_trashinfo_path(&info_path)
+    let name = file_name_of(trash_file)?;
+    let info_path = trash.join("info").join(trashinfo_name(name));
+    let original = parse_trashinfo_path(&info_path, trash)
         .ok_or_else(|| "Original location is unknown for this Trash item.".to_string())?;
     let parent = original
         .parent()
         .ok_or_else(|| "Invalid original directory.".to_string())?;
     fs::create_dir_all(parent).map_err(|e| format!("Cannot recreate parent folder: {e}"))?;
-    let orig_name = original.file_name().and_then(|n| n.to_str()).unwrap_or(name);
-    let dst = unique_destination(parent, orig_name);
-    match fs::rename(trash_file, &dst) {
-        Ok(()) => {}
-        Err(_) => {
-            copy_recursive(trash_file, &dst)?;
-            delete_permanently(trash_file)?;
-        }
+    let orig_name = original.file_name().unwrap_or(name);
+    let mut copied = false;
+    let dst = place_new(parent, orig_name, |dst| move_noreplace(trash_file, dst, &mut copied))
+        .map_err(|e| format!("Could not restore “{}”: {e}", orig_name.to_string_lossy()))?;
+    if copied {
+        remove_tree(trash_file).map_err(|e| {
+            format!(
+                "Restored a copy to {}, but could not remove it from the Trash: {e}",
+                dst.display()
+            )
+        })?;
     }
     let _ = fs::remove_file(&info_path);
     Ok(dst)
@@ -916,9 +1073,9 @@ pub fn delete_permanently(target: &Path) -> Result<(), String> {
     // Also clean up companion .trashinfo if deleting an entry from Trash/files.
     let trash_files = trash_root().join("files");
     if target.parent() == Some(trash_files.as_path())
-        && let Some(name) = target.file_name().and_then(|n| n.to_str())
+        && let Some(name) = target.file_name()
     {
-        let _ = fs::remove_file(trash_root().join("info").join(format!("{name}.trashinfo")));
+        let _ = fs::remove_file(trash_root().join("info").join(trashinfo_name(name)));
     }
     Ok(())
 }
@@ -1036,6 +1193,250 @@ mod tests {
         assert_eq!(fs::read_to_string(&restored).unwrap(), "# Hello");
         assert!(!trashed.exists());
 
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Root ignores permission bits, so the tests that rely on them say so and pass vacuously there.
+    fn permissions_apply() -> bool {
+        // SAFETY: geteuid has no preconditions.
+        unsafe { libc::geteuid() != 0 }
+    }
+
+    fn mkfifo(path: &Path) {
+        let c = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: c is a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    }
+
+    fn count_entries(dir: &Path) -> usize {
+        fs::read_dir(dir).map(|rd| rd.count()).unwrap_or(0)
+    }
+
+    #[test]
+    fn trash_keeps_everything_when_the_move_is_refused() {
+        if !permissions_apply() {
+            return;
+        }
+        // A folder the person owns, inside a parent they cannot write: rename fails with EACCES.
+        let root = temp_dir("trash-refused");
+        let shared = root.join("shared");
+        let mine = shared.join("mine");
+        let trash = root.join("Trash");
+        fs::create_dir_all(&mine).unwrap();
+        for name in ["a", "b", "c"] {
+            fs::write(mine.join(name), name).unwrap();
+        }
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o555)).unwrap();
+
+        assert!(move_to_trash_in(&mine, &trash).is_err());
+        assert_eq!(count_entries(&mine), 3, "the original must be untouched");
+        assert_eq!(count_entries(&trash.join("files")), 0);
+        assert_eq!(count_entries(&trash.join("info")), 0);
+
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_folder_that_holds_the_trash_is_refused() {
+        let root = temp_dir("trash-holder");
+        let home = root.join("home");
+        let trash = home.join(".local/share/Trash");
+        fs::create_dir_all(&trash).unwrap();
+        fs::write(home.join("notes.txt"), "keep").unwrap();
+
+        assert!(move_to_trash_in(&home, &trash).is_err());
+        assert!(home.join("notes.txt").exists());
+        assert_eq!(count_entries(&trash.join("files")), 0);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn read_only_folders_copy_whole_and_keep_their_permissions() {
+        let root = temp_dir("readonly-copy");
+        let src = root.join("pkg");
+        fs::create_dir_all(src.join("inner")).unwrap();
+        fs::write(src.join("a.txt"), "a").unwrap();
+        fs::write(src.join("inner/b.txt"), "b").unwrap();
+        fs::set_permissions(src.join("inner"), fs::Permissions::from_mode(0o555)).unwrap();
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o555)).unwrap();
+        let dst_dir = root.join("dst");
+        fs::create_dir(&dst_dir).unwrap();
+
+        let copy = copy_entry(&src, &dst_dir).unwrap();
+        assert_eq!(fs::read_to_string(copy.join("a.txt")).unwrap(), "a");
+        assert_eq!(fs::read_to_string(copy.join("inner/b.txt")).unwrap(), "b");
+        assert_eq!(fs::metadata(&copy).unwrap().permissions().mode() & 0o777, 0o555);
+
+        for dir in [&src, &src.join("inner"), &copy, &copy.join("inner")] {
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_failed_copy_leaves_nothing_behind() {
+        let root = temp_dir("fifo-copy");
+        let src = root.join("project");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("a.txt"), "a").unwrap();
+        mkfifo(&src.join("pipe"));
+        let dst_dir = root.join("dst");
+        fs::create_dir(&dst_dir).unwrap();
+
+        assert!(copy_entry(&src, &dst_dir).is_err());
+        assert_eq!(count_entries(&dst_dir), 0);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_pipe_is_never_read_for_a_preview() {
+        let root = temp_dir("fifo-preview");
+        let pipe = root.join("notes.txt");
+        mkfifo(&pipe);
+        // Opening a pipe with no writer would block forever without O_NONBLOCK.
+        assert!(read_text_preview(&pipe, 1024, 10).is_none());
+        let entry = build_entry(pipe, false).unwrap();
+        assert!(!entry.is_previewable_text());
+        assert!(!entry.is_previewable_image());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rename_never_replaces_an_existing_target() {
+        let root = temp_dir("noreplace");
+        fs::write(root.join("a"), "a").unwrap();
+        fs::write(root.join("b"), "b").unwrap();
+
+        let err = rename_noreplace(&root.join("a"), &root.join("b")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(root.join("b")).unwrap(), "b");
+        assert_eq!(fs::read_to_string(root.join("a")).unwrap(), "a");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn trash_never_overwrites_an_existing_trashinfo() {
+        let root = temp_dir("trashinfo");
+        let trash = root.join("Trash");
+        fs::create_dir_all(trash.join("info")).unwrap();
+        fs::create_dir_all(trash.join("files")).unwrap();
+        let stray = trash.join("info/draft.md.trashinfo");
+        fs::write(&stray, "[Trash Info]\nPath=/elsewhere/draft.md\n").unwrap();
+        let file = root.join("draft.md");
+        fs::write(&file, "x").unwrap();
+
+        let trashed = move_to_trash_in(&file, &trash).unwrap();
+        assert_eq!(trashed.file_name().unwrap(), "draft (copy).md");
+        assert_eq!(
+            fs::read_to_string(&stray).unwrap(),
+            "[Trash Info]\nPath=/elsewhere/draft.md\n"
+        );
+        assert!(trash.join("info/draft (copy).md.trashinfo").exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn names_that_are_not_utf8_copy_trash_and_restore_byte_for_byte() {
+        let root = temp_dir("non-utf8");
+        let trash = root.join("Trash");
+        let name = OsStr::from_bytes(b"caf\xe9.txt");
+        let file = root.join(name);
+        fs::write(&file, "x").unwrap();
+
+        let copy = copy_entry(&file, &root).unwrap();
+        assert_eq!(copy.file_name().unwrap().as_bytes(), b"caf\xe9 (copy).txt");
+
+        let trashed = move_to_trash_in(&file, &trash).unwrap();
+        let restored = restore_from_trash_in(&trashed, &trash).unwrap();
+        assert_eq!(restored, file);
+        assert_eq!(fs::read_to_string(&restored).unwrap(), "x");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_relative_trash_path_is_relative_to_the_folder_holding_the_trash() {
+        let root = temp_dir("relative-trash");
+        let trash = root.join(".Trash-1000");
+        fs::create_dir_all(trash.join("files")).unwrap();
+        fs::create_dir_all(trash.join("info")).unwrap();
+        fs::write(trash.join("files/photo.png"), "png").unwrap();
+        fs::write(trash.join("info/photo.png.trashinfo"), "[Trash Info]\nPath=Pictures/photo.png\n").unwrap();
+
+        let restored = restore_from_trash_in(&trash.join("files/photo.png"), &trash).unwrap();
+        assert_eq!(restored, root.join("Pictures/photo.png"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn parent_of_a_link_is_the_parent_of_its_target() {
+        let root = temp_dir("link-parent");
+        fs::create_dir_all(root.join("a/b")).unwrap();
+        std::os::unix::fs::symlink(root.join("a/b"), root.join("link")).unwrap();
+        let canon = fs::canonicalize(&root).unwrap();
+
+        assert_eq!(normalize_path(&canon.join("link/..")), canon.join("a"));
+        assert_eq!(normalize_path(&canon.join("a/b/..")), canon.join("a"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn file_uris_with_a_host_keep_their_path() {
+        let home = Path::new("/home/alex");
+        assert_eq!(expand_path("file://laptop/tmp/x", home, home), PathBuf::from("/tmp/x"));
+        assert_eq!(expand_path("file://localhost/tmp/x", home, home), PathBuf::from("/tmp/x"));
+    }
+
+    #[test]
+    fn rename_keeps_spaces_the_person_typed() {
+        assert_eq!(validate_entry_name("foo ").unwrap(), "foo ");
+        assert!(validate_entry_name("   ").is_err());
+    }
+
+    /// Two tmpfs mounts are two filesystems, so a rename between them fails with EXDEV.
+    fn second_filesystem(root: &Path) -> Option<PathBuf> {
+        use std::os::unix::fs::MetadataExt;
+        let shm = Path::new("/dev/shm");
+        let dev = |p: &Path| fs::metadata(p).ok().map(|m| m.dev());
+        if dev(shm)? == dev(root)? {
+            return None;
+        }
+        let dir = shm.join(root.file_name()?);
+        fs::create_dir_all(&dir).ok()?;
+        Some(dir)
+    }
+
+    #[test]
+    fn moves_between_filesystems_copy_then_remove_the_original() {
+        let root = temp_dir("cross-device");
+        let Some(other) = second_filesystem(&root) else {
+            let _ = fs::remove_dir_all(&root);
+            return;
+        };
+        let src = root.join("album");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("song.flac"), "la").unwrap();
+
+        let moved = move_entry(&src, &other).unwrap();
+        assert!(!src.exists());
+        assert_eq!(fs::read_to_string(moved.join("song.flac")).unwrap(), "la");
+
+        let trash = root.join("Trash");
+        let trashed = move_to_trash_in(&moved, &trash).unwrap();
+        assert!(!moved.exists());
+        let restored = restore_from_trash_in(&trashed, &trash).unwrap();
+        assert_eq!(restored, moved);
+        assert_eq!(fs::read_to_string(restored.join("song.flac")).unwrap(), "la");
+
+        let _ = fs::remove_dir_all(&other);
         let _ = fs::remove_dir_all(&root);
     }
 
