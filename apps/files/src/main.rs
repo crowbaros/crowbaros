@@ -173,8 +173,8 @@ struct FilesApp {
     cached_preview_path: Option<PathBuf>,
     /// The images decoded for the last frame, so those that leave the screen are released.
     images_on_screen: HashSet<PathBuf>,
-    /// The Grid thumbnails chosen for this frame, within the budget.
-    grid_thumbnails: HashSet<PathBuf>,
+    /// Each pane's Grid thumbnails chosen for this frame, within its budget.
+    grid_thumbnails: Vec<HashSet<PathBuf>>,
     /// Image sizes read from file headers, by path, with the size and time they were read at.
     image_sizes: RefCell<fs_model::ImageSizes>,
     /// Images whose file changed since GPUI decoded them, to be decoded again.
@@ -242,7 +242,7 @@ impl FilesApp {
             error: None,
             cached_preview_path: None,
             images_on_screen: HashSet::new(),
-            grid_thumbnails: HashSet::new(),
+            grid_thumbnails: Vec::new(),
             image_sizes: RefCell::new(fs_model::ImageSizes::default()),
             stale_images: RefCell::new(HashSet::new()),
             prompt_pane: 0,
@@ -316,24 +316,26 @@ impl FilesApp {
 
     /// The images this frame shows: Grid thumbnails within their budget, and the selected image in
     /// the inspector or quick preview.
-    /// Also returns, apart, the Grid thumbnails alone: Grid draws those, not every image shown.
-    fn images_to_show(&self) -> (HashSet<PathBuf>, HashSet<PathBuf>) {
+    /// Also returns, apart, each pane's Grid thumbnails: a pane draws its own, within its own budget,
+    /// not every image shown.
+    fn images_to_show(&self) -> (HashSet<PathBuf>, Vec<HashSet<PathBuf>>) {
         let mut shown = HashSet::new();
+        let mut grid = vec![HashSet::new(); self.panes.len()];
         if self.saved.view_mode == ViewMode::Grid {
-            for pane in &self.panes {
+            for (pane, thumbnails) in self.panes.iter().zip(&mut grid) {
                 let chosen = fs_model::thumbnail_choices(&pane.entries, fs_model::THUMBNAIL_BUDGET_PIXELS, |e| {
                     self.image_size(e)
                 });
-                shown.extend(
+                thumbnails.extend(
                     pane.entries
                         .iter()
                         .zip(chosen)
                         .filter(|(_, chosen)| *chosen)
                         .map(|(entry, _)| entry.path.clone()),
                 );
+                shown.extend(thumbnails.iter().cloned());
             }
         }
-        let grid = shown.clone();
         if self.saved.show_inspector
             && let Some(entry) = self.pane().selected_entry()
             && self.can_preview_image(entry)
@@ -1743,7 +1745,8 @@ impl FilesApp {
         }
 
         // Chosen once a frame, before render, by `images_to_show`.
-        let thumbnails = &self.grid_thumbnails;
+        let none = HashSet::new();
+        let thumbnails = self.grid_thumbnails.get(pane_idx).unwrap_or(&none);
         let mut grid = div()
             .id(("pane-grid", pane_idx))
             .flex_1()
