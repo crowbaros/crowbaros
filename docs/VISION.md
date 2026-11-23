@@ -76,9 +76,13 @@ Agent's reach makes a real risk, a new record decides what to do about it.
 ## Open questions
 
 - **Voice.** Whether the person can summon the Agent and speak to it by voice.
-- **Models.** Which models, local or in the cloud, and who chooses? The
-  harness is decided: Pi Durable, behind a protocol CrowbarOS owns
+- **Models.** Whether a model can run on the machine itself, and on what
+  hardware. The rest is decided. The harness is Pi Durable, behind a protocol
+  CrowbarOS owns
   ([ADR 0034](adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)).
+  The person chooses the model: they sign in to a provider in the cloud,
+  with an API key or OAuth, and pick one of its models
+  ([the Harness](../agent/README.md#reaching-a-model)).
 - **Life without a model.** What does the desktop do when no model is
   reachable?
 - **The default apps.** A terminal, a browser, files, a text editor? Which,
