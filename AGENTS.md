@@ -74,6 +74,11 @@ sides hold.
 | How the compositor serves clients: [`compositor/`](compositor/README.md) | `lab/void/compositor_check.py` | The evidence log it writes |
 | `apps/` | The app's Void build and run steps in its README | Before and after captures; a short recording for motion |
 
+- While you iterate, run the quickest thing that can fail: the component's
+  own tests (`cargo test` in its directory, or the `test_*.py` beside a
+  script), and a lab check with `--no-build` when only the check itself
+  changed ([the lab guide](lab/void/README.md)). A `--no-build` run is not
+  evidence. Before you push, run the full check the table above asks for.
 - When `main` moves while your check runs, rebase, but run the check again only
   if what landed touches a path that check covers. The compositor check covers
   `base/`, `lab/void/`, and `compositor/`. The desktop check covers `base/`,
