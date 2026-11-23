@@ -42,7 +42,7 @@ function named({ providerName, ...model }: InUse): object {
 }
 
 /** A turn as a reply shows it. What waits for another try is an event's to tell. */
-function shown({ retry: _retry, ...turn }: Turn): Omit<Turn, "retry"> {
+function shown({ retry: _retry, attempt: _attempt, ...turn }: Turn): Omit<Turn, "retry" | "attempt"> {
 	return turn;
 }
 
@@ -157,7 +157,10 @@ export function person(uid: number, conversations: Conversations, store: Store, 
 				}
 				case "stop": {
 					const conversation = text(request, "conversation");
-					if (!(await store.stop(conversation))) throw new Declined("no-conversation", `There is no conversation ${conversation}.`);
+					// The turn the client means to stop, when it says: a stop that comes after that turn ended stops nothing.
+					const turn = request.turn ?? undefined;
+					if (turn !== undefined && typeof turn !== "number") throw new Declined("request", `"stop" takes "turn" as a number.`);
+					if (!(await store.stop(conversation, turn))) throw new Declined("no-conversation", `There is no conversation ${conversation}.`);
 					return { reply: "ok" };
 				}
 				case "status": {

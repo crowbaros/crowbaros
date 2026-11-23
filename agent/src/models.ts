@@ -221,7 +221,8 @@ export class ModelAccess {
 	 * Signs in to a provider, the one named or the one the person picks,
 	 * and has them pick its Model for the Agent to use. pi-ai takes every
 	 * step and keeps the credential; `relay` carries its questions to the
-	 * person. `cancelled` ends it, and it then rejects.
+	 * person. `cancelled` ends it, and it then rejects, unless the credential
+	 * is already kept: it then resolves with no Model chosen.
 	 */
 	async signIn(named: string | undefined, relay: Relay, cancelled: AbortSignal): Promise<{ provider: string; name: string; model?: InUse }> {
 		const offered = this.models.getProviders().filter((one) => one.id !== ENDPOINT && (one.auth.oauth || one.auth.apiKey?.login));
@@ -294,11 +295,19 @@ export class ModelAccess {
 		let model = before?.provider === provider.id ? models.find((one) => one.id === before.model) : undefined;
 		if (model === undefined && models.length === 1) model = models[0];
 		if (model === undefined && models.length > 1) {
-			const picked = await relay.put({
-				kind: "select",
-				message: "Which Model should the Agent use?",
-				options: models.map((one) => ({ id: one.id, label: one.name })),
-			});
+			let picked: string;
+			try {
+				picked = await relay.put({
+					kind: "select",
+					message: "Which Model should the Agent use?",
+					options: models.map((one) => ({ id: one.id, label: one.name })),
+				});
+			} catch (error) {
+				// Left at this question, the person is signed in all the same:
+				// the credential is kept by now, and saying otherwise would be untrue.
+				if (cancelled.aborted) return { provider: provider.id, name: provider.name };
+				throw error;
+			}
 			model = models.find((one) => one.id === picked);
 			if (model === undefined) throw new Refused(`${provider.name} has no Model named ${picked}. You are signed in, and no Model is chosen.`);
 		}

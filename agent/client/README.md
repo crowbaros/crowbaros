@@ -30,6 +30,11 @@ crowbar-agent model [PROVIDER/MODEL]  # list the Models signed in to, or choose 
 - **The answer is plain text on standard output**, a piece at a time, so it
   reads the same in a terminal and down a pipe. Everything else the client
   says goes to standard error.
+- **Nothing a Model says can drive the terminal.** A Model is not trusted,
+  so a control character in anything the Harness sends is shown as its
+  picture, `␛` for escape, and does nothing: no answer can move the cursor,
+  write over what was said, or set the clipboard. Line ends and tabs stay,
+  and a carriage return is dropped.
 - **A conversation starts with its first message.** `crowbar-agent` with no
   argument asks for a line, sends it, writes the answer, and asks again.
   Ctrl-D leaves. `--resume ID` shows the conversation's newest turns first.
@@ -37,7 +42,8 @@ crowbar-agent model [PROVIDER/MODEL]  # list the Models signed in to, or choose 
   again from its start: when the Model is cut short and asked again, what it
   had written is no part of the answer.
 - **Ctrl-C stops the turn** the Agent is working on, and the client waits for
-  the turn to end. Between turns, Ctrl-C leaves.
+  the turn to end. Between turns, Ctrl-C leaves, and so it does while the
+  client waits for a Harness that is slow to answer.
 - **A client that goes away stops nothing.** When its terminal closes or its
   SSH connection drops, the turn goes on in the Harness. `--list` shows it as
   working, and `--resume ID` picks it up, where Ctrl-C stops it.
@@ -45,9 +51,11 @@ crowbar-agent model [PROVIDER/MODEL]  # list the Models signed in to, or choose 
   the Agent is to use. Every question is the Harness's. With an API key, the
   terminal does not show the key as it is typed. With OAuth, the client opens
   a browser when it runs on a desktop (`WAYLAND_DISPLAY` or `DISPLAY` is set),
-  with `xdg-open` or `gio open`, and prints the address either way. Where the
+  with `xdg-open` or `gio open`, and prints the address either way. It does
+  not wait for the browser, and opens only an address of the web. Where the
   browser is on another machine, paste the code it shows, or the address it
-  ends at.
+  ends at. Leaving at the last question, which Model to use, leaves the
+  person signed in with no Model chosen, and the client says so.
 - **`login`, `logout`, `status`, and `model` are commands only as the first
   word.** A request that starts with one of them goes in quotes with the rest
   of it, or after `--`: `crowbar-agent -- status of my disk`.
@@ -55,9 +63,9 @@ crowbar-agent model [PROVIDER/MODEL]  # list the Models signed in to, or choose 
 | Exit status | When |
 | --- | --- |
 | 0 | The turn was answered, or the command was carried out |
-| 1 | The Model gave no answer, no Model is signed in, the Harness refused the request, or no Harness answers. A conversation ends this way when its newest turn got no answer. `status` also exits 1 with no Model in use |
+| 1 | The Model gave no answer, no Model is signed in, the Harness refused the request, or no Harness answers. A conversation ends this way when its newest turn got no answer, whether in this run or before it was resumed. `status` also exits 1 with no Model in use |
 | 2 | The command line asks for nothing the client does |
-| 130 | Ctrl-C stopped the turn, or cancelled the sign-in |
+| 130 | Ctrl-C stopped the turn, cancelled the sign-in, or left a Harness that had not answered |
 
 ## Finding the Harness
 

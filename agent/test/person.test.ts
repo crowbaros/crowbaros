@@ -287,6 +287,24 @@ test("the person signs in with an API key, picks a Model, and signs out, and the
 	assert.deepEqual(await person.ask({ op: "logout" }), { reply: "error", code: "refused", message: "Not signed in to any provider." });
 });
 
+test("a sign-in left at the choice of a Model is a sign-in all the same, and the client is told so", async (t) => {
+	const harness = await start(t, scratch(t));
+	const person = await client(harness.person);
+	await person.ask({ op: "login", provider: "openai" });
+	await person.ask({ op: "answer", question: (await person.hear()).question, text: "api_key" });
+	await person.ask({ op: "answer", question: (await person.hear()).question, text: "sk-a-key-for-the-test" });
+	assert.equal((await person.hear()).message, "Which Model should the Agent use?");
+	// The key is kept by now. Told it was cancelled, the person would think it was not.
+	assert.deepEqual(await person.ask({ op: "cancel" }), { reply: "ok" });
+	assert.deepEqual(await person.hear(), { event: "signed-in", provider: "openai", provider_name: "OpenAI" });
+	assert.deepEqual(await person.ask({ op: "status" }), {
+		reply: "status",
+		model: null,
+		missing: "No Model is chosen.",
+		signed_in: [{ provider: "openai", name: "OpenAI", how: "API key" }],
+	});
+});
+
 test("a sign-in in a browser is relayed a step at a time, and ends when the client cancels it or goes away", async (t) => {
 	const harness = await start(t, scratch(t));
 	const person = await client(harness.person);
@@ -380,8 +398,17 @@ test("a turn whose Model is gone when the Harness starts again fails, and says s
 	const again = await client(next.person);
 	for (let tries = 0; tries < 200 && (await again.ask({ op: "list" })).conversations[0].working; tries++) await sleep(50);
 	// Not stopped, though its last answer was cut short by the stop: nobody stopped it.
+	const failed = { turn: 1, message: "Count.", answer: "One", state: "failed", error: "the Model it was sent to is not there" };
+	assert.deepEqual((await again.ask({ op: "resume", conversation })).turns, [failed]);
+
+	// It reads the same once a newer turn has ended: how a turn ended does not change with what came after it.
+	model.more([{ text: "Here again." }]);
+	pointAt(next.state, model.url);
+	await again.ask({ op: "send", conversation, text: "Still there?" });
+	await again.until(ended);
 	assert.deepEqual((await again.ask({ op: "resume", conversation })).turns, [
-		{ turn: 1, message: "Count.", answer: "One", state: "failed", error: "the Model it was sent to is not there" },
+		failed,
+		{ turn: 2, message: "Still there?", answer: "Here again.", state: "done" },
 	]);
 });
 
@@ -405,6 +432,60 @@ test("an answer that is cut short starts over when the Model is asked again", as
 	assert.deepEqual((await person.ask({ op: "resume", conversation })).turns, [
 		{ turn: 1, message: "Hello?", answer: "A whole answer.", state: "done" },
 	]);
+});
+
+test("an answer that starts over with the words it began with before is told as starting over", async (t) => {
+	const directory = scratch(t);
+	const model = await stub(t, directory, [{ text: "Same words", cut: true }, { text: "Same words, and more." }]);
+	const harness = await start(t, directory);
+	pointAt(harness.state, model.url);
+	const person = await client(harness.person);
+	await person.ask({ op: "send", text: "Hello?" });
+	const events = await person.until(ended);
+	const over = events.findIndex((message) => message.event === "start-over");
+	assert.notEqual(over, -1, events.map((message) => message.event).join(" "));
+	// The second try's answer is told whole, not as what it adds to the first's.
+	assert.equal(answer(events.slice(0, over), 1), "Same");
+	assert.equal(answer(events.slice(over), 1), "Same words, and more.");
+});
+
+test("a stop that names a turn stops that turn alone, and not the one after it", async (t) => {
+	const directory = scratch(t);
+	const model = await stub(t, directory, [{ text: "The first answer." }, { text: "One two three", stall: true }]);
+	const harness = await start(t, directory);
+	pointAt(harness.state, model.url);
+	const person = await client(harness.person);
+	const { conversation } = await person.ask({ op: "send", text: "One?" });
+	await person.until(ended);
+	await person.ask({ op: "send", conversation, text: "Count." });
+	await person.until((message) => message.event === "text");
+	// A stop for the first turn that comes late, as from a client that pressed Ctrl-C as that turn ended.
+	assert.deepEqual(await person.ask({ op: "stop", conversation, turn: 1 }), { reply: "ok" });
+	await sleep(300);
+	assert.deepEqual((await person.ask({ op: "list" })).conversations.map((one: Message) => one.working), [true]);
+	assert.deepEqual(await person.ask({ op: "stop", conversation, turn: 2 }), { reply: "ok" });
+	assert.deepEqual(await person.hear(), { event: "stopped", conversation, turn: 2 });
+	assert.equal((await person.ask({ op: "stop", conversation, turn: "2" })).code, "request");
+});
+
+test("a client that resumes a long conversation gets its newest turns, however long another client has followed it", async (t) => {
+	const directory = scratch(t);
+	const turns = 56;
+	const model = await stub(t, directory, Array.from({ length: turns }, (_, index) => ({ text: `Answer ${index + 1}.` })));
+	const harness = await start(t, directory);
+	pointAt(harness.state, model.url);
+	const first = await client(harness.person);
+	const { conversation } = await first.ask({ op: "send", text: "Message 1" });
+	await first.until(ended);
+	for (let turn = 2; turn <= turns; turn++) {
+		await first.ask({ op: "send", conversation, text: `Message ${turn}` });
+		await first.until(ended);
+	}
+	// The first client is still there, and has been told every turn. The second gets no more than one who came alone would.
+	const second = await (await client(harness.person)).ask({ op: "resume", conversation });
+	assert.equal(second.earlier, true);
+	assert.ok(second.turns.length <= 50, `${second.turns.length} turns`);
+	assert.equal(second.turns.at(-1).answer, `Answer ${turns}.`);
 });
 
 test("a Model that cannot be reached is asked again, and then the turn fails and the Harness goes on", async (t) => {
@@ -478,8 +559,17 @@ test("a file of the Harness's state that is not JSON is told to the client, and 
 		code: "refused",
 		message: `${credentials} is not JSON. Put it right, or remove it.`,
 	});
+	// JSON, and not what the Harness keeps there: the same, by its path alone.
+	const wrong = (path: string) => `${path} does not hold what the Harness keeps there. Put it right, or remove it.`;
+	for (const held of ["null", "[]", '{"openai": null}', '{"openai": "sk-not-a-credential"}']) {
+		writeFileSync(credentials, held);
+		assert.deepEqual(await person.ask({ op: "status" }), { reply: "error", code: "refused", message: wrong(credentials) }, held);
+	}
+	rmSync(credentials);
+	writeFileSync(settings, "null");
+	assert.deepEqual(await person.ask({ op: "status" }), { reply: "status", model: null, missing: wrong(settings), signed_in: [] });
 	assert.equal((await person.ask({ op: "list" })).reply, "conversations");
-	assert.doesNotMatch(readFileSync(join(harness.state, "harness.log"), "utf8"), /sk-not-json|error:/);
+	assert.doesNotMatch(readFileSync(join(harness.state, "harness.log"), "utf8"), /sk-not-json|sk-not-a-credential|error:/);
 });
 
 test("a Model chosen while an endpoint file is there is not yet the Model in use, and the reply says so", async (t) => {

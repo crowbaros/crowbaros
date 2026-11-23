@@ -8,6 +8,7 @@
 
 use crate::sys;
 use serde_json::{Value, json};
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::io::{Error, ErrorKind, Read, Result, Write};
 use std::os::fd::{AsRawFd, RawFd};
@@ -30,9 +31,35 @@ pub fn socket_path() -> PathBuf {
     runtime.join("crowbar-agent/person")
 }
 
-/// A field of a message that is text, or nothing where it is not.
-pub fn text<'a>(message: &'a Value, field: &str) -> &'a str {
-    message.get(field).and_then(Value::as_str).unwrap_or_default()
+/// Text from outside the client, as a terminal may be given it. A Model is
+/// not trusted, and what it says reaches the person's terminal, where a
+/// control character could move the cursor, write over what was said
+/// before, or set the clipboard. Each one is shown as its picture, `␛` for
+/// escape, and does nothing. Line ends and tabs stay, and a carriage return
+/// is dropped.
+pub fn plain(text: &str) -> Cow<'_, str> {
+    let stays = |character: char| !character.is_control() || character == '\n' || character == '\t';
+    if text.chars().all(stays) {
+        return Cow::Borrowed(text);
+    }
+    let shown = text
+        .chars()
+        .filter(|&character| character != '\r')
+        .map(|character| match character {
+            character if stays(character) => character,
+            // The pictures of the first 32 characters are in their order, from U+2400.
+            '\0'..='\x1f' => char::from_u32(0x2400 + u32::from(character)).unwrap_or(char::REPLACEMENT_CHARACTER),
+            '\x7f' => '\u{2421}',
+            _ => char::REPLACEMENT_CHARACTER,
+        });
+    Cow::Owned(shown.collect())
+}
+
+/// A field of a message that is text, or nothing where it is not. Every
+/// word of the Harness's that the client shows comes through here, so it is
+/// `plain`.
+pub fn text<'a>(message: &'a Value, field: &str) -> Cow<'a, str> {
+    plain(message.get(field).and_then(Value::as_str).unwrap_or_default())
 }
 
 /// What a client does when no Model answers: the Harness says why, and the
@@ -40,7 +67,7 @@ pub fn text<'a>(message: &'a Value, field: &str) -> &'a str {
 pub const NO_MODEL: &str = "Sign in to one with `crowbar-agent login`, or choose one with `crowbar-agent model`.";
 
 /// When a reply is an error, says it to the person, and gives its code.
-pub fn refused(reply: &Value) -> Option<&str> {
+pub fn refused(reply: &Value) -> Option<Cow<'_, str>> {
     if text(reply, "reply") != "error" {
         return None;
     }
@@ -75,6 +102,18 @@ pub struct Connection {
     /// What the person typed that does not make a whole line yet.
     typed: Vec<u8>,
     typing_ended: bool,
+    /// How many replies are still to come to requests `send` did not wait
+    /// for. The Harness answers in the order it was asked, so they come
+    /// before the reply to any request made since.
+    owed: usize,
+}
+
+/// Why there is no connection to the Harness.
+pub enum Unconnected {
+    /// In words for the person.
+    Why(String),
+    /// The person pressed Ctrl-C while the Harness was waited for.
+    Interrupted,
 }
 
 /// One whole frame's message taken off the front of `received`, if it holds one.
@@ -100,32 +139,40 @@ fn framed(received: &mut Vec<u8>) -> Result<Option<Value>> {
 impl Connection {
     /// Connects to the Harness and states the version. An error says why
     /// not, in words for the person.
-    pub fn connect() -> std::result::Result<Connection, String> {
+    pub fn connect() -> std::result::Result<Connection, Unconnected> {
         let path = socket_path();
         let stream = UnixStream::connect(&path).map_err(|error| {
-            format!(
+            Unconnected::Why(format!(
                 "The Harness is not running: nothing answers at {} ({error}).",
                 path.display()
-            )
+            ))
         })?;
-        let interrupts = sys::interrupts().map_err(|error| format!("Could not listen for Ctrl-C: {error}."))?;
-        let mut connection = Connection {
+        let interrupts =
+            sys::interrupts().map_err(|error| Unconnected::Why(format!("Could not listen for Ctrl-C: {error}.")))?;
+        let mut connection = Connection::over(stream, interrupts);
+        let stated = json!({ "version": VERSION });
+        let answered = connection.write(&stated).and_then(|()| connection.message());
+        match answered {
+            Ok(answer) if answer == stated => Ok(connection),
+            Err(error) if error.kind() == ErrorKind::Interrupted => Err(Unconnected::Interrupted),
+            // The Harness closes a peer it does not serve, or whose version it does not speak, and says nothing.
+            _ => Err(Unconnected::Why(format!(
+                "The Harness at {} closed the connection: it serves another account, or speaks another version than {VERSION}.",
+                path.display()
+            ))),
+        }
+    }
+
+    /// A connection over `stream`, which hears Ctrl-C on `interrupts`.
+    fn over(stream: UnixStream, interrupts: RawFd) -> Connection {
+        Connection {
             stream,
             received: Vec::new(),
             events: VecDeque::new(),
             interrupts,
             typed: Vec::new(),
             typing_ended: false,
-        };
-        let stated = json!({ "version": VERSION });
-        let answered = connection.write(&stated).and_then(|()| connection.message());
-        match answered {
-            Ok(answer) if answer == stated => Ok(connection),
-            // The Harness closes a peer it does not serve, or whose version it does not speak, and says nothing.
-            _ => Err(format!(
-                "The Harness at {} closed the connection: it serves another account, or speaks another version than {VERSION}.",
-                path.display()
-            )),
+            owed: 0,
         }
     }
 
@@ -151,33 +198,45 @@ impl Connection {
         Ok(())
     }
 
-    /// The next message from the Harness, waited for.
+    /// The next message from the Harness, waited for. Ctrl-C ends the
+    /// wait, with an error of the kind `Interrupted`: a Harness that is slow
+    /// to answer, or does not, is still one the person can leave.
     fn message(&mut self) -> Result<Value> {
         loop {
             if let Some(message) = framed(&mut self.received)? {
                 return Ok(message);
+            }
+            if sys::readable(&[self.interrupts, self.stream.as_raw_fd()])?[0] {
+                return Err(Error::new(ErrorKind::Interrupted, "Ctrl-C"));
             }
             self.receive()?;
         }
     }
 
     /// Sends a request, and gives its reply. Events that come first are
-    /// kept for `next`, in their order.
+    /// kept for `next`, in their order. So are the replies to requests
+    /// `send` did not wait for, which are not this one's.
     pub fn request(&mut self, request: Value) -> Result<Value> {
         self.write(&request)?;
         loop {
             let message = self.message()?;
-            if message.get("reply").is_some() {
+            if message.get("reply").is_none() {
+                self.events.push_back(message);
+            } else if self.owed > 0 {
+                self.owed -= 1;
+            } else {
                 return Ok(message);
             }
-            self.events.push_back(message);
         }
     }
 
     /// Sends a request whose reply is not waited for here: `next` gives it
-    /// as an event would be given, so nothing is missed while it comes.
+    /// as an event would be given, so nothing is missed while it comes. If
+    /// `next` is not asked before the next `request`, that drops it.
     pub fn send(&mut self, request: Value) -> Result<()> {
-        self.write(&request)
+        self.write(&request)?;
+        self.owed += 1;
+        Ok(())
     }
 
     /// Waits for the next thing to happen: an event, Ctrl-C, or, when
@@ -189,6 +248,9 @@ impl Connection {
                 return Ok(Happening::Event(event));
             }
             if let Some(message) = framed(&mut self.received)? {
+                if message.get("reply").is_some() {
+                    self.owed = self.owed.saturating_sub(1);
+                }
                 return Ok(Happening::Event(message));
             }
             if typing {
@@ -249,6 +311,75 @@ mod tests {
         }
         assert_eq!(messages, [json!({"reply": "ok"}), json!({"event": "done"})]);
         assert!(received.is_empty());
+    }
+
+    /// A connection to a peer of the test's own, which answers with `replies` once it has had `requests` frames.
+    fn against(requests: usize, replies: &'static [&'static str]) -> (Connection, [UnixStream; 2]) {
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
+        // Nothing is ever written to this one, and both its ends stay open: no Ctrl-C comes.
+        let (quiet, kept) = UnixStream::pair().unwrap();
+        std::thread::spawn(move || {
+            let mut length = [0u8; 4];
+            for _ in 0..requests {
+                theirs.read_exact(&mut length).unwrap();
+                theirs
+                    .read_exact(&mut vec![0u8; u32::from_be_bytes(length) as usize])
+                    .unwrap();
+            }
+            for reply in replies {
+                let framed = [&(reply.len() as u32).to_be_bytes(), reply.as_bytes()].concat();
+                theirs.write_all(&framed).unwrap();
+            }
+            // Stays open until the test is done with it.
+            let _ = theirs.read(&mut length);
+        });
+        (Connection::over(ours, quiet.as_raw_fd()), [quiet, kept])
+    }
+
+    #[test]
+    fn a_reply_to_a_request_that_was_not_waited_for_is_not_taken_for_the_next_requests() {
+        // A stop that was sent and not waited for, as after a second Ctrl-C, and then the person's next message.
+        let (mut harness, _quiet) = against(
+            2,
+            &[
+                r#"{"reply":"ok"}"#,
+                r#"{"event":"stopped","turn":1}"#,
+                r#"{"reply":"sent","turn":2}"#,
+            ],
+        );
+        harness.send(json!({"op": "stop"})).unwrap();
+        assert_eq!(
+            harness.request(json!({"op": "send"})).unwrap(),
+            json!({"reply": "sent", "turn": 2})
+        );
+        assert!(
+            matches!(harness.next(false).unwrap(), Happening::Event(event) if event == json!({"event": "stopped", "turn": 1}))
+        );
+
+        // One that `next` gave is not waited for again.
+        let (mut harness, _quiet) = against(1, &[r#"{"reply":"ok"}"#, r#"{"reply":"sent","turn":2}"#]);
+        harness.send(json!({"op": "stop"})).unwrap();
+        assert!(matches!(harness.next(false).unwrap(), Happening::Event(reply) if reply == json!({"reply": "ok"})));
+        assert_eq!(
+            harness.request(json!({"op": "send"})).unwrap(),
+            json!({"reply": "sent", "turn": 2})
+        );
+    }
+
+    #[test]
+    fn what_the_harness_says_is_shown_with_no_character_that_drives_a_terminal() {
+        assert!(matches!(
+            plain("Plain words,\n\tand a tab. Ünïcödé too."),
+            Cow::Borrowed(_)
+        ));
+        // Setting the clipboard, clearing the screen, and a line written over.
+        assert_eq!(
+            plain("\x1b]52;c;aGk=\x07 \x1b[2J safe\rfake\r\n\u{9b}31m\x7f\0"),
+            "␛]52;c;aGk=␇ ␛[2J safefake\n\u{fffd}31m␡␀"
+        );
+        let message = json!({"text": "a\u{1b}[1mb"});
+        assert_eq!(text(&message, "text"), "a␛[1mb");
+        assert_eq!(text(&message, "missing"), "");
     }
 
     #[test]

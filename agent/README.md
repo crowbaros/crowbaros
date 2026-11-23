@@ -133,10 +133,11 @@ since the commands the Agent will run inherit it.
 Any program running as the person can read the credentials: ADR 0034 runs the
 Harness as the person, with no isolation inside their account.
 
-`credentials.json` and `settings.json` are written beside their place and
-moved there, so a write that stops partway loses nothing. One that a person
-has edited into something that is not JSON is told to the client, by its
-path, and the Harness goes on.
+`credentials.json` and `settings.json` are written beside their place, put on
+the disk, and moved there, so a write that stops partway loses nothing. One
+that a person has edited into something that is not JSON, or is JSON and not
+what the Harness keeps there, is told to the client, by its path, and the
+Harness goes on.
 
 ## The log
 
@@ -297,7 +298,7 @@ message, so every client of a conversation shows the same thing.
 | `{"op":"list"}` | `{"reply":"conversations","conversations":[...]}` | Lists every conversation, the newest first. Each is `{"conversation":"k3f9q2xz","started":1795395526,"title":"How do I…","turns":2,"working":false}`: when it started, in seconds since 1970, how its first message begins, how many turns it has, and whether one is working |
 | `{"op":"resume","conversation":"k3f9q2xz"}` | `{"reply":"resumed","conversation":"k3f9q2xz","earlier":false,"turns":[...]}` | Follows a conversation, and gives it as it stands: its newest turns, the oldest first, and whether it has turns before them. Each is `{"turn":1,"message":"...","answer":"...","state":"done"}`. `state` is `working`, `done`, `stopped`, or `failed`, and a failed turn has `error`, which says why. A turn that is working has its answer so far, and its events follow |
 | `{"op":"send","conversation":"k3f9q2xz","text":"..."}` | `{"reply":"sent","conversation":"k3f9q2xz","turn":2}` | Sends a message of the person's, which begins a turn. The Model in use answers it. With no `conversation`, the message starts one, which the client then follows, and the reply has its ID. A message that is refused starts none |
-| `{"op":"stop","conversation":"k3f9q2xz"}` | `{"reply":"ok"}` | Stops the turn that is working. It is answered once the turn has stopped. With no turn working, it stops nothing |
+| `{"op":"stop","conversation":"k3f9q2xz","turn":2}` | `{"reply":"ok"}` | Stops the turn that is working. It is answered once the turn has stopped. With no turn working, it stops nothing. `turn` is the turn the client means, and may be left out: with it, the stop does nothing unless that is the conversation's newest turn, so one that comes after its turn ended does not stop the turn after |
 
 | Event | When |
 | --- | --- |
@@ -326,7 +327,9 @@ frame, without its length:
 The Harness does the sign-in, through pi-ai's providers, and keeps the
 credential. The client shows the Harness's questions and sends back what the
 person types. One sign-in runs at a time. It belongs to the client that began
-it, and ends when that client cancels it or goes away.
+it, and ends when that client cancels it or goes away. The credential is kept
+before the Harness asks which Model to use, so a sign-in that is cancelled at
+that question ends `signed-in`, with no Model chosen.
 
 | Request | Reply | What it does |
 | --- | --- | --- |
@@ -376,8 +379,10 @@ the code the provider shows, in answer to the `code` question.
   not mend, such as a key the provider refuses, ends the turn at once. The
   Harness goes on either way.
 - **An answer that is cut short** starts over when the Model is asked again,
-  with a `start-over` event. The conversation keeps the newest try's answer
-  alone.
+  with a `start-over` event, whether or not the new try begins with the same
+  words. The conversation keeps the newest try's answer alone.
+- **A turn that failed stays failed**, with why, however many turns come
+  after it.
 - **A turn the Harness is stopped in the middle of** goes on when it starts
   again: the Model is asked again, with no client connected.
 - **The Agent is told what it is** before every conversation, in

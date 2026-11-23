@@ -83,7 +83,8 @@ fn watch(harness: &mut Connection, conversation: &str, turn: Option<u64>, mut an
             Happening::Interrupt if stopping => return Ok(Ended::Stopped),
             Happening::Interrupt => {
                 stopping = true;
-                harness.send(json!({ "op": "stop", "conversation": conversation }))?;
+                // By its number, so a stop that comes after this turn ended does not reach the one after it.
+                harness.send(json!({ "op": "stop", "conversation": conversation, "turn": turn }))?;
                 continue;
             }
             Happening::Line(_) | Happening::EndOfInput => continue,
@@ -91,8 +92,8 @@ fn watch(harness: &mut Connection, conversation: &str, turn: Option<u64>, mut an
         if event.get("turn").and_then(Value::as_u64) != turn {
             continue;
         }
-        match text(&event, "event") {
-            "text" => answer.write(text(&event, "text"))?,
+        match &*text(&event, "event") {
+            "text" => answer.write(&text(&event, "text"))?,
             "start-over" => {
                 answer.end()?;
                 eprintln!("The Model is asked again, and its answer starts over.");
@@ -124,10 +125,19 @@ fn watch(harness: &mut Connection, conversation: &str, turn: Option<u64>, mut an
     }
 }
 
+/// A conversation that was resumed, as it stood.
+struct Resumed {
+    /// The turn that is still working, if one is.
+    working: Option<u64>,
+    /// The answer as far as it was written.
+    answer: Answer,
+    /// How its newest turn ended, if it has.
+    last: Ended,
+}
+
 /// Follows a conversation that is already there, and shows it as it
-/// stands, when `shown`. Gives the turn that is still working, if one is,
-/// and the answer as far as it was written.
-fn resume(harness: &mut Connection, conversation: &str, shown: bool) -> Result<Option<(Option<u64>, Answer)>> {
+/// stands, when `shown`. Nothing when there is no such conversation.
+fn resume(harness: &mut Connection, conversation: &str, shown: bool) -> Result<Option<Resumed>> {
     let reply = harness.request(json!({ "op": "resume", "conversation": conversation }))?;
     if refused(&reply).is_some() {
         return Ok(None);
@@ -144,8 +154,8 @@ fn resume(harness: &mut Connection, conversation: &str, shown: bool) -> Result<O
         }
         for turn in &turns {
             answer.write(&format!("> {}\n", text(turn, "message")))?;
-            answer.write(text(turn, "answer"))?;
-            match text(turn, "state") {
+            answer.write(&text(turn, "answer"))?;
+            match &*text(turn, "state") {
                 // Its answer goes on from here.
                 "working" => break,
                 "stopped" => {
@@ -160,11 +170,15 @@ fn resume(harness: &mut Connection, conversation: &str, shown: bool) -> Result<O
             }
         }
     }
-    let working = turns.last().filter(|turn| text(turn, "state") == "working");
-    Ok(Some((
-        working.and_then(|turn| turn.get("turn").and_then(Value::as_u64)),
+    let newest = turns.last().map(|turn| text(turn, "state")).unwrap_or_default();
+    Ok(Some(Resumed {
+        working: turns
+            .last()
+            .filter(|_| newest == "working")
+            .and_then(|turn| turn.get("turn").and_then(Value::as_u64)),
         answer,
-    )))
+        last: if newest == "failed" { Ended::Failed } else { Ended::Done },
+    }))
 }
 
 /// `crowbar-agent [--resume ID] "<request>"`: one turn, and out.
@@ -187,15 +201,17 @@ pub fn repl(harness: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
     let prompted = std::io::stdin().is_terminal();
     let mut conversation = None;
     // How the newest turn ended, which is how the client ends: a failed turn
-    // at the end of what was piped in is a failure.
+    // at the end of what was piped in is a failure, and so is one that had
+    // failed before the conversation was resumed.
     let mut last = Ended::Done;
     if let Some(resumed) = resumed {
-        let Some((working, answer)) = resume(harness, resumed, true)? else {
+        let Some(stood) = resume(harness, resumed, true)? else {
             return Ok(Ended::Failed);
         };
+        last = stood.last;
         // A turn another client left working is this client's to watch, and to stop.
-        if working.is_some() {
-            watch(harness, resumed, working, answer)?;
+        if stood.working.is_some() {
+            last = watch(harness, resumed, stood.working, stood.answer)?;
         }
         conversation = Some(resumed.to_string());
     }
@@ -217,7 +233,7 @@ pub fn repl(harness: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
                     });
                 }
                 // What another client of this conversation says, and the answer to it.
-                Happening::Event(event) => match text(&event, "event") {
+                Happening::Event(event) => match &*text(&event, "event") {
                     "message" => println!("\n> {}", text(&event, "text")),
                     "text" => {
                         print!("{}", text(&event, "text"));

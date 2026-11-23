@@ -19,8 +19,11 @@ function events(conversation: string, before: Map<number, Turn>, turns: readonly
 		if (known === undefined) out.push({ event: "message", ...about, text: turn.message });
 		// Already ended, and told so: nothing of an ended turn changes.
 		if (known !== undefined && known.state !== "working") continue;
-		// The Model was asked again, and its answer starts over from nothing.
-		const over = known !== undefined && !turn.answer.startsWith(known.answer);
+		// The Model was asked again, and its answer starts over from nothing:
+		// a new try, or an answer that does not go on from the one told. The
+		// new try's may begin with the very words the last one got out.
+		const again = known?.attempt !== undefined && turn.attempt !== undefined && known.attempt !== turn.attempt;
+		const over = known !== undefined && known.answer !== "" && (again || !turn.answer.startsWith(known.answer));
 		if (over) out.push({ event: "start-over", ...about });
 		const more = over ? turn.answer : turn.answer.slice(known?.answer.length ?? 0);
 		if (more !== "") out.push({ event: "text", ...about, text: more });
@@ -36,9 +39,10 @@ function events(conversation: string, before: Map<number, Turn>, turns: readonly
 /** One conversation that at least one client follows. */
 class Feed {
 	followers = new Set<Follower>();
+	/** Every turn this feed has seen, as it was last seen: what its followers have been told. */
 	turns = new Map<number, Turn>();
-	/** Whether the conversation has turns before the ones this feed first saw. */
-	earlier = false;
+	/** The conversation as it stands: what a client that joins now is given, however much this feed has seen. */
+	standing: Standing = { turns: [], earlier: false };
 	stop: () => void = () => {};
 	conversation: string;
 
@@ -51,6 +55,7 @@ class Feed {
 		// The turns that left the newest ones are kept as they were last
 		// seen, so one that comes back with the next change is not new.
 		for (const turn of standing.turns) this.turns.set(turn.turn, turn);
+		this.standing = standing;
 		for (const event of told) for (const follower of this.followers) follower(event);
 	}
 }
@@ -79,8 +84,7 @@ export class Conversations {
 				}
 				feed.stop = followed.stop;
 				// Nobody follows yet, so this tells nobody: it only records how the conversation stands.
-				feed.advance(followed);
-				feed.earlier = followed.earlier;
+				feed.advance({ turns: followed.turns, earlier: followed.earlier });
 				return feed;
 			});
 			this.#feeds.set(conversation, opening);
@@ -88,10 +92,9 @@ export class Conversations {
 		const feed = await opening;
 		if (feed === undefined) return undefined;
 		feed.followers.add(follower);
-		const newest = [...feed.turns.values()].sort((a, b) => a.turn - b.turn);
 		return {
-			turns: newest,
-			earlier: feed.earlier,
+			turns: feed.standing.turns,
+			earlier: feed.standing.earlier,
 			leave: () => {
 				feed.followers.delete(follower);
 				if (feed.followers.size === 0 && this.#feeds.get(conversation) === opening) {

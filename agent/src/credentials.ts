@@ -4,7 +4,7 @@
 // and refreshes an OAuth token inside `modify`, so two requests never
 // refresh one token twice.
 import type { Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
-import { keep, readKept } from "./kept.ts";
+import { keep, readKept, wrong } from "./kept.ts";
 
 export class FileCredentials implements CredentialStore {
 	#path: string;
@@ -16,7 +16,12 @@ export class FileCredentials implements CredentialStore {
 	}
 
 	#all(): Record<string, Credential> {
-		return readKept<Record<string, Credential>>(this.#path, {});
+		const all = readKept<Record<string, Credential>>(this.#path, {});
+		// Each one a credential in shape, so pi-ai is handed nothing it would fault on.
+		for (const one of Object.values(all) as unknown[]) {
+			if (typeof one !== "object" || one === null || typeof (one as { type?: unknown }).type !== "string") throw wrong(this.#path);
+		}
+		return all;
 	}
 
 	#keep(all: Record<string, Credential>): void {

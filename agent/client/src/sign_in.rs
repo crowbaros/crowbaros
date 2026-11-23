@@ -8,16 +8,23 @@ use crate::sys;
 use crate::talk::Ended;
 use serde_json::{Value, json};
 use std::io::Result;
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// Says a reply that is an error, and whether it was one.
 fn is_refused(reply: &Value) -> bool {
     refused(reply).is_some()
 }
 
+/// How long an opener is given to say it could not open the address.
+const OPENER_FAILS_WITHIN: Duration = Duration::from_millis(500);
+
 /// Opens an address in the person's browser, when the client runs on a
 /// desktop, and says whether it asked one to. On a console or over SSH
-/// there is none, and the address is the person's to open elsewhere.
+/// there is none, and the address is the person's to open elsewhere. Only
+/// an address of the web is opened: the address is a provider's, and an
+/// opener does with any other kind whatever the desktop has for it.
 fn open_browser(url: &str) -> bool {
     if ["WAYLAND_DISPLAY", "DISPLAY"]
         .iter()
@@ -25,16 +32,37 @@ fn open_browser(url: &str) -> bool {
     {
         return false;
     }
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return false;
+    }
     [("xdg-open", vec![url]), ("gio", vec!["open", url])]
         .iter()
         .any(|(program, args)| {
-            Command::new(program)
+            let opener = Command::new(program)
                 .args(args)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|status| status.success())
+                // A group of its own: Ctrl-C at the client's prompt is not for the browser.
+                .process_group(0)
+                .spawn();
+            let Ok(mut opener) = opener else { return false };
+            // An opener that cannot open the address says so at once. One
+            // still running after a moment is the browser itself, which
+            // some openers become: it is left to run, since waiting for it
+            // would hold the sign-in until the person closed the browser.
+            let patience = Instant::now() + OPENER_FAILS_WITHIN;
+            loop {
+                match opener.try_wait() {
+                    Ok(Some(status)) => return status.success(),
+                    Ok(None) if Instant::now() < patience => std::thread::sleep(Duration::from_millis(10)),
+                    Ok(None) => {
+                        std::thread::spawn(move || opener.wait());
+                        return true;
+                    }
+                    Err(_) => return false,
+                }
+            }
         })
 }
 
@@ -80,7 +108,7 @@ fn show(event: &Value) -> Question {
     eprint!("{}", if kind == "select" { "Its number or name: " } else { "> " });
     Question {
         number: event.get("question").and_then(Value::as_u64).unwrap_or(0),
-        options: options.iter().map(|option| text(option, "id").to_string()).collect(),
+        options: options.iter().map(|option| text(option, "id").into_owned()).collect(),
         hidden: (kind == "secret").then(sys::Hidden::typing),
     }
 }
@@ -120,7 +148,7 @@ pub fn login(harness: &mut Connection, provider: Option<&str>) -> Result<Ended> 
                 continue;
             }
         };
-        match text(&event, "event") {
+        match &*text(&event, "event") {
             "question" => asked = Some(show(&event)),
             "withdrawn" => {
                 if asked
@@ -137,7 +165,7 @@ pub fn login(harness: &mut Connection, provider: Option<&str>) -> Result<Ended> 
                 if !text(&event, "message").is_empty() {
                     eprintln!("{}", text(&event, "message"));
                 }
-                if open_browser(url) {
+                if open_browser(&url) {
                     eprintln!("A browser was opened to sign in. If it shows nothing, open this address:\n\n  {url}\n");
                 } else {
                     eprintln!("Open this address in a browser to sign in:\n\n  {url}\n");
@@ -145,7 +173,7 @@ pub fn login(harness: &mut Connection, provider: Option<&str>) -> Result<Ended> 
             }
             "code" => {
                 let url = text(&event, "url");
-                let opened = if open_browser(url) {
+                let opened = if open_browser(&url) {
                     "A browser was opened there."
                 } else {
                     ""
@@ -153,7 +181,7 @@ pub fn login(harness: &mut Connection, provider: Option<&str>) -> Result<Ended> 
                 eprintln!("Enter this code at {url}\n\n  {}\n\n{opened}", text(&event, "code"));
             }
             "signed-in" => {
-                let model = match text(&event, "name") {
+                let model = match &*text(&event, "name") {
                     "" => " No Model is chosen: choose one with `crowbar-agent model`.".to_string(),
                     name => format!(" The Agent uses {name}."),
                 };
@@ -195,7 +223,7 @@ pub fn status(harness: &mut Connection) -> Result<Ended> {
             "Signed in to {} ({}), with {}.",
             text(signed_in, "name"),
             text(signed_in, "provider"),
-            article(text(signed_in, "how"))
+            article(&text(signed_in, "how"))
         );
     }
     match reply.get("model").filter(|model| !model.is_null()) {

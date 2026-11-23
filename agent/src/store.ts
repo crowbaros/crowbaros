@@ -15,6 +15,7 @@ import {
 	defineDoc,
 	defineExtension,
 	Harness,
+	LiveDoc,
 	section,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -47,6 +48,8 @@ export interface Turn {
 	error?: string;
 	/** While the Model's last try failed and another waits: why, and when the next is made, in milliseconds since 1970. */
 	retry?: { error: string; at: number };
+	/** While the turn is working: which try at an answer this is, counted from 1. */
+	attempt?: number;
 }
 
 /** A conversation, as a list of conversations shows it. */
@@ -83,8 +86,13 @@ export interface Store {
 	 * there is no such conversation.
 	 */
 	send(conversation: string, text: string, model: ModelRef): Promise<{ turn: number; ended: Promise<Turn["state"]> } | "working" | undefined>;
-	/** Stops the turn that is working, and resolves once it has. False when there is no such conversation. */
-	stop(conversation: string): Promise<boolean>;
+	/**
+	 * Stops the turn that is working, and resolves once it has. With `turn`,
+	 * stops nothing unless that is the conversation's newest turn: a stop
+	 * meant for a turn that has ended does not reach the one after it. False
+	 * when there is no such conversation.
+	 */
+	stop(conversation: string, turn?: number): Promise<boolean>;
 	/** Closes the database, once everything committed is written to it. */
 	close(): Promise<void>;
 }
@@ -112,7 +120,12 @@ const Conversations = defineDoc<Kept>({
 	checkpointWhen: (_value, _changes, stored) => stored.deltasSinceBase >= 64,
 });
 
-/** The kind of the entry a message from the person is kept as. Its data is `{ turn }`. */
+/**
+ * The kind of the entry a message from the person is kept as. Its data is
+ * `{ turn }`, and `failed` with it when the turn before failed: why, in the
+ * words a client is told. Pi Durable keeps why a run failed only until the
+ * next run starts, and a turn that failed must read as failed ever after.
+ */
 const MESSAGE = "crowbar.message";
 
 /**
@@ -162,12 +175,13 @@ function whyFailed(reason: string, words: string | undefined): string {
  * person's, the answers after it, and the answer still being made.
  */
 function standing(view: ConversationView): Standing {
-	const turns: (Turn & { last?: Answer })[] = [];
+	const turns: (Turn & { last?: Answer; failed?: string })[] = [];
 	for (const entry of view.entries) {
 		const current = turns.at(-1);
 		const first = entry.model?.[0] as (Answer & { role?: string }) | undefined;
 		if (entry.kind === MESSAGE) {
-			const turn = (entry.data as { turn?: unknown } | undefined)?.turn;
+			const { turn, failed } = (entry.data ?? {}) as { turn?: unknown; failed?: unknown };
+			if (current && typeof failed === "string") current.failed = failed;
 			turns.push({ turn: typeof turn === "number" ? turn : 0, message: textOf(first?.content), answer: "", state: "done" });
 		} else if (entry.kind === "pi.assistant" && current && first) {
 			// The newest try's answer alone: one cut short before it stays in the database, and is not shown.
@@ -176,14 +190,17 @@ function standing(view: ConversationView): Standing {
 		}
 	}
 	const live = view.docs["pi.live"] as
-		| { run?: object; generation?: { message?: Answer; retry?: { at: number; error: string } }; runFailure?: { reason: string; detail?: string } }
+		| { run?: object; generation?: { attempt?: number; message?: Answer; retry?: { at: number; error: string } }; runFailure?: { reason: string; detail?: string } }
 		| undefined;
 	for (const [index, turn] of turns.entries()) {
 		const newest = index === turns.length - 1;
 		if (newest && live?.run) {
 			turn.state = "working";
 			if (live.generation?.message) turn.answer = textOf(live.generation.message.content);
+			// A try that has said nothing yet, and waits for no other: what the try before it got out is not its answer.
+			else if (live.generation && !live.generation.retry) turn.answer = "";
 			if (live.generation?.retry) turn.retry = { error: live.generation.retry.error, at: live.generation.retry.at };
+			if (live.generation?.attempt !== undefined) turn.attempt = live.generation.attempt;
 		} else if (newest && live?.runFailure) {
 			// Why the newest turn ended with no answer, which its last
 			// answer alone does not say: one cut short by a stop of the
@@ -194,6 +211,10 @@ function standing(view: ConversationView): Standing {
 				turn.state = "failed";
 				turn.error = whyFailed(reason, detail ?? turn.last?.errorMessage);
 			}
+		} else if (turn.failed !== undefined) {
+			// As the message after it recorded, when this was the newest turn.
+			turn.state = "failed";
+			turn.error = turn.failed;
 		} else if (turn.last?.stopReason === "aborted" || turn.last === undefined) {
 			turn.state = "stopped";
 		} else if (turn.last.stopReason === "error") {
@@ -201,6 +222,7 @@ function standing(view: ConversationView): Standing {
 			turn.error = turn.last.errorMessage ?? "the Model gave no answer";
 		}
 		delete turn.last;
+		delete turn.failed;
 	}
 	return { turns, earlier: view.before !== undefined };
 }
@@ -221,10 +243,13 @@ export async function openStore(path: string, models: Models): Promise<Store> {
 	// Goes on with whatever turn the last Harness left unfinished.
 	harness.resume();
 
+	/** What the Harness keeps of one of our conversations. */
+	const kept = async (conversation: string) => (await harness.snapshot(Conversations, context))?.conversations[conversation];
+
 	/** Pi Durable's conversation for one of ours. */
 	const find = async (conversation: string) => {
-		const kept = (await harness.snapshot(Conversations, context))?.conversations[conversation];
-		return kept === undefined ? undefined : harness.conversation(kept.at as ConversationId, context);
+		const ours = await kept(conversation);
+		return ours === undefined ? undefined : harness.conversation(ours.at as ConversationId, context);
 	};
 
 	return {
@@ -269,11 +294,14 @@ export async function openStore(path: string, models: Models): Promise<Store> {
 					// One Model covers the whole Agent, so a conversation
 					// takes the one in use now, whichever answered it before.
 					await configure(tx, found.id, { model: { provider: model.provider, modelId: model.model } });
+					// Why the turn before failed, if it did, which the run this starts takes away.
+					const before = (await tx.doc(LiveDoc, found.id)).runFailure;
+					const failed = before === undefined || before.reason === "aborted" ? undefined : whyFailed(before.reason, before.detail);
 					const submission = await found.submit(tx, {
 						type: "input",
 						content: text,
 						whenBusy: "reject",
-						entry: { kind: MESSAGE, data: { turn } },
+						entry: { kind: MESSAGE, data: failed === undefined ? { turn } : { turn, failed } },
 					});
 					kept.turns = turn;
 					// By whole characters: half of one would be text no client could read.
@@ -292,10 +320,10 @@ export async function openStore(path: string, models: Models): Promise<Store> {
 			}
 		},
 
-		async stop(conversation) {
+		async stop(conversation, turn) {
 			const found = await find(conversation);
 			if (found === undefined) return false;
-			await found.abort(context);
+			if (turn === undefined || turn === (await kept(conversation))?.turns) await found.abort(context);
 			return true;
 		},
 

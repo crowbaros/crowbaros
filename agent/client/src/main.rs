@@ -12,7 +12,7 @@ mod sign_in;
 mod sys;
 mod talk;
 
-use connection::Connection;
+use connection::{Connection, Unconnected};
 use std::process::ExitCode;
 use talk::Ended;
 
@@ -144,7 +144,8 @@ fn main() -> ExitCode {
     };
     let mut harness = match Connection::connect() {
         Ok(harness) => harness,
-        Err(why) => {
+        Err(Unconnected::Interrupted) => return ExitCode::from(130),
+        Err(Unconnected::Why(why)) => {
             eprintln!("crowbar-agent: {why}");
             return ExitCode::FAILURE;
         }
@@ -164,6 +165,8 @@ fn main() -> ExitCode {
         Ok(Ended::Failed | Ended::Refused) => ExitCode::FAILURE,
         // As a program that Ctrl-C ended.
         Ok(Ended::Stopped) => ExitCode::from(130),
+        // Ctrl-C while the Harness was waited for.
+        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => ExitCode::from(130),
         Err(error) => {
             // A turn the Agent was working on goes on without this client.
             eprintln!("crowbar-agent: The Harness went away: {error}.");

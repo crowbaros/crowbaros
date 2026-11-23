@@ -370,6 +370,37 @@ fn ctrl_c_stops_the_turn_and_a_client_that_goes_away_does_not() {
 
 #[test]
 #[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
+fn what_a_model_says_reaches_the_terminal_with_nothing_that_drives_it() {
+    // An answer that would clear the screen and set the clipboard.
+    let lab = Lab::with_model(r#"[{"text": "Clear \u001b[2Jthis, \u001b]52;c;aGk=\u0007and that."}]"#);
+    let shown = "Clear ␛[2Jthis, ␛]52;c;aGk=␇and that.\n";
+    let ran = lab.run(&["Hello?"], "");
+    assert_eq!((ran.status, ran.out.as_str()), (0, shown), "{ran:?}");
+    // And as it is shown again, from what the Harness kept.
+    let stood = lab.run(&["--resume", &only_conversation(&lab)], "");
+    assert_eq!(stood.out, format!("> Hello?\n{shown}"), "{stood:?}");
+}
+
+#[test]
+#[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
+fn ctrl_c_leaves_a_client_that_waits_for_a_harness_that_does_not_answer() {
+    let mut lab = Lab::empty();
+    lab.harness(uid());
+    // The Harness is there and answers nothing, as one that is wedged.
+    // SAFETY: the process is this test's own child, which it has not waited for.
+    unsafe { libc::kill(lab.children[0].id() as libc::pid_t, libc::SIGSTOP) };
+    let mut waiting = Running::start(lab.agent(&["--list"]));
+    std::thread::sleep(Duration::from_millis(300));
+    waiting.signal(libc::SIGINT);
+    wait_for("the client to leave", || {
+        waiting.child.try_wait().expect("crowbar-agent is waited for").is_some()
+    });
+    assert_eq!(waiting.ended(), 130);
+    assert_eq!(waiting.err.lock().unwrap().as_str(), "");
+}
+
+#[test]
+#[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
 fn a_harness_that_serves_another_account_refuses_the_client() {
     let mut lab = Lab::empty();
     lab.harness(uid() + 1);
@@ -443,6 +474,13 @@ fn a_conversation_that_is_piped_in_ends_as_its_newest_turn_did() {
     let failed = lab.run(&[], "First?\nSecond?\n");
     assert_eq!((failed.status, failed.out.as_str()), (1, "Here.\n"), "{failed:?}");
     let conversation = only_conversation(&lab);
+    // Resumed and left with nothing said, it ends as its newest turn did before: a failure still.
+    let stood = lab.run(&["--resume", &conversation], "");
+    assert_eq!(
+        (stood.status, stood.out.as_str()),
+        (1, "> First?\nHere.\n> Second?\n"),
+        "{stood:?}"
+    );
     let answered = lab.run(&["--resume", &conversation], "Third?\n");
     assert_eq!(answered.status, 0, "{answered:?}");
     // What was typed is not echoed down a pipe: the turn that failed shows its message and no answer.
@@ -548,13 +586,18 @@ fn the_person_signs_in_with_an_api_key_and_signs_out() {
 fn a_sign_in_opens_a_browser_on_a_desktop_and_prints_the_address_without_one() {
     let mut lab = Lab::empty();
     lab.harness(uid());
-    // A browser opener of the test's own, first on the path, which keeps the address it was given.
+    // A browser opener of the test's own, first on the path, which keeps
+    // the address it was given, and then stays, as an opener does that
+    // becomes the browser when none was running.
     let tools = lab.directory.join("tools");
     let opened = lab.directory.join("opened");
     fs::create_dir(&tools).unwrap();
     fs::write(
         tools.join("xdg-open"),
-        format!("#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n", opened.display()),
+        format!(
+            "#!/bin/sh\nprintf '%s' \"$1\" > '{}'\nexec sleep 20\n",
+            opened.display()
+        ),
     )
     .unwrap();
     fs::set_permissions(tools.join("xdg-open"), fs::Permissions::from_mode(0o755)).unwrap();
@@ -580,8 +623,15 @@ fn a_sign_in_opens_a_browser_on_a_desktop_and_prints_the_address_without_one() {
 
     let mut desktop = lab.agent(&["login", "anthropic"]);
     desktop.env("PATH", &path).env("WAYLAND_DISPLAY", "wayland-0");
+    let began = Instant::now();
     let desktop = Ran::of(run(desktop, typed));
     assert!(desktop.err.contains("A browser was opened to sign in."), "{desktop:?}");
+    // The sign-in went on, to its question and the person's leaving, while the opener was still there.
+    assert!(
+        began.elapsed() < Duration::from_secs(10),
+        "the client waited for the browser opener to end"
+    );
+    assert_eq!(desktop.status, 130, "{desktop:?}");
     assert!(
         fs::read_to_string(&opened)
             .unwrap()
