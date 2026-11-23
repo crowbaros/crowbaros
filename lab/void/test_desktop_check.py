@@ -435,15 +435,39 @@ class RealModelCredentialAndTyping(unittest.TestCase):
             'INSERT INTO document_revisions (document_id, seq, kind, content) VALUES (2, 2, ?, ?)',
             ('delta', json.dumps([['s', ['conversations', 'real2222'], {'at': 9, 'started': 2, 'title': '', 'turns': 1}]])),
         )
-        # Even if decoy (at=3) repeats the EXACT SAME prompt with full desktop
-        # context, target (at=9) has only a plain prompt with no context and MUST fail.
+        def msg_entry(turn, content):
+            return json.dumps({
+                'kind': 'crowbar.message',
+                'data': {'turn': turn, 'text': prompt},
+                'model': [{'role': 'user', 'content': content, 'timestamp': 1}],
+            })
+
+        def assistant_entry(content):
+            return json.dumps({
+                'kind': 'pi.assistant',
+                'model': [{'role': 'assistant', 'content': [{'type': 'text', 'text': content}], 'timestamp': 2}],
+            })
+
+        # Cross-conversation decoy (at=3, turn 1 with full desktop context),
+        # same-conversation plain user message (at=9, turn 1, NO context),
+        # same-conversation assistant reply echoing the prompt + context markers,
+        # and same-conversation wrong-turn user message (turn 2 with context):
+        # ALL combined MUST still fail when auditing conversation 'real2222' turn 1.
         conn.execute(
             'INSERT INTO entries (id, conversation_id, record) VALUES (1, 3, ?)',
-            (json.dumps({'content': full_user_content}),),
+            (msg_entry(1, full_user_content),),
         )
         conn.execute(
             'INSERT INTO entries (id, conversation_id, record) VALUES (2, 9, ?)',
-            (json.dumps({'content': prompt, 'answer': 'Your window is foot.'}),),
+            (msg_entry(1, prompt),),
+        )
+        conn.execute(
+            'INSERT INTO entries (id, conversation_id, record) VALUES (3, 9, ?)',
+            (assistant_entry('You asked: ' + full_user_content),),
+        )
+        conn.execute(
+            'INSERT INTO entries (id, conversation_id, record) VALUES (4, 9, ?)',
+            (msg_entry(2, full_user_content),),
         )
         conn.commit()
         conn.close()
@@ -451,6 +475,7 @@ class RealModelCredentialAndTyping(unittest.TestCase):
         spec = {
             'db': str(db),
             'conversation': 'real2222',
+            'turn': 1,
             'prompt': prompt,
             'sentinel': 'crowbarsecretwindowabcdef',
             'secret': 'sk-test-secret-123',
@@ -466,11 +491,11 @@ class RealModelCredentialAndTyping(unittest.TestCase):
         self.assertFalse(audit['has_active_foot'])
         self.assertFalse(audit['has_display'])
 
-        # Now add the real target entry carrying desktop context on conversation_id=9.
+        # Now replace turn 1 on conversation_id=9 with the real user-role Model input carrying desktop context.
         conn = sqlite3.connect(db)
         conn.execute(
-            'INSERT INTO entries (id, conversation_id, record) VALUES (3, 9, ?)',
-            (json.dumps({'content': full_user_content}),),
+            'UPDATE entries SET record = ? WHERE id = 2',
+            (msg_entry(1, full_user_content),),
         )
         conn.commit()
         conn.close()
@@ -507,7 +532,7 @@ class RealModelCredentialAndTyping(unittest.TestCase):
     def test_main_scrubs_secret_from_uncaught_exception_in_results(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        secret = 'sk-exception-secret-999'
+        secret = "sk-exception-'secret'\\999"
         vm = Runs.Guest(temporary.name)
 
         def boom(check, built, credential=None):
@@ -523,6 +548,7 @@ class RealModelCredentialAndTyping(unittest.TestCase):
         self.assertEqual(desktop_check.evidence_has_secret(vm.work, secret), [])
         results_text = (vm.work / 'results.json').read_text()
         self.assertNotIn(secret, results_text)
+        self.assertNotIn(repr(secret)[1:-1], results_text)
         self.assertIn('[REDACTED]', results_text)
 
 if __name__ == '__main__':

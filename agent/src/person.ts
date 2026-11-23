@@ -65,14 +65,14 @@ export interface ClientChannelOptions {
 	fulcrum?: ContextSource;
 }
 
+const SIGN_IN_OPS = new Set(["models", "model", "login", "answer", "cancel", "logout"]);
+
 /**
  * Builds either the person socket (`allowSignIn: true`) or the shell's surface
  * socket (`allowSignIn: false`). Both share conversations, `status`, and
  * desktop context from Fulcrum; sign-in and Model choice stay on the person
  * socket alone.
  */
-const SIGN_IN_OPS = new Set(["models", "model", "login", "answer", "cancel", "logout"]);
-
 export function clientChannel(options: ClientChannelOptions): Channel {
 	const { uid, peer, whose, allowSignIn, conversations, store, access, say, fulcrum } = options;
 	/** One sign-in at a time, whichever client began it. */

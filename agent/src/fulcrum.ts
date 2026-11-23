@@ -309,9 +309,13 @@ export class FulcrumClient {
 					const idx = this.#pending.indexOf(entry);
 					if (idx !== -1) this.#pending.splice(idx, 1);
 					resolve(undefined);
-					this.#say("Fulcrum snapshot timed out; reconnecting");
 					// Drop the connection so a late reply cannot shift into a later request.
-					if (this.#socket === socket) socket.destroy();
+					if (this.#socket === socket) {
+						this.#say("Fulcrum snapshot timed out; reconnecting");
+						socket.destroy();
+					} else {
+						this.#say("Fulcrum snapshot timed out");
+					}
 				}, timeoutMs),
 			};
 			entry.timer.unref();

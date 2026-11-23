@@ -2376,8 +2376,9 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                     if let Some(w) = model.read(cx).agent {
                         let _ = w.update(cx, |view, _, cx| {
                             if let Some(submitted) = view.submitted_draft.take() {
-                                if view.input.read(cx).query() == submitted {
-                                    view.input.update(cx, |input, cx| input.clear(cx));
+                                let current = view.input.read(cx).query();
+                                if let Some(next) = agent::draft_after_send(&current, &submitted) {
+                                    view.input.update(cx, |input, cx| input.set_text(next, cx));
                                 }
                             }
                             view.scroll.scroll_to_bottom();

@@ -469,9 +469,16 @@ fn contains_word(haystack: &str, needle: &str) -> bool {
 fn is_network_error(lower: &str) -> bool {
     lower.contains("econnrefused")
         || lower.contains("enotfound")
+        || lower.contains("eai_again")
+        || lower.contains("enetunreach")
+        || lower.contains("ehostunreach")
+        || lower.contains("ehostdown")
         || lower.contains("etimedout")
         || lower.contains("econnreset")
         || lower.contains("fetch failed")
+        || lower.contains("connection error")
+        || lower.contains("connect timeout")
+        || lower.contains("socket hang up")
         || lower.contains("network error")
         || lower.contains("network unreachable")
         || lower.contains("host unreachable")
@@ -483,8 +490,23 @@ fn is_auth_error(lower: &str) -> bool {
     contains_word(lower, "401")
         || contains_word(lower, "403")
         || contains_word(lower, "unauthorized")
+        || lower.contains("authentication_error")
+        || lower.contains("api key not valid")
         || lower.contains("invalid api key")
         || lower.contains("authentication failed")
+}
+
+/// Computes the composer contents after `Sent` acknowledges `submitted`.
+/// Clears an unchanged draft, strips the submitted prefix when the person
+/// typed ahead before the reply arrived, and leaves an edited draft alone.
+pub fn draft_after_send(current: &str, submitted: &str) -> Option<String> {
+    if current == submitted {
+        Some(String::new())
+    } else if let Some(rest) = current.strip_prefix(submitted) {
+        Some(rest.trim_start().to_string())
+    } else {
+        None
+    }
 }
 
 /// Maps raw network or provider failure diagnostics into calm, person-facing copy.
@@ -1139,21 +1161,59 @@ mod tests {
         // Numbers containing 401/403 must not be misclassified as sign-in errors.
         let token_err = "prompt is too long: 204031 tokens > 200000 maximum (140123 input)";
         assert_eq!(calm_turn_error(token_err), token_err);
-        // Word-bounded 401/403 status codes map calmly to sign-in guidance.
-        assert!(calm_turn_error("HTTP 401 Unauthorized").contains("crowbar-agent login"));
-        // Resumed failed turns apply the same calm mapping.
-        let resumed = parse_turn(&serde_json::json!({
-            "turn": 1,
-            "message": "hi",
-            "answer": "",
-            "state": "failed",
-            "error": "TypeError: fetch failed (ECONNREFUSED)"
-        }))
-        .unwrap();
-        match resumed.state {
-            TurnState::Failed(msg) => assert!(msg.contains("Could not reach the Model"), "{msg}"),
-            other => panic!("expected Failed, got {other:?}"),
+        // Word-bounded 401/403 status codes and provider auth strings map calmly.
+        for auth_err in [
+            "HTTP 401 Unauthorized",
+            r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#,
+            "API key not valid. Please pass a valid API key.",
+        ] {
+            assert!(
+                calm_turn_error(auth_err).contains("crowbar-agent login"),
+                "expected auth copy for {auth_err}"
+            );
         }
+        // Real pi-ai / Anthropic / OpenAI SDK offline chains map calmly on failed,
+        // retry, and resumed paths without doubling up retry copy.
+        for net_err in [
+            "Connection error.",
+            "Connection error.: getaddrinfo EAI_AGAIN api.anthropic.com",
+            "Connection error.: connect ENETUNREACH 198.51.100.1:443",
+            "Connection error.: connect EHOSTUNREACH 198.51.100.1:443",
+            "Connection error.: Connect Timeout Error (attempted address: api.anthropic.com:443)",
+            "socket hang up",
+        ] {
+            assert!(
+                calm_turn_error(net_err).contains("Could not reach the Model"),
+                "expected network copy for {net_err}"
+            );
+            let retry_reason = calm_retry_reason(net_err);
+            assert_eq!(retry_reason, "Could not reach the Model.");
+            assert!(!retry_reason.contains("try again"), "{retry_reason}");
+            let resumed = parse_turn(&serde_json::json!({
+                "turn": 1,
+                "message": "hi",
+                "answer": "",
+                "state": "failed",
+                "error": net_err
+            }))
+            .unwrap();
+            match resumed.state {
+                TurnState::Failed(msg) => {
+                    assert!(msg.contains("Could not reach the Model"), "{msg}")
+                }
+                other => panic!("expected Failed, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn draft_after_send_clears_exact_strips_typed_ahead_and_keeps_edits() {
+        assert_eq!(draft_after_send("hello", "hello"), Some(String::new()));
+        assert_eq!(
+            draft_after_send("hello next question", "hello"),
+            Some("next question".into())
+        );
+        assert_eq!(draft_after_send("completely new draft", "hello"), None);
     }
 
     #[test]

@@ -34,8 +34,13 @@ class Check:
         self.qmp = None
 
     def _scrub(self, text):
-        if self.secret and self.secret in text:
-            return text.replace(self.secret, '[REDACTED]')
+        if not self.secret:
+            return text
+        if self.secret in text:
+            text = text.replace(self.secret, '[REDACTED]')
+        escaped = repr(self.secret)[1:-1]
+        if escaped and escaped != self.secret and escaped in text:
+            text = text.replace(escaped, '[REDACTED]')
         return text
 
     def log(self, message):
@@ -756,6 +761,7 @@ class Check:
             audit_payload = json.dumps({
                 'db': f'{state_dir}/harness.sqlite',
                 'conversation': conversation_id,
+                'turn': shown_turn.get('turn'),
                 'prompt': prompt_text,
                 'sentinel': sentinel,
                 'secret': secret,
@@ -1375,25 +1381,21 @@ import json, pathlib, re, sqlite3, sys
 spec = json.load(sys.stdin)
 conn = sqlite3.connect(spec["db"])
 
-def extract_strings(value, out):
-    if isinstance(value, str):
-        out.append(value)
-        stripped = value.lstrip()
-        if stripped.startswith(("{", "[")):
-            try:
-                extract_strings(json.loads(value), out)
-            except ValueError:
-                pass
-    elif isinstance(value, dict):
-        for v in value.values():
-            extract_strings(v, out)
-    elif isinstance(value, list):
-        for v in value:
-            extract_strings(v, out)
+def user_text(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            part.get("text", "")
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
+        )
+    return ""
 
 # Resolve the Harness conversation ID to its stored conversation row ID via
 # the `crowbar.conversations` document (base + delta revisions).
 conv = spec.get("conversation") or ""
+target_turn = spec.get("turn")
 target_at = None
 tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 if conv and {"documents", "document_revisions", "entries"}.issubset(tables):
@@ -1416,18 +1418,44 @@ if conv and {"documents", "document_revisions", "entries"}.issubset(tables):
                     target_at = entry["at"]
             elif kind == "delta" and isinstance(content, list):
                 for op in content:
-                    if not isinstance(op, list) or len(op) < 3:
+                    if not isinstance(op, list) or len(op) < 2:
                         continue
-                    path, val = op[1], op[2]
-                    if path == ["conversations", conv] and isinstance(val, dict) and isinstance(val.get("at"), int):
-                        target_at = val["at"]
-                    elif path == ["conversations", conv, "at"] and isinstance(val, int):
-                        target_at = val
+                    if op[0] == "r" and isinstance(op[1], dict):
+                        entry = (op[1].get("conversations") or {}).get(conv)
+                        if isinstance(entry, dict) and isinstance(entry.get("at"), int):
+                            target_at = entry["at"]
+                    elif len(op) >= 3:
+                        path, val = op[1], op[2]
+                        if path == ["conversations"] and isinstance(val, dict):
+                            entry = val.get(conv)
+                            if isinstance(entry, dict) and isinstance(entry.get("at"), int):
+                                target_at = entry["at"]
+                        elif path == ["conversations", conv] and isinstance(val, dict) and isinstance(val.get("at"), int):
+                            target_at = val["at"]
+                        elif path == ["conversations", conv, "at"] and isinstance(val, int):
+                            target_at = val
 
-target_strings = []
+# Positive checks inspect only the stored `crowbar.message` entry's user-role
+# Model input for this conversation (and turn, when given), so neither another
+# conversation nor an assistant reply echoing the markers can satisfy them.
+target_user_texts = []
 if target_at is not None:
-    for (record,) in conn.execute("SELECT record FROM entries WHERE conversation_id = ?", (target_at,)):
-        extract_strings(record, target_strings)
+    for (record_raw,) in conn.execute("SELECT record FROM entries WHERE conversation_id = ?", (target_at,)):
+        if not isinstance(record_raw, str):
+            continue
+        try:
+            record = json.loads(record_raw)
+        except ValueError:
+            continue
+        if not isinstance(record, dict) or record.get("kind") != "crowbar.message":
+            continue
+        if target_turn is not None and (record.get("data") or {}).get("turn") != target_turn:
+            continue
+        for msg in record.get("model") or []:
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                text = user_text(msg.get("content"))
+                if text:
+                    target_user_texts.append(text)
 
 # Full-DB scan solely for negative checks (no window-content sentinel, no secret).
 blobs = []
@@ -1441,7 +1469,7 @@ for table in sorted(tables):
 conn.close()
 
 prompt = spec["prompt"]
-matching_prompts = [s for s in target_strings if prompt in s and "[Desktop context]" in s]
+matching_prompts = [s for s in target_user_texts if prompt in s and "[Desktop context]" in s]
 active_re = re.compile(r"^Active window: .*\(app_id: foot\)$", re.MULTILINE)
 display_re = re.compile(r"^Displays:\n(?:- .*\n)*- Virtual-1:", re.MULTILINE)
 
