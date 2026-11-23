@@ -25,53 +25,22 @@ void_base = guest.void_base
 
 
 class Check:
-    def __init__(self, vm, secret=''):
+    def __init__(self, vm):
         self.guest = vm
         self.work = vm.work
-        self.secret = secret
         self.results = []
         self.logfile = (self.work / 'desktop.log').open('w', buffering=1)
         self.qmp = None
 
-    def _scrub(self, text):
-        if not self.secret:
-            return text
-        for needle in (self.secret, repr(self.secret)[1:-1], json.dumps(self.secret)[1:-1]):
-            if needle and needle in text:
-                text = text.replace(needle, '[REDACTED]')
-        return text
-
-    def _scrub_value(self, value):
-        if isinstance(value, str):
-            return self._scrub(value)
-        if isinstance(value, list):
-            return [self._scrub_value(v) for v in value]
-        if isinstance(value, tuple):
-            return tuple(self._scrub_value(v) for v in value)
-        if isinstance(value, dict):
-            return {self._scrub_value(k): self._scrub_value(v) for k, v in value.items()}
-        return value
-
-    def _format_error(self, error):
-        """Formats an exception while redacting arguments before repr() can
-        escape quotes or backslashes inside the secret."""
-        args = getattr(error, 'args', ())
-        if args:
-            parts = [repr(self._scrub_value(a)) for a in args]
-            rendered = f'{type(error).__name__}({", ".join(parts)})'
-        else:
-            rendered = repr(error)
-        return self._scrub(rendered)
-
     def log(self, message):
-        line = f'[{time.strftime("%H:%M:%S", time.gmtime())}] {self._scrub(str(message))}'
+        line = f'[{time.strftime("%H:%M:%S", time.gmtime())}] {message}'
         print(line, flush=True)
         self.logfile.write(line + '\n')
 
     def record(self, name, condition, detail=''):
-        clean_detail = self._scrub(str(detail)) if detail else ''
-        self.results.append({'name': name, 'passed': bool(condition), 'detail': clean_detail})
-        self.log(f'{"PASS" if condition else "FAIL"}: {name}' + (f' — {clean_detail}' if clean_detail else ''))
+        detail = str(detail) if detail else ''
+        self.results.append({'name': name, 'passed': bool(condition), 'detail': detail})
+        self.log(f'{"PASS" if condition else "FAIL"}: {name}' + (f' — {detail}' if detail else ''))
         return bool(condition)
 
     def check(self, name, condition, detail=''):
@@ -230,9 +199,9 @@ class Check:
         for name, command in commands.items():
             try:
                 r = self.guest.ssh(command, check=False, timeout=6)
-                (self.work / name).write_text(self._scrub(r.stdout + r.stderr))
+                (self.work / name).write_text(r.stdout + r.stderr)
             except (OSError, subprocess.TimeoutExpired) as error:
-                (self.work / name).write_text(self._scrub(str(error)))
+                (self.work / name).write_text(str(error))
         try:
             if self.qmp is None:
                 self.qmp = self.guest.qmp()
@@ -240,7 +209,7 @@ class Check:
         except (OSError, RuntimeError, ValueError) as error:
             self.log(f'Could not capture final display: {error}')
 
-    def checks(self, built, credential=None):
+    def checks(self, built):
         self.qmp = self.guest.qmp()
         self.ready()
         shell_log = self.shell_log
@@ -455,7 +424,7 @@ class Check:
         time.sleep(1.5)
         self.capture('07-chromium')
         self.agent_surface()
-        self.agent_conversation(credential or real_model_credential())
+        self.agent_conversation()
 
     def agent_surface(self):
         """The summon gesture, Super+Space, and the Agent's surface (#294): a
@@ -614,47 +583,42 @@ class Check:
             summon(away, output=output, keyboard=True)
             self.wait('the Agent\'s surface is put away', lambda: not drawn(f'17-put-away-on-{output}', head, point))
 
-    def sign_in_harness(self, credential):
-        """Signs the guest's Harness in to a real Model over the person socket.
-        The credential goes over SSH stdin alone, never in argv or logs."""
-        person = self.person()[0]
-        payload = json.dumps({
-            'provider': credential['provider'],
-            'api_key': credential['api_key'],
-            'model': credential.get('model'),
-            'defaults': list(DEFAULT_MODELS.get(credential['provider'], ())),
-            'socket': void_base.PERSON_SOCKET,
-        })
-        self.log(f"Signing the guest's Harness in to provider={credential['provider']}"
-                 + (f" model={credential['model']}" if credential.get('model') else ""))
-        result = self.guest.ssh(
-            'python3 -c ' + shlex.quote(HARNESS_LOGIN_SCRIPT),
-            user=person, check=False, timeout=45, input=payload,
-        )
-        if result.returncode != 0:
-            detail = (result.stdout or result.stderr or 'sign-in failed').strip()
-            if credential['api_key'] in detail:
-                detail = 'sign-in failed (output scrubbed)'
-            raise RuntimeError(f'Harness sign-in failed ({result.returncode}): {detail}')
-        signed = json.loads(result.stdout)
-        self.log(f"Signed in to {signed.get('provider_name', signed.get('provider'))}: "
-                 f"{signed.get('name', signed.get('model'))}")
-        return signed
+    def start_stub_model(self, person, state_dir):
+        """Starts the stub Model (agent/test/stub-model.ts) in the guest as the
+        person, with the image's Node.js, and points the Harness at it with
+        the endpoint file, as Base's boot check does. Returns the directory
+        that holds the stub, its script, and its record of requests."""
+        script = json.dumps([{'text': DRAWER_ANSWER, 'pause_ms': DRAWER_PAUSE_MS}])
+        made = self.guest.ssh(
+            'd=$(mktemp -d) && cat > "$d/stub-model.ts" && '
+            f'printf %s {shlex.quote(script)} > "$d/script.json" && '
+            f'setsid -f {void_base.HARNESS_NODE} "$d/stub-model.ts" --script "$d/script.json" '
+            '--requests "$d/requests" < /dev/null > "$d/out" 2>&1 && echo "$d"',
+            user=person, check=True, timeout=20, input=void_base.STUB_MODEL.read_text())
+        stub = made.stdout.strip()
+        self.log(f'The stub Model runs in the guest from {stub}')
+        url = self.wait('the stub Model listens', lambda: self.guest.ssh(
+            f"sed -n 's/^listening //p' {shlex.quote(stub + '/out')}", user=person, check=False).stdout.strip())
+        endpoint = json.dumps({'url': url, 'model': STUB_MODEL_NAME})
+        self.guest.ssh(f'printf %s {shlex.quote(endpoint)} > {shlex.quote(state_dir + "/endpoint.json")}',
+                       user=person, check=True, timeout=10)
+        self.log(f'The Harness is pointed at the stub Model at {url}')
+        return stub
 
-    def agent_conversation(self, credential):
-        """A first real conversation in the Agent's drawer (#295): calm no-Model
-        state, sign-in from the host environment, desktop context with no
-        window contents, a turn finishing behind the put-away drawer with the
-        mark in the bar and over a fullscreen window, and the real Model's
-        answer shown in the drawer and verified in the Harness's database."""
+    def agent_conversation(self):
+        """A first conversation in the Agent's drawer (#295), with the stub
+        Model in the guest (#349): the calm no-Model state, desktop context
+        sent with no window contents, a turn finishing behind the put-away
+        drawer with the mark in the bar and over a fullscreen window, and
+        the answer shown in the drawer. What the Harness sent is read from
+        the stub's record of requests and from the Harness's database."""
         person, home = self.person()
         state_dir = f'{home}/{void_base.HARNESS_STATE}'
-        secret = credential['api_key']
-        # Before signing in: the drawer is connected to the Harness and calmly
-        # reports that no Model is signed in.
+        # With no endpoint file and no sign-in, the drawer is connected to
+        # the Harness and calmly reports that no Model is signed in.
         before_view = self.wait('shell connected to Harness',
                                 lambda: (v := self.agent_view()) and v['state']['connected'] and v)
-        self.check("without a signed-in Model, the drawer calmly reports no Model",
+        self.check("without a Model, the drawer calmly reports no Model",
                    before_view['state']['model'] is None
                    and 'No Model' in (before_view['state']['missing_model'] or ''),
                    str(before_view['state']['missing_model']))
@@ -663,27 +627,11 @@ class Check:
         time.sleep(0.5)
         self.capture('18-drawer-no-model')
         self.key('meta_l', 'spc')
-        self.wait('drawer closes before sign-in', lambda: not self.agent_view()['drawer_up'])
+        self.wait('drawer closes with no Model', lambda: not self.agent_view()['drawer_up'])
 
-        # Mount a small RAM-only tmpfs on the Harness state directory before
-        # signing in so the host's real credential never touches the guest's
-        # raw disk image (even if the run fails and retains the disk).
-        reconnects = self.shell_log().count('SHELL agent-socket connected=true')
-        self.run(
-            f'uid=$(id -u {shlex.quote(person)}) && gid=$(id -g {shlex.quote(person)}) && '
-            f'mkdir -p {shlex.quote(state_dir)} && '
-            f'mount -t tmpfs -o size=32M,mode=0700,uid=$uid,gid=$gid tmpfs {shlex.quote(state_dir)} && '
-            f'sv restart crowbar-agent'
-        )
-        self.wait('shell reconnects to Harness on RAM-backed state dir',
-                  lambda: self.shell_log().count('SHELL agent-socket connected=true') > reconnects
-                  and (v := self.agent_view()) and v['state']['connected'] and v)
-
+        stub = None
         try:
-            signed = self.sign_in_harness(credential)
-            self.check("the guest's Harness signs in to a real Model",
-                       bool(signed.get('provider')) and bool(signed.get('model')),
-                       f"{signed.get('provider')} / {signed.get('model')}")
+            stub = self.start_stub_model(person, state_dir)
             # Put a unique sentinel inside the focused Terminal window: window
             # contents must never be sent to the Model or saved by the Harness.
             self.wait('Terminal has focus before drawer conversation',
@@ -693,12 +641,16 @@ class Check:
             self.key('ret')
             time.sleep(0.5)
 
-            # Summon the drawer, verify it sees the signed-in Model, and ask a
+            # Summon the drawer, see that it shows the stub Model, and ask a
             # question that only desktop context can answer.
             self.key('meta_l', 'spc')
-            ready_view = self.wait('drawer shows signed-in Model',
+            ready_view = self.wait('drawer shows the stub Model',
                                    lambda: (v := self.agent_view()) and v['drawer_up']
                                    and v['state']['model'] is not None and v)
+            model = ready_view['state']['model']
+            self.check("the drawer shows the Model the endpoint file names",
+                       model.get('provider') == 'endpoint' and model.get('model') == STUB_MODEL_NAME,
+                       json.dumps(model))
             turns_before = len(ready_view['state']['turns'])
             working_marks = self.shell_log().count('SHELL agent-mark state=working')
             prompt_text = (
@@ -706,18 +658,18 @@ class Check:
                 'answer in two short sentences.'
             )
             self.type(prompt_text)
-            # Send and put the drawer away back-to-back with no SSH poll in
-            # between so a fast Model cannot finish before the drawer closes.
+            # The stub pauses between words, so the turn is still running
+            # when the drawer is put away.
             self.key('ret')
             self.key('meta_l', 'spc')
             self.wait('drawer put away while turn runs', lambda: not self.agent_view()['drawer_up'])
             finished = self.wait(
-                'the real Model finishes the turn behind the put-away drawer',
+                'the stub Model finishes the turn behind the put-away drawer',
                 lambda: (v := self.agent_view())
                 and len(v['state']['turns']) > turns_before
                 and turn_state_kind(v['state']['turns'][-1]) != 'working'
                 and v,
-                timeout=90,
+                timeout=60,
             )
             turn = finished['state']['turns'][-1]
             conversation_id = finished['state'].get('conversation') or ''
@@ -752,20 +704,20 @@ class Check:
                        overlay['mark_overlay'] and overlay['state']['mark'] == 'done' and overlay_drawn,
                        f"output={overlay.get('mark_overlay_output')!r} overlay_drawn={overlay_drawn}")
 
-            # Summoning the drawer clears the done mark and shows the real Model's
-            # answer along with the desktop context the message carried.
+            # Summoning the drawer clears the done mark and shows the answer
+            # along with the desktop context the message carried.
             self.key('meta_l', 'spc')
             opened = self.wait('drawer opens with answer and clears done mark',
                                lambda: (v := self.agent_view()) and v['drawer_up']
                                and v['state']['mark'] == 'idle' and not v['mark_overlay'] and v)
             time.sleep(0.5)
-            self.capture('21-drawer-real-model-answer')
+            self.capture('21-drawer-answer')
             shown_turn = opened['state']['turns'][-1]
             ctx = shown_turn.get('context') or {}
             active_app = (ctx.get('active') or {}).get('app_id')
             answer_text = shown_turn.get('answer') or ''
-            self.check("the drawer shows the desktop context and the real Model's answer naming the active app_id",
-                       active_app == 'foot' and 'foot' in answer_text.lower(),
+            self.check("the drawer shows the desktop context and the Model's whole answer",
+                       active_app == 'foot' and answer_text.strip() == DRAWER_ANSWER,
                        f"active={active_app!r} answer={answer_text[:120]!r}")
             # Put drawer away and leave fullscreen cleanly.
             self.key('meta_l', 'spc')
@@ -774,23 +726,25 @@ class Check:
             self.wait('Terminal leaves fullscreen after conversation',
                       lambda: not any(c.get('fullscreen') for c in self.snapshot()['clients']))
 
-            # Inspect the conversation the Harness kept in harness.sqlite:
-            # desktop context was sent on this exact turn, window contents
-            # (sentinel) were not, and the credential never appears in the
-            # database or logs.
+            # What reached the Model, from the stub's own record: the one
+            # request carried the question with desktop context, and no
+            # request carried the window's contents.
+            requests = self.guest.ssh(f'cat {shlex.quote(stub + "/requests")}',
+                                      user=person, check=True, timeout=10).stdout
+            sent = stub_requests_audit(requests, prompt_text, sentinel)
+            self.check("the Model was sent desktop context with the question, and no window contents",
+                       sent['asked'] == 1 and sent['has_desktop_context'] and sent['has_active_foot']
+                       and sent['has_display'] and not sent['has_sentinel'],
+                       json.dumps(sent))
+
+            # What the Harness kept in harness.sqlite: desktop context on this
+            # exact turn, and no window contents anywhere.
             audit_payload = json.dumps({
                 'db': f'{state_dir}/harness.sqlite',
                 'conversation': conversation_id,
                 'turn': shown_turn.get('turn'),
                 'prompt': prompt_text,
                 'sentinel': sentinel,
-                'secret': secret,
-                'logs': [
-                    '/var/log/crowbar-compositor.log',
-                    '/var/log/crowbar-shell.log',
-                    '/var/log/crowbar-agent.log',
-                    f'{state_dir}/harness.log',
-                ],
             })
             audit_res = self.guest.ssh(
                 'python3 -c ' + shlex.quote(HARNESS_AUDIT_SCRIPT),
@@ -804,19 +758,14 @@ class Check:
                        and audit['has_display']
                        and not audit['has_sentinel'],
                        json.dumps(audit))
-            self.check("the credential never appears in the Harness database or guest logs",
-                       not audit['has_secret_in_db'] and not audit['has_secret_in_logs'])
         finally:
-            # Remove the temporary credential from guest RAM before diagnostics run.
+            # The endpoint file and the stub go, so the diagnostics see the
+            # Harness as a person's image has it.
             try:
-                rm_res = self.guest.ssh(
-                    f'rm -f {shlex.quote(state_dir + "/credentials.json")} {shlex.quote(state_dir + "/settings.json")}',
-                    check=False, timeout=10,
-                )
-                if rm_res.returncode != 0:
-                    self.log(f'warning: cleanup rm returned {rm_res.returncode}')
-            except (OSError, subprocess.TimeoutExpired) as cleanup_err:
-                self.log(f'warning: cleanup rm failed: {cleanup_err}')
+                if self.guest.ssh(stop_stub_model(state_dir, stub), check=False, timeout=10).returncode != 0:
+                    self.log('warning: could not remove the stub Model and its endpoint file')
+            except (OSError, subprocess.TimeoutExpired) as error:
+                self.log(f'warning: could not remove the stub Model and its endpoint file: {error}')
 
     def compositor_restart(self):
         """The compositor's service restarts while the person uses the desktop.
@@ -1208,59 +1157,12 @@ STILL_WINDOW = 12
 BAR_FOLLOWS = 2 * 1000 / 60
 
 
-# Host environment variables that supply a real Model credential to the desktop
-# check. Explicit `CROWBAR_AGENT_PROVIDER` + `CROWBAR_AGENT_API_KEY` wins;
-# otherwise one of the standard provider API key variables is used. Optional
-# `CROWBAR_AGENT_MODEL` selects a specific Model ID from the provider.
-PROVIDER_KEY_ENVS = (
-    ('ANTHROPIC_API_KEY', 'anthropic'),
-    ('OPENAI_API_KEY', 'openai'),
-    ('GEMINI_API_KEY', 'google'),
-    ('GOOGLE_API_KEY', 'google'),
-)
-
-# Preferred fast, low-cost Models when CROWBAR_AGENT_MODEL is not specified.
-DEFAULT_MODELS = {
-    'anthropic': ('claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-sonnet-4-6'),
-    'openai': ('gpt-4o-mini', 'gpt-4.1-mini', 'gpt-5-mini'),
-    'google': ('gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite'),
-}
-
-NEED_CREDENTIAL = (
-    "desktop_check.py needs a real Model credential in the host environment to test the Agent drawer:\n"
-    "  set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY,\n"
-    "  or set CROWBAR_AGENT_PROVIDER and CROWBAR_AGENT_API_KEY (and optionally CROWBAR_AGENT_MODEL)."
-)
-
-
-def real_model_credential(env=None):
-    """Reads the real Model credential from the host environment, or exits
-    explaining what it needs. The returned dict is kept in memory only."""
-    source = os.environ if env is None else env
-    explicit_key = (source.get('CROWBAR_AGENT_API_KEY') or '').strip()
-    explicit_provider = (source.get('CROWBAR_AGENT_PROVIDER') or '').strip()
-    explicit_model = (source.get('CROWBAR_AGENT_MODEL') or '').strip() or None
-    if explicit_key:
-        if not explicit_provider:
-            raise SystemExit(
-                "CROWBAR_AGENT_API_KEY requires CROWBAR_AGENT_PROVIDER "
-                "(for example, anthropic, openai, or google)."
-            )
-        return {'provider': explicit_provider, 'api_key': explicit_key, 'model': explicit_model}
-    if explicit_provider:
-        for var, provider in PROVIDER_KEY_ENVS:
-            value = (source.get(var) or '').strip()
-            if provider == explicit_provider and value:
-                return {'provider': explicit_provider, 'api_key': value, 'model': explicit_model}
-        raise SystemExit(
-            f"CROWBAR_AGENT_PROVIDER={explicit_provider!r} is set, but no API key was found "
-            f"(set CROWBAR_AGENT_API_KEY or the provider's key variable)."
-        )
-    for var, provider in PROVIDER_KEY_ENVS:
-        value = (source.get(var) or '').strip()
-        if value:
-            return {'provider': provider, 'api_key': value, 'model': explicit_model}
-    raise SystemExit(NEED_CREDENTIAL)
+# The name the endpoint file gives the stub Model, and its answer to the
+# drawer's question, a word at a time with a pause before each, so the turn
+# is still running when the drawer is put away.
+STUB_MODEL_NAME = 'stub-1'
+DRAWER_ANSWER = 'Your active window is foot, a Terminal, and it is the only window open.'
+DRAWER_PAUSE_MS = 400
 
 
 QMP_PUNCTUATION = {
@@ -1301,102 +1203,62 @@ def qmp_keys_for_text(text):
     return chords
 
 
-def evidence_has_secret(work_dir, secret):
-    """Returns paths in `work_dir` whose text contains `secret`, if any."""
-    leaked = []
-    if not secret:
-        return leaked
-    needle = secret.encode('utf-8')
-    for path in sorted(work_dir.rglob('*')):
-        if not path.is_file() or path.suffix in ('.raw', '.fd', '.png'):
-            continue
+def message_text(content):
+    """The text of a chat message's content, as a string or a list of parts."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return ''.join(part.get('text', '') for part in content
+                       if isinstance(part, dict) and part.get('type') == 'text'
+                       and isinstance(part.get('text'), str))
+    return ''
+
+
+ACTIVE_FOOT = re.compile(r'^Active window: .*\(app_id: foot\)$', re.MULTILINE)
+DISPLAY_ONE = re.compile(r'^Displays:\n(?:- .*\n)*- Virtual-1:', re.MULTILINE)
+
+
+def stub_requests_audit(record, prompt, sentinel):
+    """What the stub Model's record of requests says the Harness sent: how
+    many requests asked `prompt`, whether the last user message of one that
+    did carried desktop context naming foot as the active window and
+    Virtual-1 as a display, and whether any request held `sentinel`."""
+    asking = []
+    for line in record.splitlines():
         try:
-            if needle in path.read_bytes():
-                leaked.append(path.name)
-        except OSError:
-            pass
-    return leaked
+            body = json.loads(line)
+        except ValueError:
+            continue
+        users = [m for m in (body.get('messages') or [])
+                 if isinstance(m, dict) and m.get('role') == 'user']
+        last = message_text(users[-1].get('content')) if users else ''
+        if prompt in last:
+            asking.append(last)
+    with_context = [text for text in asking if '[Desktop context]' in text]
+    return {
+        'asked': len(asking),
+        'has_desktop_context': bool(with_context),
+        'has_active_foot': any(ACTIVE_FOOT.search(text) for text in with_context),
+        'has_display': any(DISPLAY_ONE.search(text) for text in with_context),
+        'has_sentinel': sentinel in record,
+    }
 
 
-# Drives the Harness's framed `login` op over the person socket inside the
-# guest. Reads the credential JSON from stdin alone and prints only the
-# signed-in provider and Model metadata.
-HARNESS_LOGIN_SCRIPT = """
-import json, socket, struct, sys, time
+def stop_stub_model(state_dir, stub):
+    """The guest command that removes the endpoint file and, when `stub` is
+    its directory, stops the stub Model and removes its directory. The
+    pattern's bracket keeps pkill from matching the shell that runs it."""
+    stop = f'rm -f {shlex.quote(state_dir + "/endpoint.json")}'
+    if stub:
+        stop += (f"; pkill -f {shlex.quote(stub + '/[s]tub-model.ts')}; "
+                 f"rm -rf {shlex.quote(stub)}")
+    return stop
 
-cred = json.load(sys.stdin)
-deadline = time.monotonic() + 5.0
-while True:
-    sock = socket.socket(socket.AF_UNIX)
-    sock.settimeout(30)
-    try:
-        sock.connect(cred["socket"])
-        break
-    except OSError:
-        sock.close()
-        if time.monotonic() >= deadline:
-            raise
-        time.sleep(0.1)
-reader = sock.makefile("rb")
 
-def send(obj):
-    body = json.dumps(obj).encode("utf-8")
-    sock.sendall(struct.pack(">I", len(body)) + body)
-
-def recv():
-    hdr = reader.read(4)
-    if len(hdr) < 4:
-        raise EOFError("Harness closed the person socket")
-    size = struct.unpack(">I", hdr)[0]
-    body = reader.read(size)
-    if len(body) < size:
-        raise EOFError("truncated frame from Harness")
-    return json.loads(body.decode("utf-8"))
-
-send({"version": 1})
-if recv().get("version") != 1:
-    raise RuntimeError("unexpected Harness protocol version")
-send({"op": "login", "provider": cred["provider"]})
-while True:
-    msg = recv()
-    if msg.get("reply") == "error":
-        raise RuntimeError(msg.get("message", "login refused"))
-    event = msg.get("event")
-    if event == "question":
-        qnum = msg["question"]
-        kind = msg["kind"]
-        if kind in ("secret", "text"):
-            send({"op": "answer", "question": qnum, "text": cred["api_key"]})
-        elif kind == "select":
-            opts = [o["id"] for o in msg.get("options", [])]
-            if "api_key" in opts:
-                choice = "api_key"
-            elif cred.get("model"):
-                if cred["model"] not in opts:
-                    raise RuntimeError("requested model is not available from provider")
-                choice = cred["model"]
-            else:
-                choice = next((m for m in cred.get("defaults", []) if m in opts), opts[0])
-            send({"op": "answer", "question": qnum, "text": choice})
-        else:
-            raise RuntimeError(f"unexpected login question kind {kind!r}")
-    elif event == "signed-in":
-        print(json.dumps({
-            "provider": msg.get("provider"),
-            "provider_name": msg.get("provider_name"),
-            "model": msg.get("model"),
-            "name": msg.get("name"),
-        }))
-        break
-    elif event == "sign-in-failed":
-        raise RuntimeError(msg.get("message", "sign-in failed"))
-"""
-
-# Audits harness.sqlite and guest logs for desktop context presence on the
-# tested drawer turn, absence of window contents (sentinel), and absence of
-# the API key (secret).
+# Audits harness.sqlite for desktop context on the tested drawer turn, and
+# for the absence of window contents (sentinel) anywhere in it.
 HARNESS_AUDIT_SCRIPT = r"""
-import json, pathlib, re, sqlite3, sys
+import json, re, sqlite3, sys
 
 spec = json.load(sys.stdin)
 conn = sqlite3.connect(spec["db"])
@@ -1478,7 +1340,7 @@ if target_at is not None and valid_turn:
                 if text:
                     target_user_texts.append(text)
 
-# Full-DB scan solely for negative checks (no window-content sentinel, no secret).
+# Full-DB scan solely for the negative check (no window-content sentinel).
 blobs = []
 for table in sorted(tables):
     for row in conn.execute(f'SELECT * FROM "{table}"'):
@@ -1500,20 +1362,12 @@ has_active_foot = any(active_re.search(s) for s in matching_prompts)
 has_display = any(display_re.search(s) for s in matching_prompts)
 
 joined = "\n".join(blobs)
-log_texts = []
-for path in spec["logs"]:
-    p = pathlib.Path(path)
-    if p.exists():
-        log_texts.append(p.read_text(errors="ignore"))
-joined_logs = "\n".join(log_texts)
 print(json.dumps({
     "has_conversation": has_conversation,
     "has_desktop_context": has_desktop_context,
     "has_active_foot": has_active_foot,
     "has_display": has_display,
     "has_sentinel": spec["sentinel"] in joined,
-    "has_secret_in_db": spec["secret"] in joined,
-    "has_secret_in_logs": spec["secret"] in joined_logs,
 }))
 """
 
@@ -1522,12 +1376,10 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     guest.add_arguments(parser)
     args = parser.parse_args()
-    # Require a real Model credential before building or booting the VM.
-    credential = real_model_credential()
     # What building and booting the image need, before the build spends its time.
     void_base.preflight(vm=True, build=True)
     vm = guest.Guest.create(guest.ROOT / '.lab/void-desktop-checks', 'crowbaros-desktop-check')
-    check = Check(vm, secret=credential['api_key'])
+    check = Check(vm)
     check.log(f'Evidence and new guest disk: {vm.work}')
     try:
         build_log = vm.work / 'build.log'
@@ -1538,11 +1390,11 @@ def main():
         built = guest.build_base(build_log, build=args.build)
         vm.start()
         vm.wait_ssh()
-        check.checks(built, credential)
+        check.checks(built)
     except BaseException as error:
         # Whatever stopped the run, a person's Ctrl-C included: a run that
         # did not reach its end did not pass, and keeps its disk.
-        error_text = check._format_error(error)
+        error_text = repr(error)
         if all(row['passed'] for row in check.results):
             check.results.append({'name': 'smoke run completed', 'passed': False, 'detail': error_text})
         check.log(f'FAIL: {error_text}')
@@ -1556,10 +1408,6 @@ def main():
             check.qmp.close()
         results = 'results.json' if args.build else 'results-not-evidence.json'
         (vm.work / results).write_text(json.dumps(check.results, indent=2) + '\n')
-        leaked = evidence_has_secret(vm.work, credential['api_key'])
-        if leaked:
-            check.record('no credential reaches host evidence or logs', False, 'leaked in: ' + ', '.join(leaked))
-            (vm.work / results).write_text(json.dumps(check.results, indent=2) + '\n')
         failed = sum(not row['passed'] for row in check.results)
         if not args.build:
             check.log(guest.NOT_EVIDENCE)

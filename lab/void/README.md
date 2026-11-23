@@ -133,17 +133,20 @@ had it; the drawer over a fullscreen window; its close control; Super alone
 still opening the launcher; the gesture doing nothing while locked, with the
 drawer up or put away after unlock as it was; and, with a second display
 plugged in, the drawer on whichever display the pointer is on. A still
-desktop with the drawer up must commit and draw nothing, too. It then exercises a real conversation in the Agent's drawer against a real
-Model (#295): the calm no-Model state before signing in, signing the guest's
-Harness in over the person socket using a credential read from the host's
-environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or
-`CROWBAR_AGENT_PROVIDER` + `CROWBAR_AGENT_API_KEY`, with optional
-`CROWBAR_AGENT_MODEL`; without one the check fails up front and names what it
-needs), asking a question only desktop context can answer, putting the drawer
-away so the turn finishes behind it with the mark in the bar and over a
-fullscreen window, checking the real Model's answer and desktop context in the
-drawer and in `harness.sqlite` with no window contents leaked, and verifying
-the temporary credential stays in a guest RAM `tmpfs` (never touching the retained `.raw` disk), is removed before exit and redacted from logs/diagnostics, and never appears in guest logs, `harness.sqlite`, or host evidence (including `results.json`).
+desktop with the drawer up must commit and draw nothing, too. It then holds a
+conversation in the Agent's drawer (#295) against the stub Model
+([`agent/test/stub-model.ts`](../../agent/test/stub-model.ts)), which it runs
+in the guest with the image's Node.js and points the Harness at with
+`endpoint.json`, as Base's boot check does. The check needs no Model key and
+no network beyond the guest. It checks the calm no-Model state before the
+stub is there; asks a question only desktop context can answer; puts the
+drawer away so the turn finishes behind it, with the mark in the bar and over
+a fullscreen window; and checks the answer and the desktop context in the
+drawer. What the Harness sent is read from the stub's own record of requests
+and from `harness.sqlite`: the question carried desktop context, and no
+request and no row held the window's contents. A run against a real Model is
+a dated record in [`docs/research/`](../../docs/research/), not part of any
+check.
 It checks that apps run as the person at the ordinary socket for apps, that
 copy and paste, the primary selection, and drag and drop work between two apps,
 that Fulcrum's Harness socket serves the person alone, and that the shell's
