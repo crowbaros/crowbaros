@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { listen } from "./channel.ts";
 import { Conversations } from "./conversations.ts";
+import { FulcrumClient } from "./fulcrum.ts";
 import { Log } from "./log.ts";
 import { ModelAccess } from "./models.ts";
 import { person } from "./person.ts";
@@ -12,7 +13,7 @@ import { DURABLE_VERSION, openStore, type Store } from "./store.ts";
 import { surface } from "./surface.ts";
 
 const USAGE =
-	"usage: harness.mjs --state DIRECTORY --surface-socket PATH --shell-uid USER_ID --person-socket PATH --person-uid USER_ID";
+	"usage: harness.mjs --state DIRECTORY --surface-socket PATH --shell-uid USER_ID --person-socket PATH --person-uid USER_ID [--fulcrum-socket PATH]";
 
 interface Options {
 	/** Where the database, the credentials, and the log are kept. */
@@ -23,6 +24,8 @@ interface Options {
 	personSocket: string;
 	/** The one user ID served on the person socket. */
 	personUid: number;
+	/** Fulcrum's Harness socket, when running on a desktop. */
+	fulcrumSocket?: string;
 }
 
 function parseOptions(): Options | undefined {
@@ -34,12 +37,21 @@ function parseOptions(): Options | undefined {
 				"shell-uid": { type: "string" },
 				"person-socket": { type: "string" },
 				"person-uid": { type: "string" },
+				"fulcrum-socket": { type: "string" },
 			},
 		});
-		const { state, "surface-socket": surfaceSocket, "shell-uid": shellUid, "person-socket": personSocket, "person-uid": personUid } = values;
+		const {
+			state,
+			"surface-socket": surfaceSocket,
+			"shell-uid": shellUid,
+			"person-socket": personSocket,
+			"person-uid": personUid,
+			"fulcrum-socket": fulcrumSocket,
+		} = values;
 		const userId = /^\d{1,9}$/;
 		if (!state || !surfaceSocket || !personSocket || !shellUid || !personUid || !userId.test(shellUid) || !userId.test(personUid)) return undefined;
-		return { state, surfaceSocket, shellUid: Number(shellUid), personSocket, personUid: Number(personUid) };
+		if (fulcrumSocket !== undefined && fulcrumSocket === "") return undefined;
+		return { state, surfaceSocket, shellUid: Number(shellUid), personSocket, personUid: Number(personUid), fulcrumSocket };
 	} catch {
 		return undefined;
 	}
@@ -91,11 +103,12 @@ async function main(options: Options): Promise<void> {
 		// same, and the next start is no restart. One listener for each
 		// signal stays from here on: taking a listener off drops a signal
 		// that has come and not yet been handled.
-		const open: { servers: Server[]; store?: Store } = { servers: [] };
+		const open: { servers: Server[]; store?: Store; fulcrum?: FulcrumClient } = { servers: [] };
 		let stopping = false;
 		const stop = (signal: NodeJS.Signals) => {
 			if (stopping) return;
 			stopping = true;
+			open.fulcrum?.close();
 			for (const server of open.servers) server.close();
 			(open.store?.close() ?? Promise.resolve()).then(() => {
 				rmSync(marker, { force: true });
@@ -110,6 +123,10 @@ async function main(options: Options): Promise<void> {
 		const access = await ModelAccess.open(options.state);
 		const store = await openStore(join(options.state, "harness.sqlite"), access.models);
 		open.store = store;
+		const conversations = new Conversations(store);
+		const fulcrum = options.fulcrumSocket ? new FulcrumClient(options.fulcrumSocket, (what) => log.write("connection", what)) : undefined;
+		open.fulcrum = fulcrum;
+		const say = (event: Parameters<Log["write"]>[0], details: string) => log.write(event, details);
 		const serve = async (path: string, mode: number, channel: Parameters<typeof listen>[1]) => {
 			if (stopping) return;
 			// A Harness that was killed leaves its socket behind.
@@ -124,10 +141,10 @@ async function main(options: Options): Promise<void> {
 		// The person socket is in the person's runtime directory, in a
 		// directory of the Harness's own that it makes, theirs alone.
 		mkdirSync(dirname(options.personSocket), { recursive: true, mode: 0o700 });
-		await serve(options.personSocket, 0o600, person(options.personUid, new Conversations(store), store, access, (event, details) => log.write(event, details)));
+		await serve(options.personSocket, 0o600, person(options.personUid, conversations, store, access, say, fulcrum));
 		// The owner and the group. Base gives the surface socket's directory
 		// the shell's group, and the peer's user ID is the check that counts.
-		await serve(options.surfaceSocket, 0o660, surface(options.shellUid));
+		await serve(options.surfaceSocket, 0o660, surface(options.shellUid, conversations, store, access, say, fulcrum));
 	} catch (error) {
 		fail(error);
 	}

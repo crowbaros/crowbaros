@@ -19,6 +19,7 @@ import {
 	section,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { type DesktopContext, formatDesktopContext } from "./fulcrum.ts";
 
 /** The version of Pi Durable in the bundle, which bundle.mjs reads from the installed package. */
 declare const PI_DURABLE_VERSION: string;
@@ -36,6 +37,8 @@ export interface Turn {
 	turn: number;
 	/** What the person said. */
 	message: string;
+	/** The desktop context carried with the person's message, when Fulcrum answered. */
+	context?: DesktopContext;
 	/**
 	 * The answer so far, or the whole of it once the turn has ended. When
 	 * the Model is asked again, the answer starts over: it is the newest
@@ -80,12 +83,17 @@ export interface Store {
 	 */
 	follow(conversation: string, changed: (standing: Standing) => void): Promise<(Standing & { stop(): void }) | undefined>;
 	/**
-	 * Sends the person's message, to be answered by `model`. Gives the turn
-	 * it began, and `ended`, which resolves with how that turn ended; or
-	 * `working` when the turn before it has not ended; or undefined when
-	 * there is no such conversation.
+	 * Sends the person's message, to be answered by `model`, carrying `context`
+	 * when Fulcrum supplied one. Gives the turn it began, and `ended`, which
+	 * resolves with how that turn ended; or `working` when the turn before it
+	 * has not ended; or undefined when there is no such conversation.
 	 */
-	send(conversation: string, text: string, model: ModelRef): Promise<{ turn: number; ended: Promise<Turn["state"]> } | "working" | undefined>;
+	send(
+		conversation: string,
+		text: string,
+		model: ModelRef,
+		context?: DesktopContext,
+	): Promise<{ turn: number; ended: Promise<Turn["state"]> } | "working" | undefined>;
 	/**
 	 * Stops the turn that is working, and resolves once it has. With `turn`,
 	 * stops nothing unless that is the conversation's newest turn: a stop
@@ -122,7 +130,8 @@ const Conversations = defineDoc<Kept>({
 
 /**
  * The kind of the entry a message from the person is kept as. Its data is
- * `{ turn }`, and with it how the turn before ended, when it ended with no
+ * `{ turn }`, with `{ text, context }` when desktop context was prepended to
+ * the Model's input, and how the turn before ended when it ended with no
  * answer: `failed`, with why in the words a client is told, or `stopped`.
  * Pi Durable keeps why a run ended only until the next run starts, and a
  * turn must read as it ended ever after.
@@ -136,6 +145,7 @@ const MESSAGE = "crowbar.message";
 const ABOUT_THE_AGENT = [
 	"You are the Agent built into CrowbarOS, a small operating system on Void Linux.",
 	"You are at the side of the person who uses this machine, and you talk with them in plain text.",
+	"Each message from the person may begin with a [Desktop context] block showing their current workspace, active window (title and app_id), open windows by workspace, and displays — never window contents.",
 	"You cannot yet read files, run commands, or act on the desktop. When the person asks for one of those, say so plainly, and help with what you know.",
 ].join(" ");
 
@@ -181,10 +191,25 @@ function standing(view: ConversationView): Standing {
 		const current = turns.at(-1);
 		const first = entry.model?.[0] as (Answer & { role?: string }) | undefined;
 		if (entry.kind === MESSAGE) {
-			const { turn, failed, stopped } = (entry.data ?? {}) as { turn?: unknown; failed?: unknown; stopped?: unknown };
+			const { turn, failed, stopped, text, context } = (entry.data ?? {}) as {
+				turn?: unknown;
+				failed?: unknown;
+				stopped?: unknown;
+				text?: unknown;
+				context?: unknown;
+			};
 			if (current && typeof failed === "string") current.failed = failed;
 			if (current && stopped === true) current.stopped = true;
-			turns.push({ turn: typeof turn === "number" ? turn : 0, message: textOf(first?.content), answer: "", state: "done" });
+			const nextTurn: Turn & { last?: Answer; failed?: string; stopped?: boolean } = {
+				turn: typeof turn === "number" ? turn : 0,
+				message: typeof text === "string" ? text : textOf(first?.content),
+				answer: "",
+				state: "done",
+			};
+			if (typeof context === "object" && context !== null) {
+				nextTurn.context = context as DesktopContext;
+			}
+			turns.push(nextTurn);
 		} else if (entry.kind === "pi.assistant" && current && first) {
 			// The newest try's answer alone: one cut short before it stays in the database, and is not shown.
 			current.answer = textOf(first.content);
@@ -310,7 +335,7 @@ export async function openStore(path: string, models: Models): Promise<Store> {
 			return { ...standing(watch.value), stop: () => void watch.stop() };
 		},
 
-		async send(conversation, text, model) {
+		async send(conversation, text, model, desktopContext) {
 			const found = await find(conversation);
 			if (found === undefined) return undefined;
 			try {
@@ -326,11 +351,19 @@ export async function openStore(path: string, models: Models): Promise<Store> {
 						const before = (await tx.doc(LiveDoc, found.id)).runFailure;
 						const how: Record<string, string | boolean> =
 							before === undefined ? {} : before.reason === "aborted" ? { stopped: true } : { failed: whyFailed(before.reason, before.detail) };
+						const content = desktopContext !== undefined ? `${formatDesktopContext(desktopContext)}\n\n${text}` : text;
 						const submission = await found.submit(tx, {
 							type: "input",
-							content: text,
+							content,
 							whenBusy: "reject",
-							entry: { kind: MESSAGE, data: { turn, ...how } },
+							entry: {
+								kind: MESSAGE,
+								data: {
+									turn,
+									...how,
+									...(desktopContext !== undefined ? { text, context: desktopContext } : {}),
+								},
+							},
 						});
 						kept.turns = turn;
 						// By whole characters: half of one would be text no client could read.

@@ -31,6 +31,10 @@ pub struct Client {
     /// It opened without the keyboard and has not had it since: the bar
     /// shows it wants attention. Only the CrowbarOS compositor says so.
     pub attention: bool,
+    /// Whether the window is fullscreen (covering the bar).
+    pub fullscreen: bool,
+    /// The display this window is on, as Fulcrum names it.
+    pub output: String,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Snapshot {
@@ -64,6 +68,8 @@ pub enum Event {
     /// The unlock helper's answer to the person's password: `Ok` once the
     /// compositor unlocked, or why not.
     Unlock(Result<(), String>),
+    /// An event from the Harness on the surface socket.
+    Agent(crate::agent::AgentEvent),
 }
 /// The shell's events, from any thread to the interface. Sending one wakes
 /// the interface at once: it does not look for them on a timer.
@@ -185,6 +191,10 @@ fn snapshot_from(message: serde_json::Value) -> Result<Snapshot> {
         workspace: i32,
         #[serde(default)]
         attention: bool,
+        #[serde(default)]
+        fullscreen: bool,
+        #[serde(default)]
+        output: String,
     }
     #[derive(Deserialize)]
     struct Reply {
@@ -204,6 +214,8 @@ fn snapshot_from(message: serde_json::Value) -> Result<Snapshot> {
             title: w.title,
             workspace: Workspace { id: w.workspace },
             attention: w.attention,
+            fullscreen: w.fullscreen,
+            output: w.output,
         })
         .collect();
     let active = clients
@@ -938,7 +950,10 @@ pub fn send(command: &str) -> Result<()> {
     s.write_all(command.as_bytes())?;
     Ok(())
 }
-pub fn server(tx: Sender) -> Result<File> {
+pub fn server(
+    tx: Sender,
+    agent_view: std::sync::Arc<Mutex<crate::agent::AgentViewSnapshot>>,
+) -> Result<File> {
     let dir = runtime()?;
     let lock = OpenOptions::new()
         .create(true)
@@ -963,8 +978,17 @@ pub fn server(tx: Sender) -> Result<File> {
             if let Ok(n) = s.read(&mut bytes) {
                 let event = match &bytes[..n] {
                     b"snapshot" => {
+                        let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
                         if let Ok(snapshot) = snapshot() {
                             let _ = serde_json::to_writer(&mut s, &snapshot);
+                        }
+                        continue;
+                    }
+                    b"agent" => {
+                        let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
+                        let view = agent_view.lock().ok().map(|guard| guard.clone());
+                        if let Some(view) = view {
+                            let _ = serde_json::to_writer(&mut s, &view);
                         }
                         continue;
                     }
@@ -1423,6 +1447,8 @@ mod tests {
             title: "Studio \"Settings\"".into(),
             workspace: Workspace { id: 2 },
             attention: false,
+            fullscreen: false,
+            output: String::new(),
         };
         assert_eq!(
             snapshot,
@@ -1435,6 +1461,8 @@ mod tests {
                         title: "Terminal".into(),
                         workspace: Workspace { id: 1 },
                         attention: false,
+                        fullscreen: false,
+                        output: String::new(),
                     },
                     studio.clone(),
                 ],
@@ -1617,6 +1645,8 @@ mod tests {
             title: "Terminal".into(),
             workspace: Workspace { id: 1 },
             attention: false,
+            fullscreen: false,
+            output: String::new(),
         };
         assert_eq!(
             snapshot,
@@ -1661,6 +1691,8 @@ mod tests {
                     title: "Terminal".into(),
                     workspace: Workspace { id: 1 },
                     attention: false,
+                    fullscreen: false,
+                    output: String::new(),
                 },
                 Client {
                     address: "0x2".into(),
@@ -1668,6 +1700,8 @@ mod tests {
                     title: "Notes".into(),
                     workspace: Workspace { id: 0 },
                     attention: false,
+                    fullscreen: false,
+                    output: String::new(),
                 },
             ]
         );

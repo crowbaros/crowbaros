@@ -1,0 +1,28 @@
+2026-11-23T18:04:23.165Z start: process 803, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T18:04:23.220Z listening: /run/user/1003/crowbar-agent/person, for user ID 1003, 222 ms after the process started
+2026-11-23T18:04:23.220Z listening: /run/crowbar-agent/surface, for user ID 1001, 222 ms after the process started
+2026-11-23T18:04:24.356Z connection: the shell connected
+2026-11-23T18:04:24.356Z connection: the shell stated version 1
+2026-11-23T18:04:24.723Z connection: connected to Fulcrum at /run/crowbar-trusted/agent/compositor
+2026-11-23T18:06:13.647Z connection: a client connected
+2026-11-23T18:06:13.647Z connection: a client stated version 1
+2026-11-23T18:08:04.027Z sign-in: signed in to openai-codex
+2026-11-23T18:08:04.028Z connection: a client left
+2026-11-23T18:09:42.573Z conversation: 26utzzx8 started
+2026-11-23T18:09:42.578Z turn: conversation 26utzzx8, turn 1 began
+2026-11-23T18:09:45.309Z turn: conversation 26utzzx8, turn 1 ended: done
+2026-11-23T18:11:06.062Z turn: conversation 26utzzx8, turn 2 began
+2026-11-23T18:11:08.640Z turn: conversation 26utzzx8, turn 2 ended: done
+2026-11-23T18:11:55.254Z turn: conversation 26utzzx8, turn 3 began
+2026-11-23T18:11:56.403Z turn: conversation 26utzzx8, turn 3 ended: done
+2026-11-23T18:13:32.078Z turn: conversation 26utzzx8, turn 4 began
+2026-11-23T18:13:36.159Z turn: conversation 26utzzx8, turn 4 ended: done
+2026-11-23T18:14:30.508Z connection: a client connected
+2026-11-23T18:14:30.508Z connection: a client stated version 1
+2026-11-23T18:14:30.509Z connection: a client left
+2026-11-23T18:14:30.511Z connection: a client connected
+2026-11-23T18:14:30.511Z connection: a client stated version 1
+2026-11-23T18:14:30.511Z connection: a client left
+2026-11-23T18:14:44.747Z connection: a client connected
+2026-11-23T18:14:44.747Z connection: a client stated version 1
+2026-11-23T18:14:44.748Z connection: a client left

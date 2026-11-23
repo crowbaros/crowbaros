@@ -41,6 +41,8 @@ pub enum Token {
     Held(u64),
     /// The unlock authority's listener (see `lock.rs`).
     AuthorityListener,
+    /// The Harness's listener (ADR 0035, see `control.rs`).
+    AgentListener,
 }
 
 impl Token {
@@ -54,6 +56,7 @@ impl Token {
             Token::Control(id) => (8, id),
             Token::Held(surface) => (9, surface),
             Token::AuthorityListener => (10, 0),
+            Token::AgentListener => (11, 0),
         };
         debug_assert!(value < 1 << 56);
         (kind << 56) | value
@@ -70,6 +73,7 @@ impl Token {
             8 => Token::Control(value),
             9 => Token::Held(value),
             10 => Token::AuthorityListener,
+            11 => Token::AgentListener,
             _ => return None,
         })
     }

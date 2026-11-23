@@ -1,11 +1,13 @@
-// The person socket: where the person's own clients reach the Harness, the
-// terminal's `crowbar-agent` first. README.md has its messages. A client
-// only relays: the conversations are the store's, and a sign-in is taken
-// step by step in models.ts.
+// The person socket and the shared conversation channel: where the person's
+// own clients (`crowbar-agent`) and the shell's drawer (`surface.ts`) reach
+// the Harness. README.md has their messages. A client only relays: the
+// conversations are the store's, and a sign-in is taken step by step in
+// models.ts (on the person socket alone).
 import type { Channel, Connection } from "./channel.ts";
 import type { Conversations } from "./conversations.ts";
-import type { Event } from "./log.ts";
+import type { DesktopContext } from "./fulcrum.ts";
 import { Refused } from "./kept.ts";
+import type { Event } from "./log.ts";
 import type { InUse, ModelAccess, Question } from "./models.ts";
 import type { Store, Turn } from "./store.ts";
 
@@ -13,6 +15,11 @@ import type { Store, Turn } from "./store.ts";
 const MAX_FRAME = 1024 * 1024;
 
 type Request = { op: string } & Record<string, unknown>;
+
+/** Source of desktop context snapshots, when Fulcrum is wired in. */
+export interface ContextSource {
+	snapshot(): Promise<DesktopContext | undefined>;
+}
 
 /** A request the Harness will not carry out, with the code a client tells it by. */
 class Declined extends Error {
@@ -46,11 +53,28 @@ function shown({ retry: _retry, attempt: _attempt, ...turn }: Turn): Omit<Turn, 
 	return turn;
 }
 
+export interface ClientChannelOptions {
+	uid: number;
+	peer: string;
+	whose: string;
+	allowSignIn: boolean;
+	conversations: Conversations;
+	store: Store;
+	access: ModelAccess;
+	say: (event: Event, details: string) => void;
+	fulcrum?: ContextSource;
+}
+
+const SIGN_IN_OPS = new Set(["models", "model", "login", "answer", "cancel", "logout"]);
+
 /**
- * The person socket's rules, for the person's user ID. `say` is given events
- * for the log, with IDs and counts and nothing a conversation says.
+ * Builds either the person socket (`allowSignIn: true`) or the shell's surface
+ * socket (`allowSignIn: false`). Both share conversations, `status`, and
+ * desktop context from Fulcrum; sign-in and Model choice stay on the person
+ * socket alone.
  */
-export function person(uid: number, conversations: Conversations, store: Store, access: ModelAccess, say: (event: Event, details: string) => void): Channel {
+export function clientChannel(options: ClientChannelOptions): Channel {
+	const { uid, peer, whose, allowSignIn, conversations, store, access, say, fulcrum } = options;
 	/** One sign-in at a time, whichever client began it. */
 	let signingIn = false;
 
@@ -118,6 +142,9 @@ export function person(uid: number, conversations: Conversations, store: Store, 
 		};
 
 		const answer = async (request: Request): Promise<object> => {
+			if (!allowSignIn && typeof request.op === "string" && SIGN_IN_OPS.has(request.op)) {
+				throw new Declined("request", `The Harness has no request "${request.op}".`);
+			}
 			switch (request.op) {
 				case "start": {
 					const conversation = await store.start();
@@ -137,6 +164,7 @@ export function person(uid: number, conversations: Conversations, store: Store, 
 					const given = optional(request, "conversation");
 					const model = await access.inUse();
 					if ("missing" in model) throw new Declined("no-model", model.missing);
+					const desktopContext = await fulcrum?.snapshot();
 					// With no conversation named, the message starts one, which
 					// this client then follows. A message that is refused starts none.
 					const conversation = given ?? (await store.start());
@@ -144,7 +172,7 @@ export function person(uid: number, conversations: Conversations, store: Store, 
 						await follow(conversation);
 						say("conversation", `${conversation} started`);
 					}
-					const sent = await store.send(conversation, message, model);
+					const sent = await store.send(conversation, message, model, desktopContext);
 					if (sent === undefined) throw new Declined("no-conversation", `There is no conversation ${conversation}.`);
 					if (sent === "working") throw new Declined("working", "The Agent is still working on the message before this one.");
 					say("turn", `conversation ${conversation}, turn ${sent.turn} began`);
@@ -218,10 +246,10 @@ export function person(uid: number, conversations: Conversations, store: Store, 
 				try {
 					request = JSON.parse(frame.toString()) as Request;
 				} catch {
-					return connection.close("a client's frame was not JSON");
+					return connection.close(`${peer}'s frame was not JSON`);
 				}
 				if (typeof request !== "object" || request === null || typeof request.op !== "string") {
-					return connection.close("a client's frame was not a request");
+					return connection.close(`${peer}'s frame was not a request`);
 				}
 				answering = answering.then(async () => {
 					held = [];
@@ -247,5 +275,30 @@ export function person(uid: number, conversations: Conversations, store: Store, 
 		};
 	};
 
-	return { version: 1, uid, peer: "a client", whose: "the person's", maxFrame: MAX_FRAME, serve };
+	return { version: 1, uid, peer, whose, maxFrame: MAX_FRAME, serve };
+}
+
+/**
+ * The person socket's rules, for the person's user ID. `say` is given events
+ * for the log, with IDs and counts and nothing a conversation says.
+ */
+export function person(
+	uid: number,
+	conversations: Conversations,
+	store: Store,
+	access: ModelAccess,
+	say: (event: Event, details: string) => void,
+	fulcrum?: ContextSource,
+): Channel {
+	return clientChannel({
+		uid,
+		peer: "a client",
+		whose: "the person's",
+		allowSignIn: true,
+		conversations,
+		store,
+		access,
+		say,
+		fulcrum,
+	});
 }

@@ -12,6 +12,10 @@ use crate::{State, json::quote, log, surface::SurfaceId};
 /// The namespace of the shell's layer surface that is the Agent's surface.
 pub const AGENT_NAMESPACE: &str = "crowbaros-agent";
 
+/// The namespace of the shell's floating Agent mark overlay over a fullscreen
+/// window.
+pub const MARK_NAMESPACE: &str = "crowbaros-mark";
+
 /// What the compositor keeps for the Agent's surface. None of it is the
 /// surface's own state, which is the shell's.
 #[derive(Debug, Default)]
@@ -57,6 +61,30 @@ impl State {
             .summoned_on
             .filter(|number| self.outputs.iter().any(|output| output.number == *number))
             .or_else(|| self.output_for_new_window())
+    }
+
+    /// The output a floating Agent mark overlay goes on, where the shell names
+    /// none: the output of the fullscreen window on the workspace that shows
+    /// (preferring the active window if fullscreen), or the first output.
+    pub(crate) fn output_for_mark_overlay(&self) -> Option<u64> {
+        let active = self.window_for_desktop_context();
+        let active_fullscreen = active.and_then(|root| {
+            self.windows
+                .iter()
+                .find(|w| {
+                    w.surface == root && w.workspace == self.workspace && w.mode == crate::modes::Mode::Fullscreen
+                })
+                .and_then(|w| self.output_of_window(w.surface))
+        });
+        let any_fullscreen = self
+            .windows
+            .iter()
+            .find(|w| w.workspace == self.workspace && w.mode == crate::modes::Mode::Fullscreen)
+            .and_then(|w| self.output_of_window(w.surface));
+        active_fullscreen
+            .or(any_fullscreen)
+            .filter(|number| self.outputs.iter().any(|output| output.number == *number))
+            .or_else(|| self.outputs.first().map(|output| output.number))
     }
 
     /// The shell's `focus_agent`: the Agent's surface takes the keyboard, as
@@ -109,6 +137,21 @@ impl State {
     /// A layer surface was shown: the Agent's surface takes the keyboard if
     /// the shell asked for that while making it.
     pub(crate) fn layer_shown(&mut self, surface: SurfaceId) {
+        if let Some(layer) = self.layer_of(surface)
+            && layer.namespace == MARK_NAMESPACE
+        {
+            let output = self.outputs.iter().find(|output| output.number == layer.output);
+            let rect = layer.rect;
+            log::info!(
+                "agent mark overlay shown output={} at={},{} size={}x{}",
+                output.map_or("", |output| output.name.as_str()),
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height
+            );
+            return;
+        }
         if self.agent_surface() != Some(surface) {
             return;
         }
@@ -141,5 +184,20 @@ impl State {
     fn agent_has_keyboard(&self) -> bool {
         let focus = self.seat.keyboard_focus.map(|focus| self.root_of(focus));
         focus.is_some() && focus == self.agent_surface()
+    }
+
+    /// The window that has the keyboard, or had it when the Agent's surface
+    /// took it, if that window is still on the workspace that shows.
+    pub(crate) fn window_for_desktop_context(&self) -> Option<SurfaceId> {
+        let focus = if self.agent_has_keyboard() {
+            self.agent.keyboard_before
+        } else {
+            self.seat.keyboard_focus
+        };
+        focus.map(|focus| self.root_of(focus)).filter(|root| {
+            self.windows
+                .iter()
+                .any(|window| window.surface == *root && window.workspace == self.workspace)
+        })
     }
 }

@@ -4,7 +4,9 @@ exec >>/var/log/crowbar-compositor.log 2>&1
 # The shell reaches the compositor's Wayland socket and its control channel in
 # a directory only the compositor and the shell's group can enter, and the
 # person's apps reach theirs in one only the compositor and the person's group
-# can. The compositor accepts each by the peer's user ID as well (ADR 0032),
+# can. The Harness, which runs as the person (ADR 0034), reaches Fulcrum's
+# Harness socket in a directory only the compositor and the person's group can
+# enter. The compositor accepts each by the peer's user ID as well (ADR 0032),
 # and the launcher links the apps' socket into the person's runtime directory
 # as `wayland-0`. The
 # unlock helper, as root, reaches the compositor's unlock socket in a
@@ -18,6 +20,7 @@ PERSON_UID=1003
 PERSON_GID=$(getent passwd "$PERSON_UID" | cut -d: -f4)
 test -n "$PERSON_GID" || exit 1
 install -d -o crowbar-compositor -g "$PERSON_GID" -m 2750 /run/crowbar-apps
+install -d -o crowbar-compositor -g "$PERSON_GID" -m 2750 /run/crowbar-trusted/agent
 install -d -o crowbar-compositor -g root -m 0700 /run/crowbar-trusted/unlock
 chown crowbar-compositor:crowbar-compositor /var/log/crowbar-compositor.log
 chown crowbar-compositor:crowbar-compositor /home/crowbar-compositor
@@ -29,6 +32,7 @@ exec openvt -c 2 -s -f -w -- chpst -u crowbar-compositor:crowbar-compositor:_sea
   --shell-socket /run/crowbar-trusted/compositor/wayland --shell-uid 1001 \
   --shell-control-socket /run/crowbar-trusted/compositor/control \
   --apps-socket /run/crowbar-apps/wayland-0 --apps-uid 1003 \
+  --agent-socket /run/crowbar-trusted/agent/compositor \
   --unlock-socket /run/crowbar-trusted/unlock/compositor --unlock-uid 0 \
   --ctrl-alt-del-socket /run/crowbar-ctrl-alt-del/socket \
   --layout /home/crowbar-compositor/layout \

@@ -267,6 +267,12 @@ It has no account of its own: it runs as the person.
   directory itself, theirs alone, and serves the person's UID alone there.
   On a console or over SSH nothing sets `XDG_RUNTIME_DIR`, and
   `crowbar-agent` looks in `/run/user/<UID>` all the same.
+- Fulcrum listens on `/run/crowbar-trusted/agent/compositor` (in a directory
+  owned by `crowbar-compositor` with the person's group and mode 2750),
+  serving the person's UID alone. The Harness connects to it with backoff
+  for desktop context, and works while Fulcrum is absent. The shell connects
+  to `/run/crowbar-agent/surface` (`CROWBAR_AGENT_SOCKET`) for the Agent's
+  drawer and mark.
 - It then becomes the person with `chpst`, with all their groups, and runs
   `/usr/local/lib/crowbar-agent/node` on the bundle through
   `crowbar-launcher as-app`, which gives it the environment the launcher gives

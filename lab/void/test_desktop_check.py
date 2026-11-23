@@ -19,7 +19,7 @@ class FakeGuest:
         self.responder = responder
         self.calls = []
 
-    def ssh(self, command, check=True, timeout=120, user='root'):
+    def ssh(self, command, check=True, timeout=120, user='root', input=None):
         self.calls.append((user, command))
         returncode, stdout, stderr = self.responder(user, command)
         return subprocess.CompletedProcess([], returncode, stdout, stderr)
@@ -265,17 +265,19 @@ class Runs(unittest.TestCase):
             self.discarded = True
             return True
 
-    def main(self, *arguments, passes=True, stopped=None):
+    def main(self, *arguments, passes=True, stopped=None, env=None):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         vm = self.Guest(temporary.name)
 
-        def checks(check, built):
+        def checks(check, built, credential=None):
             check.record('stub', passes)
             if stopped:
                 raise stopped
 
-        with patch.object(base, 'preflight'), patch.object(guest.Guest, 'create', return_value=vm), \
+        test_env = {'ANTHROPIC_API_KEY': 'test-only-credential'} if env is None else env
+        with patch.dict(desktop_check.os.environ, test_env, clear=True), \
+                patch.object(base, 'preflight'), patch.object(guest.Guest, 'create', return_value=vm), \
                 patch.object(guest, 'build_base', return_value={}) as build_base, \
                 patch.object(desktop_check.Check, 'checks', checks), \
                 patch('sys.argv', ['desktop_check.py', *arguments]):
@@ -283,7 +285,8 @@ class Runs(unittest.TestCase):
                 code = desktop_check.main()
             except BaseException as error:
                 code = error
-        return vm, code, build_base, (vm.work / 'desktop.log').read_text()
+        log = (vm.work / 'desktop.log').read_text() if (vm.work / 'desktop.log').exists() else ''
+        return vm, code, build_base, log
 
     def test_a_run_that_passes_deletes_its_disk_and_one_that_fails_keeps_it(self):
         vm, code, build_base, log = self.main()
@@ -315,6 +318,250 @@ class Runs(unittest.TestCase):
         self.assertIn(f'Not evidence: {vm.work}', log)
         self.assertNotIn('] Evidence:', log)
 
+
+
+class RealModelCredentialAndTyping(unittest.TestCase):
+    """The desktop check requires a real Model credential from the host
+    environment, fails calmly before building without one, encodes QMP text
+    cleanly, and catches any credential leak into evidence."""
+
+    def test_missing_credential_exits_and_names_what_it_needs(self):
+        with self.assertRaises(SystemExit) as stopped:
+            desktop_check.real_model_credential({})
+        message = str(stopped.exception)
+        self.assertIn('ANTHROPIC_API_KEY', message)
+        self.assertIn('OPENAI_API_KEY', message)
+        self.assertIn('GEMINI_API_KEY', message)
+        self.assertIn('CROWBAR_AGENT_PROVIDER', message)
+        self.assertIn('CROWBAR_AGENT_API_KEY', message)
+
+    def test_main_stops_before_building_when_no_credential_is_set(self):
+        with patch.dict(desktop_check.os.environ, {}, clear=True), \
+                patch.object(base, 'preflight') as preflight, \
+                patch.object(guest, 'build_base') as build_base, \
+                patch('sys.argv', ['desktop_check.py']):
+            with self.assertRaises(SystemExit) as stopped:
+                desktop_check.main()
+        self.assertIn('ANTHROPIC_API_KEY', str(stopped.exception))
+        preflight.assert_not_called()
+        build_base.assert_not_called()
+
+    def test_explicit_provider_and_key_win_over_ambient_keys(self):
+        cred = desktop_check.real_model_credential({
+            'ANTHROPIC_API_KEY': 'ambient-anthropic',
+            'CROWBAR_AGENT_PROVIDER': 'openai',
+            'CROWBAR_AGENT_API_KEY': 'explicit-openai',
+            'CROWBAR_AGENT_MODEL': 'gpt-4o-mini',
+        })
+        self.assertEqual(cred, {
+            'provider': 'openai',
+            'api_key': 'explicit-openai',
+            'model': 'gpt-4o-mini',
+        })
+
+    def test_explicit_key_without_provider_is_refused(self):
+        with self.assertRaises(SystemExit) as stopped:
+            desktop_check.real_model_credential({'CROWBAR_AGENT_API_KEY': 'sk-test'})
+        self.assertIn('CROWBAR_AGENT_PROVIDER', str(stopped.exception))
+
+    def test_standard_provider_env_vars_are_detected(self):
+        self.assertEqual(
+            desktop_check.real_model_credential({'GEMINI_API_KEY': 'gem-key'}),
+            {'provider': 'google', 'api_key': 'gem-key', 'model': None},
+        )
+        self.assertEqual(
+            desktop_check.real_model_credential({'OPENAI_API_KEY': 'oa-key', 'CROWBAR_AGENT_MODEL': 'gpt-4o-mini'}),
+            {'provider': 'openai', 'api_key': 'oa-key', 'model': 'gpt-4o-mini'},
+        )
+
+    def test_qmp_keys_for_text_maps_spaces_punctuation_and_case(self):
+        self.assertEqual(
+            desktop_check.qmp_keys_for_text('Hi app_id?'),
+            [('shift', 'h'), ('i',), ('spc',), ('a',), ('p',), ('p',),
+             ('shift', 'minus'), ('i',), ('d',), ('shift', 'slash')],
+        )
+        with self.assertRaises(ValueError):
+            desktop_check.qmp_keys_for_text('bad\n')
+
+    def test_turn_state_kind_reads_tagged_shell_turn_state(self):
+        self.assertEqual(desktop_check.turn_state_kind({'state': {'kind': 'working'}}), 'working')
+        self.assertEqual(desktop_check.turn_state_kind({'state': {'kind': 'done'}}), 'done')
+        self.assertEqual(
+            desktop_check.turn_state_kind({'state': {'kind': 'failed', 'message': 'err'}}),
+            'failed',
+        )
+        self.assertIsNone(desktop_check.turn_state_kind({}))
+
+    def test_evidence_has_secret_detects_leaks_and_ignores_binary_artifacts(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        work = Path(temporary.name)
+        (work / 'desktop.log').write_text('clean log\n')
+        (work / 'shot.png').write_bytes(b'PNG secret-xyz')
+        self.assertEqual(desktop_check.evidence_has_secret(work, 'secret-xyz'), [])
+        (work / 'harness.log').write_text('oops secret-xyz leaked\n')
+        self.assertEqual(desktop_check.evidence_has_secret(work, 'secret-xyz'), ['harness.log'])
+
+    def test_embedded_guest_scripts_compile_cleanly(self):
+        compile(desktop_check.HARNESS_LOGIN_SCRIPT, '<HARNESS_LOGIN_SCRIPT>', 'exec')
+        compile(desktop_check.HARNESS_AUDIT_SCRIPT, '<HARNESS_AUDIT_SCRIPT>', 'exec')
+
+    def test_harness_audit_script_verifies_exact_turn_context_and_rejects_decoy(self):
+        import sqlite3, sys
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        work = Path(temporary.name)
+        db = work / 'harness.sqlite'
+        log = work / 'harness.log'
+        log.write_text('started\n')
+
+        prompt = 'what is the exact app_id of my active window?'
+        full_user_content = (
+            '[Desktop context]\nWorkspace: 1\nActive window: ~ (app_id: foot)\n'
+            'Windows by workspace:\n- Workspace 1: ~ (app_id: foot) [active]\n'
+            'Displays:\n- Virtual-1: 1280x960 at (0, 0), scale 1x\n\n' + prompt
+        )
+        conn = sqlite3.connect(db)
+        conn.execute('CREATE TABLE documents (id INTEGER PRIMARY KEY, kind TEXT NOT NULL)')
+        conn.execute('CREATE TABLE document_revisions (document_id INTEGER NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, content TEXT NOT NULL)')
+        conn.execute('CREATE TABLE entries (id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL, record TEXT NOT NULL)')
+        conn.execute('INSERT INTO documents (id, kind) VALUES (2, ?)', ('"crowbar.conversations"',))
+        # Decoy conversation (at=3) in base revision; target conversation (at=9) in delta revision.
+        conn.execute(
+            'INSERT INTO document_revisions (document_id, seq, kind, content) VALUES (2, 1, ?, ?)',
+            ('base', json.dumps({'conversations': {'decoy111': {'at': 3, 'started': 1, 'title': '', 'turns': 1}}})),
+        )
+        conn.execute(
+            'INSERT INTO document_revisions (document_id, seq, kind, content) VALUES (2, 2, ?, ?)',
+            ('delta', json.dumps([['s', ['conversations', 'real2222'], {'at': 9, 'started': 2, 'title': '', 'turns': 1}]])),
+        )
+        def msg_entry(turn, content):
+            return json.dumps({
+                'kind': 'crowbar.message',
+                'data': {'turn': turn, 'text': prompt},
+                'model': [{'role': 'user', 'content': content, 'timestamp': 1}],
+            })
+
+        def assistant_entry(content):
+            return json.dumps({
+                'kind': 'pi.assistant',
+                'model': [{'role': 'assistant', 'content': [{'type': 'text', 'text': content}], 'timestamp': 2}],
+            })
+
+        # Cross-conversation decoy (at=3, turn 1 with full desktop context),
+        # same-conversation plain user message (at=9, turn 1, NO context),
+        # same-conversation assistant reply echoing the prompt + context markers,
+        # and same-conversation wrong-turn user message (turn 2 with context):
+        # ALL combined MUST still fail when auditing conversation 'real2222' turn 1.
+        conn.execute(
+            'INSERT INTO entries (id, conversation_id, record) VALUES (1, 3, ?)',
+            (msg_entry(1, full_user_content),),
+        )
+        conn.execute(
+            'INSERT INTO entries (id, conversation_id, record) VALUES (2, 9, ?)',
+            (msg_entry(1, prompt),),
+        )
+        conn.execute(
+            'INSERT INTO entries (id, conversation_id, record) VALUES (3, 9, ?)',
+            (assistant_entry('You asked: ' + full_user_content),),
+        )
+        conn.execute(
+            'INSERT INTO entries (id, conversation_id, record) VALUES (4, 9, ?)',
+            (msg_entry(2, full_user_content),),
+        )
+        conn.commit()
+        conn.close()
+
+        spec = {
+            'db': str(db),
+            'conversation': 'real2222',
+            'turn': 1,
+            'prompt': prompt,
+            'sentinel': 'crowbarsecretwindowabcdef',
+            'secret': 'sk-test-secret-123',
+            'logs': [str(log)],
+        }
+        res = subprocess.run(
+            [sys.executable, '-c', desktop_check.HARNESS_AUDIT_SCRIPT],
+            input=json.dumps(spec), text=True, capture_output=True, check=True,
+        )
+        audit = json.loads(res.stdout)
+        self.assertTrue(audit['has_conversation'])
+        self.assertFalse(audit['has_desktop_context'])
+        self.assertFalse(audit['has_active_foot'])
+        self.assertFalse(audit['has_display'])
+
+        # Now replace turn 1 on conversation_id=9 with the real user-role Model input carrying desktop context.
+        conn = sqlite3.connect(db)
+        conn.execute(
+            'UPDATE entries SET record = ? WHERE id = 2',
+            (msg_entry(1, full_user_content),),
+        )
+        conn.commit()
+        conn.close()
+
+        res2 = subprocess.run(
+            [sys.executable, '-c', desktop_check.HARNESS_AUDIT_SCRIPT],
+            input=json.dumps(spec), text=True, capture_output=True, check=True,
+        )
+        audit2 = json.loads(res2.stdout)
+        self.assertTrue(audit2['has_conversation'])
+        self.assertTrue(audit2['has_desktop_context'])
+        self.assertTrue(audit2['has_active_foot'])
+        self.assertTrue(audit2['has_display'])
+        self.assertFalse(audit2['has_sentinel'])
+        self.assertFalse(audit2['has_secret_in_db'])
+        self.assertFalse(audit2['has_secret_in_logs'])
+
+        # Missing or null turn must fail closed rather than widening to the whole conversation.
+        for bad_turn in (None, 0, True, '1'):
+            bad_spec = dict(spec, turn=bad_turn)
+            res_bad = subprocess.run(
+                [sys.executable, '-c', desktop_check.HARNESS_AUDIT_SCRIPT],
+                input=json.dumps(bad_spec), text=True, capture_output=True, check=True,
+            )
+            audit_bad = json.loads(res_bad.stdout)
+            self.assertFalse(audit_bad['has_desktop_context'], f'turn={bad_turn!r} should fail closed')
+
+    def test_check_scrubs_secret_from_logs_results_and_diagnostics(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        secret = 'sk-never-write-this'
+        vm = FakeGuest(temporary.name, lambda user, cmd: (0, f'diag saw {secret}\n', ''))
+        check = desktop_check.Check(vm, secret=secret)
+        check.qmp = type('Q', (), {'screendump': lambda *a, **kw: None})()
+        self.addCleanup(check.logfile.close)
+        check.log(f'echo {secret}')
+        check.record('checked', True, f'detail {secret}')
+        check.diagnostics()
+        self.assertEqual(desktop_check.evidence_has_secret(vm.work, secret), [])
+        self.assertNotIn(secret, (vm.work / 'desktop.log').read_text())
+        self.assertNotIn(secret, (vm.work / 'harness.log').read_text())
+        self.assertEqual(check.results[0]['detail'], 'detail [REDACTED]')
+
+    def test_main_scrubs_secret_from_uncaught_exception_in_results(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        secret = "sk-exception-'secret'\\999"
+        vm = Runs.Guest(temporary.name)
+
+        def boom(check, built, credential=None):
+            raise RuntimeError(f'boom "quoted" with {secret}')
+
+        with patch.dict(desktop_check.os.environ, {'ANTHROPIC_API_KEY': secret}, clear=True), \
+                patch.object(base, 'preflight'), patch.object(guest.Guest, 'create', return_value=vm), \
+                patch.object(guest, 'build_base', return_value={}), \
+                patch.object(desktop_check.Check, 'checks', boom), \
+                patch('sys.argv', ['desktop_check.py']):
+            code = desktop_check.main()
+        self.assertEqual(code, 1)
+        self.assertEqual(desktop_check.evidence_has_secret(vm.work, secret), [])
+        for filename in ('results.json', 'desktop.log'):
+            text = (vm.work / filename).read_text()
+            self.assertNotIn(secret, text)
+            self.assertNotIn(repr(secret)[1:-1], text)
+            self.assertNotIn("sk-exception-", text)
+            self.assertIn('[REDACTED]', text)
 
 if __name__ == '__main__':
     unittest.main()

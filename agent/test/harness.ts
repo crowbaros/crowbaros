@@ -58,7 +58,16 @@ export function scratch(t: TestContext): string {
 export function launch(
 	t: TestContext,
 	directory: string,
-	options: { shellUid?: number; personUid?: number; umask?: number; socket?: string; args?: string[]; fault?: Fault; env?: NodeJS.ProcessEnv } = {},
+	options: {
+		shellUid?: number;
+		personUid?: number;
+		umask?: number;
+		socket?: string;
+		fulcrumSocket?: string;
+		args?: string[];
+		fault?: Fault;
+		env?: NodeJS.ProcessEnv;
+	} = {},
 ): Running {
 	const state = join(directory, "state");
 	const socket = options.socket ?? join(directory, "surface");
@@ -67,6 +76,7 @@ export function launch(
 	const args = options.args ?? [
 		"--state", state, "--surface-socket", socket, "--shell-uid", String(options.shellUid ?? OWN_UID),
 		"--person-socket", person, "--person-uid", String(options.personUid ?? OWN_UID),
+		...(options.fulcrumSocket ? ["--fulcrum-socket", options.fulcrumSocket] : []),
 	];
 	const before = process.umask(options.umask ?? 0o022);
 	const child = spawn(process.execPath, [...(options.fault ? ["--import", FAULTS] : []), BUNDLE, ...args], {
@@ -116,7 +126,14 @@ function logsListening(state: string, pid: number | undefined): boolean {
 export async function start(
 	t: TestContext,
 	directory: string,
-	options: { shellUid?: number; personUid?: number; umask?: number; fault?: Fault; env?: NodeJS.ProcessEnv } = {},
+	options: {
+		shellUid?: number;
+		personUid?: number;
+		umask?: number;
+		fulcrumSocket?: string;
+		fault?: Fault;
+		env?: NodeJS.ProcessEnv;
+	} = {},
 ): Promise<Running> {
 	const running = launch(t, directory, options);
 	const deadline = Date.now() + 10_000;

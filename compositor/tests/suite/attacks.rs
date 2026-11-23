@@ -133,8 +133,8 @@ fn a_global_the_compositor_gains_later_is_bound_by_every_client() {
 /// A program that is neither the shell nor the person looks for any Wayland
 /// socket. It finds none it can use.
 ///
-/// The compositor makes three sockets: the shell's, the apps', and the
-/// shell's control channel. Each refuses a peer by its user ID. Here neither
+/// The compositor makes four sockets: the shell's, the apps', the
+/// shell's control channel, and the Harness's. Each refuses a peer by its user ID. Here neither
 /// the shell nor the person has this process's user ID, and this process is
 /// given every path on purpose.
 #[test]
@@ -147,17 +147,23 @@ fn a_program_that_is_neither_the_shell_nor_the_person_finds_no_wayland_socket() 
     let public: Vec<_> = std::fs::read_dir(runtime_dir()).unwrap().collect();
     assert!(public.is_empty(), "something was made in XDG_RUNTIME_DIR: {public:?}");
 
-    // The compositor made exactly its three sockets.
+    // The compositor made exactly its four sockets.
     let mut made: Vec<String> = std::fs::read_dir(&compositor.dir)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
     made.sort();
-    assert_eq!(made, ["apps", "control", "shell"]);
+    assert_eq!(made, ["agent", "apps", "control", "shell"]);
 
     // None is a way in.
     let control = compositor.dir.join("control");
-    for socket in [&compositor.parts.shell.socket, &compositor.parts.apps.socket, &control] {
+    let agent = compositor.dir.join("agent");
+    for socket in [
+        &compositor.parts.shell.socket,
+        &compositor.parts.apps.socket,
+        &control,
+        &agent,
+    ] {
         assert!(
             connect(socket).is_err(),
             "{} accepted a peer with the wrong user ID",

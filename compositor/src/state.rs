@@ -269,8 +269,9 @@ impl State {
                         job(self);
                     }
                 }
-                Token::ControlListener => self.accept_control(false),
-                Token::AuthorityListener => self.accept_control(true),
+                Token::ControlListener => self.accept_control(crate::control::ChannelKind::Shell),
+                Token::AuthorityListener => self.accept_control(crate::control::ChannelKind::Authority),
+                Token::AgentListener => self.accept_control(crate::control::ChannelKind::Agent),
                 Token::Control(id) => self.control_ready(id, readiness),
                 Token::Held(surface) => self.release_held(surface),
                 Token::Backend(source) => {

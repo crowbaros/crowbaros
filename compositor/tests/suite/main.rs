@@ -13,6 +13,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod agent_socket;
 mod attacks;
 mod connections;
 mod control;

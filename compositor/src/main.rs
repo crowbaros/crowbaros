@@ -32,6 +32,9 @@ required:
                          Where the shell's control channel connects, from
                          the shell's user ID. Without it there is none.
 
+  --agent-socket PATH    Where the Harness connects, from the person's
+                         user ID (--apps-uid). Without it there is none.
+
   --lock-after SECONDS   Locks the session after this long without input,
                          unless a shown surface inhibits idle. Without it,
                          only the shell and Super+L lock it.
@@ -75,6 +78,7 @@ struct Args {
     parts: TrustedParts,
     backend: BackendKind,
     shell_control: Option<PathBuf>,
+    agent: Option<PathBuf>,
     layout: Option<PathBuf>,
     lock_after: Option<std::time::Duration>,
     unlock: Option<TrustedPart>,
@@ -86,6 +90,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
     let (mut shell_socket, mut shell_uid, mut apps_socket, mut apps_uid) = (None, None, None, None);
     let mut backend = BackendKind::Tty;
     let mut shell_control = None;
+    let mut agent = None;
     let mut layout = None;
     let mut lock_after = None;
     let (mut unlock_socket, mut unlock_uid) = (None, None);
@@ -101,6 +106,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--apps-socket" => apps_socket = Some(PathBuf::from(value()?)),
             "--apps-uid" => apps_uid = Some(uid(value()?)?),
             "--shell-control-socket" => shell_control = Some(PathBuf::from(value()?)),
+            "--agent-socket" => agent = Some(PathBuf::from(value()?)),
             "--layout" => layout = Some(PathBuf::from(value()?)),
             "--unlock-socket" => unlock_socket = Some(PathBuf::from(value()?)),
             "--unlock-uid" => unlock_uid = Some(uid(value()?)?),
@@ -144,6 +150,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         },
         backend,
         shell_control,
+        agent,
         layout,
         lock_after,
         unlock,
@@ -188,6 +195,9 @@ fn main() {
         state.listen(&args.parts)?;
         if let Some(socket) = &args.shell_control {
             state.listen_for_control(socket, args.parts.shell.uid)?;
+        }
+        if let Some(socket) = &args.agent {
+            state.listen_for_agent(socket, args.parts.apps.uid)?;
         }
         if let Some(authority) = &args.unlock {
             state.listen_for_unlock_authority(&authority.socket, authority.uid)?;
@@ -273,6 +283,17 @@ mod tests {
         assert!(args.start_locked);
         let authority = args.unlock.unwrap();
         assert_eq!((authority.socket, authority.uid), (PathBuf::from("/run/unlock"), 0));
+    }
+
+    #[test]
+    fn the_harness_socket_is_read_from_the_command_line() {
+        assert_eq!(parse(&PARTS).unwrap().agent, None);
+        let mut args = PARTS.to_vec();
+        args.extend(["--agent-socket", "/run/crowbar-trusted/agent/compositor"]);
+        assert_eq!(
+            parse(&args).unwrap().agent,
+            Some(PathBuf::from("/run/crowbar-trusted/agent/compositor"))
+        );
     }
 
     #[test]

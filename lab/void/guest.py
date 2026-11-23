@@ -311,9 +311,9 @@ class Guest:
             f"{user}@127.0.0.1",
         ]
 
-    def ssh(self, command, check=True, timeout=120, user="root"):
+    def ssh(self, command, check=True, timeout=120, user="root", input=None):
         result = subprocess.run(
-            self.ssh_args(user) + [command], text=True, capture_output=True, timeout=timeout,
+            self.ssh_args(user) + [command], input=input, text=True, capture_output=True, timeout=timeout,
         )
         if check and result.returncode != 0:
             raise RuntimeError(

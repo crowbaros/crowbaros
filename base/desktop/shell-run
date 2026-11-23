@@ -13,5 +13,6 @@ exec chpst -u crowbar-shell:crowbar-shell env -i \
   CROWBAR_LAUNCH_SOCKET=/run/crowbar-launch/socket \
   CROWBAR_UNLOCK_SOCKET=/run/crowbar-unlock/socket \
   CROWBAR_DISPLAY_SOCKET=/run/crowbar-displays/socket CROWBAR_DISPLAY_UID=1003 \
+  CROWBAR_AGENT_SOCKET=/run/crowbar-agent/surface \
   RUST_LOG=info \
   /usr/local/bin/crowbar-shell-connect

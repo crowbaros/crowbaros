@@ -2,7 +2,7 @@
 
 The person's way to the Agent from any terminal: foot, a console, or SSH. It
 is the first client of the [Harness](../README.md)'s person socket, and
-speaks [its messages](../README.md#the-person-sockets-messages). The Harness
+speaks [its messages](../README.md#the-conversation-and-person-messages). The Harness
 holds the conversations, reaches the Model, and keeps the credentials. The
 client only relays: it sends what the person types, and writes the answer as
 it comes.

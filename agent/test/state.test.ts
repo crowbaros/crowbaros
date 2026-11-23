@@ -66,7 +66,7 @@ test("the log records the start, and each connection with what became of it", as
 	wrong.write(Buffer.from('\x00\x00\x00\x0d{"version":2}'));
 	await heard(wrong);
 	const long = await dial(harness.socket);
-	long.write(Buffer.from([0x00, 0x00, 0x10, 0x01]));
+	long.write(Buffer.from([0x00, 0x10, 0x00, 0x01]));
 	await heard(long);
 	const more = await dial(harness.socket);
 	more.write(Buffer.concat([VERSION_FRAME, VERSION_FRAME]));
@@ -81,10 +81,10 @@ test("the log records the start, and each connection with what became of it", as
 		"connection: the shell connected",
 		"connection: closed, the shell's first frame did not state version 1",
 		"connection: the shell connected",
-		"connection: closed, a frame of 4097 bytes is longer than the 4096 taken",
+		"connection: closed, a frame of 1048577 bytes is longer than the 1048576 taken",
 		"connection: the shell connected",
 		"connection: the shell stated version 1",
-		"connection: closed, the surface socket has no message yet",
+		"connection: closed, the shell's frame was not a request",
 	]);
 });
 
@@ -182,7 +182,7 @@ test("started with anything but its options, the Harness says how it is used and
 	for (const args of [[], ["--state", join(directory, "state")], [...surface, "the-shell", ...person, "1003"], [...surface, "1001"], [...surface, "1001", ...person, "the-person"]]) {
 		const harness = launch(t, directory, { args });
 		assert.equal(await harness.exited, 2, args.join(" "));
-		assert.match(harness.output(), /^usage: harness\.mjs --state DIRECTORY --surface-socket PATH --shell-uid USER_ID --person-socket PATH --person-uid USER_ID$/m);
+		assert.match(harness.output(), /^usage: harness\.mjs --state DIRECTORY --surface-socket PATH --shell-uid USER_ID --person-socket PATH --person-uid USER_ID \[--fulcrum-socket PATH\]$/m);
 		assert.equal(existsSync(harness.state), false);
 	}
 });

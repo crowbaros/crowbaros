@@ -79,7 +79,7 @@ it allows ([ADR 0032](../../docs/adr/0032-fulcrum-serves-the-shell-and-the-perso
 It checks what the shell and an app are offered; that an app is refused
 layer shell, session lock, security contexts, the shell's socket, and the
 control channel; that only the person's user ID is served at the apps'
-socket, `/run/crowbar-apps/wayland-0`; that Void's own `foot` runs as an
+socket, `/run/crowbar-apps/wayland-0`, and at Fulcrum's Harness socket; that Void's own `foot` runs as an
 app; that a new window takes the keyboard; that switching to the console and
 back while a second keyboard is unplugged keeps typing working; that a still
 desktop draws no frames; and a monitor plugged in while it runs. The
@@ -133,10 +133,20 @@ had it; the drawer over a fullscreen window; its close control; Super alone
 still opening the launcher; the gesture doing nothing while locked, with the
 drawer up or put away after unlock as it was; and, with a second display
 plugged in, the drawer on whichever display the pointer is on. A still
-desktop with the drawer up must commit and draw nothing, too. That part
-runs last, since it leaves the second display plugged in. It checks that
-apps run as the person at the ordinary socket for apps, that copy and paste, the primary
-selection, and drag and drop work between two apps, and that the shell's
+desktop with the drawer up must commit and draw nothing, too. It then exercises a real conversation in the Agent's drawer against a real
+Model (#295): the calm no-Model state before signing in, signing the guest's
+Harness in over the person socket using a credential read from the host's
+environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or
+`CROWBAR_AGENT_PROVIDER` + `CROWBAR_AGENT_API_KEY`, with optional
+`CROWBAR_AGENT_MODEL`; without one the check fails up front and names what it
+needs), asking a question only desktop context can answer, putting the drawer
+away so the turn finishes behind it with the mark in the bar and over a
+fullscreen window, checking the real Model's answer and desktop context in the
+drawer and in `harness.sqlite` with no window contents leaked, and verifying
+the temporary credential stays in a guest RAM `tmpfs` (never touching the retained `.raw` disk), is removed before exit and redacted from logs/diagnostics, and never appears in guest logs, `harness.sqlite`, or host evidence (including `results.json`).
+It checks that apps run as the person at the ordinary socket for apps, that
+copy and paste, the primary selection, and drag and drop work between two apps,
+that Fulcrum's Harness socket serves the person alone, and that the shell's
 sockets, its control channel, and the unlock helper refuse an app. An error
 returns nonzero and retains `desktop.log`, `results.json`, the build log,
 service/kernel diagnostics, screenshots, and the failed disk in that run's

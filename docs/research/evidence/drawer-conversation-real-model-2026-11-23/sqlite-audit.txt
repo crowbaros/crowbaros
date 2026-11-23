@@ -1,0 +1,45 @@
+# Stored crowbar.message user inputs for conversation 26utzzx8 (internal conversation_id=3)
+
+== entry 9 turn 1
+[Desktop context]
+Workspace: 1
+Active window: foot (app_id: foot)
+Windows by workspace:
+- Workspace 1: Authentication successful - Chromium (app_id: chromium); foot (app_id: foot) [active]
+Displays:
+- HDMI-A-2: 3840x2160 at (0, 0), scale 1.5x
+
+what is the exact app_id of my active window, and what display am I on?
+
+== entry 14 turn 2
+[Desktop context]
+Workspace: 1
+Active window: foot (app_id: foot)
+Windows by workspace:
+- Workspace 1: Authentication successful - Chromium (app_id: chromium); foot (app_id: foot) [active]
+Displays:
+- HDMI-A-2: 3840x2160 at (0, 0), scale 1.5x
+
+what can you tell me about the foot session
+
+== entry 18 turn 3
+[Desktop context]
+Workspace: 1
+Active window: Authentication successful - Chromium (app_id: chromium)
+Windows by workspace:
+- Workspace 1: foot (app_id: foot); Authentication successful - Chromium (app_id: chromium) [active]
+Displays:
+- HDMI-A-2: 3840x2160 at (0, 0), scale 1.5x
+
+what about now, what app is focused?
+
+== entry 22 turn 4
+[Desktop context]
+Workspace: 1
+Active window: Authentication successful - Chromium (app_id: chromium)
+Windows by workspace:
+- Workspace 1: foot (app_id: foot); Authentication successful - Chromium (app_id: chromium) [active]
+Displays:
+- HDMI-A-2: 3840x2160 at (0, 0), scale 1.5x
+
+for about 15 seconds, write some text

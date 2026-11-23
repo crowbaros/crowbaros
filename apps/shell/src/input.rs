@@ -36,15 +36,23 @@ pub struct TextInput {
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
     scroll_x: Pixels,
+    max_len: usize,
 }
 
 impl TextInput {
     pub fn new(cx: &mut Context<Self>) -> Self {
+        Self::with_placeholder("Search applications…", 1024, cx)
+    }
+    pub fn with_placeholder(
+        placeholder: impl Into<SharedString>,
+        max_len: usize,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             palette: crate::theme::Palette::default(),
             focus_handle: cx.focus_handle(),
             content: "".into(),
-            placeholder: "Search applications…".into(),
+            placeholder: placeholder.into(),
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -52,10 +60,24 @@ impl TextInput {
             last_bounds: None,
             is_selecting: false,
             scroll_x: px(0.),
+            max_len,
         }
     }
     pub fn query(&self) -> String {
         self.content.to_string()
+    }
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.set_text("", cx);
+    }
+    pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let text: SharedString = text.into();
+        let end = text.len();
+        self.content = text;
+        self.selected_range = end..end;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.scroll_x = px(0.);
+        cx.notify();
     }
 
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
@@ -315,7 +337,7 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
 
-        if self.content.len().saturating_sub(range.len()) + new_text.len() > 1024 {
+        if self.content.len().saturating_sub(range.len()) + new_text.len() > self.max_len {
             return;
         }
         self.content =
@@ -340,7 +362,7 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
 
-        if self.content.len().saturating_sub(range.len()) + new_text.len() > 1024 {
+        if self.content.len().saturating_sub(range.len()) + new_text.len() > self.max_len {
             return;
         }
         self.content =
