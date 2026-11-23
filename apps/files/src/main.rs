@@ -732,12 +732,14 @@ impl FilesApp {
             return;
         };
         self.clear_notices();
-        if fs_model::item_identity(&clip.path) != clip.identity {
+        // A cut moves the item itself, so it must still be that item. A copy takes the path's
+        // contents as they are now, which an editor's save gives a new inode without making it
+        // something else.
+        if clip.op == ClipboardOp::Cut && fs_model::item_identity(&clip.path) != clip.identity {
             self.clipboard = None;
             self.error = Some(format!(
-                "“{}” is not what was {} any more; nothing was pasted.",
-                clip.path.display(),
-                if clip.op == ClipboardOp::Cut { "cut" } else { "copied" }
+                "“{}” is not what was cut any more; nothing was moved.",
+                clip.path.display()
             ));
             cx.notify();
             return;
@@ -1734,8 +1736,8 @@ impl FilesApp {
             return self.render_list_pane(pane_idx, p, cx);
         }
 
-        let thumbnails =
-            fs_model::thumbnail_choices(&pane.entries, fs_model::THUMBNAIL_BUDGET_PIXELS, |e| self.image_size(e));
+        // Chosen once a frame, before render, by `images_to_show`.
+        let thumbnails = &self.images_on_screen;
         let mut grid = div()
             .id(("pane-grid", pane_idx))
             .flex_1()
@@ -1752,7 +1754,7 @@ impl FilesApp {
             let selected = is_active_pane && pane.selected == Some(idx);
             let entry_open = entry.clone();
             let entry_ctx = entry.clone();
-            let thumb = if thumbnails[idx] {
+            let thumb = if thumbnails.contains(&entry.path) {
                 div()
                     .w(px(76.))
                     .h(px(58.))
