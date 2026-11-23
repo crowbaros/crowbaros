@@ -2,7 +2,7 @@
 // process, read from outside by its files and its exit.
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { dial, ended, heard, launch, OWN_UID, scratch, sleep, start, VERSION_FRAME } from "./harness.ts";
 
@@ -19,8 +19,11 @@ test("the Harness keeps its state and its log where the person alone can read th
 	assert.ok(kept.includes("harness.log"), `no log among ${kept}`);
 	assert.ok(kept.includes("harness.sqlite"), `no database among ${kept}`);
 	for (const name of kept) assert.equal(mode(join(harness.state, name)), 0o600, name);
-	// The socket takes its owner and its group, and nobody else.
+	// The surface socket takes its owner and its group, and nobody else.
 	assert.equal(mode(harness.socket), 0o660);
+	// The person socket takes its owner alone, in a directory of the Harness's own that is theirs alone.
+	assert.equal(mode(harness.person), 0o600);
+	assert.equal(mode(dirname(harness.person)), 0o700);
 });
 
 /**
@@ -49,15 +52,16 @@ async function loggedOnce(state: string, count: number): Promise<string[]> {
 test("the log records the start, and each connection with what became of it", async (t) => {
 	const harness = await start(t, scratch(t));
 	// `start` connected once, and said nothing.
-	const before = await loggedOnce(harness.state, 4);
+	const before = await loggedOnce(harness.state, 5);
 	assert.match(before[0] ?? "", new RegExp(`^start: process ${harness.process.pid}, Pi Durable 1\\.6\\.0, Node\\.js v\\d+`));
-	assert.match(before[1] ?? "", new RegExp(`^listening: ${harness.socket}, for user ID ${OWN_UID}, \\d+ ms after the process started$`));
+	assert.match(before[1] ?? "", new RegExp(`^listening: ${harness.person}, for user ID ${OWN_UID}, \\d+ ms after the process started$`));
+	assert.match(before[2] ?? "", new RegExp(`^listening: ${harness.socket}, for user ID ${OWN_UID}, \\d+ ms after the process started$`));
 
 	const shell = await dial(harness.socket);
 	shell.write(VERSION_FRAME);
 	await heard(shell);
 	shell.destroy();
-	await loggedOnce(harness.state, 7);
+	await loggedOnce(harness.state, 8);
 	const wrong = await dial(harness.socket);
 	wrong.write(Buffer.from('\x00\x00\x00\x0d{"version":2}'));
 	await heard(wrong);
@@ -68,7 +72,7 @@ test("the log records the start, and each connection with what became of it", as
 	more.write(Buffer.concat([VERSION_FRAME, VERSION_FRAME]));
 	await heard(more);
 
-	assert.deepEqual(logged(harness.state).slice(2), [
+	assert.deepEqual(logged(harness.state).slice(3), [
 		"connection: the shell connected",
 		"connection: the shell left before it stated a version",
 		"connection: the shell connected",
@@ -90,7 +94,7 @@ test("the log records a peer the Harness refused, by its user ID", async (t) => 
 	await heard(peer);
 	const refusal = `connection: refused user ID ${OWN_UID}, which is not the shell's`;
 	// Once for `start`, which connects once and says nothing, and once for this peer.
-	assert.deepEqual(logged(harness.state).slice(2), [refusal, refusal]);
+	assert.deepEqual(logged(harness.state).slice(3), [refusal, refusal]);
 });
 
 test("told to stop, the Harness stops, and the log says so", async (t) => {
@@ -99,12 +103,13 @@ test("told to stop, the Harness stops, and the log says so", async (t) => {
 	harness.process.kill("SIGTERM");
 	assert.equal(await harness.exited, 0);
 	assert.equal(logged(harness.state).at(-1), "stop: SIGTERM");
-	assert.equal(existsSync(harness.socket), false, "the socket is left behind");
+	assert.equal(existsSync(harness.socket), false, "the surface socket is left behind");
+	assert.equal(existsSync(harness.person), false, "the person socket is left behind");
 
 	// A start after a stop is a start, and no restart.
 	const next = await start(t, directory);
 	const lines = logged(next.state).filter((line) => !line.startsWith("connection: "));
-	assert.match(lines.at(-2) ?? "", new RegExp(`^start: process ${next.process.pid},`));
+	assert.match(lines.at(-3) ?? "", new RegExp(`^start: process ${next.process.pid},`));
 	assert.match(lines.at(-1) ?? "", /^listening: /);
 });
 
@@ -116,7 +121,8 @@ test("told to stop before it listens, or at the moment it starts to, the Harness
 		const lines = logged(harness.state);
 		assert.equal(lines.at(-1), "stop: SIGTERM", fault);
 		assert.equal(lines.some((line) => line.startsWith("listening: ")), fault === "stopped as it listens", fault);
-		assert.equal(existsSync(harness.socket), false, `${fault}: the socket is left behind`);
+		assert.equal(existsSync(harness.socket), false, `${fault}: the surface socket is left behind`);
+		assert.equal(existsSync(harness.person), false, `${fault}: the person socket is left behind`);
 
 		// The start after it is a start, and no restart.
 		const next = await start(t, directory);
@@ -171,10 +177,12 @@ test("a log line that cannot all be written is taken out again, and the log goes
 
 test("started with anything but its options, the Harness says how it is used and keeps nothing", async (t) => {
 	const directory = scratch(t);
-	for (const args of [[], ["--state", join(directory, "state")], ["--state", join(directory, "state"), "--surface-socket", join(directory, "surface"), "--shell-uid", "the-shell"]]) {
+	const surface = ["--state", join(directory, "state"), "--surface-socket", join(directory, "surface"), "--shell-uid"];
+	const person = ["--person-socket", join(directory, "person"), "--person-uid"];
+	for (const args of [[], ["--state", join(directory, "state")], [...surface, "the-shell", ...person, "1003"], [...surface, "1001"], [...surface, "1001", ...person, "the-person"]]) {
 		const harness = launch(t, directory, { args });
 		assert.equal(await harness.exited, 2, args.join(" "));
-		assert.match(harness.output(), /^usage: harness\.mjs --state DIRECTORY --surface-socket PATH --shell-uid USER_ID$/m);
+		assert.match(harness.output(), /^usage: harness\.mjs --state DIRECTORY --surface-socket PATH --shell-uid USER_ID --person-socket PATH --person-uid USER_ID$/m);
 		assert.equal(existsSync(harness.state), false);
 	}
 });

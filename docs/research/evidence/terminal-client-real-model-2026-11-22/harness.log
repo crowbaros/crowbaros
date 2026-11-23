@@ -1,0 +1,36 @@
+2026-11-23T03:13:30.246Z start: process 822, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T03:13:30.300Z listening: /run/user/1003/crowbar-agent/person, for user ID 1003, 223 ms after the process started
+2026-11-23T03:13:30.301Z listening: /run/crowbar-agent/surface, for user ID 1001, 223 ms after the process started
+2026-11-23T03:14:54.396Z connection: a client connected
+2026-11-23T03:14:54.396Z connection: a client stated version 1
+2026-11-23T03:18:20.442Z sign-in: signed in to openai-codex
+2026-11-23T03:18:20.442Z connection: a client left
+2026-11-23T03:19:08.946Z connection: a client connected
+2026-11-23T03:19:08.946Z connection: a client stated version 1
+2026-11-23T03:19:08.954Z conversation: wfxzy8vd started
+2026-11-23T03:19:08.958Z turn: conversation wfxzy8vd, turn 1 began
+2026-11-23T03:19:11.919Z turn: conversation wfxzy8vd, turn 1 ended: done
+2026-11-23T03:19:11.920Z connection: a client left
+2026-11-23T03:19:29.418Z connection: a client connected
+2026-11-23T03:19:29.419Z connection: a client stated version 1
+2026-11-23T03:19:29.419Z connection: a client left
+2026-11-23T03:19:29.421Z connection: a client connected
+2026-11-23T03:19:29.421Z connection: a client stated version 1
+2026-11-23T03:19:29.422Z connection: a client left
+2026-11-23T03:19:29.424Z connection: a client connected
+2026-11-23T03:19:29.424Z connection: a client stated version 1
+2026-11-23T03:19:29.425Z connection: a client left
+2026-11-23T03:20:48.773Z stop: SIGTERM
+2026-11-23T03:20:48.910Z start: process 3087, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T03:20:48.940Z listening: /run/user/1003/crowbar-agent/person, for user ID 1003, 150 ms after the process started
+2026-11-23T03:20:48.940Z listening: /run/crowbar-agent/surface, for user ID 1001, 150 ms after the process started
+2026-11-23T03:20:49.203Z connection: a client connected
+2026-11-23T03:20:49.203Z connection: a client stated version 1
+2026-11-23T03:20:49.206Z connection: a client left
+2026-11-23T03:21:29.909Z stop: SIGTERM
+2026-11-23T03:21:30.045Z start: process 3138, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T03:21:30.075Z listening: /run/user/1003/crowbar-agent/person, for user ID 1003, 150 ms after the process started
+2026-11-23T03:21:30.075Z listening: /run/crowbar-agent/surface, for user ID 1001, 150 ms after the process started
+2026-11-23T03:22:10.434Z connection: a client connected
+2026-11-23T03:22:10.434Z connection: a client stated version 1
+2026-11-23T03:22:10.436Z connection: a client left

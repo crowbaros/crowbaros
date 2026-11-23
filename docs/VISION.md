@@ -42,6 +42,9 @@ Nothing else is installed.
 2. **Part of the OS.** The Agent runs as a system service from boot, not in an
    app's window. Its surface is drawn by the shell, and every ask by the
    compositor, above everything else.
+   The person can also talk with it from any terminal, at a console or over
+   SSH: the terminal is a client of the same service, with the same
+   conversations.
    It can do what the OS can do: open and arrange windows, change settings,
    install and remove software, work with the person's files, and run commands.
 3. **Not intrusive.** The Agent speaks when it is spoken to. It does not pop
@@ -76,9 +79,13 @@ Agent's reach makes a real risk, a new record decides what to do about it.
 ## Open questions
 
 - **Voice.** Whether the person can summon the Agent and speak to it by voice.
-- **Models.** Which models, local or in the cloud, and who chooses? The
-  harness is decided: Pi Durable, behind a protocol CrowbarOS owns
+- **Models.** Whether a model can run on the machine itself, and on what
+  hardware. The rest is decided. The harness is Pi Durable, behind a protocol
+  CrowbarOS owns
   ([ADR 0034](adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)).
+  The person chooses the model: they sign in to a provider in the cloud,
+  with an API key or OAuth, and pick one of its models
+  ([the Harness](../agent/README.md#reaching-a-model)).
 - **Life without a model.** What does the desktop do when no model is
   reachable?
 - **The default apps.** A terminal, a browser, files, a text editor? Which,

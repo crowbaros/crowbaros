@@ -72,6 +72,13 @@ Super+Space. The compositor takes it before any app hears it. With the Agent's s
 Where the person and the Agent talk: a drawer on the right of the display the pointer was on at the summon, above every window. Putting it away hides it and stops nothing the Agent is doing.
 _Avoid_: Agent window, chat window, panel
 
+**Agent's client**:
+A program the person runs to talk with the Agent, as themselves. It relays what the person says and shows the answers; the conversations stay with the harness. The first is `crowbar-agent`, in a terminal.
+_Avoid_: Frontend, chat app
+
+**Person socket**:
+Where the Agent's clients reach the harness. It serves the person's account and no other.
+
 **Mark**:
 The small sign of what the Agent is doing: working, done, waiting for the person, or looking. It is in the bar, and over a fullscreen window while the Agent works, looks, or waits. The Agent's surface never comes up on its own; the mark is how the person knows.
 _Avoid_: Notification, indicator, badge

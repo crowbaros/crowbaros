@@ -190,7 +190,9 @@ jobs:
   # The Harness (ADR 0034), by the command Base's build runs: type-checked,
   # tested, and bundled into one file, with the Node.js Base pins, checked by
   # its SHA-256, and the npm that came with it. Its tests start the bundle as
-  # one process and talk to it over a real socket.
+  # one process and talk to it over a real socket. The same command then
+  # tests `crowbar-agent`, the terminal's client in agent/client, against
+  # that bundle and the stub Model, with the runner's Rust.
   agent:
     name: Harness
     needs: changes
@@ -203,7 +205,18 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check, test, and bundle the Harness
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+
+      - name: The terminal's client is formatted and has no warnings
+        working-directory: agent/client
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Check, test, and bundle the Harness, and test the terminal's client against it
         run: python3 base/void_base.py agent
 
   # The compositor's own workflow (ADR 0031), run when its code changes.
@@ -331,9 +344,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             .lab/base/target
-          key: base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock') }}-${{ github.sha }}
+          key: base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock', 'agent/client/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock') }}-
+            base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock', 'agent/client/Cargo.lock') }}-
             base-build-
 
       # Cargo rebuilds a crate whose files are newer than its last build, and

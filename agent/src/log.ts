@@ -1,5 +1,6 @@
-// The Harness's log: one line for each start, restart, connection, stop, and
-// error, in a file the person alone can read. It never holds what a
+// The Harness's log: one line for each start, restart, connection,
+// conversation, turn, sign-in, stop, and error, in a file the person alone
+// can read. It never holds what a
 // conversation says or what an act printed: callers pass it events and the
 // IDs, counts, and paths that go with them, and nothing they were sent.
 import { closeSync, fchmodSync, fstatSync, ftruncateSync, openSync, renameSync, writeSync } from "node:fs";
@@ -13,7 +14,7 @@ import { closeSync, fchmodSync, fstatSync, ftruncateSync, openSync, renameSync, 
  */
 const MAX_LOG = 4 * 1024 * 1024;
 
-export type Event = "start" | "restart" | "listening" | "connection" | "stop" | "error";
+export type Event = "start" | "restart" | "listening" | "connection" | "conversation" | "turn" | "sign-in" | "stop" | "error";
 
 export class Log {
 	#path: string;

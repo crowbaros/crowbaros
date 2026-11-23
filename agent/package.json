@@ -11,7 +11,8 @@
   "scripts": {
     "check": "tsc --noEmit",
     "bundle": "node bundle.mjs",
-    "test": "npm run bundle && node --test \"test/*.test.ts\""
+    "test": "npm run bundle && node --test \"test/*.test.ts\"",
+    "start": "npm run bundle && node --disable-warning=ExperimentalWarning dist/harness.mjs --state \"${XDG_STATE_HOME:-$HOME/.local/state}/crowbaros/agent-dev\" --surface-socket \"$XDG_RUNTIME_DIR/crowbar-agent/surface\" --shell-uid \"$(id -u)\" --person-socket \"$XDG_RUNTIME_DIR/crowbar-agent/person\" --person-uid \"$(id -u)\""
   },
   "dependencies": {
     "@earendil-works/chord": "1.6.0",

@@ -67,7 +67,9 @@ sides hold.
   any change to [`agent/`](agent/README.md), to the Node.js pin in
   `base/config.json`, or to `base/void_base.py`: it type-checks `agent/`,
   tests it, and bundles it into one file, with the pinned Node.js. The tests
-  start the bundle as one process and talk to it over a real socket.
+  start the bundle as one process and talk to it over a real socket. It then
+  runs every test of [`crowbar-agent`](agent/client/README.md), the
+  terminal's client, against that bundle and a stub Model.
 - A bug fix comes with a test that fails without the fix.
 - CI cannot draw a window or run the graphical guest, so these checks are
   yours to run and report in the pull request:

@@ -608,12 +608,28 @@ class Harness(BuildFixture):
 
     def test_the_pinned_node_and_its_npm_check_test_and_bundle_the_harness(self):
         void_base.bundle_harness()
-        self.assertEqual(self.commands, [['/node/bin/npm', 'ci'], ['/node/bin/npm', 'run', 'check'],
-                                         ['/node/bin/npm', 'test']])
-        self.assertEqual(set(self.cwds), {void_base.ROOT / 'agent'})
-        for env in self.envs:
+        self.assertEqual(self.commands[:3], [['/node/bin/npm', 'ci'], ['/node/bin/npm', 'run', 'check'],
+                                             ['/node/bin/npm', 'test']])
+        self.assertEqual(set(self.cwds[:3]), {void_base.ROOT / 'agent'})
+        for env in self.envs[:3]:
             # npm's own `node`, and the one its scripts run, is the pinned one.
             self.assertEqual(env['PATH'].split(':')[0], '/node/bin')
+
+    def test_the_terminals_client_is_tested_against_the_bundle_with_the_pinned_node(self):
+        # Its tests start the bundle, so they come after it is made, and
+        # every one of them runs: the build root's `cargo test` leaves out
+        # those that need Node.js.
+        void_base.bundle_harness()
+        self.assertEqual(self.commands[3:], [['cargo', 'test', '--locked', '--', '--include-ignored']])
+        self.assertEqual(self.cwds[3], void_base.ROOT / 'agent/client')
+        self.assertEqual(self.envs[3]['CROWBAR_AGENT_NODE'], '/node/bin/node')
+
+    def test_the_terminals_client_is_built_with_the_desktop_and_goes_on_the_path(self):
+        self.assertIn('agent/client', dict(void_base.PROJECTS))
+        self.assertEqual(void_base.binaries()['crowbar-agent'].name, 'crowbar-agent')
+        # The image step puts each program it is given in /usr/local/bin.
+        image = (Path(void_base.HERE) / 'host/image.sh').read_text()
+        self.assertIn('install -D -m 755 "$path" "$R/usr/local/bin/$(basename "$path")"', image)
 
     def test_npm_runs_no_script_a_package_brings(self):
         settings = (void_base.ROOT / 'agent/.npmrc').read_text().split()
@@ -1082,9 +1098,90 @@ class HarnessRunsCheck(unittest.TestCase):
         service = (Path(void_base.HERE) / 'desktop/agent-run').read_text()
         self.assertIn(void_base.HARNESS_NODE, service)
         self.assertIn(f'--surface-socket {void_base.SURFACE_SOCKET} ', service)
+        self.assertIn('--person-socket "/run/user/$PERSON_UID/crowbar-agent/person" --person-uid "$PERSON_UID"', service)
+        self.assertEqual(void_base.PERSON_SOCKET, f'/run/user/{void_base.PERSON_UID}/crowbar-agent/person')
         self.assertIn(f'--state "$PERSON_HOME/{void_base.HARNESS_STATE}"', service)
         image = (Path(void_base.HERE) / 'host/image.sh').read_text()
         self.assertIn(f'"$R{void_base.HARNESS_NODE}"', image)
+
+
+class HarnessMemoryCheck(unittest.TestCase):
+    """Base's check finds the idle Harness within the memory ADR 0034 allows."""
+
+    def test_less_than_the_limit_passes_and_the_limit_or_no_figure_fails(self):
+        self.assertEqual(void_base.HARNESS_MEMORY_MIB, 150)
+        self.assertTrue(void_base.harness_is_small('98304\n'))
+        self.assertFalse(void_base.harness_is_small('153600\n'))
+        self.assertFalse(void_base.harness_is_small('204800\n'))
+        self.assertFalse(void_base.harness_is_small('\n'))
+        self.assertFalse(void_base.harness_is_small('0\n'))
+
+
+class AgentInATerminalCheck(unittest.TestCase):
+    """Base's check finds the person answered by the Agent in a terminal,
+    from the stub Model, and told plainly when there is no Model."""
+
+    def setUp(self):
+        self.passes = void_base.agent_answers_in_a_terminal
+
+    def seen(self, **other):
+        lines = {'path': '/usr/local/bin/crowbar-agent', 'directory': '1003 700', 'socket': '1003 600',
+                 'before': '1290', 'exit': '0', 'answer': 'Base answers from the stub Model.', 'asked': '1',
+                 'no-model-exit': '1',
+                 'no-model': 'crowbar-agent: No Model is signed in. Sign in to one with `crowbar-agent login`, '
+                             'or choose one with `crowbar-agent model`.',
+                 'after': '1290'}
+        lines.update({name.replace('_', '-'): line for name, line in other.items()})
+        return ''.join(f'{name} {line}'.rstrip() + '\n' for name, line in lines.items())
+
+    def test_an_answer_from_the_stub_and_plain_words_without_it_pass(self):
+        self.assertTrue(self.passes(self.seen()))
+
+    def test_no_answer_or_another_fails(self):
+        self.assertFalse(self.passes(self.seen(answer='')))
+        self.assertFalse(self.passes(self.seen(answer='Hello.')))
+        self.assertFalse(self.passes(self.seen(exit='1')))
+
+    def test_a_request_the_stub_never_got_fails(self):
+        self.assertFalse(self.passes(self.seen(asked='0')))
+
+    def test_a_client_that_is_not_on_the_persons_path_fails(self):
+        self.assertFalse(self.passes(self.seen(path='')))
+
+    def test_a_person_socket_others_can_reach_fails(self):
+        self.assertFalse(self.passes(self.seen(socket='1003 660')))
+        self.assertFalse(self.passes(self.seen(directory='1003 755')))
+        self.assertFalse(self.passes(self.seen(socket='0 600')))
+
+    def test_silence_or_success_with_no_model_fails(self):
+        self.assertFalse(self.passes(self.seen(no_model_exit='0')))
+        self.assertFalse(self.passes(self.seen(no_model='')))
+
+    def test_a_harness_that_did_not_stay_up_fails(self):
+        self.assertFalse(self.passes(self.seen(after='1404')))
+        self.assertFalse(self.passes(self.seen(before='', after='')))
+
+    def test_the_stub_is_written_into_the_guest_and_never_into_the_image(self):
+        command = void_base.stub_model_in_guest()
+        self.assertIn(void_base.STUB_MODEL.read_text(), command)
+        self.assertIn(f'{void_base.HARNESS_NODE} "$d/stub-model.ts"', command)
+        image = (Path(void_base.HERE) / 'host/image.sh').read_text()
+        self.assertNotIn('stub-model', image)
+        # Its end in the guest's shell must be a line the stub does not hold.
+        self.assertNotIn('\nCROWBAR_STUB_MODEL\n', void_base.STUB_MODEL.read_text())
+
+    def test_root_is_refused_by_the_harness_and_told_so(self):
+        told = ('crowbar-agent: The Harness at /run/user/1003/crowbar-agent/person closed the connection: '
+                'it serves another account, or speaks another version than 1.')
+        self.assertTrue(void_base.root_is_refused(f'root-exit 1\nroot {told}\n'))
+        self.assertFalse(void_base.root_is_refused('root-exit 0\nroot No conversations yet.\n'))
+        self.assertFalse(void_base.root_is_refused('root-exit 1\nroot crowbar-agent: The Harness is not running\n'))
+
+    def test_the_check_runs_as_the_person(self):
+        users = {name: user for name, user, _, _ in void_base.boot_checks()}
+        self.assertEqual(users['the person gets an answer from the Agent in a terminal, from a stub Model'],
+                         void_base.LAB_ACCOUNT['name'])
+        self.assertEqual(users['the Harness refuses root on the person socket'], 'root')
 
 
 class HarnessRestartCheck(unittest.TestCase):

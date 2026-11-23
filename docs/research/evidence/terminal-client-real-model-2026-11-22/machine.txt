@@ -1,0 +1,25 @@
+# Kernel
+6.18.64_1
+# Packages
+foot-1.28.0_1
+chromium-158.0.8127.36_1
+glib-2.88.3_1
+xdg-utils-1.2.1_1
+# Openers on PATH
+/usr/bin/xdg-open
+/usr/bin/gio
+# Default browser, as the person
+chromium.desktop
+# GPUs and their drivers
+card0 amdgpu
+card1 nvidia
+# Connected outputs
+card0-HDMI-A-1
+# Fulcrum
+INFO crowbar_compositor: renderer=gles gpu=AMD Ryzen 5 7500X3D 6-Core Processor (radeonsi, raphael_mendocino, ACO, DRM 3.64, 6.18.64_1)
+INFO crowbar_compositor: output connected name=HDMI-A-1 size=3840x2160 refresh=59982 pointer=cursor-plane
+# NVIDIA driver
+NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  595.112.07  Release Build  (dvs-builder@U22-I3-AL23-31-2)  Tue Oct 20 09:16:38 UTC 2026
+# Memory in MiB, and CPUs
+15147
+12

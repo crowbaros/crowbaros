@@ -3,7 +3,7 @@
 // bytes written out by hand, so no test checks the framing against the code
 // that frames.
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -34,7 +34,10 @@ export interface Running {
 	process: ChildProcess;
 	/** Where the Harness keeps its state and its log. */
 	state: string;
+	/** The surface socket. */
 	socket: string;
+	/** The person socket. */
+	person: string;
 	/** Everything the process wrote to its standard output and error. */
 	output: () => string;
 	/** Resolves with the exit code, or the signal that ended it. */
@@ -55,18 +58,21 @@ export function scratch(t: TestContext): string {
 export function launch(
 	t: TestContext,
 	directory: string,
-	options: { shellUid?: number; umask?: number; socket?: string; args?: string[]; fault?: Fault } = {},
+	options: { shellUid?: number; personUid?: number; umask?: number; socket?: string; args?: string[]; fault?: Fault; env?: NodeJS.ProcessEnv } = {},
 ): Running {
 	const state = join(directory, "state");
 	const socket = options.socket ?? join(directory, "surface");
+	// In a directory of its own, which the Harness makes, as it does in the person's runtime directory.
+	const person = join(directory, "runtime", "crowbar-agent", "person");
 	const args = options.args ?? [
 		"--state", state, "--surface-socket", socket, "--shell-uid", String(options.shellUid ?? OWN_UID),
+		"--person-socket", person, "--person-uid", String(options.personUid ?? OWN_UID),
 	];
 	const before = process.umask(options.umask ?? 0o022);
 	const child = spawn(process.execPath, [...(options.fault ? ["--import", FAULTS] : []), BUNDLE, ...args], {
 		cwd: directory,
 		stdio: ["ignore", "pipe", "pipe"],
-		env: { ...process.env, ...(options.fault ? { HARNESS_TEST_FAULT: options.fault } : {}) },
+		env: { ...process.env, ...options.env, ...(options.fault ? { HARNESS_TEST_FAULT: options.fault } : {}) },
 	});
 	process.umask(before);
 	let output = "";
@@ -79,13 +85,14 @@ export function launch(
 		child.kill("SIGKILL");
 		await exited;
 	});
-	return { process: child, state, socket, output: () => output, exited };
+	return { process: child, state, socket, person, output: () => output, exited };
 }
 
 /**
- * Whether the log in `state` has this process's start, and `listening` after
- * it. Either line may be the one that set the log aside, so the log set
- * aside is read before the log.
+ * Whether the log in `state` has this process's start, and `listening` twice
+ * after it: the person socket, then the surface socket. Any of the lines may
+ * be the one that set the log aside, so the log set aside is read before the
+ * log.
  */
 function logsListening(state: string, pid: number | undefined): boolean {
 	let log = "";
@@ -97,7 +104,7 @@ function logsListening(state: string, pid: number | undefined): boolean {
 		}
 	}
 	const started = log.lastIndexOf(` start: process ${pid},`);
-	return started !== -1 && log.includes(" listening: ", started);
+	return started !== -1 && log.slice(started).split(" listening: ").length > 2;
 }
 
 /**
@@ -109,7 +116,7 @@ function logsListening(state: string, pid: number | undefined): boolean {
 export async function start(
 	t: TestContext,
 	directory: string,
-	options: { shellUid?: number; umask?: number; fault?: Fault } = {},
+	options: { shellUid?: number; personUid?: number; umask?: number; fault?: Fault; env?: NodeJS.ProcessEnv } = {},
 ): Promise<Running> {
 	const running = launch(t, directory, options);
 	const deadline = Date.now() + 10_000;
@@ -166,4 +173,124 @@ export function heard(socket: Socket, quiet = 300): Promise<{ bytes: Buffer; clo
 		socket.on("close", () => done(true));
 		socket.on("error", () => done(true));
 	});
+}
+
+/** The stub Model, in a process of its own, answering from `replies`. */
+export interface Stub {
+	/** Where it answers the OpenAI-compatible API. */
+	url: string;
+	/** Each request it was sent, as the body the Harness sent. */
+	requests: () => { model: string; messages: { role: string; content: unknown }[] }[];
+	/** Adds replies to the end of its script. */
+	more: (replies: object[]) => void;
+}
+
+/** Starts test/stub-model.ts on a port the kernel picks, with this script. */
+export async function stub(t: TestContext, directory: string, replies: object[]): Promise<Stub> {
+	const script = join(directory, "script.json");
+	const requests = join(directory, "requests.jsonl");
+	writeFileSync(script, JSON.stringify(replies));
+	writeFileSync(requests, "");
+	const child = spawn(process.execPath, [fileURLToPath(new URL("./stub-model.ts", import.meta.url)), "--script", script, "--requests", requests], {
+		stdio: ["ignore", "pipe", "inherit"],
+	});
+	t.after(() => void child.kill("SIGKILL"));
+	const said = await new Promise<string>((resolve, reject) => {
+		child.stdout.once("data", (chunk) => resolve(String(chunk)));
+		child.once("exit", (code) => reject(new Error(`The stub Model ended (${code}) before it listened`)));
+	});
+	const url = /^listening (http:\/\/127\.0\.0\.1:\d+\/v1)$/m.exec(said)?.[1];
+	if (url === undefined) throw new Error(`The stub Model said ${said}`);
+	return {
+		url,
+		requests: () => readFileSync(requests, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)),
+		more: (added) => writeFileSync(script, JSON.stringify([...JSON.parse(readFileSync(script, "utf8")), ...added])),
+	};
+}
+
+/** Points the Harness that keeps its state in `state` at this endpoint, as a person would by hand. */
+export function pointAt(state: string, url: string): void {
+	writeFileSync(join(state, "endpoint.json"), JSON.stringify({ url, model: "stub-1" }));
+}
+
+/** One message the Harness sent: a reply or an event. */
+export type Message = Record<string, any>;
+
+/** A client of the person socket, which frames by hand as every peer in these tests does. */
+export interface Client {
+	socket: Socket;
+	/** Sends one request. */
+	say(request: object): void;
+	/** The next message the Harness sends, within 10 seconds. */
+	hear(): Promise<Message>;
+	/** Sends one request, and gives the next message, which is its reply unless an event was already on its way. */
+	ask(request: object): Promise<Message>;
+	/** Every message up to and with the first that `last` takes. */
+	until(last: (message: Message) => boolean): Promise<Message[]>;
+	/** Whether the Harness has closed the connection, once it has had a moment to. */
+	closed(): Promise<boolean>;
+}
+
+/** Connects to the person socket and states the version, having heard the Harness state its own. */
+export async function client(path: string): Promise<Client> {
+	const socket = await dial(path);
+	let waiting = Buffer.alloc(0);
+	const messages: Message[] = [];
+	const wakes: (() => void)[] = [];
+	let gone = false;
+	socket.on("data", (chunk: Buffer) => {
+		waiting = Buffer.concat([waiting, chunk]);
+		while (waiting.length >= 4) {
+			const length = waiting.readUInt32BE(0);
+			if (waiting.length < 4 + length) break;
+			messages.push(JSON.parse(waiting.subarray(4, 4 + length).toString()));
+			waiting = waiting.subarray(4 + length);
+		}
+		for (const wake of wakes.splice(0)) wake();
+	});
+	const left = () => {
+		gone = true;
+		for (const wake of wakes.splice(0)) wake();
+	};
+	socket.on("close", left);
+	socket.on("error", left);
+	const self: Client = {
+		socket,
+		say(request) {
+			const json = Buffer.from(JSON.stringify(request));
+			const length = Buffer.alloc(4);
+			length.writeUInt32BE(json.length);
+			socket.write(Buffer.concat([length, json]));
+		},
+		async hear() {
+			const deadline = Date.now() + 10_000;
+			while (messages.length === 0) {
+				if (gone) throw new Error("The Harness closed the connection");
+				if (Date.now() > deadline) throw new Error("The Harness sent nothing within 10 seconds");
+				await new Promise<void>((resolve) => {
+					const timer = setTimeout(resolve, 200);
+					wakes.push(() => (clearTimeout(timer), resolve()));
+				});
+			}
+			return messages.shift() as Message;
+		},
+		async ask(request) {
+			self.say(request);
+			return self.hear();
+		},
+		async until(last) {
+			const heard: Message[] = [];
+			do heard.push(await self.hear());
+			while (!last(heard.at(-1) as Message));
+			return heard;
+		},
+		async closed() {
+			for (let tries = 0; tries < 100 && !gone; tries++) await sleep(20);
+			return gone;
+		},
+	};
+	socket.write(VERSION_FRAME);
+	const version = await self.hear();
+	if (version.version !== 1) throw new Error(`The Harness answered the version with ${JSON.stringify(version)}`);
+	return self;
 }
