@@ -184,6 +184,9 @@ export function person(uid: number, conversations: Conversations, store: Store, 
 				case "login": {
 					const provider = optional(request, "provider");
 					if (signingIn) throw new Declined("signing-in", "A sign-in is already under way.");
+					// It left while a request before this one was answered. A sign-in begun now would
+					// ask its questions of nobody, and nothing would end it.
+					if (gone) throw new Declined("request", "The client left before its sign-in began.");
 					signingIn = true;
 					signIn = { cancel: new AbortController(), waiting: new Map(), questions: 0 };
 					void runSignIn(provider, signIn);
