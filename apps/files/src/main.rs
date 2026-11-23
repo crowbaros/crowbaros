@@ -353,6 +353,10 @@ impl FilesApp {
             return *dims;
         }
         let dims = fs_model::still_image_size(&entry.path);
+        // A long session would otherwise keep every image path it ever showed.
+        if sizes.len() >= 4_096 {
+            sizes.clear();
+        }
         sizes.insert(entry.path.clone(), (entry.size, entry.modified, dims));
         dims
     }

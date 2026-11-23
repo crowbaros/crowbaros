@@ -105,8 +105,8 @@ pub fn fits_preview((width, height): (u32, u32)) -> bool {
 /// Files should not decode: an animation (GPUI decodes every frame of a GIF or animated WebP), a
 /// size the header does not give early, or something that is not a regular file.
 pub fn still_image_size(path: &Path) -> Option<(u32, u32)> {
-    use image::{ImageFormat, ImageReader, codecs::webp::WebPDecoder};
-    use std::io::{BufReader, Read, Seek, SeekFrom};
+    use image::ImageReader;
+    use std::io::{BufReader, Read};
     // Opened without blocking and checked once open, so a pipe in a picture's place never blocks.
     let file = fs::OpenOptions::new()
         .read(true)
@@ -117,21 +117,47 @@ pub fn still_image_size(path: &Path) -> Option<(u32, u32)> {
         return None;
     }
     let mut head = Vec::new();
-    file.take(IMAGE_HEADER_BYTES).read_to_end(&mut head).ok()?;
-    let mut reader = BufReader::new(io::Cursor::new(head));
-    let format = ImageReader::new(&mut reader).with_guessed_format().ok()?.format()?;
-    match format {
-        ImageFormat::Gif => return None,
-        ImageFormat::WebP => {
-            reader.seek(SeekFrom::Start(0)).ok()?;
-            if WebPDecoder::new(&mut reader).ok()?.has_animation() {
-                return None;
-            }
-        }
-        _ => {}
+    let mut file = file.take(IMAGE_HEADER_BYTES);
+    (&mut file).take(30).read_to_end(&mut head).ok()?;
+    match riff_webp_first_chunk(&head) {
+        _ if head.starts_with(b"GIF8") => return None,
+        Some(WebPStart::Extended { animated: true, .. }) => return None,
+        // Read straight from the header: the decoder would walk to chunks past what is read.
+        Some(WebPStart::Extended { size, .. }) => return Some(size),
+        Some(WebPStart::Simple) | None => {}
     }
-    reader.seek(SeekFrom::Start(0)).ok()?;
-    ImageReader::with_format(reader, format).into_dimensions().ok()
+    file.read_to_end(&mut head).ok()?;
+    ImageReader::new(BufReader::new(io::Cursor::new(head)))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
+}
+
+#[derive(Debug, PartialEq)]
+enum WebPStart {
+    /// `VP8 ` or `VP8L`: a single still image, its size in the first chunk.
+    Simple,
+    /// `VP8X`: the canvas size and whether it is an animation, in the first chunk.
+    Extended { size: (u32, u32), animated: bool },
+}
+
+/// The first chunk of a WebP file, from its first 30 bytes, or `None` if it is not WebP.
+fn riff_webp_first_chunk(head: &[u8]) -> Option<WebPStart> {
+    if head.len() < 16 || &head[0..4] != b"RIFF" || &head[8..12] != b"WEBP" {
+        return None;
+    }
+    if &head[12..16] != b"VP8X" {
+        return Some(WebPStart::Simple);
+    }
+    let field = |at: usize| {
+        head.get(at..at + 3)
+            .map(|b| 1 + u32::from_le_bytes([b[0], b[1], b[2], 0]))
+    };
+    Some(WebPStart::Extended {
+        size: (field(24)?, field(27)?),
+        animated: head.get(20)? & 0x02 != 0,
+    })
 }
 
 /// Which entries get a Grid thumbnail: still images, in order, while their decoded pixels fit the
@@ -1122,6 +1148,9 @@ fn identity(path: &Path) -> io::Result<(u64, u64)> {
 
 /// Removes the original after a copy between filesystems, unless it is no longer what was copied:
 /// another file at its path, or the same file written to since. Then it stays.
+///
+/// For a folder this checks the folder itself, not what is inside it: a file added to it, or a file
+/// inside saved again, after that file's own copy, is removed with the folder and is not in the copy.
 fn remove_original(src: &Path, was: &Snapshot) -> io::Result<()> {
     let now = fs::symlink_metadata(src)?;
     let changed = match &was.file {
@@ -1942,6 +1971,31 @@ mod tests {
         // A pipe in a picture's place is passed over without blocking.
         mkfifo(&root.join("pipe.png"));
         assert_eq!(still_image_size(&root.join("pipe.png")), None);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A WebP that starts with a VP8X chunk: canvas size and flags, then `rest` bytes of payload.
+    fn extended_webp(width: u32, height: u32, flags: u8, rest: usize) -> Vec<u8> {
+        let mut out = b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0".to_vec();
+        out.extend_from_slice(&[flags, 0, 0, 0]);
+        out.extend_from_slice(&(width - 1).to_le_bytes()[..3]);
+        out.extend_from_slice(&(height - 1).to_le_bytes()[..3]);
+        out.extend(std::iter::repeat_n(0u8, rest));
+        out
+    }
+
+    #[test]
+    fn a_webp_size_comes_from_its_first_chunk_and_animations_are_refused() {
+        let root = temp_dir("webp");
+        // Still, with EXIF (0x08) after more image data than Files reads.
+        fs::write(root.join("photo.webp"), extended_webp(4000, 3000, 0x08, 400 << 10)).unwrap();
+        assert_eq!(still_image_size(&root.join("photo.webp")), Some((4000, 3000)));
+        // Animated (0x02).
+        fs::write(root.join("loop.webp"), extended_webp(640, 480, 0x02, 1024)).unwrap();
+        assert_eq!(still_image_size(&root.join("loop.webp")), None);
+        assert_eq!(riff_webp_first_chunk(b"RIFF\0\0\0\0WEBPVP8L"), Some(WebPStart::Simple));
+        assert_eq!(riff_webp_first_chunk(b"\x89PNG\r\n\x1a\n\0\0\0\0\0\0\0\0"), None);
 
         let _ = fs::remove_dir_all(&root);
     }
