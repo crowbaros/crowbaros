@@ -1227,8 +1227,10 @@ CHECKS = [
      "printf '{\"url\":\"%s\",\"model\":\"stub-1\"}' \"$url\" > \"$e\"; "
      "echo \"path $(command -v crowbar-agent)\"; "
      f"stat -c 'directory %u %a' {PERSON_SOCKET.rsplit('/', 1)[0]}; stat -c 'socket %u %a' {PERSON_SOCKET}; "
-     # The person may not ask runit, so the Harness's process is found by its bundle.
-     f"pid() {{ pgrep -u {PERSON_UID} -f {HARNESS_NODE.rsplit('/', 1)[0]}/harness.mjs | xargs; }}; "
+     # The person may not ask runit, so the Harness's process is found by
+     # its command line, from its start: the shell that runs this check
+     # names the bundle too, and starts with something else.
+     f"pid() {{ pgrep -u {PERSON_UID} -f '^{HARNESS_NODE} .*/harness\\.mjs ' | xargs; }}; "
      "echo \"before $(pid)\"; "
      f"a=$(crowbar-agent {shlex.quote(STUB_REQUEST)}); echo \"exit $?\"; echo \"answer $a\"; "
      f"echo \"asked $(grep -c {shlex.quote(STUB_REQUEST)} \"$d/requests\")\"; "

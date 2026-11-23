@@ -322,3 +322,20 @@ test("a sign-in in a browser is relayed a step at a time, and ends when the clie
 	assert.deepEqual(await person.hear(), { event: "sign-in-failed", cancelled: false, message: "No provider named no-such-provider to sign in to." });
 	assert.deepEqual((await person.ask({ op: "status" })).signed_in, []);
 });
+
+test("a Model that fails for a moment is asked again, and the client is told while it waits", async (t) => {
+	const directory = scratch(t);
+	const model = await stub(t, directory, [{ status: 503, message: "Busy for a moment" }, { text: "Here after all." }]);
+	const harness = await start(t, directory);
+	pointAt(harness.state, model.url);
+	const person = await client(harness.person);
+	const { conversation } = await person.ask({ op: "start" });
+	await person.ask({ op: "send", conversation, text: "Hello?" });
+	const events = await person.until(ended);
+	const retry = events.find((message) => message.event === "retry");
+	assert.match(retry?.message, /503.*Busy for a moment/);
+	assert.deepEqual({ ...retry, message: "" }, { event: "retry", conversation, turn: 1, message: "", seconds: 2 });
+	assert.equal(answer(events, 1), "Here after all.");
+	assert.equal(events.at(-1)?.event, "done");
+	assert.equal(model.requests().length, 2);
+});
