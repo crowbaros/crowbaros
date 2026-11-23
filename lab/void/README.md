@@ -143,7 +143,7 @@ needs), asking a question only desktop context can answer, putting the drawer
 away so the turn finishes behind it with the mark in the bar and over a
 fullscreen window, checking the real Model's answer and desktop context in the
 drawer and in `harness.sqlite` with no window contents leaked, and verifying
-the credential never appears in guest logs, `harness.sqlite`, or host evidence.
+the temporary credential stays in a guest RAM `tmpfs` (never touching the retained `.raw` disk), is removed before exit and redacted from logs/diagnostics, and never appears in guest logs, `harness.sqlite`, or host evidence (including `results.json`).
 It checks that apps run as the person at the ordinary socket for apps, that
 copy and paste, the primary selection, and drag and drop work between two apps,
 that Fulcrum's Harness socket serves the person alone, and that the shell's

@@ -77,7 +77,7 @@ sides hold.
 | Change touches | Run | Show |
 | --- | --- | --- |
 | The compositor check or guest driver in `lab/void/` | `lab/void/compositor_check.py` | The evidence log it writes |
-| The desktop: how `base/` builds or runs the compositor, the shell, or the apps, or the desktop check or guest driver in `lab/void/` | `lab/void/desktop_check.py` | The run's `desktop.log` and `results.json` |
+| The desktop: how `base/` builds or runs the compositor, the shell, or the apps, or the desktop check or guest driver in `lab/void/` | `lab/void/desktop_check.py` (reads a real-Model API key from the host environment; see [`lab/void/README.md`](lab/void/README.md)) | The run's `desktop.log` and `results.json` |
 | The version of Pi Durable or Node.js the Harness runs on ([ADR 0034](docs/adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)) | `lab/void/desktop_check.py` | The run's `desktop.log` and `results.json` |
 | How the compositor serves clients: [`compositor/`](compositor/README.md) | `lab/void/compositor_check.py` | The evidence log it writes |
 | `apps/` | The app's Void build and run steps in its README | Before and after captures; a short recording for motion |

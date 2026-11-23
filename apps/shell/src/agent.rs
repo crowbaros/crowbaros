@@ -199,6 +199,7 @@ impl CommandSender {
 pub struct AgentState {
     pub configured: bool,
     pub connected: bool,
+    pub sending: bool,
     pub model: Option<ModelInfo>,
     pub missing_model: Option<String>,
     pub conversation: Option<String>,
@@ -213,6 +214,7 @@ pub struct AgentState {
 pub struct AgentViewSnapshot {
     pub drawer_up: bool,
     pub mark_overlay: bool,
+    pub mark_overlay_output: Option<String>,
     pub state: AgentState,
 }
 
@@ -232,12 +234,16 @@ impl AgentState {
                 .is_some_and(|t| matches!(t.state, TurnState::Working))
     }
 
+    pub fn can_send(&self) -> bool {
+        self.connected && !self.working() && !self.sending
+    }
+
     pub fn current_turn(&self) -> Option<u64> {
         self.turns.last().map(|t| t.turn)
     }
 
     /// Applies an event from the Harness. Returns true if visible state changed.
-    pub fn apply(&mut self, event: AgentEvent, _drawer_up: bool) -> bool {
+    pub fn apply(&mut self, event: AgentEvent, drawer_up: bool) -> bool {
         match event {
             AgentEvent::Connected => {
                 let changed = !self.connected || self.error.is_some();
@@ -246,8 +252,9 @@ impl AgentState {
                 changed
             }
             AgentEvent::Disconnected => {
-                let changed = self.connected;
+                let changed = self.connected || self.sending;
                 self.connected = false;
+                self.sending = false;
                 changed
             }
             AgentEvent::Status { model, missing } => {
@@ -263,10 +270,14 @@ impl AgentState {
                 conversation,
                 turns,
             } => {
+                self.sending = false;
                 self.conversation = Some(conversation);
                 let next_mark = match turns.last().map(|t| &t.state) {
                     Some(TurnState::Working) => Mark::Working,
                     Some(TurnState::Done) if self.mark == Mark::Working => Mark::Done,
+                    Some(TurnState::Failed(_)) if self.mark == Mark::Working && !drawer_up => {
+                        Mark::Done
+                    }
                     _ if self.mark == Mark::Working => Mark::Idle,
                     _ => self.mark,
                 };
@@ -278,6 +289,10 @@ impl AgentState {
                 conversation,
                 turn: _,
             } => {
+                self.sending = false;
+                if self.conversation.as_deref() != Some(conversation.as_str()) {
+                    self.turns.clear();
+                }
                 self.conversation = Some(conversation);
                 self.error = None;
                 self.mark = Mark::Working;
@@ -296,6 +311,7 @@ impl AgentState {
                         return false;
                     }
                 }
+                self.sending = false;
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
                     existing.message = text;
                     existing.context = context;
@@ -349,7 +365,8 @@ impl AgentState {
                     return false;
                 }
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
-                    existing.retry = Some(format!("{message} — trying again in {seconds}s"));
+                    let calm = calm_turn_error(&message);
+                    existing.retry = Some(format!("{calm} Trying again in {seconds}s…"));
                     return true;
                 }
                 false
@@ -384,20 +401,29 @@ impl AgentState {
                 if self.conversation.as_deref() != Some(conversation.as_str()) {
                     return false;
                 }
+                self.sending = false;
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
-                    existing.state = TurnState::Failed(message);
+                    existing.state = TurnState::Failed(calm_turn_error(&message));
                     existing.retry = None;
                 }
-                self.mark = Mark::Idle;
+                // Behind a put-away drawer, leave the mark lit as Done so the
+                // person knows the turn ended and can open the drawer to read why.
+                self.mark = if drawer_up { Mark::Idle } else { Mark::Done };
                 true
             }
             AgentEvent::Error { code, message } => {
+                self.sending = false;
                 if code == "no-model" {
                     self.model = None;
                     self.missing_model = Some(message);
                     self.error = None;
+                } else if code == "no-conversation" {
+                    self.conversation = None;
+                    self.turns.clear();
+                    self.mark = Mark::Idle;
+                    self.error = None;
                 } else {
-                    self.error = Some(message);
+                    self.error = Some(calm_turn_error(&message));
                 }
                 true
             }
@@ -424,19 +450,55 @@ impl AgentState {
     }
 }
 
-/// Whether the floating fullscreen mark overlay should be visible right now.
-pub fn should_show_mark_overlay(
+/// Maps raw network or provider failure diagnostics into calm, person-facing copy.
+pub fn calm_turn_error(raw: &str) -> String {
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("econnrefused")
+        || lower.contains("enotfound")
+        || lower.contains("etimedout")
+        || lower.contains("econnreset")
+        || lower.contains("fetch failed")
+        || lower.contains("network")
+        || lower.contains("unreachable")
+        || lower.contains("could not connect")
+    {
+        return "Could not reach the Model right now. Check your connection and try again.".into();
+    }
+    if lower.contains("401")
+        || lower.contains("403")
+        || lower.contains("unauthorized")
+        || lower.contains("invalid api key")
+        || lower.contains("authentication")
+    {
+        return "The Model refused the current sign-in. Run `crowbar-agent login` in a terminal to sign in again.".into();
+    }
+    let clean = raw.trim();
+    if clean.is_empty() {
+        "The Model could not answer right now.".into()
+    } else {
+        clean.to_string()
+    }
+}
+
+/// Returns the display name where the floating fullscreen mark overlay should
+/// appear, or `None` when it should be hidden. Prefers the active window if it
+/// is fullscreen on the shown workspace, else the first fullscreen window there.
+pub fn fullscreen_mark_overlay_output(
     mark: Mark,
     snapshot: &session::Snapshot,
     drawer_up: bool,
-) -> bool {
+) -> Option<String> {
     if mark == Mark::Idle || drawer_up || snapshot.locked || !snapshot.connected {
-        return false;
+        return None;
+    }
+    if snapshot.active.fullscreen && snapshot.active.workspace.id == snapshot.workspace {
+        return Some(snapshot.active.output.clone());
     }
     snapshot
         .clients
         .iter()
-        .any(|c| c.fullscreen && c.workspace.id == snapshot.workspace)
+        .find(|c| c.fullscreen && c.workspace.id == snapshot.workspace)
+        .map(|c| c.output.clone())
 }
 
 /// Concise, readable lines summarizing the desktop context carried by a message.
@@ -477,11 +539,12 @@ pub fn format_context_summary(ctx: &DesktopContext) -> Vec<String> {
             .displays
             .iter()
             .map(|d| {
+                let pos = format!("({},{})", d.x, d.y);
                 if d.scale == 120 {
-                    format!("{} {}x{}", d.name, d.width, d.height)
+                    format!("{} {}x{} at {pos}", d.name, d.width, d.height)
                 } else {
                     let scale = d.scale as f32 / 120.0;
-                    format!("{} {}x{}@{:.2}x", d.name, d.width, d.height, scale)
+                    format!("{} {}x{} at {pos} @{:.2}x", d.name, d.width, d.height, scale)
                 }
             })
             .collect();
@@ -690,7 +753,9 @@ pub fn start(path: PathBuf, events: session::Sender) -> CommandSender {
                 Some(Err(e)) => {
                     log::warn!("Agent surface socket write failed: {e}");
                     if let Ok(mut guard) = writer_for_cmds.lock() {
-                        *guard = None;
+                        if let Some(stream) = guard.take() {
+                            let _ = stream.shutdown(std::net::Shutdown::Both);
+                        }
                     }
                     let _ = events_for_cmds.send(session::Event::Agent(AgentEvent::Disconnected));
                 }
@@ -756,6 +821,13 @@ pub fn start(path: PathBuf, events: session::Sender) -> CommandSender {
                                         | AgentEvent::Message { conversation, .. } => {
                                             if let Ok(mut guard) = active_conversation.lock() {
                                                 *guard = Some(conversation.clone());
+                                            }
+                                        }
+                                        AgentEvent::Error { code, .. }
+                                            if code == "no-conversation" =>
+                                        {
+                                            if let Ok(mut guard) = active_conversation.lock() {
+                                                *guard = None;
                                             }
                                         }
                                         _ => {}
@@ -934,7 +1006,7 @@ mod tests {
     }
 
     #[test]
-    fn fullscreen_mark_overlay_visibility_rules() {
+    fn fullscreen_mark_overlay_visibility_and_output_rules() {
         let mut snap = session::Snapshot {
             workspace: 1,
             connected: true,
@@ -946,20 +1018,84 @@ mod tests {
                 workspace: session::Workspace { id: 1 },
                 attention: false,
                 fullscreen: true,
+                output: "Virtual-2".into(),
             }],
             ..Default::default()
         };
-        assert!(!should_show_mark_overlay(Mark::Idle, &snap, false));
-        assert!(should_show_mark_overlay(Mark::Working, &snap, false));
-        assert!(should_show_mark_overlay(Mark::Done, &snap, false));
+        assert_eq!(fullscreen_mark_overlay_output(Mark::Idle, &snap, false), None);
+        assert_eq!(
+            fullscreen_mark_overlay_output(Mark::Working, &snap, false).as_deref(),
+            Some("Virtual-2")
+        );
+        assert_eq!(
+            fullscreen_mark_overlay_output(Mark::Done, &snap, false).as_deref(),
+            Some("Virtual-2")
+        );
         // Hidden while drawer is up or desktop is locked.
-        assert!(!should_show_mark_overlay(Mark::Working, &snap, true));
+        assert_eq!(fullscreen_mark_overlay_output(Mark::Working, &snap, true), None);
         snap.locked = true;
-        assert!(!should_show_mark_overlay(Mark::Working, &snap, false));
+        assert_eq!(fullscreen_mark_overlay_output(Mark::Working, &snap, false), None);
         // Hidden when fullscreen window is on another workspace.
         snap.locked = false;
         snap.workspace = 2;
-        assert!(!should_show_mark_overlay(Mark::Working, &snap, false));
+        assert_eq!(fullscreen_mark_overlay_output(Mark::Working, &snap, false), None);
+    }
+
+    #[test]
+    fn rapid_send_guard_no_conversation_recovery_and_behind_drawer_failure() {
+        let mut state = AgentState::new(true);
+        state.apply(AgentEvent::Connected, true);
+        assert!(state.can_send());
+        // In-flight submission blocks duplicate sends until Sent or Error.
+        state.sending = true;
+        assert!(!state.can_send());
+        state.apply(
+            AgentEvent::Sent {
+                conversation: "conv1".into(),
+                turn: 1,
+            },
+            true,
+        );
+        assert!(!state.sending);
+        assert!(!state.can_send()); // Working now.
+
+        // A failure while the drawer is put away leaves Mark::Done so the person notices.
+        state.apply(
+            AgentEvent::Message {
+                conversation: "conv1".into(),
+                turn: 1,
+                text: "hi".into(),
+                context: None,
+            },
+            false,
+        );
+        state.apply(
+            AgentEvent::Failed {
+                conversation: "conv1".into(),
+                turn: 1,
+                message: "TypeError: fetch failed (ECONNREFUSED)".into(),
+            },
+            false,
+        );
+        assert_eq!(state.mark, Mark::Done);
+        match &state.turns[0].state {
+            TurnState::Failed(msg) => assert!(msg.contains("Could not reach the Model"), "{msg}"),
+            other => panic!("expected Failed, got {other:?}"),
+        }
+
+        // Lost conversation clears stale state and unlocks composer.
+        state.mark = Mark::Working;
+        state.apply(
+            AgentEvent::Error {
+                code: "no-conversation".into(),
+                message: "There is no conversation conv1.".into(),
+            },
+            true,
+        );
+        assert_eq!(state.conversation, None);
+        assert!(state.turns.is_empty());
+        assert_eq!(state.mark, Mark::Idle);
+        assert!(state.can_send());
     }
 
     #[test]

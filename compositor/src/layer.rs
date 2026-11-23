@@ -119,6 +119,7 @@ impl State {
             // output there is nowhere to show it. It is made and closed at
             // once.
             None if namespace == crate::agent::AGENT_NAMESPACE => self.output_for_agent_surface().unwrap_or(0),
+            None if namespace == crate::agent::MARK_NAMESPACE => self.output_for_mark_overlay().unwrap_or(0),
             None => self.outputs.first().map_or(0, |output| output.number),
         };
         let client = self.clients.get_mut(&client_id).expect("the client is dispatching");

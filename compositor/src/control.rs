@@ -190,19 +190,7 @@ impl State {
                     continue;
                 }
             }
-            if kind == ChannelKind::Agent {
-                // ADR 0035: a new Harness connection replaces the old one.
-                let previous: Vec<u64> = self
-                    .controls
-                    .connections
-                    .iter()
-                    .filter(|(_, connection)| connection.kind == ChannelKind::Agent)
-                    .map(|(id, _)| *id)
-                    .collect();
-                for old in previous {
-                    self.close_control(old);
-                }
-            } else {
+            if kind != ChannelKind::Agent {
                 let held = self
                     .controls
                     .connections
@@ -221,6 +209,20 @@ impl State {
             let id = self.controls.next;
             if self.event_loop.add(stream.as_fd(), Token::Control(id), false).is_err() {
                 continue;
+            }
+            if kind == ChannelKind::Agent {
+                // ADR 0035: a new Harness connection replaces the old one once
+                // the new stream is ready in the event loop.
+                let previous: Vec<u64> = self
+                    .controls
+                    .connections
+                    .iter()
+                    .filter(|(_, connection)| connection.kind == ChannelKind::Agent)
+                    .map(|(old_id, _)| *old_id)
+                    .collect();
+                for old in previous {
+                    self.close_control(old);
+                }
             }
             log::info!("{part} connected id={id}");
             self.controls.connections.insert(
@@ -683,14 +685,19 @@ impl State {
             .iter()
             .map(|window| {
                 let requests = self.xdg.get(&window.surface).map(|xdg| &xdg.toplevel);
+                let output = self
+                    .output_of_window(window.surface)
+                    .and_then(|number| self.outputs.iter().find(|output| output.number == number))
+                    .map_or("", |output| output.name.as_str());
                 format!(
-                    r#"{{"id":{},"app_id":{},"title":{},"workspace":{},"attention":{},"fullscreen":{}}}"#,
+                    r#"{{"id":{},"app_id":{},"title":{},"workspace":{},"attention":{},"fullscreen":{},"output":{}}}"#,
                     quote(&window_id(window.surface)),
                     quote(requests.map_or("", |requests| requests.app_id.as_str())),
                     quote(requests.map_or("", |requests| requests.title.as_str())),
                     window.workspace,
                     window.attention,
-                    window.mode == crate::modes::Mode::Fullscreen
+                    window.mode == crate::modes::Mode::Fullscreen,
+                    quote(output)
                 )
             })
             .collect();

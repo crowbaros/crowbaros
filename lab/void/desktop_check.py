@@ -25,21 +25,28 @@ void_base = guest.void_base
 
 
 class Check:
-    def __init__(self, vm):
+    def __init__(self, vm, secret=''):
         self.guest = vm
         self.work = vm.work
+        self.secret = secret
         self.results = []
         self.logfile = (self.work / 'desktop.log').open('w', buffering=1)
         self.qmp = None
 
+    def _scrub(self, text):
+        if self.secret and self.secret in text:
+            return text.replace(self.secret, '[REDACTED]')
+        return text
+
     def log(self, message):
-        line = f'[{time.strftime("%H:%M:%S", time.gmtime())}] {message}'
+        line = f'[{time.strftime("%H:%M:%S", time.gmtime())}] {self._scrub(str(message))}'
         print(line, flush=True)
         self.logfile.write(line + '\n')
 
     def record(self, name, condition, detail=''):
-        self.results.append({'name': name, 'passed': bool(condition), 'detail': detail})
-        self.log(f'{"PASS" if condition else "FAIL"}: {name}' + (f' — {detail}' if detail else ''))
+        clean_detail = self._scrub(str(detail)) if detail else ''
+        self.results.append({'name': name, 'passed': bool(condition), 'detail': clean_detail})
+        self.log(f'{"PASS" if condition else "FAIL"}: {name}' + (f' — {clean_detail}' if clean_detail else ''))
         return bool(condition)
 
     def check(self, name, condition, detail=''):
@@ -198,9 +205,9 @@ class Check:
         for name, command in commands.items():
             try:
                 r = self.guest.ssh(command, check=False, timeout=6)
-                (self.work / name).write_text(r.stdout + r.stderr)
+                (self.work / name).write_text(self._scrub(r.stdout + r.stderr))
             except (OSError, subprocess.TimeoutExpired) as error:
-                (self.work / name).write_text(str(error))
+                (self.work / name).write_text(self._scrub(str(error)))
         try:
             if self.qmp is None:
                 self.qmp = self.guest.qmp()
@@ -633,6 +640,18 @@ class Check:
         self.key('meta_l', 'spc')
         self.wait('drawer closes before sign-in', lambda: not self.agent_view()['drawer_up'])
 
+        # Mount a small RAM-only tmpfs on the Harness state directory before
+        # signing in so the host's real credential never touches the guest's
+        # raw disk image (even if the run fails and retains the disk).
+        self.run(
+            f'uid=$(id -u {shlex.quote(person)}) && gid=$(id -g {shlex.quote(person)}) && '
+            f'mkdir -p {shlex.quote(state_dir)} && '
+            f'mount -t tmpfs -o size=32M,mode=0700,uid=$uid,gid=$gid tmpfs {shlex.quote(state_dir)} && '
+            f'sv restart crowbar-agent'
+        )
+        self.wait('shell reconnects to Harness on RAM-backed state dir',
+                  lambda: (v := self.agent_view()) and v['state']['connected'] and v)
+
         try:
             signed = self.sign_in_harness(credential)
             self.check("the guest's Harness signs in to a real Model",
@@ -641,7 +660,7 @@ class Check:
             # Put a unique sentinel inside the focused Terminal window: window
             # contents must never be sent to the Model or saved by the Harness.
             self.wait('Terminal has focus before drawer conversation',
-                      lambda: self.snapshot()['active']['class'] == 'foot')
+                      lambda: ((self.snapshot().get('active') or {}).get('class')) == 'foot')
             sentinel = f'crowbarsecretwindow{os.urandom(6).hex()}'
             self.type(f'echo {sentinel}')
             self.key('ret')
@@ -655,12 +674,14 @@ class Check:
                                    and v['state']['model'] is not None and v)
             turns_before = len(ready_view['state']['turns'])
             working_marks = self.shell_log().count('SHELL agent-mark state=working')
-            self.type('what is the exact app_id of my active window? reply with just the app_id')
+            prompt_text = (
+                'what is the exact app_id of my active window and what display is it on? '
+                'answer in two short sentences.'
+            )
+            self.type(prompt_text)
+            # Send and put the drawer away back-to-back with no SSH poll in
+            # between so a fast Model cannot finish before the drawer closes.
             self.key('ret')
-            self.wait('drawer sends the message',
-                      lambda: len(self.agent_view()['state']['turns']) > turns_before)
-            # Put the drawer away immediately: putting it away stops nothing,
-            # and the turn finishes behind it with the mark showing done.
             self.key('meta_l', 'spc')
             self.wait('drawer put away while turn runs', lambda: not self.agent_view()['drawer_up'])
             finished = self.wait(
@@ -672,6 +693,7 @@ class Check:
                 timeout=90,
             )
             turn = finished['state']['turns'][-1]
+            conversation_id = finished['state'].get('conversation') or ''
             self.check("putting the drawer away stops nothing: the turn enters working, finishes behind it, "
                        "and the mark shows done in the bar",
                        self.shell_log().count('SHELL agent-mark state=working') > working_marks
@@ -682,12 +704,26 @@ class Check:
             self.capture('19-mark-done-in-bar')
 
             # Fullscreen Terminal covers the bar; the mark overlay appears over it.
+            overlay_logs = self.count('agent mark overlay shown output=Virtual-1')
             self.key('meta_l', 'f')
             overlay = self.wait('mark overlay shows over fullscreen window',
-                                lambda: (v := self.agent_view()) and v['mark_overlay'] and v)
-            self.check("the mark shows over a fullscreen window while the drawer is put away",
-                       overlay['mark_overlay'] and overlay['state']['mark'] == 'done')
+                                lambda: (v := self.agent_view()) and v['mark_overlay']
+                                and self.count('agent mark overlay shown output=Virtual-1') > overlay_logs and v)
+            time.sleep(0.5)
             self.capture('20-mark-done-over-fullscreen')
+            # Verify the overlay actually painted pixels in the top-right corner
+            # (112x28 at right margin 12, top margin 8 on 1280x960) distinct
+            # from the fullscreen Terminal background sampled at (640, 22).
+            w_px, h_px, rows = guest.png_pixels(self.work / '20-mark-done-over-fullscreen.png')
+            bg = tuple(rows[22][3 * 640:3 * 640 + 3])
+            overlay_drawn = any(
+                not like(tuple(rows[y][3 * x:3 * x + 3]), bg)
+                for y in range(10, 34, 4)
+                for x in range(w_px - 120, w_px - 14, 6)
+            )
+            self.check("the mark shows over a fullscreen window while the drawer is put away",
+                       overlay['mark_overlay'] and overlay['state']['mark'] == 'done' and overlay_drawn,
+                       f"output={overlay.get('mark_overlay_output')!r} overlay_drawn={overlay_drawn}")
 
             # Summoning the drawer clears the done mark and shows the real Model's
             # answer along with the desktop context the message carried.
@@ -712,10 +748,13 @@ class Check:
                       lambda: not any(c.get('fullscreen') for c in self.snapshot()['clients']))
 
             # Inspect the conversation the Harness kept in harness.sqlite:
-            # desktop context was sent, window contents (sentinel) were not,
-            # and the credential never appears in the database or logs.
+            # desktop context was sent on this exact turn, window contents
+            # (sentinel) were not, and the credential never appears in the
+            # database or logs.
             audit_payload = json.dumps({
                 'db': f'{state_dir}/harness.sqlite',
+                'conversation': conversation_id,
+                'prompt': prompt_text,
                 'sentinel': sentinel,
                 'secret': secret,
                 'logs': [
@@ -731,18 +770,22 @@ class Check:
             )
             audit = json.loads(audit_res.stdout)
             self.check("the Harness kept desktop context in the sent message and no window contents",
-                       audit['has_desktop_context'] and audit['has_active_foot']
-                       and audit['has_display'] and not audit['has_sentinel'],
+                       audit['has_conversation']
+                       and audit['has_desktop_context']
+                       and audit['has_active_foot']
+                       and audit['has_display']
+                       and not audit['has_sentinel'],
                        json.dumps(audit))
             self.check("the credential never appears in the Harness database or guest logs",
                        not audit['has_secret_in_db'] and not audit['has_secret_in_logs'])
         finally:
-            # Remove the temporary credential from the guest so even a retained
-            # disk on failure holds no host credential.
-            self.guest.ssh(
+            # Remove the temporary credential from guest RAM before diagnostics run.
+            rm_res = self.guest.ssh(
                 f'rm -f {shlex.quote(state_dir + "/credentials.json")} {shlex.quote(state_dir + "/settings.json")}',
                 check=False, timeout=10,
             )
+            if rm_res.returncode != 0:
+                self.log(f'warning: cleanup rm returned {rm_res.returncode}')
 
     def compositor_restart(self):
         """The compositor's service restarts while the person uses the desktop.
@@ -1309,10 +1352,11 @@ while True:
         raise RuntimeError(msg.get("message", "sign-in failed"))
 """
 
-# Audits harness.sqlite and guest logs for desktop context presence, absence of
-# window contents (sentinel), and absence of the API key (secret).
-HARNESS_AUDIT_SCRIPT = """
-import json, pathlib, sqlite3, sys
+# Audits harness.sqlite and guest logs for desktop context presence on the
+# tested drawer turn, absence of window contents (sentinel), and absence of
+# the API key (secret).
+HARNESS_AUDIT_SCRIPT = r"""
+import json, pathlib, re, sqlite3, sys
 
 spec = json.load(sys.stdin)
 conn = sqlite3.connect(spec["db"])
@@ -1325,7 +1369,40 @@ for (table,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"
             elif isinstance(cell, (bytes, bytearray)):
                 blobs.append(cell.decode("utf-8", errors="ignore"))
 conn.close()
+
+def extract_strings(value, out):
+    if isinstance(value, str):
+        out.append(value)
+        stripped = value.lstrip()
+        if stripped.startswith(("{", "[")):
+            try:
+                extract_strings(json.loads(value), out)
+            except ValueError:
+                pass
+    elif isinstance(value, dict):
+        for v in value.values():
+            extract_strings(v, out)
+    elif isinstance(value, list):
+        for v in value:
+            extract_strings(v, out)
+
+decoded_strings = []
+for blob in blobs:
+    extract_strings(blob, decoded_strings)
+
+prompt = spec["prompt"]
+matching_prompts = [s for s in decoded_strings if prompt in s and "[Desktop context]" in s]
+active_re = re.compile(r"^Active window: .*\(app_id: foot\)$", re.MULTILINE)
+display_re = re.compile(r"^Displays:\n(?:- .*\n)*- Virtual-1:", re.MULTILINE)
+
+has_desktop_context = bool(matching_prompts)
+has_active_foot = any(active_re.search(s) for s in matching_prompts)
+has_display = any(display_re.search(s) for s in matching_prompts)
+
 joined = "\n".join(blobs)
+conv = spec.get("conversation") or ""
+has_conversation = bool(conv) and conv in joined
+
 log_texts = []
 for path in spec["logs"]:
     p = pathlib.Path(path)
@@ -1333,15 +1410,15 @@ for path in spec["logs"]:
         log_texts.append(p.read_text(errors="ignore"))
 joined_logs = "\n".join(log_texts)
 print(json.dumps({
-    "has_desktop_context": "[Desktop context]" in joined,
-    "has_active_foot": "foot" in joined,
-    "has_display": "Virtual-1" in joined,
+    "has_conversation": has_conversation,
+    "has_desktop_context": has_desktop_context,
+    "has_active_foot": has_active_foot,
+    "has_display": has_display,
     "has_sentinel": spec["sentinel"] in joined,
     "has_secret_in_db": spec["secret"] in joined,
     "has_secret_in_logs": spec["secret"] in joined_logs,
 }))
 """
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
@@ -1353,7 +1430,7 @@ def main():
     # What building and booting the image need, before the build spends its time.
     void_base.preflight(vm=True, build=True)
     vm = guest.Guest.create(guest.ROOT / '.lab/void-desktop-checks', 'crowbaros-desktop-check')
-    check = Check(vm)
+    check = Check(vm, secret=credential['api_key'])
     check.log(f'Evidence and new guest disk: {vm.work}')
     try:
         build_log = vm.work / 'build.log'
@@ -1379,12 +1456,13 @@ def main():
             vm.stop()
         if check.qmp is not None:
             check.qmp.close()
+        results = 'results.json' if args.build else 'results-not-evidence.json'
+        (vm.work / results).write_text(json.dumps(check.results, indent=2) + '\n')
         leaked = evidence_has_secret(vm.work, credential['api_key'])
         if leaked:
             check.record('no credential reaches host evidence or logs', False, 'leaked in: ' + ', '.join(leaked))
+            (vm.work / results).write_text(json.dumps(check.results, indent=2) + '\n')
         failed = sum(not row['passed'] for row in check.results)
-        results = 'results.json' if args.build else 'results-not-evidence.json'
-        (vm.work / results).write_text(json.dumps(check.results, indent=2) + '\n')
         if not args.build:
             check.log(guest.NOT_EVIDENCE)
         if not failed and not vm.discard_disk():

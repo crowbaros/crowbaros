@@ -106,9 +106,20 @@ function formatScale(scale120: number): string {
 	return `${Number(factor.toFixed(2))}x`;
 }
 
+const MAX_LABEL_CHARS = 200;
+
+/** Collapses control characters and caps length on app-supplied window metadata. */
+function sanitizeLabel(value: string): string {
+	const clean = value.replace(/[\x00-\x1f\x7f]+/g, " ").trim();
+	if (clean.length <= MAX_LABEL_CHARS) return clean;
+	return `${Array.from(clean).slice(0, MAX_LABEL_CHARS - 1).join("")}…`;
+}
+
 function formatWindow(window: DesktopWindow): string {
-	const title = window.title.trim() === "" ? "(untitled)" : window.title;
-	return `${title} (app_id: ${window.app_id})`;
+	const cleanTitle = sanitizeLabel(window.title);
+	const title = cleanTitle === "" ? "(untitled)" : cleanTitle;
+	const appId = sanitizeLabel(window.app_id);
+	return `${title} (app_id: ${appId})`;
 }
 
 /**
@@ -297,6 +308,8 @@ export class FulcrumClient {
 					const idx = this.#pending.indexOf(entry);
 					if (idx !== -1) this.#pending.splice(idx, 1);
 					resolve(undefined);
+					// Drop the connection so a late reply cannot shift into a later request.
+					if (this.#socket === socket) socket.destroy();
 				}, timeoutMs),
 			};
 			entry.timer.unref();

@@ -4,11 +4,11 @@
 
 use std::{io::Write, time::Duration};
 
-use crowbar_compositor::agent::AGENT_NAMESPACE;
+use crowbar_compositor::agent::{AGENT_NAMESPACE, MARK_NAMESPACE};
 use crowbar_probe::{KeyEvent, LayerRequest};
 use fulcrum_wire::protocol::wlr_layer_shell_unstable_v1::zwlr_layer_surface_v1::{
     anchor::{BOTTOM, RIGHT, TOP},
-    keyboard_interactivity::ON_DEMAND,
+    keyboard_interactivity::{NONE as NO_KEYBOARD, ON_DEMAND},
 };
 
 use crate::common::{
@@ -195,7 +195,7 @@ fn the_harness_socket_refuses_unknown_or_shell_only_requests_without_closing() {
 }
 
 #[test]
-fn the_shell_snapshot_reports_when_a_window_is_fullscreen() {
+fn the_shell_snapshot_reports_when_a_window_is_fullscreen_and_its_output() {
     const KEY_LEFTMETA: u32 = 125;
     const KEY_F: u32 = 33;
 
@@ -205,6 +205,7 @@ fn the_shell_snapshot_reports_when_a_window_is_fullscreen() {
 
     let before = shell.ask(r#"{"op":"snapshot"}"#);
     assert!(before.contains(r#""fullscreen":false"#), "{before}");
+    assert!(before.contains(r#""output":"TEST-1""#), "{before}");
 
     // Super+F makes the active window fullscreen and pushes a snapshot event.
     compositor.key(KEY_LEFTMETA, true);
@@ -223,4 +224,61 @@ fn the_shell_snapshot_reports_when_a_window_is_fullscreen() {
 
     let restored = shell.ask(r#"{"op":"snapshot"}"#);
     assert!(restored.contains(r#""fullscreen":false"#), "{restored}");
+}
+
+#[test]
+fn the_mark_overlay_lands_on_the_fullscreen_windows_display() {
+    const KEY_LEFTMETA: u32 = 125;
+    const KEY_F: u32 = 33;
+
+    let compositor = Compositor::start_with(own_uid(), own_uid(), |state| {
+        state.add_output("DP-1", (1280, 800), 60_000);
+        state.add_output("HDMI-A-1", (1024, 768), 60_000);
+        state.set_backend(crowbar_compositor::backend::headless::Headless::default());
+    });
+    let mut shell_control = Control::connect(&compositor);
+    // Put the pointer on HDMI-A-1 (to the right of DP-1 at x=1280) so the new
+    // window opens and goes fullscreen on the second display.
+    compositor.pointer(1280 + 300, 200);
+    let _win = open_window(&compositor, "foot", "second-display");
+    compositor.key(KEY_LEFTMETA, true);
+    compositor.key(KEY_F, true);
+    compositor.key(KEY_F, false);
+    compositor.key(KEY_LEFTMETA, false);
+
+    let snap = shell_control.ask(r#"{"op":"snapshot"}"#);
+    assert!(
+        snap.contains(r#""fullscreen":true,"output":"HDMI-A-1""#),
+        "expected fullscreen window on HDMI-A-1: {snap}"
+    );
+
+    // Opening the mark overlay with no explicit output puts it on HDMI-A-1.
+    let mut shell = compositor.shell();
+    let _mark = shell
+        .open_layer(
+            LayerRequest {
+                layer: OVERLAY,
+                namespace: MARK_NAMESPACE,
+                size: (112, 28),
+                anchor: TOP | RIGHT,
+                exclusive_zone: -1,
+                keyboard: NO_KEYBOARD,
+            },
+            0xff20_c080,
+        )
+        .unwrap();
+    shell.roundtrip().unwrap();
+
+    // The top-right corner of HDMI-A-1 (pixel (1024 - 20, 10) on output 1)
+    // should show the mark overlay's green color, while DP-1's top-right does not.
+    assert_eq!(
+        compositor.screen(1).pixel(1024 - 20, 10),
+        Some(0xff20_c080),
+        "mark overlay did not render on HDMI-A-1"
+    );
+    assert_ne!(
+        compositor.screen(0).pixel(1280 - 20, 10),
+        Some(0xff20_c080),
+        "mark overlay leaked onto DP-1"
+    );
 }

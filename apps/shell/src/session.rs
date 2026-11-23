@@ -33,6 +33,8 @@ pub struct Client {
     pub attention: bool,
     /// Whether the window is fullscreen (covering the bar).
     pub fullscreen: bool,
+    /// The display this window is on, as Fulcrum names it.
+    pub output: String,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Snapshot {
@@ -191,6 +193,8 @@ fn snapshot_from(message: serde_json::Value) -> Result<Snapshot> {
         attention: bool,
         #[serde(default)]
         fullscreen: bool,
+        #[serde(default)]
+        output: String,
     }
     #[derive(Deserialize)]
     struct Reply {
@@ -211,6 +215,7 @@ fn snapshot_from(message: serde_json::Value) -> Result<Snapshot> {
             workspace: Workspace { id: w.workspace },
             attention: w.attention,
             fullscreen: w.fullscreen,
+            output: w.output,
         })
         .collect();
     let active = clients
@@ -973,14 +978,17 @@ pub fn server(
             if let Ok(n) = s.read(&mut bytes) {
                 let event = match &bytes[..n] {
                     b"snapshot" => {
+                        let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
                         if let Ok(snapshot) = snapshot() {
                             let _ = serde_json::to_writer(&mut s, &snapshot);
                         }
                         continue;
                     }
                     b"agent" => {
-                        if let Ok(view) = agent_view.lock() {
-                            let _ = serde_json::to_writer(&mut s, &*view);
+                        let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
+                        let view = agent_view.lock().ok().map(|guard| guard.clone());
+                        if let Some(view) = view {
+                            let _ = serde_json::to_writer(&mut s, &view);
                         }
                         continue;
                     }
@@ -1440,6 +1448,7 @@ mod tests {
             workspace: Workspace { id: 2 },
             attention: false,
             fullscreen: false,
+            output: String::new(),
         };
         assert_eq!(
             snapshot,
@@ -1453,6 +1462,7 @@ mod tests {
                         workspace: Workspace { id: 1 },
                         attention: false,
                         fullscreen: false,
+                        output: String::new(),
                     },
                     studio.clone(),
                 ],
@@ -1636,6 +1646,7 @@ mod tests {
             workspace: Workspace { id: 1 },
             attention: false,
             fullscreen: false,
+            output: String::new(),
         };
         assert_eq!(
             snapshot,
@@ -1681,6 +1692,7 @@ mod tests {
                     workspace: Workspace { id: 1 },
                     attention: false,
                     fullscreen: false,
+                    output: String::new(),
                 },
                 Client {
                     address: "0x2".into(),
@@ -1689,6 +1701,7 @@ mod tests {
                     workspace: Workspace { id: 0 },
                     attention: false,
                     fullscreen: false,
+                    output: String::new(),
                 },
             ]
         );

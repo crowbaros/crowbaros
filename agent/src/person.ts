@@ -139,7 +139,11 @@ export function clientChannel(options: ClientChannelOptions): Channel {
 			}
 		};
 
+		const SIGN_IN_OPS = new Set(["models", "model", "login", "answer", "cancel", "logout"]);
 		const answer = async (request: Request): Promise<object> => {
+			if (!allowSignIn && typeof request.op === "string" && SIGN_IN_OPS.has(request.op)) {
+				throw new Declined("request", `The Harness has no request "${request.op}".`);
+			}
 			switch (request.op) {
 				case "start": {
 					const conversation = await store.start();
@@ -193,13 +197,11 @@ export function clientChannel(options: ClientChannelOptions): Channel {
 					return { reply: "status", model: named(inUse), signed_in };
 				}
 				case "models": {
-					if (!allowSignIn) throw new Declined("request", `The Harness has no request "${request.op}".`);
 					const inUse = await access.inUse();
 					const same = (model: InUse) => !("missing" in inUse) && inUse.provider === model.provider && inUse.model === model.model;
 					return { reply: "models", models: (await access.available()).map((model) => ({ ...named(model), in_use: same(model) })) };
 				}
 				case "model": {
-					if (!allowSignIn) throw new Declined("request", `The Harness has no request "${request.op}".`);
 					const chosen = await access.choose(text(request, "provider"), text(request, "model"));
 					say("sign-in", `the Model chosen is one of ${chosen.provider}'s`);
 					// An endpoint file goes on being the Model in use, whatever is chosen.
@@ -207,7 +209,6 @@ export function clientChannel(options: ClientChannelOptions): Channel {
 					return { reply: "model", ...named(chosen), in_use: !("missing" in inUse) && inUse.provider === chosen.provider && inUse.model === chosen.model };
 				}
 				case "login": {
-					if (!allowSignIn) throw new Declined("request", `The Harness has no request "${request.op}".`);
 					const provider = optional(request, "provider");
 					if (signingIn) throw new Declined("signing-in", "A sign-in is already under way.");
 					// It left while a request before this one was answered. A sign-in begun now would
@@ -219,7 +220,6 @@ export function clientChannel(options: ClientChannelOptions): Channel {
 					return { reply: "ok" };
 				}
 				case "answer": {
-					if (!allowSignIn) throw new Declined("request", `The Harness has no request "${request.op}".`);
 					const waiting = signIn?.waiting.get(request.question as number);
 					if (waiting === undefined || typeof request.text !== "string") throw new Declined("request", "No such question waits for an answer.");
 					signIn?.waiting.delete(request.question as number);
@@ -227,11 +227,9 @@ export function clientChannel(options: ClientChannelOptions): Channel {
 					return { reply: "ok" };
 				}
 				case "cancel":
-					if (!allowSignIn) throw new Declined("request", `The Harness has no request "${request.op}".`);
 					signIn?.cancel.abort();
 					return { reply: "ok" };
 				case "logout": {
-					if (!allowSignIn) throw new Declined("request", `The Harness has no request "${request.op}".`);
 					const { provider, name } = await access.signOut(optional(request, "provider"));
 					say("sign-in", `signed out of ${provider}`);
 					return { reply: "signed-out", provider, provider_name: name };

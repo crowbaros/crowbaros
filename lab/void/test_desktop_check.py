@@ -402,5 +402,99 @@ class RealModelCredentialAndTyping(unittest.TestCase):
         (work / 'harness.log').write_text('oops secret-xyz leaked\n')
         self.assertEqual(desktop_check.evidence_has_secret(work, 'secret-xyz'), ['harness.log'])
 
+    def test_embedded_guest_scripts_compile_cleanly(self):
+        compile(desktop_check.HARNESS_LOGIN_SCRIPT, '<HARNESS_LOGIN_SCRIPT>', 'exec')
+        compile(desktop_check.HARNESS_AUDIT_SCRIPT, '<HARNESS_AUDIT_SCRIPT>', 'exec')
+
+    def test_harness_audit_script_verifies_exact_turn_context_and_rejects_decoy(self):
+        import sqlite3, sys
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        work = Path(temporary.name)
+        db = work / 'harness.sqlite'
+        log = work / 'harness.log'
+        log.write_text('started\n')
+
+        prompt = 'what is the exact app_id of my active window?'
+        decoy_payload = json.dumps({
+            'conversation': 'decoy111',
+            'content': '[Desktop context]\nActive window: ~ (app_id: foot)\nDisplays:\n- Virtual-1: 1280x960 at (0, 0), scale 1x\n\nhello from stub',
+        })
+        target_missing_ctx = json.dumps({
+            'conversation': 'real2222',
+            'content': prompt,
+            'answer': 'Your window is foot.',
+        })
+        conn = sqlite3.connect(db)
+        conn.execute('CREATE TABLE entries (id INTEGER PRIMARY KEY, body TEXT)')
+        conn.execute('INSERT INTO entries (body) VALUES (?)', (decoy_payload,))
+        conn.execute('INSERT INTO entries (body) VALUES (?)', (target_missing_ctx,))
+        conn.commit()
+        conn.close()
+
+        # Even though the decoy has [Desktop context] + foot + Virtual-1 and
+        # the target's answer mentions "foot", the audit must fail because the
+        # target prompt itself carried no desktop context.
+        spec = {
+            'db': str(db),
+            'conversation': 'real2222',
+            'prompt': prompt,
+            'sentinel': 'crowbarsecretwindowabcdef',
+            'secret': 'sk-test-secret-123',
+            'logs': [str(log)],
+        }
+        res = subprocess.run(
+            [sys.executable, '-c', desktop_check.HARNESS_AUDIT_SCRIPT],
+            input=json.dumps(spec), text=True, capture_output=True, check=True,
+        )
+        audit = json.loads(res.stdout)
+        self.assertTrue(audit['has_conversation'])
+        self.assertFalse(audit['has_desktop_context'])
+        self.assertFalse(audit['has_active_foot'])
+        self.assertFalse(audit['has_display'])
+
+        # Now store the real message carrying formatted desktop context.
+        target_with_ctx = json.dumps({
+            'conversation': 'real2222',
+            'content': (
+                '[Desktop context]\nWorkspace: 1\nActive window: ~ (app_id: foot)\n'
+                'Windows by workspace:\n- Workspace 1: ~ (app_id: foot) [active]\n'
+                'Displays:\n- Virtual-1: 1280x960 at (0, 0), scale 1x\n\n' + prompt
+            ),
+        })
+        conn = sqlite3.connect(db)
+        conn.execute('INSERT INTO entries (body) VALUES (?)', (target_with_ctx,))
+        conn.commit()
+        conn.close()
+
+        res2 = subprocess.run(
+            [sys.executable, '-c', desktop_check.HARNESS_AUDIT_SCRIPT],
+            input=json.dumps(spec), text=True, capture_output=True, check=True,
+        )
+        audit2 = json.loads(res2.stdout)
+        self.assertTrue(audit2['has_conversation'])
+        self.assertTrue(audit2['has_desktop_context'])
+        self.assertTrue(audit2['has_active_foot'])
+        self.assertTrue(audit2['has_display'])
+        self.assertFalse(audit2['has_sentinel'])
+        self.assertFalse(audit2['has_secret_in_db'])
+        self.assertFalse(audit2['has_secret_in_logs'])
+
+    def test_check_scrubs_secret_from_logs_results_and_diagnostics(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        secret = 'sk-never-write-this'
+        vm = FakeGuest(temporary.name, lambda user, cmd: (0, f'diag saw {secret}\n', ''))
+        check = desktop_check.Check(vm, secret=secret)
+        check.qmp = type('Q', (), {'screendump': lambda *a, **kw: None})()
+        self.addCleanup(check.logfile.close)
+        check.log(f'echo {secret}')
+        check.record('checked', True, f'detail {secret}')
+        check.diagnostics()
+        self.assertEqual(desktop_check.evidence_has_secret(vm.work, secret), [])
+        self.assertNotIn(secret, (vm.work / 'desktop.log').read_text())
+        self.assertNotIn(secret, (vm.work / 'harness.log').read_text())
+        self.assertEqual(check.results[0]['detail'], 'detail [REDACTED]')
+
 if __name__ == '__main__':
     unittest.main()

@@ -147,7 +147,7 @@ struct Model {
     /// The Agent's surface, while it is up.
     agent: Option<WindowHandle<AgentSurface>>,
     /// The floating Agent mark shown over a fullscreen window.
-    mark_overlay: Option<WindowHandle<MarkOverlay>>,
+    mark_overlay: Option<(WindowHandle<MarkOverlay>, String)>,
     agent_state: agent::AgentState,
     agent_tx: Option<agent::CommandSender>,
     agent_view: Arc<Mutex<agent::AgentViewSnapshot>>,
@@ -1106,49 +1106,61 @@ fn sync_agent_view(model: &Entity<Model>, cx: &App) {
     if let Ok(mut view) = m.agent_view.lock() {
         view.drawer_up = m.agent.is_some();
         view.mark_overlay = m.mark_overlay.is_some();
+        view.mark_overlay_output = m.mark_overlay.as_ref().map(|(_, out)| out.clone());
         view.state = m.agent_state.clone();
     }
 }
-/// Opens or removes the floating fullscreen mark overlay to match whether a
-/// fullscreen window is covering the bar while the mark is active.
-fn sync_mark_overlay(model: &Entity<Model>, cx: &mut App) {
-    let (want, existing, mark) = {
+/// Opens, moves, or removes the floating fullscreen mark overlay to match
+/// whether a fullscreen window is covering the bar while the mark is active.
+/// Returns `true` when the overlay was opened, moved, or closed.
+fn sync_mark_overlay(model: &Entity<Model>, cx: &mut App) -> bool {
+    let (want_output, existing_output, mark) = {
         let m = model.read(cx);
-        let want = agent::should_show_mark_overlay(
+        let want = agent::fullscreen_mark_overlay_output(
             m.agent_state.mark,
             &m.snapshot,
             m.agent.is_some(),
         );
-        (want, m.mark_overlay, m.agent_state.mark)
+        let existing = m.mark_overlay.as_ref().map(|(_, out)| out.clone());
+        (want, existing, m.agent_state.mark)
     };
-    if want && existing.is_none() {
-        let overlay_model = model.clone();
-        match cx.open_window(
-            layer_with_margin(
-                "mark",
-                Layer::Overlay,
-                Anchor::TOP | Anchor::RIGHT,
-                112.,
-                28.,
-                Some(-1.),
-                Some((px(8.), px(12.), px(0.), px(0.))),
-                KeyboardInteractivity::None,
-            ),
-            move |_, cx| cx.new(|_| MarkOverlay { model: overlay_model }),
-        ) {
-            Ok(w) => {
-                model.update(cx, |m, _| m.mark_overlay = Some(w));
-                log::info!("SHELL agent-mark overlay=true state={}", mark.label());
-            }
-            Err(e) => log::error!("Opening the Agent mark overlay: {e}"),
-        }
-    } else if !want {
-        if let Some(w) = model.update(cx, |m, _| m.mark_overlay.take()) {
+    let mut overlay_changed = false;
+    if want_output != existing_output {
+        if let Some((w, _)) = model.update(cx, |m, _| m.mark_overlay.take()) {
             log::info!("SHELL agent-mark overlay=false state={}", mark.label());
             let _ = w.update(cx, |_, w, _| w.remove_window());
+            overlay_changed = true;
+        }
+        if let Some(target_output) = want_output {
+            let overlay_model = model.clone();
+            match cx.open_window(
+                layer_with_margin(
+                    "mark",
+                    Layer::Overlay,
+                    Anchor::TOP | Anchor::RIGHT,
+                    112.,
+                    28.,
+                    Some(-1.),
+                    Some((px(8.), px(12.), px(0.), px(0.))),
+                    KeyboardInteractivity::None,
+                ),
+                move |_, cx| cx.new(|_| MarkOverlay { model: overlay_model }),
+            ) {
+                Ok(w) => {
+                    log::info!(
+                        "SHELL agent-mark overlay=true output={} state={}",
+                        target_output,
+                        mark.label()
+                    );
+                    model.update(cx, |m, _| m.mark_overlay = Some((w, target_output)));
+                    overlay_changed = true;
+                }
+                Err(e) => log::error!("Opening the Agent mark overlay: {e}"),
+            }
         }
     }
     sync_agent_view(model, cx);
+    overlay_changed
 }
 /// The Agent's surface (ADR 0035): a drawer on the right of the display the
 /// pointer was on at the summon, the display's full height, above every
@@ -1189,21 +1201,20 @@ impl AgentSurface {
         if trimmed.is_empty() {
             return;
         }
-        let (tx, conversation, can_send) = {
-            let m = self.model.read(cx);
-            (
-                m.agent_tx.clone(),
-                m.agent_state.conversation.clone(),
-                m.agent_state.connected && !m.agent_state.working(),
-            )
-        };
-        if !can_send {
-            return;
-        }
+        let (tx, conversation) = self.model.update(cx, |m, _| {
+            if !m.agent_state.can_send() {
+                return (None, None);
+            }
+            if let Some(tx) = m.agent_tx.clone() {
+                m.agent_state.sending = true;
+                m.agent_state.error = None;
+                (Some(tx), m.agent_state.conversation.clone())
+            } else {
+                (None, None)
+            }
+        });
         if let Some(tx) = tx {
             tx.send_message(conversation, trimmed.to_string());
-            self.input.update(cx, |input, cx| input.clear(cx));
-            self.scroll.scroll_to_bottom();
             cx.notify();
         }
     }
@@ -1231,7 +1242,7 @@ impl Render for AgentSurface {
         let state = m.agent_state.clone();
         let working = state.working();
         let draft = self.input.read(cx).query();
-        let can_send = state.connected && !working && !draft.trim().is_empty();
+        let can_send = state.can_send() && !draft.trim().is_empty();
         self.input.update(cx, |input, _| input.palette = p);
 
         let header_sub = if let Some(model) = &state.model {
@@ -1316,6 +1327,17 @@ impl Render for AgentSurface {
                         );
                     }
                     turn_col = turn_col.child(ctx_box);
+                } else {
+                    turn_col = turn_col.child(
+                        div()
+                            .pl(px(10.))
+                            .py(px(2.))
+                            .border_l_2()
+                            .border_color(rgb(p.line))
+                            .text_size(px(10.5))
+                            .text_color(rgb(p.muted))
+                            .child("No desktop context available"),
+                    );
                 }
                 // Agent's answer and turn status.
                 let state_label = match &turn.state {
@@ -1408,8 +1430,8 @@ impl Render for AgentSurface {
                             .line_height(px(18.))
                             .text_color(rgb(p.muted))
                             .child(
-                                "The Harness is not connected right now. The drawer will \
-                                 reconnect automatically once it is running.",
+                                "The Agent isn't running right now. The drawer will \
+                                 reconnect automatically once it is.",
                             ),
                     ),
             );
@@ -1543,7 +1565,7 @@ impl Render for AgentSurface {
                     if state.turns.is_empty() {
                         None
                     } else if !state.configured || !state.connected {
-                        Some("Agent is not reachable right now. Reconnecting once the Harness is running.".into())
+                        Some("The Agent isn't running right now. Reconnecting automatically.".into())
                     } else if state.model.is_none() {
                         Some(state.missing_model.clone().unwrap_or_else(|| {
                             "No Model is signed in. Run `crowbar-agent login` in a terminal.".into()
@@ -2317,25 +2339,56 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 sync_mark_overlay(model, cx);
             }
             session::Event::Agent(agent_event) => {
+                let is_sent = matches!(agent_event, agent::AgentEvent::Sent { .. });
+                let is_message = matches!(agent_event, agent::AgentEvent::Message { .. });
+                let is_no_model = matches!(
+                    &agent_event,
+                    agent::AgentEvent::Error { code, .. } if code == "no-model"
+                );
                 let prev_mark = model.read(cx).agent_state.mark;
-                let changed = model.update(cx, |m, _| {
+                let (changed, needs_status_refresh) = model.update(cx, |m, _| {
                     let up = m.agent.is_some();
-                    m.agent_state.apply(agent_event, up)
+                    let changed = m.agent_state.apply(agent_event, up);
+                    let need_status = (is_sent && m.agent_state.model.is_none()) || is_no_model;
+                    (changed, need_status)
                 });
+                if needs_status_refresh {
+                    if let Some(tx) = model.read(cx).agent_tx.clone() {
+                        tx.refresh_status();
+                    }
+                }
                 let next_mark = model.read(cx).agent_state.mark;
-                if next_mark != prev_mark {
+                let mark_changed = next_mark != prev_mark;
+                if mark_changed {
                     log::info!(
                         "SHELL agent-mark state={} prev={}",
                         next_mark.label(),
                         prev_mark.label()
                     );
                 }
-                sync_mark_overlay(model, cx);
-                if changed {
+                let overlay_changed = sync_mark_overlay(model, cx);
+                if is_sent {
                     if let Some(w) = model.read(cx).agent {
-                        let _ = w.update(cx, |view, _, _| view.scroll.scroll_to_bottom());
+                        let _ = w.update(cx, |view, _, cx| {
+                            view.input.update(cx, |input, cx| input.clear(cx));
+                            view.scroll.scroll_to_bottom();
+                            cx.notify();
+                        });
                     }
+                } else if is_message {
+                    if let Some(w) = model.read(cx).agent {
+                        let _ = w.update(cx, |view, _, cx| {
+                            view.scroll.scroll_to_bottom();
+                            cx.notify();
+                        });
+                    }
+                }
+                if mark_changed || overlay_changed {
                     refresh = true;
+                } else if changed {
+                    if let Some(w) = model.read(cx).agent {
+                        let _ = w.update(cx, |_, _, cx| cx.notify());
+                    }
                 }
             }
             session::Event::Unlock(result) => {
@@ -2423,6 +2476,7 @@ fn main() -> anyhow::Result<()> {
     let agent_view = Arc::new(Mutex::new(agent::AgentViewSnapshot {
         drawer_up: false,
         mark_overlay: false,
+        mark_overlay_output: None,
         state: agent::AgentState::new(agent_configured),
     }));
     let _lock = session::server(tx.clone(), agent_view.clone())?;
@@ -2811,6 +2865,7 @@ mod lock_tests {
             workspace: session::Workspace { id: ws },
             attention,
             fullscreen: false,
+            output: String::new(),
         };
         assert!(occupied_workspaces(&[]).is_empty());
         assert_eq!(bar_workspaces(1, &[]), vec![1, 2, 3, 4]);
@@ -2852,6 +2907,7 @@ mod lock_tests {
             workspace: session::Workspace { id: 1 },
             attention: false,
             fullscreen: false,
+            output: String::new(),
         };
         let settings_client = session::Client {
             address: "0x2".into(),
@@ -2860,6 +2916,7 @@ mod lock_tests {
             workspace: session::Workspace { id: 1 },
             attention: false,
             fullscreen: false,
+            output: String::new(),
         };
 
         let empty = session::Snapshot::default();
