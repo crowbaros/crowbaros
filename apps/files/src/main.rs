@@ -173,6 +173,8 @@ struct FilesApp {
     cached_preview_path: Option<PathBuf>,
     /// The images decoded for the last frame, so those that leave the screen are released.
     images_on_screen: HashSet<PathBuf>,
+    /// The Grid thumbnails chosen for this frame, within the budget.
+    grid_thumbnails: HashSet<PathBuf>,
     /// Image sizes read from file headers, by path, with the size and time they were read at.
     image_sizes: RefCell<fs_model::ImageSizes>,
     /// Images whose file changed since GPUI decoded them, to be decoded again.
@@ -240,6 +242,7 @@ impl FilesApp {
             error: None,
             cached_preview_path: None,
             images_on_screen: HashSet::new(),
+            grid_thumbnails: HashSet::new(),
             image_sizes: RefCell::new(fs_model::ImageSizes::default()),
             stale_images: RefCell::new(HashSet::new()),
             prompt_pane: 0,
@@ -313,7 +316,8 @@ impl FilesApp {
 
     /// The images this frame shows: Grid thumbnails within their budget, and the selected image in
     /// the inspector or quick preview.
-    fn images_to_show(&self) -> HashSet<PathBuf> {
+    /// Also returns, apart, the Grid thumbnails alone: Grid draws those, not every image shown.
+    fn images_to_show(&self) -> (HashSet<PathBuf>, HashSet<PathBuf>) {
         let mut shown = HashSet::new();
         if self.saved.view_mode == ViewMode::Grid {
             for pane in &self.panes {
@@ -329,6 +333,7 @@ impl FilesApp {
                 );
             }
         }
+        let grid = shown.clone();
         if self.saved.show_inspector
             && let Some(entry) = self.pane().selected_entry()
             && self.can_preview_image(entry)
@@ -340,7 +345,7 @@ impl FilesApp {
         {
             shown.insert(entry.path.clone());
         }
-        shown
+        (shown, grid)
     }
 
     /// An image's size, read once from the start of its file when it is first shown, and again only
@@ -378,7 +383,8 @@ impl FilesApp {
     /// GPUI keeps every decoded image until it is told to let go. Files lets go of each one when it
     /// leaves the screen, so memory follows what is shown, not every image ever opened.
     fn release_images_off_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let shown = self.images_to_show();
+        let (shown, grid) = self.images_to_show();
+        self.grid_thumbnails = grid;
         let stale = std::mem::take(&mut *self.stale_images.borrow_mut());
         for path in fs_model::images_to_release(&self.images_on_screen, &shown, &stale) {
             let resource = Resource::Path(Arc::from(path.as_path()));
@@ -1737,7 +1743,7 @@ impl FilesApp {
         }
 
         // Chosen once a frame, before render, by `images_to_show`.
-        let thumbnails = &self.images_on_screen;
+        let thumbnails = &self.grid_thumbnails;
         let mut grid = div()
             .id(("pane-grid", pane_idx))
             .flex_1()
