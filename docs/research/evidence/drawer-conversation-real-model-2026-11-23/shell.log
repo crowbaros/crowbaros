@@ -1,0 +1,28 @@
+[2026-11-23T18:04:24Z INFO  crowbaros_shell::agent] SHELL agent-socket connected=true
+[2026-11-23T18:05:34Z INFO  crowbaros_shell] SHELL agent-surface up=true output=HDMI-A-2 width=853
+[2026-11-23T18:08:27Z INFO  crowbaros_shell] SHELL agent-surface keyboard=true
+[2026-11-23T18:09:42Z INFO  crowbaros_shell] SHELL agent-mark state=working prev=idle
+[2026-11-23T18:09:45Z INFO  crowbaros_shell] SHELL agent-mark state=done prev=working
+[2026-11-23T18:11:06Z INFO  crowbaros_shell] SHELL agent-mark state=working prev=done
+[2026-11-23T18:11:08Z INFO  crowbaros_shell] SHELL agent-mark state=done prev=working
+[2026-11-23T18:11:35Z INFO  crowbaros_shell] SHELL agent-surface up=false
+[2026-11-23T18:11:35Z INFO  crowbaros_shell] SHELL agent-mark state=idle prev=done
+[2026-11-23T18:11:39Z INFO  crowbaros_shell] SHELL agent-surface up=true output=HDMI-A-2 width=853
+[2026-11-23T18:11:55Z INFO  crowbaros_shell] SHELL agent-mark state=working prev=idle
+[2026-11-23T18:11:56Z INFO  crowbaros_shell] SHELL agent-mark state=done prev=working
+[2026-11-23T18:12:23Z INFO  crowbaros_shell] SHELL agent-surface up=false
+[2026-11-23T18:12:23Z INFO  crowbaros_shell] SHELL agent-mark state=idle prev=done
+[2026-11-23T18:12:29Z INFO  crowbaros_shell] SHELL agent-surface up=true output=HDMI-A-2 width=853
+[2026-11-23T18:12:31Z INFO  crowbaros_shell] SHELL agent-surface up=false
+[2026-11-23T18:12:32Z INFO  crowbaros_shell] SHELL agent-surface up=true output=HDMI-A-2 width=853
+[2026-11-23T18:12:37Z INFO  crowbaros_shell] SHELL agent-surface up=false
+[2026-11-23T18:12:47Z INFO  crowbaros_shell] SHELL agent-surface up=true output=HDMI-A-2 width=853
+[2026-11-23T18:13:05Z INFO  crowbaros_shell] SHELL agent-surface up=false
+[2026-11-23T18:13:18Z INFO  crowbaros_shell] SHELL agent-surface up=true output=HDMI-A-2 width=853
+[2026-11-23T18:13:32Z INFO  crowbaros_shell] SHELL agent-mark state=working prev=idle
+[2026-11-23T18:13:34Z INFO  crowbaros_shell] SHELL agent-surface up=false
+[2026-11-23T18:13:36Z INFO  crowbaros_shell] SHELL agent-mark state=done prev=working
+[2026-11-23T18:13:40Z INFO  crowbaros_shell] SHELL agent-surface up=true output=HDMI-A-2 width=853
+[2026-11-23T18:13:40Z INFO  crowbaros_shell] SHELL agent-mark state=idle prev=done
+[2026-11-23T18:13:43Z INFO  crowbaros_shell] SHELL agent-surface up=false
+[2026-11-23T18:13:45Z INFO  crowbaros_shell] SHELL agent-surface up=true output=HDMI-A-2 width=853

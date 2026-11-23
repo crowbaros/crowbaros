@@ -1,0 +1,190 @@
+{
+  "drawer_up": true,
+  "mark_overlay": false,
+  "mark_overlay_output": null,
+  "state": {
+    "configured": true,
+    "connected": true,
+    "sending": false,
+    "model": {
+      "provider": "openai-codex",
+      "provider_name": "OpenAI Codex",
+      "model": "gpt-6.2-sol",
+      "name": "GPT-6.2 Sol"
+    },
+    "missing_model": null,
+    "conversation": "26utzzx8",
+    "turns": [
+      {
+        "turn": 1,
+        "message": "what is the exact app_id of my active window, and what display am I on?",
+        "context": {
+          "workspace": 1,
+          "active": {
+            "id": "0x38",
+            "app_id": "foot",
+            "title": "foot",
+            "workspace": 1
+          },
+          "locked": false,
+          "windows": [
+            {
+              "id": "0x49",
+              "app_id": "chromium",
+              "title": "Authentication successful - Chromium",
+              "workspace": 1
+            },
+            {
+              "id": "0x38",
+              "app_id": "foot",
+              "title": "foot",
+              "workspace": 1
+            }
+          ],
+          "displays": [
+            {
+              "name": "HDMI-A-2",
+              "width": 3840,
+              "height": 2160,
+              "x": 0,
+              "y": 0,
+              "scale": 180
+            }
+          ]
+        },
+        "answer": "Your active window’s `app_id` is `foot`, and you’re on display `HDMI-A-2`.",
+        "state": {
+          "kind": "done"
+        }
+      },
+      {
+        "turn": 2,
+        "message": "what can you tell me about the foot session",
+        "context": {
+          "workspace": 1,
+          "active": {
+            "id": "0x38",
+            "app_id": "foot",
+            "title": "foot",
+            "workspace": 1
+          },
+          "locked": false,
+          "windows": [
+            {
+              "id": "0x49",
+              "app_id": "chromium",
+              "title": "Authentication successful - Chromium",
+              "workspace": 1
+            },
+            {
+              "id": "0x38",
+              "app_id": "foot",
+              "title": "foot",
+              "workspace": 1
+            }
+          ],
+          "displays": [
+            {
+              "name": "HDMI-A-2",
+              "width": 3840,
+              "height": 2160,
+              "x": 0,
+              "y": 0,
+              "scale": 180
+            }
+          ]
+        },
+        "answer": "`foot` is a Wayland terminal emulator. It’s your active window on workspace 1, and both its title and `app_id` are `foot`. It’s on display `HDMI-A-2` (3840×2160 at 1.5× scaling).\n\nI can’t see inside the terminal, so I don’t know which shell you’re using, your current directory, or what’s running.",
+        "state": {
+          "kind": "done"
+        }
+      },
+      {
+        "turn": 3,
+        "message": "what about now, what app is focused?",
+        "context": {
+          "workspace": 1,
+          "active": {
+            "id": "0x49",
+            "app_id": "chromium",
+            "title": "Authentication successful - Chromium",
+            "workspace": 1
+          },
+          "locked": false,
+          "windows": [
+            {
+              "id": "0x38",
+              "app_id": "foot",
+              "title": "foot",
+              "workspace": 1
+            },
+            {
+              "id": "0x49",
+              "app_id": "chromium",
+              "title": "Authentication successful - Chromium",
+              "workspace": 1
+            }
+          ],
+          "displays": [
+            {
+              "name": "HDMI-A-2",
+              "width": 3840,
+              "height": 2160,
+              "x": 0,
+              "y": 0,
+              "scale": 180
+            }
+          ]
+        },
+        "answer": "Chromium is focused (`app_id: chromium`).",
+        "state": {
+          "kind": "done"
+        }
+      },
+      {
+        "turn": 4,
+        "message": "for about 15 seconds, write some text",
+        "context": {
+          "workspace": 1,
+          "active": {
+            "id": "0x49",
+            "app_id": "chromium",
+            "title": "Authentication successful - Chromium",
+            "workspace": 1
+          },
+          "locked": false,
+          "windows": [
+            {
+              "id": "0x38",
+              "app_id": "foot",
+              "title": "foot",
+              "workspace": 1
+            },
+            {
+              "id": "0x49",
+              "app_id": "chromium",
+              "title": "Authentication successful - Chromium",
+              "workspace": 1
+            }
+          ],
+          "displays": [
+            {
+              "name": "HDMI-A-2",
+              "width": 3840,
+              "height": 2160,
+              "x": 0,
+              "y": 0,
+              "scale": 180
+            }
+          ]
+        },
+        "answer": "I can write here, but I can’t type into Chromium or pace the text to exactly 15 seconds. Here’s about 15 seconds of reading:\n\nThe rain stopped just before sunset. On the walk home, I took the long way past the park, where drops still fell from the trees and every puddle held a little piece of sky.",
+        "state": {
+          "kind": "done"
+        }
+      }
+    ],
+    "error": null,
+    "mark": "idle"
+  }
+}

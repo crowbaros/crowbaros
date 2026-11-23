@@ -1,0 +1,11 @@
+INFO crowbar_compositor: renderer=gles gpu=NVIDIA GeForce RTX 5060/PCIe/SSE2
+INFO crowbar_compositor: output connected name=HDMI-A-2 size=3840x2160 refresh=59982 pointer=cursor-plane
+INFO crowbar_compositor: agent connected id=2
+INFO crowbar_compositor: agent surface shown output=HDMI-A-2 at=1707,0 size=853x1440
+INFO crowbar_compositor: agent surface shown output=HDMI-A-2 at=1707,0 size=853x1440
+INFO crowbar_compositor: agent surface shown output=HDMI-A-2 at=1707,0 size=853x1440
+INFO crowbar_compositor: agent surface shown output=HDMI-A-2 at=1707,0 size=853x1440
+INFO crowbar_compositor: agent surface shown output=HDMI-A-2 at=1707,0 size=853x1440
+INFO crowbar_compositor: agent surface shown output=HDMI-A-2 at=1707,0 size=853x1440
+INFO crowbar_compositor: agent surface shown output=HDMI-A-2 at=1707,0 size=853x1440
+INFO crowbar_compositor: agent surface shown output=HDMI-A-2 at=1707,0 size=853x1440

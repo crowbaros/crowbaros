@@ -1,0 +1,43 @@
+$ crowbar-agent --version
+crowbar-agent 0.1.0
+(exit status 0)
+
+$ crowbar-agent status
+Signed in to OpenAI Codex (openai-codex), with OAuth.
+The Agent uses GPT-6.2 Sol (gpt-6.2-sol), from OpenAI Codex.
+(exit status 0)
+
+$ crowbar-agent --list
+26utzzx8  5 minutes ago   4 turns  what is the exact app_id of my active window, and what display am I on?
+(exit status 0)
+
+$ crowbar-agent --resume 26utzzx8
+> what is the exact app_id of my active window, and what display am I on?
+Your active window’s `app_id` is `foot`, and you’re on display `HDMI-A-2`.
+> what can you tell me about the foot session
+`foot` is a Wayland terminal emulator. It’s your active window on workspace 1, and both its title and `app_id` are `foot`. It’s on display `HDMI-A-2` (3840×2160 at 1.5× scaling).
+
+I can’t see inside the terminal, so I don’t know which shell you’re using, your current directory, or what’s running.
+> what about now, what app is focused?
+Chromium is focused (`app_id: chromium`).
+> for about 15 seconds, write some text
+I can write here, but I can’t type into Chromium or pace the text to exactly 15 seconds. Here’s about 15 seconds of reading:
+
+The rain stopped just before sunset. On the walk home, I took the long way past the park, where drops still fell from the trees and every puddle held a little piece of sky.
+(exit status 0)
+
+# Sockets and Harness state: mode, owner, group, path
+2750 crowbar-compositor jmartin /run/crowbar-trusted/agent
+660 crowbar-compositor jmartin /run/crowbar-trusted/agent/compositor
+2750 jmartin crowbar-shell /run/crowbar-agent
+660 jmartin crowbar-shell /run/crowbar-agent/surface
+700 jmartin jmartin /run/user/1003/crowbar-agent
+600 jmartin jmartin /run/user/1003/crowbar-agent/person
+700 jmartin jmartin /home/jmartin/.local/state/crowbaros/agent
+600 jmartin jmartin /home/jmartin/.local/state/crowbaros/agent/credentials.json
+600 jmartin jmartin /home/jmartin/.local/state/crowbaros/agent/harness.log
+600 jmartin jmartin /home/jmartin/.local/state/crowbaros/agent/harness.sqlite
+600 jmartin jmartin /home/jmartin/.local/state/crowbaros/agent/harness.sqlite-shm
+600 jmartin jmartin /home/jmartin/.local/state/crowbaros/agent/harness.sqlite-wal
+600 jmartin jmartin /home/jmartin/.local/state/crowbaros/agent/running
+600 jmartin jmartin /home/jmartin/.local/state/crowbaros/agent/settings.json

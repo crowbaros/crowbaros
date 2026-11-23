@@ -1,0 +1,7 @@
+# The Harness's memory, from /proc/<pid>/smaps_rollup, in kB.
+# The process is /usr/local/lib/crowbar-agent/node, as runit starts it.
+
+== process 803, after sign-in and 4 drawer turns
+Rss:              122244 kB
+Pss:              118377 kB
+Pss_Anon:          63040 kB
