@@ -237,15 +237,20 @@ jobs:
       # copies nothing. The runner's disk is ext4, so the build's work
       # directory gets a Btrfs of its own, in a sparse file that takes only
       # the space written to it, and with `discard` gives back what is
-      # deleted. It is mounted before anything is restored into it.
+      # deleted. It is mounted outside the checkout, with `.lab/base` a link
+      # to it: the build binds the checkout into its Void build root from
+      # inside a user namespace, which may not bind a directory that has a
+      # mount of the runner's own under it. The link is made before anything
+      # is restored into it.
       - name: Give the build a filesystem that copies by reference
         run: |
           sudo truncate -s 60G "$RUNNER_TEMP/lab.btrfs"
           sudo mkfs.btrfs -q "$RUNNER_TEMP/lab.btrfs"
-          mkdir -p .lab/base
-          sudo mount -o loop,noatime,discard "$RUNNER_TEMP/lab.btrfs" .lab/base
-          sudo chown "$(id -u):$(id -g)" .lab/base
-          df -h / .lab/base
+          mkdir -p .lab "$RUNNER_TEMP/lab"
+          sudo mount -o loop,noatime,discard "$RUNNER_TEMP/lab.btrfs" "$RUNNER_TEMP/lab"
+          sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/lab"
+          ln -s "$RUNNER_TEMP/lab" .lab/base
+          df -h / .lab/base/
 
       # The Void root takes about two and a half minutes to install, most of
       # it NVIDIA's DKMS build. Main saves the root it installed, keyed on
@@ -327,7 +332,7 @@ jobs:
 
       - name: Show the space the build took
         if: always()
-        run: df -h / .lab/base || df -h /
+        run: df -h / .lab/base/ || df -h /
 
       - name: Keep the logs
         if: always()
