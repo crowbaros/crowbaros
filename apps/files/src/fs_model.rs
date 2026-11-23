@@ -1049,7 +1049,10 @@ fn copy_node(src: &Path, dst: &Path, started: &mut bool) -> io::Result<()> {
             src.display()
         )));
     }
-    output.set_modified(before.modified()?)?;
+    // The time is kept where the destination allows it, as for folders; the contents are what count.
+    if let Ok(modified) = before.modified() {
+        let _ = output.set_modified(modified);
+    }
     output.set_permissions(before.permissions())
 }
 

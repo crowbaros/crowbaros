@@ -590,13 +590,11 @@ impl FilesApp {
     fn restore_entry(&mut self, entry: &Entry, cx: &mut Context<Self>) {
         self.clear_notices();
         match fs_model::restore_from_trash(&entry.path) {
-            Ok(dst) => {
-                self.status = Some(format!("Restored to {}", fs_model::display_path(&dst, &self.home)));
-                self.reload_all(None, cx);
-            }
+            Ok(dst) => self.status = Some(format!("Restored to {}", fs_model::display_path(&dst, &self.home))),
             Err(e) => self.error = Some(e),
         }
-        cx.notify();
+        // A failed restore can still have changed the disk; show what is there now.
+        self.reload_all(None, cx);
     }
 
     fn trash_selected(&mut self, cx: &mut Context<Self>) {
@@ -625,13 +623,11 @@ impl FilesApp {
         self.overlay = None;
         self.clear_notices();
         match fs_model::delete_permanently(&entry.path) {
-            Ok(()) => {
-                self.status = Some(format!("Deleted “{}” permanently", entry.name));
-                self.reload_all(None, cx);
-            }
+            Ok(()) => self.status = Some(format!("Deleted “{}” permanently", entry.name)),
             Err(e) => self.error = Some(e),
         }
-        cx.notify();
+        // A delete that stopped partway has still removed some of it; show what is left.
+        self.reload_all(None, cx);
     }
 
     fn set_view_mode(&mut self, mode: ViewMode, cx: &mut Context<Self>) {
@@ -725,11 +721,13 @@ impl FilesApp {
             ClipboardOp::Copy => fs_model::copy_entry(&clip.path, &dst_dir),
             ClipboardOp::Cut => fs_model::move_entry(&clip.path, &dst_dir),
         };
+        // A cut is used up by its paste, even a failed one: a move that copied but kept its
+        // original must not be pasted again into a second copy.
+        if clip.op == ClipboardOp::Cut {
+            self.clipboard = None;
+        }
         match result {
             Ok(dest) => {
-                if clip.op == ClipboardOp::Cut {
-                    self.clipboard = None;
-                }
                 self.status = Some(format!(
                     "{} {}",
                     if clip.op == ClipboardOp::Copy {
@@ -743,7 +741,8 @@ impl FilesApp {
             }
             Err(e) => {
                 self.error = Some(e);
-                cx.notify();
+                // A failed paste can still have changed the disk; show what is there now.
+                self.reload_all(None, cx);
             }
         }
     }
