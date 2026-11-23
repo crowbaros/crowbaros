@@ -22,6 +22,8 @@ impl AppEntry {
     pub fn icon(&self) -> &'static str {
         if self.id.contains("StudioSettings") {
             "settings"
+        } else if self.id == "com.crowbaros.Files.desktop" {
+            "files"
         } else if self.id.contains("chromium") || self.id.contains("browser") {
             "browser"
         } else if self.id.contains("foot")
@@ -280,6 +282,19 @@ mod tests {
         assert!(entry.matches_class("chromium"));
         assert!(entry.matches_class("Chromium"));
         assert!(entry.matches_class("chromium-browser"));
+        assert!(!entry.matches_class("foot"));
+    }
+    #[test]
+    fn files_uses_files_icon_and_matches_wayland_app_id() {
+        let entry = parse(
+            "com.crowbaros.Files.desktop".into(),
+            "/usr/share/applications/com.crowbaros.Files.desktop".into(),
+            "[Desktop Entry]\nType=Application\nName=Files\nExec=crowbaros-files %u\nStartupWMClass=com.crowbaros.Files\n",
+            "en_US",
+        )
+        .unwrap();
+        assert_eq!(entry.icon(), "files");
+        assert!(entry.matches_class("com.crowbaros.Files"));
         assert!(!entry.matches_class("foot"));
     }
 }

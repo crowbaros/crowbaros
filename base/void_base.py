@@ -68,15 +68,15 @@ REPOSITORY = CFG["void_repository"]
 # installs from it.
 NONFREE = REPOSITORY + "/nonfree"
 # What the desktop is built from: each Cargo project, and the part of the
-# target directory it builds in. The two apps share theirs.
-PROJECTS = [("compositor", "compositor"), ("apps/shell", ""), ("apps/studio-settings", ""),
+# target directory it builds in. The three apps share theirs.
+PROJECTS = [("compositor", "compositor"), ("apps/shell", ""), ("apps/files", ""), ("apps/studio-settings", ""),
             ("base/helpers", "helpers"), ("agent/client", "agent-client")]
 # The programs the image holds, and the project each comes from. The probe is
 # Fulcrum's test client. The helpers are the desktop's four helpers in one
 # program; see helpers/README.md. `crowbar-agent` is the person's way to the
 # Agent from a terminal; see agent/client/README.md.
 PROGRAMS = {"crowbar-compositor": "compositor", "crowbar-probe": "compositor",
-            "crowbaros-shell": "apps/shell", "crowbaros-studio-settings": "apps/studio-settings",
+            "crowbaros-shell": "apps/shell", "crowbaros-files": "apps/files", "crowbaros-studio-settings": "apps/studio-settings",
             "crowbar-helpers": "base/helpers", "crowbar-agent": "agent/client"}
 
 

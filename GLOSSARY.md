@@ -33,7 +33,7 @@ _Avoid_: Compartment, principal, Tool
 The Base service that starts the apps the shell asks for, as the person. The shell's launcher is the menu the person picks an app from; the launcher service is what starts it.
 
 **Default apps**:
-The handful of apps CrowbarOS installs. Studio Settings is the first.
+The handful of apps CrowbarOS installs. Studio Settings is the first, and Files, the file manager, the second.
 
 **Desktop**:
 The compositor, the shell, and the apps running on Base: what the person sees and works in.

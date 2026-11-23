@@ -1,7 +1,7 @@
 # The CrowbarOS base
 
 Plain Void Linux with the desktop on it, built without root and booted under
-UEFI, in a VM or on a real machine ([the guide](HARDWARE.md)). The desktop is Fulcrum, the shell, and Studio Settings, as the lab ran
+UEFI, in a VM or on a real machine ([the guide](HARDWARE.md)). The desktop is Fulcrum, the shell, Files, and Studio Settings, as the lab ran
 them. The Harness runs beside it from boot. It has no apply engine and no generations.
 
 ```sh
@@ -23,7 +23,7 @@ base/void_base.py root key       # name what installs the Void root, as CI's cac
 | Part | What it is |
 | --- | --- |
 | Packages | `base-minimal`, `linux`, and NVIDIA's driver (`nvidia`, with `linux-headers`, `dkms`, and `pahole` to build its kernel module), `btrfs-progs`, `grub-x86_64-efi`, `mtools`, `openssh`, `sudo`, `dhcpcd`, `iproute2`; for real machines, Intel's microcode (`intel-ucode`), `iwd` for Wi-Fi, `wireless-regdb`, and Mesa's Vulkan drivers for Intel and AMD GPUs, beside the firmware and AMD's microcode `linux` already brings; and what the desktop needs: `seatd`, Mesa with lavapipe, Wayland, `foot`, Chromium, and others, from Void's `current` repository and, for NVIDIA's driver, its `nonfree` repository ([`config.json`](config.json)) |
-| Desktop | Fulcrum (`compositor/`), the shell, Studio Settings, and the desktop's helpers ([`helpers/`](helpers/README.md)), built and tested in a Void build root of their own so they link Void's libraries, in `/usr/local/bin`. Their runit services are in [`desktop/`](desktop/) |
+| Desktop | Fulcrum (`compositor/`), the shell, Files, Studio Settings, and the desktop's helpers ([`helpers/`](helpers/README.md)), built and tested in a Void build root of their own so they link Void's libraries, in `/usr/local/bin`. Their runit services are in [`desktop/`](desktop/) |
 | Harness | [`agent/`](../agent/README.md), bundled into one file, and the Node.js it runs on: Node's own Linux x64 binary at an exact version, checked by SHA-256 ([`config.json`](config.json)). Both are in `/usr/local/lib/crowbar-agent`, off `PATH`. Void's `nodejs` is not installed, and the image has no npm ([ADR 0034](../docs/adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)). [`crowbar-agent`](../agent/client/README.md), the person's way to the Agent from a terminal, is built with the desktop and is on `PATH`, in `/usr/local/bin` |
 | Disk | GPT. An ESP holds a standalone GRUB at `\EFI\BOOT\BOOTX64.EFI`, the path any UEFI firmware boots without a boot entry. The root is Btrfs, labelled `crowbaros-root` |
 | Boot | GRUB finds the root by label and reads `/boot/grub/grub.cfg` there. The kernel and initramfs are the ones xbps built. The kernel's command line adds `nvidia-drm.modeset=1 nvidia-drm.fbdev=1` |

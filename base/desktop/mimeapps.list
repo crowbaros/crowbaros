@@ -1,4 +1,5 @@
 [Default Applications]
+inode/directory=com.crowbaros.Files.desktop
 x-scheme-handler/http=chromium.desktop
 x-scheme-handler/https=chromium.desktop
 x-scheme-handler/about=chromium.desktop

@@ -89,7 +89,7 @@ jobs:
               compositor/*|.github/workflows/compositor.yml) compositor=true ;;
             esac
             case "$f" in
-              base/*|compositor/*|apps/shell/*|apps/studio-settings/*|agent/*|.github/workflows/ci.yml) boot=true ;;
+              base/*|compositor/*|apps/shell/*|apps/files/*|apps/studio-settings/*|agent/*|.github/workflows/ci.yml) boot=true ;;
             esac
             case "$f" in
               agent/*|base/config.json|base/void_base.py|.github/workflows/ci.yml) agent=true ;;
@@ -123,7 +123,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     strategy:
       matrix:
-        project: [apps/shell, apps/studio-settings]
+        project: [apps/shell, apps/files, apps/studio-settings]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -150,7 +150,7 @@ jobs:
             libfontconfig-dev libfreetype-dev
 
       # Rebuilds the patched GPUI source from the pinned crate and checks its
-      # checksum. Both apps build with it. See apps/shell/README.md.
+      # checksum. The apps build with it. See apps/shell/README.md.
       - name: Prepare GPUI
         working-directory: apps/shell
         run: python3 packaging/prepare-gpui.py
@@ -344,9 +344,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             .lab/base/target
-          key: base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock', 'agent/client/Cargo.lock') }}-${{ github.sha }}
+          key: base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/files/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock', 'agent/client/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock', 'agent/client/Cargo.lock') }}-
+            base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/files/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock', 'agent/client/Cargo.lock') }}-
             base-build-
 
       # Cargo rebuilds a crate whose files are newer than its last build, and

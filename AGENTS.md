@@ -58,7 +58,7 @@ sides hold.
   two. Run the jobs' commands before you push code.
 - CI boots Base. Its `Base boots` job runs `base/void_base.py check` on
   GitHub's runner, with KVM, for any change to `base/`, `compositor/`,
-  `apps/shell/`, `apps/studio-settings/`, or `agent/`. Its logs are the run's
+  `apps/shell/`, `apps/files/`, `apps/studio-settings/`, or `agent/`. Its logs are the run's
   `base-boot-logs` artifact. Run the check yourself when you want to see a boot
   before you push; you need not report it. GitHub does not support a VM inside
   its runners, so if the job stops working, run the check yourself, show its

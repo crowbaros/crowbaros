@@ -46,8 +46,8 @@ fn the_method_wayland_does_not_call_is_marked_unused_without_x11() {
 /// crate (rust-lang/rust#127909). Only the macro of `stacksafe` before 1.0.2
 /// used it.
 #[test]
-fn neither_app_builds_proc_macro_error2() {
-    for app in ["Cargo.lock", "../studio-settings/Cargo.lock"] {
+fn no_app_builds_proc_macro_error2() {
+    for app in ["Cargo.lock", "../files/Cargo.lock", "../studio-settings/Cargo.lock"] {
         let lock = read(&shell().join(app));
         assert!(
             !lock.contains("name = \"proc-macro-error2\""),

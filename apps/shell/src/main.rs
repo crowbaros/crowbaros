@@ -15,6 +15,7 @@ impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         Ok(Some(Cow::Borrowed(match path {
             "apps" => include_bytes!("../assets/apps.svg"),
+            "files" => include_bytes!("../assets/files.svg"),
             "browser" => include_bytes!("../assets/browser.svg"),
             "terminal" => include_bytes!("../assets/terminal.svg"),
             "settings" => include_bytes!("../assets/settings.svg"),
@@ -50,7 +51,7 @@ fn asset(name: &str) -> PathBuf {
     }
 }
 const BAR_HEIGHT: f32 = 24.;
-const DOCK_WIDTH: f32 = 220.;
+const DOCK_WIDTH: f32 = 260.;
 const DOCK_HEIGHT: f32 = 48.;
 const DOCK_LAYER_HEIGHT: f32 = 76.;
 
@@ -523,6 +524,9 @@ impl Render for Dock {
         let hovered = self.hovered;
         let mut pins: Vec<(&'static str, &'static str, Option<&'static str>)> =
             vec![("apps", "Applications", None)];
+        if apps.iter().any(|a| a.id == "com.crowbaros.Files.desktop") {
+            pins.push(("files", "Files", Some("com.crowbaros.Files.desktop")))
+        }
         if apps.iter().any(|a| a.id == "chromium.desktop") {
             pins.push(("browser", "Chromium", Some("chromium.desktop")))
         }
