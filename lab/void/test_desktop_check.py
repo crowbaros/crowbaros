@@ -371,6 +371,24 @@ class StubModelAndTyping(unittest.TestCase):
         twice = desktop_check.stub_requests_audit(self.stub_record(context + prompt, context + prompt), prompt, 'x')
         self.assertEqual(twice['asked'], 2)
 
+    def test_stopping_the_stub_stops_it_and_not_the_shell_that_asks(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        state, stub = Path(temporary.name) / 'state', Path(temporary.name) / 'stub'
+        state.mkdir()
+        stub.mkdir()
+        (state / 'endpoint.json').write_text('{}')
+        (stub / 'stub-model.ts').write_text('import time\ntime.sleep(60)\n')
+        running = subprocess.Popen(['python3', str(stub / 'stub-model.ts')])
+        self.addCleanup(running.kill)
+        stopped = subprocess.run(['sh', '-c', desktop_check.stop_stub_model(str(state), str(stub))])
+        self.assertEqual(stopped.returncode, 0)
+        self.assertIsNotNone(running.wait(timeout=5))
+        self.assertFalse((state / 'endpoint.json').exists())
+        self.assertFalse(stub.exists())
+        # With no stub started, only the endpoint file goes.
+        self.assertEqual(desktop_check.stop_stub_model('/s', None), "rm -f /s/endpoint.json")
+
     def test_qmp_keys_for_text_maps_spaces_punctuation_and_case(self):
         self.assertEqual(
             desktop_check.qmp_keys_for_text('Hi app_id?'),

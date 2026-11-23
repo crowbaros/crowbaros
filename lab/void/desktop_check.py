@@ -761,11 +761,8 @@ class Check:
         finally:
             # The endpoint file and the stub go, so the diagnostics see the
             # Harness as a person's image has it.
-            stop = f'rm -f {shlex.quote(state_dir + "/endpoint.json")}'
-            if stub:
-                stop += f"; pkill -f {shlex.quote(stub + '/stub-model.ts')}; rm -rf {shlex.quote(stub)}"
             try:
-                if self.guest.ssh(stop, check=False, timeout=10).returncode != 0:
+                if self.guest.ssh(stop_stub_model(state_dir, stub), check=False, timeout=10).returncode != 0:
                     self.log('warning: could not remove the stub Model and its endpoint file')
             except (OSError, subprocess.TimeoutExpired) as error:
                 self.log(f'warning: could not remove the stub Model and its endpoint file: {error}')
@@ -1245,6 +1242,17 @@ def stub_requests_audit(record, prompt, sentinel):
         'has_display': any(DISPLAY_ONE.search(text) for text in with_context),
         'has_sentinel': sentinel in record,
     }
+
+
+def stop_stub_model(state_dir, stub):
+    """The guest command that removes the endpoint file and, when `stub` is
+    its directory, stops the stub Model and removes its directory. The
+    pattern's bracket keeps pkill from matching the shell that runs it."""
+    stop = f'rm -f {shlex.quote(state_dir + "/endpoint.json")}'
+    if stub:
+        stop += (f"; pkill -f {shlex.quote(stub + '/[s]tub-model.ts')}; "
+                 f"rm -rf {shlex.quote(stub)}")
+    return stop
 
 
 # Audits harness.sqlite for desktop context on the tested drawer turn, and
