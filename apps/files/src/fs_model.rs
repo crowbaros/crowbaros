@@ -1072,15 +1072,17 @@ pub fn rename_entry(src: &Path, new_name: &str) -> Result<PathBuf, String> {
     }
 }
 
-/// Copies `src` into `dir` under a hidden staging name only this process uses, and returns it.
-/// On failure it removes the staging copy, which nothing else knows of. Any `AlreadyExists` from
-/// inside the copy, as two names clashing on a drive that ignores case, becomes a plain failure.
-fn stage_copy(src: &Path, dir: &Path) -> io::Result<PathBuf> {
+/// Copies `src` into `dir` under a hidden staging name only this process uses, and returns it with
+/// a snapshot of everything the copy read. On failure it removes the staging copy, which nothing
+/// else knows of. Any `AlreadyExists` from inside the copy, as two names clashing on a drive that
+/// ignores case, becomes a plain failure.
+fn stage_copy(src: &Path, dir: &Path) -> io::Result<(PathBuf, Snapshot)> {
     for n in 0..1_000 {
         let staging = dir.join(format!(".crowbaros-files-{}-{n}.partial", std::process::id()));
         let mut started = false;
-        match copy_node(src, &staging, &mut started) {
-            Ok(()) => return Ok(staging),
+        let mut read = Snapshot::default();
+        match copy_node(src, &staging, Path::new(""), &mut read, &mut started) {
+            Ok(()) => return Ok((staging, read)),
             Err(e) if !started && e.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(e) => {
                 if started {
@@ -1102,21 +1104,25 @@ fn copy_failure(err: io::Error) -> io::Error {
     }
 }
 
-/// Copies `src` to the free name `dst`. `started` turns true once `dst` exists.
-fn copy_node(src: &Path, dst: &Path, started: &mut bool) -> io::Result<()> {
+/// Copies `src` to the free name `dst`, and adds what it read to `read`, under `rel`.
+/// `started` turns true once `dst` exists.
+fn copy_node(src: &Path, dst: &Path, rel: &Path, read: &mut Snapshot, started: &mut bool) -> io::Result<()> {
     let meta = fs::symlink_metadata(src)?;
     let kind = meta.file_type();
     if kind.is_symlink() {
         std::os::unix::fs::symlink(fs::read_link(src)?, dst)?;
         *started = true;
+        read.add(rel, &meta);
         return Ok(());
     }
     if kind.is_dir() {
         fs::DirBuilder::new().mode(0o700).create(dst)?;
         *started = true;
+        read.add(rel, &meta);
         for item in fs::read_dir(src)? {
             let item = item?;
-            copy_node(&item.path(), &dst.join(item.file_name()), &mut true)?;
+            let name = item.file_name();
+            copy_node(&item.path(), &dst.join(&name), &rel.join(&name), read, &mut true)?;
         }
         if let Ok(modified) = meta.modified() {
             let _ = fs::File::open(dst).and_then(|d| d.set_modified(modified));
@@ -1146,7 +1152,7 @@ fn copy_node(src: &Path, dst: &Path, started: &mut bool) -> io::Result<()> {
     *started = true;
     io::copy(&mut input, &mut output)?;
     // Written to while copying, or saved anew under its name (as editors do): the copy is stale.
-    if changed_since(&before, &input.metadata()?) || identity(src)? != Snapshot::of(&before).id {
+    if changed_since(&before, &input.metadata()?) || identity(src)? != Node::of(rel, &before).id {
         return Err(io::Error::other(format!(
             "{} changed while it was being copied",
             src.display()
@@ -1156,6 +1162,7 @@ fn copy_node(src: &Path, dst: &Path, started: &mut bool) -> io::Result<()> {
     if let Ok(modified) = before.modified() {
         let _ = output.set_modified(modified);
     }
+    read.add(rel, &before);
     output.set_permissions(without_set_id(&before))
 }
 
@@ -1204,50 +1211,120 @@ fn remove_staging(path: &Path) -> io::Result<()> {
     }
 }
 
-/// What stood at a path before a copy between filesystems: which file, and for a file, its state.
+/// What a copy between filesystems read: each thing under the copied path, parents before what
+/// they hold, with which file it was and, for a file, its state.
+#[derive(Default)]
 struct Snapshot {
+    nodes: Vec<Node>,
+}
+
+struct Node {
+    rel: PathBuf,
     id: (u64, u64),
+    is_dir: bool,
     file: Option<Metadata>,
 }
 
-impl Snapshot {
-    fn of(meta: &Metadata) -> Self {
+impl Node {
+    fn of(rel: &Path, meta: &Metadata) -> Self {
         use std::os::unix::fs::MetadataExt;
-        Snapshot {
+        Node {
+            rel: rel.to_path_buf(),
             id: (meta.dev(), meta.ino()),
+            is_dir: meta.is_dir(),
             file: meta.is_file().then(|| meta.clone()),
         }
     }
 
+    /// Where this is under `root`. The root itself is `root`, with no trailing slash, which a
+    /// file's path does not resolve with.
+    fn at(&self, root: &Path) -> PathBuf {
+        if self.rel.as_os_str().is_empty() {
+            root.to_path_buf()
+        } else {
+            root.join(&self.rel)
+        }
+    }
+
+    /// Whether `now` is still this thing: the same file, and for a file, not written to since.
+    fn holds(&self, now: &Metadata) -> bool {
+        let same = Node::of(&self.rel, now);
+        same.id == self.id
+            && same.is_dir == self.is_dir
+            && match &self.file {
+                Some(before) => !changed_since(before, now),
+                None => true,
+            }
+    }
+}
+
+impl Snapshot {
+    fn add(&mut self, rel: &Path, meta: &Metadata) {
+        self.nodes.push(Node::of(rel, meta));
+    }
+
+    /// Everything under `path` as it is now, in the order a copy reads it.
     fn take(path: &Path) -> io::Result<Self> {
-        Ok(Self::of(&fs::symlink_metadata(path)?))
+        fn walk(path: &Path, rel: &Path, into: &mut Snapshot) -> io::Result<()> {
+            let meta = fs::symlink_metadata(path)?;
+            into.add(rel, &meta);
+            if meta.is_dir() {
+                for item in fs::read_dir(path)? {
+                    let name = item?.file_name();
+                    walk(&path.join(&name), &rel.join(&name), into)?;
+                }
+            }
+            Ok(())
+        }
+        let mut snapshot = Snapshot::default();
+        walk(path, Path::new(""), &mut snapshot)?;
+        Ok(snapshot)
+    }
+
+    /// Whether everything under `root` now is exactly what this snapshot read: nothing added,
+    /// removed, replaced, or written to.
+    fn matches(&self, root: &Path) -> io::Result<bool> {
+        // As many things now as then, and each one read still there and unchanged: the same set.
+        if Snapshot::take(root)?.nodes.len() != self.nodes.len() {
+            return Ok(false);
+        }
+        Ok(self
+            .nodes
+            .iter()
+            .all(|was| fs::symlink_metadata(was.at(root)).is_ok_and(|now| was.holds(&now))))
     }
 }
 
 /// The device and inode of what is at `path`, without following a link.
 fn identity(path: &Path) -> io::Result<(u64, u64)> {
-    Ok(Snapshot::take(path)?.id)
+    Ok(Node::of(Path::new(""), &fs::symlink_metadata(path)?).id)
 }
 
 /// Removes the original after a copy between filesystems, unless it is no longer what was copied:
-/// another file at its path, or the same file written to since. Then it stays.
+/// anything under it added, removed, replaced, or written to since. Then it stays whole.
 ///
-/// For a folder this checks the folder itself, not what is inside it: a file added to it, or a file
-/// inside saved again, after that file's own copy, is removed with the folder and is not in the copy.
+/// It removes only what the copy read, deepest first, so a file added in the moment after the check
+/// stays, with the folders that hold it.
 fn remove_original(src: &Path, was: &Snapshot) -> io::Result<()> {
-    let now = fs::symlink_metadata(src)?;
-    let changed = match &was.file {
-        Some(before) => changed_since(before, &now),
-        None => false,
-    };
-    if Snapshot::of(&now).id != was.id || changed {
+    if !was.matches(src)? {
         return Err(io::Error::other("it changed after it was copied, so it was kept"));
     }
-    if now.is_dir() {
-        fs::remove_dir_all(src)
-    } else {
-        fs::remove_file(src)
+    for node in was.nodes.iter().rev() {
+        let path = node.at(src);
+        let now = fs::symlink_metadata(&path)?;
+        if !node.holds(&now) {
+            return Err(io::Error::other(format!(
+                "{} changed after it was copied, so it was kept",
+                path.display()
+            )));
+        }
+        if node.is_dir {
+            fs::remove_dir(&path)?;
+        } else {
+            fs::remove_file(&path)?;
+        }
     }
+    Ok(())
 }
 
 /// Moves `src` into `dir` under a free name and never replaces anything. Between filesystems it
@@ -1262,7 +1339,6 @@ fn move_into(
     mut release: impl FnMut(&Path),
 ) -> io::Result<(PathBuf, Option<Snapshot>)> {
     let is_folder = is_real_folder(src);
-    let was = Snapshot::take(src)?;
     let mut cross_device = false;
     let renamed = place_new(dir, name, is_folder, |dst| {
         reserve(dst)?;
@@ -1280,7 +1356,7 @@ fn move_into(
     if !cross_device {
         return renamed.map(|dst| (dst, None));
     }
-    let staging = stage_copy(src, dir)?;
+    let (staging, was) = stage_copy(src, dir)?;
     let published = place_new(dir, name, is_folder, |dst| {
         reserve(dst)?;
         rename_noreplace(&staging, dst).inspect_err(|_| release(dst))
@@ -1309,7 +1385,7 @@ pub fn copy_entry(src: &Path, dst_dir: &Path) -> Result<PathBuf, String> {
     let name = file_name_of(src)?;
     let failed = |e: io::Error| format!("Could not copy “{}”: {e}", name.to_string_lossy());
     // Copied whole under a private name first, then given a free name: nobody sees half a copy.
-    let staging = stage_copy(src, dst_dir).map_err(failed)?;
+    let (staging, _) = stage_copy(src, dst_dir).map_err(failed)?;
     let published = place_new(dst_dir, name, is_folder, |dst| rename_noreplace(&staging, dst));
     if published.is_err() {
         let _ = remove_staging(&staging);
@@ -1913,6 +1989,48 @@ mod tests {
 
         // Unchanged: removed.
         let was = Snapshot::take(&src).unwrap();
+        remove_original(&src, &was).unwrap();
+        assert!(!src.exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_moved_folder_is_kept_when_anything_inside_changed_after_its_copy() {
+        let root = temp_dir("folder-changed");
+        let dst = root.join("dst");
+        fs::create_dir(&dst).unwrap();
+        let fresh = |label: &str| {
+            let src = root.join(label);
+            fs::create_dir_all(src.join("sub")).unwrap();
+            fs::write(src.join("a.txt"), "a").unwrap();
+            fs::write(src.join("sub/b.txt"), "b").unwrap();
+            let (staging, was) = stage_copy(&src, &dst).unwrap();
+            remove_staging(&staging).unwrap();
+            (src, was)
+        };
+
+        // A file inside written to after its own copy.
+        let (src, was) = fresh("edited");
+        fs::write(src.join("sub/b.txt"), "b, edited").unwrap();
+        assert!(remove_original(&src, &was).is_err());
+        assert_eq!(fs::read_to_string(src.join("sub/b.txt")).unwrap(), "b, edited");
+
+        // A file added that the copy never saw.
+        let (src, was) = fresh("added");
+        fs::write(src.join("sub/new.txt"), "new").unwrap();
+        assert!(remove_original(&src, &was).is_err());
+        assert!(src.join("sub/new.txt").exists());
+
+        // A file inside replaced by another under its name.
+        let (src, was) = fresh("replaced");
+        fs::write(root.join("other"), "a").unwrap();
+        fs::rename(root.join("other"), src.join("a.txt")).unwrap();
+        assert!(remove_original(&src, &was).is_err());
+        assert!(src.join("a.txt").exists());
+
+        // Unchanged: removed whole.
+        let (src, was) = fresh("unchanged");
         remove_original(&src, &was).unwrap();
         assert!(!src.exists());
 
