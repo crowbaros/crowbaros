@@ -1,8 +1,8 @@
 # The Harness's footprint
 
 **Result (November 22, 2026): under runit in the VM, the idle Harness holds
-61 MiB of memory and answers on its surface socket 69 ms after its service
-starts, or 147 ms with nothing in the page cache. Both are well inside the
+61 MiB of memory and answers on its surface socket 63 ms after its service
+starts, or 125 ms with nothing in the page cache. Both are well inside the
 limits [ADR 0034](../adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)
 set, so the Harness choice stands and no issue reopens it.**
 
@@ -21,8 +21,8 @@ image, booted it, and ran the measurements over SSH. The evidence is in
 | | |
 | --- | --- |
 | VM | QEMU 11.1.3 with KVM, as `base/void_base.py boot` starts it: 4 CPUs, 4096 MiB, a virtio disk, UEFI. The host's CPU is passed through |
-| Commit | `dfc610b0`, on `main` at `2f83a365` |
-| Image | Base, built with `base/void_base.py build --lab-account`. `base/void_base.py check` passed 26 of 26 on the same build |
+| Commit | `07e1bde3`, on `main` at `4fe18c5f` |
+| Image | Base, built with `base/void_base.py build --lab-account`. `base/void_base.py check` passed 27 of 27 on the same build |
 | Kernel | `6.18.64_1` |
 | Node.js | v26.13.1, Node's own Linux x64 binary, at `/usr/local/lib/crowbar-agent/node` |
 | Pi Durable | 1.6.0 |
@@ -32,23 +32,23 @@ image, booted it, and ran the measurements over SSH. The evidence is in
 
 | | Measured | ADR 0034's limit |
 | --- | --- | --- |
-| Idle memory (`Rss`) | **60.9 MiB**, the same at 15, 76, 136, and 316 seconds after it started | 150 MiB |
-| From `sv up` to the shell's account being answered the version | **69 ms** median of 10, from 66 to 76 | 2 seconds |
-| The same, with the page cache dropped first | **147 ms** median of 5, from 137 to 167 | 2 seconds |
-| From `kill -9` to the next Harness answering | **73 ms** median of 5, from 70 to 76 | |
+| Idle memory (`Rss`) | **61.0 MiB**, the same at 21, 81, 141, and 321 seconds after it started | 150 MiB |
+| From `sv up` to the shell's account being answered the version | **63 ms** median of 10, from 58 to 72 | 2 seconds |
+| The same, with the page cache dropped first | **125 ms** median of 5, from 122 to 125 | 2 seconds |
+| From `kill -9` to the next Harness answering | **67 ms** median of 5, from 64 to 72 | |
 
-- **Memory.** Of the 60.9 MiB, 16.2 MiB is the process's own (`Pss_Anon`)
+- **Memory.** Of the 61.0 MiB, 16.4 MiB is the process's own (`Pss_Anon`)
   and the rest is Node.js's binary and what else it maps from files, which
-  the kernel can drop and read again. `Pss` is 57.8 MiB. After 25 more
+  the kernel can drop and read again. `Pss` is 57.9 MiB. After 25 more
   starts, the Harness then running held 61.3 MiB a minute into its life.
 - **Start time** is from the moment `sv up` is run until a peer that is the
   shell's account, asking every millisecond, gets `{"version":1}` back on
   `/run/crowbar-agent/surface`. It covers runit, the service's script, `chpst`,
   `crowbar-launcher as-app`, Node.js starting, Pi Durable opening its
   database, and the answer. The Harness's own log puts its share of those ten
-  warm starts at 54 to 62 ms: `listening ... 56 ms after the process
+  warm starts at 46 to 59 ms: `listening ... 50 ms after the process
   started`.
-- **At boot** the Harness logged `listening` 375 ms after its process
+- **At boot** the Harness logged `listening` 141 ms after its process
   started, the slowest of all its starts, with every other service starting
   beside it.
 
@@ -58,8 +58,8 @@ image, booted it, and ran the measurements over SSH. The evidence is in
   says runit restarts it a second after any exit. What `runsv` does is start
   a service again as soon as it exits, unless that service had started less
   than a second before: then it waits a second. So a Harness that was killed
-  answered again in 73 ms, and one stopped within a second of its start took
-  1062 ms to answer after `sv up`, the median of four, a second of which is
+  answered again in 67 ms, and one stopped within a second of its start took
+  1056 ms to answer after `sv up`, the median of four, a second of which is
   runit's wait. A Harness that cannot start is tried once a second. Either
   way the 2 second limit holds.
 - **The Harness asks the kernel who its peer is through `node:ffi`.** Node.js

@@ -1,152 +1,152 @@
-2026-11-22T18:29:01.634Z start: process 621, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:29:01.705Z listening: /run/crowbar-agent/surface, for user ID 1001, 375 ms after the process started
-2026-11-22T18:34:19.251Z stop: SIGTERM
-2026-11-22T18:34:19.319Z start: process 977, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:19.331Z listening: /run/crowbar-agent/surface, for user ID 1001, 59 ms after the process started
-2026-11-22T18:34:19.332Z connection: the shell connected
-2026-11-22T18:34:19.333Z connection: the shell stated version 1
-2026-11-22T18:34:19.334Z connection: the shell left
-2026-11-22T18:34:20.836Z stop: SIGTERM
-2026-11-22T18:34:20.903Z start: process 1007, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:20.914Z listening: /run/crowbar-agent/surface, for user ID 1001, 56 ms after the process started
-2026-11-22T18:34:20.915Z connection: the shell connected
-2026-11-22T18:34:20.916Z connection: the shell stated version 1
-2026-11-22T18:34:20.917Z connection: the shell left
-2026-11-22T18:34:22.419Z stop: SIGTERM
-2026-11-22T18:34:22.487Z start: process 1037, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:22.503Z listening: /run/crowbar-agent/surface, for user ID 1001, 62 ms after the process started
-2026-11-22T18:34:22.505Z connection: the shell connected
-2026-11-22T18:34:22.505Z connection: the shell stated version 1
-2026-11-22T18:34:22.507Z connection: the shell left
-2026-11-22T18:34:24.009Z stop: SIGTERM
-2026-11-22T18:34:24.073Z start: process 1067, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:24.084Z listening: /run/crowbar-agent/surface, for user ID 1001, 54 ms after the process started
-2026-11-22T18:34:24.085Z connection: the shell connected
-2026-11-22T18:34:24.086Z connection: the shell stated version 1
-2026-11-22T18:34:24.087Z connection: the shell left
-2026-11-22T18:34:25.589Z stop: SIGTERM
-2026-11-22T18:34:25.655Z start: process 1097, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:25.667Z listening: /run/crowbar-agent/surface, for user ID 1001, 56 ms after the process started
-2026-11-22T18:34:25.669Z connection: the shell connected
-2026-11-22T18:34:25.669Z connection: the shell stated version 1
-2026-11-22T18:34:25.670Z connection: the shell left
-2026-11-22T18:34:27.173Z stop: SIGTERM
-2026-11-22T18:34:27.236Z start: process 1131, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:27.248Z listening: /run/crowbar-agent/surface, for user ID 1001, 54 ms after the process started
-2026-11-22T18:34:27.249Z connection: the shell connected
-2026-11-22T18:34:27.250Z connection: the shell stated version 1
-2026-11-22T18:34:27.251Z connection: the shell left
-2026-11-22T18:34:28.753Z stop: SIGTERM
-2026-11-22T18:34:28.820Z start: process 1161, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:28.832Z listening: /run/crowbar-agent/surface, for user ID 1001, 57 ms after the process started
-2026-11-22T18:34:28.833Z connection: the shell connected
-2026-11-22T18:34:28.834Z connection: the shell stated version 1
-2026-11-22T18:34:28.835Z connection: the shell left
-2026-11-22T18:34:30.337Z stop: SIGTERM
-2026-11-22T18:34:30.401Z start: process 1191, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:30.413Z listening: /run/crowbar-agent/surface, for user ID 1001, 54 ms after the process started
-2026-11-22T18:34:30.414Z connection: the shell connected
-2026-11-22T18:34:30.415Z connection: the shell stated version 1
-2026-11-22T18:34:30.416Z connection: the shell left
-2026-11-22T18:34:31.918Z stop: SIGTERM
-2026-11-22T18:34:31.983Z start: process 1221, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:31.995Z listening: /run/crowbar-agent/surface, for user ID 1001, 55 ms after the process started
-2026-11-22T18:34:31.997Z connection: the shell connected
-2026-11-22T18:34:31.997Z connection: the shell stated version 1
-2026-11-22T18:34:31.999Z connection: the shell left
-2026-11-22T18:34:33.501Z stop: SIGTERM
-2026-11-22T18:34:33.566Z start: process 1251, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:33.578Z listening: /run/crowbar-agent/surface, for user ID 1001, 55 ms after the process started
-2026-11-22T18:34:33.579Z connection: the shell connected
-2026-11-22T18:34:33.579Z connection: the shell stated version 1
-2026-11-22T18:34:33.580Z connection: the shell left
-2026-11-22T18:34:35.083Z stop: SIGTERM
-2026-11-22T18:34:35.339Z start: process 1281, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:35.367Z listening: /run/crowbar-agent/surface, for user ID 1001, 107 ms after the process started
-2026-11-22T18:34:35.369Z connection: the shell connected
-2026-11-22T18:34:35.369Z connection: the shell stated version 1
-2026-11-22T18:34:35.370Z connection: the shell left
-2026-11-22T18:34:36.873Z stop: SIGTERM
-2026-11-22T18:34:37.021Z start: process 1313, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:37.049Z listening: /run/crowbar-agent/surface, for user ID 1001, 89 ms after the process started
-2026-11-22T18:34:37.051Z connection: the shell connected
-2026-11-22T18:34:37.052Z connection: the shell stated version 1
-2026-11-22T18:34:37.053Z connection: the shell left
-2026-11-22T18:34:38.555Z stop: SIGTERM
-2026-11-22T18:34:38.710Z start: process 1343, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:38.734Z listening: /run/crowbar-agent/surface, for user ID 1001, 87 ms after the process started
-2026-11-22T18:34:38.736Z connection: the shell connected
-2026-11-22T18:34:38.737Z connection: the shell stated version 1
-2026-11-22T18:34:38.738Z connection: the shell left
-2026-11-22T18:34:40.240Z stop: SIGTERM
-2026-11-22T18:34:40.399Z start: process 1375, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:40.426Z listening: /run/crowbar-agent/surface, for user ID 1001, 99 ms after the process started
-2026-11-22T18:34:40.428Z connection: the shell connected
-2026-11-22T18:34:40.429Z connection: the shell stated version 1
-2026-11-22T18:34:40.430Z connection: the shell left
-2026-11-22T18:34:41.933Z stop: SIGTERM
-2026-11-22T18:34:42.098Z start: process 1406, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:42.124Z listening: /run/crowbar-agent/surface, for user ID 1001, 98 ms after the process started
-2026-11-22T18:34:42.126Z connection: the shell connected
-2026-11-22T18:34:42.127Z connection: the shell stated version 1
-2026-11-22T18:34:42.128Z connection: the shell left
-2026-11-22T18:34:43.686Z start: process 1437, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:43.691Z restart: the Harness before this one, process 1406, ended without stopping
-2026-11-22T18:34:43.698Z listening: /run/crowbar-agent/surface, for user ID 1001, 55 ms after the process started
-2026-11-22T18:34:43.700Z connection: the shell connected
-2026-11-22T18:34:43.700Z connection: the shell stated version 1
-2026-11-22T18:34:43.701Z connection: the shell left
-2026-11-22T18:34:45.260Z start: process 1464, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:45.264Z restart: the Harness before this one, process 1437, ended without stopping
-2026-11-22T18:34:45.271Z listening: /run/crowbar-agent/surface, for user ID 1001, 53 ms after the process started
-2026-11-22T18:34:45.272Z connection: the shell connected
-2026-11-22T18:34:45.273Z connection: the shell stated version 1
-2026-11-22T18:34:45.274Z connection: the shell left
-2026-11-22T18:34:46.836Z start: process 1491, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:46.841Z restart: the Harness before this one, process 1464, ended without stopping
-2026-11-22T18:34:46.848Z listening: /run/crowbar-agent/surface, for user ID 1001, 58 ms after the process started
-2026-11-22T18:34:46.850Z connection: the shell connected
-2026-11-22T18:34:46.851Z connection: the shell stated version 1
-2026-11-22T18:34:46.852Z connection: the shell left
-2026-11-22T18:34:48.414Z start: process 1518, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:48.419Z restart: the Harness before this one, process 1491, ended without stopping
-2026-11-22T18:34:48.426Z listening: /run/crowbar-agent/surface, for user ID 1001, 58 ms after the process started
-2026-11-22T18:34:48.428Z connection: the shell connected
-2026-11-22T18:34:48.429Z connection: the shell stated version 1
-2026-11-22T18:34:48.430Z connection: the shell left
-2026-11-22T18:34:49.990Z start: process 1545, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:49.995Z restart: the Harness before this one, process 1518, ended without stopping
-2026-11-22T18:34:50.002Z listening: /run/crowbar-agent/surface, for user ID 1001, 56 ms after the process started
-2026-11-22T18:34:50.003Z connection: the shell connected
-2026-11-22T18:34:50.004Z connection: the shell stated version 1
-2026-11-22T18:34:50.005Z connection: the shell left
-2026-11-22T18:34:51.507Z stop: SIGTERM
-2026-11-22T18:34:51.569Z start: process 1575, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:51.581Z listening: /run/crowbar-agent/surface, for user ID 1001, 52 ms after the process started
-2026-11-22T18:34:51.582Z connection: the shell connected
-2026-11-22T18:34:51.583Z connection: the shell stated version 1
-2026-11-22T18:34:51.584Z connection: the shell left
-2026-11-22T18:34:51.585Z stop: SIGTERM
-2026-11-22T18:34:52.647Z start: process 1605, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:52.659Z listening: /run/crowbar-agent/surface, for user ID 1001, 59 ms after the process started
-2026-11-22T18:34:52.660Z connection: the shell connected
-2026-11-22T18:34:52.661Z connection: the shell stated version 1
-2026-11-22T18:34:52.662Z connection: the shell left
-2026-11-22T18:34:52.664Z stop: SIGTERM
-2026-11-22T18:34:53.720Z start: process 1635, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:53.732Z listening: /run/crowbar-agent/surface, for user ID 1001, 53 ms after the process started
-2026-11-22T18:34:53.734Z connection: the shell connected
-2026-11-22T18:34:53.734Z connection: the shell stated version 1
-2026-11-22T18:34:53.735Z connection: the shell left
-2026-11-22T18:34:53.737Z stop: SIGTERM
-2026-11-22T18:34:54.797Z start: process 1665, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:54.808Z listening: /run/crowbar-agent/surface, for user ID 1001, 55 ms after the process started
-2026-11-22T18:34:54.810Z connection: the shell connected
-2026-11-22T18:34:54.810Z connection: the shell stated version 1
-2026-11-22T18:34:54.811Z connection: the shell left
-2026-11-22T18:34:54.813Z stop: SIGTERM
-2026-11-22T18:34:55.871Z start: process 1695, Pi Durable 1.6.0, Node.js v26.13.1
-2026-11-22T18:34:55.882Z listening: /run/crowbar-agent/surface, for user ID 1001, 54 ms after the process started
-2026-11-22T18:34:55.884Z connection: the shell connected
-2026-11-22T18:34:55.884Z connection: the shell stated version 1
-2026-11-22T18:34:55.885Z connection: the shell left
+2026-11-23T00:21:35.572Z start: process 618, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:21:35.615Z listening: /run/crowbar-agent/surface, for user ID 1001, 141 ms after the process started
+2026-11-23T00:26:59.026Z stop: SIGTERM
+2026-11-23T00:26:59.087Z start: process 973, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:26:59.098Z listening: /run/crowbar-agent/surface, for user ID 1001, 52 ms after the process started
+2026-11-23T00:26:59.099Z connection: the shell connected
+2026-11-23T00:26:59.100Z connection: the shell stated version 1
+2026-11-23T00:26:59.101Z connection: the shell left
+2026-11-23T00:27:00.603Z stop: SIGTERM
+2026-11-23T00:27:00.661Z start: process 1003, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:00.672Z listening: /run/crowbar-agent/surface, for user ID 1001, 48 ms after the process started
+2026-11-23T00:27:00.673Z connection: the shell connected
+2026-11-23T00:27:00.673Z connection: the shell stated version 1
+2026-11-23T00:27:00.675Z connection: the shell left
+2026-11-23T00:27:02.177Z stop: SIGTERM
+2026-11-23T00:27:02.246Z start: process 1033, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:02.257Z listening: /run/crowbar-agent/surface, for user ID 1001, 59 ms after the process started
+2026-11-23T00:27:02.258Z connection: the shell connected
+2026-11-23T00:27:02.259Z connection: the shell stated version 1
+2026-11-23T00:27:02.260Z connection: the shell left
+2026-11-23T00:27:03.762Z stop: SIGTERM
+2026-11-23T00:27:03.818Z start: process 1067, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:03.828Z listening: /run/crowbar-agent/surface, for user ID 1001, 46 ms after the process started
+2026-11-23T00:27:03.829Z connection: the shell connected
+2026-11-23T00:27:03.830Z connection: the shell stated version 1
+2026-11-23T00:27:03.831Z connection: the shell left
+2026-11-23T00:27:05.333Z stop: SIGTERM
+2026-11-23T00:27:05.390Z start: process 1097, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:05.404Z listening: /run/crowbar-agent/surface, for user ID 1001, 51 ms after the process started
+2026-11-23T00:27:05.406Z connection: the shell connected
+2026-11-23T00:27:05.406Z connection: the shell stated version 1
+2026-11-23T00:27:05.407Z connection: the shell left
+2026-11-23T00:27:06.910Z stop: SIGTERM
+2026-11-23T00:27:06.969Z start: process 1127, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:06.979Z listening: /run/crowbar-agent/surface, for user ID 1001, 49 ms after the process started
+2026-11-23T00:27:06.980Z connection: the shell connected
+2026-11-23T00:27:06.981Z connection: the shell stated version 1
+2026-11-23T00:27:06.982Z connection: the shell left
+2026-11-23T00:27:08.484Z stop: SIGTERM
+2026-11-23T00:27:08.544Z start: process 1157, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:08.554Z listening: /run/crowbar-agent/surface, for user ID 1001, 50 ms after the process started
+2026-11-23T00:27:08.556Z connection: the shell connected
+2026-11-23T00:27:08.557Z connection: the shell stated version 1
+2026-11-23T00:27:08.558Z connection: the shell left
+2026-11-23T00:27:10.060Z stop: SIGTERM
+2026-11-23T00:27:10.121Z start: process 1187, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:10.132Z listening: /run/crowbar-agent/surface, for user ID 1001, 50 ms after the process started
+2026-11-23T00:27:10.133Z connection: the shell connected
+2026-11-23T00:27:10.133Z connection: the shell stated version 1
+2026-11-23T00:27:10.134Z connection: the shell left
+2026-11-23T00:27:11.637Z stop: SIGTERM
+2026-11-23T00:27:11.695Z start: process 1217, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:11.705Z listening: /run/crowbar-agent/surface, for user ID 1001, 48 ms after the process started
+2026-11-23T00:27:11.706Z connection: the shell connected
+2026-11-23T00:27:11.707Z connection: the shell stated version 1
+2026-11-23T00:27:11.708Z connection: the shell left
+2026-11-23T00:27:13.210Z stop: SIGTERM
+2026-11-23T00:27:13.272Z start: process 1252, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:13.283Z listening: /run/crowbar-agent/surface, for user ID 1001, 52 ms after the process started
+2026-11-23T00:27:13.285Z connection: the shell connected
+2026-11-23T00:27:13.285Z connection: the shell stated version 1
+2026-11-23T00:27:13.286Z connection: the shell left
+2026-11-23T00:27:14.788Z stop: SIGTERM
+2026-11-23T00:27:15.005Z start: process 1282, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:15.026Z listening: /run/crowbar-agent/surface, for user ID 1001, 80 ms after the process started
+2026-11-23T00:27:15.028Z connection: the shell connected
+2026-11-23T00:27:15.029Z connection: the shell stated version 1
+2026-11-23T00:27:15.030Z connection: the shell left
+2026-11-23T00:27:16.532Z stop: SIGTERM
+2026-11-23T00:27:16.673Z start: process 1315, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:16.694Z listening: /run/crowbar-agent/surface, for user ID 1001, 80 ms after the process started
+2026-11-23T00:27:16.695Z connection: the shell connected
+2026-11-23T00:27:16.696Z connection: the shell stated version 1
+2026-11-23T00:27:16.697Z connection: the shell left
+2026-11-23T00:27:18.199Z stop: SIGTERM
+2026-11-23T00:27:18.340Z start: process 1349, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:18.363Z listening: /run/crowbar-agent/surface, for user ID 1001, 81 ms after the process started
+2026-11-23T00:27:18.364Z connection: the shell connected
+2026-11-23T00:27:18.365Z connection: the shell stated version 1
+2026-11-23T00:27:18.366Z connection: the shell left
+2026-11-23T00:27:19.868Z stop: SIGTERM
+2026-11-23T00:27:20.011Z start: process 1379, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:20.032Z listening: /run/crowbar-agent/surface, for user ID 1001, 81 ms after the process started
+2026-11-23T00:27:20.033Z connection: the shell connected
+2026-11-23T00:27:20.034Z connection: the shell stated version 1
+2026-11-23T00:27:20.035Z connection: the shell left
+2026-11-23T00:27:21.537Z stop: SIGTERM
+2026-11-23T00:27:21.675Z start: process 1409, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:21.697Z listening: /run/crowbar-agent/surface, for user ID 1001, 80 ms after the process started
+2026-11-23T00:27:21.698Z connection: the shell connected
+2026-11-23T00:27:21.699Z connection: the shell stated version 1
+2026-11-23T00:27:21.700Z connection: the shell left
+2026-11-23T00:27:23.252Z start: process 1436, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:23.255Z restart: the Harness before this one, process 1409, ended without stopping
+2026-11-23T00:27:23.265Z listening: /run/crowbar-agent/surface, for user ID 1001, 52 ms after the process started
+2026-11-23T00:27:23.267Z connection: the shell connected
+2026-11-23T00:27:23.267Z connection: the shell stated version 1
+2026-11-23T00:27:23.269Z connection: the shell left
+2026-11-23T00:27:24.824Z start: process 1463, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:24.828Z restart: the Harness before this one, process 1436, ended without stopping
+2026-11-23T00:27:24.834Z listening: /run/crowbar-agent/surface, for user ID 1001, 51 ms after the process started
+2026-11-23T00:27:24.836Z connection: the shell connected
+2026-11-23T00:27:24.836Z connection: the shell stated version 1
+2026-11-23T00:27:24.837Z connection: the shell left
+2026-11-23T00:27:26.390Z start: process 1490, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:26.393Z restart: the Harness before this one, process 1463, ended without stopping
+2026-11-23T00:27:26.400Z listening: /run/crowbar-agent/surface, for user ID 1001, 49 ms after the process started
+2026-11-23T00:27:26.401Z connection: the shell connected
+2026-11-23T00:27:26.402Z connection: the shell stated version 1
+2026-11-23T00:27:26.403Z connection: the shell left
+2026-11-23T00:27:27.959Z start: process 1517, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:27.962Z restart: the Harness before this one, process 1490, ended without stopping
+2026-11-23T00:27:27.969Z listening: /run/crowbar-agent/surface, for user ID 1001, 52 ms after the process started
+2026-11-23T00:27:27.970Z connection: the shell connected
+2026-11-23T00:27:27.971Z connection: the shell stated version 1
+2026-11-23T00:27:27.972Z connection: the shell left
+2026-11-23T00:27:29.533Z start: process 1544, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:29.536Z restart: the Harness before this one, process 1517, ended without stopping
+2026-11-23T00:27:29.543Z listening: /run/crowbar-agent/surface, for user ID 1001, 56 ms after the process started
+2026-11-23T00:27:29.544Z connection: the shell connected
+2026-11-23T00:27:29.545Z connection: the shell stated version 1
+2026-11-23T00:27:29.546Z connection: the shell left
+2026-11-23T00:27:31.048Z stop: SIGTERM
+2026-11-23T00:27:31.108Z start: process 1574, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:31.118Z listening: /run/crowbar-agent/surface, for user ID 1001, 50 ms after the process started
+2026-11-23T00:27:31.120Z connection: the shell connected
+2026-11-23T00:27:31.120Z connection: the shell stated version 1
+2026-11-23T00:27:31.122Z connection: the shell left
+2026-11-23T00:27:31.123Z stop: SIGTERM
+2026-11-23T00:27:32.177Z start: process 1604, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:32.187Z listening: /run/crowbar-agent/surface, for user ID 1001, 50 ms after the process started
+2026-11-23T00:27:32.189Z connection: the shell connected
+2026-11-23T00:27:32.189Z connection: the shell stated version 1
+2026-11-23T00:27:32.191Z connection: the shell left
+2026-11-23T00:27:32.192Z stop: SIGTERM
+2026-11-23T00:27:33.247Z start: process 1638, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:33.257Z listening: /run/crowbar-agent/surface, for user ID 1001, 51 ms after the process started
+2026-11-23T00:27:33.258Z connection: the shell connected
+2026-11-23T00:27:33.259Z connection: the shell stated version 1
+2026-11-23T00:27:33.260Z connection: the shell left
+2026-11-23T00:27:33.262Z stop: SIGTERM
+2026-11-23T00:27:34.315Z start: process 1668, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:34.325Z listening: /run/crowbar-agent/surface, for user ID 1001, 50 ms after the process started
+2026-11-23T00:27:34.327Z connection: the shell connected
+2026-11-23T00:27:34.327Z connection: the shell stated version 1
+2026-11-23T00:27:34.329Z connection: the shell left
+2026-11-23T00:27:34.330Z stop: SIGTERM
+2026-11-23T00:27:35.385Z start: process 1698, Pi Durable 1.6.0, Node.js v26.13.1
+2026-11-23T00:27:35.396Z listening: /run/crowbar-agent/surface, for user ID 1001, 52 ms after the process started
+2026-11-23T00:27:35.398Z connection: the shell connected
+2026-11-23T00:27:35.398Z connection: the shell stated version 1
+2026-11-23T00:27:35.399Z connection: the shell left
