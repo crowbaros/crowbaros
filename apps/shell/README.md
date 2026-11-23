@@ -77,7 +77,7 @@ historical behavior evidence, not a current Fedora workflow.
   and `Done`) is shown in the bar and, whenever a fullscreen window covers the
   bar while the drawer is put away, in a floating overlay surface
   (`crowbaros-mark`) at the top right. When the Harness is absent or no Model
-  is signed in, the drawer explains so calmly and points to `crowbar-agent login`.
+  is signed in, the drawer explains so calmly and points to `crowbar-agent login`. The shell's own `crowbar-shell`-only `control.sock` answers `agent` (drawer and mark state) beside `snapshot`.
 - The desktop starts locked. While the compositor has it locked, the shell
   shows its lock screen, and the bar's lock button and Super+L lock it. The
   lock screen takes the person's password at once and sends it to Base's

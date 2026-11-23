@@ -370,7 +370,7 @@ events.
 | `src/workspaces.rs` | The nine workspaces |
 | `src/modes.rs` | Maximized, fullscreen, and snapped windows |
 | `src/grabs.rs` | Moving and resizing windows with the pointer |
-| `src/control.rs`, `src/frames.rs`, `src/json.rs` | The shell's control channel and the unlock authority's socket, the framing of every channel of Fulcrum's own, and the flat JSON a request is |
+| `src/control.rs`, `src/frames.rs`, `src/json.rs` | The shell's control channel, the unlock authority's socket, and the Harness's socket, the framing of every channel of Fulcrum's own, and the flat JSON a request is |
 | `src/data_device.rs` | Data sources and offers, and the clipboard the shell and the apps share |
 | `src/drag.rs` | Drag targets, action negotiation, drop, and cancellation |
 | `src/primary_selection.rs` | The primary selection, under the clipboard's rules |

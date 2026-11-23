@@ -1,7 +1,7 @@
 //! The shell's control channel: how the shell learns which windows exist and
 //! on which workspace, asks the compositor to show a workspace or a window,
 //! and moves the keyboard to the Agent's surface and back (see `agent.rs`).
-//! The unlock authority's socket is served here too.
+//! The unlock authority's socket and the Harness's socket (`--agent-socket`) are served here too.
 //!
 //! Each is a path socket of its own, checked against one user ID as the
 //! shell's Wayland socket is (ADR 0032). Both speak the framing in
@@ -48,8 +48,8 @@ use crate::{
     workspaces::WORKSPACES,
 };
 
-/// The protocol version the control channel and the unlock authority's
-/// socket speak. A peer states it in its first frame, and is closed if it states
+/// The protocol version the control channel, the unlock authority's socket,
+/// and the Harness's socket speak. A peer states it in its first frame, and is closed if it states
 /// another.
 pub const VERSION: u32 = 1;
 /// The longest request, in bytes, not counting its length.

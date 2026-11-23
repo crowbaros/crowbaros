@@ -383,6 +383,15 @@ class RealModelCredentialAndTyping(unittest.TestCase):
         with self.assertRaises(ValueError):
             desktop_check.qmp_keys_for_text('bad\n')
 
+    def test_turn_state_kind_reads_tagged_shell_turn_state(self):
+        self.assertEqual(desktop_check.turn_state_kind({'state': {'kind': 'working'}}), 'working')
+        self.assertEqual(desktop_check.turn_state_kind({'state': {'kind': 'done'}}), 'done')
+        self.assertEqual(
+            desktop_check.turn_state_kind({'state': {'kind': 'failed', 'message': 'err'}}),
+            'failed',
+        )
+        self.assertIsNone(desktop_check.turn_state_kind({}))
+
     def test_evidence_has_secret_detects_leaks_and_ignores_binary_artifacts(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

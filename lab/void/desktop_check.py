@@ -667,7 +667,7 @@ class Check:
                 'the real Model finishes the turn behind the put-away drawer',
                 lambda: (v := self.agent_view())
                 and len(v['state']['turns']) > turns_before
-                and v['state']['turns'][-1]['state'] != 'working'
+                and turn_state_kind(v['state']['turns'][-1]) != 'working'
                 and v,
                 timeout=90,
             )
@@ -675,10 +675,10 @@ class Check:
             self.check("putting the drawer away stops nothing: the turn enters working, finishes behind it, "
                        "and the mark shows done in the bar",
                        self.shell_log().count('SHELL agent-mark state=working') > working_marks
-                       and turn['state'] == 'done'
+                       and turn_state_kind(turn) == 'done'
                        and finished['state']['mark'] == 'done'
                        and not finished['drawer_up'],
-                       f"turn={turn['state']!r} mark={finished['state']['mark']!r}")
+                       f"turn={turn_state_kind(turn)!r} mark={finished['state']['mark']!r}")
             self.capture('19-mark-done-in-bar')
 
             # Fullscreen Terminal covers the bar; the mark overlay appears over it.
@@ -1204,6 +1204,12 @@ QMP_PUNCTUATION = {
     "'": ('apostrophe',),
     '"': ('shift', 'apostrophe'),
 }
+
+
+def turn_state_kind(turn):
+    """Extracts the TurnState tag from a shell `AgentViewSnapshot` turn."""
+    state = (turn or {}).get('state')
+    return state.get('kind') if isinstance(state, dict) else state
 
 
 def qmp_keys_for_text(text):

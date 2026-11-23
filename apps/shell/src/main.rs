@@ -218,11 +218,11 @@ fn render_mark_pill(mark: agent::Mark, p: Palette) -> Option<Stateful<Div>> {
                 .rounded(px(4.))
                 .bg(rgb(p.surface))
                 .border_1()
-                .border_color(rgb(p.accent))
+                .border_color(rgb(p.focus))
                 .text_size(px(10.5))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(p.text))
-                .child(div().size(px(6.)).rounded_full().bg(rgb(p.accent)))
+                .child(div().size(px(6.)).rounded_full().bg(rgb(p.focus)))
                 .child("Working"),
         ),
         agent::Mark::Done => Some(
@@ -257,7 +257,7 @@ impl Render for MarkOverlay {
             .items_center()
             .justify_end()
             .font_family("Manrope")
-            .when_some(pill, |d, badge| {
+            .when_some(pill, |d, mark| {
                 d.child(
                     div()
                         .px(px(4.))
@@ -266,7 +266,7 @@ impl Render for MarkOverlay {
                         .bg(rgb(p.canvas))
                         .border_1()
                         .border_color(rgb(p.line))
-                        .child(badge),
+                        .child(mark),
                 )
             })
     }
@@ -1333,7 +1333,7 @@ impl Render for AgentSurface {
                             div()
                                 .text_size(px(10.5))
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(rgb(p.accent))
+                                .text_color(rgb(p.focus))
                                 .child("Agent"),
                         )
                         .when_some(state_label, |row, label| {
