@@ -178,6 +178,10 @@ struct FilesApp {
     images_on_screen: HashSet<PathBuf>,
     /// Image sizes read from file headers, by path, with the size and time they were read at.
     image_sizes: RefCell<HashMap<PathBuf, ImageSizeRead>>,
+    /// Images whose file changed since GPUI decoded them, to be decoded again.
+    stale_images: RefCell<HashSet<PathBuf>>,
+    /// The pane a prompt was opened in. Switching panes ends it.
+    prompt_pane: usize,
     cached_preview_text: Option<String>,
 }
 
@@ -240,6 +244,8 @@ impl FilesApp {
             cached_preview_path: None,
             images_on_screen: HashSet::new(),
             image_sizes: RefCell::new(HashMap::new()),
+            stale_images: RefCell::new(HashSet::new()),
+            prompt_pane: 0,
             cached_preview_text: None,
         };
         app.refresh_inspector_preview();
@@ -346,18 +352,24 @@ impl FilesApp {
         if !entry.is_previewable_image() {
             return None;
         }
+        // The file as it is now, not as it was listed: it may have been replaced since.
+        let meta = std::fs::metadata(&entry.path).ok()?;
+        let now = (meta.len(), meta.modified().ok());
         let mut sizes = self.image_sizes.borrow_mut();
-        if let Some((size, modified, dims)) = sizes.get(&entry.path)
-            && (*size, *modified) == (entry.size, entry.modified)
-        {
-            return *dims;
+        match sizes.get(&entry.path) {
+            Some((size, modified, dims)) if (*size, *modified) == now => return *dims,
+            // Changed on disk: whatever GPUI decoded from it is stale too.
+            Some(_) => {
+                self.stale_images.borrow_mut().insert(entry.path.clone());
+            }
+            None => {}
         }
         let dims = fs_model::still_image_size(&entry.path);
         // A long session would otherwise keep every image path it ever showed.
         if sizes.len() >= 4_096 {
             sizes.clear();
         }
-        sizes.insert(entry.path.clone(), (entry.size, entry.modified, dims));
+        sizes.insert(entry.path.clone(), (now.0, now.1, dims));
         dims
     }
 
@@ -370,7 +382,8 @@ impl FilesApp {
     /// leaves the screen, so memory follows what is shown, not every image ever opened.
     fn release_images_off_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let shown = self.images_to_show();
-        for path in self.images_on_screen.difference(&shown) {
+        let stale = std::mem::take(&mut *self.stale_images.borrow_mut());
+        for path in self.images_on_screen.difference(&shown).chain(&stale) {
             let resource = Resource::Path(Arc::from(path.as_path()));
             if let Some(Ok(image)) = window.get_asset::<ImgResourceLoader>(&resource, cx) {
                 cx.drop_image(image, Some(window));
@@ -510,6 +523,7 @@ impl FilesApp {
             }
         });
         self.prompt = Some(mode);
+        self.prompt_pane = self.active_pane;
         let handle = self.prompt_input.read(cx).focus_handle(cx);
         window.focus(&handle);
         cx.notify();
@@ -3081,6 +3095,9 @@ impl FilesApp {
 impl Render for FilesApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_appearance_if_changed(cx);
+        if self.active_pane != self.prompt_pane {
+            self.end_prompt(window);
+        }
         self.release_images_off_screen(window, cx);
         let p = self.palette();
         let center_bar = self.render_center_bars(p, cx);

@@ -24,7 +24,10 @@ demand.
 - **Split pane**: Side-by-side browsing (`Ctrl+Alt+N`, `Tab` to switch).
 - **Safe file operations**: Copy, cut, paste, duplicate, rename, new folder,
   and FreeDesktop Trash with restore. Operations never overwrite an existing
-  target, even one that appears while they run. A move or a trash between
+  target, even one that appears while they run. (On a filesystem that offers
+  neither an atomic no-replace rename nor hard links, such as some FUSE
+  mounts, a rename checks the name first, and a program creating that name in
+  the same instant could still lose the race.) A move or a trash between
   filesystems copies first and removes the original only once the copy is
   whole; a copy that fails partway removes what it made. Files does not copy
   pipes, sockets, or devices, and never reads them for a preview.

@@ -1287,14 +1287,7 @@ pub fn move_to_trash_in(src: &Path, trash: &Path) -> Result<PathBuf, String> {
         &files_dir,
         name,
         // Reserve each name with its .trashinfo first, atomically, as the Trash specification asks.
-        |dst| {
-            let mut info = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(info_for(dst)?)?;
-            info.write_all(info_body.as_bytes())
-        },
+        |dst| write_new(&info_for(dst)?, info_body.as_bytes(), |file, body| file.write_all(body)),
         |dst| {
             if let Ok(info) = info_for(dst) {
                 let _ = fs::remove_file(info);
@@ -1313,6 +1306,19 @@ pub fn move_to_trash_in(src: &Path, trash: &Path) -> Result<PathBuf, String> {
         })?;
     }
     Ok(dst)
+}
+
+/// Creates `path`, which must not exist, and fills it with `write`. If filling fails, the file is
+/// removed again, so a half-written `.trashinfo` never holds a name.
+fn write_new(path: &Path, body: &[u8], write: impl FnOnce(&mut fs::File, &[u8]) -> io::Result<()>) -> io::Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    write(&mut file, body).inspect_err(|_| {
+        let _ = fs::remove_file(path);
+    })
 }
 
 pub fn move_to_trash(src: &Path) -> Result<PathBuf, String> {
@@ -1996,6 +2002,22 @@ mod tests {
         assert_eq!(still_image_size(&root.join("loop.webp")), None);
         assert_eq!(riff_webp_first_chunk(b"RIFF\0\0\0\0WEBPVP8L"), Some(WebPStart::Simple));
         assert_eq!(riff_webp_first_chunk(b"\x89PNG\r\n\x1a\n\0\0\0\0\0\0\0\0"), None);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_half_written_trashinfo_does_not_hold_its_name() {
+        let root = temp_dir("write-new");
+        let info = root.join("draft.md.trashinfo");
+        let failed = write_new(&info, b"[Trash Info]", |file, body| {
+            file.write_all(&body[..1])?;
+            Err(io::Error::other("disk full"))
+        });
+        assert!(failed.is_err());
+        assert!(!info.exists());
+        write_new(&info, b"[Trash Info]", |file, body| file.write_all(body)).unwrap();
+        assert_eq!(fs::read_to_string(&info).unwrap(), "[Trash Info]");
 
         let _ = fs::remove_dir_all(&root);
     }
