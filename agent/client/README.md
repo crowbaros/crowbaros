@@ -43,7 +43,10 @@ crowbar-agent model [PROVIDER/MODEL]  # list the Models signed in to, or choose 
   had written is no part of the answer.
 - **Ctrl-C stops the turn** the Agent is working on, and the client waits for
   the turn to end. Between turns, Ctrl-C leaves, and so it does while the
-  client waits for a Harness that is slow to answer.
+  client waits for a Harness that is slow to answer. If that was the answer
+  to a message, the client says the message may still be answered.
+- **A turn another client begins** in the conversation is shown as it comes,
+  with its message, and Ctrl-C stops it too.
 - **A client that goes away stops nothing.** When its terminal closes or its
   SSH connection drops, the turn goes on in the Harness. `--list` shows it as
   working, and `--resume ID` picks it up, where Ctrl-C stops it.
@@ -55,7 +58,9 @@ crowbar-agent model [PROVIDER/MODEL]  # list the Models signed in to, or choose 
   not wait for the browser, and opens only an address of the web. Where the
   browser is on another machine, paste the code it shows, or the address it
   ends at. Leaving at the last question, which Model to use, leaves the
-  person signed in with no Model chosen, and the client says so.
+  person signed in with none of that provider's Models chosen, and the client
+  says so. A second Ctrl-C leaves a sign-in the Harness has not yet said is
+  cancelled.
 - **`login`, `logout`, `status`, and `model` are commands only as the first
   word.** A request that starts with one of them goes in quotes with the rest
   of it, or after `--`: `crowbar-agent -- status of my disk`.

@@ -5,7 +5,7 @@
 
 use crate::connection::{Connection, Happening, refused, text};
 use serde_json::{Value, json};
-use std::io::{IsTerminal, Result, Write};
+use std::io::{ErrorKind, IsTerminal, Result, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// How a turn ended, as the client's exit status says it.
@@ -53,7 +53,16 @@ impl Answer {
 /// until the turn ends. With no conversation yet, the message starts one,
 /// and `conversation` is then its ID.
 fn turn(harness: &mut Connection, conversation: &mut Option<String>, message: &str) -> Result<Ended> {
-    let reply = harness.request(json!({ "op": "send", "conversation": conversation, "text": message }))?;
+    let reply = harness
+        .request(json!({ "op": "send", "conversation": conversation, "text": message }))
+        .inspect_err(|error| {
+            // Ctrl-C before the Harness said the turn began. Leaving stops no turn, and this one may yet begin.
+            if error.kind() == ErrorKind::Interrupted {
+                eprintln!(
+                    "crowbar-agent: Left before the Harness answered. The message was sent, and the Agent may still answer it: `crowbar-agent --list` shows whether it did."
+                );
+            }
+        })?;
     if let Some(code) = refused(&reply) {
         return Ok(if code == "working" {
             Ended::Refused
@@ -232,16 +241,20 @@ pub fn repl(harness: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
                         Ended::Done
                     });
                 }
-                // What another client of this conversation says, and the answer to it.
-                Happening::Event(event) => match &*text(&event, "event") {
-                    "message" => println!("\n> {}", text(&event, "text")),
-                    "text" => {
-                        print!("{}", text(&event, "text"));
-                        std::io::stdout().flush()?;
+                // What another client of this conversation says begins a turn
+                // this client shows, so it is this client's to watch, and
+                // Ctrl-C stops it, as it stops any turn on the screen. What
+                // is left of a turn this client stopped watching is not shown.
+                Happening::Event(event) if text(&event, "event") == "message" => {
+                    let mut answer = Answer::new();
+                    answer.write(&format!("\n> {}\n", text(&event, "text")))?;
+                    let turn = event.get("turn").and_then(Value::as_u64);
+                    last = watch(harness, &text(&event, "conversation"), turn, answer)?;
+                    if prompted {
+                        eprint!("> ");
                     }
-                    "done" | "stopped" | "failed" => println!(),
-                    _ => {}
-                },
+                }
+                Happening::Event(_) => {}
             }
         };
         if line.trim().is_empty() {

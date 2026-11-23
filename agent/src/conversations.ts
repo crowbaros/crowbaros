@@ -11,7 +11,7 @@ export type ConversationEvent = { event: string; conversation: string; turn: num
 export type Follower = (event: ConversationEvent) => void;
 
 /** The events that take a conversation from how it stood to how it stands. */
-function events(conversation: string, before: Map<number, Turn>, turns: readonly Turn[]): ConversationEvent[] {
+export function events(conversation: string, before: Map<number, Turn>, turns: readonly Turn[]): ConversationEvent[] {
 	const out: ConversationEvent[] = [];
 	for (const turn of turns) {
 		const known = before.get(turn.turn);

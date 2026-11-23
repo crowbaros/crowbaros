@@ -298,7 +298,7 @@ message, so every client of a conversation shows the same thing.
 | `{"op":"list"}` | `{"reply":"conversations","conversations":[...]}` | Lists every conversation, the newest first. Each is `{"conversation":"k3f9q2xz","started":1795395526,"title":"How do I…","turns":2,"working":false}`: when it started, in seconds since 1970, how its first message begins, how many turns it has, and whether one is working |
 | `{"op":"resume","conversation":"k3f9q2xz"}` | `{"reply":"resumed","conversation":"k3f9q2xz","earlier":false,"turns":[...]}` | Follows a conversation, and gives it as it stands: its newest turns, the oldest first, and whether it has turns before them. Each is `{"turn":1,"message":"...","answer":"...","state":"done"}`. `state` is `working`, `done`, `stopped`, or `failed`, and a failed turn has `error`, which says why. A turn that is working has its answer so far, and its events follow |
 | `{"op":"send","conversation":"k3f9q2xz","text":"..."}` | `{"reply":"sent","conversation":"k3f9q2xz","turn":2}` | Sends a message of the person's, which begins a turn. The Model in use answers it. With no `conversation`, the message starts one, which the client then follows, and the reply has its ID. A message that is refused starts none |
-| `{"op":"stop","conversation":"k3f9q2xz","turn":2}` | `{"reply":"ok"}` | Stops the turn that is working. It is answered once the turn has stopped. With no turn working, it stops nothing. `turn` is the turn the client means, and may be left out: with it, the stop does nothing unless that is the conversation's newest turn, so one that comes after its turn ended does not stop the turn after |
+| `{"op":"stop","conversation":"k3f9q2xz","turn":2}` | `{"reply":"ok"}` | Stops the turn that is working. It is answered once the turn has stopped. With no turn working, it stops nothing. `turn` is the turn the client means, and may be left out: with it, the stop does nothing unless that is the conversation's newest turn. A stop and a message for one conversation are taken one at a time, so a stop that comes as its turn ends never stops the turn after |
 
 | Event | When |
 | --- | --- |
@@ -381,8 +381,8 @@ the code the provider shows, in answer to the `code` question.
 - **An answer that is cut short** starts over when the Model is asked again,
   with a `start-over` event, whether or not the new try begins with the same
   words. The conversation keeps the newest try's answer alone.
-- **A turn that failed stays failed**, with why, however many turns come
-  after it.
+- **A turn reads as it ended**, however many turns come after it: one that
+  failed as `failed`, with why, and one the person stopped as `stopped`.
 - **A turn the Harness is stopped in the middle of** goes on when it starts
   again: the Model is asked again, with no client connected.
 - **The Agent is told what it is** before every conversation, in

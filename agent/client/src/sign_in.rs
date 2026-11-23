@@ -119,6 +119,7 @@ pub fn login(harness: &mut Connection, provider: Option<&str>) -> Result<Ended> 
         return Ok(Ended::Failed);
     }
     let mut asked: Option<Question> = None;
+    let mut cancelling = false;
     loop {
         let event = match harness.next(asked.is_some())? {
             Happening::Event(event) => event,
@@ -144,6 +145,12 @@ pub fn login(harness: &mut Connection, provider: Option<&str>) -> Result<Ended> 
             Happening::EndOfInput | Happening::Interrupt => {
                 asked = None;
                 eprintln!();
+                // A second one does not wait for a Harness that has not said the sign-in
+                // is cancelled: it cancels the sign-in of a client that leaves.
+                if cancelling {
+                    return Ok(Ended::Stopped);
+                }
+                cancelling = true;
                 harness.send(json!({ "op": "cancel" }))?;
                 continue;
             }
@@ -182,7 +189,8 @@ pub fn login(harness: &mut Connection, provider: Option<&str>) -> Result<Ended> 
             }
             "signed-in" => {
                 let model = match &*text(&event, "name") {
-                    "" => " No Model is chosen: choose one with `crowbar-agent model`.".to_string(),
+                    // Another provider's Model may be in use still, which `status` shows.
+                    "" => " None of its Models is chosen: choose one with `crowbar-agent model`.".to_string(),
                     name => format!(" The Agent uses {name}."),
                 };
                 eprintln!("Signed in to {}.{model}", text(&event, "provider_name"));

@@ -468,6 +468,27 @@ test("a stop that names a turn stops that turn alone, and not the one after it",
 	assert.equal((await person.ask({ op: "stop", conversation, turn: "2" })).code, "request");
 });
 
+test("a turn the person stopped stays stopped, whatever turn comes after it", async (t) => {
+	const directory = scratch(t);
+	const model = await stub(t, directory, [{ text: "One two", cut: true }, { text: "Here." }]);
+	const harness = await start(t, directory);
+	pointAt(harness.state, model.url);
+	const person = await client(harness.person);
+	const { conversation } = await person.ask({ op: "send", text: "Count." });
+	// Stopped while the Model waits to be asked again: its last answer is one that failed, and nobody's stop shows in it.
+	await person.until((message) => message.event === "retry");
+	await person.ask({ op: "stop", conversation, turn: 1 });
+	await person.until(ended);
+	const stopped = { turn: 1, message: "Count.", answer: "One", state: "stopped" };
+	assert.deepEqual((await person.ask({ op: "resume", conversation })).turns, [stopped]);
+	await person.ask({ op: "send", conversation, text: "Still there?" });
+	await person.until(ended);
+	assert.deepEqual((await person.ask({ op: "resume", conversation })).turns, [
+		stopped,
+		{ turn: 2, message: "Still there?", answer: "Here.", state: "done" },
+	]);
+});
+
 test("a client that resumes a long conversation gets its newest turns, however long another client has followed it", async (t) => {
 	const directory = scratch(t);
 	const turns = 56;

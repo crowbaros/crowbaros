@@ -401,6 +401,89 @@ fn ctrl_c_leaves_a_client_that_waits_for_a_harness_that_does_not_answer() {
 
 #[test]
 #[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
+fn ctrl_c_after_a_message_is_sent_and_before_the_harness_answers_says_it_may_still_be_answered() {
+    let lab = Lab::with_model(r#"[{"text": "Here."}]"#);
+    let mut talking = Running::start(lab.agent(&[]));
+    // Connected, and then the Harness answers nothing more.
+    std::thread::sleep(Duration::from_millis(300));
+    let harness = lab.children[0].id() as libc::pid_t;
+    // SAFETY: the process is this test's own child, which it has not waited for.
+    unsafe { libc::kill(harness, libc::SIGSTOP) };
+    let mut typing = talking.child.stdin.take().expect("its input");
+    typing.write_all(b"Hello?\n").expect("typing");
+    std::thread::sleep(Duration::from_millis(300));
+    talking.signal(libc::SIGINT);
+    wait_for("the client to leave", || {
+        talking.child.try_wait().expect("crowbar-agent is waited for").is_some()
+    });
+    assert_eq!(talking.ended(), 130);
+    assert!(
+        talking
+            .err
+            .lock()
+            .unwrap()
+            .contains("The message was sent, and the Agent may still answer it"),
+        "{:?}",
+        talking.err
+    );
+    // And it is, once the Harness goes on.
+    // SAFETY: as above.
+    unsafe { libc::kill(harness, libc::SIGCONT) };
+    wait_for("the turn to be answered", || {
+        lab.run(&["--list"], "").out.contains("1 turn ")
+    });
+}
+
+#[test]
+#[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
+fn ctrl_c_stops_a_turn_another_client_began_while_this_one_shows_it() {
+    let lab = Lab::with_model(r#"[{"text": "Here."}, {"text": "One two three", "stall": true}]"#);
+    assert_eq!(lab.run(&["Hello?"], "").status, 0);
+    let conversation = only_conversation(&lab);
+    // One terminal has the conversation open, and waits for a line.
+    let mut shown = Running::start(lab.agent(&["--resume", &conversation]));
+    shown.wait_for_out("> Hello?\nHere.\n");
+    // Another begins a turn in it, which the first shows as it comes.
+    let mut other = Running::start(lab.agent(&["--resume", &conversation, "Count."]));
+    shown.wait_for_out("\n> Count.\nOne");
+    shown.signal(libc::SIGINT);
+    shown.wait_for_err("Stopped.\n");
+    assert!(!lab.run(&["--list"], "").out.contains("(working)"));
+    assert_eq!(other.ended(), 130);
+    // The first is still there, at its prompt, and Ctrl-D leaves it.
+    drop(shown.child.stdin.take());
+    assert_eq!(shown.ended(), 0);
+    assert_eq!(shown.out.lock().unwrap().as_str(), "> Hello?\nHere.\n\n> Count.\nOne\n");
+}
+
+#[test]
+#[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
+fn a_second_ctrl_c_leaves_a_sign_in_the_harness_does_not_answer() {
+    let mut lab = Lab::empty();
+    lab.harness(uid());
+    let mut signing_in = Running::start(lab.agent(&["login", "openai"]));
+    signing_in.wait_for_err("How do you want to sign in to OpenAI?");
+    // SAFETY: the process is this test's own child, which it has not waited for.
+    unsafe { libc::kill(lab.children[0].id() as libc::pid_t, libc::SIGSTOP) };
+    signing_in.signal(libc::SIGINT);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        signing_in.child.try_wait().unwrap().is_none(),
+        "the first Ctrl-C waits for the Harness"
+    );
+    signing_in.signal(libc::SIGINT);
+    wait_for("the client to leave", || {
+        signing_in
+            .child
+            .try_wait()
+            .expect("crowbar-agent is waited for")
+            .is_some()
+    });
+    assert_eq!(signing_in.ended(), 130);
+}
+
+#[test]
+#[ignore = "needs the bundled Harness and Node.js: `base/void_base.py agent` runs it"]
 fn a_harness_that_serves_another_account_refuses_the_client() {
     let mut lab = Lab::empty();
     lab.harness(uid() + 1);
