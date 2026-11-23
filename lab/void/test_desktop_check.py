@@ -513,6 +513,16 @@ class RealModelCredentialAndTyping(unittest.TestCase):
         self.assertFalse(audit2['has_secret_in_db'])
         self.assertFalse(audit2['has_secret_in_logs'])
 
+        # Missing or null turn must fail closed rather than widening to the whole conversation.
+        for bad_turn in (None, 0, True, '1'):
+            bad_spec = dict(spec, turn=bad_turn)
+            res_bad = subprocess.run(
+                [sys.executable, '-c', desktop_check.HARNESS_AUDIT_SCRIPT],
+                input=json.dumps(bad_spec), text=True, capture_output=True, check=True,
+            )
+            audit_bad = json.loads(res_bad.stdout)
+            self.assertFalse(audit_bad['has_desktop_context'], f'turn={bad_turn!r} should fail closed')
+
     def test_check_scrubs_secret_from_logs_results_and_diagnostics(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -536,7 +546,7 @@ class RealModelCredentialAndTyping(unittest.TestCase):
         vm = Runs.Guest(temporary.name)
 
         def boom(check, built, credential=None):
-            raise RuntimeError(f'boom with {secret}')
+            raise RuntimeError(f'boom "quoted" with {secret}')
 
         with patch.dict(desktop_check.os.environ, {'ANTHROPIC_API_KEY': secret}, clear=True), \
                 patch.object(base, 'preflight'), patch.object(guest.Guest, 'create', return_value=vm), \
@@ -546,10 +556,12 @@ class RealModelCredentialAndTyping(unittest.TestCase):
             code = desktop_check.main()
         self.assertEqual(code, 1)
         self.assertEqual(desktop_check.evidence_has_secret(vm.work, secret), [])
-        results_text = (vm.work / 'results.json').read_text()
-        self.assertNotIn(secret, results_text)
-        self.assertNotIn(repr(secret)[1:-1], results_text)
-        self.assertIn('[REDACTED]', results_text)
+        for filename in ('results.json', 'desktop.log'):
+            text = (vm.work / filename).read_text()
+            self.assertNotIn(secret, text)
+            self.assertNotIn(repr(secret)[1:-1], text)
+            self.assertNotIn("sk-exception-", text)
+            self.assertIn('[REDACTED]', text)
 
 if __name__ == '__main__':
     unittest.main()

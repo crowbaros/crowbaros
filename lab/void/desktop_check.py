@@ -36,12 +36,32 @@ class Check:
     def _scrub(self, text):
         if not self.secret:
             return text
-        if self.secret in text:
-            text = text.replace(self.secret, '[REDACTED]')
-        escaped = repr(self.secret)[1:-1]
-        if escaped and escaped != self.secret and escaped in text:
-            text = text.replace(escaped, '[REDACTED]')
+        for needle in (self.secret, repr(self.secret)[1:-1], json.dumps(self.secret)[1:-1]):
+            if needle and needle in text:
+                text = text.replace(needle, '[REDACTED]')
         return text
+
+    def _scrub_value(self, value):
+        if isinstance(value, str):
+            return self._scrub(value)
+        if isinstance(value, list):
+            return [self._scrub_value(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(self._scrub_value(v) for v in value)
+        if isinstance(value, dict):
+            return {self._scrub_value(k): self._scrub_value(v) for k, v in value.items()}
+        return value
+
+    def _format_error(self, error):
+        """Formats an exception while redacting arguments before repr() can
+        escape quotes or backslashes inside the secret."""
+        args = getattr(error, 'args', ())
+        if args:
+            parts = [repr(self._scrub_value(a)) for a in args]
+            rendered = f'{type(error).__name__}({", ".join(parts)})'
+        else:
+            rendered = repr(error)
+        return self._scrub(rendered)
 
     def log(self, message):
         line = f'[{time.strftime("%H:%M:%S", time.gmtime())}] {self._scrub(str(message))}'
@@ -1436,10 +1456,11 @@ if conv and {"documents", "document_revisions", "entries"}.issubset(tables):
                             target_at = val
 
 # Positive checks inspect only the stored `crowbar.message` entry's user-role
-# Model input for this conversation (and turn, when given), so neither another
-# conversation nor an assistant reply echoing the markers can satisfy them.
+# Model input for this exact conversation and positive integer turn, so neither
+# another conversation, another turn, nor an assistant reply can satisfy them.
+valid_turn = isinstance(target_turn, int) and not isinstance(target_turn, bool) and target_turn > 0
 target_user_texts = []
-if target_at is not None:
+if target_at is not None and valid_turn:
     for (record_raw,) in conn.execute("SELECT record FROM entries WHERE conversation_id = ?", (target_at,)):
         if not isinstance(record_raw, str):
             continue
@@ -1449,7 +1470,7 @@ if target_at is not None:
             continue
         if not isinstance(record, dict) or record.get("kind") != "crowbar.message":
             continue
-        if target_turn is not None and (record.get("data") or {}).get("turn") != target_turn:
+        if (record.get("data") or {}).get("turn") != target_turn:
             continue
         for msg in record.get("model") or []:
             if isinstance(msg, dict) and msg.get("role") == "user":
@@ -1521,9 +1542,10 @@ def main():
     except BaseException as error:
         # Whatever stopped the run, a person's Ctrl-C included: a run that
         # did not reach its end did not pass, and keeps its disk.
+        error_text = check._format_error(error)
         if all(row['passed'] for row in check.results):
-            check.results.append({'name': 'smoke run completed', 'passed': False, 'detail': check._scrub(repr(error))})
-        check.log(f'FAIL: {error!r}')
+            check.results.append({'name': 'smoke run completed', 'passed': False, 'detail': error_text})
+        check.log(f'FAIL: {error_text}')
         if not isinstance(error, Exception):
             raise
     finally:
