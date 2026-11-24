@@ -1,6 +1,6 @@
 # Pi Durable runs the Agent, behind a protocol CrowbarOS owns
 
-**Status:** accepted on November 21, 2026, by Jim Martin and Jason Alexander. Proposed on November 21 by Jim Martin.
+**Status:** accepted on November 21, 2026, by Jim Martin and Jason Alexander. Proposed on November 21 by Jim Martin. [ADR 0036](0036-lever-drives-the-harnesses-a-person-has-and-crowbaros-builds-none.md), proposed on November 23, replaces it: CrowbarOS builds no harness, and drives the ones a person has.
 
 The [vision](../VISION.md) left open whether we write our own harness or run an existing one. Milestone 3 needs a Harness that keeps a conversation going while the Agent's surface is put away, parks an act until the person's yes, and comes back from a crash, a suspend, or a restart without running an act twice. It also has to reach Models through API keys, OAuth, and local servers.
 
