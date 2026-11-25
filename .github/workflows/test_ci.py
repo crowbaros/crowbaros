@@ -100,6 +100,11 @@ class Changes(unittest.TestCase):
         self.assertEqual(self.needs(base=self.first, head=head),
                          {'code': 'true', 'compositor': 'false', 'lever': 'false', 'boot': 'true'})
 
+    def test_shared_libs_need_the_code_jobs_and_the_boot(self):
+        head = self.commit({'libs/crowbar-theme/src/lib.rs': 'pub fn ok() {}\n'})
+        self.assertEqual(self.needs(base=self.first, head=head),
+                         {'code': 'true', 'compositor': 'false', 'lever': 'false', 'boot': 'true'})
+
     def test_base_needs_the_code_jobs_and_the_boot(self):
         head = self.commit({'base/host/image.sh': 'set -eu\n'})
         self.assertEqual(self.needs(base=self.first, head=head),
@@ -111,9 +116,11 @@ class Changes(unittest.TestCase):
         self.assertNotIn('outputs.agent', text)
         self.assertNotIn('base/void_base.py agent', text)
         self.assertIn('name: Lever', text)
+        self.assertIn('name: Theme library (libs/crowbar-theme)', text)
+        self.assertIn('libs/crowbar-ui', text)
         self.assertIn("if: needs.changes.outputs.lever == 'true'", text)
         self.assertIn('working-directory: lever', text)
-        self.assertIn('needs: [changes, check, shell, helpers, lever, compositor, boot]', text)
+        self.assertIn('needs: [changes, check, theme, shell, helpers, lever, compositor, boot]', text)
 
     def test_code_moved_into_docs_is_still_a_change_to_the_code(self):
         # Git names a moved file by where it went. Read that way, Base losing

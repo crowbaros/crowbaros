@@ -4,6 +4,13 @@ mod session;
 mod settings;
 mod theme;
 
+use crowbar_theme::{ActiveTheme, ThemeStore};
+use crowbar_ui::{
+    ButtonVariant, FONT_MONO, FONT_UI, SIDEBAR_WIDTH, TEXT_BODY, TEXT_LABEL, TEXT_SECTION,
+    TEXT_SELECTION_LABEL, TEXT_SUPPORTING, TEXT_TECHNICAL, TEXT_TITLE, action_chip, badge,
+    button as ui_button, card, divider, load_fonts, section_header, sidebar, spawn_theme_watcher,
+    status_footer, titlebar,
+};
 use displays::{
     DisplayError, DisplayMode, OutputDraft, OutputInfo, RelativeSide, SCALES, arrange_relative,
     dedup_sorted_modes, format_refresh, format_scale, logical_size, project_diagram,
@@ -14,7 +21,7 @@ use gpui::{
     px, rgb, size,
 };
 use settings::{Preferences, Store, Theme, Wallpaper};
-use std::{borrow::Cow, path::PathBuf};
+use std::path::PathBuf;
 use theme::Palette;
 
 actions!(
@@ -78,6 +85,8 @@ struct Settings {
     store: Store,
     saved: Option<Preferences>,
     draft: Preferences,
+    live_theme: ActiveTheme,
+    previewing_appearance: bool,
     load_error: bool,
     error: Option<String>,
     busy: bool,
@@ -105,6 +114,23 @@ impl Settings {
         let error = loaded.as_ref().err().cloned();
         let saved = loaded.unwrap_or_default();
         let draft = saved.clone().unwrap_or_default();
+        let live_theme = ThemeStore::for_user()
+            .map(|theme_store| theme_store.load_active())
+            .unwrap_or_else(|_| theme::fallback_active_theme(&draft));
+        spawn_theme_watcher(cx, |this, active, cx| {
+            this.live_theme = active;
+            if !this.previewing_appearance
+                && !this.has_unsaved_edits()
+                && !this.busy
+                && let Ok(reloaded) = this.store.load()
+            {
+                this.saved = reloaded;
+                this.draft = this.saved.clone().unwrap_or_default();
+                this.load_error = false;
+                this.error = None;
+            }
+            cx.notify();
+        });
         log::info!(
             "STUDIO event=opened theme={:?} studio={} reduced_motion={} wallpaper={:?}",
             draft.theme,
@@ -119,6 +145,8 @@ impl Settings {
             store,
             saved,
             draft,
+            live_theme,
+            previewing_appearance: false,
             load_error: error.is_some(),
             error,
             busy: false,
@@ -134,6 +162,9 @@ impl Settings {
             display_error: None,
             display_status: "".into(),
         }
+    }
+    fn active_palette(&self) -> Palette {
+        theme::resolve_palette(&self.live_theme, &self.draft, self.previewing_appearance)
     }
     fn appearance_dirty(&self) -> bool {
         self.saved.as_ref() != Some(&self.draft)
@@ -151,6 +182,7 @@ impl Settings {
             || self.displays_dirty()
     }
     fn changed(&mut self, cx: &mut Context<Self>) {
+        self.previewing_appearance = true;
         self.status.clear();
         self.confirming_close = false;
         if !self.load_error {
@@ -290,10 +322,23 @@ impl Settings {
         let task = cx.background_executor().spawn(async move {
             let result = session::Session::connect()
                 .and_then(|motion| store.save(&draft, &expected, &motion));
-            (draft, result)
+            let synced_theme = if result.is_ok() {
+                match ThemeStore::for_user()
+                    .and_then(|theme_store| theme::sync_theme_store(&theme_store, &draft))
+                {
+                    Ok(active) => Some(active),
+                    Err(err) => {
+                        log::warn!("STUDIO event=theme-sync-failed {err}");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            (draft, result, synced_theme)
         });
         cx.spawn(async move |this, cx| {
-            let (draft, result) = task.await;
+            let (draft, result, synced_theme) = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.busy = false;
                 match result {
@@ -305,6 +350,9 @@ impl Settings {
                             draft.reduced_motion,
                             draft.wallpaper
                         );
+                        this.live_theme = synced_theme
+                            .unwrap_or_else(|| theme::fallback_active_theme(&draft));
+                        this.previewing_appearance = false;
                         this.saved = Some(draft);
                         this.status = "Saved.".into();
                         this.confirming_close = false;
@@ -334,6 +382,7 @@ impl Settings {
             return;
         }
         self.draft = self.saved.clone().unwrap_or_default();
+        self.previewing_appearance = false;
         self.status = "Preview reset.".into();
         self.confirming_close = false;
         if !self.load_error {
@@ -354,6 +403,10 @@ impl Settings {
             Ok(saved) => {
                 self.saved = saved;
                 self.draft = self.saved.clone().unwrap_or_default();
+                self.live_theme = ThemeStore::for_user()
+                    .map(|theme_store| theme_store.load_active())
+                    .unwrap_or_else(|_| theme::fallback_active_theme(&self.draft));
+                self.previewing_appearance = false;
                 self.error = None;
                 self.load_error = false;
                 self.status = "Reloaded saved preferences.".into();
@@ -387,33 +440,19 @@ impl Settings {
         primary: bool,
         enabled: bool,
     ) -> Stateful<Div> {
-        div()
-            .id(("button", index))
-            .track_focus(&self.controls[index])
-            .flex()
-            .items_center()
-            .justify_center()
-            .h(px(40.))
-            .px_4()
-            .rounded(px(10.))
-            .border_2()
-            .border_color(rgb(if self.controls[index].is_focused(window) {
-                if primary { p.on_accent } else { p.focus }
-            } else if primary {
-                p.accent
+        ui_button(
+            ("button", index),
+            &self.controls[index],
+            label,
+            p,
+            window,
+            if primary {
+                ButtonVariant::Primary
             } else {
-                p.line
-            }))
-            .when(self.controls[index].is_focused(window), |d| {
-                d.border_dashed()
-            })
-            .bg(rgb(if primary { p.accent } else { p.surface }))
-            .text_color(rgb(if primary { p.on_accent } else { p.text }))
-            .text_size(px(13.))
-            .font_weight(FontWeight::SEMIBOLD)
-            .when(enabled, |d| d.cursor_pointer().hover(|s| s.opacity(0.85)))
-            .when(!enabled, |d| d.opacity(0.5))
-            .child(label.into())
+                ButtonVariant::Secondary
+            },
+            enabled,
+        )
     }
     fn theme_choice(
         &self,
@@ -424,7 +463,7 @@ impl Settings {
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let selected = self.draft.theme == theme;
-        let preview = Palette::for_preferences(&Preferences {
+        let preview = theme::palette_for_preferences(&Preferences {
             theme,
             studio: self.draft.studio,
             ..Preferences::default()
@@ -701,7 +740,7 @@ impl Settings {
                 }))
             .child(div().flex().flex_col().border_t_1().border_b_1().border_color(rgb(p.line))
                 .child(self.toggle(CONTROL_STUDIO,"Studio Mode","Use neutral grays for visual work. This does not calibrate your display.",self.draft.studio,p,window,cx))
-                .child(div().h(px(1.)).bg(rgb(p.line)))
+                .child(divider(p))
                 .child(self.toggle(CONTROL_REDUCED_MOTION,if session::on_crowbaros() { "Reduced motion preference" } else { "Reduced motion" },if session::on_crowbaros() { "Saved for compatible desktops. This desktop has no animations." } else { "Turn off desktop window and workspace animations when you save." },self.draft.reduced_motion,p,window,cx)))
             .child(div().text_size(px(12.)).text_color(rgb(p.muted))
                 .child(if session::on_crowbaros() { "Saved appearance and wallpaper also apply to the shell. Other applications keep their own themes." } else { "Appearance currently styles Studio Settings. Reduced motion applies to your Hyprland desktop and is restored at login." }))
@@ -755,13 +794,9 @@ impl Settings {
 
         if self.displays_loading && !self.displays_loaded {
             return page.child(
-                div()
+                card(p)
                     .p_5()
-                    .rounded(px(12.))
-                    .bg(rgb(p.surface))
-                    .border_1()
-                    .border_color(rgb(p.line))
-                    .text_size(px(13.))
+                    .text_size(px(TEXT_BODY))
                     .text_color(rgb(p.muted))
                     .child("Reading connected displays…"),
             );
@@ -769,30 +804,19 @@ impl Settings {
 
         if let Some(reason) = &self.displays_unavailable {
             return page.child(
-                div()
+                card(p)
                     .p_5()
-                    .rounded(px(12.))
-                    .bg(rgb(p.surface))
-                    .border_1()
-                    .border_color(rgb(p.line))
-                    .flex()
-                    .flex_col()
                     .gap_2()
+                    .child(section_header("Display controls unavailable", None, p))
                     .child(
                         div()
-                            .text_size(px(14.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Display controls unavailable"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(13.))
+                            .text_size(px(TEXT_BODY))
                             .text_color(rgb(p.muted))
                             .child(reason.clone()),
                     )
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(px(TEXT_SUPPORTING))
                             .text_color(rgb(p.muted))
                             .child("Sign into a Fulcrum session to adjust resolution, scale, and monitor layout."),
                     ),
@@ -801,13 +825,9 @@ impl Settings {
 
         if self.outputs.is_empty() {
             return page.child(
-                div()
+                card(p)
                     .p_5()
-                    .rounded(px(12.))
-                    .bg(rgb(p.surface))
-                    .border_1()
-                    .border_color(rgb(p.line))
-                    .text_size(px(13.))
+                    .text_size(px(TEXT_BODY))
                     .text_color(rgb(p.muted))
                     .child("No displays reported by Fulcrum."),
             );
@@ -861,15 +881,15 @@ impl Settings {
                     )
                     .child(
                         div()
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(10.))
+                            .font_family(FONT_MONO)
+                            .text_size(px(TEXT_SELECTION_LABEL))
                             .text_color(rgb(p.muted))
                             .child(format!("{lw}×{lh}")),
                     )
                     .child(
                         div()
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(10.))
+                            .font_family(FONT_MONO)
+                            .text_size(px(TEXT_SELECTION_LABEL))
                             .text_color(rgb(if modified { p.accent } else { p.muted }))
                             .child(format_scale(draft.scale)),
                     )
@@ -985,15 +1005,9 @@ impl Settings {
         };
 
         page = page.child(
-            div()
+            card(p)
                 .px_4()
                 .py_3()
-                .rounded(px(12.))
-                .bg(rgb(p.surface))
-                .border_1()
-                .border_color(rgb(p.line))
-                .flex()
-                .flex_col()
                 .gap_2()
                 .child(
                     div()
@@ -1008,37 +1022,31 @@ impl Settings {
                                 .gap_3()
                                 .child(
                                     div()
-                                        .text_size(px(14.))
+                                        .text_size(px(TEXT_SECTION))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .child(output.name.clone()),
                                 )
                                 .child(
                                     div()
-                                        .font_family("IBM Plex Mono")
-                                        .text_size(px(11.))
+                                        .font_family(FONT_MONO)
+                                        .text_size(px(TEXT_TECHNICAL))
                                         .text_color(rgb(p.muted))
                                         .child(identity_text),
                                 ),
                         )
-                        .child(
-                            div()
-                                .px_2()
-                                .py(px(2.))
-                                .rounded(px(6.))
-                                .bg(rgb(if modified { p.accent } else { p.canvas }))
-                                .text_size(px(11.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(rgb(if modified { p.on_accent } else { p.muted }))
-                                .child(if modified { "Pending" } else { "Active" }),
-                        ),
+                        .child(badge(
+                            if modified { "Pending" } else { "Active" },
+                            p,
+                            modified,
+                        )),
                 )
                 .child(
                     div()
                         .flex()
                         .flex_wrap()
                         .gap_4()
-                        .font_family("IBM Plex Mono")
-                        .text_size(px(11.))
+                        .font_family(FONT_MONO)
+                        .text_size(px(TEXT_TECHNICAL))
                         .text_color(rgb(p.text))
                         .child(format!(
                             "Mode: {}×{} @ {}",
@@ -1065,13 +1073,13 @@ impl Settings {
                         .justify_between()
                         .child(
                             div()
-                                .text_size(px(14.))
+                                .text_size(px(TEXT_SECTION))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child("Scale"),
                         )
                         .child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(TEXT_TECHNICAL))
                                 .text_color(rgb(p.muted))
                                 .child("Interface size in 25% steps"),
                         ),
@@ -1083,23 +1091,7 @@ impl Settings {
                         .gap_2()
                         .children(SCALES.into_iter().enumerate().map(|(si, scale)| {
                             let is_active = current_scale == scale;
-                            div()
-                                .id(("display-scale", si))
-                                .h(px(32.))
-                                .px_3()
-                                .rounded(px(10.))
-                                .border_2()
-                                .border_color(rgb(if is_active { p.accent } else { p.line }))
-                                .bg(rgb(if is_active { p.accent } else { p.surface }))
-                                .text_color(rgb(if is_active { p.on_accent } else { p.text }))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .text_size(px(12.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .cursor_pointer()
-                                .hover(|s| s.opacity(0.86))
-                                .child(format_scale(scale))
+                            action_chip(("display-scale", si), format_scale(scale), p, is_active)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     if this.busy {
                                         return;
@@ -1162,8 +1154,8 @@ impl Settings {
                             )
                             .child(
                                 div()
-                                    .font_family("IBM Plex Mono")
-                                    .text_size(px(12.))
+                                    .font_family(FONT_MONO)
+                                    .text_size(px(TEXT_SUPPORTING))
                                     .text_color(rgb(p.muted))
                                     .child(format_refresh(mode.refresh)),
                             ),
@@ -1226,21 +1218,21 @@ impl Settings {
     }
     fn about(&self, p: Palette) -> Div {
         div().flex().flex_col().gap_5()
-            .child(div().text_size(px(28.)).font_weight(FontWeight::BOLD).child("Studio Settings"))
-            .child(div().text_size(px(14.)).child("Your workspace, with room to make it your own."))
-            .child(div().flex().flex_col().gap_3().text_size(px(13.)).text_color(rgb(p.muted))
+            .child(div().text_size(px(TEXT_TITLE)).font_weight(FontWeight::BOLD).child("Studio Settings"))
+            .child(div().text_size(px(TEXT_SECTION)).child("Your workspace, with room to make it your own."))
+            .child(div().flex().flex_col().gap_3().text_size(px(TEXT_BODY)).text_color(rgb(p.muted))
                 .child("Preview your appearance, then save it for your next session. Configure monitor resolution, fractional scale, and layout on the Displays page.")
-                .child("Saved appearance and wallpaper apply to the shell. Display settings apply directly through Fulcrum and persist for each monitor.")
+                .child("Saved appearance and wallpaper apply to the shell and native CrowbarOS apps. Display settings apply directly through Fulcrum and persist for each monitor.")
                 .child("Keyboard: Tab and Shift+Tab move focus. Enter or Space activates a control. Ctrl+S saves or applies; Ctrl+Z undoes; Ctrl+Q closes."))
             .child(div().border_t_1().border_color(rgb(p.line)).pt_5().flex().flex_col().gap_2()
-                .child(div().text_size(px(13.)).child("CrowbarOS · Studio Settings 0.1.3"))
-                .child(div().font_family("IBM Plex Mono").text_size(px(11.)).text_color(rgb(p.muted)).child("Rust / GPUI 0.2.2 / Wayland")))
+                .child(div().text_size(px(TEXT_LABEL)).child("CrowbarOS · Studio Settings 0.1.3"))
+                .child(div().font_family(FONT_MONO).text_size(px(TEXT_TECHNICAL)).text_color(rgb(p.muted)).child("Rust / GPUI 0.2.2 / Wayland")))
     }
 }
 
 impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = Palette::for_preferences(&self.draft);
+        let p = self.active_palette();
         let on_displays = self.page == Page::Displays;
         let active_dirty = if on_displays {
             self.displays_dirty()
@@ -1315,53 +1307,21 @@ impl Render for Settings {
             .flex_col()
             .bg(rgb(p.canvas))
             .text_color(rgb(p.text))
-            .font_family("Manrope")
-            .child(
-                div()
-                    .h(px(48.))
-                    .flex_shrink_0()
-                    .px_4()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .bg(rgb(p.surface))
-                    .border_b_1()
-                    .border_color(rgb(p.line))
-                    .child(
-                        div()
-                            .flex_1()
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
-                                window.start_window_move()
-                            })
-                            .child("Studio Settings"),
-                    )
-                    .child(
-                        self.button(CONTROL_CLOSE, "Close", p, window, false, !self.busy)
-                            .h(px(30.))
-                            .on_click(cx.listener(|this, _, w, cx| this.quit(&Quit, w, cx))),
-                    ),
-            )
+            .font_family(FONT_UI)
+            .child(titlebar(
+                "Studio Settings",
+                self.button(CONTROL_CLOSE, "Close", p, window, false, !self.busy)
+                    .h(px(30.))
+                    .on_click(cx.listener(|this, _, w, cx| this.quit(&Quit, w, cx))),
+                p,
+            ))
             .child(
                 div()
                     .flex()
                     .flex_1()
                     .min_h(px(0.))
                     .child(
-                        div()
-                            .w(px(176.))
-                            .flex_shrink_0()
-                            .bg(rgb(p.surface))
-                            .border_r_1()
-                            .border_color(rgb(p.line))
-                            .p_4()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
+                        sidebar(SIDEBAR_WIDTH, p)
                             .child(
                                 self.button(
                                     CONTROL_APPEARANCE,
@@ -1478,27 +1438,15 @@ impl Render for Settings {
                                 )
                             })
                             .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .px_6()
-                                    .py_4()
-                                    .border_t_1()
-                                    .border_color(rgb(p.line))
-                                    .flex()
-                                    .items_center()
-                                    .gap_3()
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .text_size(px(12.))
-                                            .text_color(rgb(p.muted))
-                                            .child(if self.confirming_close {
-                                                "Discard unsaved changes?".into()
-                                            } else {
-                                                status
-                                            }),
-                                    )
-                                    .when(self.confirming_close, |d| {
+                                status_footer(
+                                    if self.confirming_close {
+                                        "Discard unsaved changes?".into()
+                                    } else {
+                                        status
+                                    },
+                                    p,
+                                )
+                                .when(self.confirming_close, |d| {
                                         d.child(
                                             self.button(
                                                 CONTROL_KEEP_EDITING,
@@ -1609,14 +1557,7 @@ fn main() {
         std::process::exit(1)
     });
     Application::new().run(move |cx: &mut App| {
-        cx.text_system()
-            .add_fonts(vec![
-                Cow::Borrowed(include_bytes!("../fonts/Manrope-Regular.ttf")),
-                Cow::Borrowed(include_bytes!("../fonts/Manrope-SemiBold.ttf")),
-                Cow::Borrowed(include_bytes!("../fonts/Manrope-Bold.ttf")),
-                Cow::Borrowed(include_bytes!("../fonts/IBMPlexMono-Regular.ttf")),
-            ])
-            .expect("bundled fonts must load");
+        load_fonts(cx);
         cx.bind_keys([
             KeyBinding::new("tab", Next, Some("StudioSettings")),
             KeyBinding::new("shift-tab", Previous, Some("StudioSettings")),

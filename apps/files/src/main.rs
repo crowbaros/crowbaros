@@ -4,6 +4,7 @@ mod input;
 mod state;
 mod theme;
 
+use crowbar_ui::{load_fonts, spawn_theme_watcher};
 use fs_model::{Entry, SidebarEntry, SortField, SortOrder};
 use gpui::{
     AnyElement, App, Application, AssetSource, Bounds, Context, Div, Entity, FocusHandle, Focusable, FontWeight,
@@ -22,10 +23,9 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Arc,
-    time::SystemTime,
 };
 use theme::{
-    FONT_MONO, FONT_UI, Palette, Preferences, TEXT_BODY, TEXT_LABEL, TEXT_SECTION, TEXT_SUPPORTING, TEXT_TECHNICAL,
+    ActiveTheme, FONT_MONO, FONT_UI, Palette, TEXT_BODY, TEXT_LABEL, TEXT_SECTION, TEXT_SUPPORTING, TEXT_TECHNICAL,
 };
 
 actions!(
@@ -156,8 +156,7 @@ enum Overlay {
 struct FilesApp {
     focus: FocusHandle,
     home: PathBuf,
-    preferences: Preferences,
-    prefs_mtime: Option<SystemTime>,
+    active_theme: ActiveTheme,
     saved: SavedState,
     sort_field: SortField,
     sort_order: SortOrder,
@@ -189,10 +188,7 @@ struct FilesApp {
 impl FilesApp {
     fn new(initial_dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let home = fs_model::home_dir();
-        let preferences = Preferences::load();
-        let prefs_mtime = Preferences::path()
-            .and_then(|p| std::fs::metadata(p).ok())
-            .and_then(|m| m.modified().ok());
+        let active_theme = theme::load_active_theme();
         let saved = SavedState::load();
         let sort_field = SortField::Name;
         let sort_order = SortOrder::Asc;
@@ -216,18 +212,24 @@ impl FilesApp {
         window.focus(&focus);
         window.set_window_title("Files");
 
-        let palette = Palette::for_preferences(&preferences);
+        let palette = Palette::from_active(&active_theme);
         let prompt_input = cx.new(|cx| {
             let mut input = TextInput::with_placeholder("", 4096, cx);
             input.palette = palette;
             input
         });
 
+        spawn_theme_watcher(cx, |this, active, cx| {
+            let next_palette = Palette::from_active(&active);
+            this.active_theme = active;
+            this.prompt_input.update(cx, |i, _| i.palette = next_palette);
+            cx.notify();
+        });
+
         let mut app = Self {
             focus,
             home: home.clone(),
-            preferences,
-            prefs_mtime,
+            active_theme,
             saved,
             sort_field,
             sort_order,
@@ -261,7 +263,7 @@ impl FilesApp {
     }
 
     fn palette(&self) -> Palette {
-        Palette::for_preferences(&self.preferences)
+        Palette::from_active(&self.active_theme)
     }
 
     fn pane(&self) -> &Pane {
@@ -270,23 +272,6 @@ impl FilesApp {
 
     fn pane_mut(&mut self) -> &mut Pane {
         &mut self.panes[self.active_pane]
-    }
-
-    fn sync_appearance_if_changed(&mut self, cx: &mut Context<Self>) {
-        let Some(path) = Preferences::path() else {
-            return;
-        };
-        let mtime = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
-        if mtime != self.prefs_mtime {
-            self.prefs_mtime = mtime;
-            let loaded = Preferences::load();
-            if loaded != self.preferences {
-                self.preferences = loaded;
-                let palette = self.palette();
-                self.prompt_input.update(cx, |i, _| i.palette = palette);
-                cx.notify();
-            }
-        }
     }
 
     fn update_title(&self, window: &mut Window) {
@@ -1246,7 +1231,7 @@ impl FilesApp {
                                 .px(px(6.))
                                 .text_size(px(TEXT_LABEL))
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(rgb(p.signal_fg))
+                                .text_color(rgb(p.signal_fg()))
                                 .child(format!("Search “{query}”")),
                         )
                         .child(
@@ -1360,7 +1345,7 @@ impl FilesApp {
                 .pb(px(6.))
                 .text_size(px(TEXT_SUPPORTING))
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(if accent { p.signal_fg } else { p.muted }))
+                .text_color(rgb(if accent { p.signal_fg() } else { p.muted }))
                 .child(label)
         };
 
@@ -1395,7 +1380,7 @@ impl FilesApp {
                         .cursor_pointer()
                         .when(is_active, |d| d.bg(rgb(p.surface)))
                         .hover(move |s| s.bg(rgb(p.surface)))
-                        .child(icon("pin", if is_active { p.signal_fg } else { p.muted }, 13.5))
+                        .child(icon("pin", if is_active { p.signal_fg() } else { p.muted }, 13.5))
                         .child(
                             div()
                                 .flex_1()
@@ -1425,7 +1410,7 @@ impl FilesApp {
                 .cursor_pointer()
                 .text_size(px(TEXT_SUPPORTING))
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(p.signal_fg))
+                .text_color(rgb(p.signal_fg()))
                 .hover(move |s| s.text_color(rgb(p.text)))
                 .child("Home")
                 .on_click(cx.listener(move |this, _, w, cx| {
@@ -1449,7 +1434,7 @@ impl FilesApp {
                     .cursor_pointer()
                     .when(is_active, |d| d.bg(rgb(p.surface)))
                     .hover(move |s| s.bg(rgb(p.surface)))
-                    .child(icon(item.icon, if is_active { p.signal_fg } else { p.muted }, 14.))
+                    .child(icon(item.icon, if is_active { p.signal_fg() } else { p.muted }, 14.))
                     .child(
                         div()
                             .flex_1()
@@ -1488,7 +1473,7 @@ impl FilesApp {
                     .cursor_pointer()
                     .when(is_active, |d| d.bg(rgb(p.surface)))
                     .hover(move |s| s.bg(rgb(p.surface)))
-                    .child(icon(ic, if is_active { p.signal_fg } else { p.muted }, 14.))
+                    .child(icon(ic, if is_active { p.signal_fg() } else { p.muted }, 14.))
                     .child(
                         div()
                             .flex_1()
@@ -1521,7 +1506,7 @@ impl FilesApp {
                     .cursor_pointer()
                     .when(is_active, |d| d.bg(rgb(p.surface)))
                     .hover(move |s| s.bg(rgb(p.surface)))
-                    .child(icon(drive.icon, if is_active { p.signal_fg } else { p.muted }, 14.))
+                    .child(icon(drive.icon, if is_active { p.signal_fg() } else { p.muted }, 14.))
                     .child(
                         div()
                             .flex_1()
@@ -1602,7 +1587,7 @@ impl FilesApp {
 
     /// List and Columns rows show an icon, never a thumbnail: each row would decode its image whole.
     fn render_entry_icon(&self, entry: &Entry, p: Palette, selected: bool, size_px: f32) -> Div {
-        let color = if entry.is_dir || selected { p.signal_fg } else { p.muted };
+        let color = if entry.is_dir || selected { p.signal_fg() } else { p.muted };
         div()
             .size(px(size_px + 2.))
             .flex_shrink_0()
@@ -1680,7 +1665,7 @@ impl FilesApp {
                     .gap(px(10.))
                     .rounded(px(4.))
                     .cursor_pointer()
-                    .when(selected, |d| d.bg(rgba(p.selection_bg)))
+                    .when(selected, |d| d.bg(rgba(p.selection_bg())))
                     .when(!selected, |d| d.hover(move |s| s.bg(rgb(p.surface))))
                     .when(is_cut, |d| d.opacity(0.5))
                     .child(self.render_entry_icon(entry, p, selected, 15.))
@@ -1691,7 +1676,7 @@ impl FilesApp {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_size(px(TEXT_BODY))
-                            .text_color(rgb(if selected { p.signal_fg } else { p.text }))
+                            .text_color(rgb(if selected { p.signal_fg() } else { p.text }))
                             .child(entry.name.clone()),
                     )
                     .child(
@@ -1796,7 +1781,7 @@ impl FilesApp {
                     .justify_center()
                     .child(icon(
                         entry.icon_name(),
-                        if entry.is_dir { p.signal_fg } else { p.muted },
+                        if entry.is_dir { p.signal_fg() } else { p.muted },
                         40.,
                     ))
             };
@@ -1814,7 +1799,7 @@ impl FilesApp {
                     .rounded(px(6.))
                     .cursor_pointer()
                     .when(selected, |d| {
-                        d.bg(rgba(p.selection_bg)).border_1().border_color(rgb(p.focus))
+                        d.bg(rgba(p.selection_bg())).border_1().border_color(rgb(p.focus))
                     })
                     .when(!selected, |d| {
                         d.border_1()
@@ -1830,7 +1815,7 @@ impl FilesApp {
                             .flex()
                             .justify_center()
                             .text_size(px(TEXT_SUPPORTING))
-                            .text_color(rgb(if selected { p.signal_fg } else { p.text }))
+                            .text_color(rgb(if selected { p.signal_fg() } else { p.text }))
                             .child(elide_end(&entry.name, 15)),
                     )
                     .on_mouse_down(
@@ -1977,7 +1962,7 @@ impl FilesApp {
                     .gap(px(8.))
                     .rounded(px(4.))
                     .cursor_pointer()
-                    .when(selected, |d| d.bg(rgba(p.selection_bg)))
+                    .when(selected, |d| d.bg(rgba(p.selection_bg())))
                     .when(!selected, |d| d.hover(move |s| s.bg(rgb(p.surface))))
                     .child(self.render_entry_icon(entry, p, selected, 14.))
                     .child(
@@ -1987,11 +1972,11 @@ impl FilesApp {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_size(px(TEXT_BODY))
-                            .text_color(rgb(if selected { p.signal_fg } else { p.text }))
+                            .text_color(rgb(if selected { p.signal_fg() } else { p.text }))
                             .child(entry.name.clone()),
                     )
                     .when(entry.is_dir, |d| {
-                        d.child(icon("chevron-right", if selected { p.signal_fg } else { p.muted }, 12.))
+                        d.child(icon("chevron-right", if selected { p.signal_fg() } else { p.muted }, 12.))
                     })
                     .on_mouse_down(
                         MouseButton::Left,
@@ -2118,7 +2103,7 @@ impl FilesApp {
                     .when(!is_dir_path, |d| {
                         d.text_size(px(TEXT_SUPPORTING)).font_weight(FontWeight::SEMIBOLD)
                     })
-                    .text_color(rgb(if is_active { p.signal_fg } else { p.muted }))
+                    .text_color(rgb(if is_active { p.signal_fg() } else { p.muted }))
                     .child(label)
                     .on_click(cx.listener(move |this, _, w, cx| {
                         this.active_pane = pane_idx;
@@ -2158,7 +2143,7 @@ impl FilesApp {
                         div()
                             .text_size(px(TEXT_LABEL))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(p.signal_fg))
+                            .text_color(rgb(p.signal_fg()))
                             .child(label),
                     )
                     .child(
@@ -2234,7 +2219,7 @@ impl FilesApp {
                 .border_t_1()
                 .border_color(rgb(p.line))
                 .text_size(px(TEXT_SUPPORTING))
-                .text_color(rgb(if accent { p.signal_fg } else { p.muted }))
+                .text_color(rgb(if accent { p.signal_fg() } else { p.muted }))
                 .child(msg)
                 .child(
                     div()
@@ -2317,7 +2302,7 @@ impl FilesApp {
                 .justify_center()
                 .child(icon(
                     entry.icon_name(),
-                    if entry.is_dir { p.signal_fg } else { p.muted },
+                    if entry.is_dir { p.signal_fg() } else { p.muted },
                     54.,
                 ))
         };
@@ -2458,16 +2443,16 @@ impl FilesApp {
                             .items_center()
                             .justify_between()
                             .cursor_pointer()
-                            .when(active, |d| d.bg(rgba(p.selection_bg)))
+                            .when(active, |d| d.bg(rgba(p.selection_bg())))
                             .hover(move |s| s.bg(rgb(p.canvas)))
                             .text_size(px(TEXT_BODY))
-                            .text_color(rgb(if active { p.signal_fg } else { p.text }))
+                            .text_color(rgb(if active { p.signal_fg() } else { p.text }))
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
                                     .gap(px(8.))
-                                    .child(icon(mode.icon(), if active { p.signal_fg } else { p.muted }, 13.5))
+                                    .child(icon(mode.icon(), if active { p.signal_fg() } else { p.muted }, 13.5))
                                     .child(mode.label()),
                             )
                             .child(
@@ -2500,13 +2485,13 @@ impl FilesApp {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                .child(icon("split", if is_split { p.signal_fg } else { p.muted }, 13.5))
+                                .child(icon("split", if is_split { p.signal_fg() } else { p.muted }, 13.5))
                                 .child("Split pane"),
                         )
                         .child(
                             div()
                                 .text_size(px(TEXT_SUPPORTING))
-                                .text_color(rgb(if is_split { p.signal_fg } else { p.muted }))
+                                .text_color(rgb(if is_split { p.signal_fg() } else { p.muted }))
                                 .child(if is_split { "On" } else { "Off" }),
                         )
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -2573,10 +2558,10 @@ impl FilesApp {
                             .items_center()
                             .justify_between()
                             .cursor_pointer()
-                            .when(active, |d| d.bg(rgba(p.selection_bg)))
+                            .when(active, |d| d.bg(rgba(p.selection_bg())))
                             .hover(move |s| s.bg(rgb(p.canvas)))
                             .text_size(px(TEXT_BODY))
-                            .text_color(rgb(if active { p.signal_fg } else { p.text }))
+                            .text_color(rgb(if active { p.signal_fg() } else { p.text }))
                             .child(field.label())
                             .child(arrow)
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -2603,7 +2588,7 @@ impl FilesApp {
                         .child(
                             div()
                                 .text_size(px(TEXT_SUPPORTING))
-                                .text_color(rgb(if self.saved.show_hidden { p.signal_fg } else { p.muted }))
+                                .text_color(rgb(if self.saved.show_hidden { p.signal_fg() } else { p.muted }))
                                 .child(if self.saved.show_hidden { "On" } else { "Off" }),
                         )
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -2663,7 +2648,7 @@ impl FilesApp {
                             .whitespace_nowrap()
                             .text_size(px(TEXT_LABEL))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(p.signal_fg))
+                            .text_color(rgb(p.signal_fg()))
                             .child(entry.name.clone()),
                     );
 
@@ -2942,7 +2927,7 @@ impl FilesApp {
                         .items_center()
                         .justify_center()
                         .gap(px(12.))
-                        .child(icon(entry.icon_name(), p.signal_fg, 56.))
+                        .child(icon(entry.icon_name(), p.signal_fg(), 56.))
                         .child(
                             div()
                                 .text_size(px(TEXT_BODY))
@@ -3066,7 +3051,7 @@ impl FilesApp {
                                 div()
                                     .font_family(FONT_MONO)
                                     .text_size(px(TEXT_TECHNICAL))
-                                    .text_color(rgb(p.signal_fg))
+                                    .text_color(rgb(p.signal_fg()))
                                     .child(keys),
                             )
                             .child(div().text_size(px(TEXT_BODY)).text_color(rgb(p.text)).child(desc)),
@@ -3137,7 +3122,6 @@ impl FilesApp {
 
 impl Render for FilesApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.sync_appearance_if_changed(cx);
         if self.active_pane != self.prompt_pane {
             self.end_prompt(window);
         }
@@ -3367,14 +3351,7 @@ fn main() {
     };
 
     Application::new().with_assets(Assets).run(move |cx: &mut App| {
-        cx.text_system()
-            .add_fonts(vec![
-                Cow::Borrowed(include_bytes!("../../shell/fonts/Manrope-Regular.ttf")),
-                Cow::Borrowed(include_bytes!("../../shell/fonts/Manrope-SemiBold.ttf")),
-                Cow::Borrowed(include_bytes!("../../shell/fonts/Manrope-Bold.ttf")),
-                Cow::Borrowed(include_bytes!("../../shell/fonts/IBMPlexMono-Regular.ttf")),
-            ])
-            .expect("bundled fonts must load");
+        load_fonts(cx);
 
         input::bind_keys(cx);
         cx.bind_keys(key_bindings());

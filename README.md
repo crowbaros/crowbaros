@@ -36,6 +36,7 @@ The substrate vision before it is archived, and its code is at the
 | --- | --- |
 | [`base/`](base/) | Plain Void Linux with the desktop on it, built without root, that boots under UEFI in a VM or [on a real machine](base/HARDWARE.md) |
 | [`apps/`](apps/) | The GPUI interfaces: desktop shell, Files, Studio Settings, and the GPUI probe |
+| [`libs/`](libs/) | Shared libraries: [`crowbar-theme`](libs/crowbar-theme/README.md) (pure Rust palettes, WCAG contrast, store, config renderers) and [`crowbar-ui`](libs/crowbar-ui/README.md) (GPUI 0.2.2 bundled fonts, `UiPalette`, `ThemeWatcher`, and `DESIGN.md` primitives) |
 | [`compositor/`](compositor/) | Fulcrum, the Wayland compositor: its own Cargo project, with its own CI workflow |
 | [`lever/`](lever/) | [Lever](lever/README.md) (`crowbar-lever`), the Rust service that runs from boot as the person and will drive the harnesses a person has ([ADR 0036](docs/adr/0036-lever-drives-the-harnesses-a-person-has-and-crowbaros-builds-none.md)); also holds [`lever/client/`](lever/client/README.md) (`crowbar-agent`), waiting to be ported to Lever |
 | [`lab/`](lab/) | The Void lab: the compositor check and the desktop check, both on Base's image |

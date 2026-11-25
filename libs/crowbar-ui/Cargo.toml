@@ -1,0 +1,19 @@
+[package]
+name = "crowbar-ui"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "CrowbarOS shared GPUI 0.2.2 UI components, bundled typography, and live theme watcher"
+
+[dependencies]
+gpui = { version = "=0.2.2", default-features = false, features = ["wayland"] }
+crowbar-theme = { path = "../crowbar-theme" }
+# GPUI 0.2.2 -> zed-async-tar -> xattr 0.2.3 references ENOATTR, removed in
+# libc 0.2.190. Keep the same pin as CrowbarOS native apps.
+libc = "=0.2.189"
+
+# The shell's GPUI 0.2.2, with its patches: among them, a still window
+# commits nothing. apps/shell/packaging/prepare-gpui.py makes it.
+[patch.crates-io]
+gpui = { path = "../../apps/shell/gpui-source" }

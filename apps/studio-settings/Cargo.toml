@@ -8,6 +8,8 @@ description = "CrowbarOS Studio Settings — appearance and reduced motion"
 
 [dependencies]
 gpui = { version = "=0.2.2", default-features = false, features = ["wayland"] }
+crowbar-theme = { path = "../../libs/crowbar-theme" }
+crowbar-ui = { path = "../../libs/crowbar-ui" }
 env_logger = "0.11"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
