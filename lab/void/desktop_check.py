@@ -280,6 +280,41 @@ class Check:
                   lambda: not any(c['class'] == settings_class for c in self.snapshot()['clients']))
         self.click(680, 935)  # Return focus to Terminal before checking the lock.
         self.wait('Terminal has the keyboard again', lambda: self.snapshot()['active']['address'] == terminal['address'])
+        # Quick Settings and Calendar popovers in Dark theme, verifying focus restoration.
+        qs_opens = shell_log().count('SHELL quick-settings open=true')
+        self.click(1259, 12)  # Top-right Quick Settings control
+        self.wait('Quick Settings opens from the bar',
+                  lambda: shell_log().count('SHELL quick-settings open=true') > qs_opens)
+        self.wait('Quick Settings takes keyboard focus', lambda: not self.snapshot()['active']['address'])
+        time.sleep(0.5)
+        self.capture('01a-quick-settings-dark')
+        self.key('esc')
+        self.wait('Escape closes Quick Settings',
+                  lambda: 'SHELL quick-settings open=false' in shell_log())
+        self.wait('closing Quick Settings restores Terminal focus',
+                  lambda: self.snapshot()['active']['address'] == terminal['address'])
+        self.check('Quick Settings opens from the bar and Escape returns focus to the previous window',
+                   'SHELL quick-settings open=true' in shell_log()
+                   and 'SHELL quick-settings open=false' in shell_log()
+                   and self.snapshot()['active']['address'] == terminal['address'])
+        cal_opens = shell_log().count('SHELL calendar open=true')
+        self.click(640, 12)  # Center clock in the bar
+        self.wait('Calendar opens from the bar clock',
+                  lambda: shell_log().count('SHELL calendar open=true') > cal_opens)
+        self.wait('Calendar takes keyboard focus', lambda: not self.snapshot()['active']['address'])
+        self.key('right')
+        self.key('left')
+        time.sleep(0.3)
+        self.capture('01b-calendar-dark')
+        self.click(200, 500)  # Click outside popover to dismiss
+        self.wait('clicking outside closes Calendar',
+                  lambda: 'SHELL calendar open=false' in shell_log())
+        self.wait('closing Calendar restores Terminal focus',
+                  lambda: self.snapshot()['active']['address'] == terminal['address'])
+        self.check('Calendar opens from the bar clock, navigates months, and click-outside returns focus',
+                   'SHELL calendar open=true' in shell_log()
+                   and 'SHELL calendar open=false' in shell_log()
+                   and self.snapshot()['active']['address'] == terminal['address'])
         self.key('meta_l', 'l')
         self.wait('Super+L locks', lambda: self.snapshot().get('locked') and 'SHELL lock open=true' in shell_log())
         self.capture('01-locked')
@@ -386,6 +421,39 @@ class Check:
         self.check('the shell follows the saved appearance after the reboot', True)
         self.check("the file in the person's home survives the reboot",
                    self.run(f'cat {kept}').strip() == token)
+        # Verify Quick Settings, OSD auto-dismiss, Calendar, and zero idle frames in Light theme
+        qs_light = self.shell_log().count('SHELL quick-settings open=true')
+        self.click(1259, 12)
+        self.wait('Quick Settings opens in Light theme',
+                  lambda: self.shell_log().count('SHELL quick-settings open=true') > qs_light)
+        time.sleep(0.5)
+        self.capture('04a-quick-settings-light')
+        osd_before = self.shell_log().count('SHELL osd show=true')
+        osd_off_before = self.shell_log().count('SHELL osd show=false')
+        self.click(964, 207)  # Quick Settings volume "-" button (-5% -> 95%)
+        self.wait('Quick Settings volume adjustment triggers OSD pill',
+                  lambda: self.shell_log().count('SHELL osd show=true') > osd_before)
+        time.sleep(0.2)
+        self.capture('04b-osd-light')
+        self.wait('OSD pill auto-dismisses',
+                  lambda: self.shell_log().count('SHELL osd show=false') > osd_off_before, timeout=10)
+        qs_vol = self.run(f"su -s /bin/sh {person} -c 'XDG_RUNTIME_DIR=/run/user/1003 wpctl get-volume @DEFAULT_AUDIO_SINK@'").strip()
+        self.check('Quick Settings volume control mutates PipeWire and shows auto-dismissing OSD pill',
+                   'Volume: 0.95' in qs_vol, qs_vol)
+        self.run(f"su -s /bin/sh {person} -c 'XDG_RUNTIME_DIR=/run/user/1003 wpctl set-volume @DEFAULT_AUDIO_SINK@ 1.00'")
+        self.key('esc')
+        self.wait('Quick Settings closes in Light theme',
+                  lambda: self.shell_log().count('SHELL quick-settings open=false') > qs_light)
+        cal_light = self.shell_log().count('SHELL calendar open=true')
+        self.click(640, 12)
+        self.wait('Calendar opens in Light theme',
+                  lambda: self.shell_log().count('SHELL calendar open=true') > cal_light)
+        time.sleep(0.3)
+        self.capture('04c-calendar-light')
+        self.key('esc')
+        self.wait('Calendar closes in Light theme',
+                  lambda: self.shell_log().count('SHELL calendar open=false') > cal_light)
+        self.still('a still desktop after Quick Settings, Calendar, and OSD auto-dismiss commits nothing and draws nothing')
         log_offset = len(self.app_log())
         self.click(720, 935)
         self.wait('Settings restored Light after reboot', lambda: 'event=opened theme=Light' in self.app_log()[log_offset:])

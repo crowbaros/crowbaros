@@ -54,6 +54,12 @@ const KEY_UP: u32 = 103;
 const KEY_LEFT: u32 = 105;
 const KEY_RIGHT: u32 = 106;
 const KEY_DOWN: u32 = 108;
+const KEY_MUTE: u32 = 113;
+const KEY_VOLUMEDOWN: u32 = 114;
+const KEY_VOLUMEUP: u32 = 115;
+const KEY_BRIGHTNESSDOWN: u32 = 224;
+const KEY_BRIGHTNESSUP: u32 = 225;
+const KEY_MICMUTE: u32 = 248;
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 
@@ -436,6 +442,17 @@ impl State {
         if pressed && ENTER.contains(&key) && held(&CTRL) && held(&ALT) {
             if !self.seat.withheld.contains(&key) {
                 self.seat.withheld.push(key);
+            }
+            return;
+        }
+        // Hardware media and brightness keys belong to the shell for volume,
+        // mute, and backlight OSD without leaking to focused clients.
+        if pressed && let Some(event) = media_key_event(key) {
+            if !self.seat.withheld.contains(&key) {
+                self.seat.withheld.push(key);
+            }
+            if !self.locked() {
+                self.control_event(event);
             }
             return;
         }
@@ -930,5 +947,33 @@ impl State {
             }
         }
         None
+    }
+}
+
+fn media_key_event(key: u32) -> Option<&'static str> {
+    match key {
+        KEY_VOLUMEUP => Some("volume_up"),
+        KEY_VOLUMEDOWN => Some("volume_down"),
+        KEY_MUTE => Some("volume_mute"),
+        KEY_MICMUTE => Some("mic_mute"),
+        KEY_BRIGHTNESSUP => Some("brightness_up"),
+        KEY_BRIGHTNESSDOWN => Some("brightness_down"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod media_key_tests {
+    use super::*;
+
+    #[test]
+    fn maps_standard_evdev_media_and_brightness_keys() {
+        assert_eq!(media_key_event(KEY_VOLUMEUP), Some("volume_up"));
+        assert_eq!(media_key_event(KEY_VOLUMEDOWN), Some("volume_down"));
+        assert_eq!(media_key_event(KEY_MUTE), Some("volume_mute"));
+        assert_eq!(media_key_event(KEY_MICMUTE), Some("mic_mute"));
+        assert_eq!(media_key_event(KEY_BRIGHTNESSUP), Some("brightness_up"));
+        assert_eq!(media_key_event(KEY_BRIGHTNESSDOWN), Some("brightness_down"));
+        assert_eq!(media_key_event(KEY_SPACE), None);
     }
 }

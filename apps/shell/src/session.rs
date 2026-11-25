@@ -55,11 +55,31 @@ pub struct Summon {
     /// The keyboard is in the Agent's surface.
     pub keyboard: bool,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaKey {
+    VolumeUp,
+    VolumeDown,
+    VolumeMute,
+    MicMute,
+    BrightnessUp,
+    BrightnessDown,
+}
+
 #[derive(Clone, Debug)]
 pub enum Event {
     Toggle,
     /// The person made the summon gesture.
     Summon(Summon),
+    /// A hardware volume, mute, or brightness key was pressed.
+    MediaKey(MediaKey),
+    /// Updated Quick Settings hardware status from the launcher service.
+    QuickStatus(crate::quick_settings::QuickStatus),
+    /// A transient OSD update triggered by a hardware key or Quick Settings.
+    Osd {
+        kind: crate::quick_settings::OsdKind,
+        percent: u32,
+        muted: bool,
+    },
     /// The compositor locked the session, or unlocked it.
     Lock(bool),
     Quit,
@@ -169,6 +189,12 @@ fn shell_event(message: &serde_json::Value) -> Option<Event> {
         "launcher" => Some(Event::Toggle),
         "locked" => Some(Event::Lock(true)),
         "unlocked" => Some(Event::Lock(false)),
+        "volume_up" => Some(Event::MediaKey(MediaKey::VolumeUp)),
+        "volume_down" => Some(Event::MediaKey(MediaKey::VolumeDown)),
+        "volume_mute" => Some(Event::MediaKey(MediaKey::VolumeMute)),
+        "mic_mute" => Some(Event::MediaKey(MediaKey::MicMute)),
+        "brightness_up" => Some(Event::MediaKey(MediaKey::BrightnessUp)),
+        "brightness_down" => Some(Event::MediaKey(MediaKey::BrightnessDown)),
         "summon" => match serde_json::from_value(message.clone()) {
             Ok(summon) => Some(Event::Summon(summon)),
             Err(e) => unread("summon", &e),
