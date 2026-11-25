@@ -649,6 +649,23 @@ impl State {
             "configure_output" => only(&["name", "width", "height", "refresh", "x", "y", "scale"], &request)
                 .and_then(|()| self.configure_output(&request))
                 .map(|()| ok_reply()),
+            "input_config" => only(&[], &request).map(|()| self.input_config_reply()),
+            "configure_input" => only(
+                &[
+                    "layout",
+                    "repeat_rate",
+                    "repeat_delay",
+                    "pointer_speed",
+                    "natural_scroll",
+                ],
+                &request,
+            )
+            .and_then(|()| self.configure_input(&request))
+            .map(|()| ok_reply()),
+            "power_config" => only(&[], &request).map(|()| self.power_config_reply()),
+            "configure_power" => only(&["lock_after_secs", "suspend_after_secs"], &request)
+                .and_then(|()| self.configure_power_request(&request))
+                .map(|()| ok_reply()),
             _ => Err(format!("no op {op:?}")),
         };
         result.unwrap_or_else(|message| error_reply(&message))
@@ -794,6 +811,101 @@ impl State {
             scale_120: Some(output.scale_120),
         };
         self.layout.set(&identity, placement);
+        Ok(())
+    }
+
+    fn input_config_reply(&self) -> String {
+        let cfg = &self.seat.input;
+        format!(
+            "{{\"reply\":\"input_config\",\"layout\":{},\"repeat_rate\":{},\"repeat_delay\":{},\"pointer_speed\":{},\"natural_scroll\":{}}}",
+            quote(&cfg.layout),
+            cfg.repeat_rate,
+            cfg.repeat_delay,
+            cfg.pointer_speed,
+            cfg.natural_scroll
+        )
+    }
+
+    fn configure_input(&mut self, request: &BTreeMap<String, Value>) -> Result<(), String> {
+        let mut next = self.seat.input.clone();
+        if let Some(value) = request.get("layout") {
+            let Value::String(layout) = value else {
+                return Err("layout must be a string".into());
+            };
+            if layout.is_empty()
+                || layout.len() > 32
+                || !layout
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
+            {
+                return Err(format!("invalid keyboard layout {layout:?}"));
+            }
+            next.layout = layout.clone();
+        }
+        if let Some(value) = request.get("repeat_rate") {
+            let Value::Number(rate) = value else {
+                return Err("repeat_rate must be a whole number".into());
+            };
+            if !(10..=80).contains(rate) {
+                return Err(format!("repeat_rate must be 10..=80, not {rate}"));
+            }
+            next.repeat_rate = *rate as i32;
+        }
+        if let Some(value) = request.get("repeat_delay") {
+            let Value::Number(delay) = value else {
+                return Err("repeat_delay must be a whole number".into());
+            };
+            if !(150..=1000).contains(delay) {
+                return Err(format!("repeat_delay must be 150..=1000, not {delay}"));
+            }
+            next.repeat_delay = *delay as i32;
+        }
+        if let Some(value) = request.get("pointer_speed") {
+            let Value::Number(speed) = value else {
+                return Err("pointer_speed must be a whole number".into());
+            };
+            if !(-10..=10).contains(speed) {
+                return Err(format!("pointer_speed must be -10..=10, not {speed}"));
+            }
+            next.pointer_speed = *speed as i32;
+        }
+        if let Some(value) = request.get("natural_scroll") {
+            let Value::Bool(natural) = value else {
+                return Err("natural_scroll must be a boolean".into());
+            };
+            next.natural_scroll = *natural;
+        }
+        self.apply_input_config(next)
+    }
+
+    fn power_config_reply(&self) -> String {
+        let (lock_after_secs, suspend_after_secs) = self.power_timeouts();
+        format!(
+            "{{\"reply\":\"power_config\",\"lock_after_secs\":{lock_after_secs},\"suspend_after_secs\":{suspend_after_secs}}}"
+        )
+    }
+
+    fn configure_power_request(&mut self, request: &BTreeMap<String, Value>) -> Result<(), String> {
+        let (mut lock_secs, mut suspend_secs) = self.power_timeouts();
+        if let Some(value) = request.get("lock_after_secs") {
+            let Value::Number(secs) = value else {
+                return Err("lock_after_secs must be a whole number".into());
+            };
+            if !(0..=7200).contains(secs) {
+                return Err(format!("lock_after_secs must be 0..=7200, not {secs}"));
+            }
+            lock_secs = *secs as u32;
+        }
+        if let Some(value) = request.get("suspend_after_secs") {
+            let Value::Number(secs) = value else {
+                return Err("suspend_after_secs must be a whole number".into());
+            };
+            if !(0..=14400).contains(secs) {
+                return Err(format!("suspend_after_secs must be 0..=14400, not {secs}"));
+            }
+            suspend_secs = *secs as u32;
+        }
+        self.configure_power(lock_secs, suspend_secs);
         Ok(())
     }
 }

@@ -506,7 +506,27 @@ class Check:
         self.check('Settings Bluetooth page shows calm unavailable state without adapter',
                    'STUDIO event=bluetooth-loaded state=unavailable' in self.app_log()[log_offset:])
         self.capture('05c-settings-bluetooth-light')
-        # Preview Dark appearance, then capture Displays, Network, Sound, and Bluetooth in Dark theme
+        self.click(136, 396)  # Input sidebar button
+        self.wait('Settings Input page loads', lambda: 'STUDIO event=input-loaded ' in self.app_log()[log_offset:])
+        self.check('Settings Input page loads live configuration from Fulcrum',
+                   'STUDIO event=input-loaded live=true' in self.app_log()[log_offset:])
+        self.capture('05d-settings-input-light')
+        self.click(136, 444)  # Power sidebar button
+        self.wait('Settings Power page loads', lambda: 'STUDIO event=power-loaded ' in self.app_log()[log_offset:])
+        self.check('Settings Power page loads live idle timers from Fulcrum',
+                   'STUDIO event=power-loaded live=true' in self.app_log()[log_offset:])
+        self.capture('05e-settings-power-light')
+        self.click(136, 492)  # Default Apps sidebar button
+        self.wait('Settings Default Apps page loads', lambda: 'STUDIO event=defaults-loaded ' in self.app_log()[log_offset:])
+        self.check('Settings Default Apps page loads all six categories',
+                   'STUDIO event=defaults-loaded count=6' in self.app_log()[log_offset:])
+        self.capture('05f-settings-defaults-light')
+        self.click(136, 540)  # About / System sidebar button
+        self.wait('Settings About page loads system summary', lambda: 'STUDIO event=system-loaded ' in self.app_log()[log_offset:])
+        self.check('Settings About page reports live host summary',
+                   'STUDIO event=system-loaded hostname=' in self.app_log()[log_offset:])
+        self.capture('05g-settings-about-light')
+        # Preview Dark appearance, then capture all Settings pages in Dark theme
         self.click(136, 156)
         self.click(320, 350)
         self.wait('Dark preview before Displays capture', lambda: 'event=preview theme=Dark' in self.app_log()[log_offset:])
@@ -522,11 +542,46 @@ class Check:
         self.click(136, 348)
         time.sleep(0.3)
         self.capture('06c-settings-bluetooth-dark')
+        self.click(136, 396)
+        time.sleep(0.3)
+        self.capture('06d-settings-input-dark')
+        self.click(136, 444)
+        time.sleep(0.3)
+        self.capture('06e-settings-power-dark')
+        self.click(136, 492)
+        time.sleep(0.3)
+        self.capture('06f-settings-defaults-dark')
+        self.click(136, 540)
+        time.sleep(0.3)
+        self.capture('06g-settings-about-dark')
         # Verify Files is configured as the default directory handler and launches natively from the dock
         dir_handler = self.run(f"su -s /bin/sh {person} -c 'xdg-mime query default inode/directory'").strip()
         self.check('Files is configured as the default directory handler',
                    dir_handler == 'com.crowbaros.Files.desktop',
                    f'inode/directory={dir_handler!r}')
+        # Verify user mimeapps.list overrides xdg-mime queries immediately and restores cleanly
+        person_home = self.person()[1]
+        mime_roundtrip = json.loads(self.python(f"""
+import json, os, pathlib, subprocess
+home = {person_home!r}
+cfg = pathlib.Path(home) / '.config/mimeapps.list'
+had = cfg.exists()
+orig = cfg.read_text() if had else None
+env = dict(os.environ, HOME=home)
+try:
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text('[Default Applications]\\ntext/plain=foot.desktop\\n')
+    after = subprocess.check_output(['xdg-mime', 'query', 'default', 'text/plain'], text=True, env=env).strip()
+    print(json.dumps({{'after': after}}))
+finally:
+    if had:
+        cfg.write_text(orig)
+    elif cfg.exists():
+        cfg.unlink()
+""", person))
+        self.check('user mimeapps.list updates xdg-mime default queries immediately',
+                   mime_roundtrip['after'] == 'foot.desktop',
+                   str(mime_roundtrip))
         self.click(600, 935)  # Files dock entry
         files_app = self.wait(
             'Files launched through the shell',
@@ -1276,19 +1331,52 @@ scaled = ask({'op': 'configure_output', 'name': name, 'scale': 150})
 mid = ask({'op': 'outputs'})
 restored = ask({'op': 'configure_output', 'name': name, 'scale': orig_scale})
 after = ask({'op': 'outputs'})
+inp_before = ask({'op': 'input_config'})
+inp_set = ask({'op': 'configure_input', 'layout': 'gb', 'repeat_rate': 40, 'repeat_delay': 300, 'pointer_speed': 4, 'natural_scroll': True})
+inp_mid = ask({'op': 'input_config'})
+inp_restore = ask({'op': 'configure_input', 'layout': inp_before['layout'], 'repeat_rate': inp_before['repeat_rate'], 'repeat_delay': inp_before['repeat_delay'], 'pointer_speed': inp_before['pointer_speed'], 'natural_scroll': inp_before['natural_scroll']})
+inp_after = ask({'op': 'input_config'})
+pwr_before = ask({'op': 'power_config'})
+pwr_set = ask({'op': 'configure_power', 'lock_after_secs': 600, 'suspend_after_secs': 1800})
+pwr_mid = ask({'op': 'power_config'})
+pwr_restore = ask({'op': 'configure_power', 'lock_after_secs': pwr_before['lock_after_secs'], 'suspend_after_secs': pwr_before['suspend_after_secs']})
+pwr_after = ask({'op': 'power_config'})
+bad_input = ask({'op': 'configure_input', 'evil': True})
 print(json.dumps({
  'snap_refused': snap.get('reply') == 'error',
  'lock_refused': lock.get('reply') == 'error',
+ 'bad_input_refused': bad_input.get('reply') == 'error',
  'has_outputs': before.get('reply') == 'outputs' and len(before.get('outputs', [])) >= 1,
  'scaled_ok': scaled.get('reply') == 'ok' and mid['outputs'][0]['scale'] == 150,
  'restored_ok': restored.get('reply') == 'ok' and after['outputs'][0]['scale'] == orig_scale,
+ 'input_ok': (
+  inp_before.get('reply') == 'input_config'
+  and inp_set.get('reply') == 'ok'
+  and inp_mid.get('layout') == 'gb'
+  and inp_mid.get('repeat_rate') == 40
+  and inp_mid.get('natural_scroll') is True
+  and inp_restore.get('reply') == 'ok'
+  and inp_after.get('layout') == inp_before['layout']
+ ),
+ 'power_ok': (
+  pwr_before.get('reply') == 'power_config'
+  and pwr_set.get('reply') == 'ok'
+  and pwr_mid.get('lock_after_secs') == 600
+  and pwr_mid.get('suspend_after_secs') == 1800
+  and pwr_restore.get('reply') == 'ok'
+  and pwr_after.get('lock_after_secs') == pwr_before['lock_after_secs']
+ ),
 }))
 """
         report = json.loads(self.python(code, self.person()[0]))
         self.check("display bridge refuses non-display compositor ops from the person's apps",
-                   report['snap_refused'] and report['lock_refused'])
+                   report['snap_refused'] and report['lock_refused'] and report['bad_input_refused'])
         self.check('display bridge serves outputs and applies scale changes',
                    report['has_outputs'] and report['scaled_ok'] and report['restored_ok'])
+        self.check('settings bridge applies and restores live input configuration through Fulcrum',
+                   report['input_ok'])
+        self.check('settings bridge applies and restores live power idle timers through Fulcrum',
+                   report['power_ok'])
         layout = self.run('cat /home/crowbar-compositor/layout || true')
         self.check('compositor persists output placement to layout file',
                    bool(layout.strip()) and 'scale' in layout)

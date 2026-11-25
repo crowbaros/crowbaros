@@ -52,6 +52,8 @@ pub(crate) struct Lock {
     locked_from: Vec<(u64, u64)>,
     /// How long without input before the session locks itself.
     idle_after: Option<Duration>,
+    /// Optional suspend timeout in seconds (emits `idle_suspend` to the shell).
+    suspend_after: Option<Duration>,
     last_input: Instant,
     timer: Option<crate::event_loop::TimerId>,
 }
@@ -62,6 +64,7 @@ impl Default for Lock {
             locked: false,
             locked_from: Vec::new(),
             idle_after: None,
+            suspend_after: None,
             last_input: Instant::now(),
             timer: None,
         }
@@ -170,6 +173,25 @@ impl State {
     /// timer counts from now, or from the unlock while the session is locked.
     pub fn lock_after_idle(&mut self, after: Option<Duration>) {
         self.lock.idle_after = after;
+        self.lock.last_input = Instant::now();
+        self.arm_idle_timer();
+    }
+
+    pub(crate) fn power_timeouts(&self) -> (u32, u32) {
+        let lock_secs = self
+            .lock
+            .idle_after
+            .map_or(0, |d| d.as_secs().min(u32::MAX as u64) as u32);
+        let suspend_secs = self
+            .lock
+            .suspend_after
+            .map_or(0, |d| d.as_secs().min(u32::MAX as u64) as u32);
+        (lock_secs, suspend_secs)
+    }
+
+    pub(crate) fn configure_power(&mut self, lock_after_secs: u32, suspend_after_secs: u32) {
+        self.lock.idle_after = (lock_after_secs > 0).then(|| Duration::from_secs(u64::from(lock_after_secs)));
+        self.lock.suspend_after = (suspend_after_secs > 0).then(|| Duration::from_secs(u64::from(suspend_after_secs)));
         self.lock.last_input = Instant::now();
         self.arm_idle_timer();
     }
