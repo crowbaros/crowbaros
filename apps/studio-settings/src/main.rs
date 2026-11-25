@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MIT
+mod bluetooth;
 mod displays;
+mod network;
 mod session;
 mod settings;
+mod sound;
 mod theme;
 
+use bluetooth::{BluetoothAdapter, BluetoothDevice, BluetoothError, BluetoothState};
 use crowbar_theme::{ActiveTheme, ThemeStore};
 use crowbar_ui::{
     ButtonVariant, FONT_MONO, FONT_UI, SIDEBAR_WIDTH, TEXT_BODY, TEXT_LABEL, TEXT_SECTION,
@@ -16,12 +20,15 @@ use displays::{
     dedup_sorted_modes, format_refresh, format_scale, logical_size, project_diagram,
 };
 use gpui::{
-    App, Application, Bounds, Context, Div, FocusHandle, FontWeight, KeyBinding, ObjectFit,
-    Stateful, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, img, prelude::*,
-    px, rgb, size,
+    App, Application, Bounds, Context, Div, FocusHandle, FontWeight, KeyBinding, KeyDownEvent,
+    ObjectFit, Stateful, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, img,
+    prelude::*, px, rgb, size,
 };
+use network::{NetworkError, NetworkSnapshot, WifiNetwork, WifiState, WifiStation};
 use settings::{Preferences, Store, Theme, Wallpaper};
+use sound::{AudioEndpoint, SoundError, SoundSnapshot};
 use std::path::PathBuf;
+use std::sync::mpsc;
 use theme::Palette;
 
 actions!(
@@ -43,13 +50,35 @@ const CONTROL_KEEP_EDITING: usize = 14;
 const CONTROL_DISCARD_CLOSE: usize = 15;
 const CONTROL_DISPLAYS: usize = 16;
 const CONTROL_DISPLAY_REFRESH: usize = 17;
-const CONTROL_COUNT: usize = 18;
+const CONTROL_NETWORK: usize = 18;
+const CONTROL_SOUND: usize = 19;
+const CONTROL_BLUETOOTH: usize = 20;
+const CONTROL_NETWORK_REFRESH: usize = 21;
+const CONTROL_WIFI_SCAN: usize = 22;
+const CONTROL_WIFI_PASSPHRASE: usize = 23;
+const CONTROL_SOUND_REFRESH: usize = 24;
+const CONTROL_BLUETOOTH_REFRESH: usize = 25;
+const CONTROL_BLUETOOTH_POWER: usize = 26;
+const CONTROL_BLUETOOTH_SCAN: usize = 27;
+const CONTROL_FOOTER_REFRESH: usize = 28;
+const CONTROL_COUNT: usize = 29;
+
+const MAX_WIFI_PASSPHRASE: usize = 63;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
     Appearance,
     Displays,
+    Network,
+    Sound,
+    Bluetooth,
     About,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WifiPrompt {
+    network_path: String,
+    ssid: String,
 }
 
 fn wallpaper_path(wallpaper: Wallpaper) -> Option<PathBuf> {
@@ -101,6 +130,29 @@ struct Settings {
     displays_unavailable: Option<String>,
     display_error: Option<String>,
     display_status: String,
+    network: Option<NetworkSnapshot>,
+    network_loaded: bool,
+    network_loading: bool,
+    network_busy: bool,
+    network_error: Option<String>,
+    network_status: String,
+    wifi_prompt: Option<WifiPrompt>,
+    wifi_passphrase: String,
+    wifi_show_passphrase: bool,
+    sound: Option<SoundSnapshot>,
+    sound_loaded: bool,
+    sound_loading: bool,
+    sound_busy: bool,
+    sound_unavailable: Option<String>,
+    sound_error: Option<String>,
+    sound_status: String,
+    sound_watcher_started: bool,
+    bluetooth: Option<BluetoothState>,
+    bluetooth_loaded: bool,
+    bluetooth_loading: bool,
+    bluetooth_busy: bool,
+    bluetooth_error: Option<String>,
+    bluetooth_status: String,
 }
 
 impl Settings {
@@ -161,6 +213,29 @@ impl Settings {
             displays_unavailable: None,
             display_error: None,
             display_status: "".into(),
+            network: None,
+            network_loaded: false,
+            network_loading: false,
+            network_busy: false,
+            network_error: None,
+            network_status: "".into(),
+            wifi_prompt: None,
+            wifi_passphrase: String::new(),
+            wifi_show_passphrase: false,
+            sound: None,
+            sound_loaded: false,
+            sound_loading: false,
+            sound_busy: false,
+            sound_unavailable: None,
+            sound_error: None,
+            sound_status: "".into(),
+            sound_watcher_started: false,
+            bluetooth: None,
+            bluetooth_loaded: false,
+            bluetooth_loading: false,
+            bluetooth_busy: false,
+            bluetooth_error: None,
+            bluetooth_status: "".into(),
         }
     }
     fn active_palette(&self) -> Palette {
@@ -304,6 +379,432 @@ impl Settings {
         })
         .detach();
     }
+    fn clear_wifi_prompt(&mut self) {
+        self.wifi_prompt = None;
+        self.wifi_passphrase.clear();
+        self.wifi_show_passphrase = false;
+    }
+
+    fn refresh_network(&mut self, cx: &mut Context<Self>) {
+        if self.network_loading || self.network_busy {
+            return;
+        }
+        self.network_loading = true;
+        self.network_error = None;
+        cx.notify();
+        let task = cx.background_executor().spawn(async move { network::fetch_network() });
+        cx.spawn(async move |this, cx| {
+            let snapshot = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.network_loading = false;
+                this.network_loaded = true;
+                let wifi_label = match &snapshot.wifi {
+                    WifiState::Available(_) => "available",
+                    WifiState::Unavailable(_) => "unavailable",
+                };
+                log::info!(
+                    "STUDIO event=network-loaded ethernet={} wifi={wifi_label}",
+                    snapshot.ethernet.len()
+                );
+                this.network = Some(snapshot);
+                this.network_error = None;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn trigger_wifi_scan(&mut self, device_path: String, cx: &mut Context<Self>) {
+        if self.network_busy {
+            return;
+        }
+        self.network_busy = true;
+        self.network_error = None;
+        self.network_status = "Scanning for Wi-Fi networks…".into();
+        cx.notify();
+        let task = cx.background_executor().spawn(async move {
+            network::scan_wifi(&device_path)?;
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            Ok::<_, NetworkError>(network::fetch_network())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.network_busy = false;
+                match result {
+                    Ok(snapshot) => {
+                        this.network = Some(snapshot);
+                        this.network_status = "Wi-Fi scan updated.".into();
+                        this.network_error = None;
+                        log::info!("STUDIO event=wifi-scanned");
+                    }
+                    Err(err) => {
+                        log::warn!("STUDIO event=wifi-scan-failed {}", err.message());
+                        this.network_error = Some(err.message().to_string());
+                        this.network_status = "Wi-Fi scan failed.".into();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn connect_wifi_network(
+        &mut self,
+        network_path: String,
+        ssid: String,
+        passphrase: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.network_busy {
+            return;
+        }
+        self.network_busy = true;
+        self.network_error = None;
+        self.network_status = format!("Connecting to {ssid}…");
+        self.clear_wifi_prompt();
+        cx.notify();
+        let task = cx.background_executor().spawn(async move {
+            network::connect_wifi(&network_path, passphrase)?;
+            Ok::<_, NetworkError>(network::fetch_network())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.network_busy = false;
+                match result {
+                    Ok(snapshot) => {
+                        this.network = Some(snapshot);
+                        this.network_status = format!("Connected to {ssid}.");
+                        this.network_error = None;
+                        log::info!("STUDIO event=wifi-connected");
+                    }
+                    Err(err) => {
+                        log::warn!("STUDIO event=wifi-connect-failed {}", err.message());
+                        this.network_error = Some(err.message().to_string());
+                        this.network_status = "Wi-Fi connection failed.".into();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn disconnect_wifi_station(&mut self, device_path: String, cx: &mut Context<Self>) {
+        if self.network_busy {
+            return;
+        }
+        self.network_busy = true;
+        self.network_error = None;
+        self.network_status = "Disconnecting Wi-Fi…".into();
+        cx.notify();
+        let task = cx.background_executor().spawn(async move {
+            network::disconnect_wifi(&device_path)?;
+            Ok::<_, NetworkError>(network::fetch_network())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.network_busy = false;
+                match result {
+                    Ok(snapshot) => {
+                        this.network = Some(snapshot);
+                        this.network_status = "Wi-Fi disconnected.".into();
+                        this.network_error = None;
+                        log::info!("STUDIO event=wifi-disconnected");
+                    }
+                    Err(err) => {
+                        log::warn!("STUDIO event=wifi-disconnect-failed {}", err.message());
+                        this.network_error = Some(err.message().to_string());
+                        this.network_status = "Could not disconnect Wi-Fi.".into();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn forget_wifi_network(&mut self, known_path: String, ssid: String, cx: &mut Context<Self>) {
+        if self.network_busy {
+            return;
+        }
+        self.network_busy = true;
+        self.network_error = None;
+        self.network_status = format!("Forgetting {ssid}…");
+        cx.notify();
+        let task = cx.background_executor().spawn(async move {
+            network::forget_wifi(&known_path)?;
+            Ok::<_, NetworkError>(network::fetch_network())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.network_busy = false;
+                match result {
+                    Ok(snapshot) => {
+                        this.network = Some(snapshot);
+                        this.network_status = format!("Forgot {ssid}.");
+                        this.network_error = None;
+                        log::info!("STUDIO event=wifi-forgotten");
+                    }
+                    Err(err) => {
+                        log::warn!("STUDIO event=wifi-forget-failed {}", err.message());
+                        this.network_error = Some(err.message().to_string());
+                        this.network_status = "Could not forget network.".into();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn wifi_passphrase_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.network_busy || self.wifi_prompt.is_none() {
+            return;
+        }
+        let k = &event.keystroke;
+        if k.modifiers.control || k.modifiers.alt || k.modifiers.platform || k.modifiers.function {
+            return;
+        }
+        match k.key.as_str() {
+            "backspace" => {
+                self.wifi_passphrase.pop();
+                cx.notify();
+            }
+            "escape" => {
+                self.clear_wifi_prompt();
+                cx.notify();
+            }
+            "enter" => {
+                if !self.wifi_passphrase.is_empty()
+                    && let Some(prompt) = self.wifi_prompt.clone()
+                {
+                    let secret = std::mem::take(&mut self.wifi_passphrase);
+                    self.connect_wifi_network(prompt.network_path, prompt.ssid, Some(secret), cx);
+                }
+            }
+            _ => {
+                if let Some(ch) = &k.key_char
+                    && !ch.chars().any(char::is_control)
+                    && self.wifi_passphrase.len() + ch.len() <= MAX_WIFI_PASSPHRASE
+                {
+                    self.wifi_passphrase.push_str(ch);
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    fn start_sound_watcher(&mut self, cx: &mut Context<Self>) {
+        if self.sound_watcher_started {
+            return;
+        }
+        self.sound_watcher_started = true;
+        let (tx, rx) = mpsc::channel();
+        sound::spawn_sound_watcher(tx);
+        cx.spawn(async move |this, cx| {
+            let mut receiver = rx;
+            loop {
+                let next_task = cx.background_executor().spawn(async move {
+                    let received = receiver.recv().ok();
+                    (received, receiver)
+                });
+                let (received, back) = next_task.await;
+                receiver = back;
+                let Some(snapshot) = received else {
+                    break;
+                };
+                let updated = this.update(cx, |this, cx| {
+                    if this.sound.as_ref() != Some(&snapshot) {
+                        log::info!(
+                            "STUDIO event=sound-synced sinks={} sources={}",
+                            snapshot.sinks.len(),
+                            snapshot.sources.len()
+                        );
+                        this.sound = Some(snapshot);
+                        this.sound_unavailable = None;
+                        cx.notify();
+                    }
+                });
+                if updated.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn refresh_sound(&mut self, cx: &mut Context<Self>) {
+        if self.sound_loading || self.sound_busy {
+            return;
+        }
+        self.sound_loading = true;
+        self.sound_error = None;
+        cx.notify();
+        let task = cx.background_executor().spawn(async move { sound::fetch_sound() });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.sound_loading = false;
+                this.sound_loaded = true;
+                match result {
+                    Ok(snapshot) => {
+                        log::info!(
+                            "STUDIO event=sound-loaded sinks={} sources={}",
+                            snapshot.sinks.len(),
+                            snapshot.sources.len()
+                        );
+                        this.sound = Some(snapshot);
+                        this.sound_unavailable = None;
+                        this.sound_error = None;
+                    }
+                    Err(SoundError::Unavailable(reason)) => {
+                        this.sound = None;
+                        this.sound_unavailable = Some(reason);
+                        this.sound_error = None;
+                        log::info!("STUDIO event=sound-unavailable");
+                    }
+                    Err(SoundError::Failed(reason)) => {
+                        log::warn!("STUDIO event=sound-load-failed {reason}");
+                        this.sound_unavailable = None;
+                        this.sound_error = Some(reason);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn mutate_sound(
+        &mut self,
+        id: u32,
+        op: &'static str,
+        action: impl FnOnce() -> Result<(), SoundError> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        if self.sound_busy {
+            return;
+        }
+        self.sound_busy = true;
+        self.sound_error = None;
+        cx.notify();
+        let task = cx.background_executor().spawn(async move {
+            action()?;
+            sound::fetch_sound()
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.sound_busy = false;
+                match result {
+                    Ok(snapshot) => {
+                        log::info!("STUDIO event=sound-updated id={id} op={op}");
+                        this.sound = Some(snapshot);
+                        this.sound_unavailable = None;
+                        this.sound_error = None;
+                        this.sound_status = match op {
+                            "default" => "Default audio device updated.".into(),
+                            "mute" => "Mute state updated.".into(),
+                            _ => "Volume updated.".into(),
+                        };
+                    }
+                    Err(err) => {
+                        log::warn!("STUDIO event=sound-update-failed id={id} op={op} {}", err.message());
+                        this.sound_error = Some(err.message().to_string());
+                        this.sound_status = "Audio change failed.".into();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn refresh_bluetooth(&mut self, cx: &mut Context<Self>) {
+        if self.bluetooth_loading || self.bluetooth_busy {
+            return;
+        }
+        self.bluetooth_loading = true;
+        self.bluetooth_error = None;
+        cx.notify();
+        let task = cx.background_executor().spawn(async move { bluetooth::fetch_bluetooth() });
+        cx.spawn(async move |this, cx| {
+            let state = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.bluetooth_loading = false;
+                this.bluetooth_loaded = true;
+                match &state {
+                    BluetoothState::Available { devices, .. } => {
+                        log::info!(
+                            "STUDIO event=bluetooth-loaded state=available devices={}",
+                            devices.len()
+                        );
+                    }
+                    BluetoothState::Unavailable(_) => {
+                        log::info!("STUDIO event=bluetooth-loaded state=unavailable devices=0");
+                    }
+                }
+                this.bluetooth = Some(state);
+                this.bluetooth_error = None;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn mutate_bluetooth(
+        &mut self,
+        op: &'static str,
+        pending_status: impl Into<String>,
+        done_status: impl Into<String>,
+        action: impl FnOnce() -> Result<(), BluetoothError> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        if self.bluetooth_busy {
+            return;
+        }
+        self.bluetooth_busy = true;
+        self.bluetooth_error = None;
+        self.bluetooth_status = pending_status.into();
+        let done_status = done_status.into();
+        cx.notify();
+        let task = cx.background_executor().spawn(async move {
+            action()?;
+            Ok::<_, BluetoothError>(bluetooth::fetch_bluetooth())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.bluetooth_busy = false;
+                match result {
+                    Ok(state) => {
+                        log::info!("STUDIO event=bluetooth-updated op={op}");
+                        this.bluetooth = Some(state);
+                        this.bluetooth_error = None;
+                        this.bluetooth_status = done_status;
+                    }
+                    Err(err) => {
+                        log::warn!("STUDIO event=bluetooth-update-failed op={op} {}", err.message());
+                        this.bluetooth_error = Some(err.message().to_string());
+                        this.bluetooth_status = "Bluetooth request failed.".into();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn save(&mut self, _: &Save, _: &mut Window, cx: &mut Context<Self>) {
         if self.page == Page::Displays {
             self.apply_displays(cx);
@@ -395,9 +896,24 @@ impl Settings {
         if self.busy {
             return;
         }
-        if self.page == Page::Displays {
-            self.refresh_displays(cx);
-            return;
+        match self.page {
+            Page::Displays => {
+                self.refresh_displays(cx);
+                return;
+            }
+            Page::Network => {
+                self.refresh_network(cx);
+                return;
+            }
+            Page::Sound => {
+                self.refresh_sound(cx);
+                return;
+            }
+            Page::Bluetooth => {
+                self.refresh_bluetooth(cx);
+                return;
+            }
+            Page::Appearance | Page::About => {}
         }
         match self.store.load() {
             Ok(saved) => {
@@ -637,6 +1153,7 @@ impl Settings {
                 this.changed(cx);
             }))
     }
+    #[allow(clippy::too_many_arguments)]
     fn toggle(
         &self,
         index: usize,
@@ -1216,13 +1733,1192 @@ impl Settings {
                 .child("Applied display settings take effect immediately and are remembered for this monitor across sessions."),
         )
     }
+    #[allow(clippy::too_many_arguments)]
+    fn page_header(
+        &self,
+        title: &'static str,
+        subtitle: &'static str,
+        refresh_control: usize,
+        loading: bool,
+        disabled: bool,
+        p: Palette,
+        window: &Window,
+        on_refresh: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &Context<Self>,
+    ) -> Div {
+        div()
+            .flex()
+            .items_start()
+            .justify_between()
+            .gap_4()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(TEXT_TITLE))
+                            .font_weight(FontWeight::BOLD)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(TEXT_LABEL))
+                            .text_color(rgb(p.muted))
+                            .child(subtitle),
+                    ),
+            )
+            .child(
+                self.button(
+                    refresh_control,
+                    if loading { "Refreshing…" } else { "Refresh" },
+                    p,
+                    window,
+                    false,
+                    !loading && !disabled,
+                )
+                .h(px(34.))
+                .px_3()
+                .on_click(cx.listener(move |this, _, w, cx| {
+                    w.focus(&this.controls[refresh_control]);
+                    on_refresh(this, w, cx);
+                })),
+            )
+    }
+
+    fn network_page(&self, p: Palette, window: &Window, cx: &Context<Self>) -> Div {
+        let mut page = div().flex().flex_col().gap_5().child(self.page_header(
+            "Network",
+            "Wired Ethernet and Wi-Fi connections through iwd.",
+            CONTROL_NETWORK_REFRESH,
+            self.network_loading,
+            self.network_busy,
+            p,
+            window,
+            |this, _, cx| this.refresh_network(cx),
+            cx,
+        ));
+
+        if self.network_loading && !self.network_loaded {
+            return page.child(
+                card(p)
+                    .p_5()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("Reading network interfaces…"),
+            );
+        }
+
+        let Some(snapshot) = &self.network else {
+            return page.child(
+                card(p)
+                    .p_5()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("Network state has not loaded yet."),
+            );
+        };
+
+        // Ethernet section
+        let mut eth_card = card(p).child(section_header(
+            "Ethernet",
+            Some("Wired network adapters and active IP addresses."),
+            p,
+        ));
+        if snapshot.ethernet.is_empty() {
+            eth_card = eth_card.child(
+                div()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("No wired Ethernet adapter detected."),
+            );
+        } else {
+            for (i, iface) in snapshot.ethernet.iter().enumerate() {
+                let connected = iface.state == network::LinkState::Up;
+                let addr_text = if iface.addresses.is_empty() {
+                    if connected {
+                        "Waiting for IP address".to_string()
+                    } else {
+                        "Cable unplugged".to_string()
+                    }
+                } else {
+                    iface.addresses.join("  ·  ")
+                };
+                if i > 0 {
+                    eth_card = eth_card.child(divider(p));
+                }
+                eth_card = eth_card.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .py_1()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_size(px(TEXT_SECTION))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .child(iface.name.clone()),
+                                        )
+                                        .when_some(iface.mac.clone(), |d, mac| {
+                                            d.child(
+                                                div()
+                                                    .font_family(FONT_MONO)
+                                                    .text_size(px(TEXT_TECHNICAL))
+                                                    .text_color(rgb(p.muted))
+                                                    .child(mac),
+                                            )
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .font_family(FONT_MONO)
+                                        .text_size(px(TEXT_SUPPORTING))
+                                        .text_color(rgb(if connected { p.text } else { p.muted }))
+                                        .child(addr_text),
+                                ),
+                        )
+                        .child(badge(iface.state.label(), p, connected)),
+                );
+            }
+        }
+        page = page.child(eth_card);
+
+        // Wi-Fi section
+        match &snapshot.wifi {
+            WifiState::Unavailable(reason) => {
+                page = page.child(
+                    card(p)
+                        .p_5()
+                        .gap_2()
+                        .child(section_header("Wi-Fi unavailable", Some(reason), p))
+                        .child(
+                            div()
+                                .text_size(px(TEXT_SUPPORTING))
+                                .text_color(rgb(p.muted))
+                                .child("Wired Ethernet remains available. Connect a supported Wi-Fi adapter to manage wireless networks here."),
+                        ),
+                );
+            }
+            WifiState::Available(station) => {
+                page = page.child(self.wifi_station_card(station, p, window, cx));
+            }
+        }
+
+        page
+    }
+
+    fn wifi_station_card(
+        &self,
+        station: &WifiStation,
+        p: Palette,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let dev_path_scan = station.device_path.clone();
+        let dev_path_disc = station.device_path.clone();
+        let is_connected = station.connected_ssid.is_some();
+        let state_badge = if station.scanning {
+            "Scanning"
+        } else if is_connected {
+            "Connected"
+        } else if station.powered {
+            "Disconnected"
+        } else {
+            "Off"
+        };
+
+        let mut wifi_card = card(p).child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_size(px(TEXT_SECTION))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child("Wi-Fi"),
+                                )
+                                .child(
+                                    div()
+                                        .font_family(FONT_MONO)
+                                        .text_size(px(TEXT_TECHNICAL))
+                                        .text_color(rgb(p.muted))
+                                        .child(station.device_name.clone()),
+                                )
+                                .child(badge(state_badge, p, is_connected)),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(TEXT_SUPPORTING))
+                                .text_color(rgb(p.muted))
+                                .child(if let Some(ssid) = &station.connected_ssid {
+                                    if station.addresses.is_empty() {
+                                        format!("Connected to {ssid}")
+                                    } else {
+                                        format!(
+                                            "Connected to {ssid} · {}",
+                                            station.addresses.join(", ")
+                                        )
+                                    }
+                                } else {
+                                    "Choose a network below or scan to discover nearby access points."
+                                        .into()
+                                }),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .when(is_connected, |d| {
+                            d.child(
+                                action_chip("wifi-disconnect-top", "Disconnect", p, false)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.disconnect_wifi_station(dev_path_disc.clone(), cx);
+                                    })),
+                            )
+                        })
+                        .child(
+                            self.button(
+                                CONTROL_WIFI_SCAN,
+                                if station.scanning || self.network_busy {
+                                    "Scanning…"
+                                } else {
+                                    "Scan"
+                                },
+                                p,
+                                window,
+                                false,
+                                !self.network_busy && station.powered,
+                            )
+                            .h(px(32.))
+                            .px_3()
+                            .on_click(cx.listener(move |this, _, w, cx| {
+                                w.focus(&this.controls[CONTROL_WIFI_SCAN]);
+                                this.trigger_wifi_scan(dev_path_scan.clone(), cx);
+                            })),
+                        ),
+                ),
+        );
+
+        // Inline passphrase prompt for WPA2/WPA3 networks
+        if let Some(prompt) = &self.wifi_prompt {
+            let prompt_clone = prompt.clone();
+            let focus = self.controls[CONTROL_WIFI_PASSPHRASE].is_focused(window);
+            let display_value =
+                network::mask_passphrase(&self.wifi_passphrase, self.wifi_show_passphrase);
+            let empty = self.wifi_passphrase.is_empty();
+            wifi_card = wifi_card.child(
+                div()
+                    .p_4()
+                    .rounded(px(10.))
+                    .bg(rgb(p.canvas))
+                    .border_1()
+                    .border_color(rgb(p.accent))
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(section_header(
+                        format!("Connect to {}", prompt.ssid),
+                        Some("Enter the WPA2/WPA3 passphrase. Passphrases are never logged."),
+                        p,
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .id("wifi-passphrase-input")
+                                    .track_focus(&self.controls[CONTROL_WIFI_PASSPHRASE])
+                                    .on_key_down(cx.listener(Self::wifi_passphrase_key_down))
+                                    .flex_1()
+                                    .h(px(38.))
+                                    .px_3()
+                                    .rounded(px(8.))
+                                    .bg(rgb(p.surface))
+                                    .border_2()
+                                    .border_color(rgb(if focus { p.focus } else { p.line }))
+                                    .when(focus, |d| d.border_dashed())
+                                    .flex()
+                                    .items_center()
+                                    .font_family(FONT_MONO)
+                                    .text_size(px(TEXT_LABEL))
+                                    .text_color(rgb(if empty { p.muted } else { p.text }))
+                                    .child(if empty {
+                                        "Type passphrase…".to_string()
+                                    } else {
+                                        display_value
+                                    }),
+                            )
+                            .child(
+                                action_chip(
+                                    "wifi-passphrase-reveal",
+                                    if self.wifi_show_passphrase {
+                                        "Hide"
+                                    } else {
+                                        "Show"
+                                    },
+                                    p,
+                                    self.wifi_show_passphrase,
+                                )
+                                .on_click(cx.listener(|this, _, w, cx| {
+                                    this.wifi_show_passphrase = !this.wifi_show_passphrase;
+                                    w.focus(&this.controls[CONTROL_WIFI_PASSPHRASE]);
+                                    cx.notify();
+                                })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                action_chip("wifi-prompt-cancel", "Cancel", p, false).on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.clear_wifi_prompt();
+                                        cx.notify();
+                                    }),
+                                ),
+                            )
+                            .child(
+                                action_chip(
+                                    "wifi-prompt-submit",
+                                    "Connect",
+                                    p,
+                                    !empty && !self.network_busy,
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if this.wifi_passphrase.is_empty() || this.network_busy {
+                                        return;
+                                    }
+                                    let secret = std::mem::take(&mut this.wifi_passphrase);
+                                    this.connect_wifi_network(
+                                        prompt_clone.network_path.clone(),
+                                        prompt_clone.ssid.clone(),
+                                        Some(secret),
+                                        cx,
+                                    );
+                                })),
+                            ),
+                    ),
+            );
+        }
+
+        if station.networks.is_empty() {
+            wifi_card = wifi_card.child(divider(p)).child(
+                div()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("No nearby Wi-Fi networks reported yet. Click Scan to search."),
+            );
+        } else {
+            let mut list = div().flex().flex_col();
+            for (i, net) in station.networks.iter().enumerate() {
+                list = list.child(divider(p)).child(self.wifi_network_row(
+                    i,
+                    net,
+                    &station.device_path,
+                    p,
+                    cx,
+                ));
+            }
+            wifi_card = wifi_card.child(list);
+        }
+
+        wifi_card
+    }
+
+    fn wifi_network_row(
+        &self,
+        index: usize,
+        net: &WifiNetwork,
+        device_path: &str,
+        p: Palette,
+        cx: &Context<Self>,
+    ) -> Div {
+        let net_path = net.path.clone();
+        let ssid = net.ssid.clone();
+        let needs_pass = net.security.needs_passphrase() && !net.known;
+        let known_path = net.known_network_path.clone();
+        let ssid_forget = net.ssid.clone();
+        let dev_path = device_path.to_string();
+
+        div()
+            .py_3()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(TEXT_LABEL))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(net.ssid.clone()),
+                            )
+                            .child(badge(net.security.label(), p, false))
+                            .when(net.connected, |d| d.child(badge("Connected", p, true)))
+                            .when(!net.connected && net.known, |d| {
+                                d.child(badge("Saved", p, false))
+                            }),
+                    )
+                    .child(
+                        div()
+                            .font_family(FONT_MONO)
+                            .text_size(px(TEXT_TECHNICAL))
+                            .text_color(rgb(p.muted))
+                            .child(net.signal_label()),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .when_some(known_path, |d, kp| {
+                        d.child(
+                            action_chip(("wifi-forget", index), "Forget", p, false).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.forget_wifi_network(kp.clone(), ssid_forget.clone(), cx);
+                                }),
+                            ),
+                        )
+                    })
+                    .child(if net.connected {
+                        action_chip(("wifi-disconnect", index), "Disconnect", p, false).on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.disconnect_wifi_station(dev_path.clone(), cx);
+                            }),
+                        )
+                    } else {
+                        action_chip(("wifi-connect", index), "Connect", p, true).on_click(
+                            cx.listener(move |this, _, window, cx| {
+                                if this.network_busy {
+                                    return;
+                                }
+                                if needs_pass {
+                                    this.wifi_prompt = Some(WifiPrompt {
+                                        network_path: net_path.clone(),
+                                        ssid: ssid.clone(),
+                                    });
+                                    this.wifi_passphrase.clear();
+                                    this.wifi_show_passphrase = false;
+                                    this.network_error = None;
+                                    window.focus(&this.controls[CONTROL_WIFI_PASSPHRASE]);
+                                    cx.notify();
+                                } else {
+                                    this.connect_wifi_network(
+                                        net_path.clone(),
+                                        ssid.clone(),
+                                        None,
+                                        cx,
+                                    );
+                                }
+                            }),
+                        )
+                    }),
+            )
+    }
+
+    fn sound_page(&self, p: Palette, window: &Window, cx: &Context<Self>) -> Div {
+        let mut page = div().flex().flex_col().gap_5().child(self.page_header(
+            "Sound",
+            "PipeWire output devices, microphones, and volume levels.",
+            CONTROL_SOUND_REFRESH,
+            self.sound_loading,
+            self.sound_busy,
+            p,
+            window,
+            |this, _, cx| this.refresh_sound(cx),
+            cx,
+        ));
+
+        if self.sound_loading && !self.sound_loaded {
+            return page.child(
+                card(p)
+                    .p_5()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("Reading PipeWire audio devices…"),
+            );
+        }
+
+        if let Some(reason) = &self.sound_unavailable {
+            return page.child(
+                card(p)
+                    .p_5()
+                    .gap_2()
+                    .child(section_header("Audio unavailable", Some(reason), p))
+                    .child(
+                        div()
+                            .text_size(px(TEXT_SUPPORTING))
+                            .text_color(rgb(p.muted))
+                            .child("Start PipeWire and WirePlumber to manage output volume, mute, and audio devices."),
+                    ),
+            );
+        }
+
+        let Some(snapshot) = &self.sound else {
+            return page.child(
+                card(p)
+                    .p_5()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("No audio state available yet."),
+            );
+        };
+
+        // Output sinks
+        let mut out_card = card(p).child(section_header(
+            "Output",
+            Some("Choose the default speaker or headphones and adjust output level."),
+            p,
+        ));
+        if snapshot.sinks.is_empty() {
+            out_card = out_card.child(
+                div()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("No output devices reported by PipeWire."),
+            );
+        } else {
+            for (i, sink) in snapshot.sinks.iter().enumerate() {
+                if i > 0 {
+                    out_card = out_card.child(divider(p));
+                }
+                out_card = out_card.child(self.audio_endpoint_row("sink", i, sink, p, cx));
+            }
+        }
+        page = page.child(out_card);
+
+        // Input sources
+        let mut in_card = card(p).child(section_header(
+            "Input",
+            Some("Choose the default microphone and adjust capture level."),
+            p,
+        ));
+        if snapshot.sources.is_empty() {
+            in_card = in_card.child(
+                div()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("No input devices connected."),
+            );
+        } else {
+            for (i, source) in snapshot.sources.iter().enumerate() {
+                if i > 0 {
+                    in_card = in_card.child(divider(p));
+                }
+                in_card = in_card.child(self.audio_endpoint_row("source", i, source, p, cx));
+            }
+        }
+        page = page.child(in_card).child(
+            div()
+                .text_size(px(TEXT_SUPPORTING))
+                .text_color(rgb(p.muted))
+                .child("Volume and mute changes apply immediately and stay in sync with keyboard media keys and the shell."),
+        );
+
+        page
+    }
+
+    fn audio_endpoint_row(
+        &self,
+        kind: &'static str,
+        index: usize,
+        endpoint: &AudioEndpoint,
+        p: Palette,
+        cx: &Context<Self>,
+    ) -> Div {
+        let id = endpoint.id;
+        let pct = endpoint.volume_percent();
+        let muted = endpoint.muted;
+        let current_vol = endpoint.volume;
+        let filled_steps = ((pct.min(100) as f32) / 5.0).round() as usize;
+
+        let mut track = div()
+            .flex_1()
+            .h(px(14.))
+            .rounded_full()
+            .overflow_hidden()
+            .bg(rgb(p.canvas))
+            .border_1()
+            .border_color(rgb(p.line))
+            .flex()
+            .items_center();
+
+        for step in 1..=20usize {
+            let step_vol = (step as f32) * 0.05;
+            let active = !muted && step <= filled_steps;
+            let seg_id = (
+                if kind == "sink" {
+                    "sound-sink-step"
+                } else {
+                    "sound-source-step"
+                },
+                index * 32 + step,
+            );
+            track = track.child(
+                div()
+                    .id(seg_id)
+                    .flex_1()
+                    .h_full()
+                    .bg(rgb(if active { p.accent } else { p.canvas }))
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.85))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.mutate_sound(
+                            id,
+                            "volume",
+                            move || sound::set_volume(id, step_vol),
+                            cx,
+                        );
+                    })),
+            );
+        }
+
+        div()
+            .py_2()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w(px(0.))
+                            .child(
+                                div()
+                                    .size(px(8.))
+                                    .flex_shrink_0()
+                                    .rounded_full()
+                                    .bg(rgb(if endpoint.is_default { p.accent } else { p.line })),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(TEXT_LABEL))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(endpoint.name.clone()),
+                            ),
+                    )
+                    .child(if endpoint.is_default {
+                        badge("Default", p, true).into_any_element()
+                    } else {
+                        action_chip(
+                            (
+                                if kind == "sink" {
+                                    "sound-sink-default"
+                                } else {
+                                    "sound-source-default"
+                                },
+                                index,
+                            ),
+                            "Set default",
+                            p,
+                            false,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.mutate_sound(id, "default", move || sound::set_default(id), cx);
+                        }))
+                        .into_any_element()
+                    }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        action_chip(
+                            (
+                                if kind == "sink" {
+                                    "sound-sink-minus"
+                                } else {
+                                    "sound-source-minus"
+                                },
+                                index,
+                            ),
+                            "−",
+                            p,
+                            false,
+                        )
+                        .w(px(34.))
+                        .px_0()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let target = (current_vol - 0.05).max(0.0);
+                            this.mutate_sound(
+                                id,
+                                "volume",
+                                move || sound::set_volume(id, target),
+                                cx,
+                            );
+                        })),
+                    )
+                    .child(track)
+                    .child(
+                        action_chip(
+                            (
+                                if kind == "sink" {
+                                    "sound-sink-plus"
+                                } else {
+                                    "sound-source-plus"
+                                },
+                                index,
+                            ),
+                            "+",
+                            p,
+                            false,
+                        )
+                        .w(px(34.))
+                        .px_0()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let target = (current_vol + 0.05).min(1.0);
+                            this.mutate_sound(
+                                id,
+                                "volume",
+                                move || sound::set_volume(id, target),
+                                cx,
+                            );
+                        })),
+                    )
+                    .child(
+                        div()
+                            .w(px(52.))
+                            .flex()
+                            .justify_end()
+                            .font_family(FONT_MONO)
+                            .text_size(px(TEXT_SUPPORTING))
+                            .text_color(rgb(if muted { p.muted } else { p.text }))
+                            .child(if muted {
+                                "Muted".to_string()
+                            } else {
+                                format!("{pct}%")
+                            }),
+                    )
+                    .child(
+                        action_chip(
+                            (
+                                if kind == "sink" {
+                                    "sound-sink-mute"
+                                } else {
+                                    "sound-source-mute"
+                                },
+                                index,
+                            ),
+                            if muted { "Unmute" } else { "Mute" },
+                            p,
+                            muted,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.mutate_sound(
+                                id,
+                                "mute",
+                                move || sound::set_mute(id, !muted),
+                                cx,
+                            );
+                        })),
+                    ),
+            )
+    }
+
+    fn bluetooth_page(&self, p: Palette, window: &Window, cx: &Context<Self>) -> Div {
+        let page = div().flex().flex_col().gap_5().child(self.page_header(
+            "Bluetooth",
+            "Pair and connect wireless headphones, keyboards, and accessories through BlueZ.",
+            CONTROL_BLUETOOTH_REFRESH,
+            self.bluetooth_loading,
+            self.bluetooth_busy,
+            p,
+            window,
+            |this, _, cx| this.refresh_bluetooth(cx),
+            cx,
+        ));
+
+        if self.bluetooth_loading && !self.bluetooth_loaded {
+            return page.child(
+                card(p)
+                    .p_5()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("Checking Bluetooth adapters…"),
+            );
+        }
+
+        let Some(state) = &self.bluetooth else {
+            return page.child(
+                card(p)
+                    .p_5()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("Bluetooth state has not loaded yet."),
+            );
+        };
+
+        match state {
+            BluetoothState::Unavailable(reason) => page.child(
+                card(p)
+                    .p_5()
+                    .gap_2()
+                    .child(section_header("Bluetooth unavailable", Some(reason), p))
+                    .child(
+                        div()
+                            .text_size(px(TEXT_SUPPORTING))
+                            .text_color(rgb(p.muted))
+                            .child("BlueZ is running and ready. Connect a Bluetooth adapter to pair and manage wireless devices here."),
+                    ),
+            ),
+            BluetoothState::Available { adapter, devices } => page
+                .child(self.bluetooth_adapter_card(adapter, p, window, cx))
+                .child(self.bluetooth_devices_card(adapter, devices, p, cx)),
+        }
+    }
+
+    fn bluetooth_adapter_card(
+        &self,
+        adapter: &BluetoothAdapter,
+        p: Palette,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let adapter_path_power = adapter.path.clone();
+        let next_power = !adapter.powered;
+        let adapter_path_scan = adapter.path.clone();
+        let next_discover = !adapter.discovering;
+        let power_focused = self.controls[CONTROL_BLUETOOTH_POWER].is_focused(window);
+
+        card(p).child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_4()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_size(px(TEXT_SECTION))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(adapter.alias.clone()),
+                                )
+                                .child(badge(
+                                    if adapter.powered { "On" } else { "Off" },
+                                    p,
+                                    adapter.powered,
+                                )),
+                        )
+                        .child(
+                            div()
+                                .font_family(FONT_MONO)
+                                .text_size(px(TEXT_TECHNICAL))
+                                .text_color(rgb(p.muted))
+                                .child(adapter.address.clone()),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            self.button(
+                                CONTROL_BLUETOOTH_SCAN,
+                                if adapter.discovering {
+                                    "Stop scan"
+                                } else {
+                                    "Scan"
+                                },
+                                p,
+                                window,
+                                adapter.discovering,
+                                adapter.powered && !self.bluetooth_busy,
+                            )
+                            .h(px(34.))
+                            .px_3()
+                            .on_click(cx.listener(move |this, _, w, cx| {
+                                w.focus(&this.controls[CONTROL_BLUETOOTH_SCAN]);
+                                let path = adapter_path_scan.clone();
+                                this.mutate_bluetooth(
+                                    if next_discover {
+                                        "start-discovery"
+                                    } else {
+                                        "stop-discovery"
+                                    },
+                                    if next_discover {
+                                        "Scanning for Bluetooth devices…"
+                                    } else {
+                                        "Stopping Bluetooth scan…"
+                                    },
+                                    if next_discover {
+                                        "Scanning for nearby devices."
+                                    } else {
+                                        "Bluetooth scan stopped."
+                                    },
+                                    move || bluetooth::set_discovery(&path, next_discover),
+                                    cx,
+                                );
+                            })),
+                        )
+                        .child(
+                            div()
+                                .id("bluetooth-power-toggle")
+                                .track_focus(&self.controls[CONTROL_BLUETOOTH_POWER])
+                                .w(px(44.))
+                                .h(px(26.))
+                                .px(px(3.))
+                                .flex()
+                                .items_center()
+                                .rounded_full()
+                                .border_2()
+                                .border_color(rgb(if power_focused {
+                                    p.focus
+                                } else if adapter.powered {
+                                    p.accent
+                                } else {
+                                    p.line
+                                }))
+                                .bg(rgb(if adapter.powered { p.accent } else { p.line }))
+                                .when(adapter.powered, |d| d.justify_end())
+                                .cursor_pointer()
+                                .child(div().size(px(18.)).rounded_full().bg(rgb(
+                                    if adapter.powered {
+                                        p.on_accent
+                                    } else {
+                                        p.text
+                                    },
+                                )))
+                                .on_click(cx.listener(move |this, _, w, cx| {
+                                    w.focus(&this.controls[CONTROL_BLUETOOTH_POWER]);
+                                    let path = adapter_path_power.clone();
+                                    this.mutate_bluetooth(
+                                        if next_power { "power-on" } else { "power-off" },
+                                        if next_power {
+                                            "Turning Bluetooth on…"
+                                        } else {
+                                            "Turning Bluetooth off…"
+                                        },
+                                        if next_power {
+                                            "Bluetooth turned on."
+                                        } else {
+                                            "Bluetooth turned off."
+                                        },
+                                        move || bluetooth::set_powered(&path, next_power),
+                                        cx,
+                                    );
+                                })),
+                        ),
+                ),
+        )
+    }
+
+    fn bluetooth_devices_card(
+        &self,
+        adapter: &BluetoothAdapter,
+        devices: &[BluetoothDevice],
+        p: Palette,
+        cx: &Context<Self>,
+    ) -> Div {
+        let mut dev_card = card(p).child(section_header(
+            "Devices",
+            Some(if adapter.discovering {
+                "Scanning for nearby Bluetooth devices…"
+            } else {
+                "Paired and recently discovered devices."
+            }),
+            p,
+        ));
+
+        if devices.is_empty() {
+            return dev_card.child(
+                div()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child(if adapter.powered {
+                        "No Bluetooth devices found yet. Click Scan to discover nearby accessories."
+                    } else {
+                        "Turn on Bluetooth to see paired devices and scan for new ones."
+                    }),
+            );
+        }
+
+        for (i, device) in devices.iter().enumerate() {
+            let dev_path = device.path.clone();
+            let adapter_path = adapter.path.clone();
+            let dev_name = device.name.clone();
+            let dev_name_forget = device.name.clone();
+            let dev_path_forget = device.path.clone();
+
+            dev_card = dev_card.child(divider(p)).child(
+                div()
+                    .py_2()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_size(px(TEXT_LABEL))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(device.name.clone()),
+                                    )
+                                    .child(badge(device.status_label(), p, device.connected))
+                                    .when_some(device.battery_percentage, |d, pct| {
+                                        d.child(badge(format!("{pct}%"), p, false))
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .font_family(FONT_MONO)
+                                    .text_size(px(TEXT_TECHNICAL))
+                                    .text_color(rgb(p.muted))
+                                    .child(device.address.clone()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .when(device.paired, |d| {
+                                d.child(
+                                    action_chip(("bt-forget", i), "Forget", p, false).on_click(
+                                        cx.listener(move |this, _, _, cx| {
+                                            let ap = adapter_path.clone();
+                                            let dp = dev_path_forget.clone();
+                                            let name = dev_name_forget.clone();
+                                            this.mutate_bluetooth(
+                                                "forget",
+                                                format!("Forgetting {name}…"),
+                                                format!("Forgot {name}."),
+                                                move || bluetooth::forget_device(&ap, &dp),
+                                                cx,
+                                            );
+                                        }),
+                                    ),
+                                )
+                            })
+                            .child(if device.connected {
+                                action_chip(("bt-disconnect", i), "Disconnect", p, false).on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        let dp = dev_path.clone();
+                                        let name = dev_name.clone();
+                                        this.mutate_bluetooth(
+                                            "disconnect",
+                                            format!("Disconnecting {name}…"),
+                                            format!("Disconnected {name}."),
+                                            move || bluetooth::disconnect_device(&dp),
+                                            cx,
+                                        );
+                                    }),
+                                )
+                            } else if device.paired {
+                                action_chip(("bt-connect", i), "Connect", p, true).on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        let dp = dev_path.clone();
+                                        let name = dev_name.clone();
+                                        this.mutate_bluetooth(
+                                            "connect",
+                                            format!("Connecting to {name}…"),
+                                            format!("Connected to {name}."),
+                                            move || bluetooth::connect_device(&dp),
+                                            cx,
+                                        );
+                                    }),
+                                )
+                            } else {
+                                action_chip(("bt-pair", i), "Pair", p, true).on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        let dp = dev_path.clone();
+                                        let name = dev_name.clone();
+                                        this.mutate_bluetooth(
+                                            "pair",
+                                            format!("Pairing with {name}…"),
+                                            format!("Paired with {name}."),
+                                            move || bluetooth::pair_device(&dp),
+                                            cx,
+                                        );
+                                    },
+                                ))
+                            }),
+                    ),
+            );
+        }
+
+        dev_card
+    }
+
     fn about(&self, p: Palette) -> Div {
         div().flex().flex_col().gap_5()
             .child(div().text_size(px(TEXT_TITLE)).font_weight(FontWeight::BOLD).child("Studio Settings"))
             .child(div().text_size(px(TEXT_SECTION)).child("Your workspace, with room to make it your own."))
             .child(div().flex().flex_col().gap_3().text_size(px(TEXT_BODY)).text_color(rgb(p.muted))
-                .child("Preview your appearance, then save it for your next session. Configure monitor resolution, fractional scale, and layout on the Displays page.")
-                .child("Saved appearance and wallpaper apply to the shell and native CrowbarOS apps. Display settings apply directly through Fulcrum and persist for each monitor.")
+                .child("Preview your appearance, then save it for your next session. Configure displays through Fulcrum, manage Ethernet and Wi-Fi through iwd, adjust PipeWire audio devices, and pair Bluetooth accessories through BlueZ.")
+                .child("Saved appearance and wallpaper apply to the shell and native CrowbarOS apps. Hardware changes on Network, Sound, and Bluetooth apply immediately.")
                 .child("Keyboard: Tab and Shift+Tab move focus. Enter or Space activates a control. Ctrl+S saves or applies; Ctrl+Z undoes; Ctrl+Q closes."))
             .child(div().border_t_1().border_color(rgb(p.line)).pt_5().flex().flex_col().gap_2()
                 .child(div().text_size(px(TEXT_LABEL)).child("CrowbarOS · Studio Settings 0.1.3"))
@@ -1234,39 +2930,128 @@ impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.active_palette();
         let on_displays = self.page == Page::Displays;
+        let is_live_hardware = matches!(
+            self.page,
+            Page::Network | Page::Sound | Page::Bluetooth
+        );
         let active_dirty = if on_displays {
             self.displays_dirty()
-        } else {
+        } else if self.page == Page::Appearance {
             self.appearance_dirty()
+        } else {
+            false
         };
         let can_primary = if on_displays {
             self.displays_dirty() && !self.busy && !self.displays_loading
-        } else {
+        } else if self.page == Page::Appearance {
             self.appearance_dirty() && !self.load_error && !self.busy
-        };
-        let active_error = if on_displays {
-            self.display_error.clone()
         } else {
-            self.error.clone()
+            false
         };
-        let status = if on_displays {
-            if !self.display_status.is_empty() {
-                self.display_status.clone()
-            } else if self.displays_unavailable.is_some() {
-                "Display controls unavailable".into()
-            } else if self.displays_dirty() {
-                "Pending display changes · not applied".into()
-            } else if self.displays_loading {
-                "Reading displays…".into()
-            } else {
-                "Display settings up to date".into()
+        let active_error = match self.page {
+            Page::Displays => self.display_error.clone(),
+            Page::Network => self.network_error.clone(),
+            Page::Sound => self.sound_error.clone(),
+            Page::Bluetooth => self.bluetooth_error.clone(),
+            Page::Appearance | Page::About => self.error.clone(),
+        };
+        let status = match self.page {
+            Page::Displays => {
+                if !self.display_status.is_empty() {
+                    self.display_status.clone()
+                } else if self.displays_unavailable.is_some() {
+                    "Display controls unavailable".into()
+                } else if self.displays_dirty() {
+                    "Pending display changes · not applied".into()
+                } else if self.displays_loading {
+                    "Reading displays…".into()
+                } else {
+                    "Display settings up to date".into()
+                }
             }
-        } else if !self.status.is_empty() {
-            self.status.clone()
-        } else if self.appearance_dirty() {
-            "Preview · not saved".into()
-        } else {
-            "All changes saved".into()
+            Page::Network => {
+                if !self.network_status.is_empty() {
+                    self.network_status.clone()
+                } else if self.network_loading {
+                    "Reading network interfaces…".into()
+                } else if let Some(net) = &self.network {
+                    match &net.wifi {
+                        WifiState::Available(st) if st.connected_ssid.is_some() => format!(
+                            "Wi-Fi connected · {}",
+                            st.connected_ssid.as_deref().unwrap_or("")
+                        ),
+                        WifiState::Available(_) => {
+                            if net.ethernet.iter().any(|e| e.state == network::LinkState::Up) {
+                                "Ethernet connected · Wi-Fi ready".into()
+                            } else {
+                                "Wi-Fi ready".into()
+                            }
+                        }
+                        WifiState::Unavailable(_) => {
+                            if net.ethernet.iter().any(|e| e.state == network::LinkState::Up) {
+                                "Ethernet connected · No Wi-Fi adapter".into()
+                            } else {
+                                "No active network connection".into()
+                            }
+                        }
+                    }
+                } else {
+                    "Network ready".into()
+                }
+            }
+            Page::Sound => {
+                if !self.sound_status.is_empty() {
+                    self.sound_status.clone()
+                } else if self.sound_loading {
+                    "Reading PipeWire audio devices…".into()
+                } else if self.sound_unavailable.is_some() {
+                    "PipeWire audio unavailable".into()
+                } else if let Some(snd) = &self.sound {
+                    if let Some(sink) = snd.default_sink() {
+                        if sink.muted {
+                            format!("Output: {} · Muted", sink.name)
+                        } else {
+                            format!("Output: {} · {}%", sink.name, sink.volume_percent())
+                        }
+                    } else {
+                        "No output devices".into()
+                    }
+                } else {
+                    "PipeWire ready".into()
+                }
+            }
+            Page::Bluetooth => {
+                if !self.bluetooth_status.is_empty() {
+                    self.bluetooth_status.clone()
+                } else if self.bluetooth_loading {
+                    "Checking Bluetooth adapters…".into()
+                } else if let Some(bt) = &self.bluetooth {
+                    match bt {
+                        BluetoothState::Available { adapter, devices } => {
+                            let connected = devices.iter().filter(|d| d.connected).count();
+                            if !adapter.powered {
+                                "Bluetooth is off".into()
+                            } else if connected > 0 {
+                                format!("Bluetooth on · {connected} connected")
+                            } else {
+                                "Bluetooth on · Ready".into()
+                            }
+                        }
+                        BluetoothState::Unavailable(_) => "No Bluetooth adapter detected".into(),
+                    }
+                } else {
+                    "Bluetooth ready".into()
+                }
+            }
+            Page::Appearance | Page::About => {
+                if !self.status.is_empty() {
+                    self.status.clone()
+                } else if self.appearance_dirty() {
+                    "Preview · not saved".into()
+                } else {
+                    "All changes saved".into()
+                }
+            }
         };
         let primary_label = if on_displays {
             if self.busy {
@@ -1298,6 +3083,11 @@ impl Render for Settings {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &CancelClose, window, cx| {
+                if this.wifi_prompt.is_some() {
+                    this.clear_wifi_prompt();
+                    cx.notify();
+                    return;
+                }
                 this.confirming_close = false;
                 window.focus(&this.controls[CONTROL_SAVE]);
                 cx.notify();
@@ -1332,6 +3122,7 @@ impl Render for Settings {
                                     true,
                                 )
                                 .on_click(cx.listener(|this, _, w, cx| {
+                                    this.clear_wifi_prompt();
                                     this.page = Page::Appearance;
                                     w.focus(&this.controls[CONTROL_APPEARANCE]);
                                     cx.notify();
@@ -1347,10 +3138,68 @@ impl Render for Settings {
                                     true,
                                 )
                                 .on_click(cx.listener(|this, _, w, cx| {
+                                    this.clear_wifi_prompt();
                                     this.page = Page::Displays;
                                     w.focus(&this.controls[CONTROL_DISPLAYS]);
                                     if !this.displays_loaded && !this.displays_loading {
                                         this.refresh_displays(cx);
+                                    }
+                                    cx.notify();
+                                })),
+                            )
+                            .child(
+                                self.button(
+                                    CONTROL_NETWORK,
+                                    "Network",
+                                    p,
+                                    window,
+                                    self.page == Page::Network,
+                                    true,
+                                )
+                                .on_click(cx.listener(|this, _, w, cx| {
+                                    this.page = Page::Network;
+                                    w.focus(&this.controls[CONTROL_NETWORK]);
+                                    if !this.network_loaded && !this.network_loading {
+                                        this.refresh_network(cx);
+                                    }
+                                    cx.notify();
+                                })),
+                            )
+                            .child(
+                                self.button(
+                                    CONTROL_SOUND,
+                                    "Sound",
+                                    p,
+                                    window,
+                                    self.page == Page::Sound,
+                                    true,
+                                )
+                                .on_click(cx.listener(|this, _, w, cx| {
+                                    this.clear_wifi_prompt();
+                                    this.page = Page::Sound;
+                                    w.focus(&this.controls[CONTROL_SOUND]);
+                                    this.start_sound_watcher(cx);
+                                    if !this.sound_loaded && !this.sound_loading {
+                                        this.refresh_sound(cx);
+                                    }
+                                    cx.notify();
+                                })),
+                            )
+                            .child(
+                                self.button(
+                                    CONTROL_BLUETOOTH,
+                                    "Bluetooth",
+                                    p,
+                                    window,
+                                    self.page == Page::Bluetooth,
+                                    true,
+                                )
+                                .on_click(cx.listener(|this, _, w, cx| {
+                                    this.clear_wifi_prompt();
+                                    this.page = Page::Bluetooth;
+                                    w.focus(&this.controls[CONTROL_BLUETOOTH]);
+                                    if !this.bluetooth_loaded && !this.bluetooth_loading {
+                                        this.refresh_bluetooth(cx);
                                     }
                                     cx.notify();
                                 })),
@@ -1365,6 +3214,7 @@ impl Render for Settings {
                                     true,
                                 )
                                 .on_click(cx.listener(|this, _, w, cx| {
+                                    this.clear_wifi_prompt();
                                     this.page = Page::About;
                                     w.focus(&this.controls[CONTROL_ABOUT]);
                                     cx.notify();
@@ -1394,6 +3244,9 @@ impl Render for Settings {
                                     .child(match self.page {
                                         Page::Appearance => self.appearance(p, window, cx),
                                         Page::Displays => self.displays(p, window, cx),
+                                        Page::Network => self.network_page(p, window, cx),
+                                        Page::Sound => self.sound_page(p, window, cx),
+                                        Page::Bluetooth => self.bluetooth_page(p, window, cx),
                                         Page::About => self.about(p),
                                     }),
                             )
@@ -1418,7 +3271,7 @@ impl Render for Settings {
                                         .child(
                                             self.button(
                                                 CONTROL_RELOAD,
-                                                if on_displays {
+                                                if on_displays || is_live_hardware {
                                                     "Refresh"
                                                 } else {
                                                     "Reload saved"
@@ -1426,7 +3279,11 @@ impl Render for Settings {
                                                 p,
                                                 window,
                                                 false,
-                                                !self.busy && !self.displays_loading,
+                                                !self.busy
+                                                    && !self.displays_loading
+                                                    && !self.network_loading
+                                                    && !self.sound_loading
+                                                    && !self.bluetooth_loading,
                                             )
                                             .flex_shrink_0()
                                             .on_click(
@@ -1447,65 +3304,85 @@ impl Render for Settings {
                                     p,
                                 )
                                 .when(self.confirming_close, |d| {
-                                        d.child(
-                                            self.button(
-                                                CONTROL_KEEP_EDITING,
-                                                "Keep editing",
-                                                p,
-                                                window,
-                                                false,
-                                                true,
-                                            )
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.confirming_close = false;
-                                                window.focus(&this.controls[CONTROL_SAVE]);
-                                                cx.notify();
-                                            })),
+                                    d.child(
+                                        self.button(
+                                            CONTROL_KEEP_EDITING,
+                                            "Keep editing",
+                                            p,
+                                            window,
+                                            false,
+                                            true,
                                         )
-                                        .child(
-                                            self.button(
-                                                CONTROL_DISCARD_CLOSE,
-                                                "Discard & close",
-                                                p,
-                                                window,
-                                                true,
-                                                true,
-                                            )
-                                            .on_click(|_, _, cx| cx.quit()),
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.confirming_close = false;
+                                            window.focus(&this.controls[CONTROL_SAVE]);
+                                            cx.notify();
+                                        })),
+                                    )
+                                    .child(
+                                        self.button(
+                                            CONTROL_DISCARD_CLOSE,
+                                            "Discard & close",
+                                            p,
+                                            window,
+                                            true,
+                                            true,
                                         )
-                                    })
-                                    .when(!self.confirming_close, |d| {
-                                        d.child(
-                                            self.button(
-                                                CONTROL_UNDO,
-                                                "Undo",
-                                                p,
-                                                window,
-                                                false,
-                                                active_dirty && !self.busy,
-                                            )
-                                            .on_click(
-                                                cx.listener(|this, _, w, cx| {
-                                                    this.undo(&Undo, w, cx)
-                                                }),
-                                            ),
+                                        .on_click(|_, _, cx| cx.quit()),
+                                    )
+                                })
+                                .when(!self.confirming_close && is_live_hardware, |d| {
+                                    d.child(
+                                        self.button(
+                                            CONTROL_FOOTER_REFRESH,
+                                            "Refresh",
+                                            p,
+                                            window,
+                                            false,
+                                            !self.network_loading
+                                                && !self.sound_loading
+                                                && !self.bluetooth_loading
+                                                && !self.network_busy
+                                                && !self.sound_busy
+                                                && !self.bluetooth_busy,
                                         )
-                                        .child(
-                                            self.button(
-                                                CONTROL_SAVE,
-                                                primary_label,
-                                                p,
-                                                window,
-                                                true,
-                                                can_primary,
-                                            )
-                                            .on_click(
-                                                cx.listener(|this, _, w, cx| {
-                                                    this.save(&Save, w, cx)
-                                                }),
-                                            ),
+                                        .on_click(cx.listener(|this, _, w, cx| {
+                                            this.reload(&Reload, w, cx)
+                                        })),
+                                    )
+                                })
+                                .when(!self.confirming_close && !is_live_hardware, |d| {
+                                    d.child(
+                                        self.button(
+                                            CONTROL_UNDO,
+                                            "Undo",
+                                            p,
+                                            window,
+                                            false,
+                                            active_dirty && !self.busy,
                                         )
-                                    }),
+                                        .on_click(
+                                            cx.listener(|this, _, w, cx| {
+                                                this.undo(&Undo, w, cx)
+                                            }),
+                                        ),
+                                    )
+                                    .child(
+                                        self.button(
+                                            CONTROL_SAVE,
+                                            primary_label,
+                                            p,
+                                            window,
+                                            true,
+                                            can_primary,
+                                        )
+                                        .on_click(
+                                            cx.listener(|this, _, w, cx| {
+                                                this.save(&Save, w, cx)
+                                            }),
+                                        ),
+                                    )
+                                }),
                             ),
                     ),
             )
@@ -1636,7 +3513,10 @@ mod tests {
         assert_eq!(CONTROL_DISCARD_CLOSE, 15);
         assert_eq!(CONTROL_DISPLAYS, 16);
         assert_eq!(CONTROL_DISPLAY_REFRESH, 17);
-        assert_eq!(CONTROL_COUNT, 18);
+        assert_eq!(CONTROL_NETWORK, 18);
+        assert_eq!(CONTROL_SOUND, 19);
+        assert_eq!(CONTROL_BLUETOOTH, 20);
+        assert_eq!(CONTROL_COUNT, 29);
     }
 
     #[test]

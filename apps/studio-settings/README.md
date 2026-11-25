@@ -52,8 +52,12 @@ are from before Void, and Base does not use them.
 
 `src/settings.rs` owns model/storage, `src/session.rs` owns motion integration,
 `src/displays.rs` connects to the shell's bounded display bridge (`CROWBAR_DISPLAY_SOCKET`)
-to inspect and configure outputs, `src/theme.rs` maps brand tokens, and `src/main.rs`
-presents the surface.
+to inspect and configure outputs, `src/network.rs` inspects Ethernet (`ip -j`) and manages
+Wi-Fi through `iwd`'s D-Bus API (passing passphrases only in memory through an `iwd` Agent
+callback and never logging them), `src/sound.rs` manages PipeWire sinks/sources through
+`wpctl` and tracks external changes via `pw-mon`, `src/bluetooth.rs` manages adapters and
+devices through BlueZ D-Bus (`org.bluez`), `src/theme.rs` maps brand tokens, and
+`src/main.rs` presents the surface.
 Preferences are schema 1 JSON at `$XDG_CONFIG_HOME/crowbaros/appearance.json`
 (falling back to `~/.config/crowbaros/appearance.json`). New files are mode 0600.
 Unknown/malformed data is rejected. Save locks, checks for external changes,

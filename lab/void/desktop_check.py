@@ -398,14 +398,63 @@ class Check:
         self.check('Settings Displays page loads live outputs from Fulcrum',
                    bool(re.search(r'STUDIO event=displays-loaded count=[1-9]', self.app_log()[log_offset:])))
         self.capture('05-settings-displays-light')
-        # Preview Dark appearance, then view Displays page in Dark theme too
+        # Verify Network, Sound, and Bluetooth pages open cleanly in Light theme
+        person = self.person()[0]
+        self.click(136, 252)  # Network sidebar button
+        self.wait('Settings Network page loads', lambda: 'STUDIO event=network-loaded ' in self.app_log()[log_offset:])
+        net_log = self.app_log()[log_offset:]
+        self.check('Settings Network page loads Ethernet and calm Wi-Fi unavailable state',
+                   'STUDIO event=network-loaded ethernet=1 wifi=unavailable' in net_log
+                   and 'wifi-scan-failed' not in net_log)
+        self.capture('05a-settings-network-light')
+        self.click(136, 300)  # Sound sidebar button
+        self.wait('Settings Sound page loads PipeWire', lambda: 'STUDIO event=sound-loaded ' in self.app_log()[log_offset:])
+        self.check('Settings Sound page loads live PipeWire output',
+                   bool(re.search(r'STUDIO event=sound-loaded sinks=[1-9]', self.app_log()[log_offset:])))
+        # Verify Sound reflects external PipeWire volume changes and mutates PipeWire via UI
+        sync_before = self.app_log()[log_offset:].count('STUDIO event=sound-synced ')
+        self.run(f"su -s /bin/sh {person} -c 'XDG_RUNTIME_DIR=/run/user/1003 wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.65'")
+        self.wait('Settings Sound syncs external PipeWire volume change',
+                  lambda: self.app_log()[log_offset:].count('STUDIO event=sound-synced ') > sync_before)
+        self.check('Settings Sound reflects live external PipeWire volume changes', True)
+        self.capture('05b-settings-sound-light')
+        update_before = self.app_log()[log_offset:].count('STUDIO event=sound-updated ')
+        self.click(289, 368)  # Output volume "-" step button (-5% -> 0.60)
+        self.wait('Settings Sound volume click updates PipeWire',
+                  lambda: self.app_log()[log_offset:].count('STUDIO event=sound-updated ') > update_before)
+        vol_after = self.run(f"su -s /bin/sh {person} -c 'XDG_RUNTIME_DIR=/run/user/1003 wpctl get-volume @DEFAULT_AUDIO_SINK@'").strip()
+        self.check('Settings Sound mutates live PipeWire volume from the UI',
+                   'Volume: 0.60' in vol_after, vol_after)
+        mute_before = self.app_log()[log_offset:].count('STUDIO event=sound-updated ')
+        self.click(948, 368)  # Output Mute toggle button
+        self.wait('Settings Sound mute click updates PipeWire',
+                  lambda: self.app_log()[log_offset:].count('STUDIO event=sound-updated ') > mute_before)
+        muted_after = self.run(f"su -s /bin/sh {person} -c 'XDG_RUNTIME_DIR=/run/user/1003 wpctl get-volume @DEFAULT_AUDIO_SINK@'").strip()
+        self.check('Settings Sound toggles live PipeWire mute from the UI',
+                   '[MUTED]' in muted_after, muted_after)
+        self.run(f"su -s /bin/sh {person} -c 'XDG_RUNTIME_DIR=/run/user/1003 wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 && XDG_RUNTIME_DIR=/run/user/1003 wpctl set-volume @DEFAULT_AUDIO_SINK@ 1.00'")
+        self.click(136, 348)  # Bluetooth sidebar button
+        self.wait('Settings Bluetooth page loads', lambda: 'STUDIO event=bluetooth-loaded ' in self.app_log()[log_offset:])
+        self.check('Settings Bluetooth page shows calm unavailable state without adapter',
+                   'STUDIO event=bluetooth-loaded state=unavailable' in self.app_log()[log_offset:])
+        self.capture('05c-settings-bluetooth-light')
+        # Preview Dark appearance, then capture Displays, Network, Sound, and Bluetooth in Dark theme
         self.click(136, 156)
         self.click(320, 350)
         self.wait('Dark preview before Displays capture', lambda: 'event=preview theme=Dark' in self.app_log()[log_offset:])
         self.click(136, 204)
+        time.sleep(0.3)
         self.capture('06-settings-displays-dark')
+        self.click(136, 252)
+        time.sleep(0.3)
+        self.capture('06a-settings-network-dark')
+        self.click(136, 300)
+        time.sleep(0.3)
+        self.capture('06b-settings-sound-dark')
+        self.click(136, 348)
+        time.sleep(0.3)
+        self.capture('06c-settings-bluetooth-dark')
         # Verify Files is configured as the default directory handler and launches natively from the dock
-        person = self.person()[0]
         dir_handler = self.run(f"su -s /bin/sh {person} -c 'xdg-mime query default inode/directory'").strip()
         self.check('Files is configured as the default directory handler',
                    dir_handler == 'com.crowbaros.Files.desktop',
