@@ -62,9 +62,10 @@ is closed.
 
 Each socket keeps up to 64 connections open, counted apart, so the person's
 clients cannot use up the shell's. One more is closed at once without a reply.
-A peer that reads nothing while 16 MiB of replies wait for it is closed, and
-those replies are let go. A peer that closes its sending side still gets the
-replies to what it sent before Lever closes the connection.
+While 1 MiB of replies wait for a peer, Lever reads no more from it: a peer
+that reads slowly, or not at all, finds its own writes stall, and loses
+nothing it sent. A peer that closes its sending side still gets the replies to
+what it sent before Lever closes the connection.
 
 ### Handshake (protocol version 1)
 

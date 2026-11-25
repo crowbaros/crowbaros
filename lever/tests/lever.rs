@@ -466,69 +466,97 @@ fn restart_after_kill_replaces_stale_sockets_and_logs_restart_and_sigint_stops_c
 
 #[test]
 fn replies_reach_a_peer_that_has_sent_all_it_will() {
+    // More replies than a socket holds, and fewer than the mark at which
+    // Lever stops reading a peer, so some still wait inside Lever when it
+    // finds the peer has stopped sending.
+    const REQUESTS: usize = 10_000;
+
     let dir = TempDir::new();
     let uid = my_uid();
     let mut lever = RunningLever::start(&dir.0, uid, uid);
 
-    // The peer sends its version and a request, closes its sending side, and
-    // only then reads.
+    // The peer sends its version and its requests, closes its sending side,
+    // and reads nothing until Lever has seen that.
     let mut peer = connect(&lever.person);
     let mut bytes = encode_frame(&json!({ "version": 1 }));
-    bytes.extend_from_slice(&encode_frame(&json!({ "op": "status" })));
+    let request = encode_frame(&json!({ "op": "status" }));
+    for _ in 0..REQUESTS {
+        bytes.extend_from_slice(&request);
+    }
     peer.write_all(&bytes).unwrap();
     peer.shutdown(std::net::Shutdown::Write).unwrap();
 
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !lever.log_text().contains("connection: the person left") {
+        assert!(
+            Instant::now() < deadline,
+            "Lever did not see the peer stop sending: {}",
+            lever.log_text()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
     assert_eq!(read_frame(&mut peer).unwrap(), json!({ "version": 1 }));
-    assert_eq!(read_frame(&mut peer).unwrap()["reply"], "status");
+    for n in 0..REQUESTS {
+        let reply = read_frame(&mut peer).unwrap_or_else(|err| panic!("reply {n} of {REQUESTS} was lost: {err}"));
+        assert_eq!(reply["reply"], "status");
+    }
     assert_closed_without_reply(peer);
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
-    assert!(
-        lever.log_text().contains("connection: the person left"),
-        "expected the departure in the log: {}",
-        lever.log_text()
-    );
 }
 
 #[test]
-fn a_peer_that_reads_nothing_is_closed_while_its_replies_still_wait() {
+fn a_peer_that_reads_nothing_is_held_and_loses_nothing_it_sent() {
     let dir = TempDir::new();
     let uid = my_uid();
     let mut lever = RunningLever::start(&dir.0, uid, uid);
 
     let mut peer = handshake(&lever.person);
+    peer.set_write_timeout(Some(Duration::from_millis(500))).unwrap();
     let request = encode_frame(&json!({ "op": "status" }));
     let chunk: Vec<u8> = request.iter().copied().cycle().take(request.len() * 2048).collect();
 
-    // Requests go out and nothing is read. Lever's replies pass what it keeps
-    // waiting for one peer long before this many requests are sent, and from
-    // then on a write must fail because Lever closed the connection. A Lever
-    // that only stopped reading would leave the write waiting instead.
-    let mut ended = None;
-    for _ in 0..1024 {
-        if let Err(err) = peer.write_all(&chunk) {
-            ended = Some(err.kind());
-            break;
+    // Requests go out and nothing is read. Lever stops reading the peer once
+    // enough replies wait for it, so the peer's writes stall. A Lever that
+    // took every request would have this peer send without end, or close it.
+    let mut sent = 0;
+    loop {
+        match peer.write(&chunk[sent % chunk.len()..]) {
+            Ok(n) => sent += n,
+            Err(err) if matches!(err.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => break,
+            Err(err) => panic!("Lever closed a peer that read nothing, after {sent} bytes: {err}"),
         }
+        assert!(
+            sent < 64 * 1024 * 1024,
+            "Lever went on reading a peer that read nothing"
+        );
     }
-    assert!(
-        matches!(ended, Some(io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset)),
-        "expected Lever to close the peer that read nothing, got {ended:?}"
-    );
-    assert!(
-        lever.log_text().contains("closed, the person read nothing while"),
-        "expected the close in the log: {}",
-        lever.log_text()
-    );
 
     // Lever still answers the next peer.
     let mut next = handshake(&lever.person);
     write_frame(&mut next, &json!({ "op": "status" })).unwrap();
     assert_eq!(read_frame(&mut next).unwrap()["reply"], "status");
 
+    // When the peer reads, every request it sent whole is answered.
+    for n in 0..sent / request.len() {
+        let reply = read_frame(&mut peer).unwrap_or_else(|err| panic!("reply {n} was lost: {err}"));
+        assert_eq!(reply["reply"], "status");
+    }
+
+    // So is the one the stall cut short, once the rest of it is sent.
+    peer.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
+    peer.write_all(&request[sent % request.len()..]).unwrap();
+    assert_eq!(read_frame(&mut peer).unwrap()["reply"], "status");
+
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
+    assert!(
+        !lever.log_text().contains("connection: closed"),
+        "a peer that read nothing was closed: {}",
+        lever.log_text()
+    );
 }
 
 #[test]
@@ -545,8 +573,8 @@ fn a_peer_that_keeps_sending_and_reading_is_answered_beside_the_others() {
     let mut busy_writer = busy.try_clone().unwrap();
     let mut busy_reader = busy;
 
-    // Enough requests that their replies pass what Lever keeps waiting for one
-    // peer, were Lever to read them all before it wrote any.
+    // Far more requests than Lever could answer in one wake, so the shell
+    // below is answered while they are still coming.
     let writer = std::thread::spawn(move || {
         let request = encode_frame(&json!({ "op": "status" }));
         let chunk: Vec<u8> = request.iter().copied().cycle().take(request.len() * 1000).collect();
@@ -555,15 +583,24 @@ fn a_peer_that_keeps_sending_and_reading_is_answered_beside_the_others() {
         }
         Ok::<(), io::Error>(())
     });
+    let answered = std::sync::Arc::new(AtomicUsize::new(0));
+    let counted = answered.clone();
     let reader = std::thread::spawn(move || {
         for _ in 0..REQUESTS {
             let reply = read_frame(&mut busy_reader)?;
             assert_eq!(reply["reply"], "status");
+            counted.fetch_add(1, Ordering::Relaxed);
         }
         Ok::<UnixStream, io::Error>(busy_reader)
     });
 
-    // While that goes on, the shell is answered within its usual time.
+    // Once the busy peer is under way, the shell is answered within its
+    // usual time.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while answered.load(Ordering::Relaxed) < 1000 {
+        assert!(Instant::now() < deadline, "the busy peer was not answered");
+        std::thread::sleep(Duration::from_millis(1));
+    }
     let mut shell = handshake(&lever.surface);
     write_frame(&mut shell, &json!({ "op": "status" })).unwrap();
     assert_eq!(read_frame(&mut shell).unwrap()["reply"], "status");
@@ -578,7 +615,7 @@ fn a_peer_that_keeps_sending_and_reading_is_answered_beside_the_others() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
     assert!(
-        !lever.log_text().contains("read nothing while"),
+        !lever.log_text().contains("connection: closed"),
         "a peer that read its replies was closed: {}",
         lever.log_text()
     );

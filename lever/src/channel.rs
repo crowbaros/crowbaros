@@ -11,8 +11,11 @@ use std::os::unix::net::UnixStream;
 pub const PROTOCOL_VERSION: u64 = 1;
 /// Lever's package version reported in `status` replies.
 pub const LEVER_VERSION: &str = env!("CARGO_PKG_VERSION");
-/// Maximum outbound bytes queued for a single slow peer before closing it.
-const MAX_WAITING: usize = 16 * 1024 * 1024;
+/// Once this many bytes of replies wait for a peer, Lever reads no more from
+/// it until it has taken them. A peer that reads slowly, or not at all, is
+/// then held where it is: its own writes stall, nothing it sent is lost, and
+/// what Lever keeps for it stays near this mark.
+const WAITING_MARK: usize = 1024 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Channel {
@@ -53,7 +56,7 @@ impl Peer {
     }
 
     pub fn wants_read(&self) -> bool {
-        !self.closing
+        !self.closing && self.write_buf.len() < WAITING_MARK
     }
 
     pub fn is_done(&self) -> bool {
@@ -64,23 +67,18 @@ impl Peer {
         self.channel == channel
     }
 
-    fn queue(&mut self, msg: &Value, log: &mut Log) {
-        if self.closing {
-            return;
+    fn queue(&mut self, msg: &Value) {
+        if !self.closing {
+            self.write_buf.extend_from_slice(&frames::encode(msg));
         }
-        let frame = frames::encode(msg);
-        if self.write_buf.len() + frame.len() > MAX_WAITING {
-            let peer = self.channel.peer;
-            self.close_with_reason(
-                &format!("{peer} read nothing while {MAX_WAITING} bytes waited for it"),
-                log,
-            );
-            // A peer that reads nothing is dropped at once: what waited for it
-            // is let go, so the connection ends as soon as this call returns.
-            self.write_buf = Vec::new();
-            return;
+    }
+
+    /// The peer has hung up: it sends nothing more and can take nothing more.
+    pub fn on_hangup(&mut self, log: &mut Log) {
+        if !self.closed_logged {
+            self.closed_logged = true;
+            let _ = log.write(Event::Connection, &format!("{} left", self.channel.peer));
         }
-        self.write_buf.extend_from_slice(&frame);
     }
 
     fn close_with_reason(&mut self, why: &str, log: &mut Log) {
@@ -94,8 +92,9 @@ impl Peer {
     /// Reads once and answers every complete frame that read finished, then
     /// writes what it can. One read a wake keeps a peer that never stops
     /// sending from holding the others and a stop signal back; `poll` reports
-    /// the socket again while more waits. Returns `false` if the peer should
-    /// be removed.
+    /// the socket again while more waits. The replies to one read are the
+    /// most that can be added past `WAITING_MARK`. Returns `false` if the
+    /// peer should be removed.
     pub fn on_readable(&mut self, log: &mut Log) -> bool {
         let mut buf = [0u8; 8192];
         let n = loop {
@@ -175,7 +174,7 @@ impl Peer {
                 Event::Connection,
                 &format!("{} stated version {PROTOCOL_VERSION}", self.channel.peer),
             );
-            self.queue(&json!({ "version": PROTOCOL_VERSION }), log);
+            self.queue(&json!({ "version": PROTOCOL_VERSION }));
             return;
         }
 
@@ -185,14 +184,11 @@ impl Peer {
             return;
         };
         let Some(op) = value.as_object().and_then(|o| o.get("op")).and_then(Value::as_str) else {
-            self.queue(
-                &json!({
-                    "reply": "error",
-                    "code": "invalid-request",
-                    "message": "Expected a JSON object with a string op field."
-                }),
-                log,
-            );
+            self.queue(&json!({
+                "reply": "error",
+                "code": "invalid-request",
+                "message": "Expected a JSON object with a string op field."
+            }));
             return;
         };
 
@@ -209,7 +205,7 @@ impl Peer {
                 "message": "This request is not supported."
             }),
         };
-        self.queue(&reply, log);
+        self.queue(&reply);
     }
 }
 

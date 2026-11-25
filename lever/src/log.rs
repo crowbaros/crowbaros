@@ -38,7 +38,8 @@ impl Event {
 
 pub struct Log {
     path: PathBuf,
-    file: File,
+    /// `None` between moving a full log aside and opening the next one.
+    file: Option<File>,
     size: u64,
     limit: u64,
 }
@@ -50,14 +51,14 @@ impl Log {
     }
 
     fn open_with_limit(path: PathBuf, limit: u64) -> io::Result<Self> {
-        let file = open_private(&path)?;
-        let size = file.metadata()?.len();
-        Ok(Self {
+        let mut log = Self {
             path,
-            file,
-            size,
+            file: None,
+            size: 0,
             limit,
-        })
+        };
+        log.file()?;
+        Ok(log)
     }
 
     /// Writes one UTC-timestamped line, rotating to `<path>.1` before crossing
@@ -66,11 +67,13 @@ impl Log {
         let escaped = details.replace('\n', "\n    ");
         let line = format!("{} {}: {escaped}\n", utc_timestamp(), event.as_str());
         let bytes = line.as_bytes();
-        if self.size > 0 && self.size + (bytes.len() as u64) > self.limit {
-            self.rotate()?;
+        if self.file.is_some() && self.size > 0 && self.size + (bytes.len() as u64) > self.limit {
+            self.set_aside()?;
         }
-        if let Err(err) = self.file.write_all(bytes) {
-            let _ = self.file.set_len(self.size);
+        let size = self.size;
+        let file = self.file()?;
+        if let Err(err) = file.write_all(bytes) {
+            let _ = file.set_len(size);
             return Err(err);
         }
         self.size += bytes.len() as u64;
@@ -79,20 +82,26 @@ impl Log {
 }
 
 impl Log {
-    /// Moves the full log to `<path>.1` and starts a new one.
-    fn rotate(&mut self) -> io::Result<()> {
+    /// Moves the full log to `<path>.1`. The log has no open file from here
+    /// until `file` opens the next one, so a line can never go to the backup.
+    fn set_aside(&mut self) -> io::Result<()> {
         let mut backup = self.path.as_os_str().to_os_string();
         backup.push(".1");
-        match std::fs::rename(&self.path, &backup) {
-            Ok(()) => {}
-            // An earlier rotation moved the log and then could not open the
-            // new one. The move is done, so only the open is tried again.
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
-        }
-        self.file = open_private(&self.path)?;
+        std::fs::rename(&self.path, &backup)?;
+        self.file = None;
         self.size = 0;
         Ok(())
+    }
+
+    /// The open log. Opens it when there is none: at the start, after a full
+    /// log is moved aside, and again on each line after an open that failed.
+    fn file(&mut self) -> io::Result<&mut File> {
+        if self.file.is_none() {
+            let file = open_private(&self.path)?;
+            self.size = file.metadata()?.len();
+            self.file = Some(file);
+        }
+        Ok(self.file.as_mut().expect("the log was just opened"))
     }
 }
 
@@ -173,17 +182,23 @@ mod tests {
         let mut log = Log::open_with_limit(path.clone(), 200).unwrap();
         log.write(Event::Start, &"a".repeat(120)).unwrap();
 
-        // What a rotation leaves when the move worked and the open did not:
-        // the log is at its backup's name and nothing is at its own.
-        std::fs::rename(&path, &backup).unwrap();
+        // A rotation whose move works and whose open does not: a directory
+        // stands where the new log would go, so the line that asked for the
+        // rotation is lost and the log is left with no open file.
+        log.set_aside().unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(log.write(Event::Connection, "lost").is_err());
+        std::fs::remove_dir(&path).unwrap();
 
-        log.write(Event::Connection, &"b".repeat(120)).unwrap();
+        // The next line is far under the limit, and still opens the new log.
         log.write(Event::Connection, "c").unwrap();
 
+        let old = std::fs::read_to_string(&backup).unwrap();
         let new = std::fs::read_to_string(&path).unwrap();
-        assert!(new.contains(&"b".repeat(120)) && new.contains(": c\n"), "{new}");
-        assert!(std::fs::read_to_string(&backup).unwrap().contains(&"a".repeat(120)));
+        assert!(old.contains(&"a".repeat(120)) && !old.contains(": c\n"), "{old}");
+        assert!(new.contains(": c\n") && !new.contains("lost"), "{new}");
         assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&backup), 0o600);
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }

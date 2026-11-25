@@ -304,9 +304,11 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
             if revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
                 alive = false;
             }
-            // A peer Lever has stopped reading that has hung up can take
-            // nothing more, whatever still waits for it.
-            if revents & libc::POLLHUP != 0 && !peer.wants_read() {
+            // A peer that has hung up while Lever was not reading it, because
+            // it had sent all it would or had replies waiting, can take
+            // nothing more.
+            if alive && revents & libc::POLLHUP != 0 && !peer.wants_read() {
+                peer.on_hangup(log);
                 alive = false;
             }
             keep[idx] = alive;
