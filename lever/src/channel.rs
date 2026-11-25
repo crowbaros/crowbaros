@@ -2,7 +2,9 @@
 
 use crate::frames::{self, FrameReader, MAX_FRAME};
 use crate::log::{Event, Log};
+use crate::service::{Broadcast, Service};
 use serde_json::{Value, json};
+use std::collections::HashSet;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
@@ -29,6 +31,7 @@ pub struct Peer {
     channel: Channel,
     reader: FrameReader,
     write_buf: Vec<u8>,
+    subscriptions: HashSet<String>,
     handshaked: bool,
     closing: bool,
     closed_logged: bool,
@@ -41,6 +44,7 @@ impl Peer {
             channel,
             reader: FrameReader::new(MAX_FRAME),
             write_buf: Vec::new(),
+            subscriptions: HashSet::new(),
             handshaked: false,
             closing: false,
             closed_logged: false,
@@ -67,7 +71,11 @@ impl Peer {
         self.channel == channel
     }
 
-    fn queue(&mut self, msg: &Value) {
+    pub fn is_subscribed(&self, thread_id: &str) -> bool {
+        self.handshaked && !self.closing && self.subscriptions.contains(thread_id)
+    }
+
+    pub fn queue(&mut self, msg: &Value) {
         if !self.closing {
             self.write_buf.extend_from_slice(&frames::encode(msg));
         }
@@ -91,31 +99,26 @@ impl Peer {
     }
 
     /// Reads once and answers every complete frame that read finished, then
-    /// writes what it can. One read a wake keeps a peer that never stops
-    /// sending from holding the others and a stop signal back; `poll` reports
-    /// the socket again while more waits. The replies to one read are the
-    /// most that can be added past `WAITING_MARK`. Returns `false` if the
-    /// peer should be removed.
-    pub fn on_readable(&mut self, log: &mut Log) -> bool {
+    /// writes what it can. Returns `(alive, broadcasts)` where `broadcasts`
+    /// should be delivered to every subscribed peer.
+    pub fn on_readable(&mut self, service: &mut Service, log: &mut Log) -> (bool, Vec<Broadcast>) {
         let mut buf = [0u8; 8192];
         let n = loop {
             match self.stream.read(&mut buf) {
                 Ok(n) => break n,
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return self.on_writable(),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return (self.on_writable(), Vec::new()),
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(_) => {
                     if !self.closed_logged {
                         self.closed_logged = true;
                         let _ = log.write(Event::Connection, &format!("{} disconnected", self.channel.peer));
                     }
-                    return false;
+                    return (false, Vec::new());
                 }
             }
         };
 
         if n == 0 {
-            // The peer sent all it will. It may still be reading, so the
-            // replies already waiting for it are written before the close.
             if !self.closed_logged {
                 self.closed_logged = true;
                 let peer = self.channel.peer;
@@ -127,20 +130,19 @@ impl Peer {
                 let _ = log.write(Event::Connection, &msg);
             }
             self.closing = true;
-            return self.on_writable();
+            return (self.on_writable(), Vec::new());
         }
 
+        let mut broadcasts = Vec::new();
         self.reader.push(&buf[..n]);
         while !self.closing {
             match self.reader.next_frame() {
-                Ok(Some(frame)) => self.handle_frame(&frame, log),
+                Ok(Some(frame)) => self.handle_frame(&frame, service, log, &mut broadcasts),
                 Ok(None) => break,
                 Err(err) => self.close_with_reason(&err.to_string(), log),
             }
         }
-        // Replies queued before a close, such as the answer to a valid frame
-        // that came just before an oversized one, are still written.
-        self.on_writable()
+        (self.on_writable(), broadcasts)
     }
 
     /// Flushes queued outbound bytes. Returns `false` if the peer is finished or
@@ -160,7 +162,7 @@ impl Peer {
         !self.is_done()
     }
 
-    fn handle_frame(&mut self, frame: &[u8], log: &mut Log) {
+    fn handle_frame(&mut self, frame: &[u8], service: &mut Service, log: &mut Log, broadcasts: &mut Vec<Broadcast>) {
         if !self.handshaked {
             if !states_version(frame) {
                 let peer = self.channel.peer;
@@ -184,29 +186,13 @@ impl Peer {
             self.close_with_reason(&format!("{peer} sent invalid JSON"), log);
             return;
         };
-        let Some(op) = value.as_object().and_then(|o| o.get("op")).and_then(Value::as_str) else {
-            self.queue(&json!({
-                "reply": "error",
-                "code": "invalid-request",
-                "message": "Expected a JSON object with a string op field."
-            }));
-            return;
-        };
 
-        let reply = match op {
-            "status" => json!({
-                "reply": "status",
-                "version": LEVER_VERSION,
-                "harness_started": false,
-                "harnesses": []
-            }),
-            _ => json!({
-                "reply": "error",
-                "code": "unsupported",
-                "message": "This request is not supported."
-            }),
-        };
-        self.queue(&reply);
+        let outcome = service.handle_request(&value, log);
+        if let Some(thread_id) = outcome.subscribe {
+            self.subscriptions.insert(thread_id);
+        }
+        self.queue(&outcome.reply);
+        broadcasts.extend(outcome.broadcasts);
     }
 }
 

@@ -1,6 +1,6 @@
 //! What the client asks of the kernel that std does not offer: waiting on
-//! several descriptors at once, hearing Ctrl-C as something to act on, and
-//! the terminal's echo. All of the client's `unsafe` code is here.
+//! several descriptors at once and hearing Ctrl-C as something to act on. All
+//! of the client's `unsafe` code is here.
 
 use std::io::{Error, Result};
 use std::os::fd::RawFd;
@@ -93,38 +93,6 @@ pub fn read(descriptor: RawFd, into: &mut [u8]) -> Result<usize> {
         let error = Error::last_os_error();
         if error.kind() != std::io::ErrorKind::Interrupted {
             return Err(error);
-        }
-    }
-}
-
-/// The terminal shows nothing typed, for as long as this is held: a secret
-/// is being typed. Dropping it puts the terminal back as it was.
-pub struct Hidden {
-    before: Option<libc::termios>,
-}
-
-impl Hidden {
-    /// Turns echo off on standard input, when it is a terminal.
-    pub fn typing() -> Hidden {
-        // SAFETY: a zeroed `termios` is a valid one for `tcgetattr` to fill.
-        let mut settings: libc::termios = unsafe { std::mem::zeroed() };
-        // SAFETY: `settings` is a `termios`, and descriptor 0 is the process's own.
-        if unsafe { libc::tcgetattr(0, &mut settings) } != 0 {
-            return Hidden { before: None };
-        }
-        let before = settings;
-        settings.c_lflag &= !libc::ECHO;
-        // SAFETY: as above.
-        unsafe { libc::tcsetattr(0, libc::TCSAFLUSH, &settings) };
-        Hidden { before: Some(before) }
-    }
-}
-
-impl Drop for Hidden {
-    fn drop(&mut self) {
-        if let Some(before) = &self.before {
-            // SAFETY: `before` is the `termios` the terminal had.
-            unsafe { libc::tcsetattr(0, libc::TCSAFLUSH, before) };
         }
     }
 }

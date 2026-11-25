@@ -19,6 +19,7 @@ pub enum Event {
     Restart,
     Listening,
     Connection,
+    Harness,
     Stop,
     Error,
 }
@@ -30,6 +31,7 @@ impl Event {
             Event::Restart => "restart",
             Event::Listening => "listening",
             Event::Connection => "connection",
+            Event::Harness => "harness",
             Event::Stop => "stop",
             Event::Error => "error",
         }

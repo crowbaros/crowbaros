@@ -71,7 +71,7 @@ PROJECTS = [("compositor", "compositor"), ("apps/shell", ""), ("apps/files", "")
 # program; see helpers/README.md.
 PROGRAMS = {"crowbar-compositor": "compositor", "crowbar-probe": "compositor",
             "crowbaros-shell": "apps/shell", "crowbaros-files": "apps/files", "crowbaros-studio-settings": "apps/studio-settings",
-            "crowbar-helpers": "base/helpers", "crowbar-lever": "lever"}
+            "crowbar-helpers": "base/helpers", "crowbar-lever": "lever", "crowbar-agent": "lever"}
 
 
 def run(*args, **kwargs):
@@ -1025,18 +1025,18 @@ def desktop_services_stay_up(out):
 
 
 # Retired Pi Durable Harness, Node.js, and `crowbar-agent` service artifacts
-# that Base's image must no longer carry (ADR 0036).
+# that Base's image must no longer carry (ADR 0036). `/usr/local/bin/crowbar-agent`
+# is back as Lever's Rust client.
 RETIRED_AGENT_PATHS = (
     "/usr/local/lib/crowbar-agent",
     "/usr/share/licenses/crowbar-agent",
-    "/usr/local/bin/crowbar-agent",
     "/usr/bin/node",
     "/usr/local/bin/node",
     "/etc/sv/crowbar-agent",
     "/var/service/crowbar-agent",
     "/run/crowbar-agent",
 )
-RETIRED_AGENT_COMMANDS = ("node", "npm", "npx", "crowbar-agent")
+RETIRED_AGENT_COMMANDS = ("node", "npm", "npx")
 
 
 def no_harness_or_node(out):
@@ -1180,6 +1180,11 @@ CHECKS = [
     ("the idle Lever holds less than 50 MiB of memory",
      LEVER_PID + "awk '/^VmRSS:/ {print $2}' \"/proc/$(pid)/status\"",
      lambda out: lever_is_small(out)),
+    ("crowbar-agent reaches Lever as the person",
+     PERSON_IN_GUEST
+     + "out=$(su -s /bin/sh \"$u\" -c '/usr/local/bin/crowbar-agent --list 2>&1'); rc=$?; "
+     "echo \"exit $rc\"; printf '%s\\n' \"$out\"",
+     lambda out: out.startswith("exit 0\n") and "No threads yet." in out),
     # ADR 0036 retired the Pi Durable Harness and Node.js: fail if the image
     # still carries any Harness files, Node.js, or the `crowbar-agent` service.
     ("the image holds no Harness, no Node.js, and no crowbar-agent service",
