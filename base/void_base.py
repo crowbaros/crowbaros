@@ -613,8 +613,8 @@ def build(force=False, lab_account=False):
     preflight(build=True)
     account = person_account(lab_account)
     rootfs(force)
-    # `netdev` is the group the image makes for Wi-Fi.
-    if account["name"] in names_in_root(ROOTFS) | {"netdev"}:
+    # `netdev` and `bluetooth` are groups the image makes or ensures for hardware access.
+    if account["name"] in names_in_root(ROOTFS) | {"netdev", "bluetooth"}:
         raise SystemExit(f"{ACCOUNT_FILE}: the image already has a user or group named "
                          f"`{account['name']}`; choose another name")
     if not account["password"]:
@@ -846,7 +846,7 @@ def compositor_restarted(out):
 # starts a service that exits again a second later, so one that cannot start
 # shows as running for a moment, over and over.
 DESKTOP_SERVICES = ("seatd", "crowbar-compositor", "crowbar-shell", "crowbar-launcher",
-                    "crowbar-unlock", "crowbar-lever")
+                    "crowbar-unlock", "crowbar-lever", "crowbar-pipewire")
 # One digit: the guest's own pattern for it, in CHECKS, counts on that.
 STAYED_UP = 3
 # The shell's service starts `crowbar-shell-connect`, which waits for the
@@ -1045,6 +1045,36 @@ def no_harness_or_node(out):
     return out.strip() == "clean"
 
 
+def pipewire_audio_ready(out):
+    """Whether PipeWire, WirePlumber, and pipewire-pulse are up as the person
+    and `wpctl status` reports a working audio graph."""
+    lines = out.splitlines()
+    return ("pulse-socket yes" in lines
+            and "PipeWire" in out
+            and "Audio" in out
+            and "WirePlumber" in out)
+
+
+def bluetooth_reachable(out):
+    """Whether `bluetoothd` is supervised by runit and answers `org.bluez`
+    over the system D-Bus (even with no physical Bluetooth adapter)."""
+    lines = out.splitlines()
+    return (any(line.startswith("run: /var/service/bluetoothd:") for line in lines)
+            and "dbus-exit 0" in lines
+            and "array [" in out)
+
+
+def mpv_defaults_ready(out):
+    """Whether `mpv --version` runs cleanly, its linked libraries resolve, and
+    `video/mp4` + `audio/mpeg` default to `mpv.desktop`."""
+    lines = labelled(out)
+    return (only(lines, "video") == "mpv.desktop"
+            and only(lines, "audio") == "mpv.desktop"
+            and bool(only(lines, "mpv")) and only(lines, "mpv").startswith("mpv ")
+            and only(lines, "conf") == "yes"
+            and "=> /" in out and "not found" not in out)
+
+
 # What a booted base must show, as (name, guest command, test on its output).
 CHECKS = [
     ("Void Linux", "cat /etc/os-release",
@@ -1059,7 +1089,7 @@ CHECKS = [
     ("services are up", "sv status /var/service/*",
      lambda out: all(f"run: /var/service/{s}:" in out
                      for s in ("sshd", "dhcpcd", "agetty-ttyS0", "dbus", "iwd",
-                               "crowbar-ctrl-alt-del"))),
+                               "bluetoothd", "crowbar-pipewire", "crowbar-ctrl-alt-del"))),
     # The disk's size, the root partition's start and size, in 512-byte
     # sectors, then the size of the root's Btrfs, in bytes.
     ("the root fills a disk larger than the image",
@@ -1185,6 +1215,30 @@ CHECKS = [
      + "out=$(su -s /bin/sh \"$u\" -c '/usr/local/bin/crowbar-agent --list 2>&1'); rc=$?; "
      "echo \"exit $rc\"; printf '%s\\n' \"$out\"",
      lambda out: out.startswith("exit 0\n") and "No threads yet." in out),
+    ("PipeWire and WirePlumber serve a working audio graph for the person",
+     PERSON_IN_GUEST
+     + wait_in_guest(f"[ -S /run/user/{PERSON_UID}/pipewire-0 ] && [ -S /run/user/{PERSON_UID}/pulse/native ] "
+                     f"&& su -s /bin/sh \"$u\" -c 'XDG_RUNTIME_DIR=/run/user/{PERSON_UID} wpctl status' 2>/dev/null "
+                     "| grep -q WirePlumber")
+     + f"[ -S /run/user/{PERSON_UID}/pulse/native ] && echo 'pulse-socket yes' || echo 'pulse-socket no'; "
+     f"su -s /bin/sh \"$u\" -c 'XDG_RUNTIME_DIR=/run/user/{PERSON_UID} wpctl status'",
+     lambda out: pipewire_audio_ready(out)),
+    ("bluetoothd is supervised and reachable over system D-Bus",
+     wait_in_guest("dbus-send --system --print-reply --dest=org.bluez / "
+                   "org.freedesktop.DBus.ObjectManager.GetManagedObjects >/dev/null 2>&1")
+     + "sv status /var/service/bluetoothd; "
+     "out=$(dbus-send --system --print-reply --dest=org.bluez / "
+     "org.freedesktop.DBus.ObjectManager.GetManagedObjects 2>&1); rc=$?; "
+     "echo \"dbus-exit $rc\"; printf '%s\\n' \"$out\"",
+     lambda out: bluetooth_reachable(out)),
+    ("mpv runs cleanly as the person and handles video and audio MIME defaults",
+     PERSON_IN_GUEST
+     + "echo \"video $(su -s /bin/sh \"$u\" -c 'xdg-mime query default video/mp4')\"; "
+     "echo \"audio $(su -s /bin/sh \"$u\" -c 'xdg-mime query default audio/mpeg')\"; "
+     "echo \"mpv $(su -s /bin/sh \"$u\" -c 'mpv --version | head -n 1')\"; "
+     "test -f /etc/mpv/mpv.conf && echo 'conf yes' || echo 'conf no'; "
+     "ldd /usr/bin/mpv",
+     lambda out: mpv_defaults_ready(out)),
     # ADR 0036 retired the Pi Durable Harness and Node.js: fail if the image
     # still carries any Harness files, Node.js, or the `crowbar-agent` service.
     ("the image holds no Harness, no Node.js, and no crowbar-agent service",

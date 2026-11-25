@@ -1,0 +1,30 @@
+#!/bin/sh
+# PipeWire audio service for the person's account. PipeWire itself spawns
+# WirePlumber (via /etc/pipewire/pipewire.conf.d/10-wireplumber.conf) and
+# pipewire-pulse (via 20-pipewire-pulse.conf) inside the person's runtime
+# directory so native apps, Chromium, and mpv have working PipeWire,
+# PulseAudio, and ALSA audio from boot.
+set -eu
+exec >>/var/log/crowbar-pipewire.log 2>&1
+PERSON_UID=1003
+PERSON=$(getent passwd "$PERSON_UID" | cut -d: -f1)
+test -n "$PERSON" || { echo "no account has user ID $PERSON_UID"; exit 1; }
+PERSON_HOME=$(getent passwd "$PERSON_UID" | cut -d: -f6)
+chown "$PERSON:$PERSON" /var/log/crowbar-pipewire.log
+chmod 0600 /var/log/crowbar-pipewire.log
+install -d -o "$PERSON" -g "$PERSON" -m 0700 "/run/user/$PERSON_UID"
+# Wait briefly for system D-Bus so WirePlumber can reach BlueZ cleanly on boot.
+i=0
+while [ ! -S /run/dbus/system_bus_socket ] && [ "$i" -lt 50 ]; do
+  sleep 0.1
+  i=$((i + 1))
+done
+# chpst gives the person's own group alone unless it is told the rest.
+exec chpst -u "$PERSON:$(id -Gn "$PERSON" | tr ' ' ':')" \
+  /usr/bin/env -i \
+  HOME="$PERSON_HOME" \
+  USER="$PERSON" \
+  LOGNAME="$PERSON" \
+  PATH=/usr/local/bin:/usr/bin:/bin \
+  XDG_RUNTIME_DIR="/run/user/$PERSON_UID" \
+  /usr/bin/pipewire

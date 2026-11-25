@@ -47,7 +47,14 @@
     "dejavu-fonts-ttf",
     "xcursor-vanilla-dmz",
     "dbus",
-    "glib"
+    "glib",
+    "pipewire",
+    "wireplumber",
+    "alsa-pipewire",
+    "libspa-bluetooth",
+    "bluez",
+    "mpv",
+    "xdg-utils"
   ],
   "lab_packages": ["python3"],
   "build_packages": [
