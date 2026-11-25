@@ -3394,9 +3394,10 @@ fn surface_send_attaches_fulcrum_desktop_context_and_falls_back_when_fulcrum_is_
     assert_eq!(rec["turns"][0]["context"]["active"]["app_id"], "foot");
     assert_eq!(rec["turns"][0]["message"], "what is open?");
 
-    // Harness received [Desktop context] with the prompt.
+    // Harness received fenced desktop context with the prompt.
     let log_after_1 = std::fs::read_to_string(&rpc_log).unwrap();
-    assert!(log_after_1.contains("[Desktop context]"), "{log_after_1}");
+    assert!(log_after_1.contains("<desktop-context>"), "{log_after_1}");
+    assert!(log_after_1.contains("[Desktop context"), "{log_after_1}");
     assert!(log_after_1.contains("terminal (app_id: foot)"), "{log_after_1}");
     assert!(log_after_1.contains("Virtual-1: 1280x960"), "{log_after_1}");
 
@@ -3421,7 +3422,7 @@ fn surface_send_attaches_fulcrum_desktop_context_and_falls_back_when_fulcrum_is_
 
     let log_after_2 = &std::fs::read_to_string(&rpc_log).unwrap()[log_offset..];
     assert!(log_after_2.contains("without fulcrum"), "{log_after_2}");
-    assert!(!log_after_2.contains("[Desktop context]"), "{log_after_2}");
+    assert!(!log_after_2.contains("<desktop-context>"), "{log_after_2}");
 
     // 3. Person-socket send carries no desktop context even if Fulcrum were listening.
     let listener2 = UnixListener::bind(&fulcrum_sock).unwrap();

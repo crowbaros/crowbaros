@@ -2520,6 +2520,7 @@ struct AgentSurface {
     model: Entity<Model>,
     input: Entity<input::TextInput>,
     scroll: ScrollHandle,
+    scroll_to_bottom: bool,
     submitted_draft: Option<String>,
     _input_sub: Subscription,
 }
@@ -2586,7 +2587,15 @@ impl AgentSurface {
     }
 }
 impl Render for AgentSurface {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.scroll_to_bottom {
+            self.scroll_to_bottom = false;
+            let scroll = self.scroll.clone();
+            window.on_next_frame(move |window, _| {
+                scroll.scroll_to_bottom();
+                window.refresh();
+            });
+        }
         let m = self.model.read(cx);
         let p = m.palette();
         let mark = ImageSource::Resource(Resource::Embedded(
@@ -2594,6 +2603,7 @@ impl Render for AgentSurface {
         ));
         let state = m.agent_state.clone();
         let working = state.working();
+        let show_stop = state.connected && working;
         let draft = self.input.read(cx).query();
         let can_send = state.can_send() && !draft.trim().is_empty();
         self.input.update(cx, |input, _| input.palette = p);
@@ -2697,15 +2707,35 @@ impl Render for AgentSurface {
                     );
                 }
                 // Acts taken during this turn.
+                let turn_stopped = matches!(turn.state, agent::TurnState::Stopped);
                 for act in &turn.acts {
-                    let act_border = match act.state {
-                        agent::ActState::Working => p.focus,
-                        _ => p.line,
+                    let act_stopped = turn_stopped
+                        && (act.state == agent::ActState::Working
+                            || (act.state == agent::ActState::Failed
+                                && act.detail.as_deref().is_some_and(|d| {
+                                    d.to_ascii_lowercase().contains("interrupted by the user")
+                                })));
+                    let act_border = if act_stopped {
+                        p.line
+                    } else {
+                        match act.state {
+                            agent::ActState::Working => p.focus,
+                            _ => p.line,
+                        }
                     };
-                    let act_state_color = match act.state {
-                        agent::ActState::Working => p.focus,
-                        agent::ActState::Failed => p.text,
-                        agent::ActState::Pending | agent::ActState::Done => p.muted,
+                    let act_state_color = if act_stopped {
+                        p.muted
+                    } else {
+                        match act.state {
+                            agent::ActState::Working => p.focus,
+                            agent::ActState::Failed => p.text,
+                            agent::ActState::Pending | agent::ActState::Done => p.muted,
+                        }
+                    };
+                    let act_state_label = if act_stopped {
+                        "Stopped"
+                    } else {
+                        act.state.label()
                     };
                     let mut act_card = div()
                         .w_full()
@@ -2748,7 +2778,7 @@ impl Render for AgentSurface {
                                         .text_size(px(10.))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_color(rgb(act_state_color))
-                                        .child(act.state.label()),
+                                        .child(act_state_label),
                                 ),
                         );
                     if let Some(detail) = &act.detail {
@@ -3068,7 +3098,7 @@ impl Render for AgentSurface {
                             .items_center()
                             .gap(px(8.))
                             .child(div().flex_1().min_w_0().child(self.input.clone()))
-                            .when(working, |row| {
+                            .when(show_stop, |row| {
                                 row.child(
                                     div()
                                         .id("stop-agent-turn")
@@ -3089,7 +3119,7 @@ impl Render for AgentSurface {
                                         .on_click(cx.listener(|this, _, _, cx| this.stop_turn(cx))),
                                 )
                             })
-                            .when(!working, |row| {
+                            .when(!show_stop, |row| {
                                 row.child(
                                     div()
                                         .id("send-agent-message")
@@ -3151,12 +3181,14 @@ fn show_agent_surface(model: &Entity<Model>, summon: &session::Summon, cx: &mut 
             let input = cx.new(|cx| input::TextInput::with_placeholder("Ask the Agent…", 16384, cx));
             w.focus(&input.focus_handle(cx));
             let scroll = ScrollHandle::new();
+            let scroll_to_bottom = !surface.read(cx).agent_state.turns.is_empty();
             cx.new(|cx| {
                 let input_sub = cx.observe(&input, |_, _, cx| cx.notify());
                 AgentSurface {
                     model: surface,
                     input,
                     scroll,
+                    scroll_to_bottom,
                     submitted_draft: None,
                     _input_sub: input_sub,
                 }
@@ -3853,6 +3885,11 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                     );
                 }
                 let overlay_changed = sync_mark_overlay(model, cx);
+                if mark_changed {
+                    if let Some((w, _)) = model.read(cx).mark_overlay {
+                        let _ = w.update(cx, |_, _, cx| cx.notify());
+                    }
+                }
                 if is_sent {
                     if let Some(w) = model.read(cx).agent {
                         let _ = w.update(cx, |view, _, cx| {
@@ -3862,6 +3899,7 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                                     view.input.update(cx, |input, cx| input.set_text(next, cx));
                                 }
                             }
+                            view.scroll_to_bottom = true;
                             view.scroll.scroll_to_bottom();
                             cx.notify();
                         });
@@ -3869,6 +3907,7 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 } else if should_scroll {
                     if let Some(w) = model.read(cx).agent {
                         let _ = w.update(cx, |view, _, cx| {
+                            view.scroll_to_bottom = true;
                             view.scroll.scroll_to_bottom();
                             cx.notify();
                         });

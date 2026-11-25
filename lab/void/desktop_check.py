@@ -746,7 +746,6 @@ class Check:
         clipboard_secret = 'CLIPSECRET_' + os.urandom(6).hex()
         tmp = '/tmp/crowbar-drawer-check'
         self.run(f'rm -rf {tmp} && mkdir -p {tmp}')
-        self.run(f'cp /etc/sv/crowbar-lever/run {tmp}/lever-run.orig')
         stub_script = {
             'models': ['stub-1'],
             'rules': [
@@ -812,11 +811,12 @@ class Check:
                 self.wait('foot refocused before summoning drawer',
                           lambda: self.snapshot()['active']['address'] == foot['address'])
 
-            # Start stub Model and point OpenCode at it with catalogue fetch off.
+            # Start stub Model and point OpenCode at it (Lever disables catalogue fetch by default).
             self.run(f"cat > {tmp}/script.json <<'EOF'\n{json.dumps(stub_script, indent=2)}\nEOF")
             self.run(
                 f"setsid -f python3 /usr/local/lib/crowbar-lab/stub-model.py "
                 f"--script {tmp}/script.json --port-file {tmp}/port --log {tmp}/stub.jsonl "
+                f"--forbid {shlex.quote(window_secret)} --forbid {shlex.quote(clipboard_secret)} "
                 f">{tmp}/stub.out 2>&1 </dev/null"
             )
             port = self.wait('stub Model port ready',
@@ -836,10 +836,6 @@ class Check:
             self.run(f"install -d -o {person} -g {person} -m 700 {home}/.config/opencode")
             self.run(f"cat > {home}/.config/opencode/opencode.json <<'EOF'\n{json.dumps(opencode_cfg, indent=2)}\nEOF")
             self.run(f"chown {person}:{person} {home}/.config/opencode/opencode.json")
-            self.run(
-                f"sed 's|--harness-name OpenCode|--harness-name OpenCode --harness-env OPENCODE_DISABLE_MODELS_FETCH=1|' "
-                f"{tmp}/lever-run.orig > /etc/sv/crowbar-lever/run && chmod 755 /etc/sv/crowbar-lever/run"
-            )
             self.run('sv restart crowbar-lever')
             self.wait('shell reconnected to Lever after stub setup',
                       lambda: (v := self.agent_view()) and v['state'].get('connected') and not v['state'].get('no_harness'))
@@ -869,9 +865,11 @@ class Check:
             self.check(
                 'drawer message reaches stub Model with desktop context and no window or clipboard contents',
                 bool(tool_prompts)
-                and '[Desktop context]' in tool_prompts[0]
+                and '<desktop-context>' in tool_prompts[0]
+                and '[Desktop context' in tool_prompts[0]
                 and 'app_id: foot' in tool_prompts[0]
                 and 'Virtual-1' in tool_prompts[0]
+                and not any(e.get('forbidden_found') for e in stub_entries)
                 and window_secret not in stub_raw
                 and clipboard_secret not in stub_raw
                 and (ctx1.get('active') or {}).get('app_id') == 'foot',
@@ -901,13 +899,19 @@ class Check:
                        not bg_bar['drawer_up'] and bg_bar['state']['mark'] == 'working',
                        json.dumps(bg_bar['state']['mark']))
 
+            def overlay_region(name):
+                self.capture(name)
+                _, _, rows = guest.png_pixels(self.work / f'{name}.png')
+                return b''.join(rows[y][1150 * 3:1276 * 3] for y in range(4, 40))
+
             self.key('meta_l', 'f')
             fs_working = self.wait(
                 'fullscreen mark overlay shows working',
                 lambda: (v := self.agent_view()) and v['mark_overlay'] and v['state']['mark'] == 'working' and v,
                 timeout=15,
             )
-            self.capture('21-fullscreen-mark-working')
+            time.sleep(0.3)
+            working_overlay_px = overlay_region('21-fullscreen-mark-working')
             fs_done = self.wait(
                 'turn 2 finishes behind the put-away drawer over fullscreen',
                 lambda: (v := self.agent_view())
@@ -918,16 +922,23 @@ class Check:
                 and v,
                 timeout=45,
             )
-            self.capture('22-fullscreen-mark-done')
+            done_overlay_repainted = self.wait(
+                'fullscreen mark overlay repaints from Working to Done',
+                lambda: overlay_region('22-fullscreen-mark-done') != working_overlay_px,
+                timeout=5,
+            )
             self.check(
                 'the mark shows working and done over a fullscreen window while the drawer is put away',
                 bool(fs_working) and fs_done['mark_overlay'] and fs_done['state']['mark'] == 'done'
+                and bool(done_overlay_repainted)
                 and 'BG_DONE_OK' in fs_done['state']['turns'][1].get('answer', ''),
                 json.dumps(fs_done['state']['turns'][1]),
             )
             self.key('meta_l', 'f')
             self.wait('mark overlay hides after leaving fullscreen',
                       lambda: not self.agent_view()['mark_overlay'])
+            time.sleep(0.3)
+            self.capture('22b-bar-mark-done')
             self.key('meta_l', 'spc')
             reopened = self.wait('drawer reopens and acknowledges done mark',
                                  lambda: (v := self.agent_view()) and v['drawer_up'] and v['state']['mark'] == 'idle' and v)
@@ -1019,7 +1030,6 @@ class Check:
             self.guest.ssh(
                 f"sv stop /var/service/crowbar-lever >/dev/null 2>&1 || true; "
                 f"pkill -x opencode 2>/dev/null || true; "
-                f"cp {tmp}/lever-run.orig /etc/sv/crowbar-lever/run && chmod 755 /etc/sv/crowbar-lever/run; "
                 f"rm -rf {home}/.config/opencode {home}/.local/share/opencode {home}/.local/state/crowbaros/lever {tmp}; "
                 f"sv start /var/service/crowbar-lever >/dev/null 2>&1 || true",
                 check=False,

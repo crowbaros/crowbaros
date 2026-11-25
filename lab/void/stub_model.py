@@ -144,7 +144,8 @@ def decide_response(script, body):
     }
 
 
-def make_handler(script, log_path=None):
+def make_handler(script, log_path=None, forbidden=None):
+    forbidden_terms = [term for term in (forbidden or []) if term]
     log_lock = threading.Lock()
     counter_lock = threading.Lock()
     counter = [0]
@@ -200,8 +201,9 @@ def make_handler(script, log_path=None):
                 return
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length)
+            raw_text = raw.decode("utf-8", errors="replace")
             try:
-                body = json.loads(raw.decode("utf-8"))
+                body = json.loads(raw_text)
             except ValueError as err:
                 self._send_json(400, {"error": {"message": f"invalid json: {err}"}})
                 return
@@ -211,6 +213,7 @@ def make_handler(script, log_path=None):
             messages = body.get("messages") or []
             _, prompt, tool_output = _latest_turn(messages)
             decision = decide_response(script, body)
+            forbidden_hit_count = sum(1 for term in forbidden_terms if term in raw_text)
             append_log({
                 "path": path,
                 "model": model,
@@ -219,6 +222,8 @@ def make_handler(script, log_path=None):
                 "prompt": prompt,
                 "tool_output": tool_output,
                 "decision": decision["kind"],
+                "forbidden_found": forbidden_hit_count > 0,
+                "forbidden_hit_count": forbidden_hit_count,
             })
 
             cmpl_id = next_id()
@@ -332,8 +337,8 @@ def make_handler(script, log_path=None):
     return StubHandler
 
 
-def start_server(script, host="127.0.0.1", port=0, log_path=None):
-    handler = make_handler(script, log_path=log_path)
+def start_server(script, host="127.0.0.1", port=0, log_path=None, forbidden=None):
+    handler = make_handler(script, log_path=log_path, forbidden=forbidden)
     return http.server.ThreadingHTTPServer((host, port), handler)
 
 
@@ -344,10 +349,11 @@ def main(argv=None):
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--port-file", type=Path, default=None)
     parser.add_argument("--log", type=Path, default=None)
+    parser.add_argument("--forbid", action="append", default=[], help="Sentinel checked against full raw request body")
     args = parser.parse_args(argv)
 
     script = json.loads(args.script.read_text(encoding="utf-8"))
-    server = start_server(script, host=args.host, port=args.port, log_path=args.log)
+    server = start_server(script, host=args.host, port=args.port, log_path=args.log, forbidden=args.forbid)
     bound_port = server.server_address[1]
 
     if args.port_file is not None:

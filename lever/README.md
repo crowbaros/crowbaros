@@ -405,7 +405,9 @@ Pushed to every connection subscribed to `thread`:
 
 - **`message`** — a turn began with the person's message (when sent from the
   surface socket with Fulcrum reachable, also carries `"context"` with the
-  desktop context snapshot; never window contents or clipboard):
+  desktop context snapshot; never window contents or clipboard. When sent to
+  the harness, Lever wraps desktop context in a `<desktop-context>` metadata
+  fence marked as untrusted app metadata, not instructions):
 
   ```json
   {"event":"message","thread":"t-01a2b3c4d5e6","turn":1,"text":"List the files"}
