@@ -172,7 +172,7 @@ class Check:
         failed = []
         for name, user, command, ok in void_base.boot_checks():
             self.log(f'guest({user})$ {command}' if user != 'root' else f'guest$ {command}')
-            result = self.guest.ssh(command, check=False, timeout=60, user=user)
+            result = self.guest.ssh(command, check=False, timeout=120, user=user)
             output = (result.stdout + result.stderr).rstrip()
             if output:
                 self.log(output)
@@ -439,7 +439,7 @@ class Check:
         time.sleep(1.5)
         self.capture('07-chromium')
         self.agent_surface()
-        self.agent_reached_no_harness()
+        self.agent_reached_lever_idle()
 
     def agent_surface(self):
         """The summon gesture, Super+Space, and the Agent's surface (#294): a
@@ -598,17 +598,17 @@ class Check:
             summon(away, output=output, keyboard=True)
             self.wait('the Agent\'s surface is put away', lambda: not drawn(f'17-put-away-on-{output}', head, point))
 
-    def agent_reached_no_harness(self):
-        """With Lever running from boot (ADR 0036) and driving no harness yet,
+    def agent_reached_lever_idle(self):
+        """With Lever running from boot (ADR 0036) configured with OpenCode,
         summoning the Agent's drawer shows that the shell reached Lever and
-        that no harness is started to answer."""
+        that an idle Lever has started no OpenCode."""
         self.key('meta_l', 'spc')
-        view = self.wait('drawer opens connected to Lever with no harness',
-                         lambda: (v := self.agent_view()) and drawer_reached_lever_with_no_harness(v) and v)
+        view = self.wait('drawer opens connected to idle Lever',
+                         lambda: (v := self.agent_view()) and drawer_reached_lever_idle(v) and v)
         time.sleep(0.5)
-        self.capture('18-drawer-no-harness')
-        self.check('the drawer shows the Agent is reachable and has no harness',
-                   drawer_reached_lever_with_no_harness(view)
+        self.capture('18-drawer-lever-idle')
+        self.check('the drawer shows the Agent is reachable and Lever is idle with OpenCode configured',
+                   drawer_reached_lever_idle(view)
                    and 'SHELL agent-socket connected=true' in self.shell_log(),
                    json.dumps(view))
         self.key('meta_l', 'spc')
@@ -1022,9 +1022,10 @@ QMP_PUNCTUATION = {
 }
 
 
-def drawer_reached_lever_with_no_harness(view):
+def drawer_reached_lever_idle(view):
     """Whether the shell's Agent view snapshot shows the drawer up, connected
-    to Lever, with Lever's version reported and no harness started."""
+    to Lever, with Lever's version reported, OpenCode configured (`no_harness`
+    false), and no harness process started while idle."""
     state = (view or {}).get('state') or {}
     return (
         bool((view or {}).get('drawer_up'))
@@ -1034,7 +1035,7 @@ def drawer_reached_lever_with_no_harness(view):
         and isinstance(state.get('lever_version'), str)
         and bool(state.get('lever_version'))
         and state.get('harness_started') is False
-        and state.get('no_harness') is True
+        and state.get('no_harness') is False
         and state.get('model') is None
         and state.get('turns') == []
         and state.get('mark') == 'idle'

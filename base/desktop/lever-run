@@ -29,4 +29,5 @@ exec chpst -u "$PERSON:$(id -Gn "$PERSON" | tr ' ' ':')" \
   /usr/local/bin/crowbar-lever \
   --state "$PERSON_HOME/.local/state/crowbaros/lever" \
   --surface-socket /run/crowbar-lever/surface --shell-uid "$SHELL_UID" \
-  --person-socket "/run/user/$PERSON_UID/crowbar-lever/person" --person-uid "$PERSON_UID"
+  --person-socket "/run/user/$PERSON_UID/crowbar-lever/person" --person-uid "$PERSON_UID" \
+  --harness /usr/local/bin/opencode --harness-arg acp --harness-name OpenCode

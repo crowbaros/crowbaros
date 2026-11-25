@@ -10,12 +10,15 @@
 # once this script has finished it) PUBKEY HOSTNAME ROOT_LABEL ESP_LABEL ESP_MIB ROOT_GIB,
 # KVER (the kernel to boot, which void_base.py checked), KERNEL_ARGS (added to
 # the kernel's command line), NVIDIA_OPTIONS (for NVIDIA's `nvidia` module),
-# and for the desktop DESKTOP (base/desktop) and REPO_ROOT. The person's
-# account is PERSON_UID, PERSON, and PERSON_FULL_NAME, with PERSON_PASSWORD_HASH
-# from the account file or, for the lab account, PERSON_PASSWORD, and
-# PERSON_SSH_KEYS, its public keys from the account file, one per line. Its arguments are the
-# desktop's programs. For the lab's image, LAB_PACKAGES are installed with the
-# static xbps in XBPS, from REPOS, through the package cache PKGCACHE.
+# and for the desktop DESKTOP (base/desktop), REPO_ROOT, and OPENCODE (the
+# pinned OpenCode binary, installed unchanged on PATH as /usr/local/bin/opencode).
+# The person's account is PERSON_UID, PERSON, and PERSON_FULL_NAME, with
+# PERSON_PASSWORD_HASH from the account file or, for the lab account,
+# PERSON_PASSWORD, and PERSON_SSH_KEYS, its public keys from the account file,
+# one per line. Its arguments are the desktop's programs. For the lab's image,
+# LAB_PACKAGES are installed with the static xbps in XBPS, from REPOS, through
+# the package cache PKGCACHE, and STUB_MODEL (if set) is installed for checks
+# and omitted from every person's image.
 set -eu
 R="$WORK/staging"
 rm -rf "$R" "$WORK/esp.img" "$WORK/root.img"
@@ -88,6 +91,8 @@ for service in compositor shell launcher unlock ctrl-alt-del lever pipewire; do
 done
 install -m 755 "$DESKTOP/compositor-finish" "$R/etc/sv/crowbar-compositor/finish"
 for path in "$@"; do install -D -m 755 "$path" "$R/usr/local/bin/$(basename "$path")"; done
+# OpenCode, the bundled harness (ADR 0036), installed unchanged on PATH.
+install -D -m 755 "$OPENCODE" "$R/usr/local/bin/opencode"
 # The four helpers are one program, which takes the name it runs by.
 for helper in unlock launcher shell-connect ctrl-alt-del; do
   ln -sfn crowbar-helpers "$R/usr/local/bin/crowbar-$helper"
@@ -147,6 +152,9 @@ if [ -n "$LAB_PACKAGES" ]; then
   XBPS_ARCH=x86_64 "$XBPS/xbps-install.static" -y -r "$R" -c "$PKGCACHE" -R "$REPOS" $LAB_PACKAGES
   # The host's mounts under /dev come locked to the bind, so they leave with it.
   umount -l "$R/dev"
+fi
+if [ -n "${STUB_MODEL:-}" ]; then
+  install -D -m 755 "$STUB_MODEL" "$R/usr/local/lib/crowbar-lab/stub-model.py"
 fi
 
 # The boot menu, on the root.

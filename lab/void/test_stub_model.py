@@ -1,0 +1,134 @@
+"""Unit tests for the Python OpenAI-compatible stub Model."""
+import json
+from pathlib import Path
+import tempfile
+import threading
+import unittest
+import urllib.request
+
+import stub_model
+
+
+class StubModelTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.log = Path(self.tmp.name) / "requests.jsonl"
+        self.script = {
+            "models": ["stub-1", "stub-2"],
+            "rules": [
+                {
+                    "match": "run-whoami",
+                    "reasoning": "Let me check whoami.",
+                    "tool_call": {
+                        "name": "shell",
+                        "arguments": {"command": "id -un && id -u", "description": "Check user"},
+                    },
+                    "after_tool": "Ran as ({model}): {tool_output}",
+                },
+                {
+                    "match": "hello",
+                    "reply": "Hi from {model}!",
+                },
+            ],
+            "default_reply": "Default ({model}): {prompt}",
+        }
+        self.server = stub_model.start_server(self.script, log_path=self.log)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+
+    def _get(self, path):
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}") as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+
+    def _post(self, path, payload):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as resp:
+            return resp.status, resp.headers.get("Content-Type", ""), resp.read().decode("utf-8")
+
+    def test_health_and_models_endpoints(self):
+        status, body = self._get("/health")
+        self.assertEqual((status, body), (200, {"ok": True}))
+        status, body = self._get("/v1/models")
+        self.assertEqual(status, 200)
+        self.assertEqual([m["id"] for m in body["data"]], ["stub-1", "stub-2"])
+
+    def test_streaming_text_reply_and_request_log(self):
+        status, ctype, raw = self._post("/v1/chat/completions", {
+            "model": "stub-2",
+            "stream": True,
+            "messages": [{"role": "user", "content": "say hello"}],
+            "tools": [{"type": "function", "function": {"name": "shell"}}],
+        })
+        self.assertEqual(status, 200)
+        self.assertIn("text/event-stream", ctype)
+        events = [line.removeprefix("data: ") for line in raw.splitlines() if line.startswith("data: ")]
+        self.assertEqual(events[-1], "[DONE]")
+        parsed = [json.loads(e) for e in events[:-1]]
+        text = "".join(ch["choices"][0]["delta"].get("content", "") for ch in parsed)
+        self.assertEqual(text, "Hi from stub-2!")
+        self.assertEqual(parsed[-1]["choices"][0]["finish_reason"], "stop")
+
+        logged = [json.loads(line) for line in self.log.read_text().splitlines()]
+        self.assertEqual(len(logged), 1)
+        self.assertEqual(logged[0]["model"], "stub-2")
+        self.assertEqual(logged[0]["prompt"], "say hello")
+
+    def test_tool_call_and_follow_up_reply(self):
+        status, _, raw = self._post("/v1/chat/completions", {
+            "model": "stub-1",
+            "stream": True,
+            "messages": [{"role": "user", "content": "please run-whoami"}],
+            "tools": [{"type": "function", "function": {"name": "shell"}}],
+        })
+        self.assertEqual(status, 200)
+        events = [json.loads(line.removeprefix("data: "))
+                  for line in raw.splitlines()
+                  if line.startswith("data: ") and line != "data: [DONE]"]
+        tool_deltas = [ch["choices"][0]["delta"]["tool_calls"][0]
+                       for ch in events if "tool_calls" in ch["choices"][0]["delta"]]
+        self.assertEqual(len(tool_deltas), 1)
+        self.assertEqual(tool_deltas[0]["function"]["name"], "shell")
+        self.assertEqual(json.loads(tool_deltas[0]["function"]["arguments"])["command"], "id -un && id -u")
+        self.assertEqual(events[-1]["choices"][0]["finish_reason"], "tool_calls")
+
+        # Follow-up request with tool output returns after_tool answer.
+        status, _, raw2 = self._post("/v1/chat/completions", {
+            "model": "stub-1",
+            "stream": False,
+            "messages": [
+                {"role": "user", "content": "please run-whoami"},
+                {"role": "assistant", "tool_calls": [{"id": "call_stub_1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": "call_stub_1", "content": "crowbar\n1003\n"},
+            ],
+            "tools": [{"type": "function", "function": {"name": "shell"}}],
+        })
+        self.assertEqual(status, 200)
+        body2 = json.loads(raw2)
+        self.assertEqual(body2["choices"][0]["message"]["content"], "Ran as (stub-1): crowbar\n1003")
+
+    def test_title_generation_request_with_no_tools_never_emits_tool_call(self):
+        status, _, raw = self._post("/v1/chat/completions", {
+            "model": "stub-1",
+            "stream": False,
+            "messages": [
+                {"role": "system", "content": "Generate a short title for this conversation."},
+                {"role": "user", "content": "please run-whoami"},
+            ],
+        })
+        self.assertEqual(status, 200)
+        body = json.loads(raw)
+        self.assertEqual(body["choices"][0]["finish_reason"], "stop")
+        self.assertEqual(body["choices"][0]["message"]["content"], "Stub thread")
+
+
+if __name__ == "__main__":
+    unittest.main()

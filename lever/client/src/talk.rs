@@ -8,6 +8,8 @@
 use crate::connection::{Connection, Happening, Typing, refused, text};
 use serde_json::{Value, json};
 use std::io::{ErrorKind, IsTerminal, Result, Write, stderr};
+use std::os::unix::process::ExitStatusExt;
+use std::process::{Command, ExitCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// How a turn ended, as the client's exit status says it.
@@ -94,12 +96,15 @@ fn show_note(answer: &mut Answer, note: &Value) -> Result<()> {
 /// Sends one message of the person's, and writes the answer as it comes, until
 /// the turn ends. With no thread yet, the message starts one, and `thread` is
 /// then its ID.
-fn turn(lever: &mut Connection, thread: &mut Option<String>, message: &str) -> Result<Ended> {
+fn turn(lever: &mut Connection, thread: &mut Option<String>, model: Option<&str>, message: &str) -> Result<Ended> {
     let mut req = json!({ "op": "send", "thread": thread, "text": message });
     if thread.is_none()
         && let Some(cwd) = current_cwd()
     {
         req["cwd"] = json!(cwd);
+    }
+    if let Some(model) = model {
+        req["model"] = json!(model);
     }
     let reply = lever.request(req).inspect_err(|error| {
         // Ctrl-C before Lever said the turn began. Leaving stops no turn, and this one may yet begin.
@@ -259,12 +264,135 @@ fn resume(lever: &mut Connection, thread: &str) -> Result<Option<Resumed>> {
     }))
 }
 
-/// `crowbar-agent [--resume ID] "<request>"`: one turn, and out.
-pub fn once(lever: &mut Connection, resumed: Option<&str>, message: &str) -> Result<Ended> {
+/// `crowbar-agent [--resume ID] [--model M] "<request>"`: one turn, and out.
+pub fn once(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, message: &str) -> Result<Ended> {
     // Lever says so itself when there is no such thread, so the thread's
     // record is not asked for only to be dropped.
     let mut thread = resumed.map(str::to_string);
-    turn(lever, &mut thread, message)
+    turn(lever, &mut thread, model, message)
+}
+
+/// Runs OpenCode's own sign-in directly in this terminal. Lever holds no
+/// credential and relays none.
+fn run_opencode_login() -> ExitCode {
+    match Command::new("opencode").args(["auth", "login"]).status() {
+        Ok(status) if status.success() => ExitCode::SUCCESS,
+        Ok(status) if status.signal() == Some(libc::SIGINT) => ExitCode::from(130),
+        Ok(_) => ExitCode::FAILURE,
+        Err(err) => {
+            eprintln!("crowbar-agent: could not run `opencode auth login`: {err}.");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `crowbar-agent login`: runs OpenCode's own sign-in in this terminal, and if
+/// Lever is reachable refreshes its Model list afterwards.
+pub fn login() -> ExitCode {
+    let code = run_opencode_login();
+    if code == ExitCode::SUCCESS
+        && let Ok(mut lever) = Connection::connect()
+    {
+        let _ = lever.request(json!({ "op": "models", "refresh": true }));
+    }
+    code
+}
+
+/// Before starting a fresh interactive thread, checks whether any Model is
+/// available. When OpenCode's free hosted Models are off and no provider is
+/// signed in, offers the choice on a terminal: enable free hosted Models, or
+/// sign in. Non-interactive (piped) input is never read as a choice.
+fn ensure_model_choice(lever: &mut Connection, interactive: bool) -> Result<Option<Ended>> {
+    let reply = lever.request(json!({ "op": "models" }))?;
+    if refused(&reply).is_some() {
+        return Ok(Some(Ended::Failed));
+    }
+    let supported = reply.get("supported").and_then(Value::as_bool).unwrap_or(false);
+    let has_models = reply
+        .get("models")
+        .and_then(Value::as_array)
+        .is_some_and(|m| !m.is_empty());
+    if !supported || has_models {
+        return Ok(None);
+    }
+
+    if !interactive {
+        eprintln!("crowbar-agent: No Model is available. Run `crowbar-agent free-models on` or `crowbar-agent login`.");
+        return Ok(Some(Ended::Failed));
+    }
+
+    eprintln!("No Model is available yet. Choose how to connect:");
+    eprintln!("  1. Use OpenCode's free hosted Models (requests go to OpenCode's makers)");
+    eprintln!("  2. Sign in to a provider (`opencode auth login`)");
+    eprint!("Choice [1/2]: ");
+    let _ = stderr().flush();
+
+    let choice = loop {
+        match lever.next(Typing::Wanted)? {
+            Happening::Line(line) => break line,
+            Happening::EndOfInput => {
+                eprintln!();
+                eprintln!(
+                    "crowbar-agent: No Model is available. Run `crowbar-agent free-models on` or `crowbar-agent login`."
+                );
+                return Ok(Some(Ended::Failed));
+            }
+            Happening::Interrupt => {
+                eprintln!();
+                return Ok(Some(Ended::Stopped));
+            }
+            Happening::Event(_) => continue,
+        }
+    };
+
+    match choice.trim() {
+        "1" => {
+            let reply = lever.request(json!({ "op": "set-free-models", "enabled": true }))?;
+            if refused(&reply).is_some() {
+                return Ok(Some(Ended::Failed));
+            }
+            eprintln!("Enabled OpenCode's free hosted Models.");
+            let refreshed = lever.request(json!({ "op": "models", "refresh": true }))?;
+            if refused(&refreshed).is_some() {
+                return Ok(Some(Ended::Failed));
+            }
+            let now_has_models = refreshed
+                .get("models")
+                .and_then(Value::as_array)
+                .is_some_and(|m| !m.is_empty());
+            if !now_has_models {
+                eprintln!("crowbar-agent: No Model is available after enabling free hosted Models.");
+                return Ok(Some(Ended::Failed));
+            }
+            Ok(None)
+        }
+        "2" => {
+            let code = run_opencode_login();
+            if code == ExitCode::from(130) {
+                return Ok(Some(Ended::Stopped));
+            }
+            if code != ExitCode::SUCCESS {
+                return Ok(Some(Ended::Failed));
+            }
+            let refreshed = lever.request(json!({ "op": "models", "refresh": true }))?;
+            if refused(&refreshed).is_some() {
+                return Ok(Some(Ended::Failed));
+            }
+            let now_has_models = refreshed
+                .get("models")
+                .and_then(Value::as_array)
+                .is_some_and(|m| !m.is_empty());
+            if !now_has_models {
+                eprintln!("crowbar-agent: No Model is available after sign-in.");
+                return Ok(Some(Ended::Failed));
+            }
+            Ok(None)
+        }
+        _ => {
+            eprintln!("crowbar-agent: No Model chosen. Run `crowbar-agent free-models on` or `crowbar-agent login`.");
+            Ok(Some(Ended::Failed))
+        }
+    }
 }
 
 /// How a thread the person left ends: as a failure when its newest turn got no answer.
@@ -276,12 +404,13 @@ fn left(last: Ended) -> Ended {
     }
 }
 
-/// `crowbar-agent [--resume ID]`: a thread, a line at a time. A thread starts
-/// with its first message, so leaving at once leaves none behind. Ctrl-D
-/// leaves, and so does Ctrl-C between turns.
-pub fn repl(lever: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
+/// `crowbar-agent [--resume ID] [--model M]`: a thread, a line at a time. A
+/// thread starts with its first message, so leaving at once leaves none behind.
+/// Ctrl-D leaves, and so does Ctrl-C between turns.
+pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>) -> Result<Ended> {
     let prompted = std::io::stdin().is_terminal();
     let mut thread = None;
+    let mut pending_model = model.map(str::to_string);
     let mut last = Ended::Done;
     if let Some(resumed) = resumed {
         let Some(stood) = resume(lever, resumed)? else {
@@ -297,6 +426,8 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
             last = ended;
         }
         thread = Some(resumed.to_string());
+    } else if let Some(ended) = ensure_model_choice(lever, prompted)? {
+        return Ok(ended);
     }
     loop {
         if prompted {
@@ -343,7 +474,80 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
         if line.trim().is_empty() {
             continue;
         }
-        last = turn(lever, &mut thread, &line)?;
+        let chosen = pending_model.take();
+        last = turn(lever, &mut thread, chosen.as_deref(), &line)?;
+    }
+}
+
+/// `crowbar-agent --resume ID --model M`: set a thread's Model.
+pub fn set_model(lever: &mut Connection, thread: &str, model: &str) -> Result<Ended> {
+    let reply = lever.request(json!({ "op": "set-model", "thread": thread, "model": model }))?;
+    if refused(&reply).is_some() {
+        return Ok(Ended::Failed);
+    }
+    eprintln!("Model for {} set to {}.", text(&reply, "thread"), text(&reply, "model"));
+    Ok(Ended::Done)
+}
+
+/// `crowbar-agent models`: list the Models the harness offers.
+pub fn models(lever: &mut Connection) -> Result<Ended> {
+    let reply = lever.request(json!({ "op": "models" }))?;
+    if refused(&reply).is_some() {
+        return Ok(Ended::Failed);
+    }
+    let supported = reply.get("supported").and_then(Value::as_bool).unwrap_or(false);
+    let list = reply
+        .get("models")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if !supported {
+        eprintln!("The harness does not list Models.");
+        return Ok(Ended::Done);
+    }
+    if list.is_empty() {
+        eprintln!("No Models are available. Run `crowbar-agent free-models on` or `crowbar-agent login`.");
+        return Ok(Ended::Done);
+    }
+    let default = reply.get("default").and_then(Value::as_str);
+    for entry in &list {
+        let id = text(entry, "id");
+        let name = text(entry, "name");
+        let mark = if default == Some(id.as_ref()) {
+            "  (default)"
+        } else {
+            ""
+        };
+        if name.is_empty() || name == id {
+            println!("{id}{mark}");
+        } else {
+            println!("{id}  {name}{mark}");
+        }
+    }
+    Ok(Ended::Done)
+}
+
+/// `crowbar-agent free-models [on|off]`: show or switch OpenCode's free hosted Models.
+pub fn free_models(lever: &mut Connection, enabled: Option<bool>) -> Result<Ended> {
+    match enabled {
+        None => {
+            let reply = lever.request(json!({ "op": "status" }))?;
+            if refused(&reply).is_some() {
+                return Ok(Ended::Failed);
+            }
+            let on = reply.get("free_hosted_models") == Some(&Value::Bool(true));
+            println!("Free hosted Models: {}.", if on { "on" } else { "off" });
+            Ok(Ended::Done)
+        }
+        Some(enable) => {
+            let reply = lever.request(json!({ "op": "set-free-models", "enabled": enable }))?;
+            if refused(&reply).is_some() {
+                return Ok(Ended::Failed);
+            }
+            let on = reply.get("enabled") == Some(&Value::Bool(true));
+            eprintln!("Free hosted Models turned {}.", if on { "on" } else { "off" });
+            Ok(Ended::Done)
+        }
     }
 }
 

@@ -15,9 +15,27 @@ crowbar-agent "<request>"              # one turn, and out
 crowbar-agent --list                   # list the threads
 crowbar-agent --resume ID              # go on with a thread
 crowbar-agent --resume ID "<request>"  # one more turn of it, and out
+crowbar-agent --resume ID --model M    # set a thread's Model
+crowbar-agent --model M "<request>"    # start a thread with Model M
 crowbar-agent --stop ID                # stop the working turn of a thread
+crowbar-agent models                   # list the Models the harness offers
+crowbar-agent free-models [on|off]     # show or switch OpenCode's free hosted Models
+crowbar-agent login                    # sign in to a provider with OpenCode
 crowbar-agent status                   # Lever's status and available harnesses
 ```
+
+- **Choosing Models before the first turn.** Until the person chooses, Lever
+  starts OpenCode with its free hosted Models switched off, and a message with
+  no signed-in provider is refused with the reason. Running `crowbar-agent`
+  interactively with no Models available offers the choice: enable OpenCode's
+  free hosted Models, or run `opencode auth login`. `crowbar-agent free-models
+  on|off` changes that choice later.
+- **Sign-in stays with OpenCode.** `crowbar-agent login` runs `opencode auth
+  login` directly in the terminal and, on success, asks Lever to refresh its
+  Models. Lever holds no credential and relays none.
+- **Listing and selecting Models.** `crowbar-agent models` lists the Models the
+  harness offers, marking the default. `--model M` sets a thread's Model (alone
+  with `--resume ID`, or alongside a message).
 
 - **The answer is plain text on standard output**, a piece at a time, so it
   reads the same in a terminal and down a pipe. Acts (`[act] ...`), unrecognized
@@ -41,9 +59,9 @@ crowbar-agent status                   # Lever's status and available harnesses
 - **A client that goes away stops nothing.** When its terminal closes or its
   SSH connection drops, the turn goes on in Lever. `--list` shows it as
   `(working)`, `--resume ID` picks it up, and `--stop ID` or Ctrl-C stops it.
-- **`status` is a command only as the first word.** A request that starts with
-  it goes in quotes with the rest of it, or after `--`:
-  `crowbar-agent -- status of my disk`.
+- **`status`, `models`, `free-models`, and `login` are commands only as the
+  first word.** A request that starts with one goes in quotes with the rest of
+  it, or after `--`: `crowbar-agent -- status of my disk`.
 
 | Exit status | When |
 | --- | --- |

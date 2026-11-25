@@ -15,11 +15,14 @@
 
 use agent_client_protocol_schema::ProtocolVersion;
 use agent_client_protocol_schema::v1::{
-    AGENT_METHOD_NAMES, AgentCapabilities, CLIENT_METHOD_NAMES, CancelNotification, ContentBlock, ContentChunk,
-    Error as AcpError, Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest,
-    LoadSessionResponse, NewSessionRequest, NewSessionResponse, Notification, PromptRequest, PromptResponse, Request,
-    RequestId, Response, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate, StopReason, TextContent,
-    ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    AGENT_METHOD_NAMES, AgentCapabilities, AvailableCommandsUpdate, CLIENT_METHOD_NAMES, CancelNotification,
+    CloseSessionRequest, CloseSessionResponse, ContentBlock, ContentChunk, Error as AcpError, Implementation,
+    InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
+    NewSessionResponse, Notification, PromptRequest, PromptResponse, Request, RequestId, Response, SessionCapabilities,
+    SessionCloseCapabilities, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption, SessionId,
+    SessionInfoUpdate, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+    SetSessionConfigOptionResponse, StopReason, TextContent, ToolCall, ToolCallContent, ToolCallId, ToolCallStatus,
+    ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -32,6 +35,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
+
+#[derive(Debug, Clone, Deserialize)]
+struct StubModel {
+    id: String,
+    name: String,
+}
 
 #[derive(Debug, Deserialize)]
 struct Script {
@@ -49,6 +58,19 @@ struct Script {
     /// Waits this long before it answers `session/new`.
     #[serde(default)]
     new_session_delay_ms: u64,
+    /// Models advertised via ACP `configOptions`.
+    #[serde(default)]
+    models: Option<Vec<StubModel>>,
+    /// Default Model value for new sessions (defaults to the first entry in `models`).
+    #[serde(default)]
+    default_model: Option<String>,
+    /// If true and `OPENCODE_DISABLE_FREE_MODELS=1` is set in the environment,
+    /// `session/new` fails with OpenCode's `CatalogNotReady` error.
+    #[serde(default)]
+    no_models_when_free_disabled: bool,
+    /// If true, sends an `available_commands_update` notification right after `session/new`.
+    #[serde(default)]
+    emit_available_commands: bool,
     /// Updates sent on `session/load` before it is answered, as a harness
     /// replays a session's history.
     #[serde(default)]
@@ -57,6 +79,10 @@ struct Script {
     /// requests meanwhile.
     #[serde(default)]
     load_delay_ms: u64,
+    /// Waits this long before it answers `session/set_config_option`, and goes
+    /// on taking requests meanwhile.
+    #[serde(default)]
+    set_config_delay_ms: u64,
     /// If true, every result also carries `"error": null`, and every update
     /// `"id": null`.
     #[serde(default)]
@@ -150,6 +176,10 @@ enum Step {
     Title {
         title: String,
     },
+    Thought {
+        text: String,
+    },
+    AvailableCommands,
     Unknown {
         update: Value,
     },
@@ -205,21 +235,28 @@ fn parse_stop_reason(s: &str) -> StopReason {
 struct Options {
     script: PathBuf,
     log: Option<PathBuf>,
+    env_out: Option<PathBuf>,
 }
 
 fn parse_options(args: &[String]) -> Option<Options> {
     let mut script = None;
     let mut log = None;
+    let mut env_out = None;
     let mut iter = args.iter();
     while let Some(flag) = iter.next() {
         let value = iter.next()?;
         match flag.as_str() {
             "--script" if script.is_none() => script = Some(PathBuf::from(value)),
             "--log" if log.is_none() => log = Some(PathBuf::from(value)),
+            "--env-out" if env_out.is_none() => env_out = Some(PathBuf::from(value)),
             _ => return None,
         }
     }
-    Some(Options { script: script?, log })
+    Some(Options {
+        script: script?,
+        log,
+        env_out,
+    })
 }
 
 struct Writer {
@@ -369,7 +406,13 @@ impl ScriptPicker {
     }
 }
 
-fn emit_step(writer: &Writer, session_id: &SessionId, step: &Step, cancel: Option<&CancelFlag>) -> bool {
+fn emit_step(
+    writer: &Writer,
+    session_id: &SessionId,
+    step: &Step,
+    cancel: Option<&CancelFlag>,
+    model: Option<&str>,
+) -> bool {
     match step {
         Step::PauseMs { ms } => {
             let dur = Duration::from_millis(*ms);
@@ -379,9 +422,13 @@ fn emit_step(writer: &Writer, session_id: &SessionId, step: &Step, cancel: Optio
             thread::sleep(dur);
         }
         Step::Text { text } => {
+            let rendered = match model {
+                Some(m) => text.replace("{model}", m),
+                None => text.clone(),
+            };
             writer.send_update(
                 session_id,
-                SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(TextContent::new(text.clone())))),
+                SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(TextContent::new(rendered)))),
             );
         }
         Step::Act {
@@ -442,6 +489,18 @@ fn emit_step(writer: &Writer, session_id: &SessionId, step: &Step, cancel: Optio
                 SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title(title.clone())),
             );
         }
+        Step::Thought { text } => {
+            writer.send_update(
+                session_id,
+                SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::Text(TextContent::new(text.clone())))),
+            );
+        }
+        Step::AvailableCommands => {
+            writer.send_update(
+                session_id,
+                SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(Vec::new())),
+            );
+        }
         Step::Unknown { update } => {
             writer.send_raw_update(session_id, update.clone());
         }
@@ -468,9 +527,33 @@ fn append_log(log_file: &mut Option<File>, line: &str) {
     }
 }
 
+fn build_config_options(models: Option<&[StubModel]>, current: Option<&str>) -> Option<Vec<SessionConfigOption>> {
+    let models = models?;
+    let current = current
+        .or_else(|| models.first().map(|m| m.id.as_str()))
+        .unwrap_or("")
+        .to_string();
+    let opts: Vec<SessionConfigSelectOption> = models
+        .iter()
+        .map(|m| SessionConfigSelectOption::new(m.id.clone(), m.name.clone()))
+        .collect();
+    let option =
+        SessionConfigOption::select("model", "Model", current, opts).category(SessionConfigOptionCategory::Model);
+    Some(vec![option])
+}
+
 fn run(options: Options) -> Result<(), String> {
     let script_text = std::fs::read_to_string(&options.script).map_err(|e| format!("could not read script: {e}"))?;
     let script: Script = serde_json::from_str(&script_text).map_err(|e| format!("invalid script JSON: {e}"))?;
+    if let Some(env_path) = &options.env_out {
+        let snapshot = json!({
+            "OPENCODE_CONFIG_CONTENT": std::env::var("OPENCODE_CONFIG_CONTENT").ok(),
+            "OPENCODE_DISABLE_FREE_MODELS": std::env::var("OPENCODE_DISABLE_FREE_MODELS").ok(),
+            "OPENCODE_DISABLE_MODELS_FETCH": std::env::var("OPENCODE_DISABLE_MODELS_FETCH").ok(),
+        });
+        std::fs::write(env_path, snapshot.to_string())
+            .map_err(|e| format!("could not write env snapshot {}: {e}", env_path.display()))?;
+    }
     let mut log_file = match &options.log {
         Some(path) => Some(
             OpenOptions::new()
@@ -488,7 +571,13 @@ fn run(options: Options) -> Result<(), String> {
         next_unmatched: 0,
     }));
     let active_cancels: Arc<Mutex<HashMap<String, Arc<CancelFlag>>>> = Arc::new(Mutex::new(HashMap::new()));
+    let session_models: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
     let next_session = AtomicU64::new(1);
+    let free_disabled = std::env::var("OPENCODE_DISABLE_FREE_MODELS").ok().as_deref() == Some("1");
+    let default_model = script
+        .default_model
+        .clone()
+        .or_else(|| script.models.as_ref().and_then(|m| m.first().map(|x| x.id.clone())));
 
     let stdin = io::stdin();
     let reader = BufReader::new(stdin.lock());
@@ -541,7 +630,10 @@ fn run(options: Options) -> Result<(), String> {
             }
             match serde_json::from_value::<InitializeRequest>(params) {
                 Ok(_init) => {
-                    let caps = AgentCapabilities::new().load_session(script.load_session);
+                    let session_caps = SessionCapabilities::new().close(SessionCloseCapabilities::new());
+                    let caps = AgentCapabilities::new()
+                        .load_session(script.load_session)
+                        .session_capabilities(session_caps);
                     let resp = InitializeResponse::new(ProtocolVersion::V1)
                         .agent_capabilities(caps)
                         .agent_info(Implementation::new("crowbar-stub-harness", "0.1.0"));
@@ -551,6 +643,14 @@ fn run(options: Options) -> Result<(), String> {
             }
         } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_new {
             thread::sleep(Duration::from_millis(script.new_session_delay_ms));
+            if script.no_models_when_free_disabled && free_disabled {
+                writer.send_error(
+                    id,
+                    AcpError::new(-32603, "Internal error: No models are available")
+                        .data(json!({ "errorName": "CatalogNotReady" })),
+                );
+                continue;
+            }
             if let Some(err) = &script.new_session_error {
                 writer.send_error(id, AcpError::new(err.code, err.message.clone()));
                 continue;
@@ -562,7 +662,65 @@ fn run(options: Options) -> Result<(), String> {
                         .session_id
                         .clone()
                         .unwrap_or_else(|| format!("{}{n}", script.session_prefix));
-                    writer.send_result(id, NewSessionResponse::new(SessionId::new(sid)));
+                    if let Some(ref dm) = default_model {
+                        session_models.lock().unwrap().insert(sid.clone(), dm.clone());
+                    }
+                    let mut resp = NewSessionResponse::new(SessionId::new(sid.clone()));
+                    if let Some(opts) = build_config_options(script.models.as_deref(), default_model.as_deref()) {
+                        resp = resp.config_options(opts);
+                    }
+                    writer.send_result(id, resp);
+                    if script.emit_available_commands {
+                        writer.send_update(
+                            &SessionId::new(sid),
+                            SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(Vec::new())),
+                        );
+                    }
+                }
+                Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
+            }
+        } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_close {
+            match serde_json::from_value::<CloseSessionRequest>(params) {
+                Ok(close_req) => {
+                    session_models.lock().unwrap().remove(close_req.session_id.0.as_ref());
+                    writer.send_result(id, CloseSessionResponse::new());
+                }
+                Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
+            }
+        } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_set_config_option {
+            match serde_json::from_value::<SetSessionConfigOptionRequest>(params) {
+                Ok(set_req) => {
+                    let sid = set_req.session_id.0.as_ref().to_string();
+                    let val = set_req
+                        .value
+                        .as_value_id()
+                        .map(|v| v.0.as_ref().to_string())
+                        .unwrap_or_default();
+                    let valid = script
+                        .models
+                        .as_ref()
+                        .is_some_and(|list| list.iter().any(|m| m.id == val));
+                    if set_req.config_id.0.as_ref() != "model" || !valid {
+                        writer.send_error(id, AcpError::invalid_params().data(json!("unknown model")));
+                    } else {
+                        let delay = Duration::from_millis(script.set_config_delay_ms);
+                        let writer = writer.clone();
+                        let models = script.models.clone();
+                        let session_models = Arc::clone(&session_models);
+                        let respond = move || {
+                            if !delay.is_zero() {
+                                thread::sleep(delay);
+                            }
+                            session_models.lock().unwrap().insert(sid, val.clone());
+                            let opts = build_config_options(models.as_deref(), Some(&val)).unwrap_or_default();
+                            writer.send_result(id, SetSessionConfigOptionResponse::new(opts));
+                        };
+                        if delay.is_zero() {
+                            respond();
+                        } else {
+                            workers.push(thread::spawn(respond));
+                        }
+                    }
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
             }
@@ -574,12 +732,24 @@ fn run(options: Options) -> Result<(), String> {
                     } else {
                         let (writer, replay) = (writer.clone(), script.load_replay.clone());
                         let delay = Duration::from_millis(script.load_delay_ms);
+                        let sid = load_req.session_id.0.as_ref().to_string();
+                        let cur = session_models
+                            .lock()
+                            .unwrap()
+                            .get(&sid)
+                            .cloned()
+                            .or_else(|| default_model.clone());
+                        let opts = build_config_options(script.models.as_deref(), cur.as_deref());
                         workers.push(thread::spawn(move || {
                             thread::sleep(delay);
                             for step in &replay {
-                                let _ = emit_step(&writer, &load_req.session_id, step, None);
+                                let _ = emit_step(&writer, &load_req.session_id, step, None, cur.as_deref());
                             }
-                            writer.send_result(id, LoadSessionResponse::new());
+                            let mut resp = LoadSessionResponse::new();
+                            if let Some(opts) = opts {
+                                resp = resp.config_options(opts);
+                            }
+                            writer.send_result(id, resp);
                         }));
                     }
                 }
@@ -597,6 +767,7 @@ fn run(options: Options) -> Result<(), String> {
             let turn_script = picker.lock().unwrap().pick(&text);
             let cancel = Arc::new(CancelFlag::new());
             let sid_key = prompt_req.session_id.0.as_ref().to_string();
+            let model = session_models.lock().unwrap().get(&sid_key).cloned();
             active_cancels.lock().unwrap().insert(sid_key.clone(), cancel.clone());
 
             let writer = writer.clone();
@@ -605,7 +776,7 @@ fn run(options: Options) -> Result<(), String> {
             workers.push(thread::spawn(move || {
                 let mut was_cancelled = false;
                 for step in &turn_script.steps {
-                    if cancel.is_cancelled() || emit_step(&writer, &session_id, step, Some(&cancel)) {
+                    if cancel.is_cancelled() || emit_step(&writer, &session_id, step, Some(&cancel), model.as_deref()) {
                         was_cancelled = true;
                         break;
                     }
@@ -630,7 +801,7 @@ fn run(options: Options) -> Result<(), String> {
                 }
 
                 for step in &turn_script.after {
-                    let _ = emit_step(&writer, &session_id, step, None);
+                    let _ = emit_step(&writer, &session_id, step, None, model.as_deref());
                 }
             }));
         } else {

@@ -21,8 +21,8 @@ base/void_base.py root key       # name what installs the Void root, as CI's cac
 
 | Part | What it is |
 | --- | --- |
-| Packages | `base-minimal`, `linux`, and NVIDIA's driver (`nvidia`, with `linux-headers`, `dkms`, and `pahole` to build its kernel module), `btrfs-progs`, `grub-x86_64-efi`, `mtools`, `openssh`, `sudo`, `dhcpcd`, `iproute2`; for real machines, Intel's microcode (`intel-ucode`), `iwd` for Wi-Fi, `wireless-regdb`, `bluez` for Bluetooth, and Mesa's Vulkan drivers for Intel and AMD GPUs, beside the firmware and AMD's microcode `linux` already brings; and what the desktop needs: `seatd`, Mesa with lavapipe, Wayland, `pipewire` (`wireplumber`, `alsa-pipewire`, `libspa-bluetooth`), `mpv`, `xdg-utils`, `foot`, Chromium, and others, from Void's `current` repository and, for NVIDIA's driver, its `nonfree` repository ([`config.json`](config.json)) |
-| Desktop | Fulcrum (`compositor/`), the shell, Files, Studio Settings, Lever (`lever/`), and the desktop's helpers ([`helpers/`](helpers/README.md)), built and tested in a Void build root of their own so they link Void's libraries, in `/usr/local/bin`. Their runit services are in [`desktop/`](desktop/) |
+| Packages | `base-minimal`, `linux`, and NVIDIA's driver (`nvidia`, with `linux-headers`, `dkms`, and `pahole` to build its kernel module), `btrfs-progs`, `grub-x86_64-efi`, `mtools`, `openssh`, `sudo`, `dhcpcd`, `iproute2`, `ripgrep`, `git`; for real machines, Intel's microcode (`intel-ucode`), `iwd` for Wi-Fi, `wireless-regdb`, `bluez` for Bluetooth, and Mesa's Vulkan drivers for Intel and AMD GPUs, beside the firmware and AMD's microcode `linux` already brings; and what the desktop needs: `seatd`, Mesa with lavapipe, Wayland, `pipewire` (`wireplumber`, `alsa-pipewire`, `libspa-bluetooth`), `mpv`, `xdg-utils`, `foot`, Chromium, and others, from Void's `current` repository and, for NVIDIA's driver, its `nonfree` repository ([`config.json`](config.json)) |
+| Desktop | Fulcrum (`compositor/`), the shell, Files, Studio Settings, Lever (`lever/`), and the desktop's helpers ([`helpers/`](helpers/README.md)), built and tested in a Void build root of their own so they link Void's libraries, plus the pinned official OpenCode 2.x binary (`opencode`, verified by SHA-256), in `/usr/local/bin`. Their runit services are in [`desktop/`](desktop/) |
 | Disk | GPT. An ESP holds a standalone GRUB at `\EFI\BOOT\BOOTX64.EFI`, the path any UEFI firmware boots without a boot entry. The root is Btrfs, labelled `crowbaros-root` |
 | Boot | GRUB finds the root by label and reads `/boot/grub/grub.cfg` there. The kernel and initramfs are the ones xbps built. The kernel's command line adds `nvidia-drm.modeset=1 nvidia-drm.fbdev=1` |
 | Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `dbus`, `iwd`, `bluetoothd`, `seatd`, the system's log (`socklog` and `nanoklogd`, kept in `/var/log/socklog`), and the desktop's seven: the compositor on virtual terminal 2, the shell, the launcher, the unlock helper, Lever, PipeWire (which spawns WirePlumber and `pipewire-pulse` as the person), and the service that reboots for Ctrl+Alt+Del. Root logs in over SSH with a key made for the lab, and has no password; the person's account takes the same key. SSH takes keys only |
@@ -266,8 +266,9 @@ password they know. Either way the build prints a warning: that password is in
 this repository, so such an image is for the lab alone.
 
 `--lab-account` also adds `python3` (`lab_packages` in
-[`config.json`](config.json)), which the lab's checks use inside the guest.
-An image built without it has no Python.
+[`config.json`](config.json)) and the lab's Python stub Model
+(`/usr/local/lib/crowbar-lab/stub-model.py`), which the checks use inside the
+guest. An image built without it has neither.
 
 The checks write the same image, `.lab/base/base.raw`, that `build` writes. So
 after a check, build again before you write the image to a disk. The build's

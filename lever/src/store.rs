@@ -16,6 +16,7 @@ pub struct ThreadSummary {
     pub id: String,
     pub title: String,
     pub cwd: String,
+    pub model: Option<String>,
     pub started: i64,
     pub updated: i64,
     pub turns: u64,
@@ -30,6 +31,8 @@ pub struct ThreadMeta {
     /// had no session, and empty when it had one whose ID the harness has
     /// given to another thread since.
     pub harness_session_id: Option<String>,
+    /// The Model chosen for this thread, if any.
+    pub model: Option<String>,
     pub latest_turn: Option<u64>,
     pub working_turn: Option<u64>,
 }
@@ -39,6 +42,7 @@ pub struct ThreadRecord {
     pub id: String,
     pub title: String,
     pub cwd: String,
+    pub model: Option<String>,
     pub started: i64,
     pub updated: i64,
     pub working: bool,
@@ -115,13 +119,14 @@ impl Store {
                  key TEXT PRIMARY KEY,\n\
                  value TEXT NOT NULL\n\
              );\n\
-             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2');\n\
+             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '3');\n\
              CREATE TABLE IF NOT EXISTS threads (\n\
                  id TEXT PRIMARY KEY,\n\
                  title TEXT NOT NULL,\n\
                  cwd TEXT NOT NULL,\n\
                  harness_name TEXT,\n\
                  harness_session_id TEXT,\n\
+                 model TEXT,\n\
                  created_at INTEGER NOT NULL,\n\
                  updated_at INTEGER NOT NULL\n\
              );\n\
@@ -161,6 +166,27 @@ impl Store {
         )
         .map_err(|e| format!("could not initialize database {}: {e}", path.display()))?;
 
+        // Migrate schema v2 databases that predate `threads.model`.
+        let has_model_col: bool = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(threads)")
+                .map_err(|e| format!("could not inspect threads table: {e}"))?;
+            let cols = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .map_err(|e| format!("could not read threads schema: {e}"))?;
+            let mut found = false;
+            for col in cols {
+                if col.map_err(|e| format!("could not read column name: {e}"))? == "model" {
+                    found = true;
+                }
+            }
+            found
+        };
+        if !has_model_col {
+            conn.execute("ALTER TABLE threads ADD COLUMN model TEXT", [])
+                .map_err(|e| format!("could not migrate threads.model column: {e}"))?;
+        }
+
         // Any turn left working by a Lever that ended abruptly is interrupted.
         conn.execute(
             "UPDATE turns SET state = 'interrupted', ended_at = ?1 WHERE state = 'working'",
@@ -194,14 +220,39 @@ impl Store {
         Ok(())
     }
 
+    /// Whether the person has enabled OpenCode's free hosted Models.
+    /// Defaults to `false` until the person explicitly chooses them.
+    pub fn free_hosted_models(&self) -> Result<bool, String> {
+        let value: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key = 'free_hosted_models'", [], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(|e| format!("could not read free_hosted_models setting: {e}"))?;
+        Ok(value.as_deref() == Some("true"))
+    }
+
+    /// Saves the person's choice for OpenCode's free hosted Models.
+    pub fn set_free_hosted_models(&self, enabled: bool) -> Result<(), String> {
+        let value = if enabled { "true" } else { "false" };
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('free_hosted_models', ?1)",
+                params![value],
+            )
+            .map_err(|e| format!("could not save free_hosted_models setting: {e}"))?;
+        Ok(())
+    }
+
     /// Begins a turn with the person's message, in a new thread when
-    /// `new_thread` gives its title, working directory, and harness name.
-    /// All of it is saved or none of it: a thread is never left with a turn
-    /// that is working in the record and that Lever never began.
+    /// `new_thread` gives its title, working directory, harness name, and
+    /// optional Model. All of it is saved or none of it: a thread is never
+    /// left with a turn that is working in the record and that Lever never began.
     pub fn begin_turn(
         &self,
         thread_id: &str,
-        new_thread: Option<(&str, &str, Option<&str>)>,
+        new_thread: Option<(&str, &str, Option<&str>, Option<&str>)>,
         message: &str,
         now: i64,
     ) -> Result<u64, String> {
@@ -209,8 +260,8 @@ impl Store {
             .conn
             .unchecked_transaction()
             .map_err(|e| format!("could not begin a turn: {e}"))?;
-        if let Some((title, cwd, harness_name)) = new_thread {
-            self.create_thread(thread_id, title, cwd, harness_name, now)?;
+        if let Some((title, cwd, harness_name, model)) = new_thread {
+            self.create_thread(thread_id, title, cwd, harness_name, model, now)?;
         }
         let turn = self.create_turn(thread_id, message, now)?;
         all.commit().map_err(|e| format!("could not begin a turn: {e}"))?;
@@ -223,29 +274,30 @@ impl Store {
         title: &str,
         cwd: &str,
         harness_name: Option<&str>,
+        model: Option<&str>,
         now: i64,
     ) -> Result<(), String> {
         self.conn
             .execute(
-                "INSERT INTO threads (id, title, cwd, harness_name, created_at, updated_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-                params![id, title, cwd, harness_name, now],
+                "INSERT INTO threads (id, title, cwd, harness_name, model, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                params![id, title, cwd, harness_name, model, now],
             )
             .map_err(|e| format!("could not create thread: {e}"))?;
         Ok(())
     }
 
     pub fn thread_meta(&self, thread_id: &str) -> Result<Option<ThreadMeta>, String> {
-        let row: Option<(String, Option<String>)> = self
+        let row: Option<(String, Option<String>, Option<String>)> = self
             .conn
             .query_row(
-                "SELECT cwd, harness_session_id FROM threads WHERE id = ?1",
+                "SELECT cwd, harness_session_id, model FROM threads WHERE id = ?1",
                 params![thread_id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()
             .map_err(|e| format!("could not query thread: {e}"))?;
-        let Some((cwd, harness_session_id)) = row else {
+        let Some((cwd, harness_session_id, model)) = row else {
             return Ok(None);
         };
         let latest_turn: Option<u64> = self
@@ -273,9 +325,20 @@ impl Store {
         Ok(Some(ThreadMeta {
             cwd,
             harness_session_id,
+            model,
             latest_turn,
             working_turn,
         }))
+    }
+
+    pub fn set_thread_model(&self, thread_id: &str, model: &str, now: i64) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE threads SET model = ?1, updated_at = ?2 WHERE id = ?3",
+                params![model, now, thread_id],
+            )
+            .map_err(|e| format!("could not update thread model: {e}"))?;
+        Ok(())
     }
 
     /// Records the session the harness gave a thread. A session is one
@@ -567,7 +630,7 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT t.id, t.title, t.cwd, t.created_at, t.updated_at, \
+                "SELECT t.id, t.title, t.cwd, t.model, t.created_at, t.updated_at, \
                         (SELECT COUNT(*) FROM turns WHERE thread_id = t.id), \
                         (SELECT state FROM turns WHERE thread_id = t.id ORDER BY turn_number DESC LIMIT 1) \
                  FROM threads t \
@@ -576,15 +639,16 @@ impl Store {
             .map_err(|e| format!("could not prepare thread list query: {e}"))?;
         let rows = stmt
             .query_map([], |r| {
-                let state: String = r.get::<_, Option<String>>(6)?.unwrap_or_else(|| "idle".to_string());
+                let state: String = r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "idle".to_string());
                 let working = state == "working";
                 Ok(ThreadSummary {
                     id: r.get(0)?,
                     title: r.get(1)?,
                     cwd: r.get(2)?,
-                    started: r.get(3)?,
-                    updated: r.get(4)?,
-                    turns: r.get::<_, i64>(5)? as u64,
+                    model: r.get(3)?,
+                    started: r.get(4)?,
+                    updated: r.get(5)?,
+                    turns: r.get::<_, i64>(6)? as u64,
                     state,
                     working,
                 })
@@ -598,16 +662,16 @@ impl Store {
     }
 
     pub fn get_thread(&self, thread_id: &str) -> Result<Option<ThreadRecord>, String> {
-        let row: Option<(String, String, String, i64, i64)> = self
+        let row: Option<(String, String, String, Option<String>, i64, i64)> = self
             .conn
             .query_row(
-                "SELECT id, title, cwd, created_at, updated_at FROM threads WHERE id = ?1",
+                "SELECT id, title, cwd, model, created_at, updated_at FROM threads WHERE id = ?1",
                 params![thread_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
             )
             .optional()
             .map_err(|e| format!("could not query thread: {e}"))?;
-        let Some((id, title, cwd, started, updated)) = row else {
+        let Some((id, title, cwd, model, started, updated)) = row else {
             return Ok(None);
         };
 
@@ -694,6 +758,7 @@ impl Store {
             id,
             title,
             cwd,
+            model,
             started,
             updated,
             working,
@@ -715,4 +780,51 @@ fn tighten_permissions(db_path: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opens_and_migrates_v2_database_without_threads_model_column() {
+        let dir = std::env::temp_dir().join(format!(
+            "crowbar-lever-store-migrate-{}-{}",
+            std::process::id(),
+            crate::sys::random_hex(4)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("lever.db");
+
+        // Create a schema-v2 database (without `threads.model`).
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO meta (key, value) VALUES ('schema_version', '2');
+                 CREATE TABLE threads (
+                     id TEXT PRIMARY KEY,
+                     title TEXT NOT NULL,
+                     cwd TEXT NOT NULL,
+                     harness_name TEXT,
+                     harness_session_id TEXT,
+                     created_at INTEGER NOT NULL,
+                     updated_at INTEGER NOT NULL
+                 );
+                 INSERT INTO threads (id, title, cwd, harness_name, harness_session_id, created_at, updated_at)
+                 VALUES ('t-old', 'Old thread', '/tmp', 'OpenCode', 'sess-1', 100, 100);",
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&db, 200).unwrap();
+        let meta = store.thread_meta("t-old").unwrap().expect("migrated thread");
+        assert_eq!(meta.model, None);
+        store.set_thread_model("t-old", "stub/stub-1", 201).unwrap();
+        let updated = store.thread_meta("t-old").unwrap().expect("updated thread");
+        assert_eq!(updated.model.as_deref(), Some("stub/stub-1"));
+        assert!(!store.free_hosted_models().unwrap());
+        store.close().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

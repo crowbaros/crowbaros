@@ -3,6 +3,9 @@
   "void_repository": "https://repo-default.voidlinux.org/current",
   "xbps_static_url": "https://repo-default.voidlinux.org/static/xbps-static-static-0.60.4_1.x86_64-musl.tar.xz",
   "xbps_static_sha256": "603b3c55e9cabd5af79b461b929b14e1556a443c97b5714d188681c2172d9e28",
+  "opencode_version": "2.4.1",
+  "opencode_url": "https://github.com/anomalyco/opencode/releases/download/v2.4.1/opencode-linux-x64.tar.gz",
+  "opencode_sha256": "9ddd18e3faf64eaeccf6a0fcbc96a5c7a14520ae5fd5b61e5be51d894f478b47",
   "packages": [
     "base-minimal",
     "linux",
@@ -54,7 +57,9 @@
     "libspa-bluetooth",
     "bluez",
     "mpv",
-    "xdg-utils"
+    "xdg-utils",
+    "ripgrep",
+    "git"
   ],
   "lab_packages": ["python3"],
   "build_packages": [

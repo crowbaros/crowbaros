@@ -418,6 +418,7 @@ class BuildFixture(unittest.TestCase):
                             ('install', lambda *args, **kw: None), ('sha256', lambda path: 'digest'),
                             ('preflight', lambda **kw: None), ('rootfs', lambda force: None),
                             ('fetch', lambda: Path('/xbps-static')),
+                            ('opencode', lambda: Path('/opencode')),
                             ('ACCOUNT_FILE', Path(temporary.name) / 'account.json')]:
             p = patch.object(void_base, name, value)
             p.start()
@@ -535,19 +536,33 @@ class Desktop(BuildFixture):
         self.assertEqual(void_base.binaries()['crowbar-helpers'].name, 'crowbar-helpers')
 
     def test_python_is_only_in_an_image_built_for_the_lab_checks(self):
-        # The lab's checks drive the guest with `python3 -c`; the person's
-        # image has nothing that needs it.
+        # The lab's checks drive the guest with `python3 -c` and the stub
+        # Model; the person's image has neither.
         self.assertNotIn('python3', void_base.CFG['packages'])
         self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
         void_base.build()
         _, person = self.image_step()
         self.assertEqual(person['LAB_PACKAGES'], '')
+        self.assertEqual(person['STUB_MODEL'], '')
+        self.assertEqual(person['OPENCODE'], '/opencode')
         self.commands.clear()
         self.envs.clear()
         void_base.build(lab_account=True)
         _, lab = self.image_step()
         self.assertEqual(lab['LAB_PACKAGES'].split(), ['python3'])
         self.assertEqual(lab['XBPS'], '/xbps-static/usr/bin')
+        self.assertTrue(lab['STUB_MODEL'].endswith('lab/void/stub_model.py'))
+        self.assertEqual(lab['OPENCODE'], '/opencode')
+
+    def test_opencode_ripgrep_and_git_are_bundled_in_base(self):
+        self.assertIn('ripgrep', void_base.CFG['packages'])
+        self.assertIn('git', void_base.CFG['packages'])
+        self.assertTrue(void_base.CFG['opencode_version'].startswith('2.'))
+        self.assertEqual(len(void_base.CFG['opencode_sha256']), 64)
+        self.assertIn(f"v{void_base.CFG['opencode_version']}", void_base.CFG['opencode_url'])
+        image_sh = (Path(void_base.HERE) / 'host/image.sh').read_text()
+        self.assertIn('install -D -m 755 "$OPENCODE" "$R/usr/local/bin/opencode"', image_sh)
+        self.assertIn('install -D -m 755 "$STUB_MODEL" "$R/usr/local/lib/crowbar-lab/stub-model.py"', image_sh)
 
     def test_the_image_step_has_a_mount_namespace_to_lend_the_lab_packages_dev(self):
         # Python's install byte-compiles its library, which needs /dev/shm.
@@ -900,7 +915,11 @@ class LeverChecks(unittest.TestCase):
     """Base builds `crowbar-lever`, installs its runit service, points the
     shell at its surface socket, and checks it at boot."""
 
-    OK_STATUS = f'ok {void_base.VERSION_FRAME} {{"reply":"status","version":"0.1.0","harness_started":false,"harnesses":[]}}'
+    OK_STATUS = (
+        f'ok {void_base.VERSION_FRAME} '
+        '{"reply":"status","version":"0.1.0","harness_started":false,'
+        '"harnesses":[{"id":"harness-1","name":"OpenCode"}],"free_hosted_models":false}'
+    )
 
     def test_lever_is_built_and_wired_into_base(self):
         self.assertIn('lever', dict(void_base.PROJECTS))
@@ -911,10 +930,45 @@ class LeverChecks(unittest.TestCase):
         lever_run = (Path(void_base.HERE) / 'desktop/lever-run').read_text()
         self.assertIn('/usr/local/bin/crowbar-launcher as-app', lever_run)
         self.assertIn('/usr/local/bin/crowbar-lever', lever_run)
+        self.assertIn('--harness /usr/local/bin/opencode --harness-arg acp --harness-name OpenCode', lever_run)
         self.assertIn(void_base.LEVER_SURFACE_SOCKET, lever_run)
         self.assertIn(void_base.LEVER_STATE, lever_run)
         shell_run = (Path(void_base.HERE) / 'desktop/shell-run').read_text()
         self.assertIn(f'CROWBAR_LEVER_SOCKET={void_base.LEVER_SURFACE_SOCKET}', shell_run)
+
+    def test_opencode_and_stub_model_boot_check_parsers(self):
+        tools_ok = (
+            'opencode-path /usr/local/bin/opencode\n'
+            f'opencode-version opencode v{void_base.CFG["opencode_version"]}\n'
+            'rg-path /usr/bin/rg\n'
+            'git-path /usr/bin/git\n'
+        )
+        self.assertTrue(void_base.opencode_and_tools_installed(tools_ok))
+        self.assertFalse(void_base.opencode_and_tools_installed(tools_ok.replace(void_base.CFG['opencode_version'], '0.0.0')))
+        self.assertFalse(void_base.opencode_and_tools_installed(tools_ok.replace('/usr/bin/rg', '')))
+
+        stub_ok = '\n'.join([
+            'person crowbar',
+            'idle-before none',
+            'refused-rc 1',
+            'refused-err crowbar-agent: The Agent gave no answer: No Model is available.',
+            'models-rc 0',
+            'models-out stub/stub-1  Stub One  (default)',
+            'models-out stub/stub-2  Stub Two',
+            'hello-rc 0',
+            'hello-out Hello from stub-1!',
+            'set-model-rc 0',
+            'cmd-rc 0',
+            f'cmd-out Command ran on stub-2 as: crowbar {void_base.PERSON_UID}',
+            'opencode-working 2 450000',
+            'config-unchanged yes',
+            'idle-after none',
+        ]) + '\n'
+        self.assertTrue(void_base.opencode_stub_turn_ok(stub_ok))
+        self.assertFalse(void_base.opencode_stub_turn_ok(stub_ok.replace('idle-before none', 'idle-before running')))
+        self.assertFalse(void_base.opencode_stub_turn_ok(stub_ok.replace('refused-rc 1', 'refused-rc 0')))
+        self.assertFalse(void_base.opencode_stub_turn_ok(stub_ok.replace('config-unchanged yes', 'config-unchanged no')))
+        self.assertFalse(void_base.opencode_stub_turn_ok(stub_ok.replace('idle-after none', 'idle-after running')))
 
     def test_lever_answers_surface_socket_check(self):
         good = '\n'.join([

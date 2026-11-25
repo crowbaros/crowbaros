@@ -16,6 +16,7 @@ tag.
 | --- | --- |
 | `compositor_check.py` | The check of the [compositor](../../compositor/README.md) on a TTY in Base's image |
 | `desktop_check.py` | The desktop check and Base boot checks, on a fresh copy of Base's image, with retained diagnostics |
+| `stub_model.py` | Scripted OpenAI-compatible stub Model in Python, installed only in lab images |
 | `guest.py` | What both checks share: isolated UEFI VM runs on a copy of Base's disk, QMP input/screendumps and their pixels, VNC monitor hotplug, and SSH |
 | `test_*.py` | Unit tests for the guest driver and the checks |
 
@@ -134,8 +135,8 @@ still opening the launcher; the gesture doing nothing while locked, with the
 drawer up or put away after unlock as it was; and, with a second display
 plugged in, the drawer on whichever display the pointer is on. A still
 desktop with the drawer up must commit and draw nothing, too. It checks that
-the drawer connects to Lever's surface socket and shows that the Agent is
-reachable with no harness yet, and starts no stub Model.
+the drawer connects to Lever's surface socket with OpenCode configured and no
+OpenCode process started while idle.
 It checks that apps run as the person at the ordinary socket for apps, that
 copy and paste, the primary selection, and drag and drop work between two apps,
 that Fulcrum's Harness socket serves the person alone, and that the shell's
