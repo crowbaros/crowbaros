@@ -756,7 +756,7 @@ class Check:
                         'name': 'shell',
                         'arguments': {
                             'command': 'echo DRAWER_CMD_OK && id -un',
-                            'description': 'Echo marker and current user',
+                            'description': 'Echo marker and current person',
                         },
                     },
                     'after_tool': 'Command finished on {model}: {tool_output}',

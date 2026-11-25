@@ -149,8 +149,9 @@ class StubModelTests(unittest.TestCase):
         )
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             urllib.request.urlopen(req)
-        self.assertEqual(ctx.exception.code, 400)
-        body = json.loads(ctx.exception.read().decode("utf-8"))
+        with ctx.exception as err:
+            self.assertEqual(err.code, 400)
+            body = json.loads(err.read().decode("utf-8"))
         self.assertEqual(body["error"]["message"], "Stub model declined this turn")
 
 

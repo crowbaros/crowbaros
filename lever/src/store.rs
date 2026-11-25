@@ -168,47 +168,9 @@ impl Store {
         )
         .map_err(|e| format!("could not initialize database {}: {e}", path.display()))?;
 
-        // Migrate schema v2 databases that predate `threads.model`.
-        let has_model_col: bool = {
-            let mut stmt = conn
-                .prepare("PRAGMA table_info(threads)")
-                .map_err(|e| format!("could not inspect threads table: {e}"))?;
-            let cols = stmt
-                .query_map([], |r| r.get::<_, String>(1))
-                .map_err(|e| format!("could not read threads schema: {e}"))?;
-            let mut found = false;
-            for col in cols {
-                if col.map_err(|e| format!("could not read column name: {e}"))? == "model" {
-                    found = true;
-                }
-            }
-            found
-        };
-        if !has_model_col {
-            conn.execute("ALTER TABLE threads ADD COLUMN model TEXT", [])
-                .map_err(|e| format!("could not migrate threads.model column: {e}"))?;
-        }
-
-        // Migrate schema v2/v3 databases that predate `turns.context`.
-        let has_context_col: bool = {
-            let mut stmt = conn
-                .prepare("PRAGMA table_info(turns)")
-                .map_err(|e| format!("could not inspect turns table: {e}"))?;
-            let cols = stmt
-                .query_map([], |r| r.get::<_, String>(1))
-                .map_err(|e| format!("could not read turns schema: {e}"))?;
-            let mut found = false;
-            for col in cols {
-                if col.map_err(|e| format!("could not read column name: {e}"))? == "context" {
-                    found = true;
-                }
-            }
-            found
-        };
-        if !has_context_col {
-            conn.execute("ALTER TABLE turns ADD COLUMN context TEXT", [])
-                .map_err(|e| format!("could not migrate turns.context column: {e}"))?;
-        }
+        // Migrate older databases missing columns added in newer schema versions.
+        ensure_column(&conn, "threads", "model", "TEXT")?;
+        ensure_column(&conn, "turns", "context", "TEXT")?;
 
         // Any turn left working by a Lever that ended abruptly is interrupted.
         conn.execute(
@@ -792,6 +754,23 @@ impl Store {
             turns,
         }))
     }
+}
+
+fn ensure_column(conn: &Connection, table: &str, column: &str, sql_type: &str) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|e| format!("could not inspect {table} table: {e}"))?;
+    let cols = stmt
+        .query_map([], |r| r.get::<_, String>(1))
+        .map_err(|e| format!("could not read {table} schema: {e}"))?;
+    for col in cols {
+        if col.map_err(|e| format!("could not read column name: {e}"))? == column {
+            return Ok(());
+        }
+    }
+    conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {sql_type}"), [])
+        .map_err(|e| format!("could not migrate {table}.{column} column: {e}"))?;
+    Ok(())
 }
 
 fn tighten_permissions(db_path: &Path) -> Result<(), String> {

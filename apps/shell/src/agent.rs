@@ -397,6 +397,8 @@ pub struct AgentState {
     pub missing_model: Option<String>,
     pub thread: Option<String>,
     pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_turn: Option<u64>,
     pub turns: Vec<Turn>,
     pub error: Option<String>,
     pub mark: Mark,
@@ -433,7 +435,12 @@ impl AgentState {
     }
 
     pub fn current_turn(&self) -> Option<u64> {
-        self.turns.last().map(|t| t.turn)
+        self.active_turn.or_else(|| {
+            self.turns
+                .last()
+                .filter(|t| matches!(t.state, TurnState::Working))
+                .map(|t| t.turn)
+        })
     }
 
     fn apply_status(&mut self, status: StatusInfo) -> bool {
@@ -463,9 +470,12 @@ impl AgentState {
         } else {
             Some(resumed.title)
         };
-        if resumed.model.is_some() {
-            self.model = resumed.model;
-        }
+        self.model = resumed.model;
+        self.active_turn = resumed
+            .turns
+            .last()
+            .filter(|t| matches!(t.state, TurnState::Working))
+            .map(|t| t.turn);
         let next_mark = match resumed.turns.last().map(|t| &t.state) {
             Some(TurnState::Working) => Mark::Working,
             Some(TurnState::Done) if self.mark == Mark::Working => Mark::Done,
@@ -497,6 +507,7 @@ impl AgentState {
                     self.thread = None;
                     self.title = None;
                     self.model = None;
+                    self.active_turn = None;
                     self.turns.clear();
                     self.mark = Mark::Idle;
                     changed = true;
@@ -512,6 +523,7 @@ impl AgentState {
                     || self.no_harness;
                 self.connected = false;
                 self.sending = false;
+                self.active_turn = None;
                 self.lever_version = None;
                 self.harness_started = false;
                 self.harnesses.clear();
@@ -524,7 +536,7 @@ impl AgentState {
                 self.apply_resumed(resumed, drawer_up);
                 true
             }
-            AgentEvent::Sent { thread, turn: _ } => {
+            AgentEvent::Sent { thread, turn } => {
                 self.sending = false;
                 if self.thread.as_deref() != Some(thread.as_str()) {
                     self.turns.clear();
@@ -532,6 +544,7 @@ impl AgentState {
                     self.model = None;
                 }
                 self.thread = Some(thread);
+                self.active_turn = Some(turn);
                 self.error = None;
                 self.missing_model = None;
                 self.mark = Mark::Working;
@@ -551,6 +564,7 @@ impl AgentState {
                     }
                 }
                 self.sending = false;
+                self.active_turn = Some(turn);
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
                     existing.message = text;
                     existing.context = context;
@@ -630,6 +644,9 @@ impl AgentState {
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
                     existing.state = TurnState::Done;
                 }
+                if self.active_turn == Some(turn) {
+                    self.active_turn = None;
+                }
                 self.mark = Mark::Done;
                 true
             }
@@ -639,6 +656,9 @@ impl AgentState {
                 }
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
                     existing.state = TurnState::Stopped;
+                }
+                if self.active_turn == Some(turn) {
+                    self.active_turn = None;
                 }
                 self.mark = Mark::Idle;
                 true
@@ -655,6 +675,9 @@ impl AgentState {
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
                     existing.state = TurnState::Failed(calm_turn_error(&message));
                 }
+                if self.active_turn == Some(turn) {
+                    self.active_turn = None;
+                }
                 // Behind a put-away drawer, leave the mark lit as Done so the
                 // person knows the turn ended and can open the drawer to read why.
                 self.mark = if drawer_up { Mark::Idle } else { Mark::Done };
@@ -668,6 +691,9 @@ impl AgentState {
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
                     existing.state = TurnState::Interrupted;
                 }
+                if self.active_turn == Some(turn) {
+                    self.active_turn = None;
+                }
                 self.mark = if drawer_up { Mark::Idle } else { Mark::Done };
                 true
             }
@@ -680,6 +706,7 @@ impl AgentState {
                     self.thread = None;
                     self.title = None;
                     self.model = None;
+                    self.active_turn = None;
                     self.turns.clear();
                     self.mark = Mark::Idle;
                     self.error = None;
@@ -916,7 +943,20 @@ fn read_frame_before(stream: &mut UnixStream, deadline: Instant) -> Result<serde
         bail!("Timed out waiting for Lever");
     }
     stream.set_read_timeout(Some(remaining))?;
-    read_frame(stream)
+    let mut header = [0u8; 4];
+    stream.read_exact(&mut header)?;
+    let len = u32::from_be_bytes(header) as usize;
+    if len > MAX_FRAME {
+        bail!("Lever frame too long ({len} bytes)");
+    }
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        bail!("Timed out waiting for Lever frame body");
+    }
+    stream.set_read_timeout(Some(remaining))?;
+    let mut body = vec![0u8; len];
+    stream.read_exact(&mut body)?;
+    serde_json::from_slice(&body).context("Invalid JSON frame from Lever")
 }
 
 fn write_frame_before(
@@ -1363,10 +1403,28 @@ fn start_with_deadline(
     CommandSender { tx: cmd_tx }
 }
 
+fn resume_thread_before(
+    stream: &mut UnixStream,
+    thread_id: &str,
+    deadline: Instant,
+) -> Result<Option<ResumedThread>> {
+    write_frame_before(
+        stream,
+        &serde_json::json!({ "op": "resume", "thread": thread_id }),
+        deadline,
+    )?;
+    match parse_lever_message(&read_frame_before(stream, deadline)?) {
+        Some(LeverMessage::Resumed(r)) => Ok(Some(r)),
+        Some(LeverMessage::Error { code, .. }) if code == "no-thread" => Ok(None),
+        other => bail!("Unexpected resume reply from Lever: {other:?}"),
+    }
+}
+
 /// Connects to Lever's surface socket, completes the version-1 handshake,
-/// fetches initial `status`, and restores the active thread (or newest thread
-/// on a fresh shell start) before clearing the read timeout. Fails if Lever
-/// does not answer within `init_deadline`.
+/// fetches initial `status`, and restores the active thread (or, on a fresh
+/// shell start, the working thread if any, else the newest thread) before
+/// clearing the read timeout. Fails if Lever does not answer within
+/// `init_deadline`.
 fn connect_and_bootstrap(
     path: &PathBuf,
     existing_thread: Option<String>,
@@ -1394,38 +1452,18 @@ fn connect_and_bootstrap(
     };
 
     // Restore thread: resume the held thread if reconnecting, else ask `list`
-    // and resume the newest thread so a restarted shell redraws from Lever.
+    // and resume a working thread (if any) or the newest thread so a restarted
+    // shell redraws from Lever.
     let mut resumed = None;
-    let mut target = existing_thread;
-    if let Some(tid) = target.take() {
-        write_frame_before(
-            &mut stream,
-            &serde_json::json!({ "op": "resume", "thread": tid }),
-            deadline,
-        )?;
-        match parse_lever_message(&read_frame_before(&mut stream, deadline)?) {
-            Some(LeverMessage::Resumed(r)) => resumed = Some(r),
-            Some(LeverMessage::Error { code, .. }) if code == "no-thread" => {
-                // Held thread is gone; fall through to `list` below.
-            }
-            other => bail!("Unexpected resume reply from Lever: {other:?}"),
-        }
+    if let Some(tid) = existing_thread {
+        resumed = resume_thread_before(&mut stream, &tid, deadline)?;
     }
     if resumed.is_none() {
         write_frame_before(&mut stream, &serde_json::json!({ "op": "list" }), deadline)?;
         match parse_lever_message(&read_frame_before(&mut stream, deadline)?) {
             Some(LeverMessage::List { threads }) => {
-                if let Some(newest) = threads.first() {
-                    write_frame_before(
-                        &mut stream,
-                        &serde_json::json!({ "op": "resume", "thread": newest.thread }),
-                        deadline,
-                    )?;
-                    match parse_lever_message(&read_frame_before(&mut stream, deadline)?) {
-                        Some(LeverMessage::Resumed(r)) => resumed = Some(r),
-                        Some(LeverMessage::Error { code, .. }) if code == "no-thread" => {}
-                        other => bail!("Unexpected resume reply from Lever: {other:?}"),
-                    }
+                if let Some(chosen) = threads.iter().find(|t| t.working).or_else(|| threads.first()) {
+                    resumed = resume_thread_before(&mut stream, &chosen.thread, deadline)?;
                 }
             }
             Some(LeverMessage::Error { .. }) => {}
@@ -1620,7 +1658,7 @@ mod tests {
             })
         );
 
-        // live events: message, text, act, note, thread-updated, done, stopped, failed, interrupted
+        // live events: message (without and with desktop context), text, act, note, thread-updated, done, stopped, failed, interrupted
         assert_eq!(
             parse_lever_message(&serde_json::json!({
                 "event": "message", "thread": "t-1", "turn": 1, "text": "hello"
@@ -1630,6 +1668,30 @@ mod tests {
                 turn: 1,
                 text: "hello".into(),
                 context: None,
+            })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({
+                "event": "message",
+                "thread": "t-1",
+                "turn": 2,
+                "text": "what is focused?",
+                "context": {
+                    "workspace": 2,
+                    "active": { "id": "0x2", "app_id": "foot", "title": "work", "workspace": 2 },
+                    "locked": false,
+                    "windows": [
+                        { "id": "0x1", "app_id": "com.crowbaros.StudioSettings", "title": "Settings", "workspace": 1 },
+                        { "id": "0x2", "app_id": "foot", "title": "work", "workspace": 2 }
+                    ],
+                    "displays": [{ "name": "Virtual-1", "width": 1280, "height": 960, "x": 0, "y": 0, "scale": 120 }]
+                }
+            })),
+            Some(LeverMessage::Message {
+                thread: "t-1".into(),
+                turn: 2,
+                text: "what is focused?".into(),
+                context: Some(sample_context()),
             })
         );
         assert_eq!(
@@ -1867,15 +1929,52 @@ mod tests {
             other => panic!("expected Failed, got {other:?}"),
         }
 
-        // Stopped turn transitions mark to Idle.
+        // Stopped turn transitions mark to Idle; Stop right after Sent (before Message)
+        // targets the new turn rather than the previous finished turn.
         state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 2 }, true);
+        assert_eq!(state.current_turn(), Some(2));
         state.apply(
             AgentEvent::Message { thread: "t-1".into(), turn: 2, text: "wait".into(), context: None },
             true,
         );
         state.apply(AgentEvent::Stopped { thread: "t-1".into(), turn: 2 }, true);
         assert_eq!(state.turns[1].state, TurnState::Stopped);
+        assert_eq!(state.current_turn(), None);
         assert_eq!(state.mark, Mark::Idle);
+
+        // Resuming a thread with `model: None` clears any previously held model.
+        state.model = Some("stub/stub-1".into());
+        state.apply(
+            AgentEvent::Resumed(ResumedThread {
+                thread: "t-2".into(),
+                title: "Fresh".into(),
+                cwd: "/tmp".into(),
+                model: None,
+                working: false,
+                turns: Vec::new(),
+            }),
+            true,
+        );
+        assert_eq!(state.model, None);
+        state.thread = Some("t-1".into());
+        state.turns.push(Turn {
+            turn: 1,
+            message: "prev".into(),
+            context: None,
+            acts: Vec::new(),
+            notes: Vec::new(),
+            answer: "ok".into(),
+            state: TurnState::Done,
+        });
+        state.turns.push(Turn {
+            turn: 2,
+            message: "stopped".into(),
+            context: None,
+            acts: Vec::new(),
+            notes: Vec::new(),
+            answer: String::new(),
+            state: TurnState::Stopped,
+        });
 
         // Interrupted turn behind drawer shows Done.
         state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 3 }, false);
@@ -1944,7 +2043,8 @@ mod tests {
         let listener = UnixListener::bind(&sock).unwrap();
 
         let server = std::thread::spawn(move || {
-            // Attempt 1: handshake succeeds, status is never answered -> client must time out and NOT emit Connected.
+            // Attempt 1: handshake succeeds, status sends a 4-byte length header
+            // and stalls the payload past the deadline -> client must NOT emit Connected.
             let (mut slow, _) = listener.accept().unwrap();
             let v = read_frame(&mut slow).unwrap();
             assert_eq!(v, serde_json::json!({ "version": 1 }));
@@ -1952,7 +2052,8 @@ mod tests {
                 .unwrap();
             let req = read_frame(&mut slow).unwrap();
             assert_eq!(req["op"], "status");
-            // Keep open past the client's 180ms init deadline.
+            // Send 4-byte header advertising 32 bytes, then stall the body past 180ms.
+            slow.write_all(&32u32.to_be_bytes()).unwrap();
             std::thread::sleep(Duration::from_millis(320));
             drop(slow);
 
@@ -2030,21 +2131,33 @@ mod tests {
             })))
             .unwrap();
 
-            // Fresh shell asks `list` and resumes the newest thread.
+            // Fresh shell asks `list` and prefers a working thread over a newer idle one.
             assert_eq!(read_frame(&mut peer).unwrap()["op"], "list");
             peer.write_all(&encode_frame(&serde_json::json!({
                 "reply": "list",
-                "threads": [{
-                    "thread": "t-existing",
-                    "title": "Existing work",
-                    "cwd": "/home/crowbar",
-                    "model": "stub/stub-1",
-                    "started": 100,
-                    "updated": 105,
-                    "turns": 1,
-                    "state": "done",
-                    "working": false
-                }]
+                "threads": [
+                    {
+                        "thread": "t-idle-newer",
+                        "title": "Idle newer",
+                        "cwd": "/home/crowbar",
+                        "started": 110,
+                        "updated": 120,
+                        "turns": 1,
+                        "state": "done",
+                        "working": false
+                    },
+                    {
+                        "thread": "t-existing",
+                        "title": "Existing work",
+                        "cwd": "/home/crowbar",
+                        "model": "stub/stub-1",
+                        "started": 100,
+                        "updated": 105,
+                        "turns": 1,
+                        "state": "working",
+                        "working": true
+                    }
+                ]
             })))
             .unwrap();
 
