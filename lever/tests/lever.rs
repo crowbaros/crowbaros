@@ -180,6 +180,27 @@ fn handshake(path: &Path) -> UnixStream {
     stream
 }
 
+/// Sends `request` over and over, reading nothing, until the peer's writes
+/// stall, and returns how many bytes went out. A write that takes part of a
+/// request is carried on from where it stopped, so what the peer sent is
+/// always whole requests and the start of one more.
+fn send_until_stalled(peer: &mut UnixStream, request: &[u8]) -> usize {
+    peer.set_write_timeout(Some(Duration::from_millis(500))).unwrap();
+    let chunk: Vec<u8> = request.iter().copied().cycle().take(request.len() * 2048).collect();
+    let mut sent = 0;
+    loop {
+        match peer.write(&chunk[sent % chunk.len()..]) {
+            Ok(n) => sent += n,
+            Err(err) if matches!(err.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => return sent,
+            Err(err) => panic!("Lever closed a peer that read nothing, after {sent} bytes: {err}"),
+        }
+        assert!(
+            sent < 64 * 1024 * 1024,
+            "Lever went on reading a peer that read nothing"
+        );
+    }
+}
+
 fn assert_closed_without_reply(mut stream: UnixStream) {
     let mut buf = [0u8; 64];
     match stream.read(&mut buf) {
@@ -514,25 +535,12 @@ fn a_peer_that_reads_nothing_is_held_and_loses_nothing_it_sent() {
     let mut lever = RunningLever::start(&dir.0, uid, uid);
 
     let mut peer = handshake(&lever.person);
-    peer.set_write_timeout(Some(Duration::from_millis(500))).unwrap();
     let request = encode_frame(&json!({ "op": "status" }));
-    let chunk: Vec<u8> = request.iter().copied().cycle().take(request.len() * 2048).collect();
 
     // Requests go out and nothing is read. Lever stops reading the peer once
     // enough replies wait for it, so the peer's writes stall. A Lever that
     // took every request would have this peer send without end, or close it.
-    let mut sent = 0;
-    loop {
-        match peer.write(&chunk[sent % chunk.len()..]) {
-            Ok(n) => sent += n,
-            Err(err) if matches!(err.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => break,
-            Err(err) => panic!("Lever closed a peer that read nothing, after {sent} bytes: {err}"),
-        }
-        assert!(
-            sent < 64 * 1024 * 1024,
-            "Lever went on reading a peer that read nothing"
-        );
-    }
+    let sent = send_until_stalled(&mut peer, &request);
 
     // Lever still answers the next peer.
     let mut next = handshake(&lever.person);
@@ -706,9 +714,7 @@ fn each_peer_that_goes_is_logged_once() {
     // A peer Lever has stopped reading, because replies wait for it, closes.
     {
         let mut held = handshake(&lever.person);
-        held.set_write_timeout(Some(Duration::from_millis(500))).unwrap();
-        let chunk: Vec<u8> = request.iter().copied().cycle().take(request.len() * 2048).collect();
-        while held.write(&chunk).is_ok() {}
+        send_until_stalled(&mut held, &request);
     }
     wait_for_departures(&lever, 1);
 
