@@ -65,13 +65,13 @@ NONFREE = REPOSITORY + "/nonfree"
 # What the desktop is built from: each Cargo project, and the part of the
 # target directory it builds in. The three apps share theirs.
 PROJECTS = [("compositor", "compositor"), ("apps/shell", ""), ("apps/files", ""), ("apps/studio-settings", ""),
-            ("base/helpers", "helpers")]
+            ("base/helpers", "helpers"), ("lever", "lever")]
 # The programs the image holds, and the project each comes from. The probe is
 # Fulcrum's test client. The helpers are the desktop's four helpers in one
 # program; see helpers/README.md.
 PROGRAMS = {"crowbar-compositor": "compositor", "crowbar-probe": "compositor",
             "crowbaros-shell": "apps/shell", "crowbaros-files": "apps/files", "crowbaros-studio-settings": "apps/studio-settings",
-            "crowbar-helpers": "base/helpers"}
+            "crowbar-helpers": "base/helpers", "crowbar-lever": "lever"}
 
 
 def run(*args, **kwargs):
@@ -846,13 +846,169 @@ def compositor_restarted(out):
 # starts a service that exits again a second later, so one that cannot start
 # shows as running for a moment, over and over.
 DESKTOP_SERVICES = ("seatd", "crowbar-compositor", "crowbar-shell", "crowbar-launcher",
-                    "crowbar-unlock")
+                    "crowbar-unlock", "crowbar-lever")
 # One digit: the guest's own pattern for it, in CHECKS, counts on that.
 STAYED_UP = 3
 # The shell's service starts `crowbar-shell-connect`, which waits for the
 # compositor's sockets, for as long as 20 seconds each, and then becomes this
 # program. Until it has, the service is up and the shell is not.
 SHELL_PROGRAM = "/usr/local/bin/crowbaros-shell"
+# Lever, as the image holds it and its service, desktop/lever-run, runs it.
+LEVER_PROGRAM = "/usr/local/bin/crowbar-lever"
+LEVER_SURFACE_SOCKET = "/run/crowbar-lever/surface"
+LEVER_PERSON_SOCKET = f"/run/user/{PERSON_UID}/crowbar-lever/person"
+LEVER_STATE = ".local/state/crowbaros/lever"
+# Starting idle memory limit for Lever, in MiB (issue #371 / #373).
+LEVER_MEMORY_MIB = 50
+# `{"version":1}` and `{"op":"status"}` as frames, in hexadecimal: 4-byte
+# big-endian length prefix followed by UTF-8 JSON (lever/README.md).
+VERSION_FRAME = "0000000d7b2276657273696f6e223a317d"
+STATUS_FRAME = "0000000f7b226f70223a22737461747573227d"
+PROBE_TIMEOUT = 3
+# In the guest, `probe SOCKET ACCOUNT` connects as that account (or
+# `ACCOUNT:GROUP`), states version 1, and if accepted asks `status`. Prints
+# `ok <version_hex> <status_json>`, `refused` when closed with nothing sent,
+# or `error: <reason>`.
+LEVER_PROBE = (
+    "probe() { chpst -u \"$2\" python3 -c '\n"
+    "import socket, struct, sys\n"
+    "s = socket.socket(socket.AF_UNIX)\n"
+    f"s.settimeout({PROBE_TIMEOUT})\n"
+    "def recv_exact(n):\n"
+    "    buf = b\"\"\n"
+    "    while len(buf) < n and (more := s.recv(n - len(buf))):\n"
+    "        buf += more\n"
+    "    return buf\n"
+    "try:\n"
+    "    s.connect(sys.argv[1])\n"
+    "    vframe = bytes.fromhex(sys.argv[2])\n"
+    "    s.sendall(vframe)\n"
+    "    vreply = recv_exact(len(vframe))\n"
+    "    if not vreply:\n"
+    "        print(\"refused\")\n"
+    "        sys.exit(0)\n"
+    "    s.sendall(bytes.fromhex(sys.argv[3]))\n"
+    "    hdr = recv_exact(4)\n"
+    "    if len(hdr) < 4:\n"
+    "        print(\"short\")\n"
+    "        sys.exit(0)\n"
+    "    (length,) = struct.unpack(\">I\", hdr)\n"
+    "    body = recv_exact(length)\n"
+    "    print(\"ok\", vreply.hex(), body.decode())\n"
+    "except (ConnectionResetError, BrokenPipeError):\n"
+    "    print(\"refused\")\n"
+    "except OSError as error:\n"
+    "    print(\"error:\", error.strerror or error)\n"
+    f"' \"$1\" {VERSION_FRAME} {STATUS_FRAME} 2>&1; }}; "
+)
+# In the guest, the process Lever's service runs, or nothing.
+LEVER_PID = ("pid() { sv status /var/service/crowbar-lever | "
+             "sed -n 's|^run: [^ ]* (pid \\([0-9]*\\)).*|\\1|p'; }; ")
+# In the guest, the person's account name and home.
+PERSON_IN_GUEST = (f"u=$(getent passwd {PERSON_UID} | cut -d: -f1); "
+                   f"h=$(getent passwd {PERSON_UID} | cut -d: -f6); ")
+
+
+def wait_in_guest(condition, seconds=30):
+    """In the guest: tries `condition`, a shell command list, five times a
+    second until it holds or `seconds` have passed."""
+    return (f"t=$(($(date +%s) + {seconds})); until {condition}; do "
+            "[ \"$(date +%s)\" -ge \"$t\" ] && break; sleep 0.2; done; ")
+
+
+def labelled(out):
+    """A check's output by the word each line starts with: every `label rest`
+    line, as `{label: [rest, ...]}`."""
+    lines = {}
+    for line in out.splitlines():
+        label, _, rest = line.partition(" ")
+        lines.setdefault(label, []).append(rest)
+    return lines
+
+
+def only(lines, label):
+    """What the one line with this label says, or None when there is no such
+    line or more than one."""
+    return lines[label][0] if len(lines.get(label, [])) == 1 else None
+
+
+def lever_status_ok(answer):
+    """Whether `answer` from `LEVER_PROBE` shows version 1 echoed and a
+    `status` reply with Lever's version and no harness started."""
+    if not answer or not answer.startswith(f"ok {VERSION_FRAME} "):
+        return False
+    try:
+        status = json.loads(answer.split(" ", 2)[2])
+    except ValueError:
+        return False
+    return (isinstance(status, dict)
+            and status.get("reply") == "status"
+            and isinstance(status.get("version"), str) and bool(status["version"])
+            and status.get("harness_started") is False
+            and status.get("harnesses") == [])
+
+
+def lever_answers_surface(out):
+    """Whether Lever answers version 1 and `status` to the shell's account on
+    its surface socket, refuses root, the person, and another account with the
+    shell's group, keeps others out of the directory, and owns the directory
+    and socket with the shell's group alone."""
+    lines = labelled(out)
+    shell = (only(lines, "shell-account") or "").split()
+    if len(shell) != 2:
+        return False
+    return lever_status_ok(only(lines, "shell")) and all(only(lines, label) == value for label, value in (
+        ("root", "refused"), ("person", "refused"), ("group", "refused"),
+        ("other", "error: Permission denied"),
+        ("directory", f"{PERSON_UID} {shell[1]} 2750"), ("socket", f"{PERSON_UID} {shell[1]} 660")))
+
+
+def lever_answers_person(out):
+    """Whether Lever answers version 1 and `status` to the person's account on
+    its person socket, refuses root by SO_PEERCRED, keeps the shell out of the
+    directory, and keeps the directory and socket private to the person."""
+    lines = labelled(out)
+    return lever_status_ok(only(lines, "person")) and all(only(lines, label) == value for label, value in (
+        ("root", "refused"), ("shell", "error: Permission denied"),
+        ("directory", f"{PERSON_UID} 700"), ("socket", f"{PERSON_UID} 600")))
+
+
+def lever_runs_as_the_person(out):
+    """Whether Lever's service stays up running `crowbar-lever` as the person
+    with their groups, in the launcher's app environment, starting in their
+    home, with its state directory (`700`) and files (`600`) theirs alone."""
+    lines = labelled(out)
+    up = re.match(r"run: /var/service/crowbar-lever: \(pid \d+\) (\d+)s", only(lines, "service") or "")
+    process, person = ((only(lines, label) or "").split() for label in ("process", "person"))
+    home = only(lines, "home")
+    env = dict(line.split("=", 1) for line in lines.get("env", []) if "=" in line)
+    state = [line.split(" ", 2) for line in lines.get("state", [])]
+    if not up or len(process) < 3 or not home or not state or any(len(entry) != 3 for entry in state):
+        return False
+    return int(up[1]) >= STAYED_UP \
+        and process[:2] == person[:2] and process[0] == str(PERSON_UID) \
+        and set(process[2:]) == set(person[2:]) \
+        and only(lines, "program") == LEVER_PROGRAM and only(lines, "cwd") == home \
+        and env.get("HOME") == home and env.get("XDG_RUNTIME_DIR") == f"/run/user/{PERSON_UID}" \
+        and env.get("WAYLAND_DISPLAY") == "wayland-0" and env.get("CROWBAR_SESSION") == "crowbaros" \
+        and bool(env.get("PATH")) and bool(env.get("LANG")) \
+        and state[0] == ["700", str(PERSON_UID), f"{home}/{LEVER_STATE}"] \
+        and all(entry[:2] == ["600", str(PERSON_UID)] for entry in state[1:]) \
+        and {"lever.log", "lever.sqlite"} <= {entry[2].rsplit("/", 1)[1] for entry in state[1:]}
+
+
+def lever_restarted(out):
+    """Whether runit starts Lever again after a kill, the new Lever answers the
+    shell's account, and `lever.log` records the restart."""
+    lines = labelled(out)
+    before, after = only(lines, "before"), only(lines, "after")
+    return bool(before) and bool(after) and before != after \
+        and lever_status_ok(only(lines, "shell")) and only(lines, "logged") == "1"
+
+
+def lever_is_small(out):
+    """Whether the idle Lever holds less than `LEVER_MEMORY_MIB` MiB of RSS."""
+    return out.strip().isdigit() and 0 < int(out) < LEVER_MEMORY_MIB * 1024
 
 
 def desktop_services_stay_up(out):
@@ -972,6 +1128,58 @@ CHECKS = [
     ("the compositor answers the unlock helper's lock",
      "/usr/local/bin/crowbar-unlock lock; echo \"exit $?\"",
      lambda out: out.strip() == "exit 0"),
+    # Lever (ADR 0036) starts at boot, before anyone unlocks. Waits for its
+    # answer to the shell's account on the surface socket, for at most 30s.
+    # Each peer connects as itself so root cannot mask mode errors, and
+    # crowbar-compositor:crowbar-shell enters the directory by group to test
+    # SO_PEERCRED refusal.
+    ("Lever answers the shell's account on its surface socket, and no other",
+     LEVER_PROBE + PERSON_IN_GUEST
+     + wait_in_guest(f"s=$(probe {LEVER_SURFACE_SOCKET} crowbar-shell); "
+                     f"case \"$s\" in 'ok {VERSION_FRAME} '*) true;; *) false;; esac")
+     + f"echo \"shell $s\"; echo \"root $(probe {LEVER_SURFACE_SOCKET} root)\"; "
+     f"echo \"person $(probe {LEVER_SURFACE_SOCKET} \"$u\")\"; "
+     f"echo \"group $(probe {LEVER_SURFACE_SOCKET} crowbar-compositor:crowbar-shell)\"; "
+     f"echo \"other $(probe {LEVER_SURFACE_SOCKET} crowbar-compositor)\"; "
+     f"stat -c 'directory %u %g %a' {LEVER_SURFACE_SOCKET.rsplit('/', 1)[0]}; "
+     f"stat -c 'socket %u %g %a' {LEVER_SURFACE_SOCKET}; "
+     "echo \"shell-account $(id -u crowbar-shell) $(id -g crowbar-shell)\"",
+     lambda out: lever_answers_surface(out)),
+    ("Lever answers the person's account on its person socket, and no other",
+     LEVER_PROBE + PERSON_IN_GUEST
+     + f"echo \"person $(probe {LEVER_PERSON_SOCKET} \"$u\")\"; "
+     f"echo \"root $(probe {LEVER_PERSON_SOCKET} root)\"; "
+     f"echo \"shell $(probe {LEVER_PERSON_SOCKET} crowbar-shell)\"; "
+     f"stat -c 'directory %u %a' {LEVER_PERSON_SOCKET.rsplit('/', 1)[0]}; "
+     f"stat -c 'socket %u %a' {LEVER_PERSON_SOCKET}",
+     lambda out: lever_answers_person(out)),
+    # Waits until the service has run for STAYED_UP seconds, for at most 30s.
+    ("Lever runs as the person, in an app's environment, with its state theirs alone",
+     LEVER_PID + PERSON_IN_GUEST
+     + wait_in_guest("o=$(sv status /var/service/crowbar-lever); echo \"$o\" | "
+                     f"grep -Eq '^run: [^ ]+ \\(pid [0-9]+\\) ([{STAYED_UP}-9]|[0-9]{{2,}})s'")
+     + "p=$(pid); echo \"service $o\"; "
+     "awk '/^Uid:/{u=$2} /^Gid:/{g=$2} /^Groups:/{$1=\"\"; gr=$0} END{print \"process\", u, g, gr}' \"/proc/$p/status\"; "
+     "echo \"person $(id -u \"$u\") $(id -g \"$u\") $(id -G \"$u\")\"; "
+     "echo \"program $(readlink \"/proc/$p/exe\")\"; "
+     "echo \"cwd $(readlink \"/proc/$p/cwd\")\"; "
+     "echo \"home $h\"; "
+     "tr '\\0' '\\n' < \"/proc/$p/environ\" | sed 's/^/env /'; "
+     f"stat -c 'state %a %u %n' \"$h/{LEVER_STATE}\" \"$h/{LEVER_STATE}\"/*",
+     lambda out: lever_runs_as_the_person(out)),
+    ("Lever's service starts it again after a kill, and its log records the restart",
+     LEVER_PROBE + LEVER_PID + PERSON_IN_GUEST
+     + "b=$(pid); kill -KILL \"$b\"; s=; "
+     + wait_in_guest(f"a=$(pid); [ -n \"$a\" ] && [ \"$a\" != \"$b\" ] "
+                     f"&& s=$(probe {LEVER_SURFACE_SOCKET} crowbar-shell) "
+                     f"&& case \"$s\" in 'ok {VERSION_FRAME} '*) true;; *) false;; esac")
+     + "echo \"before $b\"; echo \"after $a\"; echo \"shell $s\"; "
+     "echo \"logged $(grep -c \"restart: the Lever before this one, process $b, ended without stopping\" "
+     f"\"$h/{LEVER_STATE}/lever.log\")\"",
+     lambda out: lever_restarted(out)),
+    ("the idle Lever holds less than 50 MiB of memory",
+     LEVER_PID + "awk '/^VmRSS:/ {print $2}' \"/proc/$(pid)/status\"",
+     lambda out: lever_is_small(out)),
     # ADR 0036 retired the Pi Durable Harness and Node.js: fail if the image
     # still carries any Harness files, Node.js, or the `crowbar-agent` service.
     ("the image holds no Harness, no Node.js, and no crowbar-agent service",

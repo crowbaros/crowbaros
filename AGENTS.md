@@ -34,7 +34,7 @@ sides hold.
 - **Squash merge.** The pull request title becomes the one commit on `main`, so
   write it as a conventional commit that states the outcome in plain language:
   `fix(base): a build that stopped partway no longer leaves a root the next build trusts`.
-  The scope is the area: `base`, `compositor`, `shell`, `agent`, `apps`,
+  The scope is the area: `base`, `compositor`, `shell`, `agent`, `lever`, `apps`,
   `studio`, `lab`, `design`, `vision`, `adr`, `ci`.
 - Fill in the [pull request template](.github/pull_request_template.md). Under
   Verification, say what you ran and what you saw, and name what you could not
@@ -56,9 +56,12 @@ sides hold.
   a change needs, and `CI passed` passes when they all do. `CI passed` is the
   one check `main`'s ruleset requires. A change to docs alone runs only those
   two. Run the jobs' commands before you push code.
+- CI runs a `Lever` job for any change to `lever/`: `cargo fmt --check`,
+  `cargo clippy --locked --all-targets -- -D warnings`, and
+  `cargo test --locked` in `lever/`. `CI passed` needs it.
 - CI boots Base. Its `Base boots` job runs `base/void_base.py check` on
   GitHub's runner, with KVM, for any change to `base/`, `compositor/`,
-  `apps/shell/`, `apps/files/`, or `apps/studio-settings/`. Its logs are the run's
+  `lever/`, `apps/shell/`, `apps/files/`, or `apps/studio-settings/`. Its logs are the run's
   `base-boot-logs` artifact. Run the check yourself when you want to see a boot
   before you push; you need not report it. GitHub does not support a VM inside
   its runners, so if the job stops working, run the check yourself, show its
@@ -70,7 +73,7 @@ sides hold.
 | Change touches | Run | Show |
 | --- | --- | --- |
 | The compositor check or guest driver in `lab/void/` | `lab/void/compositor_check.py` | The evidence log it writes |
-| The desktop: how `base/` builds or runs the compositor, the shell, or the apps, or the desktop check or guest driver in `lab/void/` | `lab/void/desktop_check.py` | The run's `desktop.log` and `results.json` |
+| The desktop: how `base/` builds or runs the compositor, the shell, Lever, or the apps, or `lever/`, or the desktop check or guest driver in `lab/void/` | `lab/void/desktop_check.py` | The run's `desktop.log` and `results.json` |
 | How the compositor serves clients: [`compositor/`](compositor/README.md) | `lab/void/compositor_check.py` | The evidence log it writes |
 | `apps/` | The app's Void build and run steps in its README | Before and after captures; a short recording for motion |
 
@@ -82,7 +85,7 @@ sides hold.
 - When `main` moves while your check runs, rebase, but run the check again only
   if what landed touches a path that check covers. The compositor check covers
   `base/`, `lab/void/`, and `compositor/`. The desktop check covers `base/`,
-  `lab/void/`, `compositor/`, and `apps/`. To see what landed, give
+  `lab/void/`, `compositor/`, `lever/`, and `apps/`. To see what landed, give
   the `main` commit your branch sat on when you ran the check:
   `git diff --stat <that commit>..origin/main -- <the paths>`. If it prints
   nothing, the evidence stands. Say in the pull request which `main` commit it

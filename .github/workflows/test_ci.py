@@ -42,6 +42,7 @@ class Changes(unittest.TestCase):
         self.first = self.commit({'README.md': 'CrowbarOS\n', 'docs/VISION.md': 'The vision\n',
                                   'base/void_base.py': 'print("Base")\n' * 20,
                                   'compositor/src/main.rs': 'fn main() {}\n' * 20,
+                                  'lever/src/main.rs': 'fn main() {}\n' * 20,
                                   'lab/void/guest.py': 'print("the guest")\n' * 20})
 
     def git(self, *args):
@@ -74,48 +75,57 @@ class Changes(unittest.TestCase):
         return dict(line.split('=', 1) for line in self.output.read_text().splitlines())
 
     def test_docs_alone_need_no_job(self):
-        head = self.commit({'docs/VISION.md': 'The vision, amended\n', 'README.md': 'CrowbarOS, again\n'})
+        head = self.commit({'docs/VISION.md': 'The vision, amended\n', 'README.md': 'CrowbarOS, again\n',
+                            'lever/README.md': 'Lever docs\n'})
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'false', 'compositor': 'false', 'boot': 'false'})
+                         {'code': 'false', 'compositor': 'false', 'lever': 'false', 'boot': 'false'})
 
     def test_a_lab_script_needs_the_code_jobs_alone(self):
         head = self.commit({'lab/void/guest.py': 'print("another guest")\n'})
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'true', 'compositor': 'false', 'boot': 'false'})
+                         {'code': 'true', 'compositor': 'false', 'lever': 'false', 'boot': 'false'})
 
     def test_the_compositor_needs_its_job_and_the_boot(self):
         head = self.commit({'compositor/src/main.rs': 'fn main() { loop {} }\n'})
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'true', 'lever': 'false', 'boot': 'true'})
+
+    def test_lever_needs_its_job_and_the_boot(self):
+        head = self.commit({'lever/src/main.rs': 'fn main() { loop {} }\n'})
+        self.assertEqual(self.needs(base=self.first, head=head),
+                         {'code': 'true', 'compositor': 'false', 'lever': 'true', 'boot': 'true'})
 
     def test_files_app_needs_the_code_jobs_and_the_boot(self):
         head = self.commit({'apps/files/src/main.rs': 'fn main() {}\n'})
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'true', 'compositor': 'false', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'false', 'lever': 'false', 'boot': 'true'})
 
     def test_base_needs_the_code_jobs_and_the_boot(self):
         head = self.commit({'base/host/image.sh': 'set -eu\n'})
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'true', 'compositor': 'false', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'false', 'lever': 'false', 'boot': 'true'})
 
-    def test_ci_has_no_harness_job_or_agent_output(self):
+    def test_ci_has_lever_job_and_no_harness_job_or_agent_output(self):
         text = WORKFLOW.read_text()
         self.assertNotIn('name: Harness', text)
         self.assertNotIn('outputs.agent', text)
         self.assertNotIn('base/void_base.py agent', text)
-        self.assertIn('needs: [changes, check, shell, helpers, compositor, boot]', text)
+        self.assertIn('name: Lever', text)
+        self.assertIn("if: needs.changes.outputs.lever == 'true'", text)
+        self.assertIn('working-directory: lever', text)
+        self.assertIn('needs: [changes, check, shell, helpers, lever, compositor, boot]', text)
 
     def test_code_moved_into_docs_is_still_a_change_to_the_code(self):
         # Git names a moved file by where it went. Read that way, Base losing
         # a file to docs/ was a change to docs alone, and no job ran.
         head = self.commit(moves=[('base/void_base.py', 'docs/void_base.py')])
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'true', 'compositor': 'false', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'false', 'lever': 'false', 'boot': 'true'})
 
     def test_a_push_that_moves_code_into_docs_is_read_the_same(self):
         after = self.commit(moves=[('compositor/src/main.rs', 'compositor/docs/main.rs')])
         self.assertEqual(self.needs(before=self.first, after=after),
-                         {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'true', 'lever': 'false', 'boot': 'true'})
 
     def test_a_file_git_would_name_in_quotes_is_read_by_its_path(self):
         # Git puts a name with a letter outside ASCII, a quote, or a
@@ -126,17 +136,17 @@ class Changes(unittest.TestCase):
                 before = self.git('rev-parse', 'HEAD')
                 added = self.commit({f'compositor/src/{name}': 'fn main() {}\n' * 20})
                 self.assertEqual(self.needs(base=before, head=added),
-                                 {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                                 {'code': 'true', 'compositor': 'true', 'lever': 'false', 'boot': 'true'})
                 moved = self.commit(moves=[(f'compositor/src/{name}', f'docs/{name}.md')])
                 self.assertEqual(self.needs(before=added, after=moved),
-                                 {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                                 {'code': 'true', 'compositor': 'true', 'lever': 'false', 'boot': 'true'})
 
     def test_a_file_whose_name_is_not_text_is_read_by_its_path(self):
         # A name that ends partway through a UTF-8 character. Read as text,
         # the byte could take the NUL after it, and the file with it.
         head = self.commit({os.fsdecode(b'base/half-a-letter-\xc2'): 'print("Base")\n'})
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'true', 'compositor': 'false', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'false', 'lever': 'false', 'boot': 'true'})
         self.assertIn('code: base/half-a-letter-?\n', self.log)
 
     def test_no_files_name_writes_what_the_runner_would_read_as_a_command(self):
@@ -148,7 +158,7 @@ class Changes(unittest.TestCase):
                             'compositor/src/b\n##[set-output name=code;]false': 'fn main() {}\n',
                             '::add-mask::false': 'a file at the top, named as a command\n'})
         self.assertEqual(self.needs(base=self.first, head=head),
-                         {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'true', 'lever': 'false', 'boot': 'true'})
         self.assertIn('code: compositor/src/a???add-mask??true\n', self.log)
         self.assertIn('code: ??add-mask??false\n', self.log)
         self.assertNotIn('::', self.log)
@@ -161,12 +171,12 @@ class Changes(unittest.TestCase):
 
     def test_a_push_with_no_commit_before_it_runs_every_job(self):
         self.assertEqual(self.needs(before='0' * 40, after=self.first),
-                         {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'true', 'lever': 'true', 'boot': 'true'})
 
     def test_the_weeks_run_runs_every_job(self):
         head = self.commit({'docs/VISION.md': 'The vision, amended\n'})
         self.assertEqual(self.needs(event='schedule', after=head),
-                         {'code': 'true', 'compositor': 'true', 'boot': 'true'})
+                         {'code': 'true', 'compositor': 'true', 'lever': 'true', 'boot': 'true'})
 
 
 # The old time the step gives a file, and a stand-in for prepare-gpui.py.

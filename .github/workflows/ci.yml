@@ -33,6 +33,7 @@ jobs:
     outputs:
       code: ${{ steps.classify.outputs.code }}
       compositor: ${{ steps.classify.outputs.compositor }}
+      lever: ${{ steps.classify.outputs.lever }}
       boot: ${{ steps.classify.outputs.boot }}
     steps:
       - name: Checkout
@@ -43,7 +44,7 @@ jobs:
 
       # Docs are any Markdown file, docs/, compositor/docs/, .impeccable/, and
       # LICENSE. Everything else is code. The boot check covers what goes into
-      # Base's image: base/, the compositor, the shell, Files, and Studio
+      # Base's image: base/, the compositor, Lever, the shell, Files, and Studio
       # Settings.
       # A moved file counts at both its paths (`--no-renames`): Git names a
       # move by where the file went, and code moved into docs/ is still a
@@ -71,7 +72,7 @@ jobs:
           else
             git ls-files -z > "$files"
           fi
-          code=false compositor=false boot=false
+          code=false compositor=false lever=false boot=false
           while IFS= read -r -d '' f; do
             case "$f" in
               *.md|docs/*|compositor/docs/*|.impeccable/*|LICENSE) continue ;;
@@ -86,10 +87,13 @@ jobs:
               compositor/*|.github/workflows/compositor.yml) compositor=true ;;
             esac
             case "$f" in
-              base/*|compositor/*|apps/shell/*|apps/files/*|apps/studio-settings/*|.github/workflows/ci.yml) boot=true ;;
+              lever/*|.github/workflows/ci.yml) lever=true ;;
+            esac
+            case "$f" in
+              base/*|compositor/*|lever/*|apps/shell/*|apps/files/*|apps/studio-settings/*|.github/workflows/ci.yml) boot=true ;;
             esac
           done < "$files"
-          printf 'code=%s\ncompositor=%s\nboot=%s\n' "$code" "$compositor" "$boot" | tee -a "$GITHUB_OUTPUT"
+          printf 'code=%s\ncompositor=%s\nlever=%s\nboot=%s\n' "$code" "$compositor" "$lever" "$boot" | tee -a "$GITHUB_OUTPUT"
 
   check:
     name: Lab scripts
@@ -164,6 +168,33 @@ jobs:
     defaults:
       run:
         working-directory: base/helpers
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+
+      - name: Test
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+
+  # Lever, the Rust service that drives the person's harnesses (ADR 0036).
+  lever:
+    name: Lever
+    needs: changes
+    if: needs.changes.outputs.lever == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: lever
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -305,9 +336,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             .lab/base/target
-          key: base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/files/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock') }}-${{ github.sha }}
+          key: base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/files/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock', 'lever/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/files/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock') }}-
+            base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/files/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock', 'lever/Cargo.lock') }}-
             base-build-
 
       # Cargo rebuilds a crate whose files are newer than its last build, and
@@ -429,7 +460,7 @@ jobs:
   gate:
     name: CI passed
     if: always()
-    needs: [changes, check, shell, helpers, compositor, boot]
+    needs: [changes, check, shell, helpers, lever, compositor, boot]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
