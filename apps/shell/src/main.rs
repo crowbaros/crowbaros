@@ -2520,6 +2520,7 @@ struct AgentSurface {
     model: Entity<Model>,
     input: Entity<input::TextInput>,
     scroll: ScrollHandle,
+    scroll_to_bottom: bool,
     submitted_draft: Option<String>,
     _input_sub: Subscription,
 }
@@ -2551,14 +2552,14 @@ impl AgentSurface {
         if trimmed.is_empty() {
             return;
         }
-        let (tx, conversation) = self.model.update(cx, |m, _| {
+        let (tx, thread) = self.model.update(cx, |m, _| {
             if !m.agent_state.can_send() {
                 return (None, None);
             }
             if let Some(tx) = m.agent_tx.clone() {
                 m.agent_state.sending = true;
                 m.agent_state.error = None;
-                (Some(tx), m.agent_state.conversation.clone())
+                (Some(tx), m.agent_state.thread.clone())
             } else {
                 (None, None)
             }
@@ -2567,26 +2568,34 @@ impl AgentSurface {
             let message = trimmed.to_string();
             self.submitted_draft = Some(query);
             sync_agent_view(&self.model, cx);
-            tx.send_message(conversation, message);
+            tx.send_message(thread, message);
             cx.notify();
         }
     }
     fn stop_turn(&mut self, cx: &mut Context<Self>) {
-        let (tx, conversation, turn) = {
+        let (tx, thread, turn) = {
             let m = self.model.read(cx);
             (
                 m.agent_tx.clone(),
-                m.agent_state.conversation.clone(),
+                m.agent_state.thread.clone(),
                 m.agent_state.current_turn(),
             )
         };
-        if let (Some(tx), Some(conversation)) = (tx, conversation) {
-            tx.stop_turn(conversation, turn);
+        if let (Some(tx), Some(thread)) = (tx, thread) {
+            tx.stop_turn(thread, turn);
         }
     }
 }
 impl Render for AgentSurface {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.scroll_to_bottom {
+            self.scroll_to_bottom = false;
+            let scroll = self.scroll.clone();
+            window.on_next_frame(move |window, _| {
+                scroll.scroll_to_bottom();
+                window.refresh();
+            });
+        }
         let m = self.model.read(cx);
         let p = m.palette();
         let mark = ImageSource::Resource(Resource::Embedded(
@@ -2594,22 +2603,25 @@ impl Render for AgentSurface {
         ));
         let state = m.agent_state.clone();
         let working = state.working();
+        let show_stop = state.connected && working;
         let draft = self.input.read(cx).query();
         let can_send = state.can_send() && !draft.trim().is_empty();
         self.input.update(cx, |input, _| input.palette = p);
 
         let header_sub = if let Some(model) = &state.model {
-            model.name.clone()
+            model.clone()
         } else if !state.configured || !state.connected {
             "Offline".into()
         } else if state.no_harness {
-            "Connected · No harness".into()
+            "No harness".into()
+        } else if let Some(harness) = state.harnesses.first() {
+            harness.clone()
         } else {
-            "No Model".into()
+            "Ready".into()
         };
 
         let mut body = div()
-            .id("agent-conversation")
+            .id("agent-thread")
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
@@ -2691,7 +2703,98 @@ impl Render for AgentSurface {
                             .border_color(rgb(p.line))
                             .text_size(px(10.5))
                             .text_color(rgb(p.muted))
-                            .child("No desktop context available"),
+                            .child("No desktop context"),
+                    );
+                }
+                // Acts taken during this turn.
+                for act in &turn.acts {
+                    let display = agent::act_display_status(&turn.state, act);
+                    let act_border = match display.tone {
+                        agent::ActTone::Active => p.focus,
+                        agent::ActTone::Failed | agent::ActTone::Muted => p.line,
+                    };
+                    let act_state_color = match display.tone {
+                        agent::ActTone::Active => p.focus,
+                        agent::ActTone::Failed => p.text,
+                        agent::ActTone::Muted => p.muted,
+                    };
+                    let act_state_label = display.label;
+                    let mut act_card = div()
+                        .w_full()
+                        .px(px(10.))
+                        .py(px(7.))
+                        .rounded(px(6.))
+                        .bg(rgb(p.surface))
+                        .border_1()
+                        .border_color(rgb(act_border))
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(10.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(rgb(p.muted))
+                                        .child(act.kind_label()),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .font_family("IBM Plex Mono")
+                                        .text_size(px(11.))
+                                        .text_color(rgb(p.text))
+                                        .text_ellipsis()
+                                        .child(act.title.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(10.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(rgb(act_state_color))
+                                        .child(act_state_label),
+                                ),
+                        );
+                    if let Some(detail) = &act.detail {
+                        let rendered = agent::format_act_detail(detail);
+                        if !rendered.is_empty() {
+                            act_card = act_card.child(
+                                div()
+                                    .w_full()
+                                    .pt(px(2.))
+                                    .border_t_1()
+                                    .border_color(rgb(p.line))
+                                    .font_family("IBM Plex Mono")
+                                    .text_size(px(10.5))
+                                    .line_height(px(15.))
+                                    .text_color(rgb(p.muted))
+                                    .child(rendered),
+                            );
+                        }
+                    }
+                    turn_col = turn_col.child(act_card);
+                }
+                // Notes recorded on this turn.
+                for note in &turn.notes {
+                    turn_col = turn_col.child(
+                        div()
+                            .w_full()
+                            .pl(px(10.))
+                            .py(px(2.))
+                            .border_l_2()
+                            .border_color(rgb(p.line))
+                            .text_size(px(11.))
+                            .line_height(px(16.))
+                            .text_color(rgb(p.muted))
+                            .child(note.text.clone()),
                     );
                 }
                 // Agent's answer and turn status.
@@ -2699,7 +2802,8 @@ impl Render for AgentSurface {
                     agent::TurnState::Working => Some("Working…"),
                     agent::TurnState::Done => None,
                     agent::TurnState::Stopped => Some("Stopped"),
-                    agent::TurnState::Failed(_) => Some("Could not answer"),
+                    agent::TurnState::Interrupted => Some("Interrupted"),
+                    agent::TurnState::Failed(_) => Some("Failed"),
                 };
                 let mut answer_box = div().w_full().flex().flex_col().gap(px(4.)).child(
                     div()
@@ -2730,21 +2834,26 @@ impl Render for AgentSurface {
                             .text_color(rgb(p.text))
                             .child(turn.answer.clone()),
                     );
-                } else if matches!(turn.state, agent::TurnState::Working) {
+                } else if matches!(turn.state, agent::TurnState::Working) && turn.acts.is_empty() {
                     answer_box = answer_box.child(
                         div()
                             .text_size(px(12.))
                             .text_color(rgb(p.muted))
                             .child("Thinking…"),
                     );
-                }
-                if let Some(retry) = &turn.retry {
+                } else if matches!(turn.state, agent::TurnState::Stopped) {
                     answer_box = answer_box.child(
                         div()
-                            .text_size(px(11.5))
-                            .line_height(px(16.))
+                            .text_size(px(12.))
                             .text_color(rgb(p.muted))
-                            .child(retry.clone()),
+                            .child("Turn stopped."),
+                    );
+                } else if matches!(turn.state, agent::TurnState::Interrupted) {
+                    answer_box = answer_box.child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(p.muted))
+                            .child("Turn interrupted."),
                     );
                 }
                 if let agent::TurnState::Failed(err) = &turn.state {
@@ -2791,12 +2900,6 @@ impl Render for AgentSurface {
                     ),
             );
         } else if state.no_harness {
-            let detail = match &state.lever_version {
-                Some(ver) => format!(
-                    "Reached Lever {ver}, but no harness is started to answer yet."
-                ),
-                None => "Reached the Agent, but no harness is started to answer yet.".into(),
-            };
             body = body.child(
                 div()
                     .pt(px(12.))
@@ -2807,20 +2910,17 @@ impl Render for AgentSurface {
                         div()
                             .text_size(px(14.))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Agent is reachable — no harness yet"),
+                            .child("No harness available"),
                     )
                     .child(
                         div()
                             .text_size(px(12.))
                             .line_height(px(18.))
                             .text_color(rgb(p.muted))
-                            .child(detail),
+                            .child("No harness is configured to answer right now."),
                     ),
             );
-        } else if state.model.is_none() {
-            let reason = state.missing_model.clone().unwrap_or_else(|| {
-                "Sign in to a Model from a terminal to talk with the Agent.".into()
-            });
+        } else if let Some(reason) = state.missing_model.clone() {
             body = body.child(
                 div()
                     .pt(px(12.))
@@ -2831,7 +2931,7 @@ impl Render for AgentSurface {
                         div()
                             .text_size(px(14.))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("No Model signed in"),
+                            .child("No Model available"),
                     )
                     .child(
                         div()
@@ -2839,19 +2939,6 @@ impl Render for AgentSurface {
                             .line_height(px(18.))
                             .text_color(rgb(p.muted))
                             .child(reason),
-                    )
-                    .child(
-                        div()
-                            .px(px(10.))
-                            .py(px(7.))
-                            .rounded(px(6.))
-                            .bg(rgb(p.surface))
-                            .border_1()
-                            .border_color(rgb(p.line))
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(11.5))
-                            .text_color(rgb(p.text))
-                            .child("crowbar-agent login"),
                     ),
             );
         } else {
@@ -2865,7 +2952,7 @@ impl Render for AgentSurface {
                         div()
                             .text_size(px(14.))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Start a conversation"),
+                            .child("Start a thread"),
                     )
                     .child(
                         div()
@@ -2950,12 +3037,8 @@ impl Render for AgentSurface {
                         Some("The Agent isn't running right now. Reconnecting automatically.".into())
                     } else if state.no_harness {
                         None
-                    } else if state.model.is_none() {
-                        Some(state.missing_model.clone().unwrap_or_else(|| {
-                            "No Model is signed in. Run `crowbar-agent login` in a terminal.".into()
-                        }))
                     } else {
-                        None
+                        state.missing_model.clone()
                     }
                 }),
                 |d, err| {
@@ -2997,7 +3080,7 @@ impl Render for AgentSurface {
                             .items_center()
                             .gap(px(8.))
                             .child(div().flex_1().min_w_0().child(self.input.clone()))
-                            .when(working, |row| {
+                            .when(show_stop, |row| {
                                 row.child(
                                     div()
                                         .id("stop-agent-turn")
@@ -3018,7 +3101,7 @@ impl Render for AgentSurface {
                                         .on_click(cx.listener(|this, _, _, cx| this.stop_turn(cx))),
                                 )
                             })
-                            .when(!working, |row| {
+                            .when(!show_stop, |row| {
                                 row.child(
                                     div()
                                         .id("send-agent-message")
@@ -3080,12 +3163,14 @@ fn show_agent_surface(model: &Entity<Model>, summon: &session::Summon, cx: &mut 
             let input = cx.new(|cx| input::TextInput::with_placeholder("Ask the Agent…", 16384, cx));
             w.focus(&input.focus_handle(cx));
             let scroll = ScrollHandle::new();
+            let scroll_to_bottom = !surface.read(cx).agent_state.turns.is_empty();
             cx.new(|cx| {
                 let input_sub = cx.observe(&input, |_, _, cx| cx.notify());
                 AgentSurface {
                     model: surface,
                     input,
                     scroll,
+                    scroll_to_bottom,
                     submitted_draft: None,
                     _input_sub: input_sub,
                 }
@@ -3740,16 +3825,32 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
             }
             session::Event::Agent(agent_event) => {
                 let is_sent = matches!(agent_event, agent::AgentEvent::Sent { .. });
-                let is_message = matches!(agent_event, agent::AgentEvent::Message { .. });
-                let is_no_model = matches!(
-                    &agent_event,
-                    agent::AgentEvent::Error { code, .. } if code == "no-model"
+                let should_scroll = matches!(
+                    agent_event,
+                    agent::AgentEvent::Message { .. }
+                        | agent::AgentEvent::Act { .. }
+                        | agent::AgentEvent::Note { .. }
+                        | agent::AgentEvent::Text { .. }
+                        | agent::AgentEvent::Done { .. }
+                        | agent::AgentEvent::Stopped { .. }
+                        | agent::AgentEvent::Failed { .. }
+                        | agent::AgentEvent::Interrupted { .. }
+                        | agent::AgentEvent::Resumed(_)
+                        | agent::AgentEvent::Connected { resumed: Some(_), .. }
+                );
+                let turn_ended = matches!(
+                    agent_event,
+                    agent::AgentEvent::Done { .. }
+                        | agent::AgentEvent::Stopped { .. }
+                        | agent::AgentEvent::Failed { .. }
+                        | agent::AgentEvent::Interrupted { .. }
                 );
                 let prev_mark = model.read(cx).agent_state.mark;
                 let (changed, needs_status_refresh) = model.update(cx, |m, _| {
                     let up = m.agent.is_some();
                     let changed = m.agent_state.apply(agent_event, up);
-                    let need_status = (is_sent && m.agent_state.model.is_none()) || is_no_model;
+                    let need_status =
+                        changed && (turn_ended || (is_sent && !m.agent_state.harness_started));
                     (changed, need_status)
                 });
                 if needs_status_refresh {
@@ -3767,6 +3868,11 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                     );
                 }
                 let overlay_changed = sync_mark_overlay(model, cx);
+                if mark_changed {
+                    if let Some((w, _)) = model.read(cx).mark_overlay {
+                        let _ = w.update(cx, |_, _, cx| cx.notify());
+                    }
+                }
                 if is_sent {
                     if let Some(w) = model.read(cx).agent {
                         let _ = w.update(cx, |view, _, cx| {
@@ -3776,13 +3882,15 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                                     view.input.update(cx, |input, cx| input.set_text(next, cx));
                                 }
                             }
+                            view.scroll_to_bottom = true;
                             view.scroll.scroll_to_bottom();
                             cx.notify();
                         });
                     }
-                } else if is_message {
+                } else if changed && should_scroll {
                     if let Some(w) = model.read(cx).agent {
                         let _ = w.update(cx, |view, _, cx| {
+                            view.scroll_to_bottom = true;
                             view.scroll.scroll_to_bottom();
                             cx.notify();
                         });

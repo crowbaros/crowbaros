@@ -30,6 +30,10 @@ class StubModelTests(unittest.TestCase):
                     "match": "hello",
                     "reply": "Hi from {model}!",
                 },
+                {
+                    "match": "make-fail",
+                    "error": {"status": 400, "message": "Stub model declined this turn"},
+                },
             ],
             "default_reply": "Default ({model}): {prompt}",
         }
@@ -128,6 +132,81 @@ class StubModelTests(unittest.TestCase):
         body = json.loads(raw)
         self.assertEqual(body["choices"][0]["finish_reason"], "stop")
         self.assertEqual(body["choices"][0]["message"]["content"], "Stub thread")
+
+    def test_error_rule_returns_http_error_json(self):
+        import urllib.error
+
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/v1/chat/completions",
+            data=json.dumps({
+                "model": "stub-1",
+                "stream": True,
+                "messages": [{"role": "user", "content": "please make-fail"}],
+                "tools": [{"type": "function", "function": {"name": "shell"}}],
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req)
+        with ctx.exception as err:
+            self.assertEqual(err.code, 400)
+            body = json.loads(err.read().decode("utf-8"))
+        self.assertEqual(body["error"]["message"], "Stub model declined this turn")
+
+    def test_forbid_scans_entire_request_including_system_and_earlier_messages(self):
+        log = Path(self.tmp.name) / "forbid.jsonl"
+        server = stub_model.start_server(
+            self.script,
+            log_path=log,
+            forbidden=["WINSECRET_ABC", "CLIPSECRET_XYZ"],
+        )
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+
+        def post(payload):
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/v1/chat/completions",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req) as resp:
+                return resp.status
+
+        # Clean request.
+        self.assertEqual(post({
+            "model": "stub-1",
+            "messages": [{"role": "user", "content": "say hello"}],
+        }), 200)
+        # Sentinel hidden in system prompt (not in latest user prompt).
+        self.assertEqual(post({
+            "model": "stub-1",
+            "messages": [
+                {"role": "system", "content": "leaked WINSECRET_ABC here"},
+                {"role": "user", "content": "say hello"},
+            ],
+        }), 200)
+        # Sentinel hidden in an earlier user message.
+        self.assertEqual(post({
+            "model": "stub-1",
+            "messages": [
+                {"role": "user", "content": "earlier CLIPSECRET_XYZ"},
+                {"role": "assistant", "content": "ok"},
+                {"role": "user", "content": "say hello"},
+            ],
+        }), 200)
+
+        entries = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual([e["forbidden_found"] for e in entries], [False, True, True])
+        self.assertEqual([e["forbidden_hit_count"] for e in entries], [0, 1, 1])
+        # The log itself never echoes the forbidden secrets.
+        raw_log = log.read_text()
+        self.assertNotIn("WINSECRET_ABC", raw_log)
+        self.assertNotIn("CLIPSECRET_XYZ", raw_log)
 
 
 if __name__ == "__main__":

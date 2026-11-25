@@ -38,6 +38,7 @@ crowbar-lever \
   --state <dir> \
   --surface-socket <path> --shell-uid <uid> \
   --person-socket <path> --person-uid <uid> \
+  [--fulcrum-socket <path>] \
   [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>]] \
   [--idle-timeout-ms <ms>]
 ```
@@ -47,6 +48,7 @@ On Base:
 - `--state` is `$HOME/.local/state/crowbaros/lever`
 - `--surface-socket` is `/run/crowbar-lever/surface`, for `crowbar-shell`'s UID
 - `--person-socket` is `/run/user/1003/crowbar-lever/person`, for the person's UID
+- `--fulcrum-socket` is `/run/crowbar-trusted/agent/compositor`, Fulcrum's agent socket for desktop context
 - `--harness` is `/usr/local/bin/opencode` with `--harness-arg acp` and
   `--harness-name OpenCode`
 
@@ -348,8 +350,9 @@ Reply:
 ```
 
 When a turn ended with `"state":"failed"`, the turn object also carries
-`"error":"..."`. When a thread has a saved Model, the reply also carries
-`"model":"..."`.
+`"error":"..."`. When a turn was sent from the drawer with desktop context from
+Fulcrum, it also carries `"context":{...}`. When a thread has a saved Model,
+the reply also carries `"model":"..."`.
 
 Errors: `no-thread`, `invalid-request`.
 
@@ -400,7 +403,11 @@ A request Lever cannot answer gets one of three outcomes:
 
 Pushed to every connection subscribed to `thread`:
 
-- **`message`** — a turn began with the person's message:
+- **`message`** — a turn began with the person's message (when sent from the
+  surface socket with Fulcrum reachable, also carries `"context"` with the
+  desktop context snapshot; never window contents or clipboard. When sent to
+  the harness, Lever wraps desktop context in a `<desktop-context>` metadata
+  fence marked as untrusted app metadata, not instructions):
 
   ```json
   {"event":"message","thread":"t-01a2b3c4d5e6","turn":1,"text":"List the files"}

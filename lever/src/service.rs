@@ -4,13 +4,14 @@
 
 use crate::acp::{AcpEvent, AcpHarness, HarnessConfig, ModelCatalog, TurnOutcome};
 use crate::channel::LEVER_VERSION;
+use crate::fulcrum;
 use crate::log::{Event, Log};
 use crate::store::{ActPatch, ActRecord, NoteRecord, Store, ThreadRecord, ThreadSummary, TurnRecord};
 use crate::sys;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::os::fd::RawFd;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Default time an idle harness stays running after the last working turn ends.
@@ -78,6 +79,7 @@ enum TurnDispatch {
 struct WorkingTurn {
     turn: u64,
     message: String,
+    context_prompt: Option<String>,
     cwd: String,
     existing_session_id: Option<String>,
     desired_model: Option<String>,
@@ -108,6 +110,7 @@ struct Ending {
 pub struct Service {
     store: Store,
     harness_config: Option<HarnessConfig>,
+    fulcrum_socket: Option<PathBuf>,
     harness: Option<AcpHarness>,
     model_catalog: Option<ModelCatalog>,
     /// True when `free_hosted_models` changed while the harness was busy, so
@@ -123,10 +126,16 @@ pub struct Service {
 }
 
 impl Service {
-    pub fn new(store: Store, harness_config: Option<HarnessConfig>, idle_timeout: Duration) -> Self {
+    pub fn new(
+        store: Store,
+        harness_config: Option<HarnessConfig>,
+        fulcrum_socket: Option<PathBuf>,
+        idle_timeout: Duration,
+    ) -> Self {
         Self {
             store,
             harness_config,
+            fulcrum_socket,
             harness: None,
             model_catalog: None,
             harness_env_stale: false,
@@ -233,7 +242,7 @@ impl Service {
         match op {
             "status" => self.handle_status(),
             "list" => self.handle_list(),
-            "send" => self.handle_send(value, log),
+            "send" => self.handle_send(is_person, value, log),
             "resume" => self.handle_resume(value),
             "stop" => self.handle_stop(value, log),
             "models" => self.handle_models(peer_id, value, log),
@@ -573,7 +582,7 @@ impl Service {
         }
     }
 
-    fn handle_send(&mut self, value: &Value, log: &mut Log) -> RequestOutcome {
+    fn handle_send(&mut self, is_person: bool, value: &Value, log: &mut Log) -> RequestOutcome {
         let Some(text) = value
             .get("text")
             .and_then(Value::as_str)
@@ -655,11 +664,28 @@ impl Service {
             (tid, cwd, None, requested_model.map(str::to_string), true)
         };
 
+        // Messages from the Agent's surface carry desktop context fetched from
+        // Fulcrum (active window title/app_id, windows by workspace, displays —
+        // never window contents or clipboard). With Fulcrum away, none is sent.
+        let desktop_context = if !is_person {
+            self.fulcrum_socket
+                .as_deref()
+                .and_then(|path| fulcrum::fetch_snapshot(path, fulcrum::SNAPSHOT_TIMEOUT))
+        } else {
+            None
+        };
+        let context_value = desktop_context.as_ref().and_then(|ctx| serde_json::to_value(ctx).ok());
+        let context_json = context_value.as_ref().map(Value::to_string);
+        let context_prompt = desktop_context.as_ref().map(fulcrum::format_desktop_context);
+
         // A new thread's requested Model is persisted only after the harness
         // accepts it (in `SessionReady` or `ModelSet`), so a rejected `--model`
         // does not stick on later turns.
         let thread = new_thread.then_some((title.as_str(), cwd.as_str(), Some(harness_name.as_str()), None));
-        let turn = match self.store.begin_turn(&thread_id, thread, text, now) {
+        let turn = match self
+            .store
+            .begin_turn(&thread_id, thread, text, context_json.as_deref(), now)
+        {
             Ok(turn) => turn,
             Err(err) => {
                 store_failed(log, &err);
@@ -667,14 +693,18 @@ impl Service {
             }
         };
 
+        let mut msg_event = json!({
+            "event": "message",
+            "thread": thread_id,
+            "turn": turn,
+            "text": text,
+        });
+        if let Some(ctx) = context_value {
+            msg_event["context"] = ctx;
+        }
         let mut broadcasts = vec![Broadcast {
             thread_id: thread_id.clone(),
-            message: json!({
-                "event": "message",
-                "thread": thread_id,
-                "turn": turn,
-                "text": text,
-            }),
+            message: msg_event,
         }];
 
         self.idle_since = None;
@@ -683,6 +713,7 @@ impl Service {
             WorkingTurn {
                 turn,
                 message: text.to_string(),
+                context_prompt,
                 cwd: cwd.clone(),
                 existing_session_id: existing_session_id.clone(),
                 desired_model,
@@ -844,7 +875,13 @@ impl Service {
                 harness.set_session_model(thread_id, Some(active.turn), &session_id, &model);
                 active.dispatch = TurnDispatch::WaitingForModel { session_id };
             } else {
-                harness.send_prompt(thread_id, active.turn, &session_id, &active.message);
+                harness.send_prompt(
+                    thread_id,
+                    active.turn,
+                    &session_id,
+                    active.context_prompt.as_deref(),
+                    &active.message,
+                );
                 active.dispatch = TurnDispatch::PromptInFlight { session_id };
             }
         } else {
@@ -1044,7 +1081,13 @@ impl Service {
                         {
                             store_failed(log, &err);
                         }
-                        harness.send_prompt(&thread_id, active.turn, &session_id, &active.message);
+                        harness.send_prompt(
+                            &thread_id,
+                            active.turn,
+                            &session_id,
+                            active.context_prompt.as_deref(),
+                            &active.message,
+                        );
                         active.dispatch = TurnDispatch::PromptInFlight { session_id };
                     }
                 }
@@ -1121,7 +1164,13 @@ impl Service {
                         && let Some(harness) = self.harness.as_mut()
                     {
                         let sid = session_id.clone();
-                        harness.send_prompt(&thread_id, active.turn, &sid, &active.message);
+                        harness.send_prompt(
+                            &thread_id,
+                            active.turn,
+                            &sid,
+                            active.context_prompt.as_deref(),
+                            &active.message,
+                        );
                         active.dispatch = TurnDispatch::PromptInFlight { session_id: sid };
                     }
                 } else if let Some(pos) = self
@@ -1619,6 +1668,9 @@ fn turn_record_json(t: &TurnRecord) -> Value {
         "acts": t.acts.iter().map(act_record_json).collect::<Vec<_>>(),
         "notes": t.notes.iter().map(note_record_json).collect::<Vec<_>>(),
     });
+    if let Some(context) = &t.context {
+        obj["context"] = context.clone();
+    }
     if let Some(err) = &t.error {
         obj["error"] = json!(err);
     }

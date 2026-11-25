@@ -931,6 +931,7 @@ class LeverChecks(unittest.TestCase):
         self.assertIn('/usr/local/bin/crowbar-launcher as-app', lever_run)
         self.assertIn('/usr/local/bin/crowbar-lever', lever_run)
         self.assertIn('--harness /usr/local/bin/opencode --harness-arg acp --harness-name OpenCode', lever_run)
+        self.assertIn('--fulcrum-socket /run/crowbar-trusted/agent/compositor', lever_run)
         self.assertIn(void_base.LEVER_SURFACE_SOCKET, lever_run)
         self.assertIn(void_base.LEVER_STATE, lever_run)
         shell_run = (Path(void_base.HERE) / 'desktop/shell-run').read_text()

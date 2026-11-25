@@ -82,8 +82,11 @@ historical behavior evidence, not a current Fedora workflow.
   as it is, and it is up or put away after unlock as it was.
 - When `CROWBAR_LEVER_SOCKET` is set, the shell connects to Lever's surface
   socket (`/run/crowbar-lever/surface`) with backoff using the shared version-1
-  framing, asks `status`, and while Lever drives no harness yet shows that the
-  Agent is reachable with no harness to answer. Putting the drawer away stops
+  framing, waits for Lever's initial `status` (and restores the active or newest
+  thread via `list` and `resume` after a restart) before reporting connected,
+  sends messages and `stop` for the thread, streams the answer, each act, notes,
+  desktop context, and stopped/failed/interrupted states, and shows when no
+  harness is configured. Putting the drawer away stops
   nothing. The mark (`Working` and `Done`) is shown in the bar and, whenever a
   fullscreen window covers the bar while the drawer is put away, in a floating
   overlay surface (`crowbaros-mark`) at the top right. The shell's own
