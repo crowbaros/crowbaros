@@ -421,12 +421,15 @@ impl AcpHarness {
         true
     }
 
-    /// Sends a `session/prompt` request for an active session.
-    pub fn send_prompt(&mut self, thread_id: &str, turn: u64, session_id: &str, text: &str) {
-        let req = PromptRequest::new(
-            SessionId::new(session_id.to_string()),
-            vec![ContentBlock::from(text.to_string())],
-        );
+    /// Sends a `session/prompt` request for an active session, prepending
+    /// desktop context when present.
+    pub fn send_prompt(&mut self, thread_id: &str, turn: u64, session_id: &str, context: Option<&str>, text: &str) {
+        let mut blocks = Vec::new();
+        if let Some(ctx) = context {
+            blocks.push(ContentBlock::from(format!("{ctx}\n")));
+        }
+        blocks.push(ContentBlock::from(text.to_string()));
+        let req = PromptRequest::new(SessionId::new(session_id.to_string()), blocks);
         let id = self.send_request(AGENT_METHOD_NAMES.session_prompt, &req);
         self.pending.insert(
             id,

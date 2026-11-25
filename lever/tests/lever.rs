@@ -3304,3 +3304,136 @@ fn stopping_turn_during_model_switch_locks_thread_and_preserves_saved_model() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn surface_send_attaches_fulcrum_desktop_context_and_falls_back_when_fulcrum_is_away() {
+    use std::os::unix::net::UnixListener;
+
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let rpc_log = dir.0.join("rpc.log");
+    let fulcrum_sock = dir.0.join("fulcrum.sock");
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                { "match": "", "steps": [{ "kind": "text", "text": "seen" }] }
+            ]
+        }),
+    );
+
+    // Fake Fulcrum agent socket: accepts one connection, answers handshake + snapshot.
+    let listener = UnixListener::bind(&fulcrum_sock).unwrap();
+    let fulcrum_thread = std::thread::spawn(move || {
+        let (mut peer, _) = listener.accept().unwrap();
+        let v = read_frame(&mut peer).unwrap();
+        assert_eq!(v, json!({ "version": 1 }));
+        write_frame(&mut peer, &json!({ "version": 1 })).unwrap();
+        let req = read_frame(&mut peer).unwrap();
+        assert_eq!(req, json!({ "op": "snapshot" }));
+        write_frame(
+            &mut peer,
+            &json!({
+                "reply": "snapshot",
+                "workspace": 2,
+                "active": "0x2",
+                "locked": false,
+                "windows": [
+                    { "id": "0x1", "app_id": "com.crowbaros.Files", "title": "Home", "workspace": 1 },
+                    { "id": "0x2", "app_id": "foot", "title": "terminal", "workspace": 2 }
+                ],
+                "displays": [
+                    { "name": "Virtual-1", "width": 1280, "height": 960, "x": 0, "y": 0, "scale": 120 }
+                ]
+            }),
+        )
+        .unwrap();
+    });
+
+    let extra: Vec<String> = vec![
+        "--fulcrum-socket".into(),
+        fulcrum_sock.to_str().unwrap().into(),
+        "--harness".into(),
+        STUB_BIN.into(),
+        "--harness-name".into(),
+        "Stub".into(),
+        "--harness-arg".into(),
+        "--script".into(),
+        "--harness-arg".into(),
+        script.to_str().unwrap().into(),
+        "--harness-arg".into(),
+        "--log".into(),
+        "--harness-arg".into(),
+        rpc_log.to_str().unwrap().into(),
+    ];
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+
+    // 1. Surface send with Fulcrum running: carries desktop context in message event, resume, and ACP prompt.
+    let mut surface = handshake(&lever.surface);
+    write_frame(
+        &mut surface,
+        &json!({ "op": "send", "thread": null, "text": "what is open?" }),
+    )
+    .unwrap();
+    let sent = read_frame(&mut surface).unwrap();
+    assert_eq!(sent["reply"], "sent");
+    let tid = sent["thread"].as_str().unwrap().to_string();
+    let msg_ev = read_frame(&mut surface).unwrap();
+    assert_eq!(msg_ev["event"], "message");
+    assert_eq!(msg_ev["text"], "what is open?");
+    assert_eq!(msg_ev["context"]["workspace"], 2);
+    assert_eq!(msg_ev["context"]["active"]["app_id"], "foot");
+    assert_eq!(msg_ev["context"]["active"]["title"], "terminal");
+    assert_eq!(msg_ev["context"]["displays"][0]["name"], "Virtual-1");
+    let evs = turn_events(&mut surface, &tid, 1);
+    assert_eq!(text_of(&evs), "seen");
+    fulcrum_thread.join().unwrap();
+
+    // Persisted in SQLite and returned by resume.
+    let rec = resume(&mut surface, &tid);
+    assert_eq!(rec["turns"][0]["context"]["active"]["app_id"], "foot");
+    assert_eq!(rec["turns"][0]["message"], "what is open?");
+
+    // Harness received [Desktop context] with the prompt.
+    let log_after_1 = std::fs::read_to_string(&rpc_log).unwrap();
+    assert!(log_after_1.contains("[Desktop context]"), "{log_after_1}");
+    assert!(log_after_1.contains("terminal (app_id: foot)"), "{log_after_1}");
+    assert!(log_after_1.contains("Virtual-1: 1280x960"), "{log_after_1}");
+
+    // 2. Remove Fulcrum socket: next surface send succeeds with NO desktop context.
+    let _ = std::fs::remove_file(&fulcrum_sock);
+    let log_offset = log_after_1.len();
+    write_frame(
+        &mut surface,
+        &json!({ "op": "send", "thread": tid, "text": "without fulcrum" }),
+    )
+    .unwrap();
+    let sent2 = read_frame(&mut surface).unwrap();
+    assert_eq!(sent2["reply"], "sent");
+    let msg_ev2 = read_frame(&mut surface).unwrap();
+    assert_eq!(msg_ev2["event"], "message");
+    assert!(
+        msg_ev2.get("context").is_none(),
+        "expected no context when Fulcrum is away: {msg_ev2}"
+    );
+    let evs2 = turn_events(&mut surface, &tid, 2);
+    assert_eq!(text_of(&evs2), "seen");
+
+    let log_after_2 = &std::fs::read_to_string(&rpc_log).unwrap()[log_offset..];
+    assert!(log_after_2.contains("without fulcrum"), "{log_after_2}");
+    assert!(!log_after_2.contains("[Desktop context]"), "{log_after_2}");
+
+    // 3. Person-socket send carries no desktop context even if Fulcrum were listening.
+    let listener2 = UnixListener::bind(&fulcrum_sock).unwrap();
+    listener2.set_nonblocking(true).unwrap();
+    let mut person = handshake(&lever.person);
+    let (ptid, pturn) = send(&mut person, None, "from terminal");
+    let pevs = turn_events(&mut person, &ptid, pturn);
+    assert_eq!(text_of(&pevs), "seen");
+    assert!(listener2.accept().is_err(), "person send should not query Fulcrum");
+    let prec = resume(&mut person, &ptid);
+    assert!(prec["turns"][0].get("context").is_none());
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}

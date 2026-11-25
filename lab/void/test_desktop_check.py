@@ -337,11 +337,14 @@ class DrawerReachedLeverAndTyping(unittest.TestCase):
             'connected': True,
             'lever_version': '0.1.0',
             'harness_started': False,
+            'harnesses': ['OpenCode'],
+            'free_hosted_models': False,
             'no_harness': False,
             'sending': False,
             'model': None,
             'missing_model': None,
-            'conversation': None,
+            'thread': None,
+            'title': None,
             'turns': [],
             'error': None,
             'mark': 'idle',
@@ -366,16 +369,15 @@ class DrawerReachedLeverAndTyping(unittest.TestCase):
         self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'lever_version': None})))
         self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'harness_started': True})))
         self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'no_harness': True})))
-        self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'model': {'model': 'x'}})))
+        self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'model': 'stub/stub-1'})))
         self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'turns': [{'turn': 1}]})))
         self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'mark': 'working'})))
         self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(mark_overlay=True)))
 
-    def test_the_desktop_check_starts_no_stub_model(self):
+    def test_the_desktop_check_uses_no_retired_node_harness(self):
         source = Path(desktop_check.__file__).read_text()
-        self.assertNotIn('stub-model', source)
-        self.assertNotIn('STUB_MODEL', source)
         self.assertNotIn('HARNESS_NODE', source)
+        self.assertIn('/usr/local/lib/crowbar-lab/stub-model.py', source)
 
     def test_qmp_keys_for_text_maps_spaces_punctuation_and_case(self):
         self.assertEqual(

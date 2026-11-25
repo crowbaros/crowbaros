@@ -103,6 +103,14 @@ def decide_response(script, body):
             break
 
     if matched is not None:
+        if matched.get("error"):
+            err = matched["error"]
+            return {
+                "kind": "error",
+                "status": int(err.get("status", 400)),
+                "message": str(err.get("message", "Stub model error")),
+                "type": str(err.get("type", "invalid_request_error")),
+            }
         if matched.get("tool_call") and tool_output is None and has_tools:
             call = matched["tool_call"]
             args = call.get("arguments", {})
@@ -215,6 +223,15 @@ def make_handler(script, log_path=None):
 
             cmpl_id = next_id()
             created = int(time.time())
+
+            if decision["kind"] == "error":
+                self._send_json(decision["status"], {
+                    "error": {
+                        "message": decision["message"],
+                        "type": decision["type"],
+                    }
+                })
+                return
 
             if stream:
                 chunks = []

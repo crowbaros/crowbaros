@@ -30,6 +30,10 @@ class StubModelTests(unittest.TestCase):
                     "match": "hello",
                     "reply": "Hi from {model}!",
                 },
+                {
+                    "match": "make-fail",
+                    "error": {"status": 400, "message": "Stub model declined this turn"},
+                },
             ],
             "default_reply": "Default ({model}): {prompt}",
         }
@@ -128,6 +132,26 @@ class StubModelTests(unittest.TestCase):
         body = json.loads(raw)
         self.assertEqual(body["choices"][0]["finish_reason"], "stop")
         self.assertEqual(body["choices"][0]["message"]["content"], "Stub thread")
+
+    def test_error_rule_returns_http_error_json(self):
+        import urllib.error
+
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/v1/chat/completions",
+            data=json.dumps({
+                "model": "stub-1",
+                "stream": True,
+                "messages": [{"role": "user", "content": "please make-fail"}],
+                "tools": [{"type": "function", "function": {"name": "shell"}}],
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req)
+        self.assertEqual(ctx.exception.code, 400)
+        body = json.loads(ctx.exception.read().decode("utf-8"))
+        self.assertEqual(body["error"]["message"], "Stub model declined this turn")
 
 
 if __name__ == "__main__":

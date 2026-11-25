@@ -53,6 +53,7 @@ pub struct ThreadRecord {
 pub struct TurnRecord {
     pub turn: u64,
     pub message: String,
+    pub context: Option<serde_json::Value>,
     pub answer: String,
     pub state: String,
     pub error: Option<String>,
@@ -119,7 +120,7 @@ impl Store {
                  key TEXT PRIMARY KEY,\n\
                  value TEXT NOT NULL\n\
              );\n\
-             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '3');\n\
+             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '4');\n\
              CREATE TABLE IF NOT EXISTS threads (\n\
                  id TEXT PRIMARY KEY,\n\
                  title TEXT NOT NULL,\n\
@@ -135,6 +136,7 @@ impl Store {
                  thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,\n\
                  turn_number INTEGER NOT NULL,\n\
                  message TEXT NOT NULL,\n\
+                 context TEXT,\n\
                  answer TEXT NOT NULL DEFAULT '',\n\
                  state TEXT NOT NULL,\n\
                  error TEXT,\n\
@@ -185,6 +187,27 @@ impl Store {
         if !has_model_col {
             conn.execute("ALTER TABLE threads ADD COLUMN model TEXT", [])
                 .map_err(|e| format!("could not migrate threads.model column: {e}"))?;
+        }
+
+        // Migrate schema v2/v3 databases that predate `turns.context`.
+        let has_context_col: bool = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(turns)")
+                .map_err(|e| format!("could not inspect turns table: {e}"))?;
+            let cols = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .map_err(|e| format!("could not read turns schema: {e}"))?;
+            let mut found = false;
+            for col in cols {
+                if col.map_err(|e| format!("could not read column name: {e}"))? == "context" {
+                    found = true;
+                }
+            }
+            found
+        };
+        if !has_context_col {
+            conn.execute("ALTER TABLE turns ADD COLUMN context TEXT", [])
+                .map_err(|e| format!("could not migrate turns.context column: {e}"))?;
         }
 
         // Any turn left working by a Lever that ended abruptly is interrupted.
@@ -254,6 +277,7 @@ impl Store {
         thread_id: &str,
         new_thread: Option<(&str, &str, Option<&str>, Option<&str>)>,
         message: &str,
+        context: Option<&str>,
         now: i64,
     ) -> Result<u64, String> {
         let all = self
@@ -263,7 +287,7 @@ impl Store {
         if let Some((title, cwd, harness_name, model)) = new_thread {
             self.create_thread(thread_id, title, cwd, harness_name, model, now)?;
         }
-        let turn = self.create_turn(thread_id, message, now)?;
+        let turn = self.create_turn(thread_id, message, context, now)?;
         all.commit().map_err(|e| format!("could not begin a turn: {e}"))?;
         Ok(turn)
     }
@@ -377,7 +401,7 @@ impl Store {
         Ok(())
     }
 
-    fn create_turn(&self, thread_id: &str, message: &str, now: i64) -> Result<u64, String> {
+    fn create_turn(&self, thread_id: &str, message: &str, context: Option<&str>, now: i64) -> Result<u64, String> {
         let next: i64 = self
             .conn
             .query_row(
@@ -388,9 +412,9 @@ impl Store {
             .map_err(|e| format!("could not compute next turn number: {e}"))?;
         self.conn
             .execute(
-                "INSERT INTO turns (thread_id, turn_number, message, answer, state, created_at) \
-                 VALUES (?1, ?2, ?3, '', 'working', ?4)",
-                params![thread_id, next, message, now],
+                "INSERT INTO turns (thread_id, turn_number, message, context, answer, state, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, '', 'working', ?5)",
+                params![thread_id, next, message, context, now],
             )
             .map_err(|e| format!("could not insert turn: {e}"))?;
         self.touch_thread(thread_id, now)?;
@@ -678,18 +702,21 @@ impl Store {
         let mut turn_stmt = self
             .conn
             .prepare(
-                "SELECT turn_number, message, answer, state, error \
+                "SELECT turn_number, message, context, answer, state, error \
                  FROM turns WHERE thread_id = ?1 ORDER BY turn_number ASC",
             )
             .map_err(|e| format!("could not prepare turns query: {e}"))?;
         let turn_rows = turn_stmt
             .query_map(params![thread_id], |r| {
+                let raw_context: Option<String> = r.get(2)?;
+                let context = raw_context.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
                 Ok(TurnRecord {
                     turn: r.get::<_, i64>(0)? as u64,
                     message: r.get(1)?,
-                    answer: r.get(2)?,
-                    state: r.get(3)?,
-                    error: r.get(4)?,
+                    context,
+                    answer: r.get(3)?,
+                    state: r.get(4)?,
+                    error: r.get(5)?,
                     acts: Vec::new(),
                     notes: Vec::new(),
                 })
@@ -824,6 +851,68 @@ mod tests {
         let updated = store.thread_meta("t-old").unwrap().expect("updated thread");
         assert_eq!(updated.model.as_deref(), Some("stub/stub-1"));
         assert!(!store.free_hosted_models().unwrap());
+        store.close().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn opens_and_migrates_v3_database_without_turns_context_column() {
+        let dir = std::env::temp_dir().join(format!(
+            "crowbar-lever-store-migrate-v3-{}-{}",
+            std::process::id(),
+            crate::sys::random_hex(4)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("lever.db");
+
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO meta (key, value) VALUES ('schema_version', '3');
+                 CREATE TABLE threads (
+                     id TEXT PRIMARY KEY,
+                     title TEXT NOT NULL,
+                     cwd TEXT NOT NULL,
+                     harness_name TEXT,
+                     harness_session_id TEXT,
+                     model TEXT,
+                     created_at INTEGER NOT NULL,
+                     updated_at INTEGER NOT NULL
+                 );
+                 CREATE TABLE turns (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+                     turn_number INTEGER NOT NULL,
+                     message TEXT NOT NULL,
+                     answer TEXT NOT NULL DEFAULT '',
+                     state TEXT NOT NULL,
+                     error TEXT,
+                     created_at INTEGER NOT NULL,
+                     ended_at INTEGER,
+                     UNIQUE(thread_id, turn_number)
+                 );
+                 INSERT INTO threads (id, title, cwd, harness_name, harness_session_id, model, created_at, updated_at)
+                 VALUES ('t-v3', 'Old v3 thread', '/tmp', 'OpenCode', 'sess-1', 'stub/stub-1', 100, 100);
+                 INSERT INTO turns (thread_id, turn_number, message, answer, state, created_at)
+                 VALUES ('t-v3', 1, 'earlier', 'answer', 'done', 100);",
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&db, 200).unwrap();
+        let rec = store.get_thread("t-v3").unwrap().expect("migrated v3 thread");
+        assert_eq!(rec.turns.len(), 1);
+        assert_eq!(rec.turns[0].context, None);
+
+        let ctx = r#"{"workspace":1,"active":null,"locked":false,"windows":[],"displays":[]}"#;
+        let turn2 = store.begin_turn("t-v3", None, "second", Some(ctx), 201).unwrap();
+        assert_eq!(turn2, 2);
+        let rec = store.get_thread("t-v3").unwrap().expect("updated v3 thread");
+        assert_eq!(
+            rec.turns[1].context.as_ref().and_then(|v| v.get("workspace")),
+            Some(&serde_json::json!(1))
+        );
         store.close().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }

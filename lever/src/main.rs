@@ -6,6 +6,7 @@
 mod acp;
 mod channel;
 mod frames;
+mod fulcrum;
 mod log;
 mod service;
 mod store;
@@ -37,6 +38,7 @@ const USAGE: &str = "usage: crowbar-lever \
   --state <dir> \
   --surface-socket <path> --shell-uid <uid> \
   --person-socket <path> --person-uid <uid> \
+  [--fulcrum-socket <path>] \
   [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>]] \
   [--idle-timeout-ms <ms>]";
 
@@ -46,6 +48,7 @@ struct Options {
     shell_uid: u32,
     person_socket: PathBuf,
     person_uid: u32,
+    fulcrum_socket: Option<PathBuf>,
     harness: Option<HarnessConfig>,
     idle_timeout: Duration,
 }
@@ -56,6 +59,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
     let mut shell_uid = None;
     let mut person_socket = None;
     let mut person_uid = None;
+    let mut fulcrum_socket = None;
     let mut harness_program = None;
     let mut harness_name = None;
     let mut harness_args = Vec::new();
@@ -74,6 +78,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
             "--shell-uid" if shell_uid.is_none() => shell_uid = Some(value.parse::<u32>().ok()?),
             "--person-socket" if person_socket.is_none() => person_socket = Some(PathBuf::from(value)),
             "--person-uid" if person_uid.is_none() => person_uid = Some(value.parse::<u32>().ok()?),
+            "--fulcrum-socket" if fulcrum_socket.is_none() => fulcrum_socket = Some(PathBuf::from(value)),
             "--harness" if harness_program.is_none() => harness_program = Some(value.clone()),
             "--harness-name" if harness_name.is_none() => harness_name = Some(value.clone()),
             "--harness-arg" => harness_args.push(value.clone()),
@@ -118,6 +123,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
         shell_uid: shell_uid?,
         person_socket: person_socket?,
         person_uid: person_uid?,
+        fulcrum_socket,
         harness,
         idle_timeout: idle_timeout.unwrap_or(DEFAULT_IDLE_TIMEOUT),
     })
@@ -286,7 +292,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
     write_marker(&marker, pid)?;
 
     let store = Store::open(&options.state.join("lever.sqlite"), unix_now())?;
-    let mut service = Service::new(store, options.harness, options.idle_timeout);
+    let mut service = Service::new(store, options.harness, options.fulcrum_socket, options.idle_timeout);
 
     if let Some(parent) = options.person_socket.parent() {
         ensure_private_dir(parent)?;

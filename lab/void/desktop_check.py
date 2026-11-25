@@ -557,6 +557,7 @@ class Check:
         self.capture('07-chromium')
         self.agent_surface()
         self.agent_reached_lever_idle()
+        self.agent_drawer_thread()
 
     def agent_surface(self):
         """The summon gesture, Super+Space, and the Agent's surface (#294): a
@@ -731,6 +732,298 @@ class Check:
         self.key('meta_l', 'spc')
         self.wait('drawer closes after Lever status check',
                   lambda: not self.agent_view()['drawer_up'])
+
+    def agent_drawer_thread(self):
+        """End-to-end drawer thread on Lever + OpenCode against the local stub
+        Model (#376): desktop context without window or clipboard contents,
+        command output in an act, streamed answer, work continuing behind a
+        put-away drawer with bar and fullscreen marks, Stop ending the turn
+        and its spawned commands, failed turn reason, and shell restart
+        redrawing the thread from Lever."""
+        person, home = self.person()
+        click_v1 = lambda x, y: (self.qmp.pointer(x / (1280 + 1024), y / 960), self.qmp.click())
+        window_secret = 'WINSECRET_' + os.urandom(6).hex()
+        clipboard_secret = 'CLIPSECRET_' + os.urandom(6).hex()
+        tmp = '/tmp/crowbar-drawer-check'
+        self.run(f'rm -rf {tmp} && mkdir -p {tmp}')
+        self.run(f'cp /etc/sv/crowbar-lever/run {tmp}/lever-run.orig')
+        stub_script = {
+            'models': ['stub-1'],
+            'rules': [
+                {
+                    'match': 'run-cmd',
+                    'tool_call': {
+                        'name': 'shell',
+                        'arguments': {
+                            'command': 'echo DRAWER_CMD_OK && id -un',
+                            'description': 'Echo marker and current user',
+                        },
+                    },
+                    'after_tool': 'Command finished on {model}: {tool_output}',
+                },
+                {
+                    'match': 'slow-bg',
+                    'tool_call': {
+                        'name': 'shell',
+                        'arguments': {
+                            'command': 'sleep 4 && echo BG_DONE_OK',
+                            'description': 'Run background sleep command',
+                        },
+                    },
+                    'after_tool': 'Background finished: {tool_output}',
+                },
+                {
+                    'match': 'long-stop',
+                    'tool_call': {
+                        'name': 'shell',
+                        'arguments': {
+                            'command': "sh -c 'sleep 45 & wait'",
+                            'description': 'Long command to be stopped',
+                        },
+                    },
+                    'after_tool': 'Should not finish',
+                },
+                {
+                    'match': 'make-fail',
+                    'error': {
+                        'status': 400,
+                        'message': 'Stub model declined this turn',
+                    },
+                },
+            ],
+            'default_reply': 'Stub ({model}): {prompt}',
+        }
+        try:
+            # Put unique secrets in the terminal window and live clipboard to
+            # prove neither crosses into desktop context or reaches the Model.
+            foot = next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None)
+            if foot is not None:
+                click_v1(680, 935)
+                self.wait('foot focused for window secret',
+                          lambda: self.snapshot()['active']['address'] == foot['address'])
+                self.type(f'echo {window_secret}')
+                self.key('ret')
+                time.sleep(0.3)
+            self.as_app(f'crowbar-probe copy {clipboard_secret}', f'{tmp}/clip.out')
+            self.wait('clipboard secret copied',
+                      lambda: 'copied' in self.guest.ssh(f'cat {tmp}/clip.out', check=False).stdout)
+            if foot is not None:
+                click_v1(680, 935)
+                self.wait('foot refocused before summoning drawer',
+                          lambda: self.snapshot()['active']['address'] == foot['address'])
+
+            # Start stub Model and point OpenCode at it with catalogue fetch off.
+            self.run(f"cat > {tmp}/script.json <<'EOF'\n{json.dumps(stub_script, indent=2)}\nEOF")
+            self.run(
+                f"setsid -f python3 /usr/local/lib/crowbar-lab/stub-model.py "
+                f"--script {tmp}/script.json --port-file {tmp}/port --log {tmp}/stub.jsonl "
+                f">{tmp}/stub.out 2>&1 </dev/null"
+            )
+            port = self.wait('stub Model port ready',
+                             lambda: self.guest.ssh(f'cat {tmp}/port', check=False).stdout.strip())
+            opencode_cfg = {
+                'provider': {
+                    'stub': {
+                        'npm': '@ai-sdk/openai-compatible',
+                        'name': 'Stub',
+                        'options': {'baseURL': f'http://127.0.0.1:{port}/v1', 'apiKey': 'stub-key'},
+                        'models': {'stub-1': {'name': 'Stub One'}},
+                    }
+                },
+                'model': 'stub/stub-1',
+                'enabled_providers': ['stub'],
+            }
+            self.run(f"install -d -o {person} -g {person} -m 700 {home}/.config/opencode")
+            self.run(f"cat > {home}/.config/opencode/opencode.json <<'EOF'\n{json.dumps(opencode_cfg, indent=2)}\nEOF")
+            self.run(f"chown {person}:{person} {home}/.config/opencode/opencode.json")
+            self.run(
+                f"sed 's|--harness-name OpenCode|--harness-name OpenCode --harness-env OPENCODE_DISABLE_MODELS_FETCH=1|' "
+                f"{tmp}/lever-run.orig > /etc/sv/crowbar-lever/run && chmod 755 /etc/sv/crowbar-lever/run"
+            )
+            self.run('sv restart crowbar-lever')
+            self.wait('shell reconnected to Lever after stub setup',
+                      lambda: (v := self.agent_view()) and v['state'].get('connected') and not v['state'].get('no_harness'))
+
+            # 1. Send a message from the drawer: desktop context, command act + output, answer.
+            self.key('meta_l', 'spc')
+            self.wait('drawer opens for thread check', lambda: self.agent_view()['drawer_up'])
+            self.type('please run-cmd')
+            self.key('ret')
+            view1 = self.wait(
+                'turn 1 finishes with command output and answer',
+                lambda: (v := self.agent_view())
+                and len(v['state']['turns']) >= 1
+                and v['state']['turns'][0]['state']['kind'] == 'done'
+                and v,
+                timeout=45,
+            )
+            time.sleep(0.5)
+            self.capture('19-drawer-thread-answer')
+            turn1 = view1['state']['turns'][0]
+            thread_id = view1['state']['thread']
+            stub_raw = self.run(f'cat {tmp}/stub.jsonl')
+            stub_entries = [json.loads(line) for line in stub_raw.splitlines() if line.strip()]
+            tool_prompts = [e['prompt'] for e in stub_entries if e.get('has_tools') and 'please run-cmd' in e.get('prompt', '')]
+            ctx1 = turn1.get('context') or {}
+            cmd_acts = [a for a in turn1.get('acts', []) if a.get('state') == 'done' and 'DRAWER_CMD_OK' in (a.get('detail') or '')]
+            self.check(
+                'drawer message reaches stub Model with desktop context and no window or clipboard contents',
+                bool(tool_prompts)
+                and '[Desktop context]' in tool_prompts[0]
+                and 'app_id: foot' in tool_prompts[0]
+                and 'Virtual-1' in tool_prompts[0]
+                and window_secret not in stub_raw
+                and clipboard_secret not in stub_raw
+                and (ctx1.get('active') or {}).get('app_id') == 'foot',
+                f'prompts={len(tool_prompts)} ctx_active={ctx1.get("active")}',
+            )
+            self.check(
+                'drawer shows the streamed answer and the command act output',
+                bool(thread_id)
+                and bool(cmd_acts)
+                and person in (cmd_acts[0].get('detail') or '')
+                and 'DRAWER_CMD_OK' in turn1.get('answer', ''),
+                json.dumps(turn1),
+            )
+
+            # 2. Put the drawer away while a turn works; verify work keeps going
+            # and the mark shows working and done in the bar and over fullscreen.
+            self.type('please slow-bg')
+            self.key('ret')
+            self.wait('turn 2 starts working',
+                      lambda: (v := self.agent_view()) and v['state']['mark'] == 'working' and len(v['state']['turns']) >= 2)
+            self.key('meta_l', 'spc')
+            self.wait('drawer put away while turn 2 works',
+                      lambda: not self.agent_view()['drawer_up'])
+            bg_bar = self.agent_view()
+            self.capture('20-bar-mark-working')
+            self.check('putting the drawer away stops nothing and the bar mark shows working',
+                       not bg_bar['drawer_up'] and bg_bar['state']['mark'] == 'working',
+                       json.dumps(bg_bar['state']['mark']))
+
+            self.key('meta_l', 'f')
+            fs_working = self.wait(
+                'fullscreen mark overlay shows working',
+                lambda: (v := self.agent_view()) and v['mark_overlay'] and v['state']['mark'] == 'working' and v,
+                timeout=15,
+            )
+            self.capture('21-fullscreen-mark-working')
+            fs_done = self.wait(
+                'turn 2 finishes behind the put-away drawer over fullscreen',
+                lambda: (v := self.agent_view())
+                and v['mark_overlay']
+                and v['state']['mark'] == 'done'
+                and len(v['state']['turns']) >= 2
+                and v['state']['turns'][1]['state']['kind'] == 'done'
+                and v,
+                timeout=45,
+            )
+            self.capture('22-fullscreen-mark-done')
+            self.check(
+                'the mark shows working and done over a fullscreen window while the drawer is put away',
+                bool(fs_working) and fs_done['mark_overlay'] and fs_done['state']['mark'] == 'done'
+                and 'BG_DONE_OK' in fs_done['state']['turns'][1].get('answer', ''),
+                json.dumps(fs_done['state']['turns'][1]),
+            )
+            self.key('meta_l', 'f')
+            self.wait('mark overlay hides after leaving fullscreen',
+                      lambda: not self.agent_view()['mark_overlay'])
+            self.key('meta_l', 'spc')
+            reopened = self.wait('drawer reopens and acknowledges done mark',
+                                 lambda: (v := self.agent_view()) and v['drawer_up'] and v['state']['mark'] == 'idle' and v)
+            self.check('summoning the drawer clears the done mark to idle', reopened['state']['mark'] == 'idle')
+
+            # 3. Stop ends the turn and every command it started.
+            self.type('please long-stop')
+            self.key('ret')
+            self.wait(
+                'long command is running for Stop check',
+                lambda: self.guest.ssh("pgrep -af '[s]leep 45'", check=False).stdout.strip()
+                and self.agent_view()['state']['mark'] == 'working',
+                timeout=30,
+            )
+            time.sleep(0.3)
+            self.capture('23-drawer-working-stop')
+            # Click the Stop button at the right end of the drawer's composer bar.
+            click_v1(1240, 904)
+            stopped_view = self.wait(
+                'turn 3 ends as stopped after clicking Stop',
+                lambda: (v := self.agent_view())
+                and len(v['state']['turns']) >= 3
+                and v['state']['turns'][2]['state']['kind'] == 'stopped'
+                and v['state']['mark'] == 'idle'
+                and v,
+                timeout=20,
+            )
+            time.sleep(0.5)
+            self.capture('24-drawer-stopped')
+            leftover = self.guest.ssh("pgrep -af '[s]leep 45'", check=False).stdout.strip()
+            self.check(
+                'Stop ends the turn as stopped and kills every command it started',
+                stopped_view['state']['turns'][2]['state']['kind'] == 'stopped' and not leftover,
+                f'leftover={leftover!r}',
+            )
+
+            # 4. Failed turn shows why in the drawer.
+            self.type('please make-fail')
+            self.key('ret')
+            failed_view = self.wait(
+                'turn 4 ends as failed with reason',
+                lambda: (v := self.agent_view())
+                and len(v['state']['turns']) >= 4
+                and v['state']['turns'][3]['state']['kind'] == 'failed'
+                and v,
+                timeout=30,
+            )
+            time.sleep(0.4)
+            self.capture('25-drawer-failed')
+            fail_reason = failed_view['state']['turns'][3]['state'].get('message', '')
+            self.check('a failed turn shows why it failed in the drawer',
+                       'Stub model declined this turn' in fail_reason,
+                       fail_reason)
+
+            # 5. After the shell restarts, the drawer reconnects and redraws the thread from Lever.
+            self.key('meta_l', 'spc')
+            self.wait('drawer put away before shell restart', lambda: not self.agent_view()['drawer_up'])
+            old_shell_pid = self.run('pgrep -x crowbaros-shell').strip()
+            self.run('sv restart crowbar-shell')
+            self.wait(
+                'restarted shell reconnects and restores the thread from Lever',
+                lambda: self.guest.ssh('pgrep -x crowbaros-shell', check=False).stdout.strip() not in ('', old_shell_pid)
+                and (v := self.agent_view())
+                and v['state'].get('connected')
+                and v['state'].get('thread') == thread_id
+                and len(v['state'].get('turns', [])) == 4
+                and v,
+                timeout=30,
+            )
+            self.key('meta_l', 'spc')
+            restored = self.wait('drawer opens with restored thread after shell restart',
+                                 lambda: (v := self.agent_view()) and v['drawer_up'] and v)
+            time.sleep(0.5)
+            self.capture('26-drawer-after-shell-restart')
+            self.check(
+                'after the shell restarts, the drawer reconnects and redraws the thread from Lever',
+                restored['state']['thread'] == thread_id
+                and len(restored['state']['turns']) == 4
+                and 'DRAWER_CMD_OK' in restored['state']['turns'][0].get('answer', '')
+                and (restored['state']['turns'][0].get('context') or {}).get('active', {}).get('app_id') == 'foot'
+                and restored['state']['turns'][2]['state']['kind'] == 'stopped'
+                and restored['state']['turns'][3]['state']['kind'] == 'failed',
+                json.dumps(restored['state']['thread']),
+            )
+            self.key('meta_l', 'spc')
+            self.wait('drawer closed after restart check', lambda: not self.agent_view()['drawer_up'])
+        finally:
+            self.guest.ssh("pkill -f '[s]tub-model.py'; pkill -f '[c]rowbar-probe copy'; pkill -f '[s]leep 45'; true", check=False)
+            self.guest.ssh(
+                f"sv stop /var/service/crowbar-lever >/dev/null 2>&1 || true; "
+                f"pkill -x opencode 2>/dev/null || true; "
+                f"cp {tmp}/lever-run.orig /etc/sv/crowbar-lever/run && chmod 755 /etc/sv/crowbar-lever/run; "
+                f"rm -rf {home}/.config/opencode {home}/.local/share/opencode {home}/.local/state/crowbaros/lever {tmp}; "
+                f"sv start /var/service/crowbar-lever >/dev/null 2>&1 || true",
+                check=False,
+            )
 
     def compositor_restart(self):
         """The compositor's service restarts while the person uses the desktop.
