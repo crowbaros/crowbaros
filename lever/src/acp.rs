@@ -1112,7 +1112,11 @@ fn build_harness_env(
 ) -> (Vec<(String, String)>, Vec<&'static str>) {
     let mut env_set: Vec<(String, String)> = extra
         .iter()
-        .filter(|(k, _)| k != "OPENCODE_CONFIG_CONTENT" && k != "OPENCODE_DISABLE_FREE_MODELS")
+        .filter(|(k, _)| {
+            k != "OPENCODE_CONFIG_CONTENT"
+                && k != "OPENCODE_DISABLE_FREE_MODELS"
+                && (free_hosted_models || k != "OPENCODE_DISABLE_MODELS_FETCH")
+        })
         .cloned()
         .collect();
     env_set.push((
@@ -1124,9 +1128,7 @@ fn build_harness_env(
         env_remove.push("OPENCODE_DISABLE_FREE_MODELS");
     } else {
         env_set.push(("OPENCODE_DISABLE_FREE_MODELS".to_string(), "1".to_string()));
-        if !env_set.iter().any(|(k, _)| k == "OPENCODE_DISABLE_MODELS_FETCH") {
-            env_set.push(("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "1".to_string()));
-        }
+        env_set.push(("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "1".to_string()));
     }
     (env_set, env_remove)
 }
@@ -1402,6 +1404,12 @@ mod tests {
         assert!(!default_on.iter().any(|(k, _)| k == "OPENCODE_DISABLE_FREE_MODELS"));
         assert!(!default_on.iter().any(|(k, _)| k == "OPENCODE_DISABLE_MODELS_FETCH"));
         assert_eq!(rm_default_on, vec!["OPENCODE_DISABLE_FREE_MODELS"]);
+
+        // Even an explicit `=0` cannot re-enable models.opencode.ai fetch while free Models are off.
+        let override_zero = vec![("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "0".to_string())];
+        let (forced_off, _) = build_harness_env(&override_zero, None, false);
+        assert!(forced_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "1".into())));
+        assert!(!forced_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "0".into())));
 
         // Explicit --harness-env OPENCODE_DISABLE_MODELS_FETCH=1 is preserved in both states.
         let extra = vec![("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "1".to_string())];

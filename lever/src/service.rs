@@ -759,8 +759,20 @@ impl Service {
                 Vec::new()
             }
             TurnDispatch::WaitingForInit | TurnDispatch::WaitingForSession | TurnDispatch::WaitingForModel { .. } => {
+                let waiting_for_model = matches!(active.dispatch, TurnDispatch::WaitingForModel { .. });
+                let desired_model = active.desired_model.clone().unwrap_or_default();
                 let turn = active.turn;
                 self.working_turns.remove(thread_id);
+                if waiting_for_model {
+                    // Keep the thread locked until the in-flight `session/set_config_option`
+                    // RPC settles so the next turn does not race it on the live session.
+                    self.pending_set_models.push(PendingSetModel {
+                        peer_id: None,
+                        thread_id: thread_id.to_string(),
+                        model: desired_model,
+                        in_flight_on_session: true,
+                    });
+                }
                 self.end_turn(thread_id, turn, "stopped", None, log);
                 self.refresh_idle_timer();
                 vec![Broadcast {
@@ -1062,6 +1074,21 @@ impl Service {
                 if let Some(cat) = catalog {
                     self.update_model_catalog(cat, false);
                 }
+                if let Some(t) = turn {
+                    let still_waiting = self.working_turns.get(&thread_id).is_some_and(|active| {
+                        active.turn == t && matches!(active.dispatch, TurnDispatch::WaitingForModel { .. })
+                    });
+                    if !still_waiting {
+                        if let Some(pos) = self
+                            .pending_set_models
+                            .iter()
+                            .position(|p| p.in_flight_on_session && p.peer_id.is_none() && p.thread_id == thread_id)
+                        {
+                            self.pending_set_models.remove(pos);
+                        }
+                        return effects;
+                    }
+                }
                 if let Err(err) = self.store.set_thread_model(&thread_id, &model, unix_now()) {
                     store_failed(log, &err);
                     if let Some(t) = turn {
@@ -1121,7 +1148,19 @@ impl Service {
             } => {
                 let mut effects = Effects::default();
                 if let Some(t) = turn {
-                    effects.broadcasts.extend(self.fail_turn(&thread_id, t, &message, log));
+                    if self
+                        .working_turns
+                        .get(&thread_id)
+                        .is_some_and(|active| active.turn == t)
+                    {
+                        effects.broadcasts.extend(self.fail_turn(&thread_id, t, &message, log));
+                    } else if let Some(pos) = self
+                        .pending_set_models
+                        .iter()
+                        .position(|p| p.in_flight_on_session && p.peer_id.is_none() && p.thread_id == thread_id)
+                    {
+                        self.pending_set_models.remove(pos);
+                    }
                 } else if let Some(pos) = self
                     .pending_set_models
                     .iter()

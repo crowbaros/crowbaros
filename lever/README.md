@@ -58,9 +58,9 @@ Model query needs it and stops it after `--idle-timeout-ms` (default `600000`,
 runs in Lever's environment (on Base, the launcher's environment for apps) with
 OpenCode's self-update turned off through `OPENCODE_CONFIG_CONTENT`
 (`{"update":"disable"}`, merged with any existing keys) and
-`OPENCODE_DISABLE_FREE_MODELS=1` until the person enables OpenCode's free
-hosted Models. Lever writes nothing in the person's own OpenCode files. The
-harness child dies with Lever.
+`OPENCODE_DISABLE_FREE_MODELS=1` plus `OPENCODE_DISABLE_MODELS_FETCH=1` until
+the person enables OpenCode's free hosted Models. Lever writes nothing in the
+person's own OpenCode files. The harness child dies with Lever.
 
 Told to stop (`SIGTERM` or `SIGINT`), Lever closes its peer connections, stops
 any running harness child, marks any turn still working `interrupted`, removes
@@ -230,7 +230,7 @@ Reply:
 - `default`: the harness's default Model ID, or `null`.
 - `free_hosted_models`: Lever's saved setting.
 
-Errors: `no-harness`, `harness-error`, `invalid-request`.
+Errors: `no-harness`, `working`, `harness-error`, `invalid-request`.
 
 #### `set-free-models`
 
