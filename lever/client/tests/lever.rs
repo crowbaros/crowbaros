@@ -339,6 +339,35 @@ fn an_act_in_the_middle_of_a_line_adds_nothing_to_a_piped_answer_and_ends_the_li
 }
 
 #[test]
+fn an_act_that_ends_after_the_next_turn_began_is_still_shown() {
+    let lab = Lab::with_script(json!({
+        "turns": [
+            {
+                "steps": [
+                    { "kind": "act", "id": "acp-call-1", "title": "Look", "status": "in_progress" },
+                    { "kind": "text", "text": "First." }
+                ],
+                "after": [
+                    { "kind": "pause_ms", "ms": 400 },
+                    { "kind": "act_update", "id": "acp-call-1", "status": "completed", "content": "found" }
+                ]
+            },
+            { "steps": [
+                { "kind": "text", "text": "Second" },
+                { "kind": "pause_ms", "ms": 1000 },
+                { "kind": "text", "text": "." }
+            ] }
+        ]
+    }));
+    let ran = lab.run(&[], "One\nTwo\n");
+    assert_eq!((ran.status, ran.out.as_str()), (0, "First.\nSecond.\n"), "{ran:?}");
+    assert_eq!(
+        ran.err, "[act] Look (working)\n[act] Look (done): found\n",
+        "the act's end came while the second turn was watched: {ran:?}"
+    );
+}
+
+#[test]
 fn a_thread_goes_a_line_at_a_time_and_is_listed_and_resumed() {
     let lab = Lab::with_script(json!({
         "turns": [

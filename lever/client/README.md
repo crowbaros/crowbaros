@@ -21,7 +21,8 @@ crowbar-agent status                   # Lever's status and available harnesses
 
 - **The answer is plain text on standard output**, a piece at a time, so it
   reads the same in a terminal and down a pipe. Acts (`[act] ...`), unrecognized
-  updates (`[update] ...`), prompts, and errors go to standard error. On a
+  updates (`[update] ...`), prompts, and errors go to standard error. An act
+  that ends after a later turn began is still shown. On a
   terminal, an act that comes in the middle of a line of the answer ends that
   line first. Down a pipe or into a file, nothing is put in the middle of the
   answer. Either way the answer's last line is ended, as any command's is.

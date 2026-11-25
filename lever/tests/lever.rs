@@ -1116,6 +1116,7 @@ fn no_harness_id_or_message_type_appears_on_levers_sockets() {
         "end_turn",
         "in_progress",
         "vendor_secret_tag",
+        "acp-secret-tool-777",
     ];
     std::fs::write(
         &script,
@@ -1130,6 +1131,9 @@ fn no_harness_id_or_message_type_appears_on_levers_sockets() {
                         { "kind": "act", "id": "acp-secret-tool-100", "tool_kind": "other", "title": "Probe", "status": "completed",
                           "raw_output": { "sessionId": "acp-secret-session-1", "toolCallId": "acp-secret-tool-100", "exit": 0 } },
                         { "kind": "unknown", "update": { "sessionUpdate": "vendor_secret_tag", "summary": "Plain note" } },
+                        // An update that names a tool call Lever has seen no act for.
+                        { "kind": "unknown", "update": { "sessionUpdate": "vendor_secret_tag", "toolCallId": "acp-secret-tool-777",
+                          "message": "Waiting on acp-secret-tool-777" } },
                         { "kind": "text", "text": "All good." }
                     ]
                 },
@@ -2585,7 +2589,23 @@ fn a_turn_whose_end_waits_to_be_saved_has_ended_for_whoever_asks() {
     assert_eq!(listed["threads"][0]["state"], "stopped", "{listed}");
     assert_eq!(listed["threads"][0]["working"], false, "{listed}");
 
+    // The thread is not working, and its next message is not taken either
+    // until the record has how the turn ended. Lever says which it is.
+    write_frame(&mut late, &json!({ "op": "send", "thread": thread, "text": "Go on" })).unwrap();
+    let refused = read_frame(&mut late).unwrap();
+    assert_eq!(refused["code"], "storage-error", "{refused}");
+    assert_eq!(
+        refused["message"],
+        "Lever is still saving how this thread's last turn ended."
+    );
+
+    // Once the database takes writes, the next message is taken at once,
+    // with no wait for Lever to try the save again on its own.
     db.execute_batch("DROP TRIGGER refused").unwrap();
+    let (_, turn) = send(&mut late, Some(&thread), "Go on");
+    assert_eq!(turn, 2);
+    assert_eq!(turn_events(&mut late, &thread, turn).pop().unwrap()["event"], "done");
+
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
@@ -2686,4 +2706,75 @@ fn an_option_given_twice_is_refused() {
         .unwrap();
     assert_eq!(given_twice.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&given_twice.stderr).starts_with("usage: crowbar-lever"));
+}
+
+#[test]
+fn a_long_event_a_peer_has_read_gives_it_no_more_room_to_fall_behind() {
+    const MIB: usize = 1024 * 1024;
+    let dir = TempDir::new();
+    let short = || json!({ "kind": "text", "text": "y".repeat(MIB) });
+    let mut steps = vec![json!({ "kind": "text", "text": "x".repeat(6 * MIB) })];
+    steps.extend((0..3).map(|_| short()));
+    steps.push(json!({ "kind": "pause_ms", "ms": 1500 }));
+    steps.extend((0..4).map(|_| short()));
+    let script = write_script(&dir.0, &json!({ "turns": [{ "steps": steps }] }));
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let closed = |lever: &RunningLever| {
+        lever
+            .log_text()
+            .contains("connection: closed, the person left more than 4 MiB of events unread")
+    };
+
+    // A peer lets a 6 MiB event and three of 1 MiB wait for it. That is
+    // within 4 MiB over the longest of them, so it is kept.
+    let mut peer = handshake(&lever.person);
+    send(&mut peer, None, "Say a great deal");
+    std::thread::sleep(Duration::from_millis(700));
+    assert!(!closed(&lever), "{}", lever.log_text());
+
+    // It reads the long event, and then nothing. Events were waiting behind
+    // that one all along, so it never had none waiting.
+    loop {
+        let frame = read_frame_up_to(&mut peer, 8 * MIB).unwrap();
+        if frame["event"] == "text" {
+            assert_eq!(frame["text"].as_str().unwrap().len(), 6 * MIB);
+            break;
+        }
+    }
+
+    // Four more events of 1 MiB come. With the three it left, that is more
+    // than 4 MiB over the longest still waiting, which is 1 MiB: the event
+    // it has taken no longer counts for it.
+    wait_until("the peer that stopped reading to be closed", || closed(&lever));
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn what_a_peer_sent_before_it_went_is_carried_out() {
+    let dir = TempDir::new();
+    let script = write_script(&dir.0, &json!({ "turns": [] }));
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+
+    // A peer states its version, sends two messages, and is gone, all
+    // before Lever has read a byte of it.
+    let mut all = encode_frame(&json!({ "version": 1 }));
+    all.extend(encode_frame(&json!({ "op": "send", "text": "first", "cwd": "/tmp" })));
+    all.extend(encode_frame(&json!({ "op": "send", "text": "second", "cwd": "/tmp" })));
+    let mut gone = connect(&lever.person);
+    gone.write_all(&all).unwrap();
+    drop(gone);
+
+    // Both messages began their threads, and both were answered.
+    let mut peer = handshake(&lever.person);
+    wait_until("both threads to be done", || {
+        write_frame(&mut peer, &json!({ "op": "list" })).unwrap();
+        let listed = read_frame(&mut peer).unwrap();
+        let threads = listed["threads"].as_array().unwrap();
+        threads.len() == 2 && threads.iter().all(|thread| thread["state"] == "done")
+    });
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
 }

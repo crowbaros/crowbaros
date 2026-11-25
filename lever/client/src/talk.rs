@@ -158,12 +158,17 @@ fn watch(
         if event.get("thread").and_then(Value::as_str) != Some(thread) {
             continue;
         }
+        // An act is its own turn's, and may end after a later turn began:
+        // the thread's acts are shown whichever turn is watched.
+        if text(&event, "event") == "act" {
+            show_act(&mut answer, &event)?;
+            continue;
+        }
         if event.get("turn").and_then(Value::as_u64) != turn {
             continue;
         }
         match &*text(&event, "event") {
             "text" => answer.write(&text(&event, "text"))?,
-            "act" => show_act(&mut answer, &event)?,
             "note" => show_note(&mut answer, &event)?,
             "done" => {
                 answer.end()?;

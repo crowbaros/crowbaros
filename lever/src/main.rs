@@ -437,6 +437,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
                 alive = false;
             }
             if !alive {
+                broadcasts.extend(peer.finish_requests(&mut service, log));
                 peer.on_gone(log);
             }
             keep[idx] = alive;

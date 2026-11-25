@@ -775,17 +775,24 @@ impl AcpHarness {
         let Some(obj) = raw.as_object() else {
             return self.redact_for_thread(Some(thread_id), &raw.to_string());
         };
+        // The update's own IDs are taken out of what it says too: an update
+        // can name a tool call Lever has seen no act for.
+        let own_ids: Vec<&str> = ["sessionId", "toolCallId", "id"]
+            .iter()
+            .filter_map(|field| obj.get(*field).and_then(Value::as_str))
+            .collect();
+        let redact = |said: &str| redact_ids(&self.redact_for_thread(Some(thread_id), said), own_ids.clone());
         for preferred in ["summary", "message", "text", "note", "detail", "title"] {
             if let Some(s) = obj.get(preferred).and_then(Value::as_str)
                 && !s.trim().is_empty()
             {
-                return self.redact_for_thread(Some(thread_id), s.trim());
+                return redact(s.trim());
             }
         }
         if let Some(content_text) = obj.get("content").and_then(|c| c.get("text")).and_then(Value::as_str)
             && !content_text.trim().is_empty()
         {
-            return self.redact_for_thread(Some(thread_id), content_text.trim());
+            return redact(content_text.trim());
         }
         let mut parts = Vec::new();
         for (k, v) in obj {
@@ -805,7 +812,7 @@ impl AcpHarness {
         if parts.is_empty() {
             "Unrecognized update from harness.".to_string()
         } else {
-            self.redact_for_thread(Some(thread_id), &parts.join(" "))
+            redact(&parts.join(" "))
         }
     }
 }

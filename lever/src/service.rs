@@ -286,6 +286,19 @@ impl Service {
             return error_outcome("no-harness", "No harness is available.");
         };
 
+        // A thread whose last turn has ended, with that end still to be
+        // saved, is not working, and is not free either: the record must
+        // have how the turn ended before the next one begins.
+        self.save_endings();
+        if let Some(tid) = requested_thread
+            && self.unsaved_endings.iter().any(|ending| ending.thread_id == tid)
+        {
+            return error_outcome(
+                "storage-error",
+                "Lever is still saving how this thread's last turn ended.",
+            );
+        }
+
         let now = unix_now();
         let title = initial_title(text);
         let (thread_id, cwd, existing_session_id, new_thread) = if let Some(tid) = requested_thread {

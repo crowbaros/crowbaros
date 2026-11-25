@@ -130,13 +130,15 @@ While 1 MiB of replies wait for a peer, Lever reads no more from it and
 answers no more of what it has read from it: a peer that reads slowly, or not
 at all, finds its own writes stall, and loses nothing it sent. Lever answers
 the rest as the peer takes its replies. A peer that closes its sending side
-still gets the replies to what it sent before Lever closes the connection.
+still gets the replies to what it sent before Lever closes the connection, and
+what a peer sent whole before it went away altogether is still carried out.
 
 Events are not held back in that way, because a thread goes on working whether
 or not a peer that watches it reads. A peer that lets more than 4 MiB of
-events wait, over and above the longest one of them, is closed, and Lever's
-log says why. One event longer than that still reaches a peer that reads, and
-a peer that is still taking a long reply is given that much more room. The
+events wait, over and above the longest one still waiting, is closed, and
+Lever's log says why. One event longer than that still reaches a peer that
+reads, and a peer that is still taking a long reply is given that much more
+room. The
 record has what a closed peer missed: it connects again and reads it with
 `resume`.
 
@@ -230,7 +232,9 @@ Reply:
 {"reply":"sent","thread":"t-01a2b3c4d5e6","turn":1}
 ```
 
-Errors: `no-harness`, `no-thread`, `working`, `invalid-request`.
+Errors: `no-harness`, `no-thread`, `working`, `invalid-request`, and
+`storage-error` when Lever's database does not take the turn, or has yet to
+take how the thread's last turn ended.
 
 #### `resume`
 

@@ -62,14 +62,14 @@ fn command(args: &[String]) -> Result<Command, String> {
             "--help" | "-h" => return Ok(Command::Help),
             "--version" => return Ok(Command::Version),
             "--list" => list = true,
-            "--resume" => {
+            "--resume" if resumed.is_none() => {
                 resumed = Some(
                     rest.next()
                         .ok_or("--resume needs a thread's ID, as --list shows it")?
                         .clone(),
                 );
             }
-            "--stop" => {
+            "--stop" if stop.is_none() => {
                 stop = Some(
                     rest.next()
                         .ok_or("--stop needs a thread's ID, as --list shows it")?
@@ -89,6 +89,7 @@ fn command(args: &[String]) -> Result<Command, String> {
                     message: words.join(" "),
                 });
             }
+            "--resume" | "--stop" => return Err(format!("{arg} is given twice")),
             option if option.starts_with('-') => return Err(format!("no option {option}")),
             _ => words.push(arg.clone()),
         }
@@ -270,6 +271,8 @@ mod tests {
             &["--"],
             &["--resume", "t-k3f9q2xz", "--"],
             &["--", " "],
+            &["--resume", "t-k3f9q2xz", "--resume", "t-other"],
+            &["--stop", "t-k3f9q2xz", "--stop", "t-other"],
         ] {
             assert!(read(line).is_err(), "{line:?}");
         }
