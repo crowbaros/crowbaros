@@ -672,3 +672,64 @@ fn each_socket_keeps_its_own_count_of_connections() {
         lever.log_text()
     );
 }
+
+/// How many times Lever's log says one of the person's connections went.
+fn departures(lever: &RunningLever) -> usize {
+    lever
+        .log_text()
+        .lines()
+        .filter(|line| {
+            line.ends_with("connection: the person left") || line.ends_with("connection: the person disconnected")
+        })
+        .count()
+}
+
+fn wait_for_departures(lever: &RunningLever, wanted: usize) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while departures(lever) < wanted {
+        assert!(
+            Instant::now() < deadline,
+            "expected {wanted} departures in the log: {}",
+            lever.log_text()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn each_peer_that_goes_is_logged_once() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let mut lever = RunningLever::start(&dir.0, uid, uid);
+    let request = encode_frame(&json!({ "op": "status" }));
+
+    // A peer Lever has stopped reading, because replies wait for it, closes.
+    {
+        let mut held = handshake(&lever.person);
+        held.set_write_timeout(Some(Duration::from_millis(500))).unwrap();
+        let chunk: Vec<u8> = request.iter().copied().cycle().take(request.len() * 2048).collect();
+        while held.write(&chunk).is_ok() {}
+    }
+    wait_for_departures(&lever, 1);
+
+    // A peer sends requests and closes without reading their replies.
+    {
+        let mut hasty = handshake(&lever.person);
+        let requests: Vec<u8> = request.iter().copied().cycle().take(request.len() * 100).collect();
+        hasty.write_all(&requests).unwrap();
+    }
+    wait_for_departures(&lever, 2);
+
+    // A peer states its version and closes.
+    drop(handshake(&lever.person));
+    wait_for_departures(&lever, 3);
+
+    // Lever kept none of them: it still answers, and stops cleanly.
+    let mut next = handshake(&lever.person);
+    write_frame(&mut next, &json!({ "op": "status" })).unwrap();
+    assert_eq!(read_frame(&mut next).unwrap()["reply"], "status");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+    assert_eq!(departures(&lever), 3, "{}", lever.log_text());
+}

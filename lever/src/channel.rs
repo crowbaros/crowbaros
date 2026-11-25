@@ -73,8 +73,9 @@ impl Peer {
         }
     }
 
-    /// The peer has hung up: it sends nothing more and can take nothing more.
-    pub fn on_hangup(&mut self, log: &mut Log) {
+    /// Lever is about to drop this peer. Logs that it left, unless its close
+    /// is in the log already, so each peer that goes has one line saying so.
+    pub fn on_gone(&mut self, log: &mut Log) {
         if !self.closed_logged {
             self.closed_logged = true;
             let _ = log.write(Event::Connection, &format!("{} left", self.channel.peer));

@@ -67,8 +67,12 @@ impl Log {
         let escaped = details.replace('\n', "\n    ");
         let line = format!("{} {}: {escaped}\n", utc_timestamp(), event.as_str());
         let bytes = line.as_bytes();
-        if self.file.is_some() && self.size > 0 && self.size + (bytes.len() as u64) > self.limit {
+        // The log is open before its size is read: opening it is what learns
+        // the size of a log that was not open.
+        self.file()?;
+        if self.size > 0 && self.size + (bytes.len() as u64) > self.limit {
             self.set_aside()?;
+            self.file()?;
         }
         let size = self.size;
         let file = self.file()?;
@@ -199,6 +203,27 @@ mod tests {
         assert!(new.contains(": c\n") && !new.contains("lost"), "{new}");
         assert_eq!(mode(&path), 0o600);
         assert_eq!(mode(&backup), 0o600);
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_log_found_where_the_next_one_opens_is_held_to_the_limit_too() {
+        let path = temp_log("found");
+        let backup = PathBuf::from(format!("{}.1", path.display()));
+        let mut log = Log::open_with_limit(path.clone(), 200).unwrap();
+        log.write(Event::Start, &"a".repeat(120)).unwrap();
+
+        // The full log is moved aside, and before the next line a log that is
+        // nearly full already stands where the next one opens.
+        log.set_aside().unwrap();
+        std::fs::write(&path, "x".repeat(190)).unwrap();
+
+        log.write(Event::Connection, "c").unwrap();
+
+        let new = std::fs::read_to_string(&path).unwrap();
+        assert!(new.ends_with(": c\n") && !new.contains('x'), "{new}");
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), "x".repeat(190));
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
