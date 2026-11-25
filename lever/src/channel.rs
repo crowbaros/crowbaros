@@ -59,6 +59,8 @@ pub struct Peer {
     /// The peer has closed its sending side. It is still owed the replies to
     /// what it sent.
     input_ended: bool,
+    /// Lever found it could send this peer nothing more.
+    lost: bool,
     subscriptions: HashSet<String>,
     handshaked: bool,
     closing: bool,
@@ -78,6 +80,7 @@ impl Peer {
             taken: 0,
             held: false,
             input_ended: false,
+            lost: false,
             subscriptions: HashSet::new(),
             handshaked: false,
             closing: false,
@@ -115,7 +118,7 @@ impl Peer {
     }
 
     pub fn is_subscribed(&self, thread_id: &str) -> bool {
-        self.handshaked && !self.closing && self.subscriptions.contains(thread_id)
+        self.handshaked && !self.closing && !self.lost && self.subscriptions.contains(thread_id)
     }
 
     pub fn queue(&mut self, msg: &Value) {
@@ -165,18 +168,48 @@ impl Peer {
         false
     }
 
+    /// Lever can send this peer nothing more, and will drop it at its next
+    /// turn in the loop, once what it sent has been carried out.
+    pub fn lose(&mut self) {
+        self.lost = true;
+    }
+
+    pub fn is_lost(&self) -> bool {
+        self.lost
+    }
+
     /// Carries out the requests a peer sent whole before it went, with
     /// nobody to answer: a message it sent is still the person's message,
-    /// and a stop it sent still stops the turn. Not for a peer Lever closed
-    /// for what it sent, whose later frames mean nothing.
+    /// and a stop it sent still stops the turn. That takes in what it sent
+    /// and Lever had not yet read. Not for a peer Lever closed for what it
+    /// sent, whose later frames mean nothing.
     pub fn finish_requests(&mut self, service: &mut Service, log: &mut Log) -> Vec<Broadcast> {
+        // A peer that has gone left no more than its socket held. One that
+        // is still there, and still sending, is not read without end.
+        const MOST_READS: usize = 1024;
         let mut broadcasts = Vec::new();
-        while self.handshaked && !self.closing {
-            let Ok(Some(frame)) = self.reader.next_frame() else {
+        let mut buf = [0u8; 8192];
+        let mut reads = 0;
+        while !self.closing {
+            match self.reader.next_frame() {
+                Ok(Some(frame)) => {
+                    self.handle_frame(&frame, service, log, &mut broadcasts);
+                    self.write_buf.clear();
+                    continue;
+                }
+                Ok(None) => {}
+                Err(_) => break,
+            }
+            if self.input_ended || reads == MOST_READS {
                 break;
-            };
-            self.handle_frame(&frame, service, log, &mut broadcasts);
-            self.write_buf.clear();
+            }
+            reads += 1;
+            match self.stream.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => self.reader.push(&buf[..n]),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => break,
+            }
         }
         broadcasts
     }

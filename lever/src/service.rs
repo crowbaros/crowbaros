@@ -483,6 +483,11 @@ impl Service {
             harness.send_prompt(thread_id, active.turn, &session_id, &active.message);
             active.dispatch = TurnDispatch::PromptInFlight { session_id };
         } else {
+            // A harness that was started again has seen none of this
+            // thread's acts, and may still name them.
+            if let Ok(ids) = self.store.harness_call_ids(thread_id) {
+                harness.remember_tool_ids(thread_id, ids);
+            }
             active.dispatch = TurnDispatch::WaitingForSession;
             harness.ensure_session(
                 thread_id,

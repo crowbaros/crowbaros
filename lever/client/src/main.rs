@@ -61,7 +61,7 @@ fn command(args: &[String]) -> Result<Command, String> {
         match arg.as_str() {
             "--help" | "-h" => return Ok(Command::Help),
             "--version" => return Ok(Command::Version),
-            "--list" => list = true,
+            "--list" if !list => list = true,
             "--resume" if resumed.is_none() => {
                 resumed = Some(
                     rest.next()
@@ -89,7 +89,7 @@ fn command(args: &[String]) -> Result<Command, String> {
                     message: words.join(" "),
                 });
             }
-            "--resume" | "--stop" => return Err(format!("{arg} is given twice")),
+            "--list" | "--resume" | "--stop" => return Err(format!("{arg} is given twice")),
             option if option.starts_with('-') => return Err(format!("no option {option}")),
             _ => words.push(arg.clone()),
         }
@@ -273,6 +273,7 @@ mod tests {
             &["--", " "],
             &["--resume", "t-k3f9q2xz", "--resume", "t-other"],
             &["--stop", "t-k3f9q2xz", "--stop", "t-other"],
+            &["--list", "--list"],
         ] {
             assert!(read(line).is_err(), "{line:?}");
         }

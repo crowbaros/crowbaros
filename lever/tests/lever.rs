@@ -1116,7 +1116,8 @@ fn no_harness_id_or_message_type_appears_on_levers_sockets() {
         "end_turn",
         "in_progress",
         "vendor_secret_tag",
-        "acp-secret-tool-777",
+        "acp-secret-tool-99-777",
+        "-777",
     ];
     std::fs::write(
         &script,
@@ -1132,8 +1133,9 @@ fn no_harness_id_or_message_type_appears_on_levers_sockets() {
                           "raw_output": { "sessionId": "acp-secret-session-1", "toolCallId": "acp-secret-tool-100", "exit": 0 } },
                         { "kind": "unknown", "update": { "sessionUpdate": "vendor_secret_tag", "summary": "Plain note" } },
                         // An update that names a tool call Lever has seen no act for.
-                        { "kind": "unknown", "update": { "sessionUpdate": "vendor_secret_tag", "toolCallId": "acp-secret-tool-777",
-                          "message": "Waiting on acp-secret-tool-777" } },
+                        // Its ID begins with one Lever does know, and all of it is taken out.
+                        { "kind": "unknown", "update": { "sessionUpdate": "vendor_secret_tag", "toolCallId": "acp-secret-tool-99-777",
+                          "message": "Waiting on acp-secret-tool-99-777" } },
                         { "kind": "text", "text": "All good." }
                     ]
                 },
@@ -1192,6 +1194,12 @@ fn no_harness_id_or_message_type_appears_on_levers_sockets() {
     record(read_frame(&mut peer).unwrap());
 
     assert!(!seen_frames.is_empty());
+    assert!(
+        seen_frames
+            .iter()
+            .any(|frame| frame.contains("\"text\":\"Waiting on [redacted]\"")),
+        "{seen_frames:?}"
+    );
     for frame in &seen_frames {
         for bad in &forbidden {
             assert!(
@@ -2759,9 +2767,12 @@ fn what_a_peer_sent_before_it_went_is_carried_out() {
 
     // A peer states its version, sends two messages, and is gone, all
     // before Lever has read a byte of it.
+    // The second is longer than Lever takes in one read, so part of it is
+    // still to be read when Lever finds the peer gone.
+    let second = format!("second {}", "x".repeat(12 * 1024));
     let mut all = encode_frame(&json!({ "version": 1 }));
     all.extend(encode_frame(&json!({ "op": "send", "text": "first", "cwd": "/tmp" })));
-    all.extend(encode_frame(&json!({ "op": "send", "text": "second", "cwd": "/tmp" })));
+    all.extend(encode_frame(&json!({ "op": "send", "text": second, "cwd": "/tmp" })));
     let mut gone = connect(&lever.person);
     gone.write_all(&all).unwrap();
     drop(gone);
@@ -2774,6 +2785,43 @@ fn what_a_peer_sent_before_it_went_is_carried_out() {
         let threads = listed["threads"].as_array().unwrap();
         threads.len() == 2 && threads.iter().all(|thread| thread["state"] == "done")
     });
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_harness_started_again_has_the_ids_of_earlier_acts_taken_out_of_what_it_says() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                { "match": "restart the harness", "crash": true },
+                {
+                    "match": "Act",
+                    "steps": [
+                        { "kind": "act", "id": "acp-earlier-call-7", "title": "Look", "status": "completed" },
+                        { "kind": "text", "text": "Looked." }
+                    ]
+                },
+                { "match": "Fail", "error": { "code": -32000, "message": "Could not go on from acp-earlier-call-7." } }
+            ]
+        }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Act");
+    assert_eq!(text_of(&turn_events(&mut peer, &thread, turn)), "Looked.");
+    end_the_harness(&mut peer);
+
+    // The new harness has shown Lever no act, and names the old one.
+    let (_, turn) = send(&mut peer, Some(&thread), "Fail");
+    let end = turn_events(&mut peer, &thread, turn).pop().unwrap();
+    assert_eq!(end["event"], "failed", "{end}");
+    assert_eq!(end["message"], "Could not go on from [redacted].");
+    let record = resume(&mut peer, &thread);
+    assert_eq!(record["turns"][1]["error"], "Could not go on from [redacted].");
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));

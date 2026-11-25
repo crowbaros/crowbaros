@@ -184,7 +184,7 @@ fn accept_pending(listener: &UnixListener, channel: Channel, peers: &mut Vec<Pee
     }
 }
 
-fn deliver_broadcasts(broadcasts: &[Broadcast], peers: &mut [Peer], keep: &mut [bool], log: &mut Log) {
+fn deliver_broadcasts(broadcasts: &[Broadcast], peers: &mut [Peer], keep: &[bool], log: &mut Log) {
     if broadcasts.is_empty() {
         return;
     }
@@ -199,9 +199,11 @@ fn deliver_broadcasts(broadcasts: &[Broadcast], peers: &mut [Peer], keep: &mut [
                 queued = true;
             }
         }
+        // A peer that cannot be sent to is dropped at its next turn in the
+        // loop, where what it had sent is carried out first.
         if queued && !(peer.on_writable() && peer.keeps_up(log)) {
             peer.on_gone(log);
-            keep[idx] = false;
+            peer.lose();
         }
     }
 }
@@ -359,7 +361,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
 
         // A peer whose requests wait, and who has made room for their
         // replies, is answered now and not at the next thing that happens.
-        let timeout_ms = if peers.iter().any(Peer::is_held) {
+        let timeout_ms = if peers.iter().any(|peer| peer.is_held() || peer.is_lost()) {
             0
         } else {
             service.poll_timeout_ms()
@@ -400,7 +402,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
                 broadcasts.extend(service.on_harness_writable(log));
             }
         }
-        deliver_broadcasts(&broadcasts, &mut peers, &mut keep, log);
+        deliver_broadcasts(&broadcasts, &mut peers, &keep, log);
         broadcasts.clear();
 
         // Process existing peers (indices 3..3+existing_len), keeping newly
@@ -410,12 +412,12 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         for (idx, pfd) in pollfds[3..3 + existing_len].iter().enumerate() {
             let revents = pfd.revents;
             let peer = &mut peers[idx];
-            if !keep[idx] || (revents == 0 && !peer.is_held()) {
+            if !keep[idx] || (revents == 0 && !peer.is_held() && !peer.is_lost()) {
                 continue;
             }
             broadcasts.clear();
-            let mut alive = true;
-            if revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 && peer.wants_read() {
+            let mut alive = !peer.is_lost();
+            if alive && revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 && peer.wants_read() {
                 let (still_alive, peer_broadcasts) = peer.on_readable(&mut service, log);
                 alive = still_alive;
                 broadcasts.extend(peer_broadcasts);
@@ -441,7 +443,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
                 peer.on_gone(log);
             }
             keep[idx] = alive;
-            deliver_broadcasts(&broadcasts, &mut peers, &mut keep, log);
+            deliver_broadcasts(&broadcasts, &mut peers, &keep, log);
         }
 
         let mut iter = keep.into_iter();

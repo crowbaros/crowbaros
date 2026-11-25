@@ -753,9 +753,9 @@ impl AcpHarness {
         }
     }
 
-    /// Redacts harness-internal IDs from error strings and unrecognized updates
-    /// without touching normal model answers.
-    fn redact_for_thread(&self, thread_id: Option<&str>, input: &str) -> String {
+    /// The harness's IDs that Lever knows for a thread, or its session IDs
+    /// when no thread is named.
+    fn known_ids(&self, thread_id: Option<&str>) -> Vec<&str> {
         let mut ids: Vec<&str> = Vec::new();
         if let Some(tid) = thread_id {
             ids.extend(self.thread_to_session.get(tid).map(String::as_str));
@@ -765,7 +765,23 @@ impl AcpHarness {
         } else {
             ids.extend(self.session_to_thread.keys().map(String::as_str));
         }
-        redact_ids(input, ids)
+        ids
+    }
+
+    /// Redacts harness-internal IDs from error strings and unrecognized updates
+    /// without touching normal model answers.
+    fn redact_for_thread(&self, thread_id: Option<&str>, input: &str) -> String {
+        redact_ids(input, self.known_ids(thread_id))
+    }
+
+    /// Takes the tool call IDs of a thread's recorded acts as known, so a
+    /// harness that was started again has them taken out of what it says of
+    /// acts from before.
+    pub fn remember_tool_ids(&mut self, thread_id: &str, ids: Vec<String>) {
+        self.thread_tool_ids
+            .entry(thread_id.to_string())
+            .or_default()
+            .extend(ids);
     }
 
     /// Turns an unknown ACP update payload into plain text without exposing
@@ -775,13 +791,21 @@ impl AcpHarness {
         let Some(obj) = raw.as_object() else {
             return self.redact_for_thread(Some(thread_id), &raw.to_string());
         };
-        // The update's own IDs are taken out of what it says too: an update
-        // can name a tool call Lever has seen no act for.
-        let own_ids: Vec<&str> = ["sessionId", "toolCallId", "id"]
+        // The update's own session and tool call IDs are taken out of what
+        // it says too, with the IDs Lever knows, in one pass: an update can
+        // name a tool call Lever has seen no act for, and the longest ID
+        // must go first whichever kind it is.
+        let own_ids: Vec<String> = ["sessionId", "toolCallId"]
             .iter()
-            .filter_map(|field| obj.get(*field).and_then(Value::as_str))
+            .filter_map(|field| match obj.get(*field) {
+                Some(Value::String(id)) => Some(id.clone()),
+                Some(Value::Number(id)) => Some(id.to_string()),
+                _ => None,
+            })
             .collect();
-        let redact = |said: &str| redact_ids(&self.redact_for_thread(Some(thread_id), said), own_ids.clone());
+        let mut ids = self.known_ids(Some(thread_id));
+        ids.extend(own_ids.iter().map(String::as_str));
+        let redact = |said: &str| redact_ids(said, ids.clone());
         for preferred in ["summary", "message", "text", "note", "detail", "title"] {
             if let Some(s) = obj.get(preferred).and_then(Value::as_str)
                 && !s.trim().is_empty()

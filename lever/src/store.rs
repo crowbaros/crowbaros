@@ -364,6 +364,19 @@ impl Store {
         Ok(())
     }
 
+    /// The harness's tool call IDs of a thread's recorded acts.
+    pub fn harness_call_ids(&self, thread_id: &str) -> Result<Vec<String>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT harness_call_id FROM acts WHERE thread_id = ?1")
+            .map_err(|e| format!("could not prepare tool call ID query: {e}"))?;
+        let rows = stmt
+            .query_map(params![thread_id], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("could not query tool call IDs: {e}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("could not read tool call ID row: {e}"))
+    }
+
     /// Marks every currently-working turn as `interrupted` and returns the
     /// affected `(thread_id, turn_number)` pairs.
     pub fn interrupt_all_working(&self, now: i64) -> Result<Vec<(String, u64)>, String> {
