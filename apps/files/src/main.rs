@@ -24,7 +24,9 @@ use std::{
     sync::Arc,
     time::SystemTime,
 };
-use theme::{Palette, Preferences};
+use theme::{
+    FONT_MONO, FONT_UI, Palette, Preferences, TEXT_BODY, TEXT_LABEL, TEXT_SECTION, TEXT_SUPPORTING, TEXT_TECHNICAL,
+};
 
 actions!(
     files,
@@ -1100,6 +1102,7 @@ impl FilesApp {
         let sort_open = matches!(self.overlay, Some(Overlay::SortMenu));
 
         let left_area: AnyElement = if in_header_prompt {
+            let is_path_prompt = matches!(self.prompt, Some(PromptMode::Path));
             let prefix_icon = match self.prompt {
                 Some(PromptMode::Search) => "search",
                 _ => "folder",
@@ -1122,8 +1125,8 @@ impl FilesApp {
                 .child(
                     div()
                         .flex_1()
-                        .font_family("IBM Plex Mono")
-                        .text_size(px(12.5))
+                        .font_family(if is_path_prompt { FONT_MONO } else { FONT_UI })
+                        .text_size(px(if is_path_prompt { TEXT_SUPPORTING } else { TEXT_BODY }))
                         .text_color(rgb(p.text))
                         .child(self.prompt_input.clone()),
                 )
@@ -1188,7 +1191,13 @@ impl FilesApp {
                     for (idx, (label, path)) in parts.into_iter().enumerate() {
                         let is_last = idx + 1 == total;
                         if idx > 0 {
-                            crumbs = crumbs.child(div().text_size(px(12.)).text_color(rgb(p.muted)).child("/"));
+                            crumbs = crumbs.child(
+                                div()
+                                    .font_family(FONT_MONO)
+                                    .text_size(px(TEXT_SUPPORTING))
+                                    .text_color(rgb(p.muted))
+                                    .child("/"),
+                            );
                         }
                         crumbs = crumbs.child(
                             div()
@@ -1197,8 +1206,8 @@ impl FilesApp {
                                 .py(px(3.))
                                 .rounded(px(4.))
                                 .cursor_pointer()
-                                .font_family("IBM Plex Mono")
-                                .text_size(px(12.5))
+                                .font_family(FONT_MONO)
+                                .text_size(px(TEXT_SUPPORTING))
                                 .text_color(rgb(if is_last { p.text } else { p.muted }))
                                 .hover(move |s| s.bg(rgb(p.surface)).text_color(rgb(p.text)))
                                 .child(label)
@@ -1213,8 +1222,8 @@ impl FilesApp {
                     crumbs = crumbs.child(
                         div()
                             .px(px(6.))
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(12.5))
+                            .text_size(px(TEXT_LABEL))
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(p.text))
                             .child("Recents"),
                     );
@@ -1223,8 +1232,8 @@ impl FilesApp {
                     crumbs = crumbs.child(
                         div()
                             .px(px(6.))
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(12.5))
+                            .text_size(px(TEXT_LABEL))
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(p.text))
                             .child("Trash"),
                     );
@@ -1235,8 +1244,8 @@ impl FilesApp {
                         .child(
                             div()
                                 .px(px(6.))
-                                .font_family("IBM Plex Mono")
-                                .text_size(px(12.5))
+                                .text_size(px(TEXT_LABEL))
+                                .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(rgb(p.signal_fg))
                                 .child(format!("Search “{query}”")),
                         )
@@ -1247,7 +1256,7 @@ impl FilesApp {
                                 .py(px(2.))
                                 .rounded(px(4.))
                                 .bg(rgb(p.surface))
-                                .text_size(px(11.))
+                                .text_size(px(TEXT_SUPPORTING))
                                 .text_color(rgb(p.muted))
                                 .cursor_pointer()
                                 .child("Clear")
@@ -1349,8 +1358,7 @@ impl FilesApp {
                 .px(px(12.))
                 .pt(px(14.))
                 .pb(px(6.))
-                .font_family("IBM Plex Mono")
-                .text_size(px(10.5))
+                .text_size(px(TEXT_SUPPORTING))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(if accent { p.signal_fg } else { p.muted }))
                 .child(label)
@@ -1365,7 +1373,7 @@ impl FilesApp {
 
         // PINNED section (shown when user has pinned folders)
         if !self.saved.pinned.is_empty() {
-            list = list.child(section_header("PINNED", true));
+            list = list.child(section_header("Pinned", true));
             for (idx, pin_path) in self.saved.pinned.iter().enumerate() {
                 let label = pin_path
                     .file_name()
@@ -1379,7 +1387,7 @@ impl FilesApp {
                         .id(("pin-item", idx))
                         .mx(px(6.))
                         .px(px(8.))
-                        .h(px(27.))
+                        .h(px(28.))
                         .flex()
                         .items_center()
                         .gap(px(9.))
@@ -1394,8 +1402,8 @@ impl FilesApp {
                                 .min_w(px(0.))
                                 .overflow_hidden()
                                 .whitespace_nowrap()
-                                .font_family("IBM Plex Mono")
-                                .text_size(px(12.))
+                                .text_size(px(TEXT_BODY))
+                                .when(is_active, |d| d.font_weight(FontWeight::SEMIBOLD))
                                 .text_color(rgb(if is_active { p.text } else { p.muted }))
                                 .child(label),
                         )
@@ -1406,7 +1414,7 @@ impl FilesApp {
             }
         }
 
-        // HOME section — clicking HOME navigates to ~
+        // HOME section — clicking Home navigates to ~
         let home_target = self.home.clone();
         list = list.child(
             div()
@@ -1415,12 +1423,11 @@ impl FilesApp {
                 .pt(px(14.))
                 .pb(px(6.))
                 .cursor_pointer()
-                .font_family("IBM Plex Mono")
-                .text_size(px(10.5))
+                .text_size(px(TEXT_SUPPORTING))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(p.signal_fg))
                 .hover(move |s| s.text_color(rgb(p.text)))
-                .child("HOME")
+                .child("Home")
                 .on_click(cx.listener(move |this, _, w, cx| {
                     this.navigate_active(Location::Directory(home_target.clone()), None, w, cx);
                 })),
@@ -1434,7 +1441,7 @@ impl FilesApp {
                     .id(("home-dir", idx))
                     .mx(px(6.))
                     .px(px(8.))
-                    .h(px(27.))
+                    .h(px(28.))
                     .flex()
                     .items_center()
                     .gap(px(9.))
@@ -1449,8 +1456,8 @@ impl FilesApp {
                             .min_w(px(0.))
                             .overflow_hidden()
                             .whitespace_nowrap()
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(12.))
+                            .text_size(px(TEXT_BODY))
+                            .when(is_active, |d| d.font_weight(FontWeight::SEMIBOLD))
                             .text_color(rgb(if is_active { p.text } else { p.muted }))
                             .child(elide_end(&item.label, 17)),
                     )
@@ -1461,7 +1468,7 @@ impl FilesApp {
         }
 
         // VIEWS section (Recents, Trash)
-        list = list.child(section_header("VIEWS", false));
+        list = list.child(section_header("Views", false));
         let views: [(&'static str, &'static str, Location); 2] = [
             ("Recents", "clock", Location::Recents),
             ("Trash", "trash", Location::Trash),
@@ -1473,7 +1480,7 @@ impl FilesApp {
                     .id(("view-item", idx))
                     .mx(px(6.))
                     .px(px(8.))
-                    .h(px(27.))
+                    .h(px(28.))
                     .flex()
                     .items_center()
                     .gap(px(9.))
@@ -1485,8 +1492,8 @@ impl FilesApp {
                     .child(
                         div()
                             .flex_1()
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(12.))
+                            .text_size(px(TEXT_BODY))
+                            .when(is_active, |d| d.font_weight(FontWeight::SEMIBOLD))
                             .text_color(rgb(if is_active { p.text } else { p.muted }))
                             .child(label),
                     )
@@ -1497,7 +1504,7 @@ impl FilesApp {
         }
 
         // DRIVES section
-        list = list.child(section_header("DRIVES", false));
+        list = list.child(section_header("Drives", false));
         for (idx, drive) in self.drives.iter().enumerate() {
             let is_active = active_loc == Location::Directory(drive.path.clone());
             let target = drive.path.clone();
@@ -1506,7 +1513,7 @@ impl FilesApp {
                     .id(("drive-item", idx))
                     .mx(px(6.))
                     .px(px(8.))
-                    .h(px(27.))
+                    .h(px(28.))
                     .flex()
                     .items_center()
                     .gap(px(9.))
@@ -1521,8 +1528,8 @@ impl FilesApp {
                             .min_w(px(0.))
                             .overflow_hidden()
                             .whitespace_nowrap()
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(12.))
+                            .text_size(px(TEXT_BODY))
+                            .when(is_active, |d| d.font_weight(FontWeight::SEMIBOLD))
                             .text_color(rgb(if is_active { p.text } else { p.muted }))
                             .child(drive.label.clone()),
                     )
@@ -1613,8 +1620,7 @@ impl FilesApp {
             return div()
                 .flex_1()
                 .p(px(24.))
-                .font_family("IBM Plex Mono")
-                .text_size(px(12.5))
+                .text_size(px(TEXT_BODY))
                 .text_color(rgb(p.muted))
                 .child(err.clone())
                 .into_any_element();
@@ -1631,8 +1637,7 @@ impl FilesApp {
                 .flex()
                 .items_center()
                 .justify_center()
-                .font_family("IBM Plex Mono")
-                .text_size(px(12.5))
+                .text_size(px(TEXT_BODY))
                 .text_color(rgb(p.muted))
                 .child(msg)
                 .into_any_element();
@@ -1685,8 +1690,7 @@ impl FilesApp {
                             .min_w(px(0.))
                             .overflow_hidden()
                             .whitespace_nowrap()
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(12.5))
+                            .text_size(px(TEXT_BODY))
                             .text_color(rgb(if selected { p.signal_fg } else { p.text }))
                             .child(entry.name.clone()),
                     )
@@ -1696,8 +1700,8 @@ impl FilesApp {
                             .flex_shrink_0()
                             .flex()
                             .justify_end()
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(11.5))
+                            .font_family(FONT_MONO)
+                            .text_size(px(TEXT_TECHNICAL))
                             .text_color(rgb(p.muted))
                             .child(meta_col),
                     )
@@ -1707,8 +1711,8 @@ impl FilesApp {
                             .flex_shrink_0()
                             .flex()
                             .justify_end()
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(11.5))
+                            .font_family(FONT_MONO)
+                            .text_size(px(TEXT_TECHNICAL))
                             .text_color(rgb(p.muted))
                             .child(date_col),
                     )
@@ -1825,8 +1829,7 @@ impl FilesApp {
                             .whitespace_nowrap()
                             .flex()
                             .justify_center()
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(11.5))
+                            .text_size(px(TEXT_SUPPORTING))
                             .text_color(rgb(if selected { p.signal_fg } else { p.text }))
                             .child(elide_end(&entry.name, 15)),
                     )
@@ -1912,7 +1915,7 @@ impl FilesApp {
                 col = col.child(
                     div()
                         .id(("anc-row", col_i * 10_000 + i))
-                        .h(px(27.))
+                        .h(px(28.))
                         .px(px(8.))
                         .flex()
                         .items_center()
@@ -1928,8 +1931,7 @@ impl FilesApp {
                                 .min_w(px(0.))
                                 .overflow_hidden()
                                 .whitespace_nowrap()
-                                .font_family("IBM Plex Mono")
-                                .text_size(px(12.))
+                                .text_size(px(TEXT_BODY))
                                 .text_color(rgb(if is_on_path { p.text } else { p.muted }))
                                 .child(entry.name),
                         )
@@ -1968,7 +1970,7 @@ impl FilesApp {
             active_col = active_col.child(
                 div()
                     .id(("col-row", pane_idx * 100_000 + row_idx))
-                    .h(px(27.))
+                    .h(px(28.))
                     .px(px(8.))
                     .flex()
                     .items_center()
@@ -1984,8 +1986,7 @@ impl FilesApp {
                             .min_w(px(0.))
                             .overflow_hidden()
                             .whitespace_nowrap()
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(12.))
+                            .text_size(px(TEXT_BODY))
                             .text_color(rgb(if selected { p.signal_fg } else { p.text }))
                             .child(entry.name.clone()),
                     )
@@ -2039,8 +2040,7 @@ impl FilesApp {
                 next_col = next_col.child(
                     div()
                         .p(px(12.))
-                        .font_family("IBM Plex Mono")
-                        .text_size(px(11.5))
+                        .text_size(px(TEXT_BODY))
                         .text_color(rgb(p.muted))
                         .child("No items"),
                 );
@@ -2052,7 +2052,7 @@ impl FilesApp {
                     next_col = next_col.child(
                         div()
                             .id(("next-row", i))
-                            .h(px(27.))
+                            .h(px(28.))
                             .px(px(8.))
                             .flex()
                             .items_center()
@@ -2067,8 +2067,7 @@ impl FilesApp {
                                     .min_w(px(0.))
                                     .overflow_hidden()
                                     .whitespace_nowrap()
-                                    .font_family("IBM Plex Mono")
-                                    .text_size(px(12.))
+                                    .text_size(px(TEXT_BODY))
                                     .text_color(rgb(p.muted))
                                     .child(entry.name),
                             )
@@ -2102,11 +2101,12 @@ impl FilesApp {
             .when(pane_idx > 0, |d| d.border_l_1().border_color(rgb(p.line)));
 
         if is_split {
+            let is_dir_path = matches!(self.panes[pane_idx].location, Location::Directory(_));
             let label = self.panes[pane_idx].location.title(&self.home);
             wrap = wrap.child(
                 div()
                     .id(("split-hdr", pane_idx))
-                    .h(px(26.))
+                    .h(px(28.))
                     .px(px(12.))
                     .flex()
                     .items_center()
@@ -2114,8 +2114,10 @@ impl FilesApp {
                     .bg(rgb(if is_active { p.surface } else { p.canvas }))
                     .border_b_1()
                     .border_color(rgb(p.line))
-                    .font_family("IBM Plex Mono")
-                    .text_size(px(11.))
+                    .when(is_dir_path, |d| d.font_family(FONT_MONO).text_size(px(TEXT_TECHNICAL)))
+                    .when(!is_dir_path, |d| {
+                        d.text_size(px(TEXT_SUPPORTING)).font_weight(FontWeight::SEMIBOLD)
+                    })
                     .text_color(rgb(if is_active { p.signal_fg } else { p.muted }))
                     .child(label)
                     .on_click(cx.listener(move |this, _, w, cx| {
@@ -2154,8 +2156,7 @@ impl FilesApp {
                     .on_action(cx.listener(|this, _: &PromptCancel, w, cx| this.close_prompt(w, cx)))
                     .child(
                         div()
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(11.5))
+                            .text_size(px(TEXT_LABEL))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(p.signal_fg))
                             .child(label),
@@ -2163,7 +2164,7 @@ impl FilesApp {
                     .child(
                         div()
                             .flex_1()
-                            .h(px(26.))
+                            .h(px(28.))
                             .px(px(8.))
                             .flex()
                             .items_center()
@@ -2171,8 +2172,7 @@ impl FilesApp {
                             .bg(rgb(p.canvas))
                             .border_1()
                             .border_color(rgb(p.focus))
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(12.))
+                            .text_size(px(TEXT_BODY))
                             .text_color(rgb(p.text))
                             .child(self.prompt_input.clone()),
                     )
@@ -2184,7 +2184,7 @@ impl FilesApp {
                             .rounded(px(4.))
                             .bg(rgb(p.accent))
                             .text_color(rgb(p.on_accent))
-                            .text_size(px(11.5))
+                            .text_size(px(TEXT_SUPPORTING))
                             .font_weight(FontWeight::SEMIBOLD)
                             .cursor_pointer()
                             .child("Apply")
@@ -2200,7 +2200,7 @@ impl FilesApp {
                             .border_1()
                             .border_color(rgb(p.line))
                             .text_color(rgb(p.muted))
-                            .text_size(px(11.5))
+                            .text_size(px(TEXT_SUPPORTING))
                             .cursor_pointer()
                             .child("Cancel")
                             .on_click(cx.listener(|this, _, w, cx| this.close_prompt(w, cx))),
@@ -2233,8 +2233,7 @@ impl FilesApp {
                 .bg(rgb(p.surface))
                 .border_t_1()
                 .border_color(rgb(p.line))
-                .font_family("IBM Plex Mono")
-                .text_size(px(11.5))
+                .text_size(px(TEXT_SUPPORTING))
                 .text_color(rgb(if accent { p.signal_fg } else { p.muted }))
                 .child(msg)
                 .child(
@@ -2272,8 +2271,7 @@ impl FilesApp {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .font_family("IBM Plex Mono")
-                    .text_size(px(12.))
+                    .text_size(px(TEXT_BODY))
                     .text_color(rgb(p.muted))
                     .child("Nothing selected"),
             );
@@ -2305,8 +2303,8 @@ impl FilesApp {
                     .border_1()
                     .border_color(rgb(p.line))
                     .overflow_hidden()
-                    .font_family("IBM Plex Mono")
-                    .text_size(px(10.))
+                    .font_family(FONT_MONO)
+                    .text_size(px(TEXT_TECHNICAL))
                     .text_color(rgb(p.muted))
                     .child(snippet.clone()),
             )
@@ -2330,11 +2328,11 @@ impl FilesApp {
                 .items_center()
                 .justify_between()
                 .gap(px(12.))
-                .font_family("IBM Plex Mono")
-                .text_size(px(11.5))
-                .child(div().text_color(rgb(p.muted)).child(key))
+                .child(div().text_size(px(TEXT_SUPPORTING)).text_color(rgb(p.muted)).child(key))
                 .child(
                     div()
+                        .font_family(FONT_MONO)
+                        .text_size(px(TEXT_TECHNICAL))
                         .text_color(rgb(p.text))
                         .overflow_hidden()
                         .whitespace_nowrap()
@@ -2351,16 +2349,14 @@ impl FilesApp {
             .gap(px(6.))
             .child(
                 div()
-                    .font_family("IBM Plex Mono")
-                    .text_size(px(13.5))
+                    .text_size(px(TEXT_SECTION))
                     .font_weight(FontWeight::BOLD)
                     .text_color(rgb(p.text))
                     .child(entry.name.clone()),
             )
             .child(
                 div()
-                    .font_family("IBM Plex Mono")
-                    .text_size(px(11.5))
+                    .text_size(px(TEXT_SUPPORTING))
                     .text_color(rgb(p.muted))
                     .child(entry.subtitle()),
             )
@@ -2387,8 +2383,7 @@ impl FilesApp {
             details = details.child(
                 div()
                     .mt(px(12.))
-                    .font_family("IBM Plex Mono")
-                    .text_size(px(11.))
+                    .text_size(px(TEXT_SUPPORTING))
                     .text_color(rgb(p.muted))
                     .child("Space to preview"),
             );
@@ -2418,8 +2413,7 @@ impl FilesApp {
                     .justify_between()
                     .cursor_pointer()
                     .hover(|s| s.opacity(0.88))
-                    .font_family("Manrope")
-                    .text_size(px(12.5))
+                    .text_size(px(TEXT_LABEL))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(cta_label)
                     .child(icon("open-external", p.on_accent, 14.))
@@ -2443,7 +2437,7 @@ impl FilesApp {
                 ];
                 let mut menu = div()
                     .id("view-popover")
-                    .w(px(210.))
+                    .w(px(224.))
                     .p(px(6.))
                     .rounded(px(6.))
                     .bg(rgb(p.surface))
@@ -2457,7 +2451,7 @@ impl FilesApp {
                     menu = menu.child(
                         div()
                             .id(("view-opt", mode as usize))
-                            .h(px(28.))
+                            .h(px(30.))
                             .px(px(10.))
                             .rounded(px(4.))
                             .flex()
@@ -2466,8 +2460,7 @@ impl FilesApp {
                             .cursor_pointer()
                             .when(active, |d| d.bg(rgba(p.selection_bg)))
                             .hover(move |s| s.bg(rgb(p.canvas)))
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(12.))
+                            .text_size(px(TEXT_BODY))
                             .text_color(rgb(if active { p.signal_fg } else { p.text }))
                             .child(
                                 div()
@@ -2477,7 +2470,13 @@ impl FilesApp {
                                     .child(icon(mode.icon(), if active { p.signal_fg } else { p.muted }, 13.5))
                                     .child(mode.label()),
                             )
-                            .child(div().text_size(px(10.5)).text_color(rgb(p.muted)).child(hint))
+                            .child(
+                                div()
+                                    .font_family(FONT_MONO)
+                                    .text_size(px(TEXT_TECHNICAL))
+                                    .text_color(rgb(p.muted))
+                                    .child(hint),
+                            )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.set_view_mode(mode, cx);
                             })),
@@ -2486,7 +2485,7 @@ impl FilesApp {
                 menu = menu.child(div().my(px(4.)).h(px(1.)).bg(rgb(p.line))).child(
                     div()
                         .id("view-split-toggle")
-                        .h(px(28.))
+                        .h(px(30.))
                         .px(px(10.))
                         .rounded(px(4.))
                         .flex()
@@ -2494,8 +2493,7 @@ impl FilesApp {
                         .justify_between()
                         .cursor_pointer()
                         .hover(move |s| s.bg(rgb(p.canvas)))
-                        .font_family("IBM Plex Mono")
-                        .text_size(px(12.))
+                        .text_size(px(TEXT_BODY))
                         .text_color(rgb(p.text))
                         .child(
                             div()
@@ -2505,7 +2503,12 @@ impl FilesApp {
                                 .child(icon("split", if is_split { p.signal_fg } else { p.muted }, 13.5))
                                 .child("Split pane"),
                         )
-                        .child(if is_split { "On" } else { "Off" })
+                        .child(
+                            div()
+                                .text_size(px(TEXT_SUPPORTING))
+                                .text_color(rgb(if is_split { p.signal_fg } else { p.muted }))
+                                .child(if is_split { "On" } else { "Off" }),
+                        )
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.overlay = None;
                             this.toggle_split(cx);
@@ -2540,7 +2543,7 @@ impl FilesApp {
             Overlay::SortMenu => {
                 let mut menu = div()
                     .id("sort-popover")
-                    .w(px(210.))
+                    .w(px(224.))
                     .p(px(6.))
                     .rounded(px(6.))
                     .bg(rgb(p.surface))
@@ -2563,7 +2566,7 @@ impl FilesApp {
                     menu = menu.child(
                         div()
                             .id(("sort-opt", field as usize))
-                            .h(px(28.))
+                            .h(px(30.))
                             .px(px(10.))
                             .rounded(px(4.))
                             .flex()
@@ -2572,8 +2575,7 @@ impl FilesApp {
                             .cursor_pointer()
                             .when(active, |d| d.bg(rgba(p.selection_bg)))
                             .hover(move |s| s.bg(rgb(p.canvas)))
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(12.))
+                            .text_size(px(TEXT_BODY))
                             .text_color(rgb(if active { p.signal_fg } else { p.text }))
                             .child(field.label())
                             .child(arrow)
@@ -2587,7 +2589,7 @@ impl FilesApp {
                 menu = menu.child(div().my(px(4.)).h(px(1.)).bg(rgb(p.line))).child(
                     div()
                         .id("sort-hidden-toggle")
-                        .h(px(28.))
+                        .h(px(30.))
                         .px(px(10.))
                         .rounded(px(4.))
                         .flex()
@@ -2595,11 +2597,15 @@ impl FilesApp {
                         .justify_between()
                         .cursor_pointer()
                         .hover(move |s| s.bg(rgb(p.canvas)))
-                        .font_family("IBM Plex Mono")
-                        .text_size(px(12.))
+                        .text_size(px(TEXT_BODY))
                         .text_color(rgb(p.text))
                         .child("Show hidden")
-                        .child(if self.saved.show_hidden { "On" } else { "Off" })
+                        .child(
+                            div()
+                                .text_size(px(TEXT_SUPPORTING))
+                                .text_color(rgb(if self.saved.show_hidden { p.signal_fg } else { p.muted }))
+                                .child(if self.saved.show_hidden { "On" } else { "Off" }),
+                        )
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.toggle_hidden(cx);
                             this.overlay = None;
@@ -2637,7 +2643,7 @@ impl FilesApp {
                 let in_trash = self.pane().location.is_trash();
                 let is_pinned = self.saved.pinned.iter().any(|x| x == &entry.path);
                 let mut menu = div()
-                    .w(px(230.))
+                    .w(px(256.))
                     .p(px(6.))
                     .rounded(px(6.))
                     .bg(rgb(p.surface))
@@ -2655,8 +2661,7 @@ impl FilesApp {
                             .mb(px(4.))
                             .overflow_hidden()
                             .whitespace_nowrap()
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(11.5))
+                            .text_size(px(TEXT_LABEL))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(p.signal_fg))
                             .child(entry.name.clone()),
@@ -2665,7 +2670,7 @@ impl FilesApp {
                 let row = |id: &'static str, label: &'static str, hint: &'static str| {
                     div()
                         .id(id)
-                        .h(px(28.))
+                        .h(px(30.))
                         .px(px(10.))
                         .rounded(px(4.))
                         .flex()
@@ -2673,11 +2678,16 @@ impl FilesApp {
                         .justify_between()
                         .cursor_pointer()
                         .hover(move |s| s.bg(rgb(p.canvas)))
-                        .font_family("IBM Plex Mono")
-                        .text_size(px(12.))
+                        .text_size(px(TEXT_BODY))
                         .text_color(rgb(p.text))
                         .child(label)
-                        .child(div().text_size(px(10.5)).text_color(rgb(p.muted)).child(hint))
+                        .child(
+                            div()
+                                .font_family(FONT_MONO)
+                                .text_size(px(TEXT_TECHNICAL))
+                                .text_color(rgb(p.muted))
+                                .child(hint),
+                        )
                 };
 
                 if in_trash {
@@ -2837,14 +2847,13 @@ impl FilesApp {
                                 .child(
                                     div()
                                         .font_weight(FontWeight::BOLD)
-                                        .text_size(px(15.))
+                                        .text_size(px(TEXT_SECTION))
                                         .text_color(rgb(p.text))
                                         .child("Delete permanently?"),
                                 )
                                 .child(
                                     div()
-                                        .font_family("IBM Plex Mono")
-                                        .text_size(px(12.))
+                                        .text_size(px(TEXT_BODY))
                                         .text_color(rgb(p.muted))
                                         .child(format!(
                                             "“{}” will be permanently removed and cannot be undone.",
@@ -2866,7 +2875,7 @@ impl FilesApp {
                                                 .bg(rgb(p.canvas))
                                                 .border_1()
                                                 .border_color(rgb(p.line))
-                                                .text_size(px(12.))
+                                                .text_size(px(TEXT_LABEL))
                                                 .text_color(rgb(p.text))
                                                 .cursor_pointer()
                                                 .child("Cancel")
@@ -2882,7 +2891,7 @@ impl FilesApp {
                                                 .py(px(7.))
                                                 .rounded(px(4.))
                                                 .bg(rgb(p.accent))
-                                                .text_size(px(12.))
+                                                .text_size(px(TEXT_LABEL))
                                                 .font_weight(FontWeight::SEMIBOLD)
                                                 .text_color(rgb(p.on_accent))
                                                 .cursor_pointer()
@@ -2920,8 +2929,8 @@ impl FilesApp {
                         .min_h(px(0.))
                         .overflow_y_scroll()
                         .p(px(16.))
-                        .font_family("IBM Plex Mono")
-                        .text_size(px(12.))
+                        .font_family(FONT_MONO)
+                        .text_size(px(TEXT_SUPPORTING))
                         .text_color(rgb(p.text))
                         .child(text.clone())
                         .into_any_element()
@@ -2936,8 +2945,7 @@ impl FilesApp {
                         .child(icon(entry.icon_name(), p.signal_fg, 56.))
                         .child(
                             div()
-                                .font_family("IBM Plex Mono")
-                                .text_size(px(12.5))
+                                .text_size(px(TEXT_BODY))
                                 .text_color(rgb(p.muted))
                                 .child(entry.subtitle()),
                         )
@@ -2989,13 +2997,16 @@ impl FilesApp {
                                                 .flex()
                                                 .items_center()
                                                 .gap(px(10.))
-                                                .font_family("IBM Plex Mono")
-                                                .text_size(px(12.5))
-                                                .text_color(rgb(p.text))
-                                                .child(entry.name.clone())
                                                 .child(
                                                     div()
-                                                        .text_size(px(11.5))
+                                                        .text_size(px(TEXT_SECTION))
+                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .text_color(rgb(p.text))
+                                                        .child(entry.name.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(TEXT_SUPPORTING))
                                                         .text_color(rgb(p.muted))
                                                         .child(entry.subtitle()),
                                                 ),
@@ -3051,10 +3062,14 @@ impl FilesApp {
                             .items_center()
                             .justify_between()
                             .gap(px(16.))
-                            .font_family("IBM Plex Mono")
-                            .text_size(px(12.))
-                            .child(div().text_color(rgb(p.signal_fg)).child(keys))
-                            .child(div().text_color(rgb(p.text)).child(desc)),
+                            .child(
+                                div()
+                                    .font_family(FONT_MONO)
+                                    .text_size(px(TEXT_TECHNICAL))
+                                    .text_color(rgb(p.signal_fg))
+                                    .child(keys),
+                            )
+                            .child(div().text_size(px(TEXT_BODY)).text_color(rgb(p.text)).child(desc)),
                     );
                 }
                 Some(
@@ -3077,7 +3092,7 @@ impl FilesApp {
                         )
                         .child(
                             div()
-                                .w(px(500.))
+                                .w(px(520.))
                                 .p(px(20.))
                                 .rounded(px(8.))
                                 .bg(rgb(p.canvas))
@@ -3097,7 +3112,7 @@ impl FilesApp {
                                         .child(
                                             div()
                                                 .font_weight(FontWeight::BOLD)
-                                                .text_size(px(15.))
+                                                .text_size(px(TEXT_SECTION))
                                                 .text_color(rgb(p.text))
                                                 .child("Keyboard Shortcuts"),
                                         )
@@ -3144,7 +3159,7 @@ impl Render for FilesApp {
             .flex_col()
             .bg(rgb(p.canvas))
             .text_color(rgb(p.text))
-            .font_family("Manrope")
+            .font_family(FONT_UI)
             .key_context(root_key_context(self.prompt.is_some(), self.overlay.is_some()))
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::on_move_up))
@@ -3452,5 +3467,42 @@ mod tests {
             parse_cli(&[odd], home).unwrap(),
             CliAction::Launch(p) if p.as_os_str().as_bytes() == b"/tmp/caf\xe9 "
         ));
+    }
+
+    #[test]
+    fn interface_text_uses_manrope_and_reserves_mono_for_technical_data() {
+        let src = include_str!("main.rs");
+        let code = src.split("#[cfg(test)]").next().expect("test module marker");
+
+        assert!(
+            !code.contains(".font_family(\"IBM Plex Mono\")"),
+            "interface code must not hardcode IBM Plex Mono; inherit FONT_UI or use FONT_MONO only for technical data"
+        );
+        assert!(
+            !code.contains(".font_family(\"Manrope\")"),
+            "use theme::FONT_UI instead of raw font literals"
+        );
+        assert!(
+            !code.contains(".text_size(px(10.") && !code.contains(".text_size(px(10))"),
+            "interface copy must not drop below DESIGN.md technical size (11px)"
+        );
+
+        // Root window sets FONT_UI (Manrope); FONT_MONO appears strictly on technical-data sites:
+        // 1. Path prompt input, 2. Breadcrumb "/" separator, 3. Breadcrumb path segment,
+        // 4. List size/count column, 5. List date column, 6. Split-pane directory path header,
+        // 7. Inspector text snippet, 8. Inspector metadata values, 9. View menu shortcut hints,
+        // 10. Context menu shortcut hints, 11. Quick preview text body, 12. Help shortcut keys.
+        let mono_sites = code
+            .lines()
+            .filter(|line| line.contains(".font_family(") && line.contains("FONT_MONO"))
+            .count();
+        assert_eq!(
+            mono_sites, 12,
+            "unexpected FONT_MONO call count ({mono_sites}); update this list only for genuine technical data"
+        );
+        assert!(
+            code.contains(".font_family(FONT_UI)"),
+            "root view must set theme::FONT_UI"
+        );
     }
 }

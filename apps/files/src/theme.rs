@@ -1,7 +1,19 @@
 // SPDX-License-Identifier: MIT
-//! CrowbarOS appearance preferences and Nullkeel / Light / Warm Paper / Studio palettes.
+//! CrowbarOS appearance preferences, typography tokens, and Nullkeel / Light / Warm Paper / Studio palettes.
 use serde::Deserialize;
 use std::path::PathBuf;
+
+/// Interface font for human-facing chrome, navigation, menus, dialogs, and copy (`DESIGN.md`).
+pub const FONT_UI: &str = "Manrope";
+/// Technical font for paths, sizes, dates, permissions, shortcuts, and code previews (`DESIGN.md`).
+pub const FONT_MONO: &str = "IBM Plex Mono";
+
+/// Typography scale from `DESIGN.md` (in logical pixels).
+pub const TEXT_SECTION: f32 = 14.;
+pub const TEXT_BODY: f32 = 13.;
+pub const TEXT_LABEL: f32 = 13.;
+pub const TEXT_SUPPORTING: f32 = 12.;
+pub const TEXT_TECHNICAL: f32 = 11.;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -174,5 +186,16 @@ mod tests {
         });
         assert_eq!(studio.canvas, 0x111111);
         assert_eq!(studio.accent, 0xe5e5e5);
+    }
+
+    #[test]
+    fn typography_tokens_match_design_system() {
+        assert_eq!(FONT_UI, "Manrope");
+        assert_eq!(FONT_MONO, "IBM Plex Mono");
+        assert_eq!(TEXT_SECTION, 14.);
+        assert_eq!(TEXT_BODY, 13.);
+        assert_eq!(TEXT_LABEL, 13.);
+        assert_eq!(TEXT_SUPPORTING, 12.);
+        assert_eq!(TEXT_TECHNICAL, 11.);
     }
 }
