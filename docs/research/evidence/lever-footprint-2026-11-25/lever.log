@@ -1,0 +1,222 @@
+2026-11-25T06:30:13.388Z start: process 607, Lever 0.1.0
+2026-11-25T06:30:13.394Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 6 ms after the process started
+2026-11-25T06:30:13.394Z listening: /run/crowbar-lever/surface, for user ID 1001, 6 ms after the process started
+2026-11-25T06:30:14.009Z connection: the shell connected
+2026-11-25T06:30:14.009Z connection: the shell stated version 1
+2026-11-25T06:31:28.251Z stop: SIGTERM
+2026-11-25T06:31:28.271Z start: process 860, Lever 0.1.0
+2026-11-25T06:31:28.271Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:28.271Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:28.272Z connection: the shell connected
+2026-11-25T06:31:28.272Z connection: the shell stated version 1
+2026-11-25T06:31:28.272Z connection: the shell left
+2026-11-25T06:31:28.450Z connection: the shell connected
+2026-11-25T06:31:28.450Z connection: the shell stated version 1
+2026-11-25T06:31:29.774Z stop: SIGTERM
+2026-11-25T06:31:29.793Z start: process 880, Lever 0.1.0
+2026-11-25T06:31:29.794Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:29.794Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:29.794Z connection: the shell connected
+2026-11-25T06:31:29.794Z connection: the shell stated version 1
+2026-11-25T06:31:29.794Z connection: the shell left
+2026-11-25T06:31:29.974Z connection: the shell connected
+2026-11-25T06:31:29.974Z connection: the shell stated version 1
+2026-11-25T06:31:31.296Z stop: SIGTERM
+2026-11-25T06:31:31.315Z start: process 900, Lever 0.1.0
+2026-11-25T06:31:31.315Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:31.315Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:31.316Z connection: the shell connected
+2026-11-25T06:31:31.316Z connection: the shell stated version 1
+2026-11-25T06:31:31.316Z connection: the shell left
+2026-11-25T06:31:31.496Z connection: the shell connected
+2026-11-25T06:31:31.496Z connection: the shell stated version 1
+2026-11-25T06:31:32.817Z stop: SIGTERM
+2026-11-25T06:31:32.837Z start: process 920, Lever 0.1.0
+2026-11-25T06:31:32.837Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:32.837Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:32.837Z connection: the shell connected
+2026-11-25T06:31:32.837Z connection: the shell stated version 1
+2026-11-25T06:31:32.838Z connection: the shell left
+2026-11-25T06:31:33.017Z connection: the shell connected
+2026-11-25T06:31:33.017Z connection: the shell stated version 1
+2026-11-25T06:31:34.339Z stop: SIGTERM
+2026-11-25T06:31:34.359Z start: process 940, Lever 0.1.0
+2026-11-25T06:31:34.360Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:34.360Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:34.360Z connection: the shell connected
+2026-11-25T06:31:34.360Z connection: the shell stated version 1
+2026-11-25T06:31:34.361Z connection: the shell left
+2026-11-25T06:31:34.539Z connection: the shell connected
+2026-11-25T06:31:34.539Z connection: the shell stated version 1
+2026-11-25T06:31:35.862Z stop: SIGTERM
+2026-11-25T06:31:35.882Z start: process 960, Lever 0.1.0
+2026-11-25T06:31:35.883Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:35.883Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:35.883Z connection: the shell connected
+2026-11-25T06:31:35.883Z connection: the shell stated version 1
+2026-11-25T06:31:35.883Z connection: the shell left
+2026-11-25T06:31:36.062Z connection: the shell connected
+2026-11-25T06:31:36.062Z connection: the shell stated version 1
+2026-11-25T06:31:37.384Z stop: SIGTERM
+2026-11-25T06:31:37.404Z start: process 980, Lever 0.1.0
+2026-11-25T06:31:37.404Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:37.404Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:37.404Z connection: the shell connected
+2026-11-25T06:31:37.404Z connection: the shell stated version 1
+2026-11-25T06:31:37.405Z connection: the shell left
+2026-11-25T06:31:37.584Z connection: the shell connected
+2026-11-25T06:31:37.584Z connection: the shell stated version 1
+2026-11-25T06:31:38.906Z stop: SIGTERM
+2026-11-25T06:31:38.926Z start: process 1000, Lever 0.1.0
+2026-11-25T06:31:38.927Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:38.927Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:38.928Z connection: the shell connected
+2026-11-25T06:31:38.928Z connection: the shell stated version 1
+2026-11-25T06:31:38.928Z connection: the shell left
+2026-11-25T06:31:39.106Z connection: the shell connected
+2026-11-25T06:31:39.106Z connection: the shell stated version 1
+2026-11-25T06:31:40.430Z stop: SIGTERM
+2026-11-25T06:31:40.449Z start: process 1020, Lever 0.1.0
+2026-11-25T06:31:40.450Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:40.450Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:40.450Z connection: the shell connected
+2026-11-25T06:31:40.450Z connection: the shell stated version 1
+2026-11-25T06:31:40.450Z connection: the shell left
+2026-11-25T06:31:40.630Z connection: the shell connected
+2026-11-25T06:31:40.630Z connection: the shell stated version 1
+2026-11-25T06:31:41.952Z stop: SIGTERM
+2026-11-25T06:31:41.972Z start: process 1040, Lever 0.1.0
+2026-11-25T06:31:41.972Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:41.972Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:41.973Z connection: the shell connected
+2026-11-25T06:31:41.973Z connection: the shell stated version 1
+2026-11-25T06:31:41.973Z connection: the shell left
+2026-11-25T06:31:42.152Z connection: the shell connected
+2026-11-25T06:31:42.152Z connection: the shell stated version 1
+2026-11-25T06:31:43.475Z stop: SIGTERM
+2026-11-25T06:31:43.598Z start: process 1060, Lever 0.1.0
+2026-11-25T06:31:43.598Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:43.598Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:43.599Z connection: the shell connected
+2026-11-25T06:31:43.599Z connection: the shell stated version 1
+2026-11-25T06:31:43.599Z connection: the shell left
+2026-11-25T06:31:43.675Z connection: the shell connected
+2026-11-25T06:31:43.675Z connection: the shell stated version 1
+2026-11-25T06:31:45.101Z stop: SIGTERM
+2026-11-25T06:31:45.143Z start: process 1080, Lever 0.1.0
+2026-11-25T06:31:45.144Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:45.144Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:45.144Z connection: the shell connected
+2026-11-25T06:31:45.144Z connection: the shell stated version 1
+2026-11-25T06:31:45.144Z connection: the shell left
+2026-11-25T06:31:45.301Z connection: the shell connected
+2026-11-25T06:31:45.301Z connection: the shell stated version 1
+2026-11-25T06:31:46.646Z stop: SIGTERM
+2026-11-25T06:31:46.688Z start: process 1100, Lever 0.1.0
+2026-11-25T06:31:46.688Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:46.689Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:46.689Z connection: the shell connected
+2026-11-25T06:31:46.689Z connection: the shell stated version 1
+2026-11-25T06:31:46.689Z connection: the shell left
+2026-11-25T06:31:46.846Z connection: the shell connected
+2026-11-25T06:31:46.846Z connection: the shell stated version 1
+2026-11-25T06:31:48.191Z stop: SIGTERM
+2026-11-25T06:31:48.233Z start: process 1120, Lever 0.1.0
+2026-11-25T06:31:48.234Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:48.234Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:48.234Z connection: the shell connected
+2026-11-25T06:31:48.234Z connection: the shell stated version 1
+2026-11-25T06:31:48.234Z connection: the shell left
+2026-11-25T06:31:48.391Z connection: the shell connected
+2026-11-25T06:31:48.391Z connection: the shell stated version 1
+2026-11-25T06:31:49.736Z stop: SIGTERM
+2026-11-25T06:31:49.778Z start: process 1140, Lever 0.1.0
+2026-11-25T06:31:49.778Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:49.778Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:49.779Z connection: the shell connected
+2026-11-25T06:31:49.779Z connection: the shell stated version 1
+2026-11-25T06:31:49.779Z connection: the shell left
+2026-11-25T06:31:49.936Z connection: the shell connected
+2026-11-25T06:31:49.936Z connection: the shell stated version 1
+2026-11-25T06:31:51.289Z start: process 1157, Lever 0.1.0
+2026-11-25T06:31:51.289Z restart: the Lever before this one, process 1140, ended without stopping
+2026-11-25T06:31:51.289Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:51.289Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:51.290Z connection: the shell connected
+2026-11-25T06:31:51.290Z connection: the shell stated version 1
+2026-11-25T06:31:51.291Z connection: the shell left
+2026-11-25T06:31:51.482Z connection: the shell connected
+2026-11-25T06:31:51.482Z connection: the shell stated version 1
+2026-11-25T06:31:52.800Z start: process 1174, Lever 0.1.0
+2026-11-25T06:31:52.800Z restart: the Lever before this one, process 1157, ended without stopping
+2026-11-25T06:31:52.801Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:52.801Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:52.802Z connection: the shell connected
+2026-11-25T06:31:52.802Z connection: the shell stated version 1
+2026-11-25T06:31:52.802Z connection: the shell left
+2026-11-25T06:31:52.993Z connection: the shell connected
+2026-11-25T06:31:52.993Z connection: the shell stated version 1
+2026-11-25T06:31:54.311Z start: process 1191, Lever 0.1.0
+2026-11-25T06:31:54.311Z restart: the Lever before this one, process 1174, ended without stopping
+2026-11-25T06:31:54.312Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:54.312Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:54.312Z connection: the shell connected
+2026-11-25T06:31:54.312Z connection: the shell stated version 1
+2026-11-25T06:31:54.312Z connection: the shell left
+2026-11-25T06:31:54.504Z connection: the shell connected
+2026-11-25T06:31:54.505Z connection: the shell stated version 1
+2026-11-25T06:31:55.822Z start: process 1208, Lever 0.1.0
+2026-11-25T06:31:55.822Z restart: the Lever before this one, process 1191, ended without stopping
+2026-11-25T06:31:55.823Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:55.823Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:55.823Z connection: the shell connected
+2026-11-25T06:31:55.823Z connection: the shell stated version 1
+2026-11-25T06:31:55.823Z connection: the shell left
+2026-11-25T06:31:56.015Z connection: the shell connected
+2026-11-25T06:31:56.015Z connection: the shell stated version 1
+2026-11-25T06:31:57.332Z start: process 1225, Lever 0.1.0
+2026-11-25T06:31:57.332Z restart: the Lever before this one, process 1208, ended without stopping
+2026-11-25T06:31:57.333Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:57.333Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:57.334Z connection: the shell connected
+2026-11-25T06:31:57.334Z connection: the shell stated version 1
+2026-11-25T06:31:57.334Z connection: the shell left
+2026-11-25T06:31:57.525Z connection: the shell connected
+2026-11-25T06:31:57.525Z connection: the shell stated version 1
+2026-11-25T06:31:58.836Z stop: SIGTERM
+2026-11-25T06:31:58.856Z start: process 1245, Lever 0.1.0
+2026-11-25T06:31:58.856Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:58.856Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:58.856Z connection: the shell connected
+2026-11-25T06:31:58.856Z connection: the shell stated version 1
+2026-11-25T06:31:58.857Z connection: the shell left
+2026-11-25T06:31:58.858Z stop: SIGTERM
+2026-11-25T06:31:59.866Z start: process 1265, Lever 0.1.0
+2026-11-25T06:31:59.867Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:31:59.867Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:31:59.868Z connection: the shell connected
+2026-11-25T06:31:59.868Z connection: the shell stated version 1
+2026-11-25T06:31:59.868Z connection: the shell left
+2026-11-25T06:31:59.869Z stop: SIGTERM
+2026-11-25T06:32:00.878Z start: process 1285, Lever 0.1.0
+2026-11-25T06:32:00.878Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:32:00.878Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:32:00.879Z connection: the shell connected
+2026-11-25T06:32:00.879Z connection: the shell stated version 1
+2026-11-25T06:32:00.879Z connection: the shell left
+2026-11-25T06:32:00.881Z stop: SIGTERM
+2026-11-25T06:32:01.889Z start: process 1305, Lever 0.1.0
+2026-11-25T06:32:01.889Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:32:01.889Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:32:01.889Z connection: the shell connected
+2026-11-25T06:32:01.889Z connection: the shell stated version 1
+2026-11-25T06:32:01.890Z connection: the shell left
+2026-11-25T06:32:01.891Z stop: SIGTERM
+2026-11-25T06:32:02.899Z start: process 1325, Lever 0.1.0
+2026-11-25T06:32:02.899Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-25T06:32:02.899Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-25T06:32:02.900Z connection: the shell connected
+2026-11-25T06:32:02.900Z connection: the shell stated version 1
+2026-11-25T06:32:02.900Z connection: the shell left
+2026-11-25T06:32:05.036Z connection: the shell connected
+2026-11-25T06:32:05.036Z connection: the shell stated version 1

@@ -1,0 +1,16 @@
+# kernel
+6.18.65_1
+# binary
+-rwxr-xr-x 1 root root 2.7M Nov 25 06:24 /usr/local/bin/crowbar-lever
+2755328
+# memory at boot
+process 607, up 13 s: Rss 4.27 MiB, Pss 2.47 MiB, Pss_Anon 0.25 MiB, Pss_File 2.22 MiB
+# memory after 60s idle
+process 607, up 73 s: Rss 4.27 MiB, Pss 2.48 MiB, Pss_Anon 0.25 MiB, Pss_File 2.22 MiB
+# start timings
+sv up to answered: median 9 ms, least 9, most 10, of 10: [9, 9, 9, 9, 9, 9, 10, 10, 10, 10]
+sv up to answered, page cache dropped first: median 20 ms, least 19, most 25, of 5: [19, 19, 20, 20, 25]
+kill -9 to answered: median 9 ms, least 8, most 10, of 5: [8, 8, 9, 9, 10]
+sv up to answered, stopped within a second of its start: median 998 ms, least 997, most 999, of 4: [997, 998, 999, 999]
+# memory after restarts
+process 1325, up 5 s: Rss 4.23 MiB, Pss 2.55 MiB, Pss_Anon 0.25 MiB, Pss_File 2.30 MiB
