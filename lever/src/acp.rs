@@ -28,6 +28,7 @@ const READ_BUDGET: usize = 256 * 1024;
 /// line, so a harness that writes more than this with no line end is not
 /// speaking it, and Lever would otherwise keep all of it in memory.
 const MAX_LINE: usize = 16 * 1024 * 1024;
+const LONG_LINE: &str = "wrote a line longer than 16 MiB";
 
 /// Configuration for a harness Lever can start on demand.
 #[derive(Debug, Clone)]
@@ -217,6 +218,13 @@ impl AcpHarness {
         self.thread_to_session.get(thread_id).map(String::as_str)
     }
 
+    /// Lets go of a thread's session, which Lever will not use.
+    pub fn forget_session(&mut self, thread_id: &str) {
+        if let Some(session_id) = self.thread_to_session.remove(thread_id) {
+            self.session_to_thread.remove(&session_id);
+        }
+    }
+
     /// Starts or reloads an ACP session for `thread_id`. A thread has one
     /// session request under way at a time: when one is, it is given `turn`,
     /// so its answer goes to the turn that now waits for it.
@@ -371,7 +379,9 @@ impl AcpHarness {
                     self.drain_lines(&mut events);
                     // What is left is the start of a line with no end yet.
                     if self.read_buf.len() > MAX_LINE {
-                        self.fault = Some("wrote a line longer than 16 MiB");
+                        self.fault = Some(LONG_LINE);
+                    }
+                    if self.fault.is_some() {
                         events.push(AcpEvent::Exited);
                         return events;
                     }
@@ -447,6 +457,12 @@ impl AcpHarness {
     fn drain_lines(&mut self, events: &mut Vec<AcpEvent>) {
         while let Some(found) = self.read_buf[self.scanned..].iter().position(|&b| b == b'\n') {
             let pos = self.scanned + found;
+            // A line that is too long is too long wherever its end came in
+            // what was read.
+            if pos > MAX_LINE {
+                self.fault = Some(LONG_LINE);
+                return;
+            }
             let line = self.read_buf[..pos].to_vec();
             self.read_buf.drain(..=pos);
             self.scanned = 0;
@@ -568,7 +584,9 @@ impl AcpHarness {
                 turn,
                 afresh,
             } => match serde_json::from_value::<NewSessionResponse>(result) {
-                Ok(resp) => {
+                // A session with no ID is no session: Lever could neither
+                // tell it from another nor load it again.
+                Ok(resp) if !resp.session_id.0.is_empty() => {
                     let sid = resp.session_id.0.as_ref().to_string();
                     if self.bind_session(&thread_id, &sid) {
                         events.push(AcpEvent::SessionReady {
@@ -584,7 +602,7 @@ impl AcpHarness {
                         });
                     }
                 }
-                Err(_) => events.push(AcpEvent::SessionFailed {
+                _ => events.push(AcpEvent::SessionFailed {
                     thread_id,
                     turn,
                     message: "The harness could not start a thread.".to_string(),

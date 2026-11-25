@@ -75,8 +75,11 @@ ACP today:
   of the thread's earlier turns. Giving a new session the thread so far, as
   ADR 0036 has it, is not built yet.
 - **A session is one thread's alone.** A harness that gives a thread a session
-  ID another thread holds, or is loading, fails that turn. A thread never
-  loads a session another thread holds. When a harness that was started again
+  ID another thread holds, or is loading, fails that turn, and so does a
+  session with no ID. A thread never loads a session another thread holds.
+  Lever uses a session only once its database has it as the thread's: a turn
+  whose session the database did not take fails, and its message is not sent
+  to the harness. When a harness that was started again
   gives a thread an ID the record has for an older thread, the ID is the newer
   thread's from then on, and the older thread is given a new session, with the
   note, at its next turn.
@@ -130,10 +133,12 @@ the rest as the peer takes its replies. A peer that closes its sending side
 still gets the replies to what it sent before Lever closes the connection.
 
 Events are not held back in that way, because a thread goes on working whether
-or not a peer that watches it reads. A peer that falls more than 4 MiB of
-events behind is closed, and Lever's log says why. A peer that is still taking
-a long reply is given that much more room. The record has what a closed peer
-missed: it connects again and reads it with `resume`.
+or not a peer that watches it reads. A peer that lets more than 4 MiB of
+events wait, over and above the longest one of them, is closed, and Lever's
+log says why. One event longer than that still reaches a peer that reads, and
+a peer that is still taking a long reply is given that much more room. The
+record has what a closed peer missed: it connects again and reads it with
+`resume`.
 
 Every thread ID, turn number, act ID, and note ID on both sockets is Lever's
 own. Lever puts no harness session ID, tool call ID, or wire message type in
@@ -159,7 +164,10 @@ connection at once without replying.
 Once both sides have stated version 1, the peer sends JSON objects carrying an
 `"op"` string. Lever answers each request with a JSON object carrying a
 `"reply"` string, and pushes live thread updates carrying an `"event"` string
-to peers subscribed to that thread (via `send` or `resume`).
+to peers subscribed to that thread (via `send` or `resume`). The events a
+request brings about are pushed before any later request is answered, so a
+record read with `resume` and the events that come after it never say the
+same thing twice.
 
 #### `status`
 
@@ -372,11 +380,12 @@ Lever stores its state in `--state` (mode `0700`, owned by the person):
   update shown as a note). A write the database does not take is logged as an
   `error` that names what could not be done and nothing a thread said. How a
   turn ended is tried again until the database takes it, so a thread is not
-  left `working` in the record after its turn is over.
+  left `working` in the record after its turn is over, and `list` and `resume`
+  say how the turn ended in the meantime.
 - `lever.log` (mode `0600`, rotated at 4 MiB to `lever.log.1`): UTC-timestamped
   lines for `start`, `restart`, `listening`, `connection`, `harness`, `stop`,
-  and `error`. Nothing a peer sent or a thread said is ever written to
-  `lever.log`.
+  and `error`. Nothing a peer sent, a thread said, or a harness answered is
+  ever written to `lever.log`.
 - `running` (mode `0600`): holds Lever's PID while running and is removed on a
   clean stop. If present at the next start, Lever logs a `restart` entry naming
   the previous PID and marks any still-working turns `interrupted`.

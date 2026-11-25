@@ -21,6 +21,9 @@ const UNSAVED_RETRY: Duration = Duration::from_millis(250);
 /// What a turn failed with when the harness finished it and Lever's database
 /// did not take all of it.
 const UNSAVED_MESSAGE: &str = "Lever could not save all of this turn.";
+/// What a turn failed with when the database did not take the session the
+/// harness gave its thread.
+const UNSAVED_SESSION_MESSAGE: &str = "Lever could not save this thread's session.";
 /// The note a thread gets when its harness session could not be picked up
 /// again, and what Lever keeps as that note's source.
 const NEW_SESSION_NOTE: &str = "The harness could not pick this thread's session up again. It began a new one, which has none of the turns before.";
@@ -206,14 +209,29 @@ impl Service {
 
     fn handle_list(&self) -> RequestOutcome {
         match self.store.list_threads() {
-            Ok(threads) => RequestOutcome {
-                reply: json!({
-                    "reply": "list",
-                    "threads": threads.iter().map(thread_summary_json).collect::<Vec<_>>(),
-                }),
-                subscribe: None,
-                broadcasts: Vec::new(),
-            },
+            Ok(mut threads) => {
+                // A turn that has ended is said to have ended, though the
+                // database has yet to take its end. A thread's turns are
+                // numbered from one, so its newest is its count of them.
+                for thread in &mut threads {
+                    if let Some(ending) = self
+                        .unsaved_endings
+                        .iter()
+                        .rfind(|ending| ending.thread_id == thread.id && ending.turn == thread.turns)
+                    {
+                        thread.state = ending.state.to_string();
+                        thread.working = false;
+                    }
+                }
+                RequestOutcome {
+                    reply: json!({
+                        "reply": "list",
+                        "threads": threads.iter().map(thread_summary_json).collect::<Vec<_>>(),
+                    }),
+                    subscribe: None,
+                    broadcasts: Vec::new(),
+                }
+            }
             Err(err) => error_outcome("storage-error", &err),
         }
     }
@@ -223,11 +241,23 @@ impl Service {
             return error_outcome("invalid-request", "Expected a non-empty string thread field.");
         };
         match self.store.get_thread(thread_id) {
-            Ok(Some(record)) => RequestOutcome {
-                reply: thread_record_json(&record),
-                subscribe: Some(thread_id.to_string()),
-                broadcasts: Vec::new(),
-            },
+            Ok(Some(mut record)) => {
+                // As in `list`: whoever resumes the thread now was not
+                // watching when its turn ended, and no event will say so
+                // again.
+                for ending in self.unsaved_endings.iter().filter(|e| e.thread_id == thread_id) {
+                    if let Some(turn) = record.turns.iter_mut().find(|turn| turn.turn == ending.turn) {
+                        turn.state = ending.state.to_string();
+                        turn.error = ending.error.clone();
+                    }
+                }
+                record.working = record.turns.last().is_some_and(|turn| turn.state == "working");
+                RequestOutcome {
+                    reply: thread_record_json(&record),
+                    subscribe: Some(thread_id.to_string()),
+                    broadcasts: Vec::new(),
+                }
+            }
             Ok(None) => error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
             Err(err) => error_outcome("storage-error", &err),
         }
@@ -465,7 +495,9 @@ impl Service {
                 Vec::new()
             }
             AcpEvent::InitializeFailed { message } => {
-                let _ = log.write(Event::Error, &format!("harness initialize failed: {message}"));
+                // What the harness said goes to the turns it fails, which
+                // are the person's, and not into the log.
+                let _ = log.write(Event::Error, "the harness could not be initialized");
                 let tids: Vec<(String, u64)> = self
                     .working_turns
                     .iter()
@@ -483,8 +515,23 @@ impl Service {
                 session_id,
                 afresh,
             } => {
+                // The record must say the session is this thread's before
+                // Lever uses it. Otherwise the record could still give its ID
+                // to the thread that had it before, to load at a later start.
                 if let Err(err) = self.store.set_harness_session_id(&thread_id, &session_id) {
-                    self.could_not_save(&thread_id, &err, log);
+                    store_failed(log, &err);
+                    if let Some(harness) = self.harness.as_mut() {
+                        harness.forget_session(&thread_id);
+                    }
+                    let waiting = self
+                        .working_turns
+                        .get(&thread_id)
+                        .filter(|active| matches!(active.dispatch, TurnDispatch::WaitingForSession))
+                        .map(|active| active.turn);
+                    return match waiting {
+                        Some(turn) => self.fail_turn(&thread_id, turn, UNSAVED_SESSION_MESSAGE, log),
+                        None => Vec::new(),
+                    };
                 }
                 let broadcasts = if afresh {
                     let after_turn = !self.working_turns.contains_key(&thread_id);

@@ -187,10 +187,14 @@ fn write_frame(stream: &mut UnixStream, msg: &Value) -> io::Result<()> {
 }
 
 fn read_frame(stream: &mut UnixStream) -> io::Result<Value> {
+    read_frame_up_to(stream, MAX_FRAME)
+}
+
+fn read_frame_up_to(stream: &mut UnixStream, limit: usize) -> io::Result<Value> {
     let mut header = [0u8; 4];
     stream.read_exact(&mut header)?;
     let len = u32::from_be_bytes(header) as usize;
-    assert!(len <= MAX_FRAME, "unexpectedly large frame: {len}");
+    assert!(len <= limit, "unexpectedly large frame: {len}");
     let mut body = vec![0u8; len];
     stream.read_exact(&mut body)?;
     Ok(serde_json::from_slice(&body).unwrap())
@@ -2411,21 +2415,43 @@ fn many_requests_for_a_long_record_from_a_peer_that_reads_nothing_are_answered_a
 
 #[test]
 fn a_harness_that_writes_a_line_with_no_end_is_stopped_and_its_turn_interrupted() {
+    const MAX_LINE: usize = 16 * 1024 * 1024;
     let dir = TempDir::new();
     let script = write_script(
         &dir.0,
         &json!({
-            "turns": [{
-                "steps": [
-                    { "kind": "text", "text": "Before." },
-                    { "kind": "flood", "bytes": 17 * 1024 * 1024 }
-                ],
-                "stall": true
-            }]
+            "turns": [
+                {
+                    "match": "Flood",
+                    "steps": [
+                        { "kind": "text", "text": "Before." },
+                        { "kind": "flood", "bytes": MAX_LINE + 1024 * 1024 }
+                    ],
+                    "stall": true
+                },
+                {
+                    // As long a line as Lever takes with no end, and then,
+                    // once Lever has read that, an update that ends it.
+                    "match": "To the brim",
+                    "steps": [
+                        { "kind": "flood", "bytes": MAX_LINE },
+                        { "kind": "pause_ms", "ms": 400 },
+                        { "kind": "text", "text": "After." }
+                    ],
+                    "stall": true
+                }
+            ]
         }),
     );
     let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
     let mut peer = handshake(&lever.person);
+    let stopped_for_it = |lever: &RunningLever| {
+        lever
+            .log_text()
+            .matches("was stopped: it wrote a line longer than 16 MiB")
+            .count()
+    };
+
     let (thread, turn) = send(&mut peer, None, "Flood");
     let events = turn_events(&mut peer, &thread, turn);
     assert_eq!(text_of(&events), "Before.");
@@ -2433,9 +2459,231 @@ fn a_harness_that_writes_a_line_with_no_end_is_stopped_and_its_turn_interrupted(
     write_frame(&mut peer, &json!({ "op": "status" })).unwrap();
     assert_eq!(read_frame(&mut peer).unwrap()["harness_started"], false);
     assert!(resident_kib(lever.pid()) < 60 * 1024, "Lever kept the line");
+    assert_eq!(stopped_for_it(&lever), 1, "{}", lever.log_text());
+
+    // A line that is too long is too long wherever its end falls in what
+    // Lever reads.
+    let (thread, turn) = send(&mut peer, None, "To the brim");
+    let events = turn_events(&mut peer, &thread, turn);
+    assert_eq!(events.last().unwrap()["event"], "interrupted", "{events:?}");
+    assert_eq!(stopped_for_it(&lever), 2, "{}", lever.log_text());
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn one_event_longer_than_the_backlog_reaches_a_peer_that_reads() {
+    const LONG: usize = 5 * 1024 * 1024;
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({ "turns": [{ "steps": [{ "kind": "text", "text": "x".repeat(LONG) }] }] }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Say it all at once");
+
+    // The peer reads as fast as it is sent to. It is behind on nothing.
+    let mut got = 0;
+    loop {
+        let frame = read_frame_up_to(&mut peer, 2 * LONG)
+            .unwrap_or_else(|err| panic!("Lever closed a peer that was reading: {err}"));
+        if frame["event"] == "text" {
+            got += frame["text"].as_str().unwrap().len();
+        }
+        if frame["event"] == "done" {
+            assert_eq!(
+                (frame["thread"].as_str(), frame["turn"].as_u64()),
+                (Some(&*thread), Some(turn))
+            );
+            break;
+        }
+    }
+    assert_eq!(got, LONG);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+    assert!(!lever.log_text().contains("events unread"), "{}", lever.log_text());
+}
+
+#[test]
+fn a_session_the_record_did_not_take_is_not_used() {
+    let dir = TempDir::new();
+    let rpc_log = dir.0.join("rpc.jsonl");
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "session_prefix": "acp-twice-",
+            "turns": [
+                { "match": "restart the harness", "crash": true },
+                { "match": "A one", "steps": [{ "kind": "text", "text": "A1." }] },
+                { "match": "A two", "steps": [{ "kind": "text", "text": "A2." }] },
+                { "match": "B unsaved", "steps": [{ "kind": "text", "text": "Never." }] },
+                { "match": "B saved", "steps": [{ "kind": "text", "text": "B1." }] }
+            ]
+        }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, Some(&rpc_log), None);
+    let mut peer = handshake(&lever.person);
+    let (a, turn) = send(&mut peer, None, "A one");
+    assert_eq!(text_of(&turn_events(&mut peer, &a, turn)), "A1.");
+    end_the_harness(&mut peer);
+
+    // The next harness gives thread B the ID the record has for A, and the
+    // database does not take the write that makes it B's. B's turn fails,
+    // and its message never reaches the harness: with the ID still A's in
+    // the record, A would load at a later start what B had said.
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    refuse_writes(&db, "UPDATE OF harness_session_id ON threads");
+    let (b, turn) = send(&mut peer, None, "B unsaved");
+    let end = turn_events(&mut peer, &b, turn).pop().unwrap();
+    assert_eq!(end["event"], "failed", "{end}");
+    assert_eq!(end["message"], "Lever could not save this thread's session.");
+    db.execute_batch("DROP TRIGGER refused").unwrap();
+    assert!(!std::fs::read_to_string(&rpc_log).unwrap().contains("B unsaved"));
+
+    // B's next turn is given a session the record takes, and A loads its own.
+    let (_, turn) = send(&mut peer, Some(&b), "B saved");
+    assert_eq!(text_of(&turn_events(&mut peer, &b, turn)), "B1.");
+    end_the_harness(&mut peer);
+    let (_, turn) = send(&mut peer, Some(&a), "A two");
+    let events = turn_events(&mut peer, &a, turn);
+    assert_eq!(text_of(&events), "A2.", "{events:?}");
+    assert!(events.iter().all(|event| event["event"] != "note"), "{events:?}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_turn_whose_end_waits_to_be_saved_has_ended_for_whoever_asks() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({ "turns": [{ "steps": [{ "kind": "text", "text": "Waiting" }], "stall": true }] }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Wait");
+    read_until(&mut peer, |frame| frame["event"] == "text");
+
+    // The turn is stopped while the database takes no turn's state.
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    refuse_writes(&db, "UPDATE OF state ON turns");
+    write_frame(&mut peer, &json!({ "op": "stop", "thread": thread, "turn": turn })).unwrap();
+    assert_eq!(turn_events(&mut peer, &thread, turn).pop().unwrap()["event"], "stopped");
+
+    // A peer that comes now was not there for that event, and none will say
+    // it again: the record it is given, and the list, say the turn stopped.
+    let mut late = handshake(&lever.person);
+    let record = resume(&mut late, &thread);
+    assert_eq!(record["turns"][0]["state"], "stopped", "{record}");
+    assert_eq!(record["working"], false, "{record}");
+    write_frame(&mut late, &json!({ "op": "list" })).unwrap();
+    let listed = read_frame(&mut late).unwrap();
+    assert_eq!(listed["threads"][0]["state"], "stopped", "{listed}");
+    assert_eq!(listed["threads"][0]["working"], false, "{listed}");
+
+    db.execute_batch("DROP TRIGGER refused").unwrap();
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_peer_that_sends_and_resumes_at_once_is_told_of_the_new_turn_once() {
+    let dir = TempDir::new();
+    let script = write_script(&dir.0, &json!({ "turns": [] }));
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "One");
+    turn_events(&mut peer, &thread, turn);
+
+    // A message and a request for the record, in one write.
+    let mut both = encode_frame(&json!({ "op": "send", "thread": thread, "text": "Two" }));
+    both.extend(encode_frame(&json!({ "op": "resume", "thread": thread })));
+    peer.write_all(&both).unwrap();
+    let mut frames = Vec::new();
+    while !(frames.iter().any(|frame: &Value| frame["event"] == "done")
+        && frames.iter().any(|frame| frame["reply"] == "resumed"))
+    {
+        frames.push(read_frame(&mut peer).unwrap());
+    }
+
+    // The new turn's message comes as an event before the record that has
+    // it, and not again after.
+    let at = |found: &dyn Fn(&Value) -> bool| frames.iter().position(found);
+    let messages = frames.iter().filter(|frame| frame["event"] == "message").count();
+    let message = at(&|frame| frame["event"] == "message").expect("the message");
+    let record = at(&|frame| frame["reply"] == "resumed").expect("the record");
+    assert_eq!(messages, 1, "{frames:?}");
+    assert!(message < record, "the record came before the event it has: {frames:?}");
+    assert_eq!(frames[record]["turns"][1]["message"], "Two", "{frames:?}");
+
+    // So with the answer, however much of it the harness had given by then:
+    // what the record has and what comes after it are the answer, once.
+    let after: String = text_of(&frames[record..]);
+    let in_record = frames[record]["turns"][1]["answer"].as_str().unwrap();
+    assert_eq!(format!("{in_record}{after}"), "stub echo: Two", "{frames:?}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn what_a_harness_says_when_it_cannot_start_is_the_persons_and_not_the_logs() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({ "initialize_error": { "code": -32000, "message": "HARNESS_DIAGNOSTIC\n2026 fake: line" } }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Hello");
+    let end = turn_events(&mut peer, &thread, turn).pop().unwrap();
+    assert_eq!(end["event"], "failed", "{end}");
+    assert_eq!(end["message"], "HARNESS_DIAGNOSTIC\n2026 fake: line");
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
     let log = lever.log_text();
-    assert!(log.contains("was stopped: it wrote a line longer than 16 MiB"), "{log}");
+    assert!(log.contains(" error: the harness could not be initialized"), "{log}");
+    assert!(
+        !log.contains("HARNESS_DIAGNOSTIC") && !log.contains("fake: line"),
+        "{log}"
+    );
+}
+
+#[test]
+fn a_session_with_no_id_is_no_session() {
+    let dir = TempDir::new();
+    let script = write_script(&dir.0, &json!({ "session_id": "" }));
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Hello");
+    let end = turn_events(&mut peer, &thread, turn).pop().unwrap();
+    assert_eq!(end["event"], "failed", "{end}");
+    assert_eq!(end["message"], "The harness could not start a thread.");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn an_option_given_twice_is_refused() {
+    let given_twice = Command::new(BIN)
+        .args([
+            "--state",
+            "/nonexistent",
+            "--surface-socket",
+            "/nonexistent/s",
+            "--shell-uid",
+            "1",
+        ])
+        .args(["--person-socket", "/nonexistent/p", "--person-uid", "1"])
+        .args(["--idle-timeout-ms", "1000", "--idle-timeout-ms", "2000"])
+        .output()
+        .unwrap();
+    assert_eq!(given_twice.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&given_twice.stderr).starts_with("usage: crowbar-lever"));
 }

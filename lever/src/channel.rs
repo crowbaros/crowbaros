@@ -20,9 +20,12 @@ pub const LEVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// keeps for it stay within one reply of this mark.
 const WAITING_MARK: usize = 1024 * 1024;
 /// Events are not held back as replies are: a thread goes on working whether
-/// or not a peer that watches it reads. So a peer that falls this many bytes
-/// of events behind is closed. The record has everything it missed, and
-/// `resume` reads it.
+/// or not a peer that watches it reads. So a peer that lets this many bytes
+/// of events wait, over and above the longest one of them, is closed. The
+/// record has everything it missed, and `resume` reads it. The longest event
+/// is set aside because a peer is behind for what it has not read, not for
+/// the size of what it is sent: one event longer than this reaches a peer
+/// that reads, with the events that follow it.
 const EVENT_BACKLOG: usize = 4 * WAITING_MARK;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -42,6 +45,8 @@ pub struct Peer {
     /// takes counts too, so a peer still reading a long reply is given that
     /// much more room.
     events_waiting: usize,
+    /// The longest event queued since this peer last had none waiting.
+    longest_event: usize,
     /// Requests this peer sent may be waiting, read and unanswered, for it
     /// to take the replies before them.
     held: bool,
@@ -62,6 +67,7 @@ impl Peer {
             reader: FrameReader::new(MAX_FRAME),
             write_buf: Vec::new(),
             events_waiting: 0,
+            longest_event: 0,
             held: false,
             input_ended: false,
             subscriptions: HashSet::new(),
@@ -79,8 +85,11 @@ impl Peer {
         !self.write_buf.is_empty()
     }
 
+    /// Whether Lever reads more from this peer: not while replies wait up
+    /// to the mark, and not while requests it has read are unanswered, or
+    /// those would pile up in their place.
     pub fn wants_read(&self) -> bool {
-        !self.closing && !self.input_ended && self.write_buf.len() < WAITING_MARK
+        !self.closing && !self.input_ended && !self.held && self.write_buf.len() < WAITING_MARK
     }
 
     /// Whether requests this peer sent wait to be answered, and it has taken
@@ -111,6 +120,7 @@ impl Peer {
     pub fn queue_event(&mut self, msg: &Value) {
         if !self.closing {
             let frame = frames::encode(msg);
+            self.longest_event = self.longest_event.max(frame.len());
             self.events_waiting += frame.len();
             self.write_buf.extend_from_slice(&frame);
         }
@@ -119,7 +129,7 @@ impl Peer {
     /// Whether this peer reads the events Lever has for it. Logs why when it
     /// does not, and Lever then drops it.
     pub fn keeps_up(&mut self, log: &mut Log) -> bool {
-        if self.events_waiting <= EVENT_BACKLOG {
+        if self.events_waiting <= EVENT_BACKLOG + self.longest_event {
             return true;
         }
         if !self.closed_logged {
@@ -202,6 +212,11 @@ impl Peer {
     /// until the peer has taken replies: a peer that sends many requests and
     /// reads no reply has Lever keep one reply past the mark for it, not one
     /// for every request.
+    ///
+    /// It also stops at a request that has something to tell who is
+    /// watching, so that is told before the next request is answered: a
+    /// `resume` that follows a `send` then reads a record whose new turn its
+    /// peer has been told of once, not twice.
     pub fn dispatch(&mut self, service: &mut Service, log: &mut Log) -> Vec<Broadcast> {
         let mut broadcasts = Vec::new();
         self.held = false;
@@ -211,7 +226,13 @@ impl Peer {
                 break;
             }
             match self.reader.next_frame() {
-                Ok(Some(frame)) => self.handle_frame(&frame, service, log, &mut broadcasts),
+                Ok(Some(frame)) => {
+                    self.handle_frame(&frame, service, log, &mut broadcasts);
+                    if !broadcasts.is_empty() {
+                        self.held = true;
+                        break;
+                    }
+                }
                 Ok(None) => {
                     if self.input_ended {
                         self.closing = true;
@@ -233,6 +254,9 @@ impl Peer {
                 Ok(n) => {
                     self.write_buf.drain(..n);
                     self.events_waiting = self.events_waiting.saturating_sub(n);
+                    if self.events_waiting == 0 {
+                        self.longest_event = 0;
+                    }
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,

@@ -39,6 +39,9 @@ struct Script {
     load_session: bool,
     #[serde(default = "default_session_prefix")]
     session_prefix: String,
+    /// If set, the ID of every session, in place of the prefix and a count.
+    #[serde(default)]
+    session_id: Option<String>,
     #[serde(default)]
     initialize_error: Option<ScriptError>,
     #[serde(default)]
@@ -555,7 +558,10 @@ fn run(options: Options) -> Result<(), String> {
             match serde_json::from_value::<NewSessionRequest>(params) {
                 Ok(_new_req) => {
                     let n = next_session.fetch_add(1, Ordering::Relaxed);
-                    let sid = format!("{}{n}", script.session_prefix);
+                    let sid = script
+                        .session_id
+                        .clone()
+                        .unwrap_or_else(|| format!("{}{n}", script.session_prefix));
                     writer.send_result(id, NewSessionResponse::new(SessionId::new(sid)));
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),

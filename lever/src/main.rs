@@ -59,7 +59,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
     let mut harness_program = None;
     let mut harness_name = None;
     let mut harness_args = Vec::new();
-    let mut idle_timeout = DEFAULT_IDLE_TIMEOUT;
+    let mut idle_timeout = None;
 
     let mut iter = args.iter();
     while let Some(flag) = iter.next() {
@@ -76,9 +76,8 @@ fn parse_options(args: &[String]) -> Option<Options> {
             "--harness" if harness_program.is_none() => harness_program = Some(value.clone()),
             "--harness-name" if harness_name.is_none() => harness_name = Some(value.clone()),
             "--harness-arg" => harness_args.push(value.clone()),
-            "--idle-timeout-ms" => {
-                let ms = value.parse::<u64>().ok()?;
-                idle_timeout = Duration::from_millis(ms);
+            "--idle-timeout-ms" if idle_timeout.is_none() => {
+                idle_timeout = Some(Duration::from_millis(value.parse::<u64>().ok()?));
             }
             _ => return None,
         }
@@ -111,7 +110,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
         person_socket: person_socket?,
         person_uid: person_uid?,
         harness,
-        idle_timeout,
+        idle_timeout: idle_timeout.unwrap_or(DEFAULT_IDLE_TIMEOUT),
     })
 }
 
@@ -404,13 +403,17 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         deliver_broadcasts(&broadcasts, &mut peers, &mut keep, log);
         broadcasts.clear();
 
-        // Process existing peers (indices 3..3+existing_len), keeping newly accepted peers.
+        // Process existing peers (indices 3..3+existing_len), keeping newly
+        // accepted peers. What one peer's request has to tell who is
+        // watching is told before the next peer is heard, so a peer that
+        // resumes a thread is not then told of a turn its record has.
         for (idx, pfd) in pollfds[3..3 + existing_len].iter().enumerate() {
             let revents = pfd.revents;
             let peer = &mut peers[idx];
             if !keep[idx] || (revents == 0 && !peer.is_held()) {
                 continue;
             }
+            broadcasts.clear();
             let mut alive = true;
             if revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 && peer.wants_read() {
                 let (still_alive, peer_broadcasts) = peer.on_readable(&mut service, log);
@@ -420,7 +423,10 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
             if alive && (revents & libc::POLLOUT != 0) && peer.wants_write() {
                 alive = peer.on_writable();
             }
-            if alive && peer.is_held() {
+            // Not while this peer has something to tell who is watching:
+            // that is told first, and its next request is answered at the
+            // next pass.
+            if alive && broadcasts.is_empty() && peer.is_held() {
                 broadcasts.extend(peer.dispatch(&mut service, log));
                 alive = peer.on_writable();
             }
@@ -434,9 +440,8 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
                 peer.on_gone(log);
             }
             keep[idx] = alive;
+            deliver_broadcasts(&broadcasts, &mut peers, &mut keep, log);
         }
-
-        deliver_broadcasts(&broadcasts, &mut peers, &mut keep, log);
 
         let mut iter = keep.into_iter();
         peers.retain(|_| iter.next().unwrap_or(true));
