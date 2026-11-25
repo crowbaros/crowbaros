@@ -40,7 +40,7 @@ crowbar-lever \
   --person-socket <path> --person-uid <uid> \
   [--fulcrum-socket <path>] \
   [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>]] \
-  [--idle-timeout-ms <ms>]
+  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>]
 ```
 
 On Base:
@@ -58,8 +58,9 @@ with no harness configured and refuses `send` with `no-harness`. When
 Model query needs it and stops it after `--idle-timeout-ms` (default `600000`,
 10 minutes) with no working thread or pending Model query. The harness child
 runs in Lever's environment (on Base, the launcher's environment for apps) with
-OpenCode's self-update turned off through `OPENCODE_CONFIG_CONTENT`
-(`{"update":"disable"}`, merged with any existing keys) and
+OpenCode's self-update turned off and the Ask first agent added through
+`OPENCODE_CONFIG_CONTENT` (`"update":"disable"`, `"default_agent"`, and
+`"agent":{"crowbar-ask-first":{...}}`, merged with any existing keys) and
 `OPENCODE_DISABLE_FREE_MODELS=1` plus `OPENCODE_DISABLE_MODELS_FETCH=1` until
 the person enables OpenCode's free hosted Models. Lever writes nothing in the
 person's own OpenCode files. The harness child dies with Lever.
@@ -113,10 +114,38 @@ ACP today:
   is recorded with the turn that is working then.
 - **Requests from the harness.** Lever tells the harness it reads and writes no
   files and runs no terminals for it, and answers those requests with
-  JSON-RPC's "method not found". Until carrying permission requests to the
-  person is built ([Milestone 3](https://github.com/crowbaros/crowbaros/issues/371)),
-  `session/request_permission` is answered with a valid ACP decline (selecting
-  the reject option when offered, or `cancelled`) rather than an RPC error.
+  JSON-RPC's "method not found". A `session/request_permission` becomes a
+  request in its thread, with the exact command, or the file and the change,
+  and the answers the harness offers. It waits with no time limit until the
+  person answers it, the harness withdraws it (`$/cancel_request`), Stop
+  withdraws it, or the harness ends. A withdrawn request is answered
+  `cancelled`, as ACP asks. While a request waits, the harness is not stopped
+  for being idle. A request the harness sends for a session Lever holds for no
+  thread is answered `cancelled` at once.
+- **Modes.** Lever offers the modes the harness reports in its session
+  configuration option of category `mode`, and only those it knows:
+  - **Ask first** (`ask-first`) is Lever's own. Lever adds to
+    `OPENCODE_CONFIG_CONTENT` a primary OpenCode agent, `crowbar-ask-first`,
+    whose permission settings ask before a command (`bash`) or an edit
+    (`edit`), and makes it OpenCode's `default_agent`. Lever writes nothing in
+    the person's own OpenCode files, so their settings, agents, and tool
+    servers apply as they made them, and a session they start by hand has none
+    of this.
+  - **Full access** (`full-access`) is OpenCode's own `build` agent, which runs
+    tools as the person's own settings allow.
+  - **Plan** (`plan`) is OpenCode's own `plan` agent, as it is.
+
+  A thread keeps its mode. A new thread starts in the starting mode, Ask first
+  unless the person chose Full access. Before each turn, Lever sets the
+  session's mode to the thread's, with `session/set_config_option`, and a turn
+  whose mode the harness refuses fails. When the harness changes a session's
+  mode itself, the thread takes the new mode.
+- **A Stop the harness does not carry out is carried out by Lever.** Lever
+  sends `session/cancel` and waits up to `--stop-timeout-ms` (5 seconds) for
+  the turn to end. When it has not, Lever ends the turn as `stopped`, and stops
+  the harness with every process under it, so no command the turn started goes
+  on. Every other turn working on that harness is `interrupted`, and its
+  requests are withdrawn. The next message starts the harness again.
 - **Lever reads at most 256 KiB from the harness each time it wakes**, so a
   harness that never stops writing holds back neither Lever's peers nor a stop
   signal. A harness that writes more than 16 MiB with no line end is stopped,
@@ -197,7 +226,7 @@ Request:
 Reply:
 
 ```json
-{"reply":"status","version":"0.1.0","harness_started":false,"harnesses":[{"id":"harness-1","name":"Stub"}],"free_hosted_models":false}
+{"reply":"status","version":"0.1.0","harness_started":false,"harnesses":[{"id":"harness-1","name":"Stub"}],"free_hosted_models":false,"default_mode":"ask-first"}
 ```
 
 - `version`: Lever's version string.
@@ -206,6 +235,7 @@ Reply:
   harness is configured).
 - `free_hosted_models`: `true` once the person has enabled OpenCode's free
   hosted Models, `false` otherwise.
+- `default_mode`: the mode new threads start in, `ask-first` or `full-access`.
 
 #### `models`
 
@@ -222,7 +252,7 @@ Request:
 Reply:
 
 ```json
-{"reply":"models","supported":true,"models":[{"id":"stub/stub-1","name":"Stub One"}],"default":"stub/stub-1","free_hosted_models":false}
+{"reply":"models","supported":true,"models":[{"id":"stub/stub-1","name":"Stub One"}],"default":"stub/stub-1","free_hosted_models":false,"modes":[{"id":"ask-first","name":"Ask first"},{"id":"full-access","name":"Full access"},{"id":"plan","name":"Plan"}]}
 ```
 
 - `supported`: `true` when the harness exposes Model selection (or reported
@@ -231,6 +261,9 @@ Reply:
   available).
 - `default`: the harness's default Model ID, or `null`.
 - `free_hosted_models`: Lever's saved setting.
+- `modes`: the modes Lever offers for this harness, as `{id, name}` entries:
+  those of `ask-first`, `full-access`, and `plan` the harness reports, in that
+  order. Empty when the harness reports no modes.
 
 Errors: `no-harness`, `working`, `harness-error`, `invalid-request`.
 
@@ -293,12 +326,14 @@ Request:
 Reply:
 
 ```json
-{"reply":"list","threads":[{"thread":"t-01a2b3c4d5e6","title":"List the files","cwd":"/home/crowbar","started":1764000000,"updated":1764000005,"turns":1,"state":"done","working":false}]}
+{"reply":"list","threads":[{"thread":"t-01a2b3c4d5e6","title":"List the files","cwd":"/home/crowbar","started":1764000000,"updated":1764000005,"turns":1,"state":"done","working":false,"waiting":false,"mode":"ask-first"}]}
 ```
 
 - `state`: the newest turn's state (`"working"`, `"done"`, `"stopped"`,
   `"failed"`, `"interrupted"`, or `"idle"`).
 - `working`: `true` while a turn on this thread is running.
+- `waiting`: `true` while a request of this thread waits for the person.
+- `mode`: the thread's mode.
 - `model`: optional Model ID last applied to this thread, omitted when unset.
 
 #### `send`
@@ -317,6 +352,9 @@ Request:
 - `cwd`: optional absolute path for a new thread's working directory (defaults
   to `$HOME`).
 - `model`: optional Model ID to select for the thread before sending the turn.
+- `mode`: optional mode for the thread from this turn on (`ask-first`,
+  `full-access`, or `plan`). A new thread without one starts in the starting
+  mode.
 
 Reply:
 
@@ -324,7 +362,7 @@ Reply:
 {"reply":"sent","thread":"t-01a2b3c4d5e6","turn":1}
 ```
 
-Errors: `no-harness`, `no-model`, `no-thread`, `working`, `invalid-request`,
+Errors: `no-harness`, `no-model`, `no-thread`, `working`, `invalid-mode`, `invalid-request`,
 and `storage-error` when Lever's database does not take the turn, or has yet to
 take how the thread's last turn ended.
 
@@ -352,7 +390,10 @@ Reply:
 When a turn ended with `"state":"failed"`, the turn object also carries
 `"error":"..."`. When a turn was sent from the drawer with desktop context from
 Fulcrum, it also carries `"context":{...}`. When a thread has a saved Model,
-the reply also carries `"model":"..."`.
+the reply also carries `"model":"..."`. The reply carries the thread's
+`"mode"`, and each turn the mode it began in (`"mode"`, absent for turns
+recorded before modes) and its requests (`"requests":[...]`, each as the
+[`request` event](#events) has it, without `event`, `thread`, and `turn`).
 
 Errors: `no-thread`, `invalid-request`.
 
@@ -362,8 +403,11 @@ Stops the currently working turn on a thread and tells the harness to cancel
 it. When `turn` is given, only that turn is stopped. The reply says that Lever
 took the request, not that the turn stopped: a turn the harness had not begun
 is `stopped` at once, and one it was working on ends when the harness answers,
-as `stopped`, or as `failed` if the harness failed instead. A thread with no
-turn working is answered `ok` too.
+as `stopped`, or as `failed` if the harness failed instead. A harness that has
+not ended the turn after `--stop-timeout-ms` is stopped, as
+[the harness](#the-harness) says. Stop withdraws every request of the thread
+that waits, whether or not a turn is working. A thread with no turn working is
+answered `ok` too.
 
 Request:
 
@@ -378,6 +422,86 @@ Reply:
 ```
 
 Errors: `no-thread`, `invalid-request`.
+
+#### `answer`
+
+Answers a request that waits, with one of the answers it offers. Either socket
+may answer.
+
+Request:
+
+```json
+{"op":"answer","thread":"t-01a2b3c4d5e6","request":"r-01a2b3c4d5e6","answer":"once"}
+```
+
+Reply:
+
+```json
+{"reply":"ok"}
+```
+
+A `request` event with `"state":"answered"` follows. Errors: `no-thread`,
+`no-request` (no such request, or it no longer waits), `invalid-answer` (not
+one the request offers), `invalid-request`.
+
+#### `set-mode`
+
+Sets a thread's mode, which applies from its next turn. Either socket may set
+it.
+
+Request:
+
+```json
+{"op":"set-mode","thread":"t-01a2b3c4d5e6","mode":"full-access"}
+```
+
+Reply:
+
+```json
+{"reply":"mode-set","thread":"t-01a2b3c4d5e6","mode":"full-access"}
+```
+
+A `thread-updated` event with the mode follows. Errors: `no-thread`, `working`
+(a turn of the thread is working), `invalid-mode` (not `ask-first`,
+`full-access`, or `plan`, or one the harness is known not to offer),
+`invalid-request`, `storage-error`.
+
+#### `set-default-mode`
+
+Sets the mode new threads start in. Either socket may set it.
+
+Request:
+
+```json
+{"op":"set-default-mode","mode":"full-access"}
+```
+
+Reply:
+
+```json
+{"reply":"default-mode","mode":"full-access"}
+```
+
+Errors: `invalid-mode` (not `ask-first` or `full-access`), `invalid-request`,
+`storage-error`.
+
+#### `watch`
+
+Says which threads are working and which wait for the person, and subscribes
+this connection to `activity` events, which say it again each time either
+changes. The shell's mark reads it.
+
+Request:
+
+```json
+{"op":"watch"}
+```
+
+Reply:
+
+```json
+{"reply":"activity","working":["t-01a2b3c4d5e6"],"waiting":[]}
+```
 
 #### `error`
 
@@ -438,10 +562,30 @@ Pushed to every connection subscribed to `thread`:
   {"event":"note","thread":"t-01a2b3c4d5e6","turn":1,"note":"note-01a2b3c4d5e6","text":"Cache warm"}
   ```
 
-- **`thread-updated`** — the thread's title changed:
+- **`request`** — a request that waits for the person, and each change to
+  it. `kind` is the kind of the act it asks about, `act` that act's ID,
+  `title` what the harness calls it, and `detail` the exact command, or the
+  file and the change as lines that begin `-` and `+`. `path` is the file, for
+  an edit. `answers` are those the harness offers, as `once`, `always`, `no`,
+  and `never`, each with the harness's `name` for it. `state` is `waiting`,
+  `answered` (with `answer`), or `withdrawn`:
+
+  ```json
+  {"event":"request","thread":"t-01a2b3c4d5e6","turn":1,"request":"r-01a2b3c4d5e6","act":"act-01a2b3c4d5e6","kind":"command","title":"echo hi","detail":"echo hi","answers":[{"answer":"once","name":"Allow once"},{"answer":"always","name":"Always allow"},{"answer":"no","name":"Reject"}],"state":"waiting"}
+  ```
+
+- **`thread-updated`** — the thread's title or mode changed. It carries
+  `title`, `mode`, or both:
 
   ```json
   {"event":"thread-updated","thread":"t-01a2b3c4d5e6","title":"Inspect workspace"}
+  ```
+
+- **`activity`** — to connections that sent `watch`, when the threads working
+  or waiting change, as the `watch` reply has them:
+
+  ```json
+  {"event":"activity","working":[],"waiting":["t-01a2b3c4d5e6"]}
   ```
 
 - **`done`** — the turn finished normally:
