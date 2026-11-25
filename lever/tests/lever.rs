@@ -3242,10 +3242,11 @@ fn disconnecting_while_waiting_for_models_reply_does_not_stall_lever() {
 fn stopping_turn_during_model_switch_locks_thread_and_preserves_saved_model() {
     let dir = TempDir::new();
     let uid = my_uid();
+    let rpc_log = dir.0.join("rpc.log");
     let script = write_script(
         &dir.0,
         &json!({
-            "set_config_delay_ms": 300,
+            "set_config_delay_ms": 400,
             "models": [
                 { "id": "stub/stub-1", "name": "Stub One" },
                 { "id": "stub/stub-2", "name": "Stub Two" }
@@ -3257,7 +3258,7 @@ fn stopping_turn_during_model_switch_locks_thread_and_preserves_saved_model() {
         }),
     );
 
-    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, Some(&rpc_log), None);
     let mut peer = handshake(&lever.person);
 
     // Start a new thread requesting stub/stub-2 (which triggers a delayed set_config_option from default stub/stub-1).
@@ -3272,8 +3273,12 @@ fn stopping_turn_during_model_switch_locks_thread_and_preserves_saved_model() {
     let ev_msg = read_frame(&mut peer).unwrap();
     assert_eq!(ev_msg["event"], "message");
 
-    // Wait briefly so session/new finishes and session/set_config_option is in flight, then stop turn 1.
-    std::thread::sleep(Duration::from_millis(80));
+    // Wait until the stub actually receives session/set_config_option, then stop turn 1.
+    wait_until("the harness to receive session/set_config_option", || {
+        std::fs::read_to_string(&rpc_log)
+            .unwrap_or_default()
+            .contains("session/set_config_option")
+    });
     write_frame(&mut peer, &json!({ "op": "stop", "thread": tid, "turn": 1 })).unwrap();
     let stop_reply = read_frame(&mut peer).unwrap();
     assert_eq!(stop_reply["reply"], "ok");
@@ -3288,7 +3293,7 @@ fn stopping_turn_during_model_switch_locks_thread_and_preserves_saved_model() {
 
     // Once the delayed set_config_option settles, the stopped turn's Model was NOT saved to SQLite,
     // and the next turn without `--model` runs on the default Model (stub/stub-1), not stub/stub-2.
-    std::thread::sleep(Duration::from_millis(320));
+    std::thread::sleep(Duration::from_millis(550));
     let rec = resume(&mut peer, &tid);
     assert!(rec.get("model").is_none(), "stopped switch must not persist: {rec}");
 

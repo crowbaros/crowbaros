@@ -718,7 +718,7 @@ fn run(options: Options) -> Result<(), String> {
                         if delay.is_zero() {
                             respond();
                         } else {
-                            thread::spawn(respond);
+                            workers.push(thread::spawn(respond));
                         }
                     }
                 }
