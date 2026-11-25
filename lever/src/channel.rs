@@ -14,7 +14,7 @@ pub const LEVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Maximum outbound bytes queued for a single slow peer before closing it.
 const MAX_WAITING: usize = 16 * 1024 * 1024;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Channel {
     pub peer: &'static str,
     pub whose: &'static str,
@@ -60,6 +60,10 @@ impl Peer {
         self.closing && self.write_buf.is_empty()
     }
 
+    pub fn is_on(&self, channel: Channel) -> bool {
+        self.channel == channel
+    }
+
     fn queue(&mut self, msg: &Value, log: &mut Log) {
         if self.closing {
             return;
@@ -71,6 +75,9 @@ impl Peer {
                 &format!("{peer} read nothing while {MAX_WAITING} bytes waited for it"),
                 log,
             );
+            // A peer that reads nothing is dropped at once: what waited for it
+            // is let go, so the connection ends as soon as this call returns.
+            self.write_buf = Vec::new();
             return;
         }
         self.write_buf.extend_from_slice(&frame);
@@ -84,48 +91,17 @@ impl Peer {
         self.closing = true;
     }
 
-    /// Reads available bytes and processes every complete frame. Returns `false`
-    /// if the peer should be removed immediately.
+    /// Reads once and answers every complete frame that read finished, then
+    /// writes what it can. One read a wake keeps a peer that never stops
+    /// sending from holding the others and a stop signal back; `poll` reports
+    /// the socket again while more waits. Returns `false` if the peer should
+    /// be removed.
     pub fn on_readable(&mut self, log: &mut Log) -> bool {
         let mut buf = [0u8; 8192];
-        loop {
+        let n = loop {
             match self.stream.read(&mut buf) {
-                Ok(0) => {
-                    if !self.closed_logged {
-                        self.closed_logged = true;
-                        let peer = self.channel.peer;
-                        let msg = if self.handshaked {
-                            format!("{peer} left")
-                        } else {
-                            format!("{peer} left before it stated a version")
-                        };
-                        let _ = log.write(Event::Connection, &msg);
-                    }
-                    return false;
-                }
-                Ok(n) => {
-                    self.reader.push(&buf[..n]);
-                    loop {
-                        match self.reader.next_frame() {
-                            Ok(Some(frame)) => {
-                                if !self.handle_frame(&frame, log) {
-                                    break;
-                                }
-                            }
-                            Ok(None) => break,
-                            Err(err) => {
-                                self.close_with_reason(&err.to_string(), log);
-                                break;
-                            }
-                        }
-                    }
-                    if self.closing {
-                        // Try to flush any already-queued replies (e.g. a valid
-                        // frame right before an oversized frame) before closing.
-                        return self.on_writable();
-                    }
-                }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Ok(n) => break n,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return self.on_writable(),
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(_) => {
                     if !self.closed_logged {
@@ -135,8 +111,35 @@ impl Peer {
                     return false;
                 }
             }
+        };
+
+        if n == 0 {
+            // The peer sent all it will. It may still be reading, so the
+            // replies already waiting for it are written before the close.
+            if !self.closed_logged {
+                self.closed_logged = true;
+                let peer = self.channel.peer;
+                let msg = if self.handshaked {
+                    format!("{peer} left")
+                } else {
+                    format!("{peer} left before it stated a version")
+                };
+                let _ = log.write(Event::Connection, &msg);
+            }
+            self.closing = true;
+            return self.on_writable();
         }
-        // Flush replies promptly when the socket is already writable.
+
+        self.reader.push(&buf[..n]);
+        while !self.closing {
+            match self.reader.next_frame() {
+                Ok(Some(frame)) => self.handle_frame(&frame, log),
+                Ok(None) => break,
+                Err(err) => self.close_with_reason(&err.to_string(), log),
+            }
+        }
+        // Replies queued before a close, such as the answer to a valid frame
+        // that came just before an oversized one, are still written.
         self.on_writable()
     }
 
@@ -157,7 +160,7 @@ impl Peer {
         !self.is_done()
     }
 
-    fn handle_frame(&mut self, frame: &[u8], log: &mut Log) -> bool {
+    fn handle_frame(&mut self, frame: &[u8], log: &mut Log) {
         if !self.handshaked {
             if !states_version(frame) {
                 let peer = self.channel.peer;
@@ -165,7 +168,7 @@ impl Peer {
                     &format!("{peer}'s first frame did not state version {PROTOCOL_VERSION}"),
                     log,
                 );
-                return false;
+                return;
             }
             self.handshaked = true;
             let _ = log.write(
@@ -173,13 +176,13 @@ impl Peer {
                 &format!("{} stated version {PROTOCOL_VERSION}", self.channel.peer),
             );
             self.queue(&json!({ "version": PROTOCOL_VERSION }), log);
-            return true;
+            return;
         }
 
         let Ok(value) = serde_json::from_slice::<Value>(frame) else {
             let peer = self.channel.peer;
             self.close_with_reason(&format!("{peer} sent invalid JSON"), log);
-            return false;
+            return;
         };
         let Some(op) = value.as_object().and_then(|o| o.get("op")).and_then(Value::as_str) else {
             self.queue(
@@ -190,7 +193,7 @@ impl Peer {
                 }),
                 log,
             );
-            return true;
+            return;
         };
 
         let reply = match op {
@@ -207,7 +210,6 @@ impl Peer {
             }),
         };
         self.queue(&reply, log);
-        true
     }
 }
 

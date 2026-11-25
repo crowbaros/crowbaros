@@ -60,6 +60,12 @@ length prefix followed by that many bytes of UTF-8 JSON. Frames longer than
 4 MiB are rejected as soon as their length header is read, and the connection
 is closed.
 
+Each socket keeps up to 64 connections open, counted apart, so the person's
+clients cannot use up the shell's. One more is closed at once without a reply.
+A peer that reads nothing while 16 MiB of replies wait for it is closed, and
+those replies are let go. A peer that closes its sending side still gets the
+replies to what it sent before Lever closes the connection.
+
 ### Handshake (protocol version 1)
 
 The first frame each way states the protocol version and nothing else:
@@ -96,11 +102,23 @@ Reply:
 
 #### `error`
 
-For an unsupported or malformed request after handshake:
+A request Lever cannot answer gets one of three outcomes:
 
-```json
-{"reply":"error","code":"unsupported","message":"This request is not supported."}
-```
+- An `"op"` Lever does not know is answered, and the connection stays open:
+
+  ```json
+  {"reply":"error","code":"unsupported","message":"This request is not supported."}
+  ```
+
+- JSON that is not an object with a string `"op"` is answered, and the
+  connection stays open:
+
+  ```json
+  {"reply":"error","code":"invalid-request","message":"Expected a JSON object with a string op field."}
+  ```
+
+- A frame that is not JSON gets no reply, and Lever closes the connection. The
+  peer connects again and states its version to go on.
 
 ## State and logging
 

@@ -18,7 +18,7 @@ image in the VM, and ran the measurements over SSH. The evidence is in
 | | |
 | --- | --- |
 | VM | QEMU 11.1.3 with KVM, as `base/void_base.py boot` starts it: 4 CPUs, 4096 MiB, a virtio disk, UEFI. The host's CPU is passed through |
-| Commit | `b894140f`, on `main` at `e85074e0` |
+| Commit | Branch commit `b894140f`, based on `main` at `e85074e0` |
 | Image | Base, built with `base/void_base.py build --lab-account`. `lab/void/desktop_check.py` passed 140 of 140 checks on the same build |
 | Kernel | `6.18.65_1` |
 | Binary | `/usr/local/bin/crowbar-lever`, 2.7 MiB (2,755,328 bytes), built in release mode inside Base's Void build root with `rusqlite` bundled SQLite |

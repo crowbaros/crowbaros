@@ -1401,8 +1401,13 @@ mod tests {
         let sock = dir.join("surface");
         let listener = UnixListener::bind(&sock).unwrap();
 
+        // Every wait below has a deadline, so a client that stops asking
+        // `status` fails this test instead of hanging it.
+        let deadline = Duration::from_secs(10);
         let server = std::thread::spawn(move || {
             let (mut peer, _) = listener.accept().unwrap();
+            peer.set_read_timeout(Some(deadline)).unwrap();
+            peer.set_write_timeout(Some(deadline)).unwrap();
             let v = read_frame(&mut peer).unwrap();
             assert_eq!(v, serde_json::json!({ "version": 1 }));
             peer.write_all(&encode_frame(&serde_json::json!({ "version": 1 })))
@@ -1420,12 +1425,24 @@ mod tests {
         });
 
         let (tx, mut rx) = session::channel();
+        let late = tx.clone();
         let _sender = start(sock.clone(), tx);
+        std::thread::spawn(move || {
+            std::thread::sleep(deadline);
+            let _ = late.send(session::Event::Agent(AgentEvent::Error {
+                code: "test-deadline".into(),
+                message: String::new(),
+            }));
+        });
 
         let mut state = AgentState::new(true);
         futures::executor::block_on(async {
             while let Some(ev) = rx.next().await {
                 if let session::Event::Agent(agent_ev) = ev {
+                    if matches!(&agent_ev, AgentEvent::Error { code, .. } if code == "test-deadline")
+                    {
+                        panic!("the shell did not report Lever's status in {deadline:?}");
+                    }
                     state.apply(agent_ev, true);
                     if state.connected && state.lever_version.is_some() {
                         break;

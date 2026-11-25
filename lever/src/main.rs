@@ -21,6 +21,13 @@ use std::time::Instant;
 use store::Store;
 use sys::SignalPipe;
 
+/// Most connections Lever keeps open on one socket. Each socket has its own
+/// count, so the person's clients cannot use up the shell's.
+const MAX_PEERS: usize = 64;
+/// Most connections Lever takes from one socket in one wake, so a peer that
+/// never stops connecting cannot hold the others and a stop signal back.
+const MAX_ACCEPTS: usize = 32;
+
 const USAGE: &str = "usage: crowbar-lever \
   --state <dir> \
   --surface-socket <path> --shell-uid <uid> \
@@ -87,10 +94,21 @@ fn bind_socket(path: &Path, mode: u32) -> Result<UnixListener, String> {
 }
 
 fn accept_pending(listener: &UnixListener, channel: Channel, peers: &mut Vec<Peer>, log: &mut Log) {
-    loop {
+    let mut open = peers.iter().filter(|peer| peer.is_on(channel)).count();
+    for _ in 0..MAX_ACCEPTS {
         match listener.accept() {
             Ok((stream, _)) => match sys::peer_uid(&stream) {
                 Ok(uid) if uid == channel.uid => {
+                    if open >= MAX_PEERS {
+                        let _ = log.write(
+                            Event::Connection,
+                            &format!(
+                                "refused {}, which already has {MAX_PEERS} connections open",
+                                channel.peer
+                            ),
+                        );
+                        continue;
+                    }
                     if stream.set_nonblocking(true).is_err() {
                         let _ = log.write(
                             Event::Error,
@@ -100,6 +118,7 @@ fn accept_pending(listener: &UnixListener, channel: Channel, peers: &mut Vec<Pee
                     }
                     let _ = log.write(Event::Connection, &format!("{} connected", channel.peer));
                     peers.push(Peer::new(stream, channel));
+                    open += 1;
                 }
                 Ok(uid) => {
                     let _ = log.write(
@@ -283,6 +302,11 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
                 alive = peer.on_writable();
             }
             if revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
+                alive = false;
+            }
+            // A peer Lever has stopped reading that has hung up can take
+            // nothing more, whatever still waits for it.
+            if revents & libc::POLLHUP != 0 && !peer.wants_read() {
                 alive = false;
             }
             keep[idx] = alive;

@@ -40,34 +40,58 @@ pub struct Log {
     path: PathBuf,
     file: File,
     size: u64,
+    limit: u64,
 }
 
 impl Log {
     /// Opens or creates `path` for appending, readable by the person alone.
     pub fn open(path: PathBuf) -> io::Result<Self> {
+        Self::open_with_limit(path, MAX_LOG)
+    }
+
+    fn open_with_limit(path: PathBuf, limit: u64) -> io::Result<Self> {
         let file = open_private(&path)?;
         let size = file.metadata()?.len();
-        Ok(Self { path, file, size })
+        Ok(Self {
+            path,
+            file,
+            size,
+            limit,
+        })
     }
 
     /// Writes one UTC-timestamped line, rotating to `<path>.1` before crossing
-    /// `MAX_LOG`.
+    /// the limit.
     pub fn write(&mut self, event: Event, details: &str) -> io::Result<()> {
         let escaped = details.replace('\n', "\n    ");
         let line = format!("{} {}: {escaped}\n", utc_timestamp(), event.as_str());
         let bytes = line.as_bytes();
-        if self.size > 0 && self.size + (bytes.len() as u64) > MAX_LOG {
-            let mut backup = self.path.as_os_str().to_os_string();
-            backup.push(".1");
-            std::fs::rename(&self.path, &backup)?;
-            self.file = open_private(&self.path)?;
-            self.size = 0;
+        if self.size > 0 && self.size + (bytes.len() as u64) > self.limit {
+            self.rotate()?;
         }
         if let Err(err) = self.file.write_all(bytes) {
             let _ = self.file.set_len(self.size);
             return Err(err);
         }
         self.size += bytes.len() as u64;
+        Ok(())
+    }
+}
+
+impl Log {
+    /// Moves the full log to `<path>.1` and starts a new one.
+    fn rotate(&mut self) -> io::Result<()> {
+        let mut backup = self.path.as_os_str().to_os_string();
+        backup.push(".1");
+        match std::fs::rename(&self.path, &backup) {
+            Ok(()) => {}
+            // An earlier rotation moved the log and then could not open the
+            // new one. The move is done, so only the open is tried again.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+        self.file = open_private(&self.path)?;
+        self.size = 0;
         Ok(())
     }
 }
@@ -104,4 +128,63 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     (y, m as u32, d as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn temp_log(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("cl-log-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("lever.log")
+    }
+
+    fn mode(path: &PathBuf) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn a_full_log_moves_to_one_backup_and_both_stay_private() {
+        let path = temp_log("rotate");
+        let backup = PathBuf::from(format!("{}.1", path.display()));
+        let mut log = Log::open_with_limit(path.clone(), 200).unwrap();
+
+        log.write(Event::Start, &"a".repeat(120)).unwrap();
+        assert!(!backup.exists(), "one line under the limit must not rotate");
+        log.write(Event::Connection, &"b".repeat(120)).unwrap();
+
+        let old = std::fs::read_to_string(&backup).unwrap();
+        let new = std::fs::read_to_string(&path).unwrap();
+        assert!(old.contains(&"a".repeat(120)) && !old.contains('b'), "{old}");
+        assert!(new.contains(&"b".repeat(120)) && !new.contains('a'), "{new}");
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&backup), 0o600);
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_rotation_that_could_not_open_the_new_log_is_finished_by_the_next_line() {
+        let path = temp_log("recover");
+        let backup = PathBuf::from(format!("{}.1", path.display()));
+        let mut log = Log::open_with_limit(path.clone(), 200).unwrap();
+        log.write(Event::Start, &"a".repeat(120)).unwrap();
+
+        // What a rotation leaves when the move worked and the open did not:
+        // the log is at its backup's name and nothing is at its own.
+        std::fs::rename(&path, &backup).unwrap();
+
+        log.write(Event::Connection, &"b".repeat(120)).unwrap();
+        log.write(Event::Connection, "c").unwrap();
+
+        let new = std::fs::read_to_string(&path).unwrap();
+        assert!(new.contains(&"b".repeat(120)) && new.contains(": c\n"), "{new}");
+        assert!(std::fs::read_to_string(&backup).unwrap().contains(&"a".repeat(120)));
+        assert_eq!(mode(&path), 0o600);
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
 }

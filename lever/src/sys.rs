@@ -13,9 +13,14 @@ extern "C" fn handle_signal(sig: libc::c_int) {
     let fd = SIGNAL_PIPE_WRITE.load(Ordering::Relaxed);
     if fd >= 0 {
         let byte = sig as u8;
-        // SAFETY: `write` to a non-blocking pipe is async-signal-safe.
+        // SAFETY: `write` to a non-blocking pipe is async-signal-safe, and
+        // `errno` is put back so the call this handler interrupted still
+        // reports its own error.
         unsafe {
+            let errno = libc::__errno_location();
+            let saved = *errno;
             let _ = libc::write(fd, (&raw const byte).cast(), 1);
+            *errno = saved;
         }
     }
 }

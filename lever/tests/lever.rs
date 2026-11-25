@@ -318,6 +318,34 @@ fn framing_handles_split_writes_pipelining_bad_version_and_oversized_frames() {
         assert_eq!(read_frame(&mut peer).unwrap()["reply"], "status");
     }
 
+    // A request that is not an object with a string op gets a structured
+    // error reply and leaves the connection alive.
+    {
+        let mut peer = handshake(&lever.person);
+        for bad in [
+            json!(["status"]),
+            json!({ "op": 7 }),
+            json!({ "text": "DO_NOT_LOG_THIS_SECRET" }),
+        ] {
+            write_frame(&mut peer, &bad).unwrap();
+            let err = read_frame(&mut peer).unwrap();
+            assert_eq!(err["reply"], "error");
+            assert_eq!(err["code"], "invalid-request");
+        }
+        write_frame(&mut peer, &json!({ "op": "status" })).unwrap();
+        assert_eq!(read_frame(&mut peer).unwrap()["reply"], "status");
+    }
+
+    // A frame that is not JSON closes the connection without a reply.
+    {
+        let mut peer = handshake(&lever.surface);
+        let body = b"DO_NOT_LOG_THIS_SECRET";
+        let mut payload = (body.len() as u32).to_be_bytes().to_vec();
+        payload.extend_from_slice(body);
+        peer.write_all(&payload).unwrap();
+        assert_closed_without_reply(peer);
+    }
+
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 
@@ -434,4 +462,176 @@ fn restart_after_kill_replaces_stale_sockets_and_logs_restart_and_sigint_stops_c
         "expected restart entry for {old_pid}: {log}"
     );
     assert!(log.contains("stop: SIGINT"), "expected SIGINT stop entry: {log}");
+}
+
+#[test]
+fn replies_reach_a_peer_that_has_sent_all_it_will() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let mut lever = RunningLever::start(&dir.0, uid, uid);
+
+    // The peer sends its version and a request, closes its sending side, and
+    // only then reads.
+    let mut peer = connect(&lever.person);
+    let mut bytes = encode_frame(&json!({ "version": 1 }));
+    bytes.extend_from_slice(&encode_frame(&json!({ "op": "status" })));
+    peer.write_all(&bytes).unwrap();
+    peer.shutdown(std::net::Shutdown::Write).unwrap();
+
+    assert_eq!(read_frame(&mut peer).unwrap(), json!({ "version": 1 }));
+    assert_eq!(read_frame(&mut peer).unwrap()["reply"], "status");
+    assert_closed_without_reply(peer);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+    assert!(
+        lever.log_text().contains("connection: the person left"),
+        "expected the departure in the log: {}",
+        lever.log_text()
+    );
+}
+
+#[test]
+fn a_peer_that_reads_nothing_is_closed_while_its_replies_still_wait() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let mut lever = RunningLever::start(&dir.0, uid, uid);
+
+    let mut peer = handshake(&lever.person);
+    let request = encode_frame(&json!({ "op": "status" }));
+    let chunk: Vec<u8> = request.iter().copied().cycle().take(request.len() * 2048).collect();
+
+    // Requests go out and nothing is read. Lever's replies pass what it keeps
+    // waiting for one peer long before this many requests are sent, and from
+    // then on a write must fail because Lever closed the connection. A Lever
+    // that only stopped reading would leave the write waiting instead.
+    let mut ended = None;
+    for _ in 0..1024 {
+        if let Err(err) = peer.write_all(&chunk) {
+            ended = Some(err.kind());
+            break;
+        }
+    }
+    assert!(
+        matches!(ended, Some(io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset)),
+        "expected Lever to close the peer that read nothing, got {ended:?}"
+    );
+    assert!(
+        lever.log_text().contains("closed, the person read nothing while"),
+        "expected the close in the log: {}",
+        lever.log_text()
+    );
+
+    // Lever still answers the next peer.
+    let mut next = handshake(&lever.person);
+    write_frame(&mut next, &json!({ "op": "status" })).unwrap();
+    assert_eq!(read_frame(&mut next).unwrap()["reply"], "status");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_peer_that_keeps_sending_and_reading_is_answered_beside_the_others() {
+    const REQUESTS: usize = 400_000;
+
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let mut lever = RunningLever::start(&dir.0, uid, uid);
+
+    let busy = handshake(&lever.person);
+    busy.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+    busy.set_write_timeout(Some(Duration::from_secs(20))).unwrap();
+    let mut busy_writer = busy.try_clone().unwrap();
+    let mut busy_reader = busy;
+
+    // Enough requests that their replies pass what Lever keeps waiting for one
+    // peer, were Lever to read them all before it wrote any.
+    let writer = std::thread::spawn(move || {
+        let request = encode_frame(&json!({ "op": "status" }));
+        let chunk: Vec<u8> = request.iter().copied().cycle().take(request.len() * 1000).collect();
+        for _ in 0..REQUESTS / 1000 {
+            busy_writer.write_all(&chunk)?;
+        }
+        Ok::<(), io::Error>(())
+    });
+    let reader = std::thread::spawn(move || {
+        for _ in 0..REQUESTS {
+            let reply = read_frame(&mut busy_reader)?;
+            assert_eq!(reply["reply"], "status");
+        }
+        Ok::<UnixStream, io::Error>(busy_reader)
+    });
+
+    // While that goes on, the shell is answered within its usual time.
+    let mut shell = handshake(&lever.surface);
+    write_frame(&mut shell, &json!({ "op": "status" })).unwrap();
+    assert_eq!(read_frame(&mut shell).unwrap()["reply"], "status");
+
+    writer.join().unwrap().expect("the busy peer's requests were all taken");
+    let mut busy = reader.join().unwrap().expect("the busy peer's replies all came");
+
+    // The busy peer was served, not closed.
+    write_frame(&mut busy, &json!({ "op": "status" })).unwrap();
+    assert_eq!(read_frame(&mut busy).unwrap()["reply"], "status");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+    assert!(
+        !lever.log_text().contains("read nothing while"),
+        "a peer that read its replies was closed: {}",
+        lever.log_text()
+    );
+}
+
+#[test]
+fn each_socket_keeps_its_own_count_of_connections() {
+    const MAX_PEERS: usize = 64;
+
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let mut lever = RunningLever::start(&dir.0, uid, uid);
+
+    let mut held: Vec<UnixStream> = (0..MAX_PEERS).map(|_| handshake(&lever.person)).collect();
+
+    // One more on the person socket is closed without a reply.
+    let mut extra = connect(&lever.person);
+    let _ = write_frame(&mut extra, &json!({ "version": 1 }));
+    assert_closed_without_reply(extra);
+
+    // The surface socket has its own count, so the shell is still answered,
+    // and so is every connection the person socket already holds.
+    let mut shell = handshake(&lever.surface);
+    write_frame(&mut shell, &json!({ "op": "status" })).unwrap();
+    assert_eq!(read_frame(&mut shell).unwrap()["reply"], "status");
+    for peer in &mut held {
+        write_frame(peer, &json!({ "op": "status" })).unwrap();
+        assert_eq!(read_frame(peer).unwrap()["reply"], "status");
+    }
+
+    // When one leaves, the person socket takes another.
+    drop(held.pop());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut peer = connect(&lever.person);
+        let _ = write_frame(&mut peer, &json!({ "version": 1 }));
+        if matches!(read_frame(&mut peer), Ok(reply) if reply == json!({ "version": 1 })) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the person socket took no connection after one left"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+    assert!(
+        lever.log_text().contains(&format!(
+            "refused the person, which already has {MAX_PEERS} connections open"
+        )),
+        "expected the refusal in the log: {}",
+        lever.log_text()
+    );
 }
