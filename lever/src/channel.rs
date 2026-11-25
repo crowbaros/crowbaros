@@ -16,8 +16,13 @@ pub const LEVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Once this many bytes of replies wait for a peer, Lever reads no more from
 /// it until it has taken them. A peer that reads slowly, or not at all, is
 /// then held where it is: its own writes stall, nothing it sent is lost, and
-/// what Lever keeps for it stays near this mark.
+/// the replies Lever keeps for it stay near this mark.
 const WAITING_MARK: usize = 1024 * 1024;
+/// Events are not held back as replies are: a thread goes on working whether
+/// or not a peer that watches it reads. So a peer that falls this many bytes
+/// of events behind is closed. The record has everything it missed, and
+/// `resume` reads it.
+const EVENT_BACKLOG: usize = 4 * WAITING_MARK;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Channel {
@@ -31,6 +36,9 @@ pub struct Peer {
     channel: Channel,
     reader: FrameReader,
     write_buf: Vec<u8>,
+    /// Bytes of events queued for this peer, less every byte it has taken
+    /// since: how far behind the threads it watches it has fallen.
+    events_waiting: usize,
     subscriptions: HashSet<String>,
     handshaked: bool,
     closing: bool,
@@ -44,6 +52,7 @@ impl Peer {
             channel,
             reader: FrameReader::new(MAX_FRAME),
             write_buf: Vec::new(),
+            events_waiting: 0,
             subscriptions: HashSet::new(),
             handshaked: false,
             closing: false,
@@ -79,6 +88,35 @@ impl Peer {
         if !self.closing {
             self.write_buf.extend_from_slice(&frames::encode(msg));
         }
+    }
+
+    /// Queues an event of a thread this peer watches.
+    pub fn queue_event(&mut self, msg: &Value) {
+        if !self.closing {
+            let frame = frames::encode(msg);
+            self.events_waiting += frame.len();
+            self.write_buf.extend_from_slice(&frame);
+        }
+    }
+
+    /// Whether this peer reads the events Lever has for it. Logs why when it
+    /// does not, and Lever then drops it.
+    pub fn keeps_up(&mut self, log: &mut Log) -> bool {
+        if self.events_waiting <= EVENT_BACKLOG {
+            return true;
+        }
+        if !self.closed_logged {
+            self.closed_logged = true;
+            let _ = log.write(
+                Event::Connection,
+                &format!(
+                    "closed, {} left more than {} MiB of events unread",
+                    self.channel.peer,
+                    EVENT_BACKLOG / (1024 * 1024)
+                ),
+            );
+        }
+        false
     }
 
     /// Lever is about to drop this peer. Logs that it left, unless its close
@@ -153,6 +191,7 @@ impl Peer {
                 Ok(0) => return false,
                 Ok(n) => {
                     self.write_buf.drain(..n);
+                    self.events_waiting = self.events_waiting.saturating_sub(n);
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,

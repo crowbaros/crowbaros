@@ -8,7 +8,8 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 static SIGNAL_PIPE_WRITE: AtomicI32 = AtomicI32::new(-1);
 
@@ -181,10 +182,21 @@ pub fn random_hex(bytes: usize) -> String {
             if err.kind() == io::ErrorKind::Interrupted {
                 continue;
             }
-            // Fallback: mix pid and monotonic time so ID generation never panics.
-            let seed = u64::from(std::process::id()).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-            for (i, slot) in buf[filled..].iter_mut().enumerate() {
-                *slot = (seed >> ((i % 8) * 8)) as u8 ^ (i as u8);
+            // The kernel gave no random bytes. An ID must still differ from
+            // the one before it, so the rest comes from the process ID, the
+            // time, and a count of the IDs made this way.
+            static MADE: AtomicU64 = AtomicU64::new(0);
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos() as u64);
+            let mut seed = u64::from(std::process::id()) ^ nanos.rotate_left(17) ^ MADE.fetch_add(1, Ordering::Relaxed);
+            for slot in &mut buf[filled..] {
+                // SplitMix64: each step gives eight well-mixed bits.
+                seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                let mut mixed = seed;
+                mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+                *slot = (mixed ^ (mixed >> 31)) as u8;
             }
             break;
         }
@@ -208,14 +220,19 @@ pub fn spawn_harness(program: &str, args: &[String]) -> io::Result<Child> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    // SAFETY: `prctl(PR_SET_PDEATHSIG)` and `getppid` are async-signal-safe.
+    // SAFETY: `prctl(PR_SET_PDEATHSIG)`, `getppid`, and `_exit` are
+    // async-signal-safe.
     unsafe {
         cmd.pre_exec(move || {
             if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
                 return Err(io::Error::last_os_error());
             }
+            // Lever died before the kernel was asked to tell this child, so
+            // nothing will. The child still has Lever's own handler for
+            // `SIGTERM`, which only writes to a pipe, so raising the signal
+            // would end nothing: the child ends itself.
             if libc::getppid() != parent_pid {
-                libc::raise(libc::SIGTERM);
+                libc::_exit(128 + libc::SIGTERM);
             }
             Ok(())
         });

@@ -1,8 +1,9 @@
 //! Lever's SQLite state store (`lever.sqlite`), kept in the person's home and
 //! readable by the person alone.
 //!
-//! Keeps every thread, its turns, its acts, and any updates Lever did not
-//! recognize (kept verbatim as they arrived, along with a plain rendering).
+//! Keeps every thread, its turns, its acts, and its notes: the updates Lever
+//! shows as neither text nor an act (kept as JSON, along with a plain
+//! rendering).
 
 use crate::sys;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -465,8 +466,8 @@ impl Store {
         Ok((recorded_turn, record))
     }
 
-    /// Stores an unrecognized harness update verbatim in `notes.raw_json` along
-    /// with its plain text rendering, returning Lever's own note record.
+    /// Stores a note: a harness update's JSON in `notes.raw_json` along with
+    /// its plain text rendering. Returns Lever's own note record.
     pub fn insert_note(
         &self,
         thread_id: &str,

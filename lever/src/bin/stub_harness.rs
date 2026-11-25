@@ -4,6 +4,12 @@
 //! responses and `session/update` notifications on standard output, using the
 //! official `agent-client-protocol-schema` v1 types for known ACP messages.
 //!
+//! A session's ID is `session_prefix` and a count. With no prefix in the
+//! script, the prefix has the stub's process ID in it, so a stub started
+//! again gives no ID the one before it gave. A script that sets the prefix
+//! gets the same IDs from every stub, which is how a test has a harness hand
+//! out an ID twice.
+//!
 //! Usage:
 //!   crowbar-stub-harness --script <path> [--log <path>]
 
@@ -37,6 +43,16 @@ struct Script {
     initialize_error: Option<ScriptError>,
     #[serde(default)]
     new_session_error: Option<ScriptError>,
+    /// Waits this long before it answers `session/new`.
+    #[serde(default)]
+    new_session_delay_ms: u64,
+    /// Updates sent on `session/load` before it is answered, as a harness
+    /// replays a session's history.
+    #[serde(default)]
+    load_replay: Vec<Step>,
+    /// If true, every result also carries `"error": null`.
+    #[serde(default)]
+    null_error: bool,
     #[serde(default)]
     turns: Vec<TurnScript>,
 }
@@ -46,7 +62,7 @@ fn default_true() -> bool {
 }
 
 fn default_session_prefix() -> String {
-    "acp-stub-session-".to_string()
+    format!("acp-stub-session-{}-", std::process::id())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -68,7 +84,8 @@ struct TurnScript {
     /// Stop reason for `PromptResponse` (`end_turn`, `cancelled`, `refusal`, `max_tokens`).
     #[serde(default = "default_stop_reason")]
     stop_reason: String,
-    /// If set, responds to `session/prompt` with this JSON-RPC error instead of a result.
+    /// If set, responds to `session/prompt` with this JSON-RPC error instead of a result,
+    /// whether the turn ran to its end or was cancelled.
     #[serde(default)]
     error: Option<ScriptError>,
     /// If true, returns a JSON-RPC request-cancelled error when cancelled instead of `StopReason::Cancelled`.
@@ -195,12 +212,14 @@ fn parse_options(args: &[String]) -> Option<Options> {
 
 struct Writer {
     stdout: Mutex<io::Stdout>,
+    null_error: bool,
 }
 
 impl Writer {
-    fn new() -> Self {
+    fn new(null_error: bool) -> Self {
         Self {
             stdout: Mutex::new(io::stdout()),
+            null_error,
         }
     }
 
@@ -213,7 +232,10 @@ impl Writer {
 
     fn send_result<R: serde::Serialize>(&self, id: RequestId, result: R) {
         let msg = JsonRpcMessage::wrap(Response::<R, AcpError>::new(id, Ok(result)));
-        let value = serde_json::to_value(msg).expect("serialize response");
+        let mut value = serde_json::to_value(msg).expect("serialize response");
+        if self.null_error {
+            value["error"] = Value::Null;
+        }
         self.send(&value);
     }
 
@@ -437,7 +459,7 @@ fn run(options: Options) -> Result<(), String> {
         None => None,
     };
 
-    let writer = Arc::new(Writer::new());
+    let writer = Arc::new(Writer::new(script.null_error));
     let picker = Arc::new(Mutex::new(ScriptPicker {
         turns: script.turns.clone(),
         next_unmatched: 0,
@@ -505,6 +527,7 @@ fn run(options: Options) -> Result<(), String> {
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
             }
         } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_new {
+            thread::sleep(Duration::from_millis(script.new_session_delay_ms));
             if let Some(err) = &script.new_session_error {
                 writer.send_error(id, AcpError::new(err.code, err.message.clone()));
                 continue;
@@ -519,10 +542,13 @@ fn run(options: Options) -> Result<(), String> {
             }
         } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_load {
             match serde_json::from_value::<LoadSessionRequest>(params) {
-                Ok(_load_req) => {
+                Ok(load_req) => {
                     if !script.load_session {
                         writer.send_error(id, AcpError::method_not_found());
                     } else {
+                        for step in &script.load_replay {
+                            let _ = emit_step(&writer, &load_req.session_id, step, None);
+                        }
                         writer.send_result(id, LoadSessionResponse::new());
                     }
                 }
@@ -562,12 +588,10 @@ fn run(options: Options) -> Result<(), String> {
                 }
                 active_cancels.lock().unwrap().remove(&sid_key);
 
-                if was_cancelled {
-                    if turn_script.cancel_with_error {
-                        writer.send_error(id, AcpError::request_cancelled());
-                    } else {
-                        writer.send_result(id, PromptResponse::new(StopReason::Cancelled));
-                    }
+                if was_cancelled && turn_script.cancel_with_error {
+                    writer.send_error(id, AcpError::request_cancelled());
+                } else if was_cancelled && turn_script.error.is_none() {
+                    writer.send_result(id, PromptResponse::new(StopReason::Cancelled));
                 } else if let Some(err) = &turn_script.error {
                     writer.send_error(id, AcpError::new(err.code, err.message.clone()));
                 } else {

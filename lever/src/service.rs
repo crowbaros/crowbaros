@@ -16,6 +16,16 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 /// Default time an idle harness stays running after the last working turn ends.
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
+/// How long Lever waits before it tries again to save how a turn ended.
+const UNSAVED_RETRY: Duration = Duration::from_millis(250);
+/// What a turn failed with when the harness finished it and Lever's database
+/// did not take all of it.
+const UNSAVED_MESSAGE: &str = "Lever could not save all of this turn.";
+/// The note a thread gets when its harness session could not be picked up
+/// again, and what Lever keeps as that note's source.
+const NEW_SESSION_NOTE: &str = "The harness could not pick this thread's session up again. It began a new one, which has none of the turns before.";
+const NEW_SESSION_SOURCE: &str = r#"{"lever":"new-session"}"#;
+
 /// One broadcast event targeted at peers subscribed to `thread_id`.
 pub struct Broadcast {
     pub thread_id: String,
@@ -43,7 +53,16 @@ struct WorkingTurn {
     cwd: String,
     existing_session_id: Option<String>,
     dispatch: TurnDispatch,
-    stopping: bool,
+    /// Something of this turn did not reach the database.
+    unsaved: bool,
+}
+
+/// How a turn ended, kept until the database has it.
+struct Ending {
+    thread_id: String,
+    turn: u64,
+    state: &'static str,
+    error: Option<String>,
 }
 
 pub struct Service {
@@ -53,6 +72,8 @@ pub struct Service {
     idle_timeout: Duration,
     idle_since: Option<Instant>,
     working_turns: HashMap<String, WorkingTurn>,
+    /// Ends the database did not take, tried again on each wake.
+    unsaved_endings: Vec<Ending>,
 }
 
 impl Service {
@@ -64,6 +85,7 @@ impl Service {
             idle_timeout,
             idle_since: None,
             working_turns: HashMap::new(),
+            unsaved_endings: Vec::new(),
         }
     }
 
@@ -78,32 +100,33 @@ impl Service {
             .and_then(AcpHarness::stdin_fd)
     }
 
-    /// Timeout in milliseconds for `poll(2)`, or `-1` when no idle timer is active.
+    /// Timeout in milliseconds for `poll(2)`, or `-1` when Lever waits for
+    /// nothing but its peers and its harness.
     pub fn poll_timeout_ms(&self) -> libc::c_int {
-        let Some(since) = self.idle_since else {
-            return -1;
-        };
-        if self.harness.is_none() || !self.working_turns.is_empty() {
-            return -1;
-        }
-        let elapsed = since.elapsed();
-        if elapsed >= self.idle_timeout {
-            0
-        } else {
-            let remaining = (self.idle_timeout - elapsed).as_millis();
-            remaining.min(i32::MAX as u128) as libc::c_int
+        let retry = (!self.unsaved_endings.is_empty()).then_some(UNSAVED_RETRY);
+        match [self.idle_remaining(), retry].into_iter().flatten().min() {
+            None => -1,
+            // Rounded up: the last part of a millisecond is waited for, not
+            // spun through.
+            Some(wait) => wait.as_nanos().div_ceil(1_000_000).min(i32::MAX as u128) as libc::c_int,
         }
     }
 
-    /// Stops the harness if no thread has worked for `idle_timeout`.
-    pub fn check_idle_timeout(&mut self, log: &mut Log) {
+    /// How long the harness may still sit idle, when it is idle.
+    fn idle_remaining(&self) -> Option<Duration> {
+        let since = self.idle_since?;
         if self.harness.is_none() || !self.working_turns.is_empty() {
-            return;
+            return None;
         }
-        let Some(since) = self.idle_since else {
-            return;
-        };
-        if since.elapsed() >= self.idle_timeout {
+        Some(self.idle_timeout.saturating_sub(since.elapsed()))
+    }
+
+    /// What Lever does each time it wakes: saves the ends of turns the
+    /// database did not take before, and stops the harness if no thread has
+    /// worked for `idle_timeout`.
+    pub fn on_wake(&mut self, log: &mut Log) {
+        self.save_endings();
+        if self.idle_remaining().is_some_and(|left| left.is_zero()) {
             self.stop_harness("after idle timeout", log);
         }
     }
@@ -118,7 +141,7 @@ impl Service {
             "list" => self.handle_list(),
             "send" => self.handle_send(value, log),
             "resume" => self.handle_resume(value),
-            "stop" => self.handle_stop(value),
+            "stop" => self.handle_stop(value, log),
             _ => error_outcome("unsupported", "This request is not supported."),
         }
     }
@@ -154,6 +177,12 @@ impl Service {
         if self.harness.is_some() {
             self.stop_harness("on Lever stop", log);
         }
+        // What was working ends here, and the record says so now, not at the
+        // next start.
+        if let Err(err) = self.store.interrupt_all_working(unix_now()) {
+            store_failed(log, &err);
+        }
+        self.save_endings();
         self.store.close()
     }
 
@@ -273,7 +302,7 @@ impl Service {
                 cwd: cwd.clone(),
                 existing_session_id: existing_session_id.clone(),
                 dispatch: TurnDispatch::WaitingForInit,
-                stopping: false,
+                unsaved: false,
             },
         );
 
@@ -281,7 +310,7 @@ impl Service {
         if self.harness.is_none()
             && let Err(err) = self.start_harness(log)
         {
-            broadcasts.extend(self.fail_turn(&thread_id, turn, &err));
+            broadcasts.extend(self.fail_turn(&thread_id, turn, &err, log));
             return RequestOutcome {
                 reply: json!({ "reply": "sent", "thread": thread_id, "turn": turn }),
                 subscribe: Some(thread_id),
@@ -304,7 +333,7 @@ impl Service {
         }
     }
 
-    fn handle_stop(&mut self, value: &Value) -> RequestOutcome {
+    fn handle_stop(&mut self, value: &Value, log: &mut Log) -> RequestOutcome {
         let Some(thread_id) = value.get("thread").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
             return error_outcome("invalid-request", "Expected a non-empty string thread field.");
         };
@@ -341,7 +370,6 @@ impl Service {
 
         let broadcasts = match &active.dispatch {
             TurnDispatch::PromptInFlight { session_id } => {
-                active.stopping = true;
                 let sid = session_id.clone();
                 if let Some(harness) = self.harness.as_mut() {
                     harness.cancel_session(&sid);
@@ -351,7 +379,7 @@ impl Service {
             TurnDispatch::WaitingForInit | TurnDispatch::WaitingForSession => {
                 let turn = active.turn;
                 self.working_turns.remove(thread_id);
-                let _ = self.store.finish_turn(thread_id, turn, "stopped", None, unix_now());
+                self.end_turn(thread_id, turn, "stopped", None, log);
                 self.refresh_idle_timer();
                 vec![Broadcast {
                     thread_id: thread_id.to_string(),
@@ -444,40 +472,51 @@ impl Service {
                     .collect();
                 let mut broadcasts = Vec::new();
                 for (tid, turn) in tids {
-                    broadcasts.extend(self.fail_turn(&tid, turn, &message));
+                    broadcasts.extend(self.fail_turn(&tid, turn, &message, log));
                 }
                 self.stop_harness("after initialize failure", log);
                 broadcasts
             }
             AcpEvent::SessionReady {
                 thread_id,
-                turn,
                 session_id,
+                afresh,
             } => {
-                let _ = self.store.set_harness_session_id(&thread_id, &session_id);
-                let Some(active) = self.working_turns.get_mut(&thread_id) else {
-                    // Turn was stopped before session setup finished.
-                    return Vec::new();
-                };
-                if active.turn != turn {
-                    return Vec::new();
+                if let Err(err) = self.store.set_harness_session_id(&thread_id, &session_id) {
+                    self.could_not_save(&thread_id, &err, log);
                 }
-                if let Some(harness) = self.harness.as_mut() {
-                    harness.send_prompt(&thread_id, turn, &session_id, &active.message);
+                let broadcasts = if afresh {
+                    let after_turn = !self.working_turns.contains_key(&thread_id);
+                    self.record_note(&thread_id, NEW_SESSION_SOURCE, NEW_SESSION_NOTE, after_turn, log)
+                } else {
+                    Vec::new()
+                };
+                // The session is the thread's. The turn that waits for it is
+                // the one working now: the turn that first asked may have
+                // been stopped since.
+                if let Some(active) = self.working_turns.get_mut(&thread_id)
+                    && matches!(active.dispatch, TurnDispatch::WaitingForSession)
+                    && let Some(harness) = self.harness.as_mut()
+                {
+                    harness.send_prompt(&thread_id, active.turn, &session_id, &active.message);
                     active.dispatch = TurnDispatch::PromptInFlight { session_id };
                 }
-                Vec::new()
+                broadcasts
             }
             AcpEvent::SessionFailed {
                 thread_id,
                 turn,
                 message,
-            } => self.fail_turn(&thread_id, turn, &message),
+            } => self.fail_turn(&thread_id, turn, &message, log),
             AcpEvent::TextChunk { thread_id, text } => {
                 let Some(turn) = self.turn_for_update(&thread_id) else {
                     return Vec::new();
                 };
-                let _ = self.store.append_answer(&thread_id, turn, &text, unix_now());
+                // The answer still goes to who is watching. The turn's end
+                // says that not all of it was saved.
+                if let Err(err) = self.store.append_answer(&thread_id, turn, &text, unix_now()) {
+                    self.could_not_save(&thread_id, &err, log);
+                }
                 vec![Broadcast {
                     thread_id: thread_id.clone(),
                     message: json!({
@@ -510,8 +549,12 @@ impl Service {
                     state: state.as_deref(),
                     detail: detail.as_deref(),
                 };
-                let Ok((recorded_turn, act)) = self.store.upsert_act(&patch, unix_now()) else {
-                    return Vec::new();
+                let (recorded_turn, act) = match self.store.upsert_act(&patch, unix_now()) {
+                    Ok(saved) => saved,
+                    Err(err) => {
+                        self.could_not_save(&thread_id, &err, log);
+                        return Vec::new();
+                    }
                 };
                 vec![Broadcast {
                     thread_id: thread_id.clone(),
@@ -519,7 +562,10 @@ impl Service {
                 }]
             }
             AcpEvent::TitleUpdated { thread_id, title } => {
-                let _ = self.store.update_thread_title(&thread_id, &title, unix_now());
+                if let Err(err) = self.store.update_thread_title(&thread_id, &title, unix_now()) {
+                    self.could_not_save(&thread_id, &err, log);
+                    return Vec::new();
+                }
                 vec![Broadcast {
                     thread_id: thread_id.clone(),
                     message: json!({
@@ -535,47 +581,32 @@ impl Service {
                 plain_text,
             } => {
                 let after_turn = !self.working_turns.contains_key(&thread_id);
-                let Some(turn) = self.turn_for_update(&thread_id) else {
-                    return Vec::new();
-                };
-                let Ok(note) = self
-                    .store
-                    .insert_note(&thread_id, turn, &raw_json, &plain_text, after_turn, unix_now())
-                else {
-                    return Vec::new();
-                };
-                vec![Broadcast {
-                    thread_id: thread_id.clone(),
-                    message: json!({
-                        "event": "note",
-                        "thread": thread_id,
-                        "turn": turn,
-                        "note": note.id,
-                        "text": note.text,
-                    }),
-                }]
+                self.record_note(&thread_id, &raw_json, &plain_text, after_turn, log)
             }
             AcpEvent::PromptFinished {
                 thread_id,
                 turn,
                 outcome,
             } => {
-                let Some(active) = self.working_turns.remove(&thread_id) else {
-                    return Vec::new();
-                };
-                if active.turn != turn {
+                // An answer for a turn that is not the one working ends nothing.
+                if self
+                    .working_turns
+                    .get(&thread_id)
+                    .is_none_or(|active| active.turn != turn)
+                {
                     return Vec::new();
                 }
-                // A harness that answers a `session/cancel` with an error
-                // instead of `StopReason::Cancelled` still stopped the turn.
+                let unsaved = self
+                    .working_turns
+                    .remove(&thread_id)
+                    .is_some_and(|active| active.unsaved);
                 let outcome = match outcome {
-                    TurnOutcome::Failed(_) if active.stopping => TurnOutcome::Stopped,
+                    TurnOutcome::Done if unsaved => TurnOutcome::Failed(UNSAVED_MESSAGE.to_string()),
                     other => other,
                 };
-                let now = unix_now();
                 match outcome {
                     TurnOutcome::Done => {
-                        let _ = self.store.finish_turn(&thread_id, turn, "done", None, now);
+                        self.end_turn(&thread_id, turn, "done", None, log);
                         vec![Broadcast {
                             thread_id: thread_id.clone(),
                             message: json!({
@@ -586,7 +617,7 @@ impl Service {
                         }]
                     }
                     TurnOutcome::Stopped => {
-                        let _ = self.store.finish_turn(&thread_id, turn, "stopped", None, now);
+                        self.end_turn(&thread_id, turn, "stopped", None, log);
                         vec![Broadcast {
                             thread_id: thread_id.clone(),
                             message: json!({
@@ -597,7 +628,7 @@ impl Service {
                         }]
                     }
                     TurnOutcome::Failed(msg) => {
-                        let _ = self.store.finish_turn(&thread_id, turn, "failed", Some(&msg), now);
+                        self.end_turn(&thread_id, turn, "failed", Some(&msg), log);
                         vec![Broadcast {
                             thread_id: thread_id.clone(),
                             message: json!({
@@ -628,9 +659,19 @@ impl Service {
         self.idle_since = None;
         self.working_turns.clear();
 
-        let interrupted = self.store.interrupt_all_working(unix_now()).unwrap_or_default();
+        let interrupted = self.store.interrupt_all_working(unix_now()).unwrap_or_else(|err| {
+            store_failed(log, &err);
+            Vec::new()
+        });
         interrupted
             .into_iter()
+            // A turn whose end waits to be saved ended before the harness did.
+            .filter(|(thread_id, turn)| {
+                !self
+                    .unsaved_endings
+                    .iter()
+                    .any(|ending| ending.thread_id == *thread_id && ending.turn == *turn)
+            })
             .map(|(thread_id, turn)| Broadcast {
                 thread_id: thread_id.clone(),
                 message: json!({
@@ -642,11 +683,19 @@ impl Service {
             .collect()
     }
 
-    fn fail_turn(&mut self, thread_id: &str, turn: u64, message: &str) -> Vec<Broadcast> {
+    /// Fails the working turn of a thread. A failure that comes for a turn
+    /// that has ended already, or for one before the turn now working,
+    /// changes nothing: that turn's end is in the record.
+    fn fail_turn(&mut self, thread_id: &str, turn: u64, message: &str, log: &mut Log) -> Vec<Broadcast> {
+        if self
+            .working_turns
+            .get(thread_id)
+            .is_none_or(|active| active.turn != turn)
+        {
+            return Vec::new();
+        }
         self.working_turns.remove(thread_id);
-        let _ = self
-            .store
-            .finish_turn(thread_id, turn, "failed", Some(message), unix_now());
+        self.end_turn(thread_id, turn, "failed", Some(message), log);
         self.refresh_idle_timer();
         vec![Broadcast {
             thread_id: thread_id.to_string(),
@@ -655,6 +704,83 @@ impl Service {
                 "thread": thread_id,
                 "turn": turn,
                 "message": message,
+            }),
+        }]
+    }
+
+    /// Records how a turn ended. An end the database does not take is kept
+    /// and tried again on each wake, so the thread is not left working in the
+    /// record after its turn is over.
+    fn end_turn(&mut self, thread_id: &str, turn: u64, state: &'static str, error: Option<&str>, log: &mut Log) {
+        if let Err(err) = self.store.finish_turn(thread_id, turn, state, error, unix_now()) {
+            store_failed(log, &err);
+            self.unsaved_endings.push(Ending {
+                thread_id: thread_id.to_string(),
+                turn,
+                state,
+                error: error.map(str::to_string),
+            });
+        }
+    }
+
+    fn save_endings(&mut self) {
+        if self.unsaved_endings.is_empty() {
+            return;
+        }
+        let now = unix_now();
+        let store = &self.store;
+        self.unsaved_endings.retain(|ending| {
+            store
+                .finish_turn(
+                    &ending.thread_id,
+                    ending.turn,
+                    ending.state,
+                    ending.error.as_deref(),
+                    now,
+                )
+                .is_err()
+        });
+    }
+
+    /// The database did not take something of a thread. The log says so, and
+    /// the turn the thread is working on ends as failed, not as done.
+    fn could_not_save(&mut self, thread_id: &str, err: &str, log: &mut Log) {
+        store_failed(log, err);
+        if let Some(active) = self.working_turns.get_mut(thread_id) {
+            active.unsaved = true;
+        }
+    }
+
+    /// Keeps a note on a thread's newest turn and tells who is watching.
+    fn record_note(
+        &mut self,
+        thread_id: &str,
+        raw_json: &str,
+        plain_text: &str,
+        after_turn: bool,
+        log: &mut Log,
+    ) -> Vec<Broadcast> {
+        let Some(turn) = self.turn_for_update(thread_id) else {
+            return Vec::new();
+        };
+        let note = match self
+            .store
+            .insert_note(thread_id, turn, raw_json, plain_text, after_turn, unix_now())
+        {
+            Ok(note) => note,
+            Err(err) => {
+                self.could_not_save(thread_id, &err, log);
+                return Vec::new();
+            }
+        };
+        vec![Broadcast {
+            thread_id: thread_id.to_string(),
+            message: json!({
+                "event": "note",
+                "thread": thread_id,
+                "turn": turn,
+                "note": note.id,
+                "text": note.text,
             }),
         }]
     }
@@ -679,6 +805,12 @@ impl Service {
             self.idle_since = None;
         }
     }
+}
+
+/// Says in the log that the database did not take a write. The database's
+/// error names what it could not do, and nothing a thread said.
+fn store_failed(log: &mut Log, err: &str) {
+    let _ = log.write(Event::Error, &format!("storage: {err}"));
 }
 
 fn error_outcome(code: &str, message: &str) -> RequestOutcome {

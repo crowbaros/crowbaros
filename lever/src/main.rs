@@ -196,11 +196,11 @@ fn deliver_broadcasts(broadcasts: &[Broadcast], peers: &mut [Peer], keep: &mut [
         let mut queued = false;
         for b in broadcasts {
             if peer.is_subscribed(&b.thread_id) {
-                peer.queue(&b.message);
+                peer.queue_event(&b.message);
                 queued = true;
             }
         }
-        if queued && !peer.on_writable() {
+        if queued && !(peer.on_writable() && peer.keeps_up(log)) {
             peer.on_gone(log);
             keep[idx] = false;
         }
@@ -303,7 +303,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         if let Some(sig) = signals.take_signal() {
             break sig;
         }
-        service.check_idle_timeout(log);
+        service.on_wake(log);
 
         let harness_stdout_fd = service.harness_stdout_fd();
         let harness_stdin_fd = service.harness_stdin_fd();
@@ -375,12 +375,25 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         }
 
         let mut keep = vec![true; peers.len()];
+
+        // The harness first, and what it said to who is watching, before any
+        // peer is heard: an update that is already here belongs to the turn
+        // it came in, not to one a peer is about to begin, and a peer that
+        // resumes a thread reads the record with that update in it once.
         let mut broadcasts: Vec<Broadcast> = Vec::new();
+        if let Some(i) = stdout_idx {
+            let revents = pollfds[i].revents;
+            if revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+                broadcasts.extend(service.on_harness_readable(log));
+            }
+        }
+        deliver_broadcasts(&broadcasts, &mut peers, &mut keep, log);
+        broadcasts.clear();
 
         // Process existing peers (indices 3..3+existing_len), keeping newly accepted peers.
         for (idx, pfd) in pollfds[3..3 + existing_len].iter().enumerate() {
             let revents = pfd.revents;
-            if revents == 0 {
+            if revents == 0 || !keep[idx] {
                 continue;
             }
             let peer = &mut peers[idx];
@@ -405,12 +418,6 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
             keep[idx] = alive;
         }
 
-        if let Some(i) = stdout_idx {
-            let revents = pollfds[i].revents;
-            if revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
-                broadcasts.extend(service.on_harness_readable(log));
-            }
-        }
         if let Some(i) = stdin_idx {
             let revents = pollfds[i].revents;
             if revents & (libc::POLLOUT | libc::POLLERR | libc::POLLHUP) != 0 {

@@ -55,8 +55,50 @@ it and stops it after `--idle-timeout-ms` (default `600000`, 10 minutes) with
 no working thread. The harness child dies with Lever.
 
 Told to stop (`SIGTERM` or `SIGINT`), Lever closes its peer connections, stops
-any running harness child, removes its sockets and `running` marker, closes its
-database cleanly, logs the stop, and exits with status `0`.
+any running harness child, marks any turn still working `interrupted`, removes
+its sockets and `running` marker, closes its database cleanly, logs the stop,
+and exits with status `0`.
+
+## The harness
+
+Lever is the client in ACP and the harness is the agent. What Lever does with
+ACP today:
+
+- **One session for each thread.** A thread's first turn asks the harness for
+  a session (`session/new`), and Lever keeps its ID with the thread. A harness
+  that was stopped and started again is asked to load it (`session/load`) when
+  it says it can, and Lever drops what the harness replays as it loads: the
+  record has it already.
+- **A session that cannot be picked up again is replaced, and the thread says
+  so.** When the harness cannot load sessions, or the load fails, Lever asks
+  for a new session and puts a note in the thread. The harness then has none
+  of the thread's earlier turns. Giving a new session the thread so far, as
+  ADR 0036 has it, is not built yet.
+- **A session is one thread's alone.** A harness that gives a thread a session
+  ID another thread holds fails that turn, and a thread never loads a session
+  another thread holds.
+- **How a turn ends.** `end_turn` is `done`. `cancelled`, or the JSON-RPC
+  error for a cancelled request (`-32800`), is `stopped`. Any other stop
+  reason, and any other error, is `failed`, whether or not a stop was asked
+  for.
+- **Updates.** A piece of the agent's message is `text`, a tool call and its
+  updates are an `act`, and a session's new title is `thread-updated`. Every
+  other update is a `note`, the ones ACP defines among them (a thought, a
+  plan, a usage report), until Lever shows them as their own kinds.
+- **An update that comes after its turn ended goes to the thread's newest
+  turn.** ACP gives an update no turn. Lever takes what the harness has said
+  before it hears a peer, so an update that is already there when the next
+  message arrives stays with the turn it came in. One that comes later still
+  is recorded with the turn that is working then.
+- **Requests from the harness are refused.** Lever tells the harness it reads
+  and writes no files and runs no terminals for it, and answers every request
+  the harness makes of it, `session/request_permission` among them, with
+  JSON-RPC's "method not found". Carrying a harness's requests to the person
+  is a later part of
+  [Milestone 3](https://github.com/crowbaros/crowbaros/issues/371).
+- **Lever reads at most 256 KiB from the harness each time it wakes**, so a
+  harness that never stops writing holds back neither Lever's peers nor a stop
+  signal.
 
 ## Channels and framing
 
@@ -82,9 +124,18 @@ that reads slowly, or not at all, finds its own writes stall, and loses
 nothing it sent. A peer that closes its sending side still gets the replies to
 what it sent before Lever closes the connection.
 
+Events are not held back in that way, because a thread goes on working whether
+or not a peer that watches it reads. A peer that falls more than 4 MiB of
+events behind is closed, and Lever's log says why. The record has what it
+missed: it connects again and reads it with `resume`.
+
 Every thread ID, turn number, act ID, and note ID on both sockets is Lever's
-own. No harness session ID, tool call ID, or wire message type crosses Lever's
-sockets.
+own. Lever puts no harness session ID, tool call ID, or wire message type in
+any field of its own, and takes those IDs out of a harness's error messages
+and of the updates it shows as notes. An act's detail is the text the harness
+gave for it, or the command or path its raw input or output names, and never
+the raw value itself. What a harness writes in an answer, or in an act's title
+and text, crosses as the harness wrote it.
 
 ### Handshake (protocol version 1)
 
@@ -170,7 +221,9 @@ Errors: `no-harness`, `no-thread`, `working`, `invalid-request`.
 #### `resume`
 
 Reads a thread's full record from Lever's database (without starting a harness)
-and subscribes this connection to future events for that thread.
+and subscribes this connection to future events for that thread. The reply is
+one frame that holds the whole record, so a client must take frames as large
+as its longest thread. Reading a record in parts is not built yet.
 
 Request:
 
@@ -192,7 +245,11 @@ Errors: `no-thread`, `invalid-request`.
 #### `stop`
 
 Stops the currently working turn on a thread and tells the harness to cancel
-it. When `turn` is given, only that turn is stopped.
+it. When `turn` is given, only that turn is stopped. The reply says that Lever
+took the request, not that the turn stopped: a turn the harness had not begun
+is `stopped` at once, and one it was working on ends when the harness answers,
+as `stopped`, or as `failed` if the harness failed instead. A thread with no
+turn working is answered `ok` too.
 
 Request:
 
@@ -254,8 +311,10 @@ Pushed to every connection subscribed to `thread`:
   {"event":"act","thread":"t-01a2b3c4d5e6","turn":1,"act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","state":"done","detail":"Cargo.toml"}
   ```
 
-- **`note`** — an update Lever did not recognize, stored verbatim in SQLite and
-  shown plainly (also taken if it arrives after a turn ended):
+- **`note`** — an update Lever shows as neither text nor an act, kept as JSON
+  in SQLite and shown plainly (also taken if it arrives after a turn ended).
+  A note can also be Lever's own, as when a thread's harness began a new
+  session for it:
 
   ```json
   {"event":"note","thread":"t-01a2b3c4d5e6","turn":1,"note":"note-01a2b3c4d5e6","text":"Cache warm"}
@@ -279,14 +338,17 @@ Pushed to every connection subscribed to `thread`:
   {"event":"stopped","thread":"t-01a2b3c4d5e6","turn":1}
   ```
 
-- **`failed`** — the turn failed with a reason:
+- **`failed`** — the turn failed with a reason. A turn the harness finished
+  also fails, with "Lever could not save all of this turn.", when Lever's
+  database did not take all of it: the answer still reached who was watching,
+  and the record does not have all of it.
 
   ```json
   {"event":"failed","thread":"t-01a2b3c4d5e6","turn":1,"message":"The harness reported an error."}
   ```
 
-- **`interrupted`** — the harness exited unexpectedly mid-turn (or Lever
-  restarted after an unclean stop):
+- **`interrupted`** — the harness exited unexpectedly mid-turn, or Lever
+  stopped or restarted with the turn still working:
 
   ```json
   {"event":"interrupted","thread":"t-01a2b3c4d5e6","turn":1}
@@ -298,8 +360,11 @@ Lever stores its state in `--state` (mode `0700`, owned by the person):
 
 - `lever.sqlite` (mode `0600`, SQLite WAL mode with `synchronous = NORMAL`,
   plus `0600` sidecar `-wal`/`-shm` files): Lever's database holding `threads`,
-  `turns`, `acts`, and `notes` (with `raw_json` preserving unrecognized updates
-  verbatim).
+  `turns`, `acts`, and `notes` (with `raw_json` keeping the JSON of each
+  update shown as a note). A write the database does not take is logged as an
+  `error` that names what could not be done and nothing a thread said. How a
+  turn ended is tried again until the database takes it, so a thread is not
+  left `working` in the record after its turn is over.
 - `lever.log` (mode `0600`, rotated at 4 MiB to `lever.log.1`): UTC-timestamped
   lines for `start`, `restart`, `listening`, `connection`, `harness`, `stop`,
   and `error`. Nothing a peer sent or a thread said is ever written to

@@ -5,19 +5,25 @@
 use crate::channel::LEVER_VERSION;
 use crate::sys;
 use agent_client_protocol_schema::v1::{
-    AGENT_METHOD_NAMES, CLIENT_METHOD_NAMES, CancelNotification, ContentBlock, Error as AcpError, Implementation,
-    InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
-    NewSessionResponse, Notification, PromptRequest, PromptResponse, Request, RequestId, Response, SessionId,
-    SessionUpdate, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
+    AGENT_METHOD_NAMES, CLIENT_METHOD_NAMES, CancelNotification, ContentBlock, Error as AcpError, ErrorCode,
+    Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest, LoadSessionResponse,
+    NewSessionRequest, NewSessionResponse, Notification, PromptRequest, PromptResponse, Request, RequestId, Response,
+    SessionId, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
 };
 use agent_client_protocol_schema::{MaybeUndefined, ProtocolVersion};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout};
 use std::time::{Duration, Instant};
+
+/// Most bytes Lever reads from the harness in one wake. A harness that never
+/// stops writing then holds back neither Lever's peers nor a stop signal, and
+/// a peer that watches a thread is handed its events a part at a time, with
+/// the chance to read them in between.
+const READ_BUDGET: usize = 256 * 1024;
 
 /// Configuration for a harness Lever can start on demand.
 #[derive(Debug, Clone)]
@@ -45,8 +51,10 @@ pub enum AcpEvent {
     },
     SessionReady {
         thread_id: String,
-        turn: u64,
         session_id: String,
+        /// The thread had a session before, and this is not it: the harness
+        /// begins with none of the thread's earlier turns.
+        afresh: bool,
     },
     SessionFailed {
         thread_id: String,
@@ -88,6 +96,7 @@ enum PendingRpc {
     NewSession {
         thread_id: String,
         turn: u64,
+        afresh: bool,
     },
     LoadSession {
         thread_id: String,
@@ -133,9 +142,16 @@ impl AcpHarness {
             .stdout
             .take()
             .ok_or_else(|| "harness child had no stdout pipe".to_string())?;
-        sys::set_nonblocking(stdin.as_raw_fd()).map_err(|e| format!("could not set harness stdin nonblocking: {e}"))?;
-        sys::set_nonblocking(stdout.as_raw_fd())
-            .map_err(|e| format!("could not set harness stdout nonblocking: {e}"))?;
+        if let Err(e) = sys::set_nonblocking(stdin.as_raw_fd()).and_then(|()| sys::set_nonblocking(stdout.as_raw_fd()))
+        {
+            // The child is running and nothing will ever speak to it.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "could not set the pipes of harness {} nonblocking: {e}",
+                config.name
+            ));
+        }
 
         let mut harness = Self {
             child,
@@ -185,30 +201,56 @@ impl AcpHarness {
         self.thread_to_session.get(thread_id).map(String::as_str)
     }
 
-    /// Starts or reloads an ACP session for `thread_id`.
+    /// Starts or reloads an ACP session for `thread_id`. A thread has one
+    /// session request under way at a time: when one is, it is given `turn`,
+    /// so its answer goes to the turn that now waits for it.
     pub fn ensure_session(&mut self, thread_id: &str, turn: u64, cwd: &str, existing_session_id: Option<&str>) {
-        if self.supports_load_session
-            && let Some(sid) = existing_session_id
-        {
-            self.loading_sessions.insert(sid.to_string());
-            let req = LoadSessionRequest::new(SessionId::new(sid.to_string()), PathBuf::from(cwd));
-            let id = self.send_request(AGENT_METHOD_NAMES.session_load, &req);
-            self.pending.insert(
-                id,
-                PendingRpc::LoadSession {
-                    thread_id: thread_id.to_string(),
-                    turn,
-                    session_id: sid.to_string(),
-                    cwd: cwd.to_string(),
-                },
-            );
-            let _ = self.on_writable();
+        for pending in self.pending.values_mut() {
+            match pending {
+                PendingRpc::NewSession {
+                    thread_id: waiting,
+                    turn: waiting_turn,
+                    ..
+                }
+                | PendingRpc::LoadSession {
+                    thread_id: waiting,
+                    turn: waiting_turn,
+                    ..
+                } if waiting == thread_id => {
+                    *waiting_turn = turn;
+                    return;
+                }
+                _ => {}
+            }
+        }
+        let Some(sid) = existing_session_id else {
+            self.request_new_session(thread_id, turn, cwd, false);
+            return;
+        };
+        // A session another thread holds, or is loading, is not this thread's
+        // to load, whatever ID the harness once gave it.
+        let taken = self.session_to_thread.get(sid).is_some_and(|owner| owner != thread_id)
+            || self.loading_sessions.contains(sid);
+        if !self.supports_load_session || taken {
+            self.request_new_session(thread_id, turn, cwd, true);
             return;
         }
-        self.request_new_session(thread_id, turn, cwd);
+        self.loading_sessions.insert(sid.to_string());
+        let req = LoadSessionRequest::new(SessionId::new(sid.to_string()), PathBuf::from(cwd));
+        let id = self.send_request(AGENT_METHOD_NAMES.session_load, &req);
+        self.pending.insert(
+            id,
+            PendingRpc::LoadSession {
+                thread_id: thread_id.to_string(),
+                turn,
+                session_id: sid.to_string(),
+                cwd: cwd.to_string(),
+            },
+        );
+        let _ = self.on_writable();
     }
 
-    fn request_new_session(&mut self, thread_id: &str, turn: u64, cwd: &str) {
+    fn request_new_session(&mut self, thread_id: &str, turn: u64, cwd: &str, afresh: bool) {
         let req = NewSessionRequest::new(PathBuf::from(cwd));
         let id = self.send_request(AGENT_METHOD_NAMES.session_new, &req);
         self.pending.insert(
@@ -216,9 +258,33 @@ impl AcpHarness {
             PendingRpc::NewSession {
                 thread_id: thread_id.to_string(),
                 turn,
+                afresh,
             },
         );
         let _ = self.on_writable();
+    }
+
+    /// Makes `session_id` the session of `thread_id`, and of no other. Says
+    /// no when another thread holds it: two threads on one session would have
+    /// each other's answers.
+    fn bind_session(&mut self, thread_id: &str, session_id: &str) -> bool {
+        if self
+            .session_to_thread
+            .get(session_id)
+            .is_some_and(|owner| owner != thread_id)
+        {
+            return false;
+        }
+        if let Some(before) = self
+            .thread_to_session
+            .insert(thread_id.to_string(), session_id.to_string())
+            && before != session_id
+        {
+            self.session_to_thread.remove(&before);
+        }
+        self.session_to_thread
+            .insert(session_id.to_string(), thread_id.to_string());
+        true
     }
 
     /// Sends a `session/prompt` request for an active session.
@@ -265,12 +331,14 @@ impl AcpHarness {
         true
     }
 
-    /// Reads available JSON-RPC lines from the child's stdout and returns any
-    /// resulting events.
+    /// Reads JSON-RPC lines from the child's stdout, up to `READ_BUDGET` in
+    /// one call, and returns any resulting events. What is left wakes Lever
+    /// again.
     pub fn on_readable(&mut self) -> Vec<AcpEvent> {
         let mut events = Vec::new();
         let mut buf = [0u8; 16384];
-        loop {
+        let mut taken = 0;
+        while taken < READ_BUDGET {
             match self.stdout.read(&mut buf) {
                 Ok(0) => {
                     self.drain_lines(&mut events);
@@ -278,6 +346,7 @@ impl AcpHarness {
                     return events;
                 }
                 Ok(n) => {
+                    taken += n;
                     self.read_buf.extend_from_slice(&buf[..n]);
                     self.drain_lines(&mut events);
                 }
@@ -372,7 +441,8 @@ impl AcpHarness {
         let has_id = value.get("id").is_some();
 
         if has_method && has_id {
-            // Incoming JSON-RPC request from the harness: reject unsupported methods cleanly.
+            // A request from the harness. Lever carries none of them to the
+            // person yet (`lever/README.md`, The harness), so each is refused.
             if let Ok(id) = serde_json::from_value::<RequestId>(value["id"].clone()) {
                 self.send_error_response(id, AcpError::method_not_found());
                 let _ = self.on_writable();
@@ -398,15 +468,18 @@ impl AcpHarness {
             return;
         };
 
-        if let Some(err_val) = value.get("error") {
-            let raw_msg = serde_json::from_value::<AcpError>(err_val.clone())
+        // A result that carries `"error": null` beside it is still a result.
+        if let Some(err_val) = value.get("error").filter(|v| !v.is_null()) {
+            let error = serde_json::from_value::<AcpError>(err_val.clone()).ok();
+            let cancelled = error.as_ref().is_some_and(|e| e.code == ErrorCode::RequestCancelled);
+            let raw_msg = error
                 .map(|e| e.message)
-                .unwrap_or_else(|_| "The harness reported an error.".to_string());
+                .unwrap_or_else(|| "The harness reported an error.".to_string());
             match pending {
                 PendingRpc::Initialize => events.push(AcpEvent::InitializeFailed {
                     message: self.redact_for_thread(None, &raw_msg),
                 }),
-                PendingRpc::NewSession { thread_id, turn } => {
+                PendingRpc::NewSession { thread_id, turn, .. } => {
                     let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
                     events.push(AcpEvent::SessionFailed {
                         thread_id,
@@ -421,7 +494,17 @@ impl AcpHarness {
                     cwd,
                 } => {
                     self.loading_sessions.remove(&session_id);
-                    self.request_new_session(&thread_id, turn, &cwd);
+                    self.request_new_session(&thread_id, turn, &cwd, true);
+                }
+                // The harness says the turn was cancelled, with an error
+                // where ACP has `StopReason::Cancelled`. Any other error is
+                // a failure, whether or not a stop was asked for.
+                PendingRpc::Prompt { thread_id, turn } if cancelled => {
+                    events.push(AcpEvent::PromptFinished {
+                        thread_id,
+                        turn,
+                        outcome: TurnOutcome::Stopped,
+                    });
                 }
                 PendingRpc::Prompt { thread_id, turn } => {
                     let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
@@ -450,16 +533,26 @@ impl AcpHarness {
                     message: "The harness returned an invalid initialization response.".to_string(),
                 }),
             },
-            PendingRpc::NewSession { thread_id, turn } => match serde_json::from_value::<NewSessionResponse>(result) {
+            PendingRpc::NewSession {
+                thread_id,
+                turn,
+                afresh,
+            } => match serde_json::from_value::<NewSessionResponse>(result) {
                 Ok(resp) => {
                     let sid = resp.session_id.0.as_ref().to_string();
-                    self.thread_to_session.insert(thread_id.clone(), sid.clone());
-                    self.session_to_thread.insert(sid.clone(), thread_id.clone());
-                    events.push(AcpEvent::SessionReady {
-                        thread_id,
-                        turn,
-                        session_id: sid,
-                    });
+                    if self.bind_session(&thread_id, &sid) {
+                        events.push(AcpEvent::SessionReady {
+                            thread_id,
+                            session_id: sid,
+                            afresh,
+                        });
+                    } else {
+                        events.push(AcpEvent::SessionFailed {
+                            thread_id,
+                            turn,
+                            message: "The harness gave this thread a session that another thread is using.".to_string(),
+                        });
+                    }
                 }
                 Err(_) => events.push(AcpEvent::SessionFailed {
                     thread_id,
@@ -475,18 +568,14 @@ impl AcpHarness {
             } => {
                 self.loading_sessions.remove(&session_id);
                 match serde_json::from_value::<LoadSessionResponse>(result) {
-                    Ok(_) => {
-                        self.thread_to_session.insert(thread_id.clone(), session_id.clone());
-                        self.session_to_thread.insert(session_id.clone(), thread_id.clone());
+                    Ok(_) if self.bind_session(&thread_id, &session_id) => {
                         events.push(AcpEvent::SessionReady {
                             thread_id,
-                            turn,
                             session_id,
+                            afresh: false,
                         });
                     }
-                    Err(_) => {
-                        self.request_new_session(&thread_id, turn, &cwd);
-                    }
+                    _ => self.request_new_session(&thread_id, turn, &cwd, true),
                 }
             }
             PendingRpc::Prompt { thread_id, turn } => match serde_json::from_value::<PromptResponse>(result) {
@@ -604,7 +693,7 @@ impl AcpHarness {
                 }
             }
             // Any other update (known to the schema or unknown/future) is kept
-            // verbatim in the record and rendered plainly.
+            // as JSON in the record and rendered plainly.
             Ok(_) | Err(_) => {
                 let plain = self.render_unknown_update(&thread_id, raw_update);
                 events.push(AcpEvent::UnknownUpdate {
@@ -619,29 +708,16 @@ impl AcpHarness {
     /// Redacts harness-internal IDs from error strings and unrecognized updates
     /// without touching normal model answers.
     fn redact_for_thread(&self, thread_id: Option<&str>, input: &str) -> String {
-        let mut out = input.to_string();
+        let mut ids: Vec<&str> = Vec::new();
         if let Some(tid) = thread_id {
-            if let Some(sid) = self.thread_to_session.get(tid)
-                && !sid.is_empty()
-                && out.contains(sid)
-            {
-                out = out.replace(sid, "[redacted]");
-            }
+            ids.extend(self.thread_to_session.get(tid).map(String::as_str));
             if let Some(tools) = self.thread_tool_ids.get(tid) {
-                for call_id in tools {
-                    if !call_id.is_empty() && out.contains(call_id) {
-                        out = out.replace(call_id, "[redacted]");
-                    }
-                }
+                ids.extend(tools.iter().map(String::as_str));
             }
         } else {
-            for sid in self.session_to_thread.keys() {
-                if !sid.is_empty() && out.contains(sid) {
-                    out = out.replace(sid, "[redacted]");
-                }
-            }
+            ids.extend(self.session_to_thread.keys().map(String::as_str));
         }
-        out
+        redact_ids(input, ids)
     }
 
     /// Turns an unknown ACP update payload into plain text without exposing
@@ -748,21 +824,83 @@ fn tool_detail(content: &[ToolCallContent], raw_output: Option<&Value>, raw_inpu
     None
 }
 
+/// What an act's raw input or output says of it in one line: the text itself,
+/// or the command or path it names. Anything else stays with the harness: a
+/// raw value has the harness's own field names and IDs in it.
 fn value_to_detail(val: &Value) -> Option<String> {
     match val {
-        Value::Null => None,
         Value::String(s) if !s.is_empty() => Some(s.clone()),
-        Value::String(_) => None,
-        Value::Object(map) => {
-            if let Some(cmd) = map.get("command").and_then(Value::as_str) {
-                return Some(cmd.to_string());
-            }
-            if let Some(path) = map.get("path").and_then(Value::as_str) {
-                return Some(path.to_string());
-            }
-            let s = json!(map).to_string();
-            (!s.is_empty()).then_some(s)
+        Value::Object(map) => ["command", "path"]
+            .iter()
+            .find_map(|field| map.get(*field).and_then(Value::as_str))
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        _ => None,
+    }
+}
+
+/// Puts `[redacted]` where `input` has one of `ids` as a whole word. The
+/// longest ID goes first, and an ID inside a longer word or number is left
+/// alone, so `call-1` takes nothing from `call-10` and `c1` nothing from
+/// `vec1`.
+fn redact_ids(input: &str, mut ids: Vec<&str>) -> String {
+    ids.retain(|id| !id.is_empty());
+    ids.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+    ids.dedup();
+    let mut out = input.to_string();
+    for id in ids {
+        let mut redacted = String::with_capacity(out.len());
+        let mut rest = out.as_str();
+        while let Some(at) = rest.find(id) {
+            let before = rest[..at].chars().next_back();
+            let after = rest[at + id.len()..].chars().next();
+            let whole = !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric);
+            redacted.push_str(&rest[..at]);
+            redacted.push_str(if whole { "[redacted]" } else { id });
+            rest = &rest[at + id.len()..];
         }
-        other => Some(other.to_string()),
+        redacted.push_str(rest);
+        out = redacted;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn an_id_is_redacted_as_a_whole_word_and_the_longest_first() {
+        assert_eq!(
+            redact_ids("failed on call-10 after call-1", vec!["call-1", "call-10"]),
+            "failed on [redacted] after [redacted]"
+        );
+        assert_eq!(redact_ids("vec1 failed in c1", vec!["c1"]), "vec1 failed in [redacted]");
+        assert_eq!(
+            redact_ids("failed after 10 seconds", vec!["1"]),
+            "failed after 10 seconds"
+        );
+        assert_eq!(
+            redact_ids("session s-9: s-9.", vec!["s-9", ""]),
+            "session [redacted]: [redacted]."
+        );
+    }
+
+    #[test]
+    fn a_raw_value_gives_an_act_only_its_text_command_or_path() {
+        assert_eq!(value_to_detail(&json!("plain")), Some("plain".to_string()));
+        assert_eq!(
+            value_to_detail(&json!({ "command": "ls -l", "id": "x" })),
+            Some("ls -l".to_string())
+        );
+        assert_eq!(
+            value_to_detail(&json!({ "path": "/tmp/a" })),
+            Some("/tmp/a".to_string())
+        );
+        assert_eq!(value_to_detail(&json!({ "sessionId": "s-1", "exit": 0 })), None);
+        assert_eq!(value_to_detail(&json!([{ "toolCallId": "c-1" }])), None);
+        assert_eq!(value_to_detail(&json!(7)), None);
+        assert_eq!(value_to_detail(&Value::Null), None);
     }
 }

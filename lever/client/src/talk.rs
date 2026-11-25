@@ -7,7 +7,7 @@
 
 use crate::connection::{Connection, Happening, Typing, refused, text};
 use serde_json::{Value, json};
-use std::io::{ErrorKind, IsTerminal, Result, Write};
+use std::io::{ErrorKind, IsTerminal, Result, Write, stderr};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// How a turn ended, as the client's exit status says it.
@@ -49,6 +49,18 @@ impl Answer {
     fn end(&mut self) -> Result<()> {
         if self.open { self.write("\n") } else { Ok(()) }
     }
+
+    /// Makes room for a line on standard error in the middle of the answer.
+    /// Only where the two are one terminal does that line land in the
+    /// answer's open line. Down a pipe or into a file the answer is the
+    /// harness's text and nothing else, so nothing is added to it.
+    fn make_way(&mut self) -> Result<()> {
+        if self.out.is_terminal() && stderr().is_terminal() {
+            self.end()
+        } else {
+            Ok(())
+        }
+    }
 }
 
 fn current_cwd() -> Option<String> {
@@ -60,7 +72,7 @@ fn current_cwd() -> Option<String> {
 
 /// Prints one act to standard error with control characters neutralized.
 fn show_act(answer: &mut Answer, act: &Value) -> Result<()> {
-    answer.end()?;
+    answer.make_way()?;
     let title = text(act, "title");
     let state = text(act, "state");
     let detail = text(act, "detail");
@@ -74,7 +86,7 @@ fn show_act(answer: &mut Answer, act: &Value) -> Result<()> {
 
 /// Prints one unrecognized update plainly to standard error.
 fn show_note(answer: &mut Answer, note: &Value) -> Result<()> {
-    answer.end()?;
+    answer.make_way()?;
     eprintln!("[update] {}", text(note, "text"));
     Ok(())
 }
@@ -187,9 +199,9 @@ struct Resumed {
     last: Ended,
 }
 
-/// Follows a thread that is already there, and shows it as it stands, when
-/// `shown`. Nothing when there is no such thread.
-fn resume(lever: &mut Connection, thread: &str, shown: bool) -> Result<Option<Resumed>> {
+/// Follows a thread that is already there, and shows it as it stands.
+/// Nothing when there is no such thread.
+fn resume(lever: &mut Connection, thread: &str) -> Result<Option<Resumed>> {
     let reply = lever.request(json!({ "op": "resume", "thread": thread }))?;
     if refused(&reply).is_some() {
         return Ok(None);
@@ -200,33 +212,31 @@ fn resume(lever: &mut Connection, thread: &str, shown: bool) -> Result<Option<Re
         .cloned()
         .unwrap_or_default();
     let mut answer = Answer::new();
-    if shown {
-        for turn in &turns {
-            answer.write(&format!("> {}\n", text(turn, "message")))?;
-            for act in turn.get("acts").and_then(Value::as_array).into_iter().flatten() {
-                show_act(&mut answer, act)?;
+    for turn in &turns {
+        answer.write(&format!("> {}\n", text(turn, "message")))?;
+        for act in turn.get("acts").and_then(Value::as_array).into_iter().flatten() {
+            show_act(&mut answer, act)?;
+        }
+        for note in turn.get("notes").and_then(Value::as_array).into_iter().flatten() {
+            show_note(&mut answer, note)?;
+        }
+        answer.write(&text(turn, "answer"))?;
+        match &*text(turn, "state") {
+            // Its answer goes on from here.
+            "working" => break,
+            "stopped" => {
+                answer.end()?;
+                eprintln!("(stopped)");
             }
-            for note in turn.get("notes").and_then(Value::as_array).into_iter().flatten() {
-                show_note(&mut answer, note)?;
+            "interrupted" => {
+                answer.end()?;
+                eprintln!("(interrupted)");
             }
-            answer.write(&text(turn, "answer"))?;
-            match &*text(turn, "state") {
-                // Its answer goes on from here.
-                "working" => break,
-                "stopped" => {
-                    answer.end()?;
-                    eprintln!("(stopped)");
-                }
-                "interrupted" => {
-                    answer.end()?;
-                    eprintln!("(interrupted)");
-                }
-                "failed" => {
-                    answer.end()?;
-                    eprintln!("(the Agent gave no answer: {})", text(turn, "error"));
-                }
-                _ => answer.end()?,
+            "failed" => {
+                answer.end()?;
+                eprintln!("(the Agent gave no answer: {})", text(turn, "error"));
             }
+            _ => answer.end()?,
         }
     }
     let newest = turns.last().map(|turn| text(turn, "state")).unwrap_or_default();
@@ -246,13 +256,9 @@ fn resume(lever: &mut Connection, thread: &str, shown: bool) -> Result<Option<Re
 
 /// `crowbar-agent [--resume ID] "<request>"`: one turn, and out.
 pub fn once(lever: &mut Connection, resumed: Option<&str>, message: &str) -> Result<Ended> {
-    let mut thread = None;
-    if let Some(resumed) = resumed {
-        match resume(lever, resumed, false)? {
-            Some(_) => thread = Some(resumed.to_string()),
-            None => return Ok(Ended::Failed),
-        }
-    }
+    // Lever says so itself when there is no such thread, so the thread's
+    // record is not asked for only to be dropped.
+    let mut thread = resumed.map(str::to_string);
     turn(lever, &mut thread, message)
 }
 
@@ -273,7 +279,7 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
     let mut thread = None;
     let mut last = Ended::Done;
     if let Some(resumed) = resumed {
-        let Some(stood) = resume(lever, resumed, true)? else {
+        let Some(stood) = resume(lever, resumed)? else {
             return Ok(Ended::Failed);
         };
         last = stood.last;
@@ -337,7 +343,9 @@ pub fn stop(lever: &mut Connection, thread: &str) -> Result<Ended> {
     if refused(&reply).is_some() {
         return Ok(Ended::Failed);
     }
-    eprintln!("Stopped.");
+    // Lever has taken the request. The turn's own end, which `--resume` and
+    // `--list` show, says whether it stopped.
+    eprintln!("Asked the Agent to stop.");
     Ok(Ended::Done)
 }
 

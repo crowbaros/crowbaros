@@ -17,10 +17,19 @@ static INTERRUPTS: AtomicI32 = AtomicI32::new(-1);
 
 extern "C" fn interrupted(_signal: libc::c_int) {
     let pipe = INTERRUPTS.load(Ordering::Relaxed);
+    if pipe < 0 {
+        return;
+    }
     // SAFETY: `write` is safe to call in a signal handler, on a descriptor
     // that stays open for the life of the process. A full pipe drops the
-    // byte, and one is already waiting to be read.
-    unsafe { libc::write(pipe, [0u8].as_ptr().cast(), 1) };
+    // byte, and one is already waiting to be read. `errno` is put back, so
+    // the call this handler interrupted still reports its own error.
+    unsafe {
+        let errno = libc::__errno_location();
+        let saved = *errno;
+        libc::write(pipe, [0u8].as_ptr().cast(), 1);
+        *errno = saved;
+    }
 }
 
 /// From here on Ctrl-C (SIGINT) does not end the client: each one makes the

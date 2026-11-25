@@ -81,6 +81,9 @@ fn command(args: &[String]) -> Result<Command, String> {
                     return Err("-- cannot be combined with --list or --stop".to_string());
                 }
                 words.extend(rest.by_ref().cloned());
+                if words.iter().all(|word| word.trim().is_empty()) {
+                    return Err("-- needs a request after it".to_string());
+                }
                 return Ok(Command::Once {
                     resumed,
                     message: words.join(" "),
@@ -264,6 +267,9 @@ mod tests {
             &["--stop", "t-k3f9q2xz", "--resume", "t-k3f9q2xz"],
             &["--frobnicate"],
             &["status", "now"],
+            &["--"],
+            &["--resume", "t-k3f9q2xz", "--"],
+            &["--", " "],
         ] {
             assert!(read(line).is_err(), "{line:?}");
         }

@@ -21,7 +21,10 @@ crowbar-agent status                   # Lever's status and available harnesses
 
 - **The answer is plain text on standard output**, a piece at a time, so it
   reads the same in a terminal and down a pipe. Acts (`[act] ...`), unrecognized
-  updates (`[update] ...`), prompts, and errors go to standard error.
+  updates (`[update] ...`), prompts, and errors go to standard error. On a
+  terminal, an act that comes in the middle of a line of the answer ends that
+  line first. Down a pipe or into a file, standard output is the answer as the
+  harness wrote it and nothing else.
 - **Nothing a harness says can drive the terminal.** Control characters in
   answers, acts, notes, and errors are shown as their Unicode pictures (`␛` for
   escape) and do nothing. Line ends and tabs stay, and carriage returns are
@@ -31,7 +34,8 @@ crowbar-agent status                   # Lever's status and available harnesses
   the answer, and asks again. Ctrl-D leaves.
 - **Ctrl-C stops the turn** the Agent is working on, and the client waits for
   the turn to end (a second Ctrl-C leaves immediately). Between turns, Ctrl-C
-  leaves. `--stop ID` stops a working turn from another terminal.
+  leaves. `--stop ID` asks Lever to stop a working turn from another terminal,
+  and does not wait for it: `--list` and `--resume ID` show how the turn ended.
 - **A client that goes away stops nothing.** When its terminal closes or its
   SSH connection drops, the turn goes on in Lever. `--list` shows it as
   `(working)`, `--resume ID` picks it up, and `--stop ID` or Ctrl-C stops it.

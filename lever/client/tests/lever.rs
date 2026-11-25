@@ -295,6 +295,50 @@ fn one_request_streams_answer_acts_and_unknown_updates_cleanly() {
 }
 
 #[test]
+fn an_act_in_the_middle_of_a_line_adds_nothing_to_a_piped_answer_and_ends_the_line_on_a_terminal() {
+    let lab = Lab::with_script(json!({
+        "turns": [
+            { "steps": [
+                { "kind": "text", "text": "Hel" },
+                { "kind": "act", "id": "acp-call-1", "title": "Look", "status": "completed" },
+                { "kind": "unknown", "update": { "sessionUpdate": "vendor_progress", "summary": "Halfway" } },
+                { "kind": "text", "text": "lo." }
+            ] },
+            { "steps": [
+                { "kind": "text", "text": "Hel" },
+                { "kind": "act", "id": "acp-call-2", "title": "Look", "status": "completed" },
+                { "kind": "text", "text": "lo." }
+            ] }
+        ]
+    }));
+
+    // Down a pipe, standard output is the answer and nothing else.
+    let piped = lab.run(&["Hello?"], "");
+    assert_eq!((piped.status, piped.out.as_str()), (0, "Hello.\n"), "{piped:?}");
+    assert_eq!(piped.err, "[act] Look (done)\n[update] Halfway\n", "{piped:?}");
+
+    // On one terminal the act would land in the answer's open line, so that
+    // line is ended first.
+    let (mut keys, screen) = terminal();
+    let mut on_terminal = lab.agent(&["Hello again?"]);
+    on_terminal
+        .stdin(Stdio::null())
+        .stdout(screen.try_clone().expect("the terminal again"))
+        .stderr(screen);
+    let mut child = on_terminal.spawn().expect("crowbar-agent runs");
+    // The command holds the terminal's other end until it is dropped.
+    drop(on_terminal);
+    let mut shown = Vec::new();
+    let mut bytes = [0u8; 4096];
+    // Reading ends with an error when the last holder of the terminal has gone.
+    while let Ok(count @ 1..) = keys.read(&mut bytes) {
+        shown.extend_from_slice(&bytes[..count]);
+    }
+    assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&shown), "Hel\r\n[act] Look (done)\r\nlo.\r\n");
+}
+
+#[test]
 fn a_thread_goes_a_line_at_a_time_and_is_listed_and_resumed() {
     let lab = Lab::with_script(json!({
         "turns": [
@@ -362,7 +406,10 @@ fn stop_flag_and_ctrl_c_stop_working_turns_and_a_departing_client_does_not() {
     // `--stop ID` stops the working turn from another terminal.
     let thread = only_thread(&lab);
     let stopped = lab.run(&["--stop", &thread], "");
-    assert_eq!((stopped.status, stopped.err.as_str()), (0, "Stopped.\n"));
+    assert_eq!(
+        (stopped.status, stopped.err.as_str()),
+        (0, "Asked the Agent to stop.\n")
+    );
     wait_for("thread to leave working state", || {
         lab.run(&["--list"], "").out.contains("(stopped)")
     });
