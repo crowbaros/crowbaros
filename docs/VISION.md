@@ -1,9 +1,9 @@
 # CrowbarOS: vision
 
-**Status:** proposed on November 23, 2026, by Jim Martin. It changes the vision
-that Jim Martin and Jason Alexander accepted on November 18, 2026: what the
-Agent is made of, the milestones after the second, and the open questions.
-That vision replaced the [substrate vision](archive/substrate-vision/README.md),
+**Status:** accepted on November 24, 2026, by Jim Martin and Jason Alexander.
+Proposed on November 23 by Jim Martin. It changes the vision they accepted on
+November 18, 2026: what the Agent is made of, the milestones after the second,
+and the open questions. That vision replaced the [substrate vision](archive/substrate-vision/README.md),
 which replaced the [Fedora blueprint](archive/fedora-blueprint/README.md). The
 decisions are [ADR 0030](adr/0030-crowbaros-starts-again-with-an-agent-at-the-persons-side.md)
 and [ADR 0036](adr/0036-lever-drives-the-harnesses-a-person-has-and-crowbaros-builds-none.md).
