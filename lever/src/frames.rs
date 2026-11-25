@@ -19,17 +19,12 @@ pub fn encode(message: &Value) -> Vec<u8> {
 /// Framing error when a peer advertises a frame longer than the limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameTooLong {
-    pub length: usize,
     pub limit: usize,
 }
 
 impl std::fmt::Display for FrameTooLong {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "a frame of {} bytes is longer than the {} taken",
-            self.length, self.limit
-        )
+        write!(f, "a frame is longer than the {} bytes taken", self.limit)
     }
 }
 
@@ -60,10 +55,7 @@ impl FrameReader {
         }
         let length = u32::from_be_bytes([self.waiting[0], self.waiting[1], self.waiting[2], self.waiting[3]]) as usize;
         if length > self.limit {
-            return Err(FrameTooLong {
-                length,
-                limit: self.limit,
-            });
+            return Err(FrameTooLong { limit: self.limit });
         }
         if self.waiting.len() < 4 + length {
             return Ok(None);

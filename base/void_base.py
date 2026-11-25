@@ -950,7 +950,7 @@ def lever_status_ok(answer):
 
 def lever_answers_surface(out):
     """Whether Lever answers version 1 and `status` to the shell's account on
-    its surface socket, refuses root, the person, and another user with the
+    its surface socket, refuses root, the person, and another account with the
     shell's group, keeps others out of the directory, and owns the directory
     and socket with the shell's group alone."""
     lines = labelled(out)

@@ -327,6 +327,10 @@ fn framing_handles_split_writes_pipelining_bad_version_and_oversized_frames() {
         "peer payload leaked into log: {log}"
     );
     assert!(!log.contains("unknown-secret-op"), "peer op leaked into log: {log}");
+    assert!(
+        !log.contains(&(MAX_FRAME + 1).to_string()),
+        "peer length header leaked into log: {log}"
+    );
 }
 
 #[test]
