@@ -2708,16 +2708,17 @@ impl Render for AgentSurface {
                 }
                 // Acts taken during this turn.
                 for act in &turn.acts {
-                    let (act_state_label, act_active) =
-                        agent::act_display_status(&turn.state, act);
-                    let act_border = if act_active { p.focus } else { p.line };
-                    let act_state_color = if act_active {
-                        p.focus
-                    } else if act_state_label == "Failed" {
-                        p.text
-                    } else {
-                        p.muted
+                    let display = agent::act_display_status(&turn.state, act);
+                    let act_border = match display.tone {
+                        agent::ActTone::Active => p.focus,
+                        agent::ActTone::Failed | agent::ActTone::Muted => p.line,
                     };
+                    let act_state_color = match display.tone {
+                        agent::ActTone::Active => p.focus,
+                        agent::ActTone::Failed => p.text,
+                        agent::ActTone::Muted => p.muted,
+                    };
+                    let act_state_label = display.label;
                     let mut act_card = div()
                         .w_full()
                         .px(px(10.))

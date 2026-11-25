@@ -405,7 +405,7 @@ pub struct AgentState {
     pub error: Option<String>,
     pub mark: Mark,
     #[serde(skip)]
-    working_before_disconnect: Option<(String, u64)>,
+    working_before_disconnect: Option<String>,
 }
 
 /// Snapshot exposed on the shell's own `crowbar-shell`-only control socket for
@@ -484,7 +484,7 @@ impl AgentState {
             || self
                 .working_before_disconnect
                 .take()
-                .is_some_and(|(t, _)| self.thread.as_deref() == Some(t.as_str()));
+                .is_some_and(|t| self.thread.as_deref() == Some(t.as_str()));
         let next_mark = match resumed.turns.last().map(|t| &t.state) {
             Some(TurnState::Working) => Mark::Working,
             Some(TurnState::Done) if was_working => Mark::Done,
@@ -523,7 +523,13 @@ impl AgentState {
                 } else if let Some(tid) = preserved_thread {
                     // Keep the saved thread ID across a transient resume error
                     // or timeout so follow-ups stay on the person's thread.
-                    self.working_before_disconnect = None;
+                    // Because this socket did not subscribe via `resume`, never
+                    // leave a cached `Working` turn wedging `can_send()`, and
+                    // keep `working_before_disconnect` for a later successful
+                    // resume of the same thread.
+                    if self.working_before_disconnect.as_deref() != Some(tid.as_str()) {
+                        self.working_before_disconnect = None;
+                    }
                     if self.thread.as_deref() != Some(tid.as_str()) {
                         self.thread = Some(tid);
                         self.title = None;
@@ -532,6 +538,17 @@ impl AgentState {
                         self.turns.clear();
                         self.mark = Mark::Idle;
                         changed = true;
+                    } else {
+                        if self.active_turn.take().is_some() || self.mark != Mark::Idle {
+                            self.mark = Mark::Idle;
+                            changed = true;
+                        }
+                        for turn in &mut self.turns {
+                            if matches!(turn.state, TurnState::Working) {
+                                turn.state = TurnState::Interrupted;
+                                changed = true;
+                            }
+                        }
                     }
                 } else if self.thread.is_some() {
                     self.thread = None;
@@ -556,10 +573,8 @@ impl AgentState {
                     || self.no_harness
                     || self.missing_model.is_some()
                     || self.mark != Mark::Idle;
-                if self.working() {
-                    if let (Some(thread), Some(turn)) = (self.thread.clone(), self.current_turn()) {
-                        self.working_before_disconnect = Some((thread, turn));
-                    }
+                if self.working() && let Some(thread) = self.thread.clone() {
+                    self.working_before_disconnect = Some(thread);
                 }
                 self.connected = false;
                 self.sending = false;
@@ -945,11 +960,32 @@ pub fn format_context_summary(ctx: &DesktopContext) -> Vec<String> {
     lines
 }
 
-/// Returns `(label, highlight_active)` for rendering an act inside a turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActTone {
+    Active,
+    Failed,
+    Muted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActDisplay {
+    pub label: &'static str,
+    pub tone: ActTone,
+}
+
+/// Returns display label and tone for rendering an act inside a turn.
 /// Terminal turns never leave an unfinished act highlighted as `Working` or `Pending`.
-pub fn act_display_status(turn_state: &TurnState, act: &Act) -> (&'static str, bool) {
+pub fn act_display_status(turn_state: &TurnState, act: &Act) -> ActDisplay {
+    let tone_for = |state: ActState| match state {
+        ActState::Working => ActTone::Active,
+        ActState::Failed => ActTone::Failed,
+        ActState::Pending | ActState::Done => ActTone::Muted,
+    };
     match turn_state {
-        TurnState::Working => (act.state.label(), act.state == ActState::Working),
+        TurnState::Working => ActDisplay {
+            label: act.state.label(),
+            tone: tone_for(act.state),
+        },
         TurnState::Stopped => {
             let interrupted_by_stop = matches!(act.state, ActState::Pending | ActState::Working)
                 || (act.state == ActState::Failed
@@ -957,16 +993,41 @@ pub fn act_display_status(turn_state: &TurnState, act: &Act) -> (&'static str, b
                         d.to_ascii_lowercase().contains("interrupted by the user")
                     }));
             if interrupted_by_stop {
-                ("Stopped", false)
+                ActDisplay {
+                    label: "Stopped",
+                    tone: ActTone::Muted,
+                }
             } else {
-                (act.state.label(), false)
+                ActDisplay {
+                    label: act.state.label(),
+                    tone: tone_for(act.state),
+                }
             }
         }
-        TurnState::Interrupted | TurnState::Failed(_) | TurnState::Done => {
+        TurnState::Done => {
             if matches!(act.state, ActState::Pending | ActState::Working) {
-                ("Interrupted", false)
+                ActDisplay {
+                    label: "Done",
+                    tone: ActTone::Muted,
+                }
             } else {
-                (act.state.label(), false)
+                ActDisplay {
+                    label: act.state.label(),
+                    tone: tone_for(act.state),
+                }
+            }
+        }
+        TurnState::Interrupted | TurnState::Failed(_) => {
+            if matches!(act.state, ActState::Pending | ActState::Working) {
+                ActDisplay {
+                    label: "Interrupted",
+                    tone: ActTone::Muted,
+                }
+            } else {
+                ActDisplay {
+                    label: act.state.label(),
+                    tone: tone_for(act.state),
+                }
             }
         }
     }
@@ -1022,42 +1083,83 @@ fn read_frame(stream: &mut UnixStream) -> Result<serde_json::Value> {
     serde_json::from_slice(&body).context("Invalid JSON frame from Lever")
 }
 
-enum FrameReadError {
-    TooLong(usize),
+enum DeadlineIoError {
+    TimedOut,
     Other(anyhow::Error),
 }
 
-fn read_exact_before(stream: &mut UnixStream, buf: &mut [u8], deadline: Instant) -> Result<()> {
+enum FrameReadError {
+    TooLong(usize),
+    TimedOut,
+    Other(anyhow::Error),
+}
+
+impl From<DeadlineIoError> for anyhow::Error {
+    fn from(err: DeadlineIoError) -> Self {
+        match err {
+            DeadlineIoError::TimedOut => anyhow::anyhow!("Timed out waiting for Lever"),
+            DeadlineIoError::Other(e) => e,
+        }
+    }
+}
+
+fn read_exact_before(
+    stream: &mut UnixStream,
+    buf: &mut [u8],
+    deadline: Instant,
+) -> std::result::Result<(), DeadlineIoError> {
     let mut read = 0;
     while read < buf.len() {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            bail!("Timed out waiting for Lever");
+            return Err(DeadlineIoError::TimedOut);
         }
-        stream.set_read_timeout(Some(remaining))?;
+        stream
+            .set_read_timeout(Some(remaining))
+            .map_err(|e| DeadlineIoError::Other(e.into()))?;
         match stream.read(&mut buf[read..]) {
-            Ok(0) => bail!("Lever closed the surface socket before finishing the frame"),
+            Ok(0) => {
+                return Err(DeadlineIoError::Other(anyhow::anyhow!(
+                    "Lever closed the surface socket before finishing the frame"
+                )));
+            }
             Ok(n) => read += n,
             Err(e) if e.kind() == ErrorKind::Interrupted => continue,
-            Err(e) => return Err(e.into()),
+            Err(e) if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                return Err(DeadlineIoError::TimedOut);
+            }
+            Err(e) => return Err(DeadlineIoError::Other(e.into())),
         }
     }
     Ok(())
 }
 
-fn write_all_before(stream: &mut UnixStream, buf: &[u8], deadline: Instant) -> Result<()> {
+fn write_all_before(
+    stream: &mut UnixStream,
+    buf: &[u8],
+    deadline: Instant,
+) -> std::result::Result<(), DeadlineIoError> {
     let mut written = 0;
     while written < buf.len() {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            bail!("Timed out writing to Lever");
+            return Err(DeadlineIoError::TimedOut);
         }
-        stream.set_write_timeout(Some(remaining))?;
+        stream
+            .set_write_timeout(Some(remaining))
+            .map_err(|e| DeadlineIoError::Other(e.into()))?;
         match stream.write(&buf[written..]) {
-            Ok(0) => bail!("Lever closed the surface socket while writing"),
+            Ok(0) => {
+                return Err(DeadlineIoError::Other(anyhow::anyhow!(
+                    "Lever closed the surface socket while writing"
+                )));
+            }
             Ok(n) => written += n,
             Err(e) if e.kind() == ErrorKind::Interrupted => continue,
-            Err(e) => return Err(e.into()),
+            Err(e) if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                return Err(DeadlineIoError::TimedOut);
+            }
+            Err(e) => return Err(DeadlineIoError::Other(e.into())),
         }
     }
     Ok(())
@@ -1068,13 +1170,19 @@ fn read_frame_before(
     deadline: Instant,
 ) -> std::result::Result<serde_json::Value, FrameReadError> {
     let mut header = [0u8; 4];
-    read_exact_before(stream, &mut header, deadline).map_err(FrameReadError::Other)?;
+    read_exact_before(stream, &mut header, deadline).map_err(|e| match e {
+        DeadlineIoError::TimedOut => FrameReadError::TimedOut,
+        DeadlineIoError::Other(err) => FrameReadError::Other(err),
+    })?;
     let len = u32::from_be_bytes(header) as usize;
     if len > MAX_FRAME {
         return Err(FrameReadError::TooLong(len));
     }
     let mut body = vec![0u8; len];
-    read_exact_before(stream, &mut body, deadline).map_err(FrameReadError::Other)?;
+    read_exact_before(stream, &mut body, deadline).map_err(|e| match e {
+        DeadlineIoError::TimedOut => FrameReadError::TimedOut,
+        DeadlineIoError::Other(err) => FrameReadError::Other(err),
+    })?;
     serde_json::from_slice(&body)
         .context("Invalid JSON frame from Lever")
         .map_err(FrameReadError::Other)
@@ -1084,7 +1192,7 @@ fn write_frame_before(
     stream: &mut UnixStream,
     message: &serde_json::Value,
     deadline: Instant,
-) -> Result<()> {
+) -> std::result::Result<(), DeadlineIoError> {
     write_all_before(stream, &encode_frame(message), deadline)
 }
 
@@ -1514,7 +1622,13 @@ fn start_with_options(
                 skipped_resume.as_ref().map(|(t, r)| (t.as_str(), *r)),
                 init_deadline,
             ) {
-                Ok((mut stream, status, resumed, preserved_thread, resume_error)) => {
+                Ok(BootstrapResult {
+                    mut stream,
+                    status,
+                    resumed,
+                    preserved_thread,
+                    resume_error,
+                }) => {
                     backoff = INITIAL_BACKOFF;
                     last_bootstrap_warn = None;
                     // Only keep a permanent skip for oversized history frames; a
@@ -1692,15 +1806,20 @@ enum BootstrapError {
     Fatal(anyhow::Error),
 }
 
-fn is_timeout_error(err: &anyhow::Error) -> bool {
-    if err.to_string().contains("Timed out") {
-        return true;
+struct BootstrapResult {
+    stream: UnixStream,
+    status: StatusInfo,
+    resumed: Option<ResumedThread>,
+    preserved_thread: Option<String>,
+    resume_error: Option<String>,
+}
+
+fn bootstrap_error_copy(code: &str, message: &str) -> String {
+    if code == "storage-error" {
+        "Could not load the previous thread right now. Try again in a moment.".into()
+    } else {
+        calm_turn_error(message)
     }
-    err.chain().any(|cause| {
-        cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
-            matches!(io.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock)
-        })
-    })
 }
 
 fn resume_thread_before(
@@ -1713,22 +1832,16 @@ fn resume_thread_before(
         &serde_json::json!({ "op": "resume", "thread": thread_id }),
         deadline,
     ) {
-        return Err(if is_timeout_error(&e) {
-            ResumeError::TimedOut
-        } else {
-            ResumeError::Fatal(e)
+        return Err(match e {
+            DeadlineIoError::TimedOut => ResumeError::TimedOut,
+            DeadlineIoError::Other(err) => ResumeError::Fatal(err),
         });
     }
     let frame = match read_frame_before(stream, deadline) {
         Ok(f) => f,
         Err(FrameReadError::TooLong(bytes)) => return Err(ResumeError::TooLong(bytes)),
-        Err(FrameReadError::Other(e)) => {
-            return Err(if is_timeout_error(&e) {
-                ResumeError::TimedOut
-            } else {
-                ResumeError::Fatal(e)
-            });
-        }
+        Err(FrameReadError::TimedOut) => return Err(ResumeError::TimedOut),
+        Err(FrameReadError::Other(e)) => return Err(ResumeError::Fatal(e)),
     };
     match parse_lever_message(&frame) {
         Some(LeverMessage::Resumed(r)) => Ok(ResumeOutcome::Resumed(r)),
@@ -1737,12 +1850,9 @@ fn resume_thread_before(
         }
         Some(LeverMessage::Error { code, message }) => {
             log::warn!("Lever could not resume thread {thread_id} ({code}): {message}");
-            let copy = if code == "storage-error" {
-                "Could not load the previous thread right now. Try again in a moment.".into()
-            } else {
-                calm_turn_error(&message)
-            };
-            Ok(ResumeOutcome::RecoverableError(copy))
+            Ok(ResumeOutcome::RecoverableError(bootstrap_error_copy(
+                &code, &message,
+            )))
         }
         other => Err(ResumeError::Fatal(anyhow::anyhow!(
             "Unexpected resume reply from Lever: {other:?}"
@@ -1754,30 +1864,22 @@ fn read_bootstrap_frame(stream: &mut UnixStream, deadline: Instant) -> Result<se
     match read_frame_before(stream, deadline) {
         Ok(frame) => Ok(frame),
         Err(FrameReadError::TooLong(bytes)) => bail!("Lever frame too long ({bytes} bytes)"),
+        Err(FrameReadError::TimedOut) => bail!("Timed out waiting for Lever"),
         Err(FrameReadError::Other(err)) => Err(err),
     }
 }
 
 /// Connects to Lever's surface socket, completes the version-1 handshake,
 /// fetches initial `status`, and restores the active thread (or, on a fresh
-/// shell start, the working thread if any, else the newest thread) before
-/// clearing the read timeout. Fails if Lever does not answer within
-/// `init_deadline`.
+/// shell start with no saved thread, the working thread if any, else the newest
+/// thread) before clearing the read timeout. Fails if Lever does not answer
+/// within `init_deadline`.
 fn connect_and_bootstrap(
     path: &PathBuf,
     existing_thread: Option<String>,
     skip_resume: Option<(&str, SkipResumeReason)>,
     init_deadline: Duration,
-) -> std::result::Result<
-    (
-        UnixStream,
-        StatusInfo,
-        Option<ResumedThread>,
-        Option<String>,
-        Option<String>,
-    ),
-    BootstrapError,
-> {
+) -> std::result::Result<BootstrapResult, BootstrapError> {
     let deadline = Instant::now() + init_deadline;
     let mut stream = UnixStream::connect(path).map_err(|e| BootstrapError::Fatal(e.into()))?;
 
@@ -1787,7 +1889,7 @@ fn connect_and_bootstrap(
         &serde_json::json!({ "version": SURFACE_VERSION }),
         deadline,
     )
-    .map_err(BootstrapError::Fatal)?;
+    .map_err(|e| BootstrapError::Fatal(e.into()))?;
     let reply = read_bootstrap_frame(&mut stream, deadline).map_err(BootstrapError::Fatal)?;
     if reply != serde_json::json!({ "version": SURFACE_VERSION }) {
         return Err(BootstrapError::Fatal(anyhow::anyhow!(
@@ -1797,7 +1899,7 @@ fn connect_and_bootstrap(
 
     // Initial status (must arrive within `deadline` before reporting Connected).
     write_frame_before(&mut stream, &serde_json::json!({ "op": "status" }), deadline)
-        .map_err(BootstrapError::Fatal)?;
+        .map_err(|e| BootstrapError::Fatal(e.into()))?;
     let status_frame =
         read_bootstrap_frame(&mut stream, deadline).map_err(BootstrapError::Fatal)?;
     let status = match parse_lever_message(&status_frame) {
@@ -1809,26 +1911,25 @@ fn connect_and_bootstrap(
         }
     };
 
-    // Restore thread: resume the held/persisted thread if any, else ask `list`
-    // and resume a working thread (if any) or the newest thread so a restarted
-    // shell redraws from Lever. A failed or timed-out `resume` after `status`
-    // succeeded leaves the drawer online with a recoverable error while keeping
-    // any saved thread ID intact.
+    // Restore thread: if the previous thread was skipped because its history
+    // exceeded MAX_FRAME, stay at a fresh drawer without adopting another thread.
+    // Otherwise resume the held/persisted thread if any (without falling through
+    // to `list` if it disappeared), or ask `list` on a fresh start with no saved
+    // thread.
     let mut resumed = None;
     let mut preserved_thread = None;
     let mut resume_error = None;
-    if let Some(tid) = existing_thread {
+    if matches!(skip_resume, Some((_, SkipResumeReason::TooLong))) {
+        resume_error = Some(
+            "Could not load the previous thread's history because it is too large. Start a new thread or inspect it from a terminal."
+                .into(),
+        );
+    } else if let Some(tid) = existing_thread {
         match skip_resume {
-            Some((skipped, SkipResumeReason::TooLong)) if skipped == tid => {
-                resume_error = Some(
-                    "Could not load the previous thread's history because it is too large. Start a new thread or inspect it from a terminal."
-                        .into(),
-                );
-            }
             Some((skipped, SkipResumeReason::TimedOut)) if skipped == tid => {
                 preserved_thread = Some(tid);
                 resume_error = Some(
-                    "Timed out loading the previous thread's history. Your thread is kept — send a message or reconnect to retry."
+                    "Timed out loading the previous thread's history. Your thread is kept — send a message to continue."
                         .into(),
                 );
             }
@@ -1848,10 +1949,9 @@ fn connect_and_bootstrap(
                 Err(ResumeError::Fatal(e)) => return Err(BootstrapError::Fatal(e)),
             },
         }
-    }
-    if resumed.is_none() && resume_error.is_none() {
+    } else {
         write_frame_before(&mut stream, &serde_json::json!({ "op": "list" }), deadline)
-            .map_err(BootstrapError::Fatal)?;
+            .map_err(|e| BootstrapError::Fatal(e.into()))?;
         let list_frame =
             read_bootstrap_frame(&mut stream, deadline).map_err(BootstrapError::Fatal)?;
         match parse_lever_message(&list_frame) {
@@ -1862,15 +1962,9 @@ fn connect_and_bootstrap(
                     .or_else(|| threads.first())
                 {
                     match skip_resume {
-                        Some((skipped, SkipResumeReason::TooLong)) if skipped == chosen.thread => {
-                            resume_error = Some(
-                                "Could not load the previous thread's history because it is too large. Start a new thread or inspect it from a terminal."
-                                    .into(),
-                            );
-                        }
                         Some((skipped, SkipResumeReason::TimedOut)) if skipped == chosen.thread => {
                             resume_error = Some(
-                                "Timed out loading the previous thread's history. Start a new thread or reconnect to retry."
+                                "Timed out loading the previous thread's history. Start a new thread or send a message to continue."
                                     .into(),
                             );
                         }
@@ -1894,8 +1988,8 @@ fn connect_and_bootstrap(
                     }
                 }
             }
-            Some(LeverMessage::Error { message, .. }) => {
-                resume_error = Some(calm_turn_error(&message));
+            Some(LeverMessage::Error { code, message }) => {
+                resume_error = Some(bootstrap_error_copy(&code, &message));
             }
             other => {
                 return Err(BootstrapError::Fatal(anyhow::anyhow!(
@@ -1909,7 +2003,13 @@ fn connect_and_bootstrap(
     stream
         .set_read_timeout(None)
         .map_err(|e| BootstrapError::Fatal(e.into()))?;
-    Ok((stream, status, resumed, preserved_thread, resume_error))
+    Ok(BootstrapResult {
+        stream,
+        status,
+        resumed,
+        preserved_thread,
+        resume_error,
+    })
 }
 
 #[cfg(test)]
@@ -2939,22 +3039,22 @@ mod tests {
                     "free_hosted_models": false
                 })))
                 .unwrap();
-                assert_eq!(read_frame(&mut peer).unwrap()["op"], "list");
-                peer.write_all(&encode_frame(&serde_json::json!({
-                    "reply": "list",
-                    "threads": [{
-                        "thread": "t-huge",
-                        "title": "Huge",
-                        "cwd": "/tmp",
-                        "started": 1,
-                        "updated": 2,
-                        "turns": 500,
-                        "state": "done",
-                        "working": false
-                    }]
-                })))
-                .unwrap();
                 if attempt == 0 {
+                    assert_eq!(read_frame(&mut peer).unwrap()["op"], "list");
+                    peer.write_all(&encode_frame(&serde_json::json!({
+                        "reply": "list",
+                        "threads": [{
+                            "thread": "t-huge",
+                            "title": "Huge",
+                            "cwd": "/tmp",
+                            "started": 1,
+                            "updated": 2,
+                            "turns": 500,
+                            "state": "done",
+                            "working": false
+                        }]
+                    })))
+                    .unwrap();
                     assert_eq!(read_frame(&mut peer).unwrap()["op"], "resume");
                     // Advertise a frame larger than MAX_FRAME (64 MiB + 1).
                     peer.write_all(&((MAX_FRAME as u32) + 1).to_be_bytes()).unwrap();
@@ -3378,12 +3478,165 @@ mod tests {
             state: ActState::Failed,
             detail: Some("Command interrupted by the user.".into()),
         };
-        assert_eq!(act_display_status(&TurnState::Working, &working_act), ("Working…", true));
-        assert_eq!(act_display_status(&TurnState::Stopped, &working_act), ("Stopped", false));
-        assert_eq!(act_display_status(&TurnState::Stopped, &pending_act), ("Stopped", false));
-        assert_eq!(act_display_status(&TurnState::Stopped, &stopped_err_act), ("Stopped", false));
-        assert_eq!(act_display_status(&TurnState::Interrupted, &working_act), ("Interrupted", false));
-        assert_eq!(act_display_status(&TurnState::Interrupted, &pending_act), ("Interrupted", false));
-        assert_eq!(act_display_status(&TurnState::Failed("err".into()), &working_act), ("Interrupted", false));
+        assert_eq!(
+            act_display_status(&TurnState::Working, &working_act),
+            ActDisplay { label: "Working…", tone: ActTone::Active }
+        );
+        assert_eq!(
+            act_display_status(&TurnState::Stopped, &working_act),
+            ActDisplay { label: "Stopped", tone: ActTone::Muted }
+        );
+        assert_eq!(
+            act_display_status(&TurnState::Stopped, &pending_act),
+            ActDisplay { label: "Stopped", tone: ActTone::Muted }
+        );
+        assert_eq!(
+            act_display_status(&TurnState::Stopped, &stopped_err_act),
+            ActDisplay { label: "Stopped", tone: ActTone::Muted }
+        );
+        assert_eq!(
+            act_display_status(&TurnState::Interrupted, &working_act),
+            ActDisplay { label: "Interrupted", tone: ActTone::Muted }
+        );
+        assert_eq!(
+            act_display_status(&TurnState::Interrupted, &pending_act),
+            ActDisplay { label: "Interrupted", tone: ActTone::Muted }
+        );
+        assert_eq!(
+            act_display_status(&TurnState::Failed("err".into()), &working_act),
+            ActDisplay { label: "Interrupted", tone: ActTone::Muted }
+        );
+        assert_eq!(
+            act_display_status(&TurnState::Done, &working_act),
+            ActDisplay { label: "Done", tone: ActTone::Muted }
+        );
+    }
+
+    #[test]
+    fn preserved_thread_reconnect_unwedges_working_turn_and_keeps_done_memory() {
+        let mut state = AgentState::new(true);
+        state.apply(
+            AgentEvent::Connected {
+                status: sample_status(vec!["OpenCode"]),
+                resumed: None,
+                preserved_thread: None,
+                resume_error: None,
+            },
+            false,
+        );
+        state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, false);
+        state.apply(
+            AgentEvent::Message {
+                thread: "t-1".into(),
+                turn: 1,
+                text: "slow work".into(),
+                context: None,
+            },
+            false,
+        );
+        assert!(state.working());
+        assert!(!state.can_send());
+
+        // Disconnect while turn 1 is working.
+        state.apply(AgentEvent::Disconnected, false);
+        assert_eq!(state.mark, Mark::Idle);
+
+        // Reconnect hits transient storage-error on `resume("t-1")`.
+        // Preserves `t-1`, unwedges stale Working turn so `can_send()` is true,
+        // and retains working memory for a subsequent resume.
+        state.apply(
+            AgentEvent::Connected {
+                status: sample_status(vec!["OpenCode"]),
+                resumed: None,
+                preserved_thread: Some("t-1".into()),
+                resume_error: Some("Could not load the previous thread right now.".into()),
+            },
+            false,
+        );
+        assert_eq!(state.thread.as_deref(), Some("t-1"));
+        assert!(!state.working());
+        assert!(state.can_send());
+        assert_eq!(state.turns[0].state, TurnState::Interrupted);
+
+        // Later reconnect succeeds with turn 1 Done -> mark still lights Done!
+        state.apply(
+            AgentEvent::Connected {
+                status: sample_status(vec!["OpenCode"]),
+                resumed: Some(ResumedThread {
+                    thread: "t-1".into(),
+                    title: "slow".into(),
+                    cwd: "/tmp".into(),
+                    model: None,
+                    working: false,
+                    turns: vec![Turn {
+                        turn: 1,
+                        message: "slow work".into(),
+                        context: None,
+                        acts: Vec::new(),
+                        notes: Vec::new(),
+                        answer: "all done".into(),
+                        state: TurnState::Done,
+                    }],
+                }),
+                preserved_thread: None,
+                resume_error: None,
+            },
+            false,
+        );
+        assert_eq!(state.mark, Mark::Done);
+        assert_eq!(state.turns[0].state, TurnState::Done);
+    }
+
+    #[test]
+    fn missing_saved_thread_starts_fresh_without_adopting_other_thread() {
+        let dir = short_temp_dir("cs-lever-missing-saved");
+        let sock = dir.join("surface");
+        let state_path = dir.join("active-thread");
+        save_active_thread(Some(&state_path), Some("t-deleted"));
+        let listener = UnixListener::bind(&sock).unwrap();
+
+        let server = std::thread::spawn(move || {
+            let (mut peer, _) = listener.accept().unwrap();
+            peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "version": 1 }));
+            peer.write_all(&encode_frame(&serde_json::json!({ "version": 1 }))).unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap()["op"], "status");
+            peer.write_all(&encode_frame(&serde_json::json!({
+                "reply": "status",
+                "version": "0.1.0",
+                "harness_started": false,
+                "harnesses": [{ "id": "h1", "name": "OpenCode" }],
+                "free_hosted_models": false
+            })))
+            .unwrap();
+            assert_eq!(
+                read_frame(&mut peer).unwrap(),
+                serde_json::json!({ "op": "resume", "thread": "t-deleted" })
+            );
+            peer.write_all(&encode_frame(&serde_json::json!({
+                "reply": "error",
+                "code": "no-thread",
+                "message": "There is no thread t-deleted."
+            })))
+            .unwrap();
+            // Client must NOT ask `list` to adopt another thread.
+        });
+
+        let (tx, mut rx) = session::channel();
+        let _sender =
+            start_with_options(sock.clone(), tx.clone(), INIT_DEADLINE, Some(state_path.clone()));
+        let mut state = AgentState::new(true);
+        run_with_deadline(&mut rx, &tx, Duration::from_secs(5), |ev| {
+            state.apply(ev, true);
+            state.connected
+        });
+
+        server.join().unwrap();
+        let saved = load_saved_thread(Some(&state_path));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(state.connected);
+        assert!(state.can_send());
+        assert_eq!(state.thread, None);
+        assert_eq!(saved, None);
     }
 }
