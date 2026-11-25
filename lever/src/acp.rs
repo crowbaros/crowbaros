@@ -1102,7 +1102,9 @@ impl AcpHarness {
 /// Builds the environment overrides Lever passes to a harness child:
 /// any `--harness-env` entries, `OPENCODE_CONFIG_CONTENT` with OpenCode's
 /// self-update disabled (preserving any keys already present), and
-/// `OPENCODE_DISABLE_FREE_MODELS=1` until the person chooses free hosted Models.
+/// `OPENCODE_DISABLE_FREE_MODELS=1` plus `OPENCODE_DISABLE_MODELS_FETCH=1`
+/// until the person chooses free hosted Models (so nothing contacts
+/// `models.opencode.ai` before the person's choice).
 fn build_harness_env(
     extra: &[(String, String)],
     existing_config_content: Option<&str>,
@@ -1122,6 +1124,9 @@ fn build_harness_env(
         env_remove.push("OPENCODE_DISABLE_FREE_MODELS");
     } else {
         env_set.push(("OPENCODE_DISABLE_FREE_MODELS".to_string(), "1".to_string()));
+        if !env_set.iter().any(|(k, _)| k == "OPENCODE_DISABLE_MODELS_FETCH") {
+            env_set.push(("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "1".to_string()));
+        }
     }
     (env_set, env_remove)
 }
@@ -1388,9 +1393,26 @@ mod tests {
 
     #[test]
     fn harness_env_toggles_free_hosted_models_without_losing_extra_env() {
+        // Without extra env, free_hosted_models=false also disables models.opencode.ai fetch.
+        let (default_off, _) = build_harness_env(&[], None, false);
+        assert!(default_off.contains(&("OPENCODE_DISABLE_FREE_MODELS".into(), "1".into())));
+        assert!(default_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "1".into())));
+
+        let (default_on, rm_default_on) = build_harness_env(&[], None, true);
+        assert!(!default_on.iter().any(|(k, _)| k == "OPENCODE_DISABLE_FREE_MODELS"));
+        assert!(!default_on.iter().any(|(k, _)| k == "OPENCODE_DISABLE_MODELS_FETCH"));
+        assert_eq!(rm_default_on, vec!["OPENCODE_DISABLE_FREE_MODELS"]);
+
+        // Explicit --harness-env OPENCODE_DISABLE_MODELS_FETCH=1 is preserved in both states.
         let extra = vec![("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "1".to_string())];
         let (set_off, rm_off) = build_harness_env(&extra, None, false);
-        assert!(set_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "1".into())));
+        assert_eq!(
+            set_off
+                .iter()
+                .filter(|(k, _)| k == "OPENCODE_DISABLE_MODELS_FETCH")
+                .count(),
+            1
+        );
         assert!(set_off.contains(&("OPENCODE_DISABLE_FREE_MODELS".into(), "1".into())));
         assert!(
             set_off

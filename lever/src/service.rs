@@ -375,6 +375,12 @@ impl Service {
         if self.harness_config.is_none() {
             return error_outcome("no-harness", "No harness is available.");
         }
+        if self.harness_env_stale {
+            return error_outcome(
+                "working",
+                "Lever is restarting the harness after the free hosted Models setting changed; try again when active turns finish.",
+            );
+        }
         let empty_cached = self
             .model_catalog
             .as_ref()
@@ -457,6 +463,12 @@ impl Service {
         if self.harness_config.is_none() {
             return error_outcome("no-harness", "No harness is available.");
         }
+        if self.harness_env_stale {
+            return error_outcome(
+                "working",
+                "Lever is restarting the harness after the free hosted Models setting changed; try again when active turns finish.",
+            );
+        }
         match self.store.thread_meta(thread_id) {
             Ok(Some(meta)) => {
                 if meta.working_turn.is_some()
@@ -500,7 +512,9 @@ impl Service {
             };
         }
 
-        if let Some(catalog) = self.model_catalog.clone() {
+        if let Some(catalog) = self.model_catalog.clone()
+            && !(catalog.supported && catalog.models.is_empty())
+        {
             return self.finish_set_model_with_catalog(thread_id, model, &catalog, log);
         }
 
@@ -872,6 +886,30 @@ impl Service {
             }
             AcpEvent::ModelsProbed(result) => {
                 let mut effects = Effects::default();
+                if self.harness_env_stale {
+                    let msg = "Lever is restarting the harness after the free hosted Models setting changed; try again when active turns finish.";
+                    for peer_id in self.pending_models.drain(..) {
+                        effects.replies.push(PeerReply {
+                            peer_id,
+                            message: error_json("working", msg),
+                            subscribe: None,
+                        });
+                    }
+                    let mut remaining = Vec::new();
+                    for item in std::mem::take(&mut self.pending_set_models) {
+                        if item.in_flight_on_session {
+                            remaining.push(item);
+                        } else if let Some(peer_id) = item.peer_id {
+                            effects.replies.push(PeerReply {
+                                peer_id,
+                                message: error_json("working", msg),
+                                subscribe: None,
+                            });
+                        }
+                    }
+                    self.pending_set_models = remaining;
+                    return effects;
+                }
                 match result {
                     Ok(catalog) => {
                         let free = self.free_hosted_models();

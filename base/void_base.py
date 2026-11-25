@@ -1149,7 +1149,7 @@ cleanup() {
 };
 trap cleanup EXIT;
 sed 's|--harness-name OpenCode|--harness-name OpenCode --harness-env OPENCODE_DISABLE_MODELS_FETCH=1|' "$orig_run" > /etc/sv/crowbar-lever/run;
-grep -q 'OPENCODE_DISABLE_MODELS_FETCH=1' /etc/sv/crowbar-lever/run;
+grep -q 'OPENCODE_DISABLE_MODELS_FETCH=1' /etc/sv/crowbar-lever/run || { echo "harness-env-missing"; exit 1; };
 chmod 755 /etc/sv/crowbar-lever/run;
 sv restart /var/service/crowbar-lever >/dev/null;
 """

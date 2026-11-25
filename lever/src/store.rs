@@ -806,12 +806,12 @@ mod tests {
                      id TEXT PRIMARY KEY,
                      title TEXT NOT NULL,
                      cwd TEXT NOT NULL,
-                     harness TEXT,
+                     harness_name TEXT,
                      harness_session_id TEXT,
                      created_at INTEGER NOT NULL,
                      updated_at INTEGER NOT NULL
                  );
-                 INSERT INTO threads (id, title, cwd, harness, harness_session_id, created_at, updated_at)
+                 INSERT INTO threads (id, title, cwd, harness_name, harness_session_id, created_at, updated_at)
                  VALUES ('t-old', 'Old thread', '/tmp', 'OpenCode', 'sess-1', 100, 100);",
             )
             .unwrap();

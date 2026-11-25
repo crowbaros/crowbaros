@@ -3158,7 +3158,7 @@ fn free_models_off_while_working_refuses_new_sends_until_harness_restarts() {
         json!({ "reply": "free-models", "enabled": false })
     );
 
-    // A new send must be refused while the stale harness is still winding down.
+    // A new send and models query must be refused while the stale harness is still winding down.
     write_frame(
         &mut p2,
         &json!({ "op": "send", "thread": null, "text": "sneak through" }),
@@ -3167,6 +3167,11 @@ fn free_models_off_while_working_refuses_new_sends_until_harness_restarts() {
     let refused = read_frame(&mut p2).unwrap();
     assert_eq!(refused["reply"], "error");
     assert_eq!(refused["code"], "working");
+
+    write_frame(&mut p2, &json!({ "op": "models" })).unwrap();
+    let refused_models = read_frame(&mut p2).unwrap();
+    assert_eq!(refused_models["reply"], "error");
+    assert_eq!(refused_models["code"], "working");
 
     // Stop turn 1; Lever stops the stale harness so the next check sees free hosted Models off.
     write_frame(&mut p1, &json!({ "op": "stop", "thread": tid, "turn": t1 })).unwrap();
@@ -3188,7 +3193,7 @@ fn disconnecting_while_waiting_for_models_reply_does_not_stall_lever() {
     let script = write_script(
         &dir.0,
         &json!({
-            "new_session_delay_ms": 300,
+            "new_session_delay_ms": 2000,
             "models": [{ "id": "stub/stub-1", "name": "Stub One" }],
             "default_model": "stub/stub-1",
             "turns": []
@@ -3197,15 +3202,33 @@ fn disconnecting_while_waiting_for_models_reply_does_not_stall_lever() {
 
     let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
 
-    // Send `models` and immediately close the socket while the probe is delayed.
+    // Send `models` and close the socket well before the 2s probe finishes.
     {
         let mut departing = handshake(&lever.person);
         write_frame(&mut departing, &json!({ "op": "models" })).unwrap();
-        // Give Lever a moment to read the frame and enter waiting_reply, then disconnect.
-        std::thread::sleep(Duration::from_millis(30));
+        std::thread::sleep(Duration::from_millis(50));
     }
 
-    // Another peer stays responsive and Lever logs the disconnect cleanly.
+    // Lever must notice the hang-up and log it BEFORE the 2s probe finishes
+    // (without the POLLHUP fix, Lever busy-spins and never logs disconnect until the probe completes).
+    let log_path = lever.state.join("lever.log");
+    let deadline = Instant::now() + Duration::from_millis(800);
+    while Instant::now() < deadline {
+        if std::fs::read_to_string(&log_path)
+            .unwrap_or_default()
+            .contains("the person left")
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let log_before_probe = std::fs::read_to_string(&log_path).unwrap_or_default();
+    assert!(
+        log_before_probe.contains("the person left"),
+        "expected disconnect to be logged before probe completed: {log_before_probe}"
+    );
+
+    // Another peer stays responsive.
     let mut p2 = handshake(&lever.person);
     write_frame(&mut p2, &json!({ "op": "status" })).unwrap();
     let status = read_frame(&mut p2).unwrap();
@@ -3213,6 +3236,4 @@ fn disconnecting_while_waiting_for_models_reply_does_not_stall_lever() {
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
-    let log = std::fs::read_to_string(lever.state.join("lever.log")).unwrap();
-    assert!(log.contains("person left"), "expected disconnect in log: {log}");
 }
