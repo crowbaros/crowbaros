@@ -1,6 +1,6 @@
 # Lever drives the harnesses a person has, and CrowbarOS builds none
 
-**Status:** proposed on November 23, 2026, by Jim Martin. It replaces [ADR 0034](0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md).
+**Status:** accepted on November 24, 2026, by Jim Martin and Jason Alexander. Proposed on November 23 by Jim Martin. It replaces [ADR 0034](0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md).
 
 [ADR 0034](0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md) made Pi Durable the one Harness, with our TypeScript around it. Building Milestone 3 on it, we were writing again what the harnesses a person already uses have. Sign-ins were done. Fifteen of the milestone's twenty slices were still open, and among them were acts on files and commands, the rules for when to ask, web search, and coming back from a restart. A person who already works in Codex, Claude Code, or OpenCode would have kept their skills, tool servers, and habits in one place and the Agent in another.
 
