@@ -200,9 +200,8 @@ fn parse_default_sink_name(status: &str) -> Option<String> {
         if !in_audio {
             continue;
         }
-        let stripped = line.trim_start_matches(|c: char| {
-            c.is_whitespace() || matches!(c, '│' | '├' | '└' | '─' | '|' | '-' | '`')
-        });
+        let stripped = line
+            .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '│' | '├' | '└' | '─' | '|' | '-' | '`'));
         if stripped.starts_with("Sinks:") {
             in_sinks = true;
             continue;
@@ -428,10 +427,7 @@ fn query_brightness_in(base: &Path) -> Value {
         return json!({"available": false});
     };
     let percent = ((cur as f64 / max as f64) * 100.0).round().clamp(0.0, 100.0) as u32;
-    let device = dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("backlight");
+    let device = dir.file_name().and_then(|n| n.to_str()).unwrap_or("backlight");
     json!({
         "available": true,
         "percent": percent,
@@ -588,9 +584,7 @@ fn dispatch(request: serde_json::Map<String, Value>, person: &Account, run: &mut
                 .and_then(Value::as_bool)
                 .ok_or("powered must be a boolean")?;
             let wifi = query_wifi(person);
-            let path = wifi["device_path"]
-                .as_str()
-                .ok_or("No Wi-Fi adapter detected")?;
+            let path = wifi["device_path"].as_str().ok_or("No Wi-Fi adapter detected")?;
             set_dbus_bool_property(
                 person,
                 "net.connman.iwd",
@@ -607,17 +601,8 @@ fn dispatch(request: serde_json::Map<String, Value>, person: &Account, run: &mut
                 .and_then(Value::as_bool)
                 .ok_or("powered must be a boolean")?;
             let bt = query_bluetooth(person);
-            let path = bt["adapter_path"]
-                .as_str()
-                .ok_or("No Bluetooth adapter detected")?;
-            set_dbus_bool_property(
-                person,
-                "org.bluez",
-                path,
-                "org.bluez.Adapter1",
-                "Powered",
-                powered,
-            )?;
+            let path = bt["adapter_path"].as_str().ok_or("No Bluetooth adapter detected")?;
+            set_dbus_bool_property(person, "org.bluez", path, "org.bluez.Adapter1", "Powered", powered)?;
             Ok(json!({"ok": true, "bluetooth": query_bluetooth(person)}))
         }
         Some("power") if request.len() == 2 => {

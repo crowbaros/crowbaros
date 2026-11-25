@@ -447,9 +447,7 @@ impl State {
         }
         // Hardware media and brightness keys belong to the shell for volume,
         // mute, and backlight OSD without leaking to focused clients.
-        if pressed
-            && let Some(event) = media_key_event(key)
-        {
+        if pressed && let Some(event) = media_key_event(key) {
             if !self.seat.withheld.contains(&key) {
                 self.seat.withheld.push(key);
             }
