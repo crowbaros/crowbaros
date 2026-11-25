@@ -235,8 +235,11 @@ Errors: `no-harness`, `harness-error`, `invalid-request`.
 #### `set-free-models`
 
 Saves the person's choice for OpenCode's free hosted Models. When changed, an
-idle harness is stopped immediately (or as soon as active work finishes) so the
-next start applies the new `OPENCODE_DISABLE_FREE_MODELS` setting.
+idle harness is stopped immediately (or as soon as active work finishes, while
+refusing new `send` requests until the restart completes) so the next start
+applies the new `OPENCODE_DISABLE_FREE_MODELS` setting. Only the person's
+socket may change this setting; the surface socket is refused with
+`unsupported`.
 
 Request:
 
@@ -250,7 +253,7 @@ Reply:
 {"reply":"free-models","enabled":true}
 ```
 
-Errors: `invalid-request`, `storage-error`.
+Errors: `unsupported`, `invalid-request`, `storage-error`.
 
 #### `set-model`
 
@@ -293,6 +296,7 @@ Reply:
 - `state`: the newest turn's state (`"working"`, `"done"`, `"stopped"`,
   `"failed"`, `"interrupted"`, or `"idle"`).
 - `working`: `true` while a turn on this thread is running.
+- `model`: optional Model ID last applied to this thread, omitted when unset.
 
 #### `send`
 
@@ -343,7 +347,8 @@ Reply:
 ```
 
 When a turn ended with `"state":"failed"`, the turn object also carries
-`"error":"..."`.
+`"error":"..."`. When a thread has a saved Model, the reply also carries
+`"model":"..."`.
 
 Errors: `no-thread`, `invalid-request`.
 

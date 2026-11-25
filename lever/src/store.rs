@@ -781,3 +781,50 @@ fn tighten_permissions(db_path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opens_and_migrates_v2_database_without_threads_model_column() {
+        let dir = std::env::temp_dir().join(format!(
+            "crowbar-lever-store-migrate-{}-{}",
+            std::process::id(),
+            crate::sys::random_hex(4)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("lever.db");
+
+        // Create a schema-v2 database (without `threads.model`).
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO meta (key, value) VALUES ('schema_version', '2');
+                 CREATE TABLE threads (
+                     id TEXT PRIMARY KEY,
+                     title TEXT NOT NULL,
+                     cwd TEXT NOT NULL,
+                     harness TEXT,
+                     harness_session_id TEXT,
+                     created_at INTEGER NOT NULL,
+                     updated_at INTEGER NOT NULL
+                 );
+                 INSERT INTO threads (id, title, cwd, harness, harness_session_id, created_at, updated_at)
+                 VALUES ('t-old', 'Old thread', '/tmp', 'OpenCode', 'sess-1', 100, 100);",
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&db, 200).unwrap();
+        let meta = store.thread_meta("t-old").unwrap().expect("migrated thread");
+        assert_eq!(meta.model, None);
+        store.set_thread_model("t-old", "stub/stub-1", 201).unwrap();
+        let updated = store.thread_meta("t-old").unwrap().expect("updated thread");
+        assert_eq!(updated.model.as_deref(), Some("stub/stub-1"));
+        assert!(!store.free_hosted_models().unwrap());
+        store.close().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -1140,14 +1140,16 @@ cp /etc/sv/crowbar-lever/run "$orig_run";
 stub_pid="";
 cleanup() {
   [ -n "$stub_pid" ] && kill "$stub_pid" 2>/dev/null || true;
+  sv stop /var/service/crowbar-lever >/dev/null 2>&1 || true;
+  pkill -x opencode 2>/dev/null || true;
   cp "$orig_run" /etc/sv/crowbar-lever/run;
   chmod 755 /etc/sv/crowbar-lever/run;
   rm -rf "$h/.config/opencode" "$h/.local/share/opencode" "$h/.local/state/crowbaros/lever" "$tmp";
-  sv restart /var/service/crowbar-lever >/dev/null 2>&1 || true;
-  pkill -x opencode 2>/dev/null || true;
+  sv start /var/service/crowbar-lever >/dev/null 2>&1 || true;
 };
 trap cleanup EXIT;
 sed 's|--harness-name OpenCode|--harness-name OpenCode --harness-env OPENCODE_DISABLE_MODELS_FETCH=1|' "$orig_run" > /etc/sv/crowbar-lever/run;
+grep -q 'OPENCODE_DISABLE_MODELS_FETCH=1' /etc/sv/crowbar-lever/run;
 chmod 755 /etc/sv/crowbar-lever/run;
 sv restart /var/service/crowbar-lever >/dev/null;
 """

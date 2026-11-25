@@ -25,8 +25,7 @@ const UNSAVED_MESSAGE: &str = "Lever could not save all of this turn.";
 /// harness gave its thread.
 const UNSAVED_SESSION_MESSAGE: &str = "Lever could not save this thread's session.";
 /// What Lever says when free hosted Models are off and no provider is signed in.
-const NO_MODEL_MESSAGE: &str =
-    "No Model is available. Choose OpenCode's free hosted Models or sign in with `crowbar-agent login`.";
+const NO_MODEL_MESSAGE: &str = "No Model is available. Run `crowbar-agent free-models on` or `crowbar-agent login`.";
 /// The note a thread gets when its harness session could not be picked up
 /// again, and what Lever keeps as that note's source.
 const NEW_SESSION_NOTE: &str = "The harness could not pick this thread's session up again. It began a new one, which has none of the turns before.";
@@ -88,7 +87,9 @@ struct WorkingTurn {
 }
 
 struct PendingSetModel {
-    peer_id: u64,
+    /// Peer waiting for the reply, or `None` if that peer disconnected while
+    /// `session/set_config_option` was already in flight on the harness.
+    peer_id: Option<u64>,
     thread_id: String,
     model: String,
     /// True when `session/set_config_option` is already in flight on an active
@@ -157,6 +158,19 @@ impl Service {
         self.store.free_hosted_models().unwrap_or(false)
     }
 
+    fn update_model_catalog(&mut self, mut cat: ModelCatalog, update_default: bool) {
+        if self.harness_env_stale {
+            return;
+        }
+        if !update_default
+            && let Some(existing) = &self.model_catalog
+            && existing.default_model.is_some()
+        {
+            cat.default_model = existing.default_model.clone();
+        }
+        self.model_catalog = Some(cat);
+    }
+
     /// Timeout in milliseconds for `poll(2)`, or `-1` when Lever waits for
     /// nothing but its peers and its harness.
     pub fn poll_timeout_ms(&self) -> libc::c_int {
@@ -192,13 +206,26 @@ impl Service {
     }
 
     /// Drops any deferred replies waiting for a peer that has disconnected.
+    /// An in-flight `session/set_config_option` RPC keeps its thread locked
+    /// until the harness answers, with `peer_id` cleared so no reply is sent.
     pub fn on_peer_gone(&mut self, peer_id: u64) {
         self.pending_models.retain(|&id| id != peer_id);
-        self.pending_set_models.retain(|p| p.peer_id != peer_id);
+        self.pending_set_models.retain_mut(|p| {
+            if p.peer_id == Some(peer_id) {
+                if p.in_flight_on_session {
+                    p.peer_id = None;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                true
+            }
+        });
         self.refresh_idle_timer();
     }
 
-    pub fn handle_request(&mut self, peer_id: u64, value: &Value, log: &mut Log) -> RequestOutcome {
+    pub fn handle_request(&mut self, peer_id: u64, is_person: bool, value: &Value, log: &mut Log) -> RequestOutcome {
         let Some(op) = value.as_object().and_then(|o| o.get("op")).and_then(Value::as_str) else {
             return error_outcome("invalid-request", "Expected a JSON object with a string op field.");
         };
@@ -210,7 +237,12 @@ impl Service {
             "resume" => self.handle_resume(value),
             "stop" => self.handle_stop(value, log),
             "models" => self.handle_models(peer_id, value, log),
-            "set-free-models" => self.handle_set_free_models(value, log),
+            "set-free-models" => {
+                if !is_person {
+                    return error_outcome("unsupported", "Only the person's socket can change free hosted Models.");
+                }
+                self.handle_set_free_models(value, log)
+            }
             "set-model" => self.handle_set_model(peer_id, value, log),
             _ => error_outcome("unsupported", "This request is not supported."),
         }
@@ -343,13 +375,20 @@ impl Service {
         if self.harness_config.is_none() {
             return error_outcome("no-harness", "No harness is available.");
         }
-        if refresh && !self.has_active_work() {
+        let empty_cached = self
+            .model_catalog
+            .as_ref()
+            .is_some_and(|c| c.supported && c.models.is_empty());
+        if (refresh || empty_cached) && !self.has_active_work() {
             if self.harness.is_some() {
                 self.stop_harness("to refresh Models", log);
             }
             self.model_catalog = None;
         }
-        if !refresh && let Some(catalog) = &self.model_catalog {
+        if !refresh
+            && !empty_cached
+            && let Some(catalog) = &self.model_catalog
+        {
             return RequestOutcome {
                 reply: Some(models_reply_json(catalog, self.free_hosted_models())),
                 subscribe: None,
@@ -439,6 +478,9 @@ impl Service {
                 if !catalog.supported {
                     return error_outcome("unsupported", "This harness does not offer Model selection.");
                 }
+                if catalog.models.is_empty() {
+                    return error_outcome("no-model", NO_MODEL_MESSAGE);
+                }
                 if !catalog.models.iter().any(|m| m.id == model) {
                     return error_outcome("invalid-model", &format!("The harness does not offer Model {model}."));
                 }
@@ -446,7 +488,7 @@ impl Service {
             self.idle_since = None;
             harness.set_session_model(thread_id, None, &session_id, model);
             self.pending_set_models.push(PendingSetModel {
-                peer_id,
+                peer_id: Some(peer_id),
                 thread_id: thread_id.to_string(),
                 model: model.to_string(),
                 in_flight_on_session: true,
@@ -469,7 +511,7 @@ impl Service {
         }
         self.idle_since = None;
         self.pending_set_models.push(PendingSetModel {
-            peer_id,
+            peer_id: Some(peer_id),
             thread_id: thread_id.to_string(),
             model: model.to_string(),
             in_flight_on_session: false,
@@ -545,6 +587,13 @@ impl Service {
             return error_outcome("no-harness", "No harness is available.");
         };
 
+        if self.harness_env_stale {
+            return error_outcome(
+                "working",
+                "Lever is restarting the harness after the free hosted Models setting changed; try again when active turns finish.",
+            );
+        }
+
         if self
             .model_catalog
             .as_ref()
@@ -589,12 +638,10 @@ impl Service {
             (tid, cwd, None, requested_model.map(str::to_string), true)
         };
 
-        let thread = new_thread.then_some((
-            title.as_str(),
-            cwd.as_str(),
-            Some(harness_name.as_str()),
-            desired_model.as_deref(),
-        ));
+        // A new thread's requested Model is persisted only after the harness
+        // accepts it (in `SessionReady` or `ModelSet`), so a rejected `--model`
+        // does not stick on later turns.
+        let thread = new_thread.then_some((title.as_str(), cwd.as_str(), Some(harness_name.as_str()), None));
         let turn = match self.store.begin_turn(&thread_id, thread, text, now) {
             Ok(turn) => turn,
             Err(err) => {
@@ -843,9 +890,9 @@ impl Service {
                             } else {
                                 let outcome =
                                     self.finish_set_model_with_catalog(&item.thread_id, &item.model, &catalog, log);
-                                if let Some(reply) = outcome.reply {
+                                if let (Some(peer_id), Some(reply)) = (item.peer_id, outcome.reply) {
                                     effects.replies.push(PeerReply {
-                                        peer_id: item.peer_id,
+                                        peer_id,
                                         message: reply,
                                         subscribe: outcome.subscribe,
                                     });
@@ -853,7 +900,7 @@ impl Service {
                             }
                         }
                         self.pending_set_models = remaining;
-                        self.model_catalog = Some(catalog);
+                        self.update_model_catalog(catalog, true);
                     }
                     Err(msg) => {
                         for peer_id in self.pending_models.drain(..) {
@@ -867,9 +914,9 @@ impl Service {
                         for item in std::mem::take(&mut self.pending_set_models) {
                             if item.in_flight_on_session {
                                 remaining.push(item);
-                            } else {
+                            } else if let Some(peer_id) = item.peer_id {
                                 effects.replies.push(PeerReply {
-                                    peer_id: item.peer_id,
+                                    peer_id,
                                     message: error_json("harness-error", &msg),
                                     subscribe: None,
                                 });
@@ -889,7 +936,7 @@ impl Service {
             } => {
                 let mut effects = Effects::default();
                 if let Some(cat) = catalog {
-                    self.model_catalog = Some(cat);
+                    self.update_model_catalog(cat, false);
                 }
                 // The record must say the session is this thread's before
                 // Lever uses it. Otherwise the record could still give its ID
@@ -939,8 +986,10 @@ impl Service {
                         harness.set_session_model(&thread_id, Some(active.turn), &session_id, &model);
                         active.dispatch = TurnDispatch::WaitingForModel { session_id };
                     } else {
-                        if let Some(ref model) = current_model {
-                            let _ = self.store.set_thread_model(&thread_id, model, unix_now());
+                        if let Some(ref model) = current_model
+                            && let Err(err) = self.store.set_thread_model(&thread_id, model, unix_now())
+                        {
+                            store_failed(log, &err);
                         }
                         harness.send_prompt(&thread_id, active.turn, &session_id, &active.message);
                         active.dispatch = TurnDispatch::PromptInFlight { session_id };
@@ -955,12 +1004,7 @@ impl Service {
                 no_models,
             } => {
                 let display = if no_models {
-                    self.model_catalog = Some(ModelCatalog {
-                        supported: true,
-                        models: Vec::new(),
-                        default_model: None,
-                        config_id: None,
-                    });
+                    self.model_catalog = None;
                     NO_MODEL_MESSAGE.to_string()
                 } else {
                     message
@@ -978,7 +1022,7 @@ impl Service {
             } => {
                 let mut effects = Effects::default();
                 if let Some(cat) = catalog {
-                    self.model_catalog = Some(cat);
+                    self.update_model_catalog(cat, false);
                 }
                 if let Err(err) = self.store.set_thread_model(&thread_id, &model, unix_now()) {
                     store_failed(log, &err);
@@ -992,11 +1036,13 @@ impl Service {
                         .position(|p| p.in_flight_on_session && p.thread_id == thread_id)
                     {
                         let item = self.pending_set_models.remove(pos);
-                        effects.replies.push(PeerReply {
-                            peer_id: item.peer_id,
-                            message: error_json("storage-error", &err),
-                            subscribe: None,
-                        });
+                        if let Some(peer_id) = item.peer_id {
+                            effects.replies.push(PeerReply {
+                                peer_id,
+                                message: error_json("storage-error", &err),
+                                subscribe: None,
+                            });
+                        }
                     }
                     return effects;
                 }
@@ -1016,15 +1062,17 @@ impl Service {
                     .position(|p| p.in_flight_on_session && p.thread_id == thread_id)
                 {
                     let item = self.pending_set_models.remove(pos);
-                    effects.replies.push(PeerReply {
-                        peer_id: item.peer_id,
-                        message: json!({
-                            "reply": "model-set",
-                            "thread": thread_id,
-                            "model": model,
-                        }),
-                        subscribe: None,
-                    });
+                    if let Some(peer_id) = item.peer_id {
+                        effects.replies.push(PeerReply {
+                            peer_id,
+                            message: json!({
+                                "reply": "model-set",
+                                "thread": thread_id,
+                                "model": model,
+                            }),
+                            subscribe: None,
+                        });
+                    }
                 }
                 effects
             }
@@ -1042,11 +1090,13 @@ impl Service {
                     .position(|p| p.in_flight_on_session && p.thread_id == thread_id)
                 {
                     let item = self.pending_set_models.remove(pos);
-                    effects.replies.push(PeerReply {
-                        peer_id: item.peer_id,
-                        message: error_json("invalid-model", &message),
-                        subscribe: None,
-                    });
+                    if let Some(peer_id) = item.peer_id {
+                        effects.replies.push(PeerReply {
+                            peer_id,
+                            message: error_json("invalid-model", &message),
+                            subscribe: None,
+                        });
+                    }
                 }
                 effects
             }
@@ -1055,9 +1105,11 @@ impl Service {
                 catalog,
                 current_model,
             } => {
-                self.model_catalog = Some(catalog);
-                if let Some(model) = current_model {
-                    let _ = self.store.set_thread_model(&thread_id, &model, unix_now());
+                self.update_model_catalog(catalog, false);
+                if let Some(model) = current_model
+                    && let Err(err) = self.store.set_thread_model(&thread_id, &model, unix_now())
+                {
+                    store_failed(log, &err);
                 }
                 Effects::default()
             }
@@ -1224,11 +1276,13 @@ impl Service {
             });
         }
         for item in self.pending_set_models.drain(..) {
-            replies.push(PeerReply {
-                peer_id: item.peer_id,
-                message: error_json("harness-error", message),
-                subscribe: None,
-            });
+            if let Some(peer_id) = item.peer_id {
+                replies.push(PeerReply {
+                    peer_id,
+                    message: error_json("harness-error", message),
+                    subscribe: None,
+                });
+            }
         }
         replies
     }

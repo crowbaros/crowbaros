@@ -888,12 +888,37 @@ fn choice_of_free_models_model_selection_and_login_work_from_the_terminal() {
     assert_eq!(refused.status, 1, "{refused:?}");
     assert!(refused.err.contains("No Model is available"), "{refused:?}");
 
-    // Interactive `crowbar-agent` offers the choice; picking 1 enables free hosted Models and answers.
-    let chose = lab.run(&[], "1\nHello\n");
-    assert_eq!(chose.status, 0, "{chose:?}");
-    assert!(chose.err.contains("1. Use OpenCode's free hosted Models"), "{chose:?}");
-    assert!(chose.err.contains("2. Sign in to a provider"), "{chose:?}");
-    assert_eq!(chose.out, "Reply from stub/stub-1\n");
+    // Piped stdin must never be interpreted as opting into hosted Models.
+    let piped = lab.run(&[], "1\nHello\n");
+    assert_eq!(piped.status, 1, "{piped:?}");
+    assert!(piped.err.contains("No Model is available"), "{piped:?}");
+    let still_off = lab.run(&["free-models"], "");
+    assert_eq!(
+        (still_off.status, still_off.out.as_str()),
+        (0, "Free hosted Models: off.\n")
+    );
+
+    // Interactive `crowbar-agent` on a terminal offers the choice; picking 1 enables free hosted Models and answers.
+    let (mut keys, screen) = terminal();
+    let mut cmd = lab.agent(&[]);
+    cmd.stdin(Stdio::from(screen));
+    let mut running = Running::start(cmd);
+    running.wait_for_err("Choice [1/2]: ");
+    {
+        let err = running.err.lock().unwrap();
+        assert!(err.contains("1. Use OpenCode's free hosted Models"), "{err}");
+        assert!(err.contains("2. Sign in to a provider"), "{err}");
+    }
+    keys.write_all(b"1\n").unwrap();
+    keys.flush().unwrap();
+    running.wait_for_err("Enabled OpenCode's free hosted Models.");
+    keys.write_all(b"Hello\n").unwrap();
+    keys.flush().unwrap();
+    running.wait_for_out("Reply from stub/stub-1\n");
+    keys.write_all(&[0x04]).unwrap();
+    keys.flush().unwrap();
+    assert_eq!(running.ended(), 0);
+    assert_eq!(*running.out.lock().unwrap(), "Reply from stub/stub-1\n");
 
     // `models` now lists both Models and marks the default.
     let listed = lab.run(&["models"], "");

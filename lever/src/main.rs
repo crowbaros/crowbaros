@@ -296,11 +296,13 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         peer: "the person",
         whose: "the person's",
         uid: options.person_uid,
+        is_person: true,
     };
     let surface_channel = Channel {
         peer: "the shell",
         whose: "the shell's",
         uid: options.shell_uid,
+        is_person: false,
     };
 
     let person_listener = bind_socket(&options.person_socket, 0o600)?;
@@ -474,12 +476,12 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
             if revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
                 alive = false;
             }
-            if revents & libc::POLLHUP != 0 && !peer.wants_read() && !peer.is_waiting_reply() {
+            if revents & libc::POLLHUP != 0 && !peer.wants_read() {
                 alive = false;
             }
             if !alive {
-                service.on_peer_gone(peer.id());
                 broadcasts.extend(peer.finish_requests(&mut service, log));
+                service.on_peer_gone(peer.id());
                 peer.on_gone(log);
             }
             keep[idx] = alive;

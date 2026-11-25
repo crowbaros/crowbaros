@@ -3054,3 +3054,165 @@ fn known_acp_updates_like_thoughts_and_available_commands_do_not_become_notes() 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn surface_socket_cannot_toggle_free_models_and_model_switch_preserves_default() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "models": [
+                { "id": "stub/stub-1", "name": "Stub One" },
+                { "id": "stub/stub-2", "name": "Stub Two" }
+            ],
+            "default_model": "stub/stub-1",
+            "turns": [
+                { "steps": [{ "kind": "text", "text": "on {model}" }] },
+                { "steps": [{ "kind": "text", "text": "after {model}" }] }
+            ]
+        }),
+    );
+
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+
+    // Surface socket is refused `set-free-models`.
+    let mut surface = handshake(&lever.surface);
+    write_frame(&mut surface, &json!({ "op": "set-free-models", "enabled": true })).unwrap();
+    let refused = read_frame(&mut surface).unwrap();
+    assert_eq!(refused["reply"], "error");
+    assert_eq!(refused["code"], "unsupported");
+
+    // Person socket can read models, switch one thread's Model, and `models` still reports stub/stub-1 as default.
+    let mut person = handshake(&lever.person);
+    write_frame(&mut person, &json!({ "op": "models" })).unwrap();
+    let m1 = read_frame(&mut person).unwrap();
+    assert_eq!(m1["default"], "stub/stub-1");
+
+    let (tid, t1) = send(&mut person, None, "hello");
+    let ev1 = turn_events(&mut person, &tid, t1);
+    assert_eq!(text_of(&ev1), "on stub/stub-1");
+
+    write_frame(
+        &mut person,
+        &json!({ "op": "set-model", "thread": tid, "model": "stub/stub-2" }),
+    )
+    .unwrap();
+    let set_ok = read_frame(&mut person).unwrap();
+    assert_eq!(set_ok["reply"], "model-set");
+
+    write_frame(&mut person, &json!({ "op": "models" })).unwrap();
+    let m2 = read_frame(&mut person).unwrap();
+    assert_eq!(m2["default"], "stub/stub-1");
+
+    // A rejected `--model` on a new thread is not persisted in SQLite.
+    write_frame(
+        &mut person,
+        &json!({ "op": "send", "thread": null, "text": "bad model", "model": "stub/nonexistent" }),
+    )
+    .unwrap();
+    let sent = read_frame(&mut person).unwrap();
+    let bad_tid = sent["thread"].as_str().unwrap().to_string();
+    let bad_evs = turn_events(&mut person, &bad_tid, 1);
+    assert_eq!(bad_evs.last().unwrap()["event"], "failed");
+    let rec = resume(&mut person, &bad_tid);
+    assert!(rec.get("model").is_none(), "rejected model must not persist: {rec}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn free_models_off_while_working_refuses_new_sends_until_harness_restarts() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "no_models_when_free_disabled": true,
+            "models": [{ "id": "stub/stub-1", "name": "Stub One" }],
+            "default_model": "stub/stub-1",
+            "turns": [
+                { "stall": true, "steps": [{ "kind": "text", "text": "working..." }] }
+            ]
+        }),
+    );
+
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut p1 = handshake(&lever.person);
+    write_frame(&mut p1, &json!({ "op": "set-free-models", "enabled": true })).unwrap();
+    assert_eq!(read_frame(&mut p1).unwrap()["reply"], "free-models");
+
+    // Start a stalled turn on p1.
+    let (tid, t1) = send(&mut p1, None, "hold");
+    let ev = read_frame(&mut p1).unwrap();
+    assert_eq!(ev["event"], "message");
+    let ev = read_frame(&mut p1).unwrap();
+    assert_eq!(ev["event"], "text");
+
+    // Turn free hosted Models off from a second client while turn 1 is still working.
+    let mut p2 = handshake(&lever.person);
+    write_frame(&mut p2, &json!({ "op": "set-free-models", "enabled": false })).unwrap();
+    assert_eq!(
+        read_frame(&mut p2).unwrap(),
+        json!({ "reply": "free-models", "enabled": false })
+    );
+
+    // A new send must be refused while the stale harness is still winding down.
+    write_frame(
+        &mut p2,
+        &json!({ "op": "send", "thread": null, "text": "sneak through" }),
+    )
+    .unwrap();
+    let refused = read_frame(&mut p2).unwrap();
+    assert_eq!(refused["reply"], "error");
+    assert_eq!(refused["code"], "working");
+
+    // Stop turn 1; Lever stops the stale harness so the next check sees free hosted Models off.
+    write_frame(&mut p1, &json!({ "op": "stop", "thread": tid, "turn": t1 })).unwrap();
+    let _ = turn_events(&mut p1, &tid, t1);
+
+    write_frame(&mut p2, &json!({ "op": "models" })).unwrap();
+    let models = read_frame(&mut p2).unwrap();
+    assert_eq!(models["free_hosted_models"], false);
+    assert_eq!(models["models"], json!([]));
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn disconnecting_while_waiting_for_models_reply_does_not_stall_lever() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "new_session_delay_ms": 300,
+            "models": [{ "id": "stub/stub-1", "name": "Stub One" }],
+            "default_model": "stub/stub-1",
+            "turns": []
+        }),
+    );
+
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+
+    // Send `models` and immediately close the socket while the probe is delayed.
+    {
+        let mut departing = handshake(&lever.person);
+        write_frame(&mut departing, &json!({ "op": "models" })).unwrap();
+        // Give Lever a moment to read the frame and enter waiting_reply, then disconnect.
+        std::thread::sleep(Duration::from_millis(30));
+    }
+
+    // Another peer stays responsive and Lever logs the disconnect cleanly.
+    let mut p2 = handshake(&lever.person);
+    write_frame(&mut p2, &json!({ "op": "status" })).unwrap();
+    let status = read_frame(&mut p2).unwrap();
+    assert_eq!(status["reply"], "status");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+    let log = std::fs::read_to_string(lever.state.join("lever.log")).unwrap();
+    assert!(log.contains("person left"), "expected disconnect in log: {log}");
+}

@@ -604,25 +604,7 @@ impl AcpHarness {
                     // Carrying permission requests to the person is #378. Until
                     // then, answer with a valid ACP decline rather than -32601
                     // so a harness does not treat Lever as a broken client.
-                    let outcome = value
-                        .get("params")
-                        .and_then(|p| serde_json::from_value::<RequestPermissionRequest>(p.clone()).ok())
-                        .and_then(|req| {
-                            req.options
-                                .iter()
-                                .find(|o| o.kind == PermissionOptionKind::RejectOnce)
-                                .or_else(|| {
-                                    req.options
-                                        .iter()
-                                        .find(|o| o.kind == PermissionOptionKind::RejectAlways)
-                                })
-                                .map(|o| {
-                                    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
-                                        o.option_id.clone(),
-                                    ))
-                                })
-                        })
-                        .unwrap_or(RequestPermissionOutcome::Cancelled);
+                    let outcome = decline_permission_outcome(value.get("params"));
                     self.send_result_response(id, RequestPermissionResponse::new(outcome));
                 } else {
                     self.send_error_response(id, AcpError::method_not_found());
@@ -1156,6 +1138,23 @@ fn opencode_config_content(existing: Option<&str>) -> String {
     Value::Object(map).to_string()
 }
 
+fn decline_permission_outcome(params: Option<&Value>) -> RequestPermissionOutcome {
+    params
+        .and_then(|p| serde_json::from_value::<RequestPermissionRequest>(p.clone()).ok())
+        .and_then(|req| {
+            req.options
+                .iter()
+                .find(|o| o.kind == PermissionOptionKind::RejectOnce)
+                .or_else(|| {
+                    req.options
+                        .iter()
+                        .find(|o| o.kind == PermissionOptionKind::RejectAlways)
+                })
+                .map(|o| RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(o.option_id.clone())))
+        })
+        .unwrap_or(RequestPermissionOutcome::Cancelled)
+}
+
 /// Whether a JSON-RPC error from `session/new` means the harness has no Models
 /// available (for example OpenCode's `CatalogNotReady` when free hosted Models
 /// are switched off and no provider is signed in).
@@ -1420,5 +1419,33 @@ mod tests {
             &json!({ "code": -32603, "message": "Timeout" }),
             "Timeout"
         ));
+    }
+
+    #[test]
+    fn permission_requests_are_declined_with_reject_option_or_cancelled() {
+        let with_reject = json!({
+            "sessionId": "s1",
+            "toolCall": { "toolCallId": "tc1", "title": "Run shell" },
+            "options": [
+                { "optionId": "allow", "name": "Allow", "kind": "allow_once" },
+                { "optionId": "reject", "name": "Reject", "kind": "reject_once" }
+            ]
+        });
+        assert_eq!(
+            decline_permission_outcome(Some(&with_reject)),
+            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new("reject"))
+        );
+
+        let allow_only = json!({
+            "sessionId": "s1",
+            "toolCall": { "toolCallId": "tc2", "title": "Run shell" },
+            "options": [
+                { "optionId": "allow", "name": "Allow", "kind": "allow_once" }
+            ]
+        });
+        assert_eq!(
+            decline_permission_outcome(Some(&allow_only)),
+            RequestPermissionOutcome::Cancelled
+        );
     }
 }

@@ -33,6 +33,7 @@ pub struct Channel {
     pub peer: &'static str,
     pub whose: &'static str,
     pub uid: u32,
+    pub is_person: bool,
 }
 
 pub struct Peer {
@@ -118,10 +119,6 @@ impl Peer {
     /// enough of its replies for Lever to answer more of them.
     pub fn is_held(&self) -> bool {
         self.held && !self.closing && !self.waiting_reply && self.write_buf.len() < WAITING_MARK
-    }
-
-    pub fn is_waiting_reply(&self) -> bool {
-        self.waiting_reply
     }
 
     /// Delivers a deferred reply from the harness to this peer and lets any
@@ -391,7 +388,7 @@ impl Peer {
             return;
         };
 
-        let outcome = service.handle_request(self.id, &value, log);
+        let outcome = service.handle_request(self.id, self.channel.is_person, &value, log);
         if let Some(thread_id) = outcome.subscribe {
             self.subscriptions.insert(thread_id);
         }

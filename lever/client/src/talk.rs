@@ -300,8 +300,9 @@ pub fn login() -> ExitCode {
 
 /// Before starting a fresh interactive thread, checks whether any Model is
 /// available. When OpenCode's free hosted Models are off and no provider is
-/// signed in, offers the choice: enable free hosted Models, or sign in.
-fn ensure_model_choice(lever: &mut Connection) -> Result<Option<Ended>> {
+/// signed in, offers the choice on a terminal: enable free hosted Models, or
+/// sign in. Non-interactive (piped) input is never read as a choice.
+fn ensure_model_choice(lever: &mut Connection, interactive: bool) -> Result<Option<Ended>> {
     let reply = lever.request(json!({ "op": "models" }))?;
     if refused(&reply).is_some() {
         return Ok(Some(Ended::Failed));
@@ -313,6 +314,11 @@ fn ensure_model_choice(lever: &mut Connection) -> Result<Option<Ended>> {
         .is_some_and(|m| !m.is_empty());
     if !supported || has_models {
         return Ok(None);
+    }
+
+    if !interactive {
+        eprintln!("crowbar-agent: No Model is available. Run `crowbar-agent free-models on` or `crowbar-agent login`.");
+        return Ok(Some(Ended::Failed));
     }
 
     eprintln!("No Model is available yet. Choose how to connect:");
@@ -346,7 +352,18 @@ fn ensure_model_choice(lever: &mut Connection) -> Result<Option<Ended>> {
                 return Ok(Some(Ended::Failed));
             }
             eprintln!("Enabled OpenCode's free hosted Models.");
-            let _ = lever.request(json!({ "op": "models", "refresh": true }))?;
+            let refreshed = lever.request(json!({ "op": "models", "refresh": true }))?;
+            if refused(&refreshed).is_some() {
+                return Ok(Some(Ended::Failed));
+            }
+            let now_has_models = refreshed
+                .get("models")
+                .and_then(Value::as_array)
+                .is_some_and(|m| !m.is_empty());
+            if !now_has_models {
+                eprintln!("crowbar-agent: No Model is available after enabling free hosted Models.");
+                return Ok(Some(Ended::Failed));
+            }
             Ok(None)
         }
         "2" => {
@@ -409,7 +426,7 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>) 
             last = ended;
         }
         thread = Some(resumed.to_string());
-    } else if let Some(ended) = ensure_model_choice(lever)? {
+    } else if let Some(ended) = ensure_model_choice(lever, prompted)? {
         return Ok(ended);
     }
     loop {

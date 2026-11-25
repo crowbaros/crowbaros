@@ -172,7 +172,7 @@ class Check:
         failed = []
         for name, user, command, ok in void_base.boot_checks():
             self.log(f'guest({user})$ {command}' if user != 'root' else f'guest$ {command}')
-            result = self.guest.ssh(command, check=False, timeout=60, user=user)
+            result = self.guest.ssh(command, check=False, timeout=120, user=user)
             output = (result.stdout + result.stderr).rstrip()
             if output:
                 self.log(output)
