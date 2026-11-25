@@ -2707,35 +2707,16 @@ impl Render for AgentSurface {
                     );
                 }
                 // Acts taken during this turn.
-                let turn_stopped = matches!(turn.state, agent::TurnState::Stopped);
                 for act in &turn.acts {
-                    let act_stopped = turn_stopped
-                        && (act.state == agent::ActState::Working
-                            || (act.state == agent::ActState::Failed
-                                && act.detail.as_deref().is_some_and(|d| {
-                                    d.to_ascii_lowercase().contains("interrupted by the user")
-                                })));
-                    let act_border = if act_stopped {
-                        p.line
+                    let (act_state_label, act_active) =
+                        agent::act_display_status(&turn.state, act);
+                    let act_border = if act_active { p.focus } else { p.line };
+                    let act_state_color = if act_active {
+                        p.focus
+                    } else if act_state_label == "Failed" {
+                        p.text
                     } else {
-                        match act.state {
-                            agent::ActState::Working => p.focus,
-                            _ => p.line,
-                        }
-                    };
-                    let act_state_color = if act_stopped {
                         p.muted
-                    } else {
-                        match act.state {
-                            agent::ActState::Working => p.focus,
-                            agent::ActState::Failed => p.text,
-                            agent::ActState::Pending | agent::ActState::Done => p.muted,
-                        }
-                    };
-                    let act_state_label = if act_stopped {
-                        "Stopped"
-                    } else {
-                        act.state.label()
                     };
                     let mut act_card = div()
                         .w_full()
@@ -3867,7 +3848,8 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 let (changed, needs_status_refresh) = model.update(cx, |m, _| {
                     let up = m.agent.is_some();
                     let changed = m.agent_state.apply(agent_event, up);
-                    let need_status = turn_ended || (is_sent && !m.agent_state.harness_started);
+                    let need_status =
+                        changed && (turn_ended || (is_sent && !m.agent_state.harness_started));
                     (changed, need_status)
                 });
                 if needs_status_refresh {
@@ -3904,7 +3886,7 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                             cx.notify();
                         });
                     }
-                } else if should_scroll {
+                } else if changed && should_scroll {
                     if let Some(w) = model.read(cx).agent {
                         let _ = w.update(cx, |view, _, cx| {
                             view.scroll_to_bottom = true;

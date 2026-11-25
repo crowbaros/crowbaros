@@ -250,6 +250,7 @@ pub enum AgentEvent {
     Connected {
         status: StatusInfo,
         resumed: Option<ResumedThread>,
+        preserved_thread: Option<String>,
         resume_error: Option<String>,
     },
     Disconnected,
@@ -403,6 +404,8 @@ pub struct AgentState {
     pub turns: Vec<Turn>,
     pub error: Option<String>,
     pub mark: Mark,
+    #[serde(skip)]
+    working_before_disconnect: Option<(String, u64)>,
 }
 
 /// Snapshot exposed on the shell's own `crowbar-shell`-only control socket for
@@ -477,15 +480,20 @@ impl AgentState {
             .last()
             .filter(|t| matches!(t.state, TurnState::Working))
             .map(|t| t.turn);
+        let was_working = self.mark == Mark::Working
+            || self
+                .working_before_disconnect
+                .take()
+                .is_some_and(|(t, _)| self.thread.as_deref() == Some(t.as_str()));
         let next_mark = match resumed.turns.last().map(|t| &t.state) {
             Some(TurnState::Working) => Mark::Working,
-            Some(TurnState::Done) if self.mark == Mark::Working => Mark::Done,
+            Some(TurnState::Done) if was_working => Mark::Done,
             Some(TurnState::Stopped | TurnState::Failed(_) | TurnState::Interrupted)
-                if self.mark == Mark::Working && !drawer_up =>
+                if was_working && !drawer_up =>
             {
                 Mark::Done
             }
-            _ if self.mark == Mark::Working => Mark::Idle,
+            _ if was_working => Mark::Idle,
             _ => self.mark,
         };
         self.turns = resumed.turns;
@@ -498,6 +506,7 @@ impl AgentState {
             AgentEvent::Connected {
                 status,
                 resumed,
+                preserved_thread,
                 resume_error,
             } => {
                 let mut changed = !self.connected
@@ -511,6 +520,19 @@ impl AgentState {
                 if let Some(resumed) = resumed {
                     self.apply_resumed(resumed, drawer_up);
                     changed = true;
+                } else if let Some(tid) = preserved_thread {
+                    // Keep the saved thread ID across a transient resume error
+                    // or timeout so follow-ups stay on the person's thread.
+                    self.working_before_disconnect = None;
+                    if self.thread.as_deref() != Some(tid.as_str()) {
+                        self.thread = Some(tid);
+                        self.title = None;
+                        self.model = None;
+                        self.active_turn = None;
+                        self.turns.clear();
+                        self.mark = Mark::Idle;
+                        changed = true;
+                    }
                 } else if self.thread.is_some() {
                     self.thread = None;
                     self.title = None;
@@ -518,7 +540,10 @@ impl AgentState {
                     self.active_turn = None;
                     self.turns.clear();
                     self.mark = Mark::Idle;
+                    self.working_before_disconnect = None;
                     changed = true;
+                } else {
+                    self.working_before_disconnect = None;
                 }
                 changed
             }
@@ -531,6 +556,11 @@ impl AgentState {
                     || self.no_harness
                     || self.missing_model.is_some()
                     || self.mark != Mark::Idle;
+                if self.working() {
+                    if let (Some(thread), Some(turn)) = (self.thread.clone(), self.current_turn()) {
+                        self.working_before_disconnect = Some((thread, turn));
+                    }
+                }
                 self.connected = false;
                 self.sending = false;
                 self.active_turn = None;
@@ -550,6 +580,7 @@ impl AgentState {
             }
             AgentEvent::Sent { thread, turn } => {
                 self.sending = false;
+                self.working_before_disconnect = None;
                 if self.thread.as_deref() != Some(thread.as_str()) {
                     self.turns.clear();
                     self.title = None;
@@ -721,6 +752,7 @@ impl AgentState {
                     self.active_turn = None;
                     self.turns.clear();
                     self.mark = Mark::Idle;
+                    self.working_before_disconnect = None;
                     self.error = None;
                 } else {
                     self.error = Some(calm_turn_error(&message));
@@ -911,6 +943,33 @@ pub fn format_context_summary(ctx: &DesktopContext) -> Vec<String> {
         lines.push(format!("Displays: {}", displays.join(", ")));
     }
     lines
+}
+
+/// Returns `(label, highlight_active)` for rendering an act inside a turn.
+/// Terminal turns never leave an unfinished act highlighted as `Working` or `Pending`.
+pub fn act_display_status(turn_state: &TurnState, act: &Act) -> (&'static str, bool) {
+    match turn_state {
+        TurnState::Working => (act.state.label(), act.state == ActState::Working),
+        TurnState::Stopped => {
+            let interrupted_by_stop = matches!(act.state, ActState::Pending | ActState::Working)
+                || (act.state == ActState::Failed
+                    && act.detail.as_deref().is_some_and(|d| {
+                        d.to_ascii_lowercase().contains("interrupted by the user")
+                    }));
+            if interrupted_by_stop {
+                ("Stopped", false)
+            } else {
+                (act.state.label(), false)
+            }
+        }
+        TurnState::Interrupted | TurnState::Failed(_) | TurnState::Done => {
+            if matches!(act.state, ActState::Pending | ActState::Working) {
+                ("Interrupted", false)
+            } else {
+                (act.state.label(), false)
+            }
+        }
+    }
 }
 
 /// Truncates long act detail output to a bounded number of lines and characters
@@ -1323,8 +1382,10 @@ fn save_active_thread(path: Option<&Path>, thread: Option<&str>) {
                 let _ = std::fs::create_dir_all(parent);
             }
             let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
-            if std::fs::write(&tmp, format!("{tid}\n")).is_ok() {
-                let _ = std::fs::rename(&tmp, path);
+            if std::fs::write(&tmp, format!("{tid}\n")).is_ok()
+                && std::fs::rename(&tmp, path).is_err()
+            {
+                let _ = std::fs::remove_file(&tmp);
             }
         }
         _ => {
@@ -1353,6 +1414,7 @@ pub fn start_from_env(events: session::Sender) -> Option<CommandSender> {
 }
 
 /// Starts the background client for a specific surface socket path.
+#[cfg(test)]
 pub fn start(path: PathBuf, events: session::Sender) -> CommandSender {
     start_with_options(path, events, INIT_DEADLINE, None)
 }
@@ -1442,25 +1504,34 @@ fn start_with_options(
     // `init_deadline`, and then blocks on live reads with zero idle wakeups.
     std::thread::spawn(move || {
         let mut backoff = INITIAL_BACKOFF;
-        let mut skipped_resume_thread: Option<String> = None;
+        let mut skipped_resume: Option<(String, SkipResumeReason)> = None;
         let mut last_bootstrap_warn: Option<String> = None;
         loop {
             let existing_thread = active_thread.lock().ok().and_then(|g| g.clone());
             match connect_and_bootstrap(
                 &path,
                 existing_thread,
-                skipped_resume_thread.as_deref(),
+                skipped_resume.as_ref().map(|(t, r)| (t.as_str(), *r)),
                 init_deadline,
             ) {
-                Ok((mut stream, status, resumed, resume_error)) => {
+                Ok((mut stream, status, resumed, preserved_thread, resume_error)) => {
                     backoff = INITIAL_BACKOFF;
                     last_bootstrap_warn = None;
+                    // Only keep a permanent skip for oversized history frames; a
+                    // timed-out resume is skipped for this reconnect so the drawer
+                    // comes online, then retried on a future reconnect.
+                    if matches!(skipped_resume, Some((_, SkipResumeReason::TimedOut))) {
+                        skipped_resume = None;
+                    }
                     let Ok(write_half) = stream.try_clone() else {
                         std::thread::sleep(backoff);
                         continue;
                     };
                     let _ = write_half.set_write_timeout(Some(Duration::from_secs(5)));
-                    let current_tid = resumed.as_ref().map(|r| r.thread.clone());
+                    let current_tid = resumed
+                        .as_ref()
+                        .map(|r| r.thread.clone())
+                        .or_else(|| preserved_thread.clone());
                     if let Ok(mut guard) = active_thread.lock() {
                         *guard = current_tid.clone();
                     }
@@ -1473,6 +1544,7 @@ fn start_with_options(
                         .send(session::Event::Agent(AgentEvent::Connected {
                             status,
                             resumed,
+                            preserved_thread,
                             resume_error,
                         }))
                         .is_err()
@@ -1486,7 +1558,7 @@ fn start_with_options(
                                     if let Some(event) = parsed.into_agent_event() {
                                         match &event {
                                             AgentEvent::Sent { thread, .. } => {
-                                                skipped_resume_thread = None;
+                                                skipped_resume = None;
                                                 if let Ok(mut guard) = active_thread.lock() {
                                                     *guard = Some(thread.clone());
                                                 }
@@ -1509,7 +1581,7 @@ fn start_with_options(
                                                     false
                                                 };
                                                 if updated {
-                                                    skipped_resume_thread = None;
+                                                    skipped_resume = None;
                                                     save_active_thread(
                                                         state_path.as_deref(),
                                                         Some(thread.as_str()),
@@ -1517,7 +1589,7 @@ fn start_with_options(
                                                 }
                                             }
                                             AgentEvent::Resumed(r) => {
-                                                skipped_resume_thread = None;
+                                                skipped_resume = None;
                                                 if let Ok(mut guard) = active_thread.lock() {
                                                     *guard = Some(r.thread.clone());
                                                 }
@@ -1562,11 +1634,19 @@ fn start_with_options(
                     log::warn!(
                         "Agent thread {thread} resume reply exceeded {MAX_FRAME} bytes ({bytes} bytes); reconnecting without restoring its history"
                     );
-                    skipped_resume_thread = Some(thread);
+                    skipped_resume = Some((thread, SkipResumeReason::TooLong));
                     if let Ok(mut guard) = active_thread.lock() {
                         *guard = None;
                     }
                     save_active_thread(state_path.as_deref(), None);
+                    std::thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
+                Err(BootstrapError::ResumeTimedOut { thread }) => {
+                    log::warn!(
+                        "Timed out restoring Agent thread {thread}; reconnecting while keeping thread selection"
+                    );
+                    skipped_resume = Some((thread, SkipResumeReason::TimedOut));
                     std::thread::sleep(Duration::from_millis(50));
                     continue;
                 }
@@ -1588,6 +1668,12 @@ fn start_with_options(
     CommandSender { tx: cmd_tx }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SkipResumeReason {
+    TooLong,
+    TimedOut,
+}
+
 enum ResumeOutcome {
     Resumed(ResumedThread),
     NotFound,
@@ -1596,12 +1682,25 @@ enum ResumeOutcome {
 
 enum ResumeError {
     TooLong(usize),
+    TimedOut,
     Fatal(anyhow::Error),
 }
 
 enum BootstrapError {
     ResumeFrameTooLong { thread: String, bytes: usize },
+    ResumeTimedOut { thread: String },
     Fatal(anyhow::Error),
+}
+
+fn is_timeout_error(err: &anyhow::Error) -> bool {
+    if err.to_string().contains("Timed out") {
+        return true;
+    }
+    err.chain().any(|cause| {
+        cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
+            matches!(io.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock)
+        })
+    })
 }
 
 fn resume_thread_before(
@@ -1609,16 +1708,27 @@ fn resume_thread_before(
     thread_id: &str,
     deadline: Instant,
 ) -> std::result::Result<ResumeOutcome, ResumeError> {
-    write_frame_before(
+    if let Err(e) = write_frame_before(
         stream,
         &serde_json::json!({ "op": "resume", "thread": thread_id }),
         deadline,
-    )
-    .map_err(ResumeError::Fatal)?;
+    ) {
+        return Err(if is_timeout_error(&e) {
+            ResumeError::TimedOut
+        } else {
+            ResumeError::Fatal(e)
+        });
+    }
     let frame = match read_frame_before(stream, deadline) {
         Ok(f) => f,
         Err(FrameReadError::TooLong(bytes)) => return Err(ResumeError::TooLong(bytes)),
-        Err(FrameReadError::Other(e)) => return Err(ResumeError::Fatal(e)),
+        Err(FrameReadError::Other(e)) => {
+            return Err(if is_timeout_error(&e) {
+                ResumeError::TimedOut
+            } else {
+                ResumeError::Fatal(e)
+            });
+        }
     };
     match parse_lever_message(&frame) {
         Some(LeverMessage::Resumed(r)) => Ok(ResumeOutcome::Resumed(r)),
@@ -1627,7 +1737,12 @@ fn resume_thread_before(
         }
         Some(LeverMessage::Error { code, message }) => {
             log::warn!("Lever could not resume thread {thread_id} ({code}): {message}");
-            Ok(ResumeOutcome::RecoverableError(calm_turn_error(&message)))
+            let copy = if code == "storage-error" {
+                "Could not load the previous thread right now. Try again in a moment.".into()
+            } else {
+                calm_turn_error(&message)
+            };
+            Ok(ResumeOutcome::RecoverableError(copy))
         }
         other => Err(ResumeError::Fatal(anyhow::anyhow!(
             "Unexpected resume reply from Lever: {other:?}"
@@ -1651,10 +1766,16 @@ fn read_bootstrap_frame(stream: &mut UnixStream, deadline: Instant) -> Result<se
 fn connect_and_bootstrap(
     path: &PathBuf,
     existing_thread: Option<String>,
-    skip_resume_thread: Option<&str>,
+    skip_resume: Option<(&str, SkipResumeReason)>,
     init_deadline: Duration,
 ) -> std::result::Result<
-    (UnixStream, StatusInfo, Option<ResumedThread>, Option<String>),
+    (
+        UnixStream,
+        StatusInfo,
+        Option<ResumedThread>,
+        Option<String>,
+        Option<String>,
+    ),
     BootstrapError,
 > {
     let deadline = Instant::now() + init_deadline;
@@ -1677,59 +1798,83 @@ fn connect_and_bootstrap(
     // Initial status (must arrive within `deadline` before reporting Connected).
     write_frame_before(&mut stream, &serde_json::json!({ "op": "status" }), deadline)
         .map_err(BootstrapError::Fatal)?;
-    let status =
-        match parse_lever_message(&read_bootstrap_frame(&mut stream, deadline).map_err(BootstrapError::Fatal)?) {
-            Some(LeverMessage::Status(status)) => status,
-            other => {
-                return Err(BootstrapError::Fatal(anyhow::anyhow!(
-                    "Unexpected initial status reply from Lever: {other:?}"
-                )));
-            }
-        };
+    let status_frame =
+        read_bootstrap_frame(&mut stream, deadline).map_err(BootstrapError::Fatal)?;
+    let status = match parse_lever_message(&status_frame) {
+        Some(LeverMessage::Status(status)) => status,
+        other => {
+            return Err(BootstrapError::Fatal(anyhow::anyhow!(
+                "Unexpected initial status reply from Lever: {other:?}"
+            )));
+        }
+    };
 
     // Restore thread: resume the held/persisted thread if any, else ask `list`
     // and resume a working thread (if any) or the newest thread so a restarted
-    // shell redraws from Lever. A failed `resume` after `status` succeeded
-    // leaves the drawer online with a recoverable error rather than offline.
+    // shell redraws from Lever. A failed or timed-out `resume` after `status`
+    // succeeded leaves the drawer online with a recoverable error while keeping
+    // any saved thread ID intact.
     let mut resumed = None;
+    let mut preserved_thread = None;
     let mut resume_error = None;
     if let Some(tid) = existing_thread {
-        if skip_resume_thread == Some(tid.as_str()) {
-            resume_error = Some(
-                "Could not load the previous thread's history because it is too large. Start a new thread or inspect it from a terminal."
-                    .into(),
-            );
-        } else {
-            match resume_thread_before(&mut stream, &tid, deadline) {
+        match skip_resume {
+            Some((skipped, SkipResumeReason::TooLong)) if skipped == tid => {
+                resume_error = Some(
+                    "Could not load the previous thread's history because it is too large. Start a new thread or inspect it from a terminal."
+                        .into(),
+                );
+            }
+            Some((skipped, SkipResumeReason::TimedOut)) if skipped == tid => {
+                preserved_thread = Some(tid);
+                resume_error = Some(
+                    "Timed out loading the previous thread's history. Your thread is kept — send a message or reconnect to retry."
+                        .into(),
+                );
+            }
+            _ => match resume_thread_before(&mut stream, &tid, deadline) {
                 Ok(ResumeOutcome::Resumed(r)) => resumed = Some(r),
                 Ok(ResumeOutcome::NotFound) => {}
-                Ok(ResumeOutcome::RecoverableError(msg)) => resume_error = Some(msg),
+                Ok(ResumeOutcome::RecoverableError(msg)) => {
+                    preserved_thread = Some(tid);
+                    resume_error = Some(msg);
+                }
                 Err(ResumeError::TooLong(bytes)) => {
                     return Err(BootstrapError::ResumeFrameTooLong { thread: tid, bytes });
                 }
+                Err(ResumeError::TimedOut) => {
+                    return Err(BootstrapError::ResumeTimedOut { thread: tid });
+                }
                 Err(ResumeError::Fatal(e)) => return Err(BootstrapError::Fatal(e)),
-            }
+            },
         }
     }
     if resumed.is_none() && resume_error.is_none() {
         write_frame_before(&mut stream, &serde_json::json!({ "op": "list" }), deadline)
             .map_err(BootstrapError::Fatal)?;
-        match parse_lever_message(
-            &read_bootstrap_frame(&mut stream, deadline).map_err(BootstrapError::Fatal)?,
-        ) {
+        let list_frame =
+            read_bootstrap_frame(&mut stream, deadline).map_err(BootstrapError::Fatal)?;
+        match parse_lever_message(&list_frame) {
             Some(LeverMessage::List { threads }) => {
                 if let Some(chosen) = threads
                     .iter()
                     .find(|t| t.working)
                     .or_else(|| threads.first())
                 {
-                    if skip_resume_thread == Some(chosen.thread.as_str()) {
-                        resume_error = Some(
-                            "Could not load the previous thread's history because it is too large. Start a new thread or inspect it from a terminal."
-                                .into(),
-                        );
-                    } else {
-                        match resume_thread_before(&mut stream, &chosen.thread, deadline) {
+                    match skip_resume {
+                        Some((skipped, SkipResumeReason::TooLong)) if skipped == chosen.thread => {
+                            resume_error = Some(
+                                "Could not load the previous thread's history because it is too large. Start a new thread or inspect it from a terminal."
+                                    .into(),
+                            );
+                        }
+                        Some((skipped, SkipResumeReason::TimedOut)) if skipped == chosen.thread => {
+                            resume_error = Some(
+                                "Timed out loading the previous thread's history. Start a new thread or reconnect to retry."
+                                    .into(),
+                            );
+                        }
+                        _ => match resume_thread_before(&mut stream, &chosen.thread, deadline) {
                             Ok(ResumeOutcome::Resumed(r)) => resumed = Some(r),
                             Ok(ResumeOutcome::NotFound) => {}
                             Ok(ResumeOutcome::RecoverableError(msg)) => resume_error = Some(msg),
@@ -1739,8 +1884,13 @@ fn connect_and_bootstrap(
                                     bytes,
                                 });
                             }
+                            Err(ResumeError::TimedOut) => {
+                                return Err(BootstrapError::ResumeTimedOut {
+                                    thread: chosen.thread.clone(),
+                                });
+                            }
                             Err(ResumeError::Fatal(e)) => return Err(BootstrapError::Fatal(e)),
-                        }
+                        },
                     }
                 }
             }
@@ -1759,7 +1909,7 @@ fn connect_and_bootstrap(
     stream
         .set_read_timeout(None)
         .map_err(|e| BootstrapError::Fatal(e.into()))?;
-    Ok((stream, status, resumed, resume_error))
+    Ok((stream, status, resumed, preserved_thread, resume_error))
 }
 
 #[cfg(test)]
@@ -2048,6 +2198,7 @@ mod tests {
             AgentEvent::Connected {
                 status: sample_status(vec!["OpenCode"]),
                 resumed: None,
+                preserved_thread: None,
                 resume_error: None,
             },
             true,
@@ -2187,6 +2338,7 @@ mod tests {
             AgentEvent::Connected {
                 status: sample_status(vec!["OpenCode"]),
                 resumed: None,
+                preserved_thread: None,
                 resume_error: None,
             },
             true,
@@ -2755,7 +2907,15 @@ mod tests {
         assert!(state.connected);
         assert!(state.can_send());
         assert_eq!(state.thread, None);
-        assert_eq!(state.error.as_deref(), Some("database is locked"));
+        assert!(
+            state
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("Could not load the previous thread"),
+            "expected calm storage-error copy, got {:?}",
+            state.error
+        );
     }
 
     #[test]
@@ -2962,5 +3122,268 @@ mod tests {
         server.join().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(connected_count, 1);
+    }
+
+    #[test]
+    fn surface_client_preserves_saved_thread_across_storage_error_and_retries_it() {
+        let dir = short_temp_dir("cs-lever-keep-tid");
+        let sock = dir.join("surface");
+        let state_path = dir.join("active-thread");
+        save_active_thread(Some(&state_path), Some("t-drawer"));
+        let listener = UnixListener::bind(&sock).unwrap();
+
+        let server = std::thread::spawn(move || {
+            // Attempt 1: saved thread returns transient storage-error, then disconnects.
+            {
+                let (mut peer, _) = listener.accept().unwrap();
+                peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "version": 1 }));
+                peer.write_all(&encode_frame(&serde_json::json!({ "version": 1 }))).unwrap();
+                assert_eq!(read_frame(&mut peer).unwrap()["op"], "status");
+                peer.write_all(&encode_frame(&serde_json::json!({
+                    "reply": "status",
+                    "version": "0.1.0",
+                    "harness_started": false,
+                    "harnesses": [{ "id": "h1", "name": "OpenCode" }],
+                    "free_hosted_models": false
+                })))
+                .unwrap();
+                assert_eq!(
+                    read_frame(&mut peer).unwrap(),
+                    serde_json::json!({ "op": "resume", "thread": "t-drawer" })
+                );
+                peer.write_all(&encode_frame(&serde_json::json!({
+                    "reply": "error",
+                    "code": "storage-error",
+                    "message": "database is locked"
+                })))
+                .unwrap();
+                // Wait briefly so client emits Connected before disconnect.
+                std::thread::sleep(Duration::from_millis(80));
+            }
+            // Attempt 2: client must retry `t-drawer` (never falling back to `list`).
+            {
+                let (mut peer, _) = listener.accept().unwrap();
+                peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "version": 1 }));
+                peer.write_all(&encode_frame(&serde_json::json!({ "version": 1 }))).unwrap();
+                assert_eq!(read_frame(&mut peer).unwrap()["op"], "status");
+                peer.write_all(&encode_frame(&serde_json::json!({
+                    "reply": "status",
+                    "version": "0.1.0",
+                    "harness_started": false,
+                    "harnesses": [{ "id": "h1", "name": "OpenCode" }],
+                    "free_hosted_models": false
+                })))
+                .unwrap();
+                assert_eq!(
+                    read_frame(&mut peer).unwrap(),
+                    serde_json::json!({ "op": "resume", "thread": "t-drawer" })
+                );
+                peer.write_all(&encode_frame(&serde_json::json!({
+                    "reply": "resumed",
+                    "thread": "t-drawer",
+                    "title": "Drawer",
+                    "cwd": "/tmp",
+                    "started": 1,
+                    "updated": 2,
+                    "working": false,
+                    "turns": [{
+                        "turn": 1,
+                        "message": "hi",
+                        "answer": "preserved",
+                        "state": "done",
+                        "acts": [],
+                        "notes": []
+                    }]
+                })))
+                .unwrap();
+            }
+        });
+
+        let (tx, mut rx) = session::channel();
+        let _sender =
+            start_with_options(sock.clone(), tx.clone(), INIT_DEADLINE, Some(state_path.clone()));
+        let mut state = AgentState::new(true);
+        let mut first_connect_checked = false;
+        run_with_deadline(&mut rx, &tx, Duration::from_secs(5), |ev| {
+            let is_conn = matches!(ev, AgentEvent::Connected { .. });
+            state.apply(ev, true);
+            if is_conn && !first_connect_checked {
+                first_connect_checked = true;
+                assert_eq!(state.thread.as_deref(), Some("t-drawer"));
+                assert!(state.error.is_some());
+                assert_eq!(load_saved_thread(Some(&state_path)).as_deref(), Some("t-drawer"));
+                return false;
+            }
+            is_conn && first_connect_checked && state.turns.len() == 1
+        });
+
+        server.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(state.thread.as_deref(), Some("t-drawer"));
+        assert_eq!(state.turns[0].answer, "preserved");
+        assert_eq!(state.error, None);
+    }
+
+    #[test]
+    fn surface_client_recovers_when_resume_times_out_preserving_saved_thread() {
+        let dir = short_temp_dir("cs-lever-resume-timeout");
+        let sock = dir.join("surface");
+        let state_path = dir.join("active-thread");
+        save_active_thread(Some(&state_path), Some("t-drawer"));
+        let listener = UnixListener::bind(&sock).unwrap();
+
+        let server = std::thread::spawn(move || {
+            // Attempt 1: status succeeds, resume stalls past deadline.
+            {
+                let (mut peer, _) = listener.accept().unwrap();
+                peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let _ = read_frame(&mut peer);
+                let _ = peer.write_all(&encode_frame(&serde_json::json!({ "version": 1 })));
+                let _ = read_frame(&mut peer);
+                let _ = peer.write_all(&encode_frame(&serde_json::json!({
+                    "reply": "status",
+                    "version": "0.1.0",
+                    "harness_started": false,
+                    "harnesses": [{ "id": "h1", "name": "OpenCode" }],
+                    "free_hosted_models": false
+                })));
+                assert_eq!(
+                    read_frame(&mut peer).unwrap(),
+                    serde_json::json!({ "op": "resume", "thread": "t-drawer" })
+                );
+                std::thread::sleep(Duration::from_millis(260));
+            }
+            // Attempt 2: client skips resume for this reconnect and connects online with `t-drawer` preserved.
+            {
+                let (mut peer, _) = listener.accept().unwrap();
+                peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let _ = read_frame(&mut peer);
+                peer.write_all(&encode_frame(&serde_json::json!({ "version": 1 }))).unwrap();
+                let _ = read_frame(&mut peer);
+                peer.write_all(&encode_frame(&serde_json::json!({
+                    "reply": "status",
+                    "version": "0.1.0",
+                    "harness_started": false,
+                    "harnesses": [{ "id": "h1", "name": "OpenCode" }],
+                    "free_hosted_models": false
+                })))
+                .unwrap();
+            }
+        });
+
+        let (tx, mut rx) = session::channel();
+        let _sender = start_with_options(
+            sock.clone(),
+            tx.clone(),
+            Duration::from_millis(140),
+            Some(state_path.clone()),
+        );
+        let mut state = AgentState::new(true);
+        run_with_deadline(&mut rx, &tx, Duration::from_secs(5), |ev| {
+            state.apply(ev, true);
+            state.connected
+        });
+
+        server.join().unwrap();
+        let saved = load_saved_thread(Some(&state_path));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(state.connected);
+        assert_eq!(state.thread.as_deref(), Some("t-drawer"));
+        assert_eq!(saved.as_deref(), Some("t-drawer"));
+        assert!(
+            state.error.as_deref().unwrap_or("").contains("Timed out"),
+            "expected timeout warning, got {:?}",
+            state.error
+        );
+    }
+
+    #[test]
+    fn turn_finishing_during_disconnect_lights_done_on_reconnect() {
+        let mut state = AgentState::new(true);
+        state.apply(
+            AgentEvent::Connected {
+                status: sample_status(vec!["OpenCode"]),
+                resumed: None,
+                preserved_thread: None,
+                resume_error: None,
+            },
+            false,
+        );
+        state.apply(AgentEvent::Sent { thread: "t-bg".into(), turn: 1 }, false);
+        state.apply(
+            AgentEvent::Message {
+                thread: "t-bg".into(),
+                turn: 1,
+                text: "run".into(),
+                context: None,
+            },
+            false,
+        );
+        assert_eq!(state.mark, Mark::Working);
+
+        // Lever disconnects while turn is working -> mark clears to Idle while offline.
+        state.apply(AgentEvent::Disconnected, false);
+        assert_eq!(state.mark, Mark::Idle);
+
+        // Lever reconnects and resumes the thread now finished -> mark lights Done.
+        state.apply(
+            AgentEvent::Connected {
+                status: sample_status(vec!["OpenCode"]),
+                resumed: Some(ResumedThread {
+                    thread: "t-bg".into(),
+                    title: "bg".into(),
+                    cwd: "/tmp".into(),
+                    model: None,
+                    working: false,
+                    turns: vec![Turn {
+                        turn: 1,
+                        message: "run".into(),
+                        context: None,
+                        acts: Vec::new(),
+                        notes: Vec::new(),
+                        answer: "finished".into(),
+                        state: TurnState::Done,
+                    }],
+                }),
+                preserved_thread: None,
+                resume_error: None,
+            },
+            false,
+        );
+        assert_eq!(state.mark, Mark::Done);
+    }
+
+    #[test]
+    fn terminal_turn_never_displays_unfinished_act_as_working() {
+        let working_act = Act {
+            id: "a1".into(),
+            kind: "command".into(),
+            title: "sleep 10".into(),
+            state: ActState::Working,
+            detail: None,
+        };
+        let pending_act = Act {
+            id: "a2".into(),
+            kind: "command".into(),
+            title: "ls".into(),
+            state: ActState::Pending,
+            detail: None,
+        };
+        let stopped_err_act = Act {
+            id: "a3".into(),
+            kind: "command".into(),
+            title: "sleep 45".into(),
+            state: ActState::Failed,
+            detail: Some("Command interrupted by the user.".into()),
+        };
+        assert_eq!(act_display_status(&TurnState::Working, &working_act), ("Working…", true));
+        assert_eq!(act_display_status(&TurnState::Stopped, &working_act), ("Stopped", false));
+        assert_eq!(act_display_status(&TurnState::Stopped, &pending_act), ("Stopped", false));
+        assert_eq!(act_display_status(&TurnState::Stopped, &stopped_err_act), ("Stopped", false));
+        assert_eq!(act_display_status(&TurnState::Interrupted, &working_act), ("Interrupted", false));
+        assert_eq!(act_display_status(&TurnState::Interrupted, &pending_act), ("Interrupted", false));
+        assert_eq!(act_display_status(&TurnState::Failed("err".into()), &working_act), ("Interrupted", false));
     }
 }
