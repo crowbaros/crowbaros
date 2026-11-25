@@ -358,7 +358,13 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
             i
         });
 
-        let timeout_ms = service.poll_timeout_ms();
+        // A peer whose requests wait, and who has made room for their
+        // replies, is answered now and not at the next thing that happens.
+        let timeout_ms = if peers.iter().any(Peer::is_held) {
+            0
+        } else {
+            service.poll_timeout_ms()
+        };
         sys::poll(&mut pollfds, timeout_ms).map_err(|e| format!("poll failed: {e}"))?;
 
         if pollfds[0].revents & libc::POLLIN != 0
@@ -387,16 +393,24 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
                 broadcasts.extend(service.on_harness_readable(log));
             }
         }
+        // Its input next, while this is still the harness that was polled: a
+        // peer below may have Lever start another.
+        if let Some(i) = stdin_idx {
+            let revents = pollfds[i].revents;
+            if revents & (libc::POLLOUT | libc::POLLERR | libc::POLLHUP) != 0 {
+                broadcasts.extend(service.on_harness_writable(log));
+            }
+        }
         deliver_broadcasts(&broadcasts, &mut peers, &mut keep, log);
         broadcasts.clear();
 
         // Process existing peers (indices 3..3+existing_len), keeping newly accepted peers.
         for (idx, pfd) in pollfds[3..3 + existing_len].iter().enumerate() {
             let revents = pfd.revents;
-            if revents == 0 || !keep[idx] {
+            let peer = &mut peers[idx];
+            if !keep[idx] || (revents == 0 && !peer.is_held()) {
                 continue;
             }
-            let peer = &mut peers[idx];
             let mut alive = true;
             if revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 && peer.wants_read() {
                 let (still_alive, peer_broadcasts) = peer.on_readable(&mut service, log);
@@ -404,6 +418,10 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
                 broadcasts.extend(peer_broadcasts);
             }
             if alive && (revents & libc::POLLOUT != 0) && peer.wants_write() {
+                alive = peer.on_writable();
+            }
+            if alive && peer.is_held() {
+                broadcasts.extend(peer.dispatch(&mut service, log));
                 alive = peer.on_writable();
             }
             if revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
@@ -416,13 +434,6 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
                 peer.on_gone(log);
             }
             keep[idx] = alive;
-        }
-
-        if let Some(i) = stdin_idx {
-            let revents = pollfds[i].revents;
-            if revents & (libc::POLLOUT | libc::POLLERR | libc::POLLHUP) != 0 {
-                broadcasts.extend(service.on_harness_writable(log));
-            }
         }
 
         deliver_broadcasts(&broadcasts, &mut peers, &mut keep, log);

@@ -24,6 +24,10 @@ use std::time::{Duration, Instant};
 /// a peer that watches a thread is handed its events a part at a time, with
 /// the chance to read them in between.
 const READ_BUDGET: usize = 256 * 1024;
+/// The longest line Lever takes from the harness. ACP is a message to a
+/// line, so a harness that writes more than this with no line end is not
+/// speaking it, and Lever would otherwise keep all of it in memory.
+const MAX_LINE: usize = 16 * 1024 * 1024;
 
 /// Configuration for a harness Lever can start on demand.
 #[derive(Debug, Clone)]
@@ -116,6 +120,9 @@ pub struct AcpHarness {
     stdout: ChildStdout,
     write_buf: Vec<u8>,
     read_buf: Vec<u8>,
+    /// How much of `read_buf` is known to hold no line end, so a long line
+    /// is looked through once and not again at each read.
+    scanned: usize,
     next_id: i64,
     initialized: bool,
     supports_load_session: bool,
@@ -123,6 +130,8 @@ pub struct AcpHarness {
     thread_to_session: HashMap<String, String>,
     session_to_thread: HashMap<String, String>,
     loading_sessions: HashSet<String>,
+    /// Why Lever is ending this harness, when the harness did not end itself.
+    fault: Option<&'static str>,
     /// Tool call IDs seen per thread, used only to redact harness error messages
     /// and unrecognized updates without altering normal model output.
     thread_tool_ids: HashMap<String, HashSet<String>>,
@@ -159,6 +168,7 @@ impl AcpHarness {
             stdout,
             write_buf: Vec::new(),
             read_buf: Vec::new(),
+            scanned: 0,
             next_id: 1,
             initialized: false,
             supports_load_session: false,
@@ -166,6 +176,7 @@ impl AcpHarness {
             thread_to_session: HashMap::new(),
             session_to_thread: HashMap::new(),
             loading_sessions: HashSet::new(),
+            fault: None,
             thread_tool_ids: HashMap::new(),
         };
 
@@ -195,6 +206,11 @@ impl AcpHarness {
 
     pub fn is_initialized(&self) -> bool {
         self.initialized
+    }
+
+    /// What this harness did that Lever is ending it for, if anything.
+    pub fn fault(&self) -> Option<&'static str> {
+        self.fault
     }
 
     pub fn session_for_thread(&self, thread_id: &str) -> Option<&str> {
@@ -228,8 +244,10 @@ impl AcpHarness {
             return;
         };
         // A session another thread holds, or is loading, is not this thread's
-        // to load, whatever ID the harness once gave it.
-        let taken = self.session_to_thread.get(sid).is_some_and(|owner| owner != thread_id)
+        // to load, whatever ID the harness once gave it. Nor is one the
+        // record says was given to another thread since: its ID is empty.
+        let taken = sid.is_empty()
+            || self.session_to_thread.get(sid).is_some_and(|owner| owner != thread_id)
             || self.loading_sessions.contains(sid);
         if !self.supports_load_session || taken {
             self.request_new_session(thread_id, turn, cwd, true);
@@ -265,13 +283,15 @@ impl AcpHarness {
     }
 
     /// Makes `session_id` the session of `thread_id`, and of no other. Says
-    /// no when another thread holds it: two threads on one session would have
-    /// each other's answers.
+    /// no when another thread holds it or is loading it: two threads on one
+    /// session would have each other's answers. A thread that loaded a
+    /// session is no longer loading it when it comes here.
     fn bind_session(&mut self, thread_id: &str, session_id: &str) -> bool {
-        if self
-            .session_to_thread
-            .get(session_id)
-            .is_some_and(|owner| owner != thread_id)
+        if self.loading_sessions.contains(session_id)
+            || self
+                .session_to_thread
+                .get(session_id)
+                .is_some_and(|owner| owner != thread_id)
         {
             return false;
         }
@@ -349,6 +369,12 @@ impl AcpHarness {
                     taken += n;
                     self.read_buf.extend_from_slice(&buf[..n]);
                     self.drain_lines(&mut events);
+                    // What is left is the start of a line with no end yet.
+                    if self.read_buf.len() > MAX_LINE {
+                        self.fault = Some("wrote a line longer than 16 MiB");
+                        events.push(AcpEvent::Exited);
+                        return events;
+                    }
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
@@ -419,9 +445,11 @@ impl AcpHarness {
     }
 
     fn drain_lines(&mut self, events: &mut Vec<AcpEvent>) {
-        while let Some(pos) = self.read_buf.iter().position(|&b| b == b'\n') {
+        while let Some(found) = self.read_buf[self.scanned..].iter().position(|&b| b == b'\n') {
+            let pos = self.scanned + found;
             let line = self.read_buf[..pos].to_vec();
             self.read_buf.drain(..=pos);
+            self.scanned = 0;
             let Ok(text) = std::str::from_utf8(&line) else {
                 continue;
             };
@@ -434,11 +462,13 @@ impl AcpHarness {
             };
             self.handle_message(value, events);
         }
+        self.scanned = self.read_buf.len();
     }
 
     fn handle_message(&mut self, value: Value, events: &mut Vec<AcpEvent>) {
         let has_method = value.get("method").and_then(Value::as_str).is_some();
-        let has_id = value.get("id").is_some();
+        // A notification that carries `"id": null` is still a notification.
+        let has_id = value.get("id").is_some_and(|id| !id.is_null());
 
         if has_method && has_id {
             // A request from the harness. Lever carries none of them to the
@@ -815,13 +845,9 @@ fn tool_detail(content: &[ToolCallContent], raw_output: Option<&Value>, raw_inpu
     if !parts.is_empty() {
         return Some(parts.join("\n"));
     }
-    if let Some(val) = raw_output {
-        return value_to_detail(val);
-    }
-    if let Some(val) = raw_input {
-        return value_to_detail(val);
-    }
-    None
+    raw_output
+        .and_then(value_to_detail)
+        .or_else(|| raw_input.and_then(value_to_detail))
 }
 
 /// What an act's raw input or output says of it in one line: the text itself,
@@ -850,16 +876,19 @@ fn redact_ids(input: &str, mut ids: Vec<&str>) -> String {
     let mut out = input.to_string();
     for id in ids {
         let mut redacted = String::with_capacity(out.len());
-        let mut rest = out.as_str();
-        while let Some(at) = rest.find(id) {
-            let before = rest[..at].chars().next_back();
-            let after = rest[at + id.len()..].chars().next();
+        let mut from = 0;
+        while let Some(found) = out[from..].find(id) {
+            // Both neighbors are read from the whole text, so a match that
+            // follows another at once still has the character before it.
+            let (at, end) = (from + found, from + found + id.len());
+            let before = out[..at].chars().next_back();
+            let after = out[end..].chars().next();
             let whole = !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric);
-            redacted.push_str(&rest[..at]);
+            redacted.push_str(&out[from..at]);
             redacted.push_str(if whole { "[redacted]" } else { id });
-            rest = &rest[at + id.len()..];
+            from = end;
         }
-        redacted.push_str(rest);
+        redacted.push_str(&out[from..]);
         out = redacted;
     }
     out
@@ -885,6 +914,9 @@ mod tests {
             redact_ids("session s-9: s-9.", vec!["s-9", ""]),
             "session [redacted]: [redacted]."
         );
+        // An ID that follows itself at once is inside a longer word both times.
+        assert_eq!(redact_ids("c1c1 and ac1c1", vec!["c1"]), "c1c1 and ac1c1");
+        assert_eq!(redact_ids("c1 c1", vec!["c1"]), "[redacted] [redacted]");
     }
 
     #[test]
@@ -902,5 +934,19 @@ mod tests {
         assert_eq!(value_to_detail(&json!([{ "toolCallId": "c-1" }])), None);
         assert_eq!(value_to_detail(&json!(7)), None);
         assert_eq!(value_to_detail(&Value::Null), None);
+    }
+
+    #[test]
+    fn an_act_with_no_text_says_what_its_output_or_else_its_input_names() {
+        let (input, output) = (json!({ "command": "cargo test" }), json!({ "exit": 0 }));
+        assert_eq!(
+            tool_detail(&[], Some(&output), Some(&input)),
+            Some("cargo test".to_string())
+        );
+        assert_eq!(
+            tool_detail(&[], Some(&json!("3 passed")), Some(&input)),
+            Some("3 passed".to_string())
+        );
+        assert_eq!(tool_detail(&[], Some(&output), None), None);
     }
 }

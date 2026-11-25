@@ -26,6 +26,9 @@ pub struct ThreadSummary {
 #[derive(Debug, Clone)]
 pub struct ThreadMeta {
     pub cwd: String,
+    /// The harness's ID for this thread's session. None when the thread has
+    /// had no session, and empty when it had one whose ID the harness has
+    /// given to another thread since.
     pub harness_session_id: Option<String>,
     pub latest_turn: Option<u64>,
     pub working_turn: Option<u64>,
@@ -191,7 +194,30 @@ impl Store {
         Ok(())
     }
 
-    pub fn create_thread(
+    /// Begins a turn with the person's message, in a new thread when
+    /// `new_thread` gives its title, working directory, and harness name.
+    /// All of it is saved or none of it: a thread is never left with a turn
+    /// that is working in the record and that Lever never began.
+    pub fn begin_turn(
+        &self,
+        thread_id: &str,
+        new_thread: Option<(&str, &str, Option<&str>)>,
+        message: &str,
+        now: i64,
+    ) -> Result<u64, String> {
+        let all = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| format!("could not begin a turn: {e}"))?;
+        if let Some((title, cwd, harness_name)) = new_thread {
+            self.create_thread(thread_id, title, cwd, harness_name, now)?;
+        }
+        let turn = self.create_turn(thread_id, message, now)?;
+        all.commit().map_err(|e| format!("could not begin a turn: {e}"))?;
+        Ok(turn)
+    }
+
+    fn create_thread(
         &self,
         id: &str,
         title: &str,
@@ -252,14 +278,30 @@ impl Store {
         }))
     }
 
+    /// Records the session the harness gave a thread. A session is one
+    /// thread's alone, so any other thread the record has on this ID loses
+    /// it: the harness has given the ID out again, and what it now holds
+    /// under it is this thread's. That thread's ID is left empty, which says
+    /// it had a session and has none to load.
     pub fn set_harness_session_id(&self, thread_id: &str, session_id: &str) -> Result<(), String> {
+        let both = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| format!("could not store harness session id: {e}"))?;
+        self.conn
+            .execute(
+                "UPDATE threads SET harness_session_id = '' WHERE harness_session_id = ?1 AND id <> ?2",
+                params![session_id, thread_id],
+            )
+            .map_err(|e| format!("could not store harness session id: {e}"))?;
         self.conn
             .execute(
                 "UPDATE threads SET harness_session_id = ?1 WHERE id = ?2",
                 params![session_id, thread_id],
             )
             .map_err(|e| format!("could not store harness session id: {e}"))?;
-        Ok(())
+        both.commit()
+            .map_err(|e| format!("could not store harness session id: {e}"))
     }
 
     pub fn update_thread_title(&self, thread_id: &str, title: &str, now: i64) -> Result<(), String> {
@@ -272,7 +314,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn create_turn(&self, thread_id: &str, message: &str, now: i64) -> Result<u64, String> {
+    fn create_turn(&self, thread_id: &str, message: &str, now: i64) -> Result<u64, String> {
         let next: i64 = self
             .conn
             .query_row(

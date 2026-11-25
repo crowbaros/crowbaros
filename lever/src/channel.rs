@@ -14,9 +14,10 @@ pub const PROTOCOL_VERSION: u64 = 1;
 /// Lever's package version reported in `status` replies.
 pub const LEVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Once this many bytes of replies wait for a peer, Lever reads no more from
-/// it until it has taken them. A peer that reads slowly, or not at all, is
-/// then held where it is: its own writes stall, nothing it sent is lost, and
-/// the replies Lever keeps for it stay near this mark.
+/// it, and answers no more of what it has read from it, until the peer has
+/// taken them. A peer that reads slowly, or not at all, is then held where it
+/// is: its own writes stall, nothing it sent is lost, and the replies Lever
+/// keeps for it stay within one reply of this mark.
 const WAITING_MARK: usize = 1024 * 1024;
 /// Events are not held back as replies are: a thread goes on working whether
 /// or not a peer that watches it reads. So a peer that falls this many bytes
@@ -37,8 +38,16 @@ pub struct Peer {
     reader: FrameReader,
     write_buf: Vec<u8>,
     /// Bytes of events queued for this peer, less every byte it has taken
-    /// since: how far behind the threads it watches it has fallen.
+    /// since: how far behind the threads it watches it has fallen. A reply it
+    /// takes counts too, so a peer still reading a long reply is given that
+    /// much more room.
     events_waiting: usize,
+    /// Requests this peer sent may be waiting, read and unanswered, for it
+    /// to take the replies before them.
+    held: bool,
+    /// The peer has closed its sending side. It is still owed the replies to
+    /// what it sent.
+    input_ended: bool,
     subscriptions: HashSet<String>,
     handshaked: bool,
     closing: bool,
@@ -53,6 +62,8 @@ impl Peer {
             reader: FrameReader::new(MAX_FRAME),
             write_buf: Vec::new(),
             events_waiting: 0,
+            held: false,
+            input_ended: false,
             subscriptions: HashSet::new(),
             handshaked: false,
             closing: false,
@@ -69,7 +80,13 @@ impl Peer {
     }
 
     pub fn wants_read(&self) -> bool {
-        !self.closing && self.write_buf.len() < WAITING_MARK
+        !self.closing && !self.input_ended && self.write_buf.len() < WAITING_MARK
+    }
+
+    /// Whether requests this peer sent wait to be answered, and it has taken
+    /// enough of its replies for Lever to answer more of them.
+    pub fn is_held(&self) -> bool {
+        self.held && !self.closing && self.write_buf.len() < WAITING_MARK
     }
 
     pub fn is_done(&self) -> bool {
@@ -167,20 +184,44 @@ impl Peer {
                 };
                 let _ = log.write(Event::Connection, &msg);
             }
-            self.closing = true;
+            // Requests it sent before it closed are still answered.
+            self.input_ended = true;
+            if !self.held {
+                self.closing = true;
+            }
             return (self.on_writable(), Vec::new());
         }
 
-        let mut broadcasts = Vec::new();
         self.reader.push(&buf[..n]);
+        let broadcasts = self.dispatch(service, log);
+        (self.on_writable(), broadcasts)
+    }
+
+    /// Answers the requests read from this peer, in order, until the replies
+    /// that wait for it reach the mark. The rest wait, read and unanswered,
+    /// until the peer has taken replies: a peer that sends many requests and
+    /// reads no reply has Lever keep one reply past the mark for it, not one
+    /// for every request.
+    pub fn dispatch(&mut self, service: &mut Service, log: &mut Log) -> Vec<Broadcast> {
+        let mut broadcasts = Vec::new();
+        self.held = false;
         while !self.closing {
+            if self.write_buf.len() >= WAITING_MARK {
+                self.held = true;
+                break;
+            }
             match self.reader.next_frame() {
                 Ok(Some(frame)) => self.handle_frame(&frame, service, log, &mut broadcasts),
-                Ok(None) => break,
+                Ok(None) => {
+                    if self.input_ended {
+                        self.closing = true;
+                    }
+                    break;
+                }
                 Err(err) => self.close_with_reason(&err.to_string(), log),
             }
         }
-        (self.on_writable(), broadcasts)
+        broadcasts
     }
 
     /// Flushes queued outbound bytes. Returns `false` if the peer is finished or

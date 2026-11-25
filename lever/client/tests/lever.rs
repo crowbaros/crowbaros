@@ -511,6 +511,34 @@ fn another_clients_turn_streams_live_and_ctrl_d_leaves_without_stopping_it() {
 }
 
 #[test]
+fn ctrl_d_leaves_a_turn_that_was_working_when_its_thread_was_resumed() {
+    let lab = Lab::with_script(json!({
+        "turns": [{ "steps": [{ "kind": "text", "text": "One two" }], "stall": true }]
+    }));
+    let mut other = Running::start(lab.agent(&["Count."]));
+    other.wait_for_out("One two");
+    let thread = only_thread(&lab);
+
+    let (mut keys, screen) = terminal();
+    let mut shown = lab.agent(&["--resume", &thread]);
+    shown.stdin(screen);
+    let mut shown = Running::start(shown);
+    shown.wait_for_out("> Count.\nOne two");
+
+    // Ctrl-D leaves, and the turn goes on.
+    keys.write_all(&[0x04]).expect("Ctrl-D");
+    wait_for("resumed client to exit", || {
+        shown.child.try_wait().expect("try_wait").is_some()
+    });
+    assert_eq!(shown.ended(), 0);
+    assert!(lab.run(&["--list"], "").out.ends_with("(working)\n"));
+
+    other.signal(libc::SIGINT);
+    other.wait_for_err("Stopped.\n");
+    assert_eq!(other.ended(), 130);
+}
+
+#[test]
 fn lever_killed_mid_turn_leaves_turn_interrupted_in_client() {
     let mut lab = Lab::with_script(json!({
         "turns": [
@@ -690,9 +718,9 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let ev_interrupted = find_event("interrupted");
 
     let server_ops = doc_ops.clone();
-    // Serve 9 short connections exercising every documented op, reply (including error), and event.
+    // Serve 10 short connections exercising every documented op, reply (including error), and event.
     let server = std::thread::spawn(move || {
-        for turn_case in 0..9 {
+        for turn_case in 0..10 {
             let (mut stream, _) = listener.accept().expect("accept client");
             let ver = read_framed(&mut stream);
             assert_eq!(ver, json!({ "version": 1 }));
@@ -727,6 +755,13 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
                     write_framed(&mut stream, &ev_interrupted);
                 }
                 (8, "resume") => write_framed(&mut stream, &reply_error),
+                // One more turn of a thread is sent to it at once: its record is not asked for first.
+                (9, "send") => {
+                    assert_eq!(req["thread"], "t-01a2b3c4d5e6");
+                    write_framed(&mut stream, &reply_sent);
+                    write_framed(&mut stream, &ev_text);
+                    write_framed(&mut stream, &ev_done);
+                }
                 other => panic!("unexpected connection {other:?}"),
             }
             // Hold the connection open until the client closes it, as Lever does.
@@ -766,6 +801,13 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let errored = lab.run(&["--resume", "missing"], "");
     assert_eq!(errored.status, 1, "{errored:?}");
     assert!(errored.err.contains("This request is not supported."), "{errored:?}");
+
+    let more = lab.run(&["--resume", "t-01a2b3c4d5e6", "And then?"], "");
+    assert_eq!(
+        (more.status, more.out.as_str()),
+        (0, "Here are the files.\n"),
+        "{more:?}"
+    );
 
     server.join().unwrap();
     assert_eq!(*sent_ops.lock().unwrap(), doc_ops);

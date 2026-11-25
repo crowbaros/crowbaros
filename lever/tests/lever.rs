@@ -1911,9 +1911,25 @@ fn a_session_that_fails_after_its_turn_was_stopped_fails_the_turn_that_waits_and
             .count()
     };
 
-    // Turn 1 is stopped while the harness still has its request for a session.
-    let (thread, _) = send(&mut peer, None, "One");
+    // A turn is stopped while the harness still has its request for a
+    // session, and nothing more is sent. When the harness says there is no
+    // session, no turn waits for one: the turn stays stopped, and nobody is
+    // told it failed.
+    let (alone, _) = send(&mut peer, None, "Alone");
     wait_until("the harness to be asked for a session", || session_requests() == 1);
+    write_frame(&mut peer, &json!({ "op": "stop", "thread": alone, "turn": 1 })).unwrap();
+    read_until(&mut peer, |frame| frame["event"] == "stopped" && frame["turn"] == 1);
+    std::thread::sleep(Duration::from_millis(700));
+    write_frame(&mut peer, &json!({ "op": "resume", "thread": alone })).unwrap();
+    let record = read_until(&mut peer, |frame| {
+        assert_ne!(frame["event"], "failed", "a stopped turn was failed: {frame}");
+        frame.get("reply").is_some()
+    });
+    assert_eq!(record["turns"][0]["state"], "stopped", "{record}");
+
+    // Turn 1 of another thread is stopped in the same way.
+    let (thread, _) = send(&mut peer, None, "One");
+    wait_until("the harness to be asked for a session", || session_requests() == 2);
     write_frame(&mut peer, &json!({ "op": "stop", "thread": thread, "turn": 1 })).unwrap();
     read_until(&mut peer, |frame| frame["event"] == "stopped" && frame["turn"] == 1);
 
@@ -1924,7 +1940,7 @@ fn a_session_that_fails_after_its_turn_was_stopped_fails_the_turn_that_waits_and
     let failed = read_until(&mut peer, |frame| frame["event"] == "failed");
     assert_eq!(failed["turn"], 2, "{failed}");
     assert_eq!(failed["message"], "no sessions today");
-    assert_eq!(session_requests(), 1, "one thread asks for one session at a time");
+    assert_eq!(session_requests(), 2, "one thread asks for one session at a time");
     let record = resume(&mut peer, &thread);
     assert_eq!(record["turns"][0]["state"], "stopped", "{record}");
     assert_eq!(record["turns"][1]["state"], "failed", "{record}");
@@ -2112,11 +2128,11 @@ fn a_harness_failure_is_a_failure_though_the_person_had_asked_to_stop() {
 }
 
 #[test]
-fn a_result_that_carries_a_null_error_beside_it_is_a_result() {
+fn a_result_with_a_null_error_is_a_result_and_an_update_with_a_null_id_is_an_update() {
     let dir = TempDir::new();
     let script = write_script(
         &dir.0,
-        &json!({ "null_error": true, "turns": [{ "steps": [{ "kind": "text", "text": "Fine." }] }] }),
+        &json!({ "explicit_nulls": true, "turns": [{ "steps": [{ "kind": "text", "text": "Fine." }] }] }),
     );
     let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
     let mut peer = handshake(&lever.person);
@@ -2127,4 +2143,299 @@ fn a_result_that_carries_a_null_error_beside_it_is_a_result() {
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_session_id_the_record_has_for_two_threads_is_loaded_for_neither() {
+    let dir = TempDir::new();
+    let rpc_log = dir.0.join("rpc.jsonl");
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "session_prefix": "acp-twice-",
+            "turns": [
+                { "match": "restart the harness", "crash": true },
+                { "match": "A one", "steps": [{ "kind": "text", "text": "A1." }] },
+                { "match": "A two", "steps": [{ "kind": "text", "text": "A2." }] },
+                { "match": "B one", "steps": [{ "kind": "text", "text": "B1." }] },
+                { "match": "B two", "steps": [{ "kind": "text", "text": "B2." }] }
+            ]
+        }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, Some(&rpc_log), None);
+    let mut peer = handshake(&lever.person);
+
+    // One harness gives thread A session 1, and the next gives thread B the
+    // same ID. A sends nothing while that harness runs, so nothing in memory
+    // says the ID was A's once.
+    let (a, turn) = send(&mut peer, None, "A one");
+    assert_eq!(text_of(&turn_events(&mut peer, &a, turn)), "A1.");
+    end_the_harness(&mut peer);
+    let (b, turn) = send(&mut peer, None, "B one");
+    assert_eq!(text_of(&turn_events(&mut peer, &b, turn)), "B1.");
+    end_the_harness(&mut peer);
+
+    // What a harness holds under that ID now is B's, if it is anyone's. A
+    // does not load it: A is given a new session, and a note that says so.
+    // That new session has the ID again, so B has lost it in turn.
+    for (thread, message, answer) in [(&a, "A two", "A2."), (&b, "B two", "B2.")] {
+        let (_, turn) = send(&mut peer, Some(thread), message);
+        let events = turn_events(&mut peer, thread, turn);
+        assert_eq!(text_of(&events), answer, "{events:?}");
+        assert_eq!(
+            events.iter().filter(|event| event["event"] == "note").count(),
+            1,
+            "the thread must say its harness began afresh: {events:?}"
+        );
+    }
+    let rpc_text = std::fs::read_to_string(&rpc_log).unwrap();
+    assert!(
+        !rpc_text.contains("session/load"),
+        "a shared session was loaded: {rpc_text}"
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_session_id_one_thread_is_loading_is_not_given_to_another() {
+    let dir = TempDir::new();
+    let rpc_log = dir.0.join("rpc.jsonl");
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "session_prefix": "acp-twice-",
+            "load_delay_ms": 500,
+            "turns": [
+                { "match": "restart the harness", "crash": true },
+                { "match": "A one", "steps": [{ "kind": "text", "text": "A1." }] },
+                { "match": "A two", "steps": [{ "kind": "text", "text": "A2." }] },
+                { "match": "B one", "steps": [{ "kind": "text", "text": "B1." }] }
+            ]
+        }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, Some(&rpc_log), None);
+    let mut peer = handshake(&lever.person);
+    let (a, turn) = send(&mut peer, None, "A one");
+    assert_eq!(text_of(&turn_events(&mut peer, &a, turn)), "A1.");
+    end_the_harness(&mut peer);
+
+    // The new harness is slow to load A's session, 1, and meanwhile gives
+    // the same ID to a new thread. That thread's turn fails: the session is
+    // A's, and while it loads Lever takes none of its updates.
+    let (_, turn_a) = send(&mut peer, Some(&a), "A two");
+    wait_until("the harness to be asked to load A's session", || {
+        std::fs::read_to_string(&rpc_log)
+            .unwrap_or_default()
+            .contains("session/load")
+    });
+    let (b, turn_b) = send(&mut peer, None, "B one");
+    let mut ends = std::collections::HashMap::new();
+    let mut a_text = String::new();
+    while ends.len() < 2 {
+        let frame = read_frame(&mut peer).unwrap();
+        let thread = frame["thread"].as_str().unwrap_or_default().to_string();
+        if frame["event"] == "text" && thread == a {
+            a_text.push_str(frame["text"].as_str().unwrap());
+        }
+        if ["done", "failed", "stopped", "interrupted"]
+            .iter()
+            .any(|end| frame["event"] == *end)
+        {
+            ends.insert(thread, frame);
+        }
+    }
+    assert_eq!(ends[&b]["event"], "failed", "{ends:?}");
+    assert_eq!(ends[&b]["turn"], turn_b);
+    assert!(
+        ends[&b]["message"]
+            .as_str()
+            .unwrap()
+            .contains("another thread is using"),
+        "{ends:?}"
+    );
+    assert_eq!(ends[&a]["event"], "done", "{ends:?}");
+    assert_eq!(ends[&a]["turn"], turn_a);
+    assert_eq!(a_text, "A2.");
+    let record = resume(&mut peer, &a);
+    assert_eq!(
+        record["turns"][1]["notes"],
+        json!([]),
+        "A loaded its own session: {record}"
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+/// Has the database refuse a kind of write until the trigger is dropped.
+fn refuse_writes(db: &rusqlite::Connection, what: &str) {
+    db.busy_timeout(Duration::from_secs(5)).unwrap();
+    db.execute_batch(&format!(
+        "CREATE TRIGGER refused BEFORE {what} BEGIN SELECT RAISE(ABORT, 'refused by the test'); END"
+    ))
+    .unwrap();
+}
+
+#[test]
+fn a_harness_that_ends_while_the_database_takes_no_writes_still_interrupts_its_turns() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                {
+                    "match": "crash",
+                    "steps": [{ "kind": "text", "text": "Half" }, { "kind": "pause_ms", "ms": 600 }],
+                    "crash": true
+                },
+                { "steps": [{ "kind": "text", "text": "Back." }] }
+            ]
+        }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Now crash");
+    read_until(&mut peer, |frame| frame["event"] == "text");
+
+    // No turn's state can be written when the harness ends.
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    refuse_writes(&db, "UPDATE OF state ON turns");
+    let end = turn_events(&mut peer, &thread, turn).pop().unwrap();
+    assert_eq!(end["event"], "interrupted", "who is watching is told all the same");
+
+    // When the database takes writes again, the record gets the turn's end,
+    // and the thread takes another message.
+    db.execute_batch("DROP TRIGGER refused").unwrap();
+    wait_until("the turn's end to be saved", || {
+        resume(&mut peer, &thread)["turns"][0]["state"] == "interrupted"
+    });
+    let (_, turn) = send(&mut peer, Some(&thread), "Go on");
+    assert_eq!(text_of(&turn_events(&mut peer, &thread, turn)), "Back.");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_message_the_database_takes_only_part_of_begins_no_turn() {
+    let dir = TempDir::new();
+    let script = write_script(&dir.0, &json!({ "turns": [] }));
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "First");
+    turn_events(&mut peer, &thread, turn);
+
+    // The database takes a new turn and a new thread, and refuses the
+    // timestamp that is written after them.
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    refuse_writes(&db, "UPDATE OF updated_at ON threads");
+    for request in [
+        json!({ "op": "send", "thread": thread, "text": "Second" }),
+        json!({ "op": "send", "text": "Another thread", "cwd": "/tmp" }),
+    ] {
+        write_frame(&mut peer, &request).unwrap();
+        let reply = read_until(&mut peer, |frame| frame.get("reply").is_some());
+        assert_eq!(reply["code"], "storage-error", "{reply}");
+    }
+    db.execute_batch("DROP TRIGGER refused").unwrap();
+
+    // Neither left anything behind: no second thread, and no turn that is
+    // working in the record with nothing working on it.
+    write_frame(&mut peer, &json!({ "op": "list" })).unwrap();
+    let listed = read_until(&mut peer, |frame| frame.get("reply").is_some());
+    assert_eq!(listed["threads"].as_array().unwrap().len(), 1, "{listed}");
+    assert_eq!(listed["threads"][0]["turns"], 1, "{listed}");
+    assert_eq!(listed["threads"][0]["working"], false, "{listed}");
+    let (_, turn) = send(&mut peer, Some(&thread), "Second, again");
+    assert_eq!(turn, 2);
+    assert_eq!(turn_events(&mut peer, &thread, turn).last().unwrap()["event"], "done");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+    assert!(lever.log_text().contains(" error: storage: "), "{}", lever.log_text());
+}
+
+/// The memory a process holds, in KiB, as the kernel counts it.
+fn resident_kib(pid: u32) -> usize {
+    std::fs::read_to_string(format!("/proc/{pid}/status"))
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|kib| kib.parse().ok())
+        .expect("VmRSS")
+}
+
+#[test]
+fn many_requests_for_a_long_record_from_a_peer_that_reads_nothing_are_answered_as_it_reads() {
+    const PIECE: usize = 64 * 1024;
+    const PIECES: usize = 24;
+    const REQUESTS: usize = 64;
+    let dir = TempDir::new();
+    let steps: Vec<Value> = (0..PIECES)
+        .map(|_| json!({ "kind": "text", "text": "x".repeat(PIECE) }))
+        .collect();
+    let script = write_script(&dir.0, &json!({ "turns": [{ "steps": steps }] }));
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut first = handshake(&lever.person);
+    let (thread, turn) = send(&mut first, None, "Say a great deal");
+    assert_eq!(turn_events(&mut first, &thread, turn).last().unwrap()["event"], "done");
+    drop(first);
+
+    // A peer asks for the 1.5 MiB record many times over in one write, says
+    // it will send no more, and reads nothing. The replies come to 96 MiB.
+    let mut peer = handshake(&lever.person);
+    let request = encode_frame(&json!({ "op": "resume", "thread": thread }));
+    peer.write_all(&request.repeat(REQUESTS)).unwrap();
+    peer.shutdown(std::net::Shutdown::Write).unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Lever has answered only as far as the mark, and holds the rest of the
+    // requests, not their replies.
+    let held = resident_kib(lever.pid());
+    assert!(held < 40 * 1024, "Lever holds {held} KiB for a peer that reads nothing");
+
+    // Every request is answered as the peer reads, and then Lever closes.
+    for n in 0..REQUESTS {
+        let reply = read_frame(&mut peer).unwrap_or_else(|err| panic!("reply {n} was lost: {err}"));
+        assert_eq!(reply["reply"], "resumed", "reply {n}");
+        assert_eq!(reply["turns"][0]["answer"].as_str().unwrap().len(), PIECE * PIECES);
+    }
+    assert_closed_without_reply(peer);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_harness_that_writes_a_line_with_no_end_is_stopped_and_its_turn_interrupted() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [{
+                "steps": [
+                    { "kind": "text", "text": "Before." },
+                    { "kind": "flood", "bytes": 17 * 1024 * 1024 }
+                ],
+                "stall": true
+            }]
+        }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Flood");
+    let events = turn_events(&mut peer, &thread, turn);
+    assert_eq!(text_of(&events), "Before.");
+    assert_eq!(events.last().unwrap()["event"], "interrupted", "{events:?}");
+    write_frame(&mut peer, &json!({ "op": "status" })).unwrap();
+    assert_eq!(read_frame(&mut peer).unwrap()["harness_started"], false);
+    assert!(resident_kib(lever.pid()) < 60 * 1024, "Lever kept the line");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+    let log = lever.log_text();
+    assert!(log.contains("was stopped: it wrote a line longer than 16 MiB"), "{log}");
 }

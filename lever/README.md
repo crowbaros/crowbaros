@@ -75,8 +75,11 @@ ACP today:
   of the thread's earlier turns. Giving a new session the thread so far, as
   ADR 0036 has it, is not built yet.
 - **A session is one thread's alone.** A harness that gives a thread a session
-  ID another thread holds fails that turn, and a thread never loads a session
-  another thread holds.
+  ID another thread holds, or is loading, fails that turn. A thread never
+  loads a session another thread holds. When a harness that was started again
+  gives a thread an ID the record has for an older thread, the ID is the newer
+  thread's from then on, and the older thread is given a new session, with the
+  note, at its next turn.
 - **How a turn ends.** `end_turn` is `done`. `cancelled`, or the JSON-RPC
   error for a cancelled request (`-32800`), is `stopped`. Any other stop
   reason, and any other error, is `failed`, whether or not a stop was asked
@@ -98,7 +101,8 @@ ACP today:
   [Milestone 3](https://github.com/crowbaros/crowbaros/issues/371).
 - **Lever reads at most 256 KiB from the harness each time it wakes**, so a
   harness that never stops writing holds back neither Lever's peers nor a stop
-  signal.
+  signal. A harness that writes more than 16 MiB with no line end is stopped,
+  and its working turns are `interrupted`.
 
 ## Channels and framing
 
@@ -119,14 +123,16 @@ is closed.
 
 Each socket keeps up to 64 connections open, counted apart, so the person's
 clients cannot use up the shell's. One more is closed at once without a reply.
-While 1 MiB of replies wait for a peer, Lever reads no more from it: a peer
-that reads slowly, or not at all, finds its own writes stall, and loses
-nothing it sent. A peer that closes its sending side still gets the replies to
-what it sent before Lever closes the connection.
+While 1 MiB of replies wait for a peer, Lever reads no more from it and
+answers no more of what it has read from it: a peer that reads slowly, or not
+at all, finds its own writes stall, and loses nothing it sent. Lever answers
+the rest as the peer takes its replies. A peer that closes its sending side
+still gets the replies to what it sent before Lever closes the connection.
 
 Events are not held back in that way, because a thread goes on working whether
 or not a peer that watches it reads. A peer that falls more than 4 MiB of
-events behind is closed, and Lever's log says why. The record has what it
+events behind is closed, and Lever's log says why. A peer that is still taking
+a long reply is given that much more room. The record has what a closed peer
 missed: it connects again and reads it with `resume`.
 
 Every thread ID, turn number, act ID, and note ID on both sockets is Lever's
@@ -223,7 +229,9 @@ Errors: `no-harness`, `no-thread`, `working`, `invalid-request`.
 Reads a thread's full record from Lever's database (without starting a harness)
 and subscribes this connection to future events for that thread. The reply is
 one frame that holds the whole record, so a client must take frames as large
-as its longest thread. Reading a record in parts is not built yet.
+as its longest thread. `crowbar-agent` takes frames up to 64 MiB, and says
+that Lever sent a frame too long to read when a record is longer. Reading a
+record in parts is not built yet.
 
 Request:
 

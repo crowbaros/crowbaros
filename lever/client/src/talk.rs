@@ -52,8 +52,8 @@ impl Answer {
 
     /// Makes room for a line on standard error in the middle of the answer.
     /// Only where the two are one terminal does that line land in the
-    /// answer's open line. Down a pipe or into a file the answer is the
-    /// harness's text and nothing else, so nothing is added to it.
+    /// answer's open line. Down a pipe or into a file nothing is put in the
+    /// middle of the answer.
     fn make_way(&mut self) -> Result<()> {
         if self.out.is_terminal() && stderr().is_terminal() {
             self.end()
@@ -284,7 +284,12 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
         };
         last = stood.last;
         if stood.working.is_some() {
-            last = watch(lever, resumed, stood.working, stood.answer, Typing::Waits)?.unwrap_or(last);
+            // Ctrl-D leaves a turn that was working when the thread was
+            // resumed, as it leaves one that begins after.
+            let Some(ended) = watch(lever, resumed, stood.working, stood.answer, Typing::UntilItEnds)? else {
+                return Ok(left(last));
+            };
+            last = ended;
         }
         thread = Some(resumed.to_string());
     }

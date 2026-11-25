@@ -257,13 +257,14 @@ impl Service {
         };
 
         let now = unix_now();
-        let (thread_id, cwd, existing_session_id) = if let Some(tid) = requested_thread {
+        let title = initial_title(text);
+        let (thread_id, cwd, existing_session_id, new_thread) = if let Some(tid) = requested_thread {
             match self.store.thread_meta(tid) {
                 Ok(Some(meta)) => {
                     if meta.working_turn.is_some() || self.working_turns.contains_key(tid) {
                         return error_outcome("working", "This thread is already working on a turn.");
                     }
-                    (tid.to_string(), meta.cwd, meta.harness_session_id)
+                    (tid.to_string(), meta.cwd, meta.harness_session_id, false)
                 }
                 Ok(None) => return error_outcome("no-thread", &format!("There is no thread {tid}.")),
                 Err(err) => return error_outcome("storage-error", &err),
@@ -271,16 +272,16 @@ impl Service {
         } else {
             let tid = format!("t-{}", sys::random_hex(6));
             let cwd = requested_cwd.map(str::to_string).unwrap_or_else(default_cwd);
-            let title = initial_title(text);
-            if let Err(err) = self.store.create_thread(&tid, &title, &cwd, Some(&harness_name), now) {
-                return error_outcome("storage-error", &err);
-            }
-            (tid, cwd, None)
+            (tid, cwd, None, true)
         };
 
-        let turn = match self.store.create_turn(&thread_id, text, now) {
+        let thread = new_thread.then_some((title.as_str(), cwd.as_str(), Some(harness_name.as_str())));
+        let turn = match self.store.begin_turn(&thread_id, thread, text, now) {
             Ok(turn) => turn,
-            Err(err) => return error_outcome("storage-error", &err),
+            Err(err) => {
+                store_failed(log, &err);
+                return error_outcome("storage-error", &err);
+            }
         };
 
         let mut broadcasts = vec![Broadcast {
@@ -648,37 +649,42 @@ impl Service {
     fn on_harness_exited(&mut self, log: &mut Log) -> Vec<Broadcast> {
         if let Some(harness) = self.harness.take() {
             let pid = harness.pid();
+            let fault = harness.fault();
             harness.stop();
             let name = self
                 .harness_config
                 .as_ref()
                 .map(|c| c.name.as_str())
                 .unwrap_or("harness");
-            let _ = log.write(Event::Harness, &format!("{name} (process {pid}) exited unexpectedly"));
+            let what = match fault {
+                Some(fault) => format!("{name} (process {pid}) was stopped: it {fault}"),
+                None => format!("{name} (process {pid}) exited unexpectedly"),
+            };
+            let _ = log.write(Event::Harness, &what);
         }
         self.idle_since = None;
-        self.working_turns.clear();
 
-        let interrupted = self.store.interrupt_all_working(unix_now()).unwrap_or_else(|err| {
-            store_failed(log, &err);
-            Vec::new()
-        });
+        // Every turn that was working is interrupted, and each end goes the
+        // way every other end does, so one the database does not take now is
+        // tried again.
+        let mut interrupted: Vec<(String, u64)> = self
+            .working_turns
+            .drain()
+            .map(|(thread_id, active)| (thread_id, active.turn))
+            .collect();
+        interrupted.sort();
         interrupted
             .into_iter()
-            // A turn whose end waits to be saved ended before the harness did.
-            .filter(|(thread_id, turn)| {
-                !self
-                    .unsaved_endings
-                    .iter()
-                    .any(|ending| ending.thread_id == *thread_id && ending.turn == *turn)
-            })
-            .map(|(thread_id, turn)| Broadcast {
-                thread_id: thread_id.clone(),
-                message: json!({
-                    "event": "interrupted",
-                    "thread": thread_id,
-                    "turn": turn,
-                }),
+            .map(|(thread_id, turn)| {
+                self.end_turn(&thread_id, turn, "interrupted", None, log);
+                Broadcast {
+                    thread_id: thread_id.clone(),
+                    message: json!({
+                        "event": "interrupted",
+                        "thread": thread_id,
+                        "turn": turn,
+                    }),
+                }
             })
             .collect()
     }

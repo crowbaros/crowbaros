@@ -50,9 +50,14 @@ struct Script {
     /// replays a session's history.
     #[serde(default)]
     load_replay: Vec<Step>,
-    /// If true, every result also carries `"error": null`.
+    /// Waits this long before it answers `session/load`, and goes on taking
+    /// requests meanwhile.
     #[serde(default)]
-    null_error: bool,
+    load_delay_ms: u64,
+    /// If true, every result also carries `"error": null`, and every update
+    /// `"id": null`.
+    #[serde(default)]
+    explicit_nulls: bool,
     #[serde(default)]
     turns: Vec<TurnScript>,
 }
@@ -145,6 +150,10 @@ enum Step {
     Unknown {
         update: Value,
     },
+    /// Writes this many bytes with no line end.
+    Flood {
+        bytes: usize,
+    },
 }
 
 fn default_tool_kind() -> String {
@@ -212,15 +221,22 @@ fn parse_options(args: &[String]) -> Option<Options> {
 
 struct Writer {
     stdout: Mutex<io::Stdout>,
-    null_error: bool,
+    explicit_nulls: bool,
 }
 
 impl Writer {
-    fn new(null_error: bool) -> Self {
+    fn new(explicit_nulls: bool) -> Self {
         Self {
             stdout: Mutex::new(io::stdout()),
-            null_error,
+            explicit_nulls,
         }
+    }
+
+    /// Writes bytes with no line end after them.
+    fn send_unfinished(&self, bytes: &[u8]) {
+        let mut out = self.stdout.lock().unwrap();
+        let _ = out.write_all(bytes);
+        let _ = out.flush();
     }
 
     fn send(&self, value: &Value) {
@@ -233,7 +249,7 @@ impl Writer {
     fn send_result<R: serde::Serialize>(&self, id: RequestId, result: R) {
         let msg = JsonRpcMessage::wrap(Response::<R, AcpError>::new(id, Ok(result)));
         let mut value = serde_json::to_value(msg).expect("serialize response");
-        if self.null_error {
+        if self.explicit_nulls {
             value["error"] = Value::Null;
         }
         self.send(&value);
@@ -250,7 +266,10 @@ impl Writer {
             method: CLIENT_METHOD_NAMES.session_update.into(),
             params: Some(SessionNotification::new(session_id.clone(), update)),
         });
-        let value = serde_json::to_value(notif).expect("serialize session notification");
+        let mut value = serde_json::to_value(notif).expect("serialize session notification");
+        if self.explicit_nulls {
+            value["id"] = Value::Null;
+        }
         self.send(&value);
     }
 
@@ -423,6 +442,7 @@ fn emit_step(writer: &Writer, session_id: &SessionId, step: &Step, cancel: Optio
         Step::Unknown { update } => {
             writer.send_raw_update(session_id, update.clone());
         }
+        Step::Flood { bytes } => writer.send_unfinished(&vec![b'x'; *bytes]),
     }
     false
 }
@@ -459,7 +479,7 @@ fn run(options: Options) -> Result<(), String> {
         None => None,
     };
 
-    let writer = Arc::new(Writer::new(script.null_error));
+    let writer = Arc::new(Writer::new(script.explicit_nulls));
     let picker = Arc::new(Mutex::new(ScriptPicker {
         turns: script.turns.clone(),
         next_unmatched: 0,
@@ -546,10 +566,15 @@ fn run(options: Options) -> Result<(), String> {
                     if !script.load_session {
                         writer.send_error(id, AcpError::method_not_found());
                     } else {
-                        for step in &script.load_replay {
-                            let _ = emit_step(&writer, &load_req.session_id, step, None);
-                        }
-                        writer.send_result(id, LoadSessionResponse::new());
+                        let (writer, replay) = (writer.clone(), script.load_replay.clone());
+                        let delay = Duration::from_millis(script.load_delay_ms);
+                        workers.push(thread::spawn(move || {
+                            thread::sleep(delay);
+                            for step in &replay {
+                                let _ = emit_step(&writer, &load_req.session_id, step, None);
+                            }
+                            writer.send_result(id, LoadSessionResponse::new());
+                        }));
                     }
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),

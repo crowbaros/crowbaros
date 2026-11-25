@@ -23,15 +23,16 @@ crowbar-agent status                   # Lever's status and available harnesses
   reads the same in a terminal and down a pipe. Acts (`[act] ...`), unrecognized
   updates (`[update] ...`), prompts, and errors go to standard error. On a
   terminal, an act that comes in the middle of a line of the answer ends that
-  line first. Down a pipe or into a file, standard output is the answer as the
-  harness wrote it and nothing else.
+  line first. Down a pipe or into a file, nothing is put in the middle of the
+  answer. Either way the answer's last line is ended, as any command's is.
 - **Nothing a harness says can drive the terminal.** Control characters in
   answers, acts, notes, and errors are shown as their Unicode pictures (`␛` for
   escape) and do nothing. Line ends and tabs stay, and carriage returns are
   dropped.
 - **A thread starts with its first message**, in the terminal's current working
   directory. `crowbar-agent` with no argument asks for a line, sends it, writes
-  the answer, and asks again. Ctrl-D leaves.
+  the answer, and asks again. Ctrl-D leaves, and stops nothing: a turn another
+  client began, or one that was working when the thread was resumed, goes on.
 - **Ctrl-C stops the turn** the Agent is working on, and the client waits for
   the turn to end (a second Ctrl-C leaves immediately). Between turns, Ctrl-C
   leaves. `--stop ID` asks Lever to stop a working turn from another terminal,
