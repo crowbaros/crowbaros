@@ -162,17 +162,482 @@ pub fn as_app(command: &[String], runner: u32, person: &Account, locale: &str) -
     Ok(command)
 }
 
+fn person_tool(program: &str, person: &Account) -> Command {
+    let mut command = Command::new(program);
+    command
+        .env_clear()
+        .env("HOME", &person.dir)
+        .env("USER", &person.name)
+        .env("LOGNAME", &person.name)
+        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+        .env("XDG_RUNTIME_DIR", format!("/run/user/{}", person.uid))
+        .stdin(Stdio::null());
+    command
+}
+
+fn parse_wpctl_volume(raw: &str) -> Option<(u32, bool)> {
+    let rest = raw.trim().strip_prefix("Volume:")?.trim();
+    let muted = rest.contains("[MUTED]");
+    let num: f32 = rest.split_whitespace().next()?.parse().ok()?;
+    if !num.is_finite() || num < 0.0 {
+        return None;
+    }
+    Some(((num * 100.0).round().clamp(0.0, 150.0) as u32, muted))
+}
+
+fn parse_default_sink_name(status: &str) -> Option<String> {
+    let mut in_audio = false;
+    let mut in_sinks = false;
+    for line in status.lines() {
+        let plain = line.trim();
+        if plain == "Audio" {
+            in_audio = true;
+            continue;
+        }
+        if plain == "Video" || plain == "Settings" {
+            break;
+        }
+        if !in_audio {
+            continue;
+        }
+        let stripped = line.trim_start_matches(|c: char| {
+            c.is_whitespace() || matches!(c, '│' | '├' | '└' | '─' | '|' | '-' | '`')
+        });
+        if stripped.starts_with("Sinks:") {
+            in_sinks = true;
+            continue;
+        }
+        if stripped.starts_with("Sources:")
+            || stripped.starts_with("Devices:")
+            || stripped.starts_with("Filters:")
+            || stripped.starts_with("Streams:")
+        {
+            in_sinks = false;
+            continue;
+        }
+        if in_sinks
+            && let Some(after_star) = stripped.strip_prefix('*')
+            && let Some((_, after_id)) = after_star.trim_start().split_once('.')
+            && let Some((name_part, _)) = after_id.trim().rsplit_once("[vol:")
+        {
+            let name = name_part.trim();
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn query_audio(person: &Account) -> Value {
+    let sink_out = person_tool("/usr/bin/wpctl", person)
+        .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
+        .output();
+    let Ok(out) = sink_out else {
+        return json!({"available": false});
+    };
+    if !out.status.success() {
+        return json!({"available": false});
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let Some((volume, muted)) = parse_wpctl_volume(&stdout) else {
+        return json!({"available": false});
+    };
+    let sink_name = person_tool("/usr/bin/wpctl", person)
+        .arg("status")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| parse_default_sink_name(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or_else(|| "Audio Output".into());
+    let (mic_available, mic_muted) = person_tool("/usr/bin/wpctl", person)
+        .args(["get-volume", "@DEFAULT_AUDIO_SOURCE@"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| parse_wpctl_volume(&String::from_utf8_lossy(&o.stdout)))
+        .map(|(_, m)| (true, m))
+        .unwrap_or((false, false));
+    json!({
+        "available": true,
+        "volume": volume,
+        "muted": muted,
+        "sink_name": sink_name,
+        "mic_available": mic_available,
+        "mic_muted": mic_muted,
+    })
+}
+
+fn parse_dbus_objects_for_iface(raw: &str, target_iface: &str) -> Vec<(String, String)> {
+    // Extracts (object_path, block_text) pairs for entries containing `target_iface`
+    // from `dbus-send --print-reply ... GetManagedObjects`.
+    let mut results = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut current_block = String::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("object path \"")
+            && let Some(path) = rest.strip_suffix('"')
+        {
+            if let Some(prev) = current_path.take()
+                && current_block.contains(target_iface)
+            {
+                results.push((prev, std::mem::take(&mut current_block)));
+            } else {
+                current_block.clear();
+            }
+            current_path = Some(path.to_string());
+        } else if current_path.is_some() {
+            current_block.push_str(trimmed);
+            current_block.push('\n');
+        }
+    }
+    if let Some(prev) = current_path
+        && current_block.contains(target_iface)
+    {
+        results.push((prev, current_block));
+    }
+    results
+}
+
+fn extract_dbus_bool(block: &str, key: &str) -> Option<bool> {
+    let needle = format!("string \"{key}\"");
+    let mut lines = block.lines();
+    while let Some(line) = lines.next() {
+        if line.contains(&needle)
+            && let Some(val_line) = lines.next()
+        {
+            if val_line.contains("boolean true") {
+                return Some(true);
+            }
+            if val_line.contains("boolean false") {
+                return Some(false);
+            }
+        }
+    }
+    None
+}
+
+fn extract_dbus_string(block: &str, key: &str) -> Option<String> {
+    let needle = format!("string \"{key}\"");
+    let mut lines = block.lines();
+    while let Some(line) = lines.next() {
+        if line.contains(&needle)
+            && let Some(val_line) = lines.next()
+            && let Some(start) = val_line.find("string \"")
+        {
+            let rest = &val_line[start + 8..];
+            if let Some(end) = rest.rfind('"') {
+                return Some(rest[..end].to_string());
+            }
+        }
+    }
+    None
+}
+
+fn query_wifi(person: &Account) -> Value {
+    let Ok(out) = person_tool("/usr/bin/dbus-send", person)
+        .args([
+            "--system",
+            "--print-reply",
+            "--dest=net.connman.iwd",
+            "/",
+            "org.freedesktop.DBus.ObjectManager.GetManagedObjects",
+        ])
+        .output()
+    else {
+        return json!({"available": false});
+    };
+    if !out.status.success() {
+        return json!({"available": false});
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let devices = parse_dbus_objects_for_iface(&text, "net.connman.iwd.Device");
+    let Some((dev_path, dev_block)) = devices.into_iter().next() else {
+        return json!({"available": false});
+    };
+    let powered = extract_dbus_bool(&dev_block, "Powered").unwrap_or(true);
+    let connected_ssid = parse_dbus_objects_for_iface(&text, "net.connman.iwd.Network")
+        .into_iter()
+        .find(|(_, block)| extract_dbus_bool(block, "Connected") == Some(true))
+        .and_then(|(_, block)| extract_dbus_string(&block, "Name"));
+    json!({
+        "available": true,
+        "powered": powered,
+        "ssid": connected_ssid,
+        "device_path": dev_path,
+    })
+}
+
+fn query_bluetooth(person: &Account) -> Value {
+    let Ok(out) = person_tool("/usr/bin/dbus-send", person)
+        .args([
+            "--system",
+            "--print-reply",
+            "--dest=org.bluez",
+            "/",
+            "org.freedesktop.DBus.ObjectManager.GetManagedObjects",
+        ])
+        .output()
+    else {
+        return json!({"available": false});
+    };
+    if !out.status.success() {
+        return json!({"available": false});
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let adapters = parse_dbus_objects_for_iface(&text, "org.bluez.Adapter1");
+    let Some((adapter_path, block)) = adapters.into_iter().next() else {
+        return json!({"available": false});
+    };
+    let powered = extract_dbus_bool(&block, "Powered").unwrap_or(false);
+    json!({
+        "available": true,
+        "powered": powered,
+        "adapter_path": adapter_path,
+    })
+}
+
+fn read_backlight_dir(base: &Path) -> Option<(PathBuf, u32, u32)> {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(base)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.join("brightness").is_file() && p.join("max_brightness").is_file())
+        .collect();
+    entries.sort();
+    let dir = entries.into_iter().next()?;
+    let cur: u32 = std::fs::read_to_string(dir.join("brightness"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    let max: u32 = std::fs::read_to_string(dir.join("max_brightness"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    if max == 0 {
+        return None;
+    }
+    Some((dir, cur.min(max), max))
+}
+
+fn query_brightness_in(base: &Path) -> Value {
+    let Some((dir, cur, max)) = read_backlight_dir(base) else {
+        return json!({"available": false});
+    };
+    let percent = ((cur as f64 / max as f64) * 100.0).round().clamp(0.0, 100.0) as u32;
+    let device = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("backlight");
+    json!({
+        "available": true,
+        "percent": percent,
+        "device": device,
+    })
+}
+
+fn set_brightness_in(base: &Path, percent: u32) -> Result<Value, String> {
+    let Some((dir, _, max)) = read_backlight_dir(base) else {
+        return Err("No backlight device available".into());
+    };
+    let clamped = percent.clamp(5, 100);
+    let raw = (((clamped as f64 / 100.0) * max as f64).round() as u32).clamp(1, max);
+    std::fs::write(dir.join("brightness"), format!("{raw}\n"))
+        .map_err(|e| format!("Could not adjust display brightness: {e}"))?;
+    Ok(query_brightness_in(base))
+}
+
+fn set_dbus_bool_property(
+    person: &Account,
+    dest: &str,
+    path: &str,
+    iface: &str,
+    prop: &str,
+    value: bool,
+) -> Result<(), String> {
+    if !path.starts_with('/')
+        || path.contains("..")
+        || !path
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_'))
+    {
+        return Err("Invalid D-Bus object path".into());
+    }
+    let out = person_tool("/usr/bin/dbus-send", person)
+        .args([
+            "--system",
+            "--print-reply",
+            &format!("--dest={dest}"),
+            path,
+            "org.freedesktop.DBus.Properties.Set",
+            &format!("string:{iface}"),
+            &format!("string:{prop}"),
+            &format!("variant:boolean:{value}"),
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
 fn dispatch(request: serde_json::Map<String, Value>, person: &Account, run: &mut Run) -> Result<Value, String> {
     let op = request.get("op").and_then(Value::as_str);
-    if request.len() == 1 && op == Some("appearance") {
-        return Ok(json!({"ok": true, "preferences": appearance(&person.dir, person.uid)?}));
+    match op {
+        Some("appearance") if request.len() == 1 => {
+            Ok(json!({"ok": true, "preferences": appearance(&person.dir, person.uid)?}))
+        }
+        Some("launch") if request.len() == 2 => {
+            let entry = request
+                .get("desktop")
+                .and_then(Value::as_str)
+                .ok_or("A desktop entry is a path")?;
+            let entry = desktop_path(entry)?;
+            run(&mut launch_command(&entry, person))?;
+            Ok(json!({"ok": true}))
+        }
+        Some("quick_status") if request.len() == 1 => Ok(json!({
+            "ok": true,
+            "audio": query_audio(person),
+            "wifi": query_wifi(person),
+            "bluetooth": query_bluetooth(person),
+            "brightness": query_brightness_in(Path::new("/sys/class/backlight")),
+        })),
+        Some("set_volume") if request.len() == 2 => {
+            let pct = request
+                .get("percent")
+                .and_then(Value::as_u64)
+                .ok_or("percent must be an integer 0..=100")?;
+            let clamped = pct.min(100);
+            let formatted = format!("{:.2}", clamped as f32 / 100.0);
+            let out = person_tool("/usr/bin/wpctl", person)
+                .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &formatted])
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                return Err("Could not set volume".into());
+            }
+            Ok(json!({"ok": true, "audio": query_audio(person)}))
+        }
+        Some("step_volume") if request.len() == 2 => {
+            let delta = request
+                .get("delta")
+                .and_then(Value::as_i64)
+                .ok_or("delta must be an integer")?;
+            let clamped_delta = delta.clamp(-25, 25);
+            let current = query_audio(person)["volume"].as_u64().unwrap_or(50) as i64;
+            let next = (current + clamped_delta).clamp(0, 100);
+            let formatted = format!("{:.2}", next as f32 / 100.0);
+            let out = person_tool("/usr/bin/wpctl", person)
+                .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &formatted])
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                return Err("Could not adjust volume".into());
+            }
+            Ok(json!({"ok": true, "audio": query_audio(person)}))
+        }
+        Some("toggle_mute") if request.len() == 1 => {
+            let out = person_tool("/usr/bin/wpctl", person)
+                .args(["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                return Err("Could not toggle mute".into());
+            }
+            Ok(json!({"ok": true, "audio": query_audio(person)}))
+        }
+        Some("toggle_mic_mute") if request.len() == 1 => {
+            let out = person_tool("/usr/bin/wpctl", person)
+                .args(["set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"])
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                return Err("Could not toggle microphone mute".into());
+            }
+            Ok(json!({"ok": true, "audio": query_audio(person)}))
+        }
+        Some("set_brightness") if request.len() == 2 => {
+            let pct = request
+                .get("percent")
+                .and_then(Value::as_u64)
+                .ok_or("percent must be an integer 5..=100")? as u32;
+            let brightness = set_brightness_in(Path::new("/sys/class/backlight"), pct)?;
+            Ok(json!({"ok": true, "brightness": brightness}))
+        }
+        Some("step_brightness") if request.len() == 2 => {
+            let delta = request
+                .get("delta")
+                .and_then(Value::as_i64)
+                .ok_or("delta must be an integer")?;
+            let current = query_brightness_in(Path::new("/sys/class/backlight"))["percent"]
+                .as_u64()
+                .ok_or("No backlight device available")? as i64;
+            let next = (current + delta.clamp(-25, 25)).clamp(5, 100) as u32;
+            let brightness = set_brightness_in(Path::new("/sys/class/backlight"), next)?;
+            Ok(json!({"ok": true, "brightness": brightness}))
+        }
+        Some("set_wifi_power") if request.len() == 2 => {
+            let powered = request
+                .get("powered")
+                .and_then(Value::as_bool)
+                .ok_or("powered must be a boolean")?;
+            let wifi = query_wifi(person);
+            let path = wifi["device_path"]
+                .as_str()
+                .ok_or("No Wi-Fi adapter detected")?;
+            set_dbus_bool_property(
+                person,
+                "net.connman.iwd",
+                path,
+                "net.connman.iwd.Device",
+                "Powered",
+                powered,
+            )?;
+            Ok(json!({"ok": true, "wifi": query_wifi(person)}))
+        }
+        Some("set_bluetooth_power") if request.len() == 2 => {
+            let powered = request
+                .get("powered")
+                .and_then(Value::as_bool)
+                .ok_or("powered must be a boolean")?;
+            let bt = query_bluetooth(person);
+            let path = bt["adapter_path"]
+                .as_str()
+                .ok_or("No Bluetooth adapter detected")?;
+            set_dbus_bool_property(
+                person,
+                "org.bluez",
+                path,
+                "org.bluez.Adapter1",
+                "Powered",
+                powered,
+            )?;
+            Ok(json!({"ok": true, "bluetooth": query_bluetooth(person)}))
+        }
+        Some("power") if request.len() == 2 => {
+            let action = request
+                .get("action")
+                .and_then(Value::as_str)
+                .ok_or("action must be suspend, reboot, or poweroff")?;
+            let target = match action {
+                "suspend" => "/usr/bin/zzz",
+                "reboot" => "/usr/bin/reboot",
+                "poweroff" => "/usr/bin/poweroff",
+                _ => return Err("Unknown power action".into()),
+            };
+            let mut command = person_tool("/usr/bin/sudo", person);
+            command.args(["-n", target]);
+            run(&mut command)?;
+            Ok(json!({"ok": true}))
+        }
+        _ => Err("Unknown request".into()),
     }
-    let (Some("launch"), 2, Some(entry)) = (op, request.len(), request.get("desktop")) else {
-        return Err("Unknown request".into());
-    };
-    let entry = desktop_path(entry.as_str().ok_or("A desktop entry is a path")?)?;
-    run(&mut launch_command(&entry, person))?;
-    Ok(json!({"ok": true}))
 }
 
 /// The reply to one connection from a peer with this user ID. Only the
@@ -603,5 +1068,57 @@ mod tests {
             assert_eq!(serde_json::from_str::<serde_json::Value>(&reply).unwrap()["ok"], false);
         }
         assert_eq!(ran, 0);
+    }
+
+    #[test]
+    fn quick_settings_parsers_and_backlight_helpers() {
+        assert_eq!(parse_wpctl_volume("Volume: 0.65\n"), Some((65, false)));
+        assert_eq!(parse_wpctl_volume("Volume: 0.40 [MUTED]\n"), Some((40, true)));
+        assert_eq!(parse_wpctl_volume("bad"), None);
+
+        let status = "Audio\n ├─ Sinks:\n │  *   32. Dummy Output [vol: 1.00]\n ├─ Sources:\n";
+        assert_eq!(parse_default_sink_name(status).as_deref(), Some("Dummy Output"));
+
+        let dir = TempDir::new();
+        assert_eq!(query_brightness_in(&dir.0)["available"], false);
+        let bl = dir.0.join("intel_backlight");
+        std::fs::create_dir_all(&bl).unwrap();
+        std::fs::write(bl.join("max_brightness"), "200\n").unwrap();
+        std::fs::write(bl.join("brightness"), "100\n").unwrap();
+        let state = query_brightness_in(&dir.0);
+        assert_eq!(state["available"], true);
+        assert_eq!(state["percent"], 50);
+        let updated = set_brightness_in(&dir.0, 75).unwrap();
+        assert_eq!(updated["percent"], 75);
+        assert_eq!(std::fs::read_to_string(bl.join("brightness")).unwrap().trim(), "150");
+    }
+
+    #[test]
+    fn power_op_only_accepts_bounded_actions_from_the_shell() {
+        let home = Home::new();
+        let (reply, ran) = ask(
+            b"{\"op\":\"power\",\"action\":\"suspend\"}\n",
+            SHELL_UID,
+            &person(home.path()),
+        );
+        assert_eq!(reply, json!({"ok": true}));
+        assert_eq!(ran.len(), 1);
+        assert!(ran[0].contains("/usr/bin/zzz"));
+
+        let (bad_action, ran_bad) = ask(
+            b"{\"op\":\"power\",\"action\":\"rm -rf /\"}\n",
+            SHELL_UID,
+            &person(home.path()),
+        );
+        assert_eq!(bad_action["ok"], false);
+        assert!(ran_bad.is_empty());
+
+        let (non_shell, ran_non_shell) = ask(
+            b"{\"op\":\"power\",\"action\":\"reboot\"}\n",
+            1003,
+            &person(home.path()),
+        );
+        assert_eq!(non_shell["ok"], false);
+        assert!(ran_non_shell.is_empty());
     }
 }

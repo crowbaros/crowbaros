@@ -46,7 +46,19 @@ historical behavior evidence, not a current Fedora workflow.
 
 - The bar and dock reserve 24 and 48 pixels through Wayland layer surfaces.
   Only the shell is offered layer shell, so no app can draw the bar, the dock,
-  the launcher, the wallpaper, the lock screen, or the Agent's surface.
+  the launcher, the Quick Settings popover (`crowbaros-quick-settings`), the
+  bar clock calendar (`crowbaros-calendar`), the transient volume/brightness OSD
+  pill (`crowbaros-osd`), the wallpaper, the lock screen, or the Agent's surface.
+- Clicking the top-right Quick Settings control opens a floating layer popover
+  with Wi-Fi (`iwd`), Bluetooth (`BlueZ`), PipeWire volume and microphone mute,
+  display brightness (when `/sys/class/backlight/*` exists), Lock/Suspend/Reboot/Power
+  Off actions (with confirmation on Reboot and Power Off), and a shortcut to
+  Studio Settings. Hardware volume, mute, and brightness keys or Quick Settings
+  changes show a brief non-focus-stealing OSD pill clear of the dock that
+  auto-dismisses.
+- Clicking the center clock in the bar toggles a month calendar popover with
+  `Left`/`Right` month navigation, `Escape`/click-outside dismissal, and a quick
+  timer.
 - Applications search supports keyboard navigation; closing the launcher returns focus.
 - Workspace and window focus requests go over the compositor's control
   channel, and the compositor tells the shell of each change to the windows
