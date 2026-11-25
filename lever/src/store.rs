@@ -1,9 +1,9 @@
 //! Lever's SQLite state store (`lever.sqlite`), kept in the person's home and
 //! readable by the person alone.
 //!
-//! Keeps every thread, its turns, its acts, and its notes: the updates Lever
-//! shows as neither text nor an act (kept as JSON, along with a plain
-//! rendering).
+//! Keeps every thread, its turns, its acts, its requests, and its notes: the
+//! updates Lever shows as neither text nor an act (kept as JSON, along with a
+//! plain rendering).
 
 use crate::sys;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -22,6 +22,9 @@ pub struct ThreadSummary {
     pub turns: u64,
     pub state: String,
     pub working: bool,
+    /// A request of this thread waits for the person.
+    pub waiting: bool,
+    pub mode: String,
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +36,7 @@ pub struct ThreadMeta {
     pub harness_session_id: Option<String>,
     /// The Model chosen for this thread, if any.
     pub model: Option<String>,
+    pub mode: String,
     pub latest_turn: Option<u64>,
     pub working_turn: Option<u64>,
 }
@@ -43,6 +47,7 @@ pub struct ThreadRecord {
     pub title: String,
     pub cwd: String,
     pub model: Option<String>,
+    pub mode: String,
     pub started: i64,
     pub updated: i64,
     pub working: bool,
@@ -57,9 +62,52 @@ pub struct TurnRecord {
     pub answer: String,
     pub state: String,
     pub error: Option<String>,
+    /// The mode the turn began in, absent for turns recorded before modes.
+    pub mode: Option<String>,
     pub acts: Vec<ActRecord>,
+    pub requests: Vec<RequestRecord>,
     pub notes: Vec<NoteRecord>,
 }
+
+/// A thread's first turn: what Lever keeps of the thread as it begins.
+pub struct NewThread<'a> {
+    pub title: &'a str,
+    pub cwd: &'a str,
+    pub harness_name: Option<&'a str>,
+    pub mode: &'a str,
+}
+
+/// A request that waits for the person: what the harness asks to do, and the
+/// answers it offers, as Lever's own (`once`, `always`, `no`, `never`) with
+/// the harness's name for each.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestRecord {
+    pub id: String,
+    pub act: Option<String>,
+    pub kind: String,
+    pub title: String,
+    pub detail: Option<String>,
+    pub path: Option<String>,
+    pub answers: Vec<(String, String)>,
+    /// `waiting`, `answered`, or `withdrawn`.
+    pub state: String,
+    pub answer: Option<String>,
+}
+
+/// A request as it begins, before Lever gives it an ID.
+pub struct NewRequest<'a> {
+    pub thread_id: &'a str,
+    pub turn_number: u64,
+    pub act: Option<&'a str>,
+    pub kind: &'a str,
+    pub title: &'a str,
+    pub detail: Option<&'a str>,
+    pub path: Option<&'a str>,
+    pub answers: &'a [(String, String)],
+}
+
+/// The mode a thread starts in when the person has chosen none.
+pub const STARTING_MODE: &str = "ask-first";
 
 #[derive(Debug, Clone)]
 pub struct ActRecord {
@@ -120,7 +168,7 @@ impl Store {
                  key TEXT PRIMARY KEY,\n\
                  value TEXT NOT NULL\n\
              );\n\
-             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '4');\n\
+             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '5');\n\
              CREATE TABLE IF NOT EXISTS threads (\n\
                  id TEXT PRIMARY KEY,\n\
                  title TEXT NOT NULL,\n\
@@ -128,6 +176,7 @@ impl Store {
                  harness_name TEXT,\n\
                  harness_session_id TEXT,\n\
                  model TEXT,\n\
+                 mode TEXT,\n\
                  created_at INTEGER NOT NULL,\n\
                  updated_at INTEGER NOT NULL\n\
              );\n\
@@ -140,6 +189,7 @@ impl Store {
                  answer TEXT NOT NULL DEFAULT '',\n\
                  state TEXT NOT NULL,\n\
                  error TEXT,\n\
+                 mode TEXT,\n\
                  created_at INTEGER NOT NULL,\n\
                  ended_at INTEGER,\n\
                  UNIQUE(thread_id, turn_number)\n\
@@ -164,6 +214,20 @@ impl Store {
                  plain_text TEXT NOT NULL,\n\
                  after_turn INTEGER NOT NULL DEFAULT 0,\n\
                  seq INTEGER NOT NULL\n\
+             );\n\
+             CREATE TABLE IF NOT EXISTS requests (\n\
+                 id TEXT PRIMARY KEY,\n\
+                 thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,\n\
+                 turn_number INTEGER NOT NULL,\n\
+                 act_id TEXT,\n\
+                 kind TEXT NOT NULL,\n\
+                 title TEXT NOT NULL,\n\
+                 detail TEXT,\n\
+                 path TEXT,\n\
+                 answers TEXT NOT NULL,\n\
+                 state TEXT NOT NULL,\n\
+                 answer TEXT,\n\
+                 seq INTEGER NOT NULL\n\
              );",
         )
         .map_err(|e| format!("could not initialize database {}: {e}", path.display()))?;
@@ -171,13 +235,18 @@ impl Store {
         // Migrate older databases missing columns added in newer schema versions.
         ensure_column(&conn, "threads", "model", "TEXT")?;
         ensure_column(&conn, "turns", "context", "TEXT")?;
+        ensure_column(&conn, "threads", "mode", "TEXT")?;
+        ensure_column(&conn, "turns", "mode", "TEXT")?;
 
-        // Any turn left working by a Lever that ended abruptly is interrupted.
+        // Any turn left working by a Lever that ended abruptly is interrupted,
+        // and a request that waited went with the harness that asked it.
         conn.execute(
             "UPDATE turns SET state = 'interrupted', ended_at = ?1 WHERE state = 'working'",
             params![now],
         )
         .map_err(|e| format!("could not mark interrupted turns: {e}"))?;
+        conn.execute("UPDATE requests SET state = 'withdrawn' WHERE state = 'waiting'", [])
+            .map_err(|e| format!("could not withdraw waiting requests: {e}"))?;
 
         tighten_permissions(path)?;
         Ok(Self {
@@ -230,60 +299,82 @@ impl Store {
         Ok(())
     }
 
+    /// The mode new threads start in: `ask-first` until the person chooses
+    /// another.
+    pub fn default_mode(&self) -> Result<String, String> {
+        let value: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key = 'default_mode'", [], |r| r.get(0))
+            .optional()
+            .map_err(|e| format!("could not read default_mode setting: {e}"))?;
+        Ok(value.unwrap_or_else(|| STARTING_MODE.to_string()))
+    }
+
+    /// Saves the mode new threads start in.
+    pub fn set_default_mode(&self, mode: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('default_mode', ?1)",
+                params![mode],
+            )
+            .map_err(|e| format!("could not save default_mode setting: {e}"))?;
+        Ok(())
+    }
+
     /// Begins a turn with the person's message, in a new thread when
-    /// `new_thread` gives its title, working directory, harness name, and
-    /// optional Model. All of it is saved or none of it: a thread is never
-    /// left with a turn that is working in the record and that Lever never began.
+    /// `new_thread` is given. The turn, and the thread from it on, is in
+    /// `mode` when one is given. All of it is saved or none of it: a thread is
+    /// never left with a turn that is working in the record and that Lever
+    /// never began.
     pub fn begin_turn(
         &self,
         thread_id: &str,
-        new_thread: Option<(&str, &str, Option<&str>, Option<&str>)>,
+        new_thread: Option<NewThread<'_>>,
         message: &str,
         context: Option<&str>,
+        mode: Option<&str>,
         now: i64,
     ) -> Result<u64, String> {
         let all = self
             .conn
             .unchecked_transaction()
             .map_err(|e| format!("could not begin a turn: {e}"))?;
-        if let Some((title, cwd, harness_name, model)) = new_thread {
-            self.create_thread(thread_id, title, cwd, harness_name, model, now)?;
+        if let Some(thread) = new_thread {
+            self.create_thread(thread_id, &thread, now)?;
+        }
+        if let Some(mode) = mode {
+            self.conn
+                .execute("UPDATE threads SET mode = ?1 WHERE id = ?2", params![mode, thread_id])
+                .map_err(|e| format!("could not set thread mode: {e}"))?;
         }
         let turn = self.create_turn(thread_id, message, context, now)?;
         all.commit().map_err(|e| format!("could not begin a turn: {e}"))?;
         Ok(turn)
     }
 
-    fn create_thread(
-        &self,
-        id: &str,
-        title: &str,
-        cwd: &str,
-        harness_name: Option<&str>,
-        model: Option<&str>,
-        now: i64,
-    ) -> Result<(), String> {
+    fn create_thread(&self, id: &str, thread: &NewThread<'_>, now: i64) -> Result<(), String> {
         self.conn
             .execute(
-                "INSERT INTO threads (id, title, cwd, harness_name, model, created_at, updated_at) \
+                "INSERT INTO threads (id, title, cwd, harness_name, mode, created_at, updated_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-                params![id, title, cwd, harness_name, model, now],
+                params![id, thread.title, thread.cwd, thread.harness_name, thread.mode, now],
             )
             .map_err(|e| format!("could not create thread: {e}"))?;
         Ok(())
     }
 
     pub fn thread_meta(&self, thread_id: &str) -> Result<Option<ThreadMeta>, String> {
-        let row: Option<(String, Option<String>, Option<String>)> = self
+        type Row = (String, Option<String>, Option<String>, Option<String>);
+        let row: Option<Row> = self
             .conn
             .query_row(
-                "SELECT cwd, harness_session_id, model FROM threads WHERE id = ?1",
+                "SELECT cwd, harness_session_id, model, mode FROM threads WHERE id = ?1",
                 params![thread_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .optional()
             .map_err(|e| format!("could not query thread: {e}"))?;
-        let Some((cwd, harness_session_id, model)) = row else {
+        let Some((cwd, harness_session_id, model, mode)) = row else {
             return Ok(None);
         };
         let latest_turn: Option<u64> = self
@@ -312,9 +403,20 @@ impl Store {
             cwd,
             harness_session_id,
             model,
+            mode: mode.unwrap_or_else(|| STARTING_MODE.to_string()),
             latest_turn,
             working_turn,
         }))
+    }
+
+    pub fn set_thread_mode(&self, thread_id: &str, mode: &str, now: i64) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE threads SET mode = ?1, updated_at = ?2 WHERE id = ?3",
+                params![mode, now, thread_id],
+            )
+            .map_err(|e| format!("could not update thread mode: {e}"))?;
+        Ok(())
     }
 
     pub fn set_thread_model(&self, thread_id: &str, model: &str, now: i64) -> Result<(), String> {
@@ -374,8 +476,8 @@ impl Store {
             .map_err(|e| format!("could not compute next turn number: {e}"))?;
         self.conn
             .execute(
-                "INSERT INTO turns (thread_id, turn_number, message, context, answer, state, created_at) \
-                 VALUES (?1, ?2, ?3, ?4, '', 'working', ?5)",
+                "INSERT INTO turns (thread_id, turn_number, message, context, answer, state, mode, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, '', 'working', (SELECT mode FROM threads WHERE id = ?1), ?5)",
                 params![thread_id, next, message, context, now],
             )
             .map_err(|e| format!("could not insert turn: {e}"))?;
@@ -618,7 +720,9 @@ impl Store {
             .prepare(
                 "SELECT t.id, t.title, t.cwd, t.model, t.created_at, t.updated_at, \
                         (SELECT COUNT(*) FROM turns WHERE thread_id = t.id), \
-                        (SELECT state FROM turns WHERE thread_id = t.id ORDER BY turn_number DESC LIMIT 1) \
+                        (SELECT state FROM turns WHERE thread_id = t.id ORDER BY turn_number DESC LIMIT 1), \
+                        EXISTS (SELECT 1 FROM requests WHERE thread_id = t.id AND state = 'waiting'), \
+                        t.mode \
                  FROM threads t \
                  ORDER BY t.updated_at DESC, t.rowid DESC",
             )
@@ -637,6 +741,10 @@ impl Store {
                     turns: r.get::<_, i64>(6)? as u64,
                     state,
                     working,
+                    waiting: r.get(8)?,
+                    mode: r
+                        .get::<_, Option<String>>(9)?
+                        .unwrap_or_else(|| STARTING_MODE.to_string()),
                 })
             })
             .map_err(|e| format!("could not query threads: {e}"))?;
@@ -648,23 +756,34 @@ impl Store {
     }
 
     pub fn get_thread(&self, thread_id: &str) -> Result<Option<ThreadRecord>, String> {
-        let row: Option<(String, String, String, Option<String>, i64, i64)> = self
+        type Row = (String, String, String, Option<String>, Option<String>, i64, i64);
+        let row: Option<Row> = self
             .conn
             .query_row(
-                "SELECT id, title, cwd, model, created_at, updated_at FROM threads WHERE id = ?1",
+                "SELECT id, title, cwd, model, mode, created_at, updated_at FROM threads WHERE id = ?1",
                 params![thread_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
             )
             .optional()
             .map_err(|e| format!("could not query thread: {e}"))?;
-        let Some((id, title, cwd, model, started, updated)) = row else {
+        let Some((id, title, cwd, model, mode, started, updated)) = row else {
             return Ok(None);
         };
 
         let mut turn_stmt = self
             .conn
             .prepare(
-                "SELECT turn_number, message, context, answer, state, error \
+                "SELECT turn_number, message, context, answer, state, error, mode \
                  FROM turns WHERE thread_id = ?1 ORDER BY turn_number ASC",
             )
             .map_err(|e| format!("could not prepare turns query: {e}"))?;
@@ -679,7 +798,9 @@ impl Store {
                     answer: r.get(3)?,
                     state: r.get(4)?,
                     error: r.get(5)?,
+                    mode: r.get(6)?,
                     acts: Vec::new(),
+                    requests: Vec::new(),
                     notes: Vec::new(),
                 })
             })
@@ -717,6 +838,12 @@ impl Store {
             }
         }
 
+        for (turn_number, request) in self.requests_of(thread_id, None)? {
+            if let Some(turn) = turns.iter_mut().find(|t| t.turn == turn_number) {
+                turn.requests.push(request);
+            }
+        }
+
         let mut note_stmt = self
             .conn
             .prepare(
@@ -748,11 +875,134 @@ impl Store {
             title,
             cwd,
             model,
+            mode: mode.unwrap_or_else(|| STARTING_MODE.to_string()),
             started,
             updated,
             working,
             turns,
         }))
+    }
+
+    /// Keeps a request that waits for the person, and gives it Lever's ID.
+    pub fn insert_request(&self, request: &NewRequest<'_>, now: i64) -> Result<RequestRecord, String> {
+        let seq: i64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(MAX(seq), 0) + 1 FROM requests WHERE thread_id = ?1",
+                params![request.thread_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("could not compute request sequence: {e}"))?;
+        let id = format!("r-{}", sys::random_hex(6));
+        let answers = serde_json::to_string(request.answers).map_err(|e| format!("could not encode answers: {e}"))?;
+        self.conn
+            .execute(
+                "INSERT INTO requests (id, thread_id, turn_number, act_id, kind, title, detail, path, answers, state, seq) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'waiting', ?10)",
+                params![
+                    id,
+                    request.thread_id,
+                    request.turn_number as i64,
+                    request.act,
+                    request.kind,
+                    request.title,
+                    request.detail,
+                    request.path,
+                    answers,
+                    seq
+                ],
+            )
+            .map_err(|e| format!("could not insert request: {e}"))?;
+        self.touch_thread(request.thread_id, now)?;
+        Ok(RequestRecord {
+            id,
+            act: request.act.map(str::to_string),
+            kind: request.kind.to_string(),
+            title: request.title.to_string(),
+            detail: request.detail.map(str::to_string),
+            path: request.path.map(str::to_string),
+            answers: request.answers.to_vec(),
+            state: "waiting".to_string(),
+            answer: None,
+        })
+    }
+
+    /// Ends a request that waits, as `answered` with `answer` or as
+    /// `withdrawn`. Returns its turn and record, or `None` when no request
+    /// with that ID waits.
+    pub fn end_request(
+        &self,
+        request_id: &str,
+        state: &str,
+        answer: Option<&str>,
+        now: i64,
+    ) -> Result<Option<(String, u64, RequestRecord)>, String> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE requests SET state = ?1, answer = ?2 WHERE id = ?3 AND state = 'waiting'",
+                params![state, answer, request_id],
+            )
+            .map_err(|e| format!("could not end request: {e}"))?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        let thread_id: String = self
+            .conn
+            .query_row(
+                "SELECT thread_id FROM requests WHERE id = ?1",
+                params![request_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("could not query request: {e}"))?;
+        self.touch_thread(&thread_id, now)?;
+        let found = self
+            .requests_of(&thread_id, Some(request_id))?
+            .into_iter()
+            .next()
+            .map(|(turn, record)| (thread_id, turn, record));
+        Ok(found)
+    }
+
+    /// A thread's requests, oldest first, each with its turn: all of them, or
+    /// the one with `request_id`.
+    pub fn requests_of(&self, thread_id: &str, request_id: Option<&str>) -> Result<Vec<(u64, RequestRecord)>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT turn_number, id, act_id, kind, title, detail, path, answers, state, answer \
+                 FROM requests WHERE thread_id = ?1 AND (?2 IS NULL OR id = ?2) ORDER BY seq ASC",
+            )
+            .map_err(|e| format!("could not prepare requests query: {e}"))?;
+        let rows = stmt
+            .query_map(params![thread_id, request_id], |r| {
+                let answers: String = r.get(7)?;
+                Ok((
+                    r.get::<_, i64>(0)? as u64,
+                    RequestRecord {
+                        id: r.get(1)?,
+                        act: r.get(2)?,
+                        kind: r.get(3)?,
+                        title: r.get(4)?,
+                        detail: r.get(5)?,
+                        path: r.get(6)?,
+                        answers: serde_json::from_str(&answers).unwrap_or_default(),
+                        state: r.get(8)?,
+                        answer: r.get(9)?,
+                    },
+                ))
+            })
+            .map_err(|e| format!("could not query requests: {e}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("could not read request row: {e}"))
+    }
+
+    /// Withdraws every request that waits, as when Lever stops.
+    pub fn withdraw_all_waiting(&self) -> Result<(), String> {
+        self.conn
+            .execute("UPDATE requests SET state = 'withdrawn' WHERE state = 'waiting'", [])
+            .map_err(|e| format!("could not withdraw waiting requests: {e}"))?;
+        Ok(())
     }
 }
 
@@ -885,13 +1135,86 @@ mod tests {
         assert_eq!(rec.turns[0].context, None);
 
         let ctx = r#"{"workspace":1,"active":null,"locked":false,"windows":[],"displays":[]}"#;
-        let turn2 = store.begin_turn("t-v3", None, "second", Some(ctx), 201).unwrap();
+        let turn2 = store.begin_turn("t-v3", None, "second", Some(ctx), None, 201).unwrap();
         assert_eq!(turn2, 2);
         let rec = store.get_thread("t-v3").unwrap().expect("updated v3 thread");
         assert_eq!(
             rec.turns[1].context.as_ref().and_then(|v| v.get("workspace")),
             Some(&serde_json::json!(1))
         );
+        store.close().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn opens_a_v4_database_with_no_modes_or_requests_and_keeps_both_after() {
+        let dir = std::env::temp_dir().join(format!(
+            "crowbar-lever-store-migrate-v4-{}-{}",
+            std::process::id(),
+            crate::sys::random_hex(4)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("lever.db");
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO meta (key, value) VALUES ('schema_version', '4');
+                 CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, cwd TEXT NOT NULL,
+                     harness_name TEXT, harness_session_id TEXT, model TEXT,
+                     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+                 CREATE TABLE turns (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+                     turn_number INTEGER NOT NULL, message TEXT NOT NULL, context TEXT,
+                     answer TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, error TEXT,
+                     created_at INTEGER NOT NULL, ended_at INTEGER, UNIQUE(thread_id, turn_number));
+                 INSERT INTO threads (id, title, cwd, created_at, updated_at) VALUES ('t-v4', 'Old', '/tmp', 1, 1);
+                 INSERT INTO turns (thread_id, turn_number, message, state, created_at) VALUES ('t-v4', 1, 'hi', 'done', 1);",
+            )
+            .unwrap();
+        }
+        let store = Store::open(&db, 2).unwrap();
+        let rec = store.get_thread("t-v4").unwrap().unwrap();
+        assert_eq!(rec.mode, STARTING_MODE);
+        assert_eq!(rec.turns[0].mode, None);
+        assert!(rec.turns[0].requests.is_empty());
+        assert_eq!(store.default_mode().unwrap(), STARTING_MODE);
+
+        store.set_thread_mode("t-v4", "plan", 3).unwrap();
+        let turn = store.begin_turn("t-v4", None, "again", None, None, 3).unwrap();
+        let answers = vec![("once".to_string(), "Allow once".to_string())];
+        let request = store
+            .insert_request(
+                &NewRequest {
+                    thread_id: "t-v4",
+                    turn_number: turn,
+                    act: None,
+                    kind: "command",
+                    title: "ls",
+                    detail: Some("ls"),
+                    path: None,
+                    answers: &answers,
+                },
+                4,
+            )
+            .unwrap();
+        assert!(store.list_threads().unwrap()[0].waiting);
+        let (thread, turn_number, ended) = store
+            .end_request(&request.id, "answered", Some("once"), 5)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (thread.as_str(), turn_number, ended.answer.as_deref()),
+            ("t-v4", 2, Some("once"))
+        );
+        assert_eq!(
+            store.end_request(&request.id, "withdrawn", None, 6).unwrap(),
+            None,
+            "it ends once"
+        );
+        let rec = store.get_thread("t-v4").unwrap().unwrap();
+        assert_eq!(rec.turns[1].mode.as_deref(), Some("plan"));
+        assert_eq!(rec.turns[1].requests[0].state, "answered");
         store.close().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -384,7 +384,7 @@ Request:
 Reply:
 
 ```json
-{"reply":"resumed","thread":"t-01a2b3c4d5e6","title":"List the files","cwd":"/home/crowbar","started":1764000000,"updated":1764000005,"working":false,"turns":[{"turn":1,"message":"List the files","answer":"Here are the files.","state":"done","acts":[{"act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","state":"done","detail":"Cargo.toml"}],"notes":[{"note":"note-01a2b3c4d5e6","text":"Cache warm"}]}]}
+{"reply":"resumed","thread":"t-01a2b3c4d5e6","title":"List the files","cwd":"/home/crowbar","started":1764000000,"updated":1764000005,"working":false,"mode":"ask-first","turns":[{"turn":1,"message":"List the files","answer":"Here are the files.","state":"done","mode":"ask-first","acts":[{"act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","state":"done","detail":"Cargo.toml"}],"requests":[{"request":"r-01a2b3c4d5e6","act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","detail":"ls","answers":[{"answer":"once","name":"Allow once"},{"answer":"always","name":"Always allow"},{"answer":"no","name":"Reject"}],"state":"answered","answer":"once"}],"notes":[{"note":"note-01a2b3c4d5e6","text":"Cache warm"}]}]}
 ```
 
 When a turn ended with `"state":"failed"`, the turn object also carries
@@ -622,8 +622,9 @@ Lever stores its state in `--state` (mode `0700`, owned by the person):
 
 - `lever.sqlite` (mode `0600`, SQLite WAL mode with `synchronous = NORMAL`,
   plus `0600` sidecar `-wal`/`-shm` files): Lever's database holding `threads`,
-  `turns`, `acts`, and `notes` (with `raw_json` keeping the JSON of each
-  update shown as a note). A write the database does not take is logged as an
+  `turns`, `acts`, `requests`, and `notes` (with `raw_json` keeping the JSON
+  of each update shown as a note), and the starting mode. A request that waits
+  when Lever starts is withdrawn, as the turn that asked it is interrupted. A write the database does not take is logged as an
   `error` that names what could not be done and nothing a thread said. How a
   turn ended is tried again until the database takes it, so a thread is not
   left `working` in the record after its turn is over, and `list` and `resume`

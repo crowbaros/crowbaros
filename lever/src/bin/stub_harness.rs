@@ -10,19 +10,28 @@
 //! gets the same IDs from every stub, which is how a test has a harness hand
 //! out an ID twice.
 //!
+//! With `modes` in the script, it offers modes as OpenCode does: a session
+//! configuration option of category `mode` with each primary agent in
+//! `OPENCODE_CONFIG_CONTENT`, then `build` and `plan`, starting in that
+//! configuration's `default_agent`. An `ask` step asks before it acts when the
+//! session's agent has `ask` for its permission, as OpenCode does: it waits
+//! for the answer, and a reject ends the turn as cancelled. A turn that is
+//! cancelled while it asks withdraws the request with `$/cancel_request`.
+//!
 //! Usage:
 //!   crowbar-stub-harness --script <path> [--log <path>]
 
 use agent_client_protocol_schema::ProtocolVersion;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AgentCapabilities, AvailableCommandsUpdate, CLIENT_METHOD_NAMES, CancelNotification,
-    CloseSessionRequest, CloseSessionResponse, ContentBlock, ContentChunk, Error as AcpError, Implementation,
-    InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
-    NewSessionResponse, Notification, PromptRequest, PromptResponse, Request, RequestId, Response, SessionCapabilities,
-    SessionCloseCapabilities, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption, SessionId,
-    SessionInfoUpdate, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
-    SetSessionConfigOptionResponse, StopReason, TextContent, ToolCall, ToolCallContent, ToolCallId, ToolCallStatus,
-    ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    CloseSessionRequest, CloseSessionResponse, ConfigOptionUpdate, ContentBlock, ContentChunk, Diff, Error as AcpError,
+    Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest, LoadSessionResponse,
+    NewSessionRequest, NewSessionResponse, Notification, PROTOCOL_LEVEL_METHOD_NAMES, PermissionOption,
+    PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId, RequestPermissionRequest, Response,
+    SessionCapabilities, SessionCloseCapabilities, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigSelectOption, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
+    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason, TextContent, ToolCall, ToolCallContent,
+    ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -87,6 +96,9 @@ struct Script {
     /// `"id": null`.
     #[serde(default)]
     explicit_nulls: bool,
+    /// If true, offers modes as OpenCode does (see the module's doc).
+    #[serde(default)]
+    modes: bool,
     #[serde(default)]
     turns: Vec<TurnScript>,
 }
@@ -131,6 +143,10 @@ struct TurnScript {
     /// If true, exits the stub process abruptly mid-turn (after running `steps`).
     #[serde(default)]
     crash: bool,
+    /// If true, takes no notice of `session/cancel`: the turn goes on, and a
+    /// `stall` holds it open for ever.
+    #[serde(default)]
+    ignore_cancel: bool,
 }
 
 fn default_stop_reason() -> String {
@@ -187,6 +203,40 @@ enum Step {
     Flood {
         bytes: usize,
     },
+    /// An act that asks first when the session's agent asks for its
+    /// permission, and is carried out at once otherwise.
+    Ask {
+        id: String,
+        #[serde(default = "default_tool_kind")]
+        tool_kind: String,
+        title: String,
+        #[serde(default)]
+        raw_input: Option<Value>,
+        /// For an edit: the file, what it held, and what it is to hold.
+        #[serde(default)]
+        diff: Option<StubDiff>,
+        /// What it prints when it runs.
+        #[serde(default)]
+        output: Option<String>,
+    },
+    /// Starts `sleep 600` as a child of the stub and writes its process ID
+    /// to `pid_file`.
+    Spawn {
+        pid_file: String,
+    },
+    /// The session's mode changes to `mode` (a harness value), as when the
+    /// harness changes it itself.
+    ModeChange {
+        mode: String,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StubDiff {
+    path: String,
+    #[serde(default)]
+    old: Option<String>,
+    new: String,
 }
 
 fn default_tool_kind() -> String {
@@ -402,8 +452,247 @@ impl ScriptPicker {
             cancel_with_error: false,
             after: Vec::new(),
             crash: false,
+            ignore_cancel: false,
         }
     }
+}
+
+/// What an `ask` step needs from the stub beyond its session.
+struct Asking<'a> {
+    modes: &'a Modes,
+    session_modes: &'a Mutex<HashMap<String, String>>,
+    always: &'a Mutex<HashMap<String, Vec<String>>>,
+    replies: &'a Replies,
+    next_request: &'a AtomicU64,
+}
+
+/// What an `ask` step came to.
+#[derive(PartialEq)]
+enum Asked {
+    /// The turn goes on.
+    Went,
+    /// The person said no, or the turn was cancelled while it asked: the
+    /// turn ends as cancelled.
+    Ended,
+}
+
+/// Answers Lever sends to the stub's own requests, by request ID.
+type Replies = Mutex<HashMap<String, std::sync::mpsc::Sender<Value>>>;
+
+/// The modes the stub offers: each primary agent in `OPENCODE_CONFIG_CONTENT`
+/// with what it asks for, then `build` and `plan`, and the one a session
+/// starts in.
+struct Modes {
+    offered: bool,
+    agents: Vec<(String, HashMap<String, String>)>,
+    default: String,
+}
+
+impl Modes {
+    fn read(offered: bool) -> Modes {
+        let config: Value = std::env::var("OPENCODE_CONFIG_CONTENT")
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or(Value::Null);
+        let mut agents = Vec::new();
+        if let Some(defined) = config.get("agent").and_then(Value::as_object) {
+            for (name, agent) in defined {
+                if agent.get("mode").and_then(Value::as_str) != Some("primary") {
+                    continue;
+                }
+                let permission = agent
+                    .get("permission")
+                    .and_then(Value::as_object)
+                    .map(|p| {
+                        p.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                agents.push((name.clone(), permission));
+            }
+        }
+        agents.push(("build".to_string(), HashMap::new()));
+        agents.push((
+            "plan".to_string(),
+            HashMap::from([("edit".to_string(), "deny".to_string())]),
+        ));
+        let default = config
+            .get("default_agent")
+            .and_then(Value::as_str)
+            .filter(|d| agents.iter().any(|(name, _)| name == d))
+            .unwrap_or("build")
+            .to_string();
+        Modes {
+            offered,
+            agents,
+            default,
+        }
+    }
+
+    fn has(&self, mode: &str) -> bool {
+        self.agents.iter().any(|(name, _)| name == mode)
+    }
+
+    /// What `mode` does for `permission`: `ask`, `deny`, or `allow`.
+    fn rule(&self, mode: &str, permission: &str) -> String {
+        self.agents
+            .iter()
+            .find(|(name, _)| name == mode)
+            .and_then(|(_, rules)| rules.get(permission).cloned())
+            .unwrap_or_else(|| "allow".to_string())
+    }
+}
+
+fn act_update(writer: &Writer, session_id: &SessionId, id: &str, status: ToolCallStatus, text: &str) {
+    let fields = ToolCallUpdateFields::new()
+        .status(status)
+        .content(vec![ToolCallContent::from(ContentBlock::from(text.to_string()))]);
+    writer.send_update(
+        session_id,
+        SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(ToolCallId::new(id.to_string()), fields)),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ask(
+    writer: &Writer,
+    session_id: &SessionId,
+    asking: &Asking<'_>,
+    cancel: Option<&CancelFlag>,
+    id: &str,
+    tool_kind: &str,
+    title: &str,
+    raw_input: Option<&Value>,
+    diff: Option<&StubDiff>,
+    output: Option<&str>,
+) -> Asked {
+    let kind = parse_tool_kind(tool_kind);
+    let permission = if kind == ToolKind::Execute { "bash" } else { "edit" };
+    let mut fields = ToolCallUpdateFields::new().kind(kind).title(title.to_string());
+    if let Some(input) = raw_input {
+        fields = fields.raw_input(input.clone());
+    }
+    if let Some(d) = diff {
+        let mut change = Diff::new(PathBuf::from(&d.path), d.new.clone());
+        if let Some(old) = &d.old {
+            change = change.old_text(old.clone());
+        }
+        fields = fields.content(vec![ToolCallContent::Diff(change)]);
+    }
+    let mut call = ToolCall::new(ToolCallId::new(id.to_string()), title.to_string())
+        .kind(kind)
+        .status(ToolCallStatus::InProgress);
+    if let Some(input) = raw_input {
+        call = call.raw_input(input.clone());
+    }
+    writer.send_update(session_id, SessionUpdate::ToolCall(call));
+
+    let sid = session_id.0.as_ref().to_string();
+    let mode = asking
+        .session_modes
+        .lock()
+        .unwrap()
+        .get(&sid)
+        .cloned()
+        .unwrap_or_else(|| asking.modes.default.clone());
+    let rule = if asking.modes.offered {
+        asking.modes.rule(&mode, permission)
+    } else {
+        "allow".to_string()
+    };
+    let allowed_always = asking
+        .always
+        .lock()
+        .unwrap()
+        .get(&sid)
+        .is_some_and(|granted| granted.iter().any(|p| p == permission));
+    if rule == "deny" {
+        act_update(
+            writer,
+            session_id,
+            id,
+            ToolCallStatus::Failed,
+            "Not allowed in this mode",
+        );
+        return Asked::Went;
+    }
+    if rule == "ask" && !allowed_always {
+        let n = asking.next_request.fetch_add(1, Ordering::Relaxed);
+        let request_id = RequestId::Number(n as i64);
+        let (tx, rx) = std::sync::mpsc::channel();
+        asking.replies.lock().unwrap().insert(n.to_string(), tx);
+        let options = vec![
+            PermissionOption::new("once", "Allow once", PermissionOptionKind::AllowOnce),
+            PermissionOption::new("always", "Always allow", PermissionOptionKind::AllowAlways),
+            PermissionOption::new("reject", "Reject", PermissionOptionKind::RejectOnce),
+        ];
+        let request = RequestPermissionRequest::new(
+            session_id.clone(),
+            ToolCallUpdate::new(ToolCallId::new(id.to_string()), fields),
+            options,
+        );
+        writer.send(
+            &serde_json::to_value(JsonRpcMessage::wrap(Request {
+                id: request_id.clone(),
+                method: CLIENT_METHOD_NAMES.session_request_permission.into(),
+                params: Some(request),
+            }))
+            .expect("serialize permission request"),
+        );
+        let answer = loop {
+            if cancel.is_some_and(CancelFlag::is_cancelled) {
+                asking.replies.lock().unwrap().remove(&n.to_string());
+                writer.send(&json!({
+                    "jsonrpc": "2.0",
+                    "method": PROTOCOL_LEVEL_METHOD_NAMES.cancel_request,
+                    "params": { "requestId": n },
+                }));
+                break None;
+            }
+            match rx.recv_timeout(Duration::from_millis(20)) {
+                Ok(reply) => break Some(reply),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break None,
+            }
+        };
+        let chosen = answer
+            .as_ref()
+            .and_then(|r| r.pointer("/result/outcome"))
+            .filter(|o| o.get("outcome").and_then(Value::as_str) == Some("selected"))
+            .and_then(|o| o.get("optionId").and_then(Value::as_str))
+            .map(str::to_string);
+        match chosen.as_deref() {
+            Some("once") => {}
+            Some("always") => {
+                asking
+                    .always
+                    .lock()
+                    .unwrap()
+                    .entry(sid)
+                    .or_default()
+                    .push(permission.to_string());
+            }
+            _ => {
+                act_update(
+                    writer,
+                    session_id,
+                    id,
+                    ToolCallStatus::Failed,
+                    "The user declined this tool call",
+                );
+                return Asked::Ended;
+            }
+        }
+    }
+    act_update(
+        writer,
+        session_id,
+        id,
+        ToolCallStatus::Completed,
+        output.unwrap_or("ran"),
+    );
+    Asked::Went
 }
 
 fn emit_step(
@@ -505,6 +794,15 @@ fn emit_step(
             writer.send_raw_update(session_id, update.clone());
         }
         Step::Flood { bytes } => writer.send_unfinished(&vec![b'x'; *bytes]),
+        Step::Spawn { pid_file } => {
+            if let Ok(child) = std::process::Command::new("sleep").arg("600").spawn() {
+                let _ = std::fs::write(pid_file, child.id().to_string());
+                // Left running: the stub's own end must take it, or Lever.
+                std::mem::forget(child);
+            }
+        }
+        // Carried out by the turn, which has what they need.
+        Step::Ask { .. } | Step::ModeChange { .. } => {}
     }
     false
 }
@@ -527,19 +825,39 @@ fn append_log(log_file: &mut Option<File>, line: &str) {
     }
 }
 
-fn build_config_options(models: Option<&[StubModel]>, current: Option<&str>) -> Option<Vec<SessionConfigOption>> {
-    let models = models?;
-    let current = current
-        .or_else(|| models.first().map(|m| m.id.as_str()))
-        .unwrap_or("")
-        .to_string();
-    let opts: Vec<SessionConfigSelectOption> = models
-        .iter()
-        .map(|m| SessionConfigSelectOption::new(m.id.clone(), m.name.clone()))
-        .collect();
-    let option =
-        SessionConfigOption::select("model", "Model", current, opts).category(SessionConfigOptionCategory::Model);
-    Some(vec![option])
+fn build_config_options(
+    models: Option<&[StubModel]>,
+    current: Option<&str>,
+    modes: &Modes,
+    current_mode: Option<&str>,
+) -> Option<Vec<SessionConfigOption>> {
+    let mut options = Vec::new();
+    if let Some(models) = models {
+        let current = current
+            .or_else(|| models.first().map(|m| m.id.as_str()))
+            .unwrap_or("")
+            .to_string();
+        let opts: Vec<SessionConfigSelectOption> = models
+            .iter()
+            .map(|m| SessionConfigSelectOption::new(m.id.clone(), m.name.clone()))
+            .collect();
+        options.push(
+            SessionConfigOption::select("model", "Model", current, opts).category(SessionConfigOptionCategory::Model),
+        );
+    }
+    if modes.offered {
+        let opts: Vec<SessionConfigSelectOption> = modes
+            .agents
+            .iter()
+            .map(|(name, _)| SessionConfigSelectOption::new(name.clone(), name.clone()))
+            .collect();
+        let current = current_mode.unwrap_or(&modes.default).to_string();
+        options.push(
+            SessionConfigOption::select("mode", "Session Mode", current, opts)
+                .category(SessionConfigOptionCategory::Mode),
+        );
+    }
+    (!options.is_empty()).then_some(options)
 }
 
 fn run(options: Options) -> Result<(), String> {
@@ -572,6 +890,11 @@ fn run(options: Options) -> Result<(), String> {
     }));
     let active_cancels: Arc<Mutex<HashMap<String, Arc<CancelFlag>>>> = Arc::new(Mutex::new(HashMap::new()));
     let session_models: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let session_modes: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let always: Arc<Mutex<HashMap<String, Vec<String>>>> = Arc::new(Mutex::new(HashMap::new()));
+    let replies: Arc<Replies> = Arc::new(Mutex::new(HashMap::new()));
+    let next_request = Arc::new(AtomicU64::new(0));
+    let modes = Arc::new(Modes::read(script.modes));
     let next_session = AtomicU64::new(1);
     let free_disabled = std::env::var("OPENCODE_DISABLE_FREE_MODELS").ok().as_deref() == Some("1");
     let default_model = script
@@ -598,6 +921,15 @@ fn run(options: Options) -> Result<(), String> {
             continue;
         };
         let Some(method) = raw.get("method").and_then(Value::as_str) else {
+            // An answer to one of the stub's own requests.
+            if let Some(id) = raw.get("id")
+                && let Some(waiting) = replies
+                    .lock()
+                    .unwrap()
+                    .remove(&id.to_string().trim_matches('"').to_string())
+            {
+                let _ = waiting.send(raw.clone());
+            }
             continue;
         };
 
@@ -665,8 +997,11 @@ fn run(options: Options) -> Result<(), String> {
                     if let Some(ref dm) = default_model {
                         session_models.lock().unwrap().insert(sid.clone(), dm.clone());
                     }
+                    session_modes.lock().unwrap().insert(sid.clone(), modes.default.clone());
                     let mut resp = NewSessionResponse::new(SessionId::new(sid.clone()));
-                    if let Some(opts) = build_config_options(script.models.as_deref(), default_model.as_deref()) {
+                    if let Some(opts) =
+                        build_config_options(script.models.as_deref(), default_model.as_deref(), &modes, None)
+                    {
                         resp = resp.config_options(opts);
                     }
                     writer.send_result(id, resp);
@@ -696,6 +1031,18 @@ fn run(options: Options) -> Result<(), String> {
                         .as_value_id()
                         .map(|v| v.0.as_ref().to_string())
                         .unwrap_or_default();
+                    if set_req.config_id.0.as_ref() == "mode" {
+                        if !modes.offered || !modes.has(&val) {
+                            writer.send_error(id, AcpError::invalid_params().data(json!("unknown mode")));
+                            continue;
+                        }
+                        session_modes.lock().unwrap().insert(sid.clone(), val.clone());
+                        let model = session_models.lock().unwrap().get(&sid).cloned();
+                        let opts = build_config_options(script.models.as_deref(), model.as_deref(), &modes, Some(&val))
+                            .unwrap_or_default();
+                        writer.send_result(id, SetSessionConfigOptionResponse::new(opts));
+                        continue;
+                    }
                     let valid = script
                         .models
                         .as_ref()
@@ -707,12 +1054,15 @@ fn run(options: Options) -> Result<(), String> {
                         let writer = writer.clone();
                         let models = script.models.clone();
                         let session_models = Arc::clone(&session_models);
+                        let mode = session_modes.lock().unwrap().get(&sid).cloned();
+                        let modes = Arc::clone(&modes);
                         let respond = move || {
                             if !delay.is_zero() {
                                 thread::sleep(delay);
                             }
                             session_models.lock().unwrap().insert(sid, val.clone());
-                            let opts = build_config_options(models.as_deref(), Some(&val)).unwrap_or_default();
+                            let opts = build_config_options(models.as_deref(), Some(&val), &modes, mode.as_deref())
+                                .unwrap_or_default();
                             writer.send_result(id, SetSessionConfigOptionResponse::new(opts));
                         };
                         if delay.is_zero() {
@@ -739,7 +1089,9 @@ fn run(options: Options) -> Result<(), String> {
                             .get(&sid)
                             .cloned()
                             .or_else(|| default_model.clone());
-                        let opts = build_config_options(script.models.as_deref(), cur.as_deref());
+                        let mode = session_modes.lock().unwrap().get(&sid).cloned();
+                        let opts =
+                            build_config_options(script.models.as_deref(), cur.as_deref(), &modes, mode.as_deref());
                         workers.push(thread::spawn(move || {
                             thread::sleep(delay);
                             for step in &replay {
@@ -773,19 +1125,81 @@ fn run(options: Options) -> Result<(), String> {
             let writer = writer.clone();
             let active_cancels = active_cancels.clone();
             let session_id = prompt_req.session_id;
+            let (modes, session_modes, always, replies, next_request) = (
+                Arc::clone(&modes),
+                Arc::clone(&session_modes),
+                Arc::clone(&always),
+                Arc::clone(&replies),
+                Arc::clone(&next_request),
+            );
+            let script_models = script.models.clone();
             workers.push(thread::spawn(move || {
+                let asking = Asking {
+                    modes: &modes,
+                    session_modes: &session_modes,
+                    always: &always,
+                    replies: &replies,
+                    next_request: &next_request,
+                };
+                // A harness that takes no notice of a cancel never sees one.
+                let unheard = CancelFlag::new();
+                let heard = if turn_script.ignore_cancel { &unheard } else { &*cancel };
                 let mut was_cancelled = false;
                 for step in &turn_script.steps {
-                    if cancel.is_cancelled() || emit_step(&writer, &session_id, step, Some(&cancel), model.as_deref()) {
+                    if heard.is_cancelled() {
                         was_cancelled = true;
                         break;
+                    }
+                    match step {
+                        Step::Ask {
+                            id,
+                            tool_kind,
+                            title,
+                            raw_input,
+                            diff,
+                            output,
+                        } => {
+                            let asked = ask(
+                                &writer,
+                                &session_id,
+                                &asking,
+                                Some(heard),
+                                id,
+                                tool_kind,
+                                title,
+                                raw_input.as_ref(),
+                                diff.as_ref(),
+                                output.as_deref(),
+                            );
+                            if asked == Asked::Ended {
+                                was_cancelled = true;
+                                break;
+                            }
+                        }
+                        Step::ModeChange { mode } => {
+                            let sid = session_id.0.as_ref().to_string();
+                            session_modes.lock().unwrap().insert(sid, mode.clone());
+                            let opts =
+                                build_config_options(script_models.as_deref(), model.as_deref(), &modes, Some(mode))
+                                    .unwrap_or_default();
+                            writer.send_update(
+                                &session_id,
+                                SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(opts)),
+                            );
+                        }
+                        _ => {
+                            if emit_step(&writer, &session_id, step, Some(heard), model.as_deref()) {
+                                was_cancelled = true;
+                                break;
+                            }
+                        }
                     }
                 }
                 if turn_script.crash {
                     std::process::exit(1);
                 }
                 if !was_cancelled && turn_script.stall {
-                    cancel.wait_cancelled();
+                    heard.wait_cancelled();
                     was_cancelled = true;
                 }
                 active_cancels.lock().unwrap().remove(&sid_key);

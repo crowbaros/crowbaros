@@ -251,6 +251,43 @@ pub fn spawn_harness(
     cmd.spawn()
 }
 
+/// Every process under `pid`, read from `/proc`: its children, theirs, and so
+/// on. A process that left the tree (one whose parent ended before it) is not
+/// found.
+pub fn descendants(pid: u32) -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut parents: Vec<(u32, u32)> = Vec::new();
+    for entry in entries.flatten() {
+        let Some(child) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+            continue;
+        };
+        // The command name is in parentheses and may hold anything, so the
+        // fields are read from after its last closing parenthesis.
+        let Some(rest) = stat.rfind(')').map(|at| &stat[at + 1..]) else {
+            continue;
+        };
+        if let Some(parent) = rest.split_whitespace().nth(1).and_then(|p| p.parse::<u32>().ok()) {
+            parents.push((child, parent));
+        }
+    }
+    let mut found = Vec::new();
+    let mut next = vec![pid];
+    while let Some(parent) = next.pop() {
+        for &(child, _) in parents.iter().filter(|(_, p)| *p == parent) {
+            if !found.contains(&child) {
+                found.push(child);
+                next.push(child);
+            }
+        }
+    }
+    found
+}
+
 /// Sends a signal to a child process.
 pub fn signal_pid(pid: u32, sig: libc::c_int) {
     // SAFETY: sending a signal to Lever's own child process.

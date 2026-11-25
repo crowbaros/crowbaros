@@ -15,7 +15,7 @@ mod sys;
 use acp::HarnessConfig;
 use channel::{Channel, LEVER_VERSION, Peer};
 use log::{Event, Log};
-use service::{Broadcast, DEFAULT_IDLE_TIMEOUT, Effects, PeerReply, Service, unix_now};
+use service::{Broadcast, DEFAULT_IDLE_TIMEOUT, DEFAULT_STOP_TIMEOUT, Effects, PeerReply, Service, unix_now};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::fd::AsRawFd;
@@ -40,7 +40,7 @@ const USAGE: &str = "usage: crowbar-lever \
   --person-socket <path> --person-uid <uid> \
   [--fulcrum-socket <path>] \
   [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>]] \
-  [--idle-timeout-ms <ms>]";
+  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>]";
 
 struct Options {
     state: PathBuf,
@@ -51,6 +51,7 @@ struct Options {
     fulcrum_socket: Option<PathBuf>,
     harness: Option<HarnessConfig>,
     idle_timeout: Duration,
+    stop_timeout: Duration,
 }
 
 fn parse_options(args: &[String]) -> Option<Options> {
@@ -65,6 +66,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
     let mut harness_args = Vec::new();
     let mut harness_env = Vec::new();
     let mut idle_timeout = None;
+    let mut stop_timeout = None;
 
     let mut iter = args.iter();
     while let Some(flag) = iter.next() {
@@ -88,6 +90,9 @@ fn parse_options(args: &[String]) -> Option<Options> {
                     return None;
                 }
                 harness_env.push((k.to_string(), v.to_string()));
+            }
+            "--stop-timeout-ms" if stop_timeout.is_none() => {
+                stop_timeout = Some(Duration::from_millis(value.parse::<u64>().ok()?));
             }
             "--idle-timeout-ms" if idle_timeout.is_none() => {
                 idle_timeout = Some(Duration::from_millis(value.parse::<u64>().ok()?));
@@ -126,6 +131,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
         fulcrum_socket,
         harness,
         idle_timeout: idle_timeout.unwrap_or(DEFAULT_IDLE_TIMEOUT),
+        stop_timeout: stop_timeout.unwrap_or(DEFAULT_STOP_TIMEOUT),
     })
 }
 
@@ -292,7 +298,13 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
     write_marker(&marker, pid)?;
 
     let store = Store::open(&options.state.join("lever.sqlite"), unix_now())?;
-    let mut service = Service::new(store, options.harness, options.fulcrum_socket, options.idle_timeout);
+    let mut service = Service::new(
+        store,
+        options.harness,
+        options.fulcrum_socket,
+        options.idle_timeout,
+        options.stop_timeout,
+    );
 
     if let Some(parent) = options.person_socket.parent() {
         ensure_private_dir(parent)?;
@@ -346,7 +358,10 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         if let Some(sig) = signals.take_signal() {
             break sig;
         }
-        service.on_wake(log);
+        let woke = service.on_wake(log);
+        let everyone = vec![true; peers.len()];
+        deliver_replies(&woke.replies, &mut peers, &everyone, log);
+        deliver_broadcasts(&woke.broadcasts, &mut peers, &everyone, log);
 
         let harness_stdout_fd = service.harness_stdout_fd();
         let harness_stdin_fd = service.harness_stdin_fd();
