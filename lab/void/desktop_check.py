@@ -225,8 +225,8 @@ class Check:
         self.wait("the shell's lock screen is back after Base's checks restart the compositor",
                   lambda: shell_log().count('SHELL lock open=true') > locks
                   and self.snapshot().get('connected') and self.snapshot().get('locked'), timeout=60)
-        self.check('seatd and five desktop services supervised',
-                   all(line.startswith('run: ') for line in self.run('sv status seatd crowbar-compositor crowbar-shell crowbar-launcher crowbar-unlock crowbar-lever').splitlines()))
+        self.check('seatd, bluetoothd, and six desktop services supervised',
+                   all(line.startswith('run: ') for line in self.run('sv status seatd bluetoothd crowbar-compositor crowbar-shell crowbar-launcher crowbar-unlock crowbar-lever crowbar-pipewire').splitlines()))
         digests = self.run('sha256sum ' + ' '.join('/usr/local/bin/' + n for n in built))
         self.check('guest binaries match this build', all(f'{h}  /usr/local/bin/{n}' in digests for n, h in built.items()))
         for name in built:

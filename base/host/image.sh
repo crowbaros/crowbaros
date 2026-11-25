@@ -58,8 +58,9 @@ echo "options nvidia $NVIDIA_OPTIONS" > "$R/etc/modprobe.d/crowbaros-nvidia.conf
 # serves every interface, gets the address. iwd answers on the system bus, to
 # root and to the `netdev` group, which the person's account joins below. On
 # every boot, once the root is writable, the root grows to fill its disk.
-for s in dbus iwd; do ln -sfn "/etc/sv/$s" "$SV/$s"; done
+for s in dbus iwd bluetoothd; do ln -sfn "/etc/sv/$s" "$SV/$s"; done
 chroot "$R" groupadd -r netdev
+chroot "$R" getent group bluetooth >/dev/null || chroot "$R" groupadd -r bluetooth
 install -D -m 755 "$REPO_ROOT/base/system/grow-root" "$R/usr/local/sbin/crowbar-grow-root"
 cat > "$R/etc/runit/core-services/04-crowbar-grow-root.sh" <<'GROW'
 # Grow the root to fill its disk: see /usr/local/sbin/crowbar-grow-root.
@@ -80,8 +81,8 @@ ln -sfn /etc/sv/seatd "$SV/seatd"
 rm -f "$SV/agetty-tty2"
 chroot "$R" useradd -m -u 1000 -G _seatd crowbar-compositor
 chroot "$R" useradd -m -u 1001 crowbar-shell
-chroot "$R" useradd -m -u "$PERSON_UID" -G netdev,wheel -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
-for service in compositor shell launcher unlock ctrl-alt-del lever; do
+chroot "$R" useradd -m -u "$PERSON_UID" -G netdev,wheel,audio,bluetooth -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
+for service in compositor shell launcher unlock ctrl-alt-del lever pipewire; do
   install -D -m 755 "$DESKTOP/$service-run" "$R/etc/sv/crowbar-$service/run"
   ln -sfn "/etc/sv/crowbar-$service" "$SV/crowbar-$service"
 done
@@ -119,6 +120,14 @@ install -D -m 644 "$REPO_ROOT/apps/files/packaging/com.crowbaros.Files.svg" "$R/
 install -m 644 "$REPO_ROOT/apps/shell/fonts/IBMPlexMono-Regular.ttf" "$REPO_ROOT"/apps/shell/fonts/Manrope-*.ttf "$R/usr/share/fonts/crowbaros/"
 chroot "$R" fc-cache -f
 install -D -m 644 "$DESKTOP/foot.ini" "$R/etc/xdg/foot/foot.ini"
+# PipeWire spawns WirePlumber and pipewire-pulse, and takes default ALSA output.
+install -d "$R/etc/pipewire/pipewire.conf.d" "$R/etc/alsa/conf.d"
+ln -sfn /usr/share/examples/wireplumber/10-wireplumber.conf "$R/etc/pipewire/pipewire.conf.d/10-wireplumber.conf"
+ln -sfn /usr/share/examples/pipewire/20-pipewire-pulse.conf "$R/etc/pipewire/pipewire.conf.d/20-pipewire-pulse.conf"
+ln -sfn /usr/share/alsa/alsa.conf.d/50-pipewire.conf "$R/etc/alsa/conf.d/50-pipewire.conf"
+ln -sfn /usr/share/alsa/alsa.conf.d/99-pipewire-default.conf "$R/etc/alsa/conf.d/99-pipewire-default.conf"
+# mpv is the default video/audio player, native on Wayland with PipeWire audio.
+install -D -m 644 "$DESKTOP/mpv.conf" "$R/etc/mpv/mpv.conf"
 # Chromium is the default browser, native on Wayland through a wrapper.
 install -D -m 755 "$DESKTOP/chromium-wrapper" "$R/usr/local/bin/chromium"
 install -D -m 644 "$DESKTOP/mimeapps.list" "$R/etc/xdg/mimeapps.list"

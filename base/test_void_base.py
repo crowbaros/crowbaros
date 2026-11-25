@@ -887,12 +887,12 @@ class DesktopServicesCheck(unittest.TestCase):
         # The services the image step turns on for the desktop, but for
         # Ctrl+Alt+Del's, which the check of every service covers.
         script = (Path(void_base.HERE) / 'host/image.sh').read_text()
-        self.assertIn('for service in compositor shell launcher unlock ctrl-alt-del lever; do', script)
+        self.assertIn('for service in compositor shell launcher unlock ctrl-alt-del lever pipewire; do', script)
         self.assertIn('ln -sfn /etc/sv/seatd "$SV/seatd"', script)
         command = next(command for name, command, *_ in void_base.CHECKS
                        if name == "the desktop's services stay up")
         for service in ('seatd', 'crowbar-compositor', 'crowbar-shell', 'crowbar-launcher',
-                        'crowbar-unlock', 'crowbar-lever'):
+                        'crowbar-unlock', 'crowbar-lever', 'crowbar-pipewire'):
             self.assertIn(f'/var/service/{service}', command)
 
 
@@ -1087,6 +1087,61 @@ class NvidiaCheck(unittest.TestCase):
     def test_a_later_line_that_sets_them_otherwise_fails(self):
         # modprobe gives the module every line's options, and the last value wins.
         self.assertFalse(self.suspend(self.OPTIONS + 'options nvidia NVreg_TemporaryFilePath=/tmp\nbtrfs\n'))
+
+
+class AudioBluetoothAndMpv(unittest.TestCase):
+    def test_pipewire_audio_ready_checks_pulse_socket_and_graph(self):
+        good = (
+            "pulse-socket yes\n"
+            "PipeWire 'pipewire-0' [1.6.10, crowbar@crowbaros]\n"
+            "Audio\n"
+            " ├─ Sinks:\n"
+            " │  * 34. Dummy Output [vol: 1.00]\n"
+            "Clients:\n"
+            "   32. WirePlumber [1.6.10]\n"
+        )
+        self.assertTrue(void_base.pipewire_audio_ready(good))
+        self.assertFalse(void_base.pipewire_audio_ready(good.replace("pulse-socket yes", "pulse-socket no")))
+        self.assertFalse(void_base.pipewire_audio_ready(good.replace("WirePlumber", "other")))
+
+    def test_bluetooth_reachable_requires_service_and_dbus_reply(self):
+        good = (
+            "run: /var/service/bluetoothd: (pid 611) 18s\n"
+            "dbus-exit 0\n"
+            "method return time=1.0 sender=:1.4 -> destination=:1.9\n"
+            "   array [\n"
+            "   ]\n"
+        )
+        self.assertTrue(void_base.bluetooth_reachable(good))
+        self.assertFalse(void_base.bluetooth_reachable(good.replace("dbus-exit 0", "dbus-exit 1")))
+        self.assertFalse(void_base.bluetooth_reachable(good.replace("run: ", "down: ")))
+
+    def test_mpv_defaults_ready_checks_mime_version_conf_and_libs(self):
+        good = (
+            "video mpv.desktop\n"
+            "audio mpv.desktop\n"
+            "mpv mpv v0.42.0 Copyright © 2000-2026 mpv/MPlayer/mplayer2 projects\n"
+            "conf yes\n"
+            "\tlibpipewire-0.3.so.0 => /usr/lib/libpipewire-0.3.so.0 (0x00007f00)\n"
+        )
+        self.assertTrue(void_base.mpv_defaults_ready(good))
+        self.assertFalse(void_base.mpv_defaults_ready(good.replace("video mpv.desktop", "video vlc.desktop")))
+        self.assertFalse(void_base.mpv_defaults_ready(good.replace("audio mpv.desktop", "audio ")))
+        self.assertFalse(void_base.mpv_defaults_ready(good.replace("conf yes", "conf no")))
+        self.assertFalse(void_base.mpv_defaults_ready(good + "\tlibfoo.so => not found\n"))
+        self.assertFalse(void_base.mpv_defaults_ready(
+            good.replace("mpv mpv v0.42.0 Copyright © 2000-2026 mpv/MPlayer/mplayer2 projects",
+                         "mpv Error parsing option osd-color (option requires parameter)")))
+
+    def test_mpv_conf_quotes_hash_colors(self):
+        # Unquoted `#` starts a comment in mpv.conf, turning hex colors into
+        # empty values that make mpv fail option parsing on startup.
+        conf = (Path(void_base.HERE) / 'desktop/mpv.conf').read_text()
+        for line in conf.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            self.assertNotIn('=#', stripped, f'unquoted # in mpv.conf: {line}')
 
 
 if __name__ == '__main__':
