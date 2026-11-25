@@ -1614,11 +1614,19 @@ fn start_with_options(
         let mut backoff = INITIAL_BACKOFF;
         let mut skipped_resume: Option<(String, SkipResumeReason)> = None;
         let mut last_bootstrap_warn: Option<String> = None;
+        // Only fall back to `list` on a truly fresh shell start with no saved
+        // thread ID; once we have connected or a saved thread was deleted/skipped,
+        // never silently adopt an unrelated thread on a subsequent reconnect.
+        let mut allow_list_fallback = active_thread
+            .lock()
+            .ok()
+            .is_none_or(|g| g.is_none());
         loop {
             let existing_thread = active_thread.lock().ok().and_then(|g| g.clone());
             match connect_and_bootstrap(
                 &path,
                 existing_thread,
+                allow_list_fallback,
                 skipped_resume.as_ref().map(|(t, r)| (t.as_str(), *r)),
                 init_deadline,
             ) {
@@ -1631,6 +1639,7 @@ fn start_with_options(
                 }) => {
                     backoff = INITIAL_BACKOFF;
                     last_bootstrap_warn = None;
+                    allow_list_fallback = false;
                     // Only keep a permanent skip for oversized history frames; a
                     // timed-out resume is skipped for this reconnect so the drawer
                     // comes online, then retried on a future reconnect.
@@ -1877,6 +1886,7 @@ fn read_bootstrap_frame(stream: &mut UnixStream, deadline: Instant) -> Result<se
 fn connect_and_bootstrap(
     path: &PathBuf,
     existing_thread: Option<String>,
+    allow_list_fallback: bool,
     skip_resume: Option<(&str, SkipResumeReason)>,
     init_deadline: Duration,
 ) -> std::result::Result<BootstrapResult, BootstrapError> {
@@ -1912,10 +1922,10 @@ fn connect_and_bootstrap(
     };
 
     // Restore thread: if the previous thread was skipped because its history
-    // exceeded MAX_FRAME, stay at a fresh drawer without adopting another thread.
-    // Otherwise resume the held/persisted thread if any (without falling through
-    // to `list` if it disappeared), or ask `list` on a fresh start with no saved
-    // thread.
+    // exceeded MAX_FRAME (which also cleared `active_thread`; the skip itself
+    // clears as soon as Sent/Message/Resumed adopts a thread), stay at a fresh
+    // drawer without adopting another thread. Otherwise resume the held/saved
+    // thread if any, or ask `list` only on a fresh start with no saved thread.
     let mut resumed = None;
     let mut preserved_thread = None;
     let mut resume_error = None;
@@ -1949,7 +1959,7 @@ fn connect_and_bootstrap(
                 Err(ResumeError::Fatal(e)) => return Err(BootstrapError::Fatal(e)),
             },
         }
-    } else {
+    } else if allow_list_fallback {
         write_frame_before(&mut stream, &serde_json::json!({ "op": "list" }), deadline)
             .map_err(|e| BootstrapError::Fatal(e.into()))?;
         let list_frame =
@@ -1964,7 +1974,7 @@ fn connect_and_bootstrap(
                     match skip_resume {
                         Some((skipped, SkipResumeReason::TimedOut)) if skipped == chosen.thread => {
                             resume_error = Some(
-                                "Timed out loading the previous thread's history. Start a new thread or send a message to continue."
+                                "Timed out loading the previous thread's history. Send a message to start a new thread."
                                     .into(),
                             );
                         }
@@ -3596,39 +3606,65 @@ mod tests {
         let listener = UnixListener::bind(&sock).unwrap();
 
         let server = std::thread::spawn(move || {
-            let (mut peer, _) = listener.accept().unwrap();
-            peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "version": 1 }));
-            peer.write_all(&encode_frame(&serde_json::json!({ "version": 1 }))).unwrap();
-            assert_eq!(read_frame(&mut peer).unwrap()["op"], "status");
-            peer.write_all(&encode_frame(&serde_json::json!({
-                "reply": "status",
-                "version": "0.1.0",
-                "harness_started": false,
-                "harnesses": [{ "id": "h1", "name": "OpenCode" }],
-                "free_hosted_models": false
-            })))
-            .unwrap();
-            assert_eq!(
-                read_frame(&mut peer).unwrap(),
-                serde_json::json!({ "op": "resume", "thread": "t-deleted" })
-            );
-            peer.write_all(&encode_frame(&serde_json::json!({
-                "reply": "error",
-                "code": "no-thread",
-                "message": "There is no thread t-deleted."
-            })))
-            .unwrap();
-            // Client must NOT ask `list` to adopt another thread.
+            // Attempt 1: saved thread is gone (`no-thread`), then socket drops.
+            {
+                let (mut peer, _) = listener.accept().unwrap();
+                peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "version": 1 }));
+                peer.write_all(&encode_frame(&serde_json::json!({ "version": 1 }))).unwrap();
+                assert_eq!(read_frame(&mut peer).unwrap()["op"], "status");
+                peer.write_all(&encode_frame(&serde_json::json!({
+                    "reply": "status",
+                    "version": "0.1.0",
+                    "harness_started": false,
+                    "harnesses": [{ "id": "h1", "name": "OpenCode" }],
+                    "free_hosted_models": false
+                })))
+                .unwrap();
+                assert_eq!(
+                    read_frame(&mut peer).unwrap(),
+                    serde_json::json!({ "op": "resume", "thread": "t-deleted" })
+                );
+                peer.write_all(&encode_frame(&serde_json::json!({
+                    "reply": "error",
+                    "code": "no-thread",
+                    "message": "There is no thread t-deleted."
+                })))
+                .unwrap();
+                std::thread::sleep(Duration::from_millis(80));
+            }
+            // Attempt 2: after reconnect, client STILL must NOT ask `list` to
+            // adopt an unrelated thread before the person sends a message.
+            {
+                let (mut peer, _) = listener.accept().unwrap();
+                peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "version": 1 }));
+                peer.write_all(&encode_frame(&serde_json::json!({ "version": 1 }))).unwrap();
+                assert_eq!(read_frame(&mut peer).unwrap()["op"], "status");
+                peer.write_all(&encode_frame(&serde_json::json!({
+                    "reply": "status",
+                    "version": "0.1.0",
+                    "harness_started": false,
+                    "harnesses": [{ "id": "h1", "name": "OpenCode" }],
+                    "free_hosted_models": false
+                })))
+                .unwrap();
+            }
         });
 
         let (tx, mut rx) = session::channel();
         let _sender =
             start_with_options(sock.clone(), tx.clone(), INIT_DEADLINE, Some(state_path.clone()));
         let mut state = AgentState::new(true);
+        let mut connect_count = 0usize;
         run_with_deadline(&mut rx, &tx, Duration::from_secs(5), |ev| {
+            let is_conn = matches!(ev, AgentEvent::Connected { .. });
             state.apply(ev, true);
-            state.connected
+            if is_conn {
+                connect_count += 1;
+                assert_eq!(state.thread, None);
+            }
+            connect_count >= 2
         });
 
         server.join().unwrap();
