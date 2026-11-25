@@ -5,7 +5,7 @@
 use crate::acp::{AcpEvent, AcpHarness, HarnessConfig, TurnOutcome};
 use crate::channel::LEVER_VERSION;
 use crate::log::{Event, Log};
-use crate::store::{ActRecord, NoteRecord, Store, ThreadRecord, ThreadSummary, TurnRecord};
+use crate::store::{ActPatch, ActRecord, NoteRecord, Store, ThreadRecord, ThreadSummary, TurnRecord};
 use crate::sys;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -488,9 +488,10 @@ impl Service {
                     }),
                 }]
             }
-            AcpEvent::ActCreated {
+            AcpEvent::Act {
                 thread_id,
                 harness_call_id,
+                is_new,
                 kind,
                 title,
                 state,
@@ -499,44 +500,17 @@ impl Service {
                 let Some(turn) = self.turn_for_update(&thread_id) else {
                     return Vec::new();
                 };
-                let Ok((recorded_turn, act)) = self.store.upsert_act(
-                    &thread_id,
-                    turn,
-                    &harness_call_id,
-                    Some(&kind),
-                    Some(&title),
-                    Some(&state),
-                    detail.as_deref(),
-                    unix_now(),
-                ) else {
-                    return Vec::new();
+                let patch = ActPatch {
+                    thread_id: &thread_id,
+                    turn_number: turn,
+                    harness_call_id: &harness_call_id,
+                    is_new,
+                    kind: kind.as_deref(),
+                    title: title.as_deref(),
+                    state: state.as_deref(),
+                    detail: detail.as_deref(),
                 };
-                vec![Broadcast {
-                    thread_id: thread_id.clone(),
-                    message: act_event_json(&thread_id, recorded_turn, &act),
-                }]
-            }
-            AcpEvent::ActUpdated {
-                thread_id,
-                harness_call_id,
-                kind,
-                title,
-                state,
-                detail,
-            } => {
-                let Some(turn) = self.turn_for_update(&thread_id) else {
-                    return Vec::new();
-                };
-                let Ok((recorded_turn, act)) = self.store.upsert_act(
-                    &thread_id,
-                    turn,
-                    &harness_call_id,
-                    kind.as_deref(),
-                    title.as_deref(),
-                    state.as_deref(),
-                    detail.as_deref(),
-                    unix_now(),
-                ) else {
+                let Ok((recorded_turn, act)) = self.store.upsert_act(&patch, unix_now()) else {
                     return Vec::new();
                 };
                 vec![Broadcast {
@@ -586,10 +560,18 @@ impl Service {
                 turn,
                 outcome,
             } => {
-                let was_active = self.working_turns.remove(&thread_id);
-                if was_active.as_ref().is_none_or(|w| w.turn != turn) {
+                let Some(active) = self.working_turns.remove(&thread_id) else {
+                    return Vec::new();
+                };
+                if active.turn != turn {
                     return Vec::new();
                 }
+                // A harness that answers a `session/cancel` with an error
+                // instead of `StopReason::Cancelled` still stopped the turn.
+                let outcome = match outcome {
+                    TurnOutcome::Failed(_) if active.stopping => TurnOutcome::Stopped,
+                    other => other,
+                };
                 let now = unix_now();
                 match outcome {
                     TurnOutcome::Done => {
@@ -766,18 +748,10 @@ fn act_record_json(a: &ActRecord) -> Value {
 }
 
 fn act_event_json(thread_id: &str, turn: u64, a: &ActRecord) -> Value {
-    let mut obj = json!({
-        "event": "act",
-        "thread": thread_id,
-        "turn": turn,
-        "act": a.id,
-        "kind": a.kind,
-        "title": a.title,
-        "state": a.state,
-    });
-    if let Some(detail) = &a.detail {
-        obj["detail"] = json!(detail);
-    }
+    let mut obj = act_record_json(a);
+    obj["event"] = json!("act");
+    obj["thread"] = json!(thread_id);
+    obj["turn"] = json!(turn);
     obj
 }
 

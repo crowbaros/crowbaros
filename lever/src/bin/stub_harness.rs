@@ -17,7 +17,7 @@ use agent_client_protocol_schema::v1::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -71,6 +71,9 @@ struct TurnScript {
     /// If set, responds to `session/prompt` with this JSON-RPC error instead of a result.
     #[serde(default)]
     error: Option<ScriptError>,
+    /// If true, returns a JSON-RPC request-cancelled error when cancelled instead of `StopReason::Cancelled`.
+    #[serde(default)]
+    cancel_with_error: bool,
     /// Updates emitted after `PromptResponse` has been sent.
     #[serde(default)]
     after: Vec<Step>,
@@ -315,6 +318,7 @@ impl ScriptPicker {
             stall: false,
             stop_reason: "end_turn".to_string(),
             error: None,
+            cancel_with_error: false,
             after: Vec::new(),
             crash: false,
         }
@@ -438,7 +442,6 @@ fn run(options: Options) -> Result<(), String> {
         turns: script.turns.clone(),
         next_unmatched: 0,
     }));
-    let sessions: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let active_cancels: Arc<Mutex<HashMap<String, Arc<CancelFlag>>>> = Arc::new(Mutex::new(HashMap::new()));
     let next_session = AtomicU64::new(1);
 
@@ -510,21 +513,16 @@ fn run(options: Options) -> Result<(), String> {
                 Ok(_new_req) => {
                     let n = next_session.fetch_add(1, Ordering::Relaxed);
                     let sid = format!("{}{n}", script.session_prefix);
-                    sessions.lock().unwrap().insert(sid.clone());
                     writer.send_result(id, NewSessionResponse::new(SessionId::new(sid)));
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
             }
         } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_load {
             match serde_json::from_value::<LoadSessionRequest>(params) {
-                Ok(load_req) => {
+                Ok(_load_req) => {
                     if !script.load_session {
                         writer.send_error(id, AcpError::method_not_found());
                     } else {
-                        sessions
-                            .lock()
-                            .unwrap()
-                            .insert(load_req.session_id.0.as_ref().to_string());
                         writer.send_result(id, LoadSessionResponse::new());
                     }
                 }
@@ -565,7 +563,11 @@ fn run(options: Options) -> Result<(), String> {
                 active_cancels.lock().unwrap().remove(&sid_key);
 
                 if was_cancelled {
-                    writer.send_result(id, PromptResponse::new(StopReason::Cancelled));
+                    if turn_script.cancel_with_error {
+                        writer.send_error(id, AcpError::request_cancelled());
+                    } else {
+                        writer.send_result(id, PromptResponse::new(StopReason::Cancelled));
+                    }
                 } else if let Some(err) = &turn_script.error {
                     writer.send_error(id, AcpError::new(err.code, err.message.clone()));
                 } else {

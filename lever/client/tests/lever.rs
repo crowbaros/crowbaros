@@ -643,9 +643,9 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let ev_interrupted = find_event("interrupted");
 
     let server_ops = doc_ops.clone();
-    // Serve 8 short connections exercising every documented op, reply, and event.
+    // Serve 9 short connections exercising every documented op, reply (including error), and event.
     let server = std::thread::spawn(move || {
-        for turn_case in 0..8 {
+        for turn_case in 0..9 {
             let (mut stream, _) = listener.accept().expect("accept client");
             let ver = read_framed(&mut stream);
             assert_eq!(ver, json!({ "version": 1 }));
@@ -679,7 +679,8 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
                     write_framed(&mut stream, &reply_sent);
                     write_framed(&mut stream, &ev_interrupted);
                 }
-                _ => write_framed(&mut stream, &reply_error),
+                (8, "resume") => write_framed(&mut stream, &reply_error),
+                other => panic!("unexpected connection {other:?}"),
             }
             // Hold the connection open until the client closes it, as Lever does.
             let mut drain = [0u8; 1];
@@ -714,6 +715,10 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let interrupted = lab.run(&["Interrupt me"], "");
     assert_eq!(interrupted.status, 1, "{interrupted:?}");
     assert!(interrupted.err.contains("Interrupted."), "{interrupted:?}");
+
+    let errored = lab.run(&["--resume", "missing"], "");
+    assert_eq!(errored.status, 1, "{errored:?}");
+    assert!(errored.err.contains("This request is not supported."), "{errored:?}");
 
     server.join().unwrap();
     assert_eq!(*sent_ops.lock().unwrap(), doc_ops);

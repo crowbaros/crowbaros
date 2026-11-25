@@ -308,6 +308,11 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>) -> Result<Ended> {
                         eprint!("> ");
                     }
                 }
+                Happening::Event(event) if text(&event, "event") == "text" => {
+                    let mut answer = Answer::new();
+                    answer.write(&text(&event, "text"))?;
+                    answer.end()?;
+                }
                 Happening::Event(event) if text(&event, "event") == "note" => {
                     let mut answer = Answer::new();
                     show_note(&mut answer, &event)?;

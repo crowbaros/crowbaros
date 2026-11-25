@@ -61,6 +61,19 @@ pub struct ActRecord {
     pub detail: Option<String>,
 }
 
+/// Fields carried when creating or updating an act in Lever's record.
+#[derive(Debug, Clone)]
+pub struct ActPatch<'a> {
+    pub thread_id: &'a str,
+    pub turn_number: u64,
+    pub harness_call_id: &'a str,
+    pub is_new: bool,
+    pub kind: Option<&'a str>,
+    pub title: Option<&'a str>,
+    pub state: Option<&'a str>,
+    pub detail: Option<&'a str>,
+}
+
 #[derive(Debug, Clone)]
 pub struct NoteRecord {
     pub id: String,
@@ -130,7 +143,7 @@ impl Store {
                  state TEXT NOT NULL,\n\
                  detail TEXT,\n\
                  seq INTEGER NOT NULL,\n\
-                 UNIQUE(thread_id, harness_call_id)\n\
+                 UNIQUE(thread_id, turn_number, harness_call_id)\n\
              );\n\
              CREATE TABLE IF NOT EXISTS notes (\n\
                  id TEXT PRIMARY KEY,\n\
@@ -164,6 +177,16 @@ impl Store {
             .close()
             .map_err(|(_, e)| format!("could not close database {}: {e}", path.display()))?;
         tighten_permissions(&path)?;
+        Ok(())
+    }
+
+    fn touch_thread(&self, thread_id: &str, now: i64) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE threads SET updated_at = ?1 WHERE id = ?2",
+                params![now, thread_id],
+            )
+            .map_err(|e| format!("could not touch thread timestamp: {e}"))?;
         Ok(())
     }
 
@@ -264,12 +287,7 @@ impl Store {
                 params![thread_id, next, message, now],
             )
             .map_err(|e| format!("could not insert turn: {e}"))?;
-        self.conn
-            .execute(
-                "UPDATE threads SET updated_at = ?1 WHERE id = ?2",
-                params![now, thread_id],
-            )
-            .map_err(|e| format!("could not touch thread timestamp: {e}"))?;
+        self.touch_thread(thread_id, now)?;
         Ok(next as u64)
     }
 
@@ -280,12 +298,7 @@ impl Store {
                 params![chunk, thread_id, turn_number as i64],
             )
             .map_err(|e| format!("could not append answer: {e}"))?;
-        self.conn
-            .execute(
-                "UPDATE threads SET updated_at = ?1 WHERE id = ?2",
-                params![now, thread_id],
-            )
-            .map_err(|e| format!("could not touch thread timestamp: {e}"))?;
+        self.touch_thread(thread_id, now)?;
         Ok(())
     }
 
@@ -304,12 +317,7 @@ impl Store {
                 params![state, error, now, thread_id, turn_number as i64],
             )
             .map_err(|e| format!("could not finish turn: {e}"))?;
-        self.conn
-            .execute(
-                "UPDATE threads SET updated_at = ?1 WHERE id = ?2",
-                params![now, thread_id],
-            )
-            .map_err(|e| format!("could not touch thread timestamp: {e}"))?;
+        self.touch_thread(thread_id, now)?;
         Ok(())
     }
 
@@ -338,46 +346,62 @@ impl Store {
         Ok(interrupted)
     }
 
-    /// Inserts or updates an act identified internally by `(thread_id, harness_call_id)`
-    /// and returns the stored `ActRecord` with Lever's own act ID.
-    #[allow(clippy::too_many_arguments)]
-    pub fn upsert_act(
-        &self,
-        thread_id: &str,
-        turn_number: u64,
-        harness_call_id: &str,
-        kind: Option<&str>,
-        title: Option<&str>,
-        state: Option<&str>,
-        detail: Option<&str>,
-        now: i64,
-    ) -> Result<(u64, ActRecord), String> {
-        let existing: Option<(String, u64, String, String, String, Option<String>)> = self
-            .conn
-            .query_row(
-                "SELECT id, turn_number, kind, title, state, detail FROM acts \
-                 WHERE thread_id = ?1 AND harness_call_id = ?2",
-                params![thread_id, harness_call_id],
-                |r| {
-                    Ok((
-                        r.get(0)?,
-                        r.get::<_, i64>(1)? as u64,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get(4)?,
-                        r.get(5)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(|e| format!("could not query act: {e}"))?;
+    /// Inserts or updates an act and returns `(recorded_turn, ActRecord)` with
+    /// Lever's own act ID.
+    ///
+    /// When `patch.is_new` is true (`ToolCall`), lookup is scoped to the
+    /// current `(thread_id, turn_number, harness_call_id)` so a call ID reused
+    /// on a later turn creates a distinct act. When `patch.is_new` is false
+    /// (`ToolCallUpdate`), lookup matches the most recent act with that
+    /// `harness_call_id` on the thread so post-turn updates find their act.
+    pub fn upsert_act(&self, patch: &ActPatch<'_>, now: i64) -> Result<(u64, ActRecord), String> {
+        let existing: Option<(String, u64, String, String, String, Option<String>)> = if patch.is_new {
+            self.conn
+                .query_row(
+                    "SELECT id, turn_number, kind, title, state, detail FROM acts \
+                     WHERE thread_id = ?1 AND turn_number = ?2 AND harness_call_id = ?3",
+                    params![patch.thread_id, patch.turn_number as i64, patch.harness_call_id],
+                    |r| {
+                        Ok((
+                            r.get(0)?,
+                            r.get::<_, i64>(1)? as u64,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|e| format!("could not query act: {e}"))?
+        } else {
+            self.conn
+                .query_row(
+                    "SELECT id, turn_number, kind, title, state, detail FROM acts \
+                     WHERE thread_id = ?1 AND harness_call_id = ?2 \
+                     ORDER BY turn_number DESC, seq DESC LIMIT 1",
+                    params![patch.thread_id, patch.harness_call_id],
+                    |r| {
+                        Ok((
+                            r.get(0)?,
+                            r.get::<_, i64>(1)? as u64,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|e| format!("could not query act: {e}"))?
+        };
 
         let (recorded_turn, record) =
             if let Some((id, orig_turn, cur_kind, cur_title, cur_state, cur_detail)) = existing {
-                let new_kind = kind.map(str::to_string).unwrap_or(cur_kind);
-                let new_title = title.map(str::to_string).unwrap_or(cur_title);
-                let new_state = state.map(str::to_string).unwrap_or(cur_state);
-                let new_detail = detail.map(str::to_string).or(cur_detail);
+                let new_kind = patch.kind.map(str::to_string).unwrap_or(cur_kind);
+                let new_title = patch.title.map(str::to_string).unwrap_or(cur_title);
+                let new_state = patch.state.map(str::to_string).unwrap_or(cur_state);
+                let new_detail = patch.detail.map(str::to_string).or(cur_detail);
                 self.conn
                     .execute(
                         "UPDATE acts SET kind = ?1, title = ?2, state = ?3, detail = ?4 WHERE id = ?5",
@@ -399,24 +423,24 @@ impl Store {
                     .conn
                     .query_row(
                         "SELECT COALESCE(MAX(seq), 0) + 1 FROM acts WHERE thread_id = ?1",
-                        params![thread_id],
+                        params![patch.thread_id],
                         |r| r.get(0),
                     )
                     .map_err(|e| format!("could not compute act sequence: {e}"))?;
                 let id = format!("act-{}", sys::random_hex(6));
-                let new_kind = kind.unwrap_or("other").to_string();
-                let new_title = title.unwrap_or("Act").to_string();
-                let new_state = state.unwrap_or("pending").to_string();
-                let new_detail = detail.map(str::to_string);
+                let new_kind = patch.kind.unwrap_or("other").to_string();
+                let new_title = patch.title.unwrap_or("Act").to_string();
+                let new_state = patch.state.unwrap_or("pending").to_string();
+                let new_detail = patch.detail.map(str::to_string);
                 self.conn
                 .execute(
                     "INSERT INTO acts (id, thread_id, turn_number, harness_call_id, kind, title, state, detail, seq) \
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                     params![
                         id,
-                        thread_id,
-                        turn_number as i64,
-                        harness_call_id,
+                        patch.thread_id,
+                        patch.turn_number as i64,
+                        patch.harness_call_id,
                         new_kind,
                         new_title,
                         new_state,
@@ -426,7 +450,7 @@ impl Store {
                 )
                 .map_err(|e| format!("could not insert act: {e}"))?;
                 (
-                    turn_number,
+                    patch.turn_number,
                     ActRecord {
                         id,
                         kind: new_kind,
@@ -437,12 +461,7 @@ impl Store {
                 )
             };
 
-        self.conn
-            .execute(
-                "UPDATE threads SET updated_at = ?1 WHERE id = ?2",
-                params![now, thread_id],
-            )
-            .map_err(|e| format!("could not touch thread timestamp: {e}"))?;
+        self.touch_thread(patch.thread_id, now)?;
         Ok((recorded_turn, record))
     }
 
@@ -481,12 +500,7 @@ impl Store {
                 ],
             )
             .map_err(|e| format!("could not insert note: {e}"))?;
-        self.conn
-            .execute(
-                "UPDATE threads SET updated_at = ?1 WHERE id = ?2",
-                params![now, thread_id],
-            )
-            .map_err(|e| format!("could not touch thread timestamp: {e}"))?;
+        self.touch_thread(thread_id, now)?;
         Ok(NoteRecord {
             id,
             text: plain_text.to_string(),

@@ -57,17 +57,10 @@ pub enum AcpEvent {
         thread_id: String,
         text: String,
     },
-    ActCreated {
+    Act {
         thread_id: String,
         harness_call_id: String,
-        kind: String,
-        title: String,
-        state: String,
-        detail: Option<String>,
-    },
-    ActUpdated {
-        thread_id: String,
-        harness_call_id: String,
+        is_new: bool,
         kind: Option<String>,
         title: Option<String>,
         state: Option<String>,
@@ -121,7 +114,9 @@ pub struct AcpHarness {
     thread_to_session: HashMap<String, String>,
     session_to_thread: HashMap<String, String>,
     loading_sessions: HashSet<String>,
-    known_tool_ids: HashSet<String>,
+    /// Tool call IDs seen per thread, used only to redact harness error messages
+    /// and unrecognized updates without altering normal model output.
+    thread_tool_ids: HashMap<String, HashSet<String>>,
 }
 
 impl AcpHarness {
@@ -155,7 +150,7 @@ impl AcpHarness {
             thread_to_session: HashMap::new(),
             session_to_thread: HashMap::new(),
             loading_sessions: HashSet::new(),
-            known_tool_ids: HashSet::new(),
+            thread_tool_ids: HashMap::new(),
         };
 
         let init = InitializeRequest::new(ProtocolVersion::V1)
@@ -299,7 +294,6 @@ impl AcpHarness {
 
     /// Stops and reaps the harness child process.
     pub fn stop(mut self) {
-        // Close stdin first to invite a clean exit.
         self.stdin.take();
         if self.wait_exit(Duration::from_millis(200)) {
             return;
@@ -408,14 +402,18 @@ impl AcpHarness {
             let raw_msg = serde_json::from_value::<AcpError>(err_val.clone())
                 .map(|e| e.message)
                 .unwrap_or_else(|_| "The harness reported an error.".to_string());
-            let message = self.sanitize_text(&raw_msg);
             match pending {
-                PendingRpc::Initialize => events.push(AcpEvent::InitializeFailed { message }),
-                PendingRpc::NewSession { thread_id, turn } => events.push(AcpEvent::SessionFailed {
-                    thread_id,
-                    turn,
-                    message,
+                PendingRpc::Initialize => events.push(AcpEvent::InitializeFailed {
+                    message: self.redact_for_thread(None, &raw_msg),
                 }),
+                PendingRpc::NewSession { thread_id, turn } => {
+                    let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
+                    events.push(AcpEvent::SessionFailed {
+                        thread_id,
+                        turn,
+                        message,
+                    });
+                }
                 PendingRpc::LoadSession {
                     thread_id,
                     turn,
@@ -423,14 +421,16 @@ impl AcpHarness {
                     cwd,
                 } => {
                     self.loading_sessions.remove(&session_id);
-                    // Fall back to starting a fresh session if the harness cannot load the old one.
                     self.request_new_session(&thread_id, turn, &cwd);
                 }
-                PendingRpc::Prompt { thread_id, turn } => events.push(AcpEvent::PromptFinished {
-                    thread_id,
-                    turn,
-                    outcome: TurnOutcome::Failed(message),
-                }),
+                PendingRpc::Prompt { thread_id, turn } => {
+                    let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
+                    events.push(AcpEvent::PromptFinished {
+                        thread_id,
+                        turn,
+                        outcome: TurnOutcome::Failed(message),
+                    });
+                }
             }
             return;
         }
@@ -443,11 +443,11 @@ impl AcpHarness {
                     self.supports_load_session = resp.agent_capabilities.load_session;
                     events.push(AcpEvent::Initialized);
                 }
-                Ok(resp) => events.push(AcpEvent::InitializeFailed {
-                    message: format!("Harness negotiated unsupported ACP version {}.", resp.protocol_version),
+                Ok(_) => events.push(AcpEvent::InitializeFailed {
+                    message: "The harness uses an unsupported protocol version.".to_string(),
                 }),
                 Err(_) => events.push(AcpEvent::InitializeFailed {
-                    message: "Harness returned an invalid initialize response.".to_string(),
+                    message: "The harness returned an invalid initialization response.".to_string(),
                 }),
             },
             PendingRpc::NewSession { thread_id, turn } => match serde_json::from_value::<NewSessionResponse>(result) {
@@ -464,7 +464,7 @@ impl AcpHarness {
                 Err(_) => events.push(AcpEvent::SessionFailed {
                     thread_id,
                     turn,
-                    message: "Harness returned an invalid new-session response.".to_string(),
+                    message: "The harness could not start a thread.".to_string(),
                 }),
             },
             PendingRpc::LoadSession {
@@ -510,7 +510,7 @@ impl AcpHarness {
                 Err(_) => events.push(AcpEvent::PromptFinished {
                     thread_id,
                     turn,
-                    outcome: TurnOutcome::Failed("Harness returned an invalid prompt response.".to_string()),
+                    outcome: TurnOutcome::Failed("The harness returned an invalid turn response.".to_string()),
                 }),
             },
         }
@@ -544,12 +544,9 @@ impl AcpHarness {
         match serde_json::from_value::<SessionUpdate>(raw_update.clone()) {
             Ok(SessionUpdate::AgentMessageChunk(chunk)) => {
                 if let Some(text) = content_block_text(&chunk.content) {
-                    events.push(AcpEvent::TextChunk {
-                        thread_id,
-                        text: self.sanitize_text(&text),
-                    });
+                    events.push(AcpEvent::TextChunk { thread_id, text });
                 } else {
-                    let plain = self.render_unknown_update(raw_update);
+                    let plain = self.render_unknown_update(&thread_id, raw_update);
                     events.push(AcpEvent::UnknownUpdate {
                         thread_id,
                         raw_json: raw_update.to_string(),
@@ -559,39 +556,45 @@ impl AcpHarness {
             }
             Ok(SessionUpdate::ToolCall(tc)) => {
                 let call_id = tc.tool_call_id.0.as_ref().to_string();
-                self.known_tool_ids.insert(call_id.clone());
-                let detail = tool_detail(&tc.content, tc.raw_output.as_ref(), tc.raw_input.as_ref())
-                    .map(|d| self.sanitize_text(&d));
-                events.push(AcpEvent::ActCreated {
+                self.thread_tool_ids
+                    .entry(thread_id.clone())
+                    .or_default()
+                    .insert(call_id.clone());
+                let detail = tool_detail(&tc.content, tc.raw_output.as_ref(), tc.raw_input.as_ref());
+                events.push(AcpEvent::Act {
                     thread_id,
                     harness_call_id: call_id,
-                    kind: map_tool_kind(tc.kind).to_string(),
-                    title: self.sanitize_text(&tc.title),
-                    state: map_tool_status(tc.status).to_string(),
+                    is_new: true,
+                    kind: Some(map_tool_kind(tc.kind).to_string()),
+                    title: Some(tc.title),
+                    state: Some(map_tool_status(tc.status).to_string()),
                     detail,
                 });
             }
             Ok(SessionUpdate::ToolCallUpdate(tcu)) => {
                 let call_id = tcu.tool_call_id.0.as_ref().to_string();
-                self.known_tool_ids.insert(call_id.clone());
+                self.thread_tool_ids
+                    .entry(thread_id.clone())
+                    .or_default()
+                    .insert(call_id.clone());
                 let detail = tool_detail(
                     tcu.fields.content.as_deref().unwrap_or(&[]),
                     tcu.fields.raw_output.as_ref(),
                     tcu.fields.raw_input.as_ref(),
-                )
-                .map(|d| self.sanitize_text(&d));
-                events.push(AcpEvent::ActUpdated {
+                );
+                events.push(AcpEvent::Act {
                     thread_id,
                     harness_call_id: call_id,
+                    is_new: false,
                     kind: tcu.fields.kind.map(|k| map_tool_kind(k).to_string()),
-                    title: tcu.fields.title.map(|t| self.sanitize_text(&t)),
+                    title: tcu.fields.title,
                     state: tcu.fields.status.map(|s| map_tool_status(s).to_string()),
                     detail,
                 });
             }
             Ok(SessionUpdate::SessionInfoUpdate(info)) => {
                 if let MaybeUndefined::Value(title) = info.title {
-                    let clean = self.sanitize_text(title.trim());
+                    let clean = title.trim().to_string();
                     if !clean.is_empty() {
                         events.push(AcpEvent::TitleUpdated {
                             thread_id,
@@ -603,7 +606,7 @@ impl AcpHarness {
             // Any other update (known to the schema or unknown/future) is kept
             // verbatim in the record and rendered plainly.
             Ok(_) | Err(_) => {
-                let plain = self.render_unknown_update(raw_update);
+                let plain = self.render_unknown_update(&thread_id, raw_update);
                 events.push(AcpEvent::UnknownUpdate {
                     thread_id,
                     raw_json: raw_update.to_string(),
@@ -613,38 +616,52 @@ impl AcpHarness {
         }
     }
 
-    fn sanitize_text(&self, input: &str) -> String {
+    /// Redacts harness-internal IDs from error strings and unrecognized updates
+    /// without touching normal model answers.
+    fn redact_for_thread(&self, thread_id: Option<&str>, input: &str) -> String {
         let mut out = input.to_string();
-        for sid in self.session_to_thread.keys() {
-            if !sid.is_empty() && out.contains(sid) {
-                out = out.replace(sid, "[session]");
+        if let Some(tid) = thread_id {
+            if let Some(sid) = self.thread_to_session.get(tid)
+                && !sid.is_empty()
+                && out.contains(sid)
+            {
+                out = out.replace(sid, "[redacted]");
             }
-        }
-        for tid in &self.known_tool_ids {
-            if !tid.is_empty() && out.contains(tid) {
-                out = out.replace(tid, "[act]");
+            if let Some(tools) = self.thread_tool_ids.get(tid) {
+                for call_id in tools {
+                    if !call_id.is_empty() && out.contains(call_id) {
+                        out = out.replace(call_id, "[redacted]");
+                    }
+                }
+            }
+        } else {
+            for sid in self.session_to_thread.keys() {
+                if !sid.is_empty() && out.contains(sid) {
+                    out = out.replace(sid, "[redacted]");
+                }
             }
         }
         out
     }
 
     /// Turns an unknown ACP update payload into plain text without exposing
-    /// ACP's discriminator tag (`sessionUpdate`), metadata, or harness IDs.
-    fn render_unknown_update(&self, raw: &Value) -> String {
+    /// ACP's discriminator tag (`sessionUpdate`), schema field names, metadata,
+    /// or harness IDs.
+    fn render_unknown_update(&self, thread_id: &str, raw: &Value) -> String {
         let Some(obj) = raw.as_object() else {
-            return self.sanitize_text(&raw.to_string());
+            return self.redact_for_thread(Some(thread_id), &raw.to_string());
         };
         for preferred in ["summary", "message", "text", "note", "detail", "title"] {
             if let Some(s) = obj.get(preferred).and_then(Value::as_str)
                 && !s.trim().is_empty()
             {
-                return self.sanitize_text(s.trim());
+                return self.redact_for_thread(Some(thread_id), s.trim());
             }
         }
         if let Some(content_text) = obj.get("content").and_then(|c| c.get("text")).and_then(Value::as_str)
             && !content_text.trim().is_empty()
         {
-            return self.sanitize_text(content_text.trim());
+            return self.redact_for_thread(Some(thread_id), content_text.trim());
         }
         let mut parts = Vec::new();
         for (k, v) in obj {
@@ -654,17 +671,17 @@ impl AcpHarness {
             ) {
                 continue;
             }
-            let rendered = match v {
-                Value::String(s) => s.clone(),
-                Value::Null => continue,
-                other => other.to_string(),
-            };
-            parts.push(format!("{k}: {rendered}"));
+            match v {
+                Value::String(s) if !s.trim().is_empty() => parts.push(s.trim().to_string()),
+                Value::Number(n) => parts.push(n.to_string()),
+                Value::Bool(b) => parts.push(b.to_string()),
+                _ => {}
+            }
         }
         if parts.is_empty() {
             "Unrecognized update from harness.".to_string()
         } else {
-            self.sanitize_text(&parts.join(", "))
+            self.redact_for_thread(Some(thread_id), &parts.join(" "))
         }
     }
 }

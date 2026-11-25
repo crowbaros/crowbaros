@@ -1221,7 +1221,7 @@ fn harness_starts_on_demand_stops_when_idle_and_restarts_for_next_turn() {
     // Turn 1 starts the harness.
     write_frame(
         &mut peer,
-        &json!({ "op": "send", "text": "SUPER_SECRET_USER_TEXT", "cwd": dir.0.to_str().unwrap() }),
+        &json!({ "op": "send", "text": "SUPER_SECRET_PERSON_TEXT", "cwd": dir.0.to_str().unwrap() }),
     )
     .unwrap();
     let sent = read_frame(&mut peer).unwrap();
@@ -1269,8 +1269,8 @@ fn harness_starts_on_demand_stops_when_idle_and_restarts_for_next_turn() {
     let log = lever.log_text();
     assert!(log.contains("after idle timeout"), "expected idle stop in log: {log}");
     assert!(
-        !log.contains("SUPER_SECRET_USER_TEXT"),
-        "user text leaked to log: {log}"
+        !log.contains("SUPER_SECRET_PERSON_TEXT"),
+        "person text leaked to log: {log}"
     );
 }
 
@@ -1451,14 +1451,17 @@ fn lever_speaks_every_message_documented_in_readme() {
 
     let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
     let mut peer = handshake(&lever.person);
-    let mut seen_replies = BTreeSet::new();
-    let mut seen_events = BTreeSet::new();
-    let record = |v: Value, replies: &mut BTreeSet<String>, events: &mut BTreeSet<String>| -> Value {
+    let mut seen_replies: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
+    let mut seen_events: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
+    let record = |v: Value,
+                  replies: &mut std::collections::BTreeMap<String, Value>,
+                  events: &mut std::collections::BTreeMap<String, Value>|
+     -> Value {
         if let Some(r) = v.get("reply").and_then(Value::as_str) {
-            replies.insert(r.to_string());
+            replies.insert(r.to_string(), v.clone());
         }
         if let Some(e) = v.get("event").and_then(Value::as_str) {
-            events.insert(e.to_string());
+            events.insert(e.to_string(), v.clone());
         }
         v
     };
@@ -1504,14 +1507,14 @@ fn lever_speaks_every_message_documented_in_readme() {
         }
     }
     write_frame(&mut peer, &json!({ "op": "stop", "thread": thread_id, "turn": 2 })).unwrap();
-    while !seen_replies.contains("ok") || !seen_events.contains("stopped") {
+    while !seen_replies.contains_key("ok") || !seen_events.contains_key("stopped") {
         record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
     }
 
     // Turn 3: failed
     write_frame(&mut peer, &json!({ "op": "send", "thread": thread_id, "text": "Fail" })).unwrap();
     record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
-    while !seen_events.contains("failed") {
+    while !seen_events.contains_key("failed") {
         record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
     }
 
@@ -1522,12 +1525,141 @@ fn lever_speaks_every_message_documented_in_readme() {
     )
     .unwrap();
     record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
-    while !seen_events.contains("interrupted") {
+    while !seen_events.contains_key("interrupted") {
         record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
     }
 
-    assert_eq!(seen_replies, doc_replies);
-    assert_eq!(seen_events, doc_events);
+    let seen_reply_names: BTreeSet<String> = seen_replies.keys().cloned().collect();
+    let seen_event_names: BTreeSet<String> = seen_events.keys().cloned().collect();
+    assert_eq!(seen_reply_names, doc_replies);
+    assert_eq!(seen_event_names, doc_events);
+
+    // Every documented reply and event block's top-level keys must match what Lever emits.
+    for block in &blocks {
+        if let Some(name) = block.get("reply").and_then(Value::as_str) {
+            let actual = &seen_replies[name];
+            let doc_keys: BTreeSet<&str> = block.as_object().unwrap().keys().map(String::as_str).collect();
+            let actual_keys: BTreeSet<&str> = actual.as_object().unwrap().keys().map(String::as_str).collect();
+            assert_eq!(actual_keys, doc_keys, "reply {name:?} keys drifted from README");
+        }
+        if let Some(name) = block.get("event").and_then(Value::as_str) {
+            let actual = &seen_events[name];
+            let doc_keys: BTreeSet<&str> = block.as_object().unwrap().keys().map(String::as_str).collect();
+            let actual_keys: BTreeSet<&str> = actual.as_object().unwrap().keys().map(String::as_str).collect();
+            assert_eq!(actual_keys, doc_keys, "event {name:?} keys drifted from README");
+        }
+    }
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn reused_tool_call_id_short_id_in_answer_and_error_on_cancel_are_handled_correctly() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = dir.0.join("script.json");
+    std::fs::write(
+        &script,
+        serde_json::to_string(&json!({
+            "turns": [
+                {
+                    "steps": [
+                        { "kind": "act", "id": "c1", "tool_kind": "execute", "title": "First act", "status": "completed", "content": "one" },
+                        { "kind": "text", "text": "Use vec1 here." }
+                    ]
+                },
+                {
+                    "steps": [
+                        { "kind": "act", "id": "c1", "tool_kind": "read", "title": "Second act", "status": "in_progress" },
+                        { "kind": "act_update", "id": "c1", "status": "completed", "content": "two" },
+                        { "kind": "text", "text": "Turn two." }
+                    ]
+                },
+                {
+                    "steps": [{ "kind": "text", "text": "Cancel me" }],
+                    "stall": true,
+                    "cancel_with_error": true
+                }
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut peer = handshake(&lever.person);
+
+    // Turn 1: short tool ID "c1" must not corrupt "vec1" in the answer.
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "text": "One", "cwd": dir.0.to_str().unwrap() }),
+    )
+    .unwrap();
+    let sent1 = read_frame(&mut peer).unwrap();
+    let thread_id = sent1["thread"].as_str().unwrap().to_string();
+    let mut t1_text = String::new();
+    let mut t1_act_id = String::new();
+    loop {
+        let ev = read_frame(&mut peer).unwrap();
+        if ev["event"] == "text" {
+            t1_text.push_str(ev["text"].as_str().unwrap());
+        } else if ev["event"] == "act" {
+            t1_act_id = ev["act"].as_str().unwrap().to_string();
+        } else if ev["event"] == "done" {
+            break;
+        }
+    }
+    assert_eq!(t1_text, "Use vec1 here.");
+
+    // Turn 2: reusing harness tool call ID "c1" creates a new act on turn 2 without overwriting turn 1's act.
+    write_frame(&mut peer, &json!({ "op": "send", "thread": thread_id, "text": "Two" })).unwrap();
+    assert_eq!(read_frame(&mut peer).unwrap()["turn"], 2);
+    let mut t2_act_id = String::new();
+    loop {
+        let ev = read_frame(&mut peer).unwrap();
+        if ev["event"] == "act" {
+            assert_eq!(ev["turn"], 2, "turn 2 act must broadcast under turn 2: {ev}");
+            t2_act_id = ev["act"].as_str().unwrap().to_string();
+        } else if ev["event"] == "done" {
+            break;
+        }
+    }
+    assert_ne!(t1_act_id, t2_act_id, "turn 2 must get its own Lever act ID");
+
+    // Turn 3: harness answering `session/cancel` with a JSON-RPC error still finishes as `stopped`.
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": thread_id, "text": "Three" }),
+    )
+    .unwrap();
+    assert_eq!(read_frame(&mut peer).unwrap()["turn"], 3);
+    loop {
+        if read_frame(&mut peer).unwrap()["event"] == "text" {
+            break;
+        }
+    }
+    write_frame(&mut peer, &json!({ "op": "stop", "thread": thread_id, "turn": 3 })).unwrap();
+    let mut saw_stopped = false;
+    while !saw_stopped {
+        let frame = read_frame(&mut peer).unwrap();
+        assert_ne!(
+            frame["event"], "failed",
+            "cancelled turn must not end as failed: {frame}"
+        );
+        if frame["event"] == "stopped" && frame["turn"] == 3 {
+            saw_stopped = true;
+        }
+    }
+
+    // Verify all three turns and both acts are intact in the resumed record.
+    write_frame(&mut peer, &json!({ "op": "resume", "thread": thread_id })).unwrap();
+    let resumed = read_frame(&mut peer).unwrap();
+    assert_eq!(resumed["turns"][0]["acts"][0]["title"], "First act");
+    assert_eq!(resumed["turns"][0]["acts"][0]["detail"], "one");
+    assert_eq!(resumed["turns"][1]["acts"][0]["title"], "Second act");
+    assert_eq!(resumed["turns"][1]["acts"][0]["detail"], "two");
+    assert_eq!(resumed["turns"][2]["state"], "stopped");
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
