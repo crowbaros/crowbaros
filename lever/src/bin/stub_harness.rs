@@ -79,6 +79,10 @@ struct Script {
     /// requests meanwhile.
     #[serde(default)]
     load_delay_ms: u64,
+    /// Waits this long before it answers `session/set_config_option`, and goes
+    /// on taking requests meanwhile.
+    #[serde(default)]
+    set_config_delay_ms: u64,
     /// If true, every result also carries `"error": null`, and every update
     /// `"id": null`.
     #[serde(default)]
@@ -699,9 +703,23 @@ fn run(options: Options) -> Result<(), String> {
                     if set_req.config_id.0.as_ref() != "model" || !valid {
                         writer.send_error(id, AcpError::invalid_params().data(json!("unknown model")));
                     } else {
-                        session_models.lock().unwrap().insert(sid, val.clone());
-                        let opts = build_config_options(script.models.as_deref(), Some(&val)).unwrap_or_default();
-                        writer.send_result(id, SetSessionConfigOptionResponse::new(opts));
+                        let delay = Duration::from_millis(script.set_config_delay_ms);
+                        let writer = writer.clone();
+                        let models = script.models.clone();
+                        let session_models = Arc::clone(&session_models);
+                        let respond = move || {
+                            if !delay.is_zero() {
+                                thread::sleep(delay);
+                            }
+                            session_models.lock().unwrap().insert(sid, val.clone());
+                            let opts = build_config_options(models.as_deref(), Some(&val)).unwrap_or_default();
+                            writer.send_result(id, SetSessionConfigOptionResponse::new(opts));
+                        };
+                        if delay.is_zero() {
+                            respond();
+                        } else {
+                            thread::spawn(respond);
+                        }
                     }
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),

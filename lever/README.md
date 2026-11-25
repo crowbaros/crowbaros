@@ -236,10 +236,11 @@ Errors: `no-harness`, `working`, `harness-error`, `invalid-request`.
 
 Saves the person's choice for OpenCode's free hosted Models. When changed, an
 idle harness is stopped immediately (or as soon as active work finishes, while
-refusing new `send` requests until the restart completes) so the next start
-applies the new `OPENCODE_DISABLE_FREE_MODELS` setting. Only the person's
-socket may change this setting; the surface socket is refused with
-`unsupported`.
+refusing `send`, `models`, and `set-model` requests with `working` until the
+restart completes) so the next start applies the new
+`OPENCODE_DISABLE_FREE_MODELS` and `OPENCODE_DISABLE_MODELS_FETCH` settings.
+Only the person's socket may change this setting; the surface socket is refused
+with `unsupported`.
 
 Request:
 

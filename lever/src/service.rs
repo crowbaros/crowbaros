@@ -640,7 +640,10 @@ impl Service {
                     {
                         return error_outcome("working", "This thread is already working on a turn.");
                     }
-                    let model = requested_model.map(str::to_string).or(meta.model);
+                    let model = requested_model
+                        .map(str::to_string)
+                        .or(meta.model)
+                        .or_else(|| self.model_catalog.as_ref().and_then(|c| c.default_model.clone()));
                     (tid.to_string(), meta.cwd, meta.harness_session_id, model, false)
                 }
                 Ok(None) => return error_outcome("no-thread", &format!("There is no thread {tid}.")),

@@ -3237,3 +3237,65 @@ fn disconnecting_while_waiting_for_models_reply_does_not_stall_lever() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn stopping_turn_during_model_switch_locks_thread_and_preserves_saved_model() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "set_config_delay_ms": 300,
+            "models": [
+                { "id": "stub/stub-1", "name": "Stub One" },
+                { "id": "stub/stub-2", "name": "Stub Two" }
+            ],
+            "default_model": "stub/stub-1",
+            "turns": [
+                { "steps": [{ "kind": "text", "text": "reply on {model}" }] }
+            ]
+        }),
+    );
+
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut peer = handshake(&lever.person);
+
+    // Start a new thread requesting stub/stub-2 (which triggers a delayed set_config_option from default stub/stub-1).
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": null, "text": "switch and stop", "model": "stub/stub-2" }),
+    )
+    .unwrap();
+    let sent = read_frame(&mut peer).unwrap();
+    assert_eq!(sent["reply"], "sent");
+    let tid = sent["thread"].as_str().unwrap().to_string();
+    let ev_msg = read_frame(&mut peer).unwrap();
+    assert_eq!(ev_msg["event"], "message");
+
+    // Wait briefly so session/new finishes and session/set_config_option is in flight, then stop turn 1.
+    std::thread::sleep(Duration::from_millis(80));
+    write_frame(&mut peer, &json!({ "op": "stop", "thread": tid, "turn": 1 })).unwrap();
+    let stop_reply = read_frame(&mut peer).unwrap();
+    assert_eq!(stop_reply["reply"], "ok");
+    let ev_stopped = read_frame(&mut peer).unwrap();
+    assert_eq!(ev_stopped["event"], "stopped");
+
+    // While the stopped turn's set_config_option is still in flight, a new send on the same thread is refused with `working`.
+    write_frame(&mut peer, &json!({ "op": "send", "thread": tid, "text": "too soon" })).unwrap();
+    let busy = read_frame(&mut peer).unwrap();
+    assert_eq!(busy["reply"], "error");
+    assert_eq!(busy["code"], "working");
+
+    // Once the delayed set_config_option settles, the stopped turn's Model was NOT saved to SQLite,
+    // and the next turn without `--model` runs on the default Model (stub/stub-1), not stub/stub-2.
+    std::thread::sleep(Duration::from_millis(320));
+    let rec = resume(&mut peer, &tid);
+    assert!(rec.get("model").is_none(), "stopped switch must not persist: {rec}");
+
+    let (_, turn2) = send(&mut peer, Some(&tid), "after settle");
+    let evs = turn_events(&mut peer, &tid, turn2);
+    assert_eq!(text_of(&evs), "reply on stub/stub-1");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
