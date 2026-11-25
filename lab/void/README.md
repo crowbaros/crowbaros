@@ -133,20 +133,9 @@ had it; the drawer over a fullscreen window; its close control; Super alone
 still opening the launcher; the gesture doing nothing while locked, with the
 drawer up or put away after unlock as it was; and, with a second display
 plugged in, the drawer on whichever display the pointer is on. A still
-desktop with the drawer up must commit and draw nothing, too. It then holds a
-conversation in the Agent's drawer (#295) against the stub Model
-([`agent/test/stub-model.ts`](../../agent/test/stub-model.ts)), which it runs
-in the guest with the image's Node.js and points the Harness at with
-`endpoint.json`, as Base's boot check does. The check needs no Model key and
-no network beyond the guest. It checks the calm no-Model state before the
-stub is there; asks a question only desktop context can answer; puts the
-drawer away so the turn finishes behind it, with the mark in the bar and over
-a fullscreen window; and checks the answer and the desktop context in the
-drawer. What the Harness sent is read from the stub's own record of requests
-and from `harness.sqlite`: the question carried desktop context, and no
-request and no row held the window's contents. A run against a real Model is
-a dated record in [`docs/research/`](../../docs/research/), not part of any
-check.
+desktop with the drawer up must commit and draw nothing, too. It checks that
+the drawer says the Agent is not reachable until Lever answers, and starts no
+stub Model.
 It checks that apps run as the person at the ordinary socket for apps, that
 copy and paste, the primary selection, and drag and drop work between two apps,
 that Fulcrum's Harness socket serves the person alone, and that the shell's

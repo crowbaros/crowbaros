@@ -2,13 +2,12 @@
 
 Plain Void Linux with the desktop on it, built without root and booted under
 UEFI, in a VM or on a real machine ([the guide](HARDWARE.md)). The desktop is Fulcrum, the shell, Files, and Studio Settings, as the lab ran
-them. The Harness runs beside it from boot. It has no apply engine and no generations.
+them. It has no apply engine and no generations.
 
 ```sh
 base/void_base.py check          # build, boot, check, record a log, power off
-base/void_base.py build          # install the Void roots, build the desktop and the Harness, write the boot disk
+base/void_base.py build          # install the Void roots, build the desktop, write the boot disk
                                  # (--lab-account to ignore your account file, as the checks do)
-base/void_base.py agent          # type-check, test, and bundle the Harness alone, and test `crowbar-agent` against it
 base/void_base.py boot           # boot a fresh copy of the disk (--window to see the desktop)
 base/void_base.py ssh [CMD]      # a root shell, or one command
 base/void_base.py console        # the serial console (Ctrl-] to leave)
@@ -24,10 +23,9 @@ base/void_base.py root key       # name what installs the Void root, as CI's cac
 | --- | --- |
 | Packages | `base-minimal`, `linux`, and NVIDIA's driver (`nvidia`, with `linux-headers`, `dkms`, and `pahole` to build its kernel module), `btrfs-progs`, `grub-x86_64-efi`, `mtools`, `openssh`, `sudo`, `dhcpcd`, `iproute2`; for real machines, Intel's microcode (`intel-ucode`), `iwd` for Wi-Fi, `wireless-regdb`, and Mesa's Vulkan drivers for Intel and AMD GPUs, beside the firmware and AMD's microcode `linux` already brings; and what the desktop needs: `seatd`, Mesa with lavapipe, Wayland, `foot`, Chromium, and others, from Void's `current` repository and, for NVIDIA's driver, its `nonfree` repository ([`config.json`](config.json)) |
 | Desktop | Fulcrum (`compositor/`), the shell, Files, Studio Settings, and the desktop's helpers ([`helpers/`](helpers/README.md)), built and tested in a Void build root of their own so they link Void's libraries, in `/usr/local/bin`. Their runit services are in [`desktop/`](desktop/) |
-| Harness | [`agent/`](../agent/README.md), bundled into one file, and the Node.js it runs on: Node's own Linux x64 binary at an exact version, checked by SHA-256 ([`config.json`](config.json)). Both are in `/usr/local/lib/crowbar-agent`, off `PATH`. Void's `nodejs` is not installed, and the image has no npm ([ADR 0034](../docs/adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)). [`crowbar-agent`](../agent/client/README.md), the person's way to the Agent from a terminal, is built with the desktop and is on `PATH`, in `/usr/local/bin` |
 | Disk | GPT. An ESP holds a standalone GRUB at `\EFI\BOOT\BOOTX64.EFI`, the path any UEFI firmware boots without a boot entry. The root is Btrfs, labelled `crowbaros-root` |
 | Boot | GRUB finds the root by label and reads `/boot/grub/grub.cfg` there. The kernel and initramfs are the ones xbps built. The kernel's command line adds `nvidia-drm.modeset=1 nvidia-drm.fbdev=1` |
-| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `dbus`, `iwd`, `seatd`, the system's log (`socklog` and `nanoklogd`, kept in `/var/log/socklog`), the desktop's five: the compositor on virtual terminal 2, the shell, the launcher, the unlock helper, and the service that reboots for Ctrl+Alt+Del; and the Harness, `crowbar-agent`. Root logs in over SSH with a key made for the lab, and has no password; the person's account takes the same key. SSH takes keys only |
+| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `dbus`, `iwd`, `seatd`, the system's log (`socklog` and `nanoklogd`, kept in `/var/log/socklog`), and the desktop's five: the compositor on virtual terminal 2, the shell, the launcher, the unlock helper, and the service that reboots for Ctrl+Alt+Del. Root logs in over SSH with a key made for the lab, and has no password; the person's account takes the same key. SSH takes keys only |
 
 The VM is QEMU with KVM, OVMF firmware, virtio disk and network, SSH
 forwarded to `127.0.0.1:22240`, and for the desktop a virtio GPU, keyboard, and
@@ -35,13 +33,10 @@ tablet, with no VGA card.
 
 ## Where things go
 
-- Downloads: `~/.cache/crowbaros/void`. The static xbps and Node.js
-  are each pinned by SHA-256 and refused if they do not match. Each pin's archive
-  and unpacked copy are kept under the pin's name, so a new pin is never
-  served the last one's, and checkouts with different pins share the cache.
-- The Harness's packages: `agent/node_modules`, which npm installs from
-  `agent/package-lock.json` on every build, and its bundle, `agent/dist/`.
-  Git ignores both.
+- Downloads: `~/.cache/crowbaros/void`. The static xbps is pinned by SHA-256
+  and refused if it does not match. Each pin's archive and unpacked copy are
+  kept under the pin's name, so a new pin is never served the last one's, and
+  checkouts with different pins share the cache.
 - The root, the build root, the Cargo target, the disks, the SSH key, and boot
   logs: `.lab/base/`, outside git. The build root and the target are kept, so
   the next build starts from them.
@@ -136,15 +131,13 @@ also works with `qemu-hw-display-virtio-gpu-pci`, but `boot --window` needs the
 GTK display that `qemu-desktop` has. Where QEMU's virtio-gpu device is not
 installed, set `QEMU_MODULE_DIR` to a directory that holds it. The desktop is
 built with Cargo, and its crates are fetched and GPUI is patched on the host:
-install Rust through `rustup`, and `patch`. Only `build` needs them. The
-Harness needs nothing installed: the build downloads the pinned Node.js and
-runs the npm that came with it, on the host.
+install Rust through `rustup`, and `patch`. Only `build` needs them.
 You also need read and write access to `/dev/kvm`, and a range of subordinate
 IDs in `/etc/subuid` and `/etc/subgid` (Arch gives every new user one). `build`
 and `boot` check for all of this first, and name what is missing.
 
 The first `build` on a machine downloads the packages for both roots, and
-compiles the desktop. Every build type-checks, tests, and bundles the Harness. It shows each install as it goes, and keeps a copy in
+compiles the desktop. It shows each install as it goes, and keeps a copy in
 `.lab/base/rootfs.log` and `.lab/base/buildroot.log`. If a build stops partway,
 the next `build` installs that root again: it uses a root only after an install
 of the configured packages finished. The image is the same: `build` writes it
@@ -171,21 +164,8 @@ disk, that restarting the compositor's
 service leaves one new compositor running, that `seatd`, the compositor, the
 shell, the launcher, and the unlock helper then stay up and the shell's
 service runs the shell, that the compositor answers the unlock helper's
-`lock`, that the Harness answers the version to the shell's
-account on its surface socket and to no other, another user with the shell's
-group included, that it runs as the person
-with their groups, in an app's environment, with its state theirs alone and
-no Node.js on its `PATH`, that runit starts it again after a kill and its log
-records the restart, that it then holds less than the 150 MiB ADR 0034
-allows, that the person gets an answer from the Agent with `crowbar-agent`,
-from a stub Model, and is told plainly when there is no Model, that the
-Harness refuses root on its person socket, and that the kernel logged nothing
-critical.
-
-For the turn, the check writes [the stub Model](../agent/README.md#the-stub-model)
-into the guest, runs it as the person with the Node.js the image ships, and
-points the Harness at it with an endpoint file in the Harness's state. It
-removes all three before it ends. The image holds none of them.
+`lock`, that the image holds no retired Harness, no Node.js, and no
+`crowbar-agent` service, and that the kernel logged nothing critical.
 
 The lab's two graphical checks boot a copy of this image under UEFI as well.
 The desktop check runs all of these Base boot checks alongside the desktop
@@ -245,50 +225,6 @@ clipboard, and a new window takes the keyboard, as on any desktop. The shell rea
 through a read-only request to the launcher, and Studio Settings keeps its
 preferences in the person's home. The compositor has no animations, so Studio
 Settings saves the motion preference and says it has no effect here.
-
-## The Harness's service
-
-`crowbar-agent` ([`desktop/agent-run`](desktop/agent-run)) runs the Harness
-from boot, whether or not anyone has unlocked
-([ADR 0034](../docs/adr/0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md)).
-It has no account of its own: it runs as the person.
-
-- As root, the service makes what the person cannot: their runtime directory,
-  and `/run/crowbar-agent`, the directory of the surface socket. That
-  directory is the person's, so the Harness can bind there, with the shell's
-  group and mode 2750, so the shell's account is the only other one that can
-  enter. The Harness serves the shell's UID alone, and refuses root. A
-  program running as the person can enter as the Harness does, and could put
-  a socket of its own there. That follows from ADR 0034 running the Harness
-  as the person, with no isolation inside their account.
-- The Harness also listens on its person socket,
-  `/run/user/<the person's UID>/crowbar-agent/person`, for the person's own
-  clients, [`crowbar-agent`](../agent/client/README.md) first. It makes that
-  directory itself, theirs alone, and serves the person's UID alone there.
-  On a console or over SSH nothing sets `XDG_RUNTIME_DIR`, and
-  `crowbar-agent` looks in `/run/user/<UID>` all the same.
-- Fulcrum listens on `/run/crowbar-trusted/agent/compositor` (in a directory
-  owned by `crowbar-compositor` with the person's group and mode 2750),
-  serving the person's UID alone. The Harness connects to it with backoff
-  for desktop context, and works while Fulcrum is absent. The shell connects
-  to `/run/crowbar-agent/surface` (`CROWBAR_AGENT_SOCKET`) for the Agent's
-  drawer and mark.
-- It then becomes the person with `chpst`, with all their groups, and runs
-  `/usr/local/lib/crowbar-agent/node` on the bundle through
-  `crowbar-launcher as-app`, which gives it the environment the launcher gives
-  an app and starts it in the person's home. The commands the Agent will run
-  inherit both.
-- The Harness keeps its database, the credentials of each sign-in, and its
-  log in the person's home,
-  `~/.local/state/crowbaros/agent`, readable by the person alone. It makes
-  them itself. `/var/log/crowbar-agent.log` holds only what the service's
-  script and the Harness's process print: Node.js's own errors, and the
-  Harness's when its log is what failed.
-- It waits for nothing. runit starts it again whenever it exits: at once, or
-  a second later when it had run for less than a second.
-
-[`agent/README.md`](../agent/README.md) has both sockets' framing, the person
-socket's messages, and what the log records.
 
 ## The person's account
 

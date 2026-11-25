@@ -8,7 +8,6 @@ from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
-import time
 import unittest
 from unittest.mock import patch
 
@@ -387,52 +386,6 @@ class StaticXbps(PinFixture):
         self.assertEqual(self.program(), b'the xbps')
 
 
-class PinnedNode(PinFixture):
-    """The Node.js the Harness runs on is the one the configuration pins
-    (ADR 0034)."""
-
-    def pin(self, version, program):
-        """Pins an archive of this version, as nodejs.org lays one out, whose
-        `node` is `program`."""
-        top = f'node-v{version}-linux-x64'
-        archive = self.tar(f'{top}/bin/node', program)
-        url = f'https://example.org/dist/v{version}/{top}.tar.xz'
-        void_base.CFG['node_url'] = url
-        void_base.CFG['node_sha256'] = hashlib.sha256(archive).hexdigest()
-        self.downloads[url] = archive
-
-    def test_the_pinned_node_is_downloaded_and_unpacked_once(self):
-        self.pin('1.2.3', b'the node')
-        self.assertEqual((void_base.node() / 'bin/node').read_bytes(), b'the node')
-        self.assertEqual((void_base.node() / 'bin/node').read_bytes(), b'the node')
-        self.assertEqual(self.downloads, {})
-
-    def test_a_download_that_is_not_the_pinned_node_is_refused_and_not_kept(self):
-        self.pin('1.2.3', b'the node')
-        self.downloads[void_base.CFG['node_url']] = self.tar('node-v1.2.3-linux-x64/bin/node', b'another node')
-        with self.assertRaises(SystemExit):
-            void_base.node()
-        self.assertEqual(list(self.cache.iterdir()), [])
-
-    def test_a_new_pin_runs_the_new_node(self):
-        self.pin('1.2.3', b'the old node')
-        old = void_base.node()
-        self.pin('1.2.4', b'the new node')
-        self.assertEqual((void_base.node() / 'bin/node').read_bytes(), b'the new node')
-        self.assertEqual((old / 'bin/node').read_bytes(), b'the old node')
-
-    def test_the_pin_is_nodes_own_linux_x64_binary_at_an_exact_version(self):
-        cfg = json.loads((Path(void_base.HERE) / 'config.json').read_text())
-        self.assertRegex(cfg['node_url'],
-                         r'^https://nodejs\.org/dist/v(\d+\.\d+\.\d+)/node-v\1-linux-x64\.tar\.xz$')
-        self.assertRegex(cfg['node_sha256'], r'^[0-9a-f]{64}$')
-
-    def test_voids_own_nodejs_is_in_no_root(self):
-        cfg = json.loads((Path(void_base.HERE) / 'config.json').read_text())
-        for packages in ('packages', 'lab_packages', 'build_packages'):
-            self.assertFalse([name for name in cfg[packages] if name.startswith('nodejs')], packages)
-
-
 class BuildFixture(unittest.TestCase):
     """A build with every outside step recorded instead of run."""
 
@@ -464,7 +417,7 @@ class BuildFixture(unittest.TestCase):
                             ('ROOTFS', self.work / 'rootfs'), ('run', run),
                             ('install', lambda *args, **kw: None), ('sha256', lambda path: 'digest'),
                             ('preflight', lambda **kw: None), ('rootfs', lambda force: None),
-                            ('fetch', lambda: Path('/xbps-static')), ('node', lambda: Path('/node')),
+                            ('fetch', lambda: Path('/xbps-static')),
                             ('ACCOUNT_FILE', Path(temporary.name) / 'account.json')]:
             p = patch.object(void_base, name, value)
             p.start()
@@ -605,61 +558,55 @@ class Desktop(BuildFixture):
 
 
 
-class Harness(BuildFixture):
-    """What Base's build does with the Harness: npm runs in the build alone,
-    from the pinned Node.js, and the image gets that Node.js and one bundled
-    file (ADR 0034)."""
+class NoHarnessOrNode(BuildFixture):
+    """Base carries no Pi Durable Harness, no Node.js, and no `crowbar-agent`
+    service or binary (ADR 0036)."""
 
-    def test_the_pinned_node_and_its_npm_check_test_and_bundle_the_harness(self):
-        void_base.bundle_harness()
-        self.assertEqual(self.commands[:3], [['/node/bin/npm', 'ci'], ['/node/bin/npm', 'run', 'check'],
-                                             ['/node/bin/npm', 'test']])
-        self.assertEqual(set(self.cwds[:3]), {void_base.ROOT / 'agent'})
-        for env in self.envs[:3]:
-            # npm's own `node`, and the one its scripts run, is the pinned one.
-            self.assertEqual(env['PATH'].split(':')[0], '/node/bin')
+    def test_config_has_no_node_pin_and_no_nodejs_package(self):
+        cfg = json.loads((Path(void_base.HERE) / 'config.json').read_text())
+        self.assertNotIn('node_url', cfg)
+        self.assertNotIn('node_sha256', cfg)
+        for packages in ('packages', 'lab_packages', 'build_packages'):
+            self.assertFalse([name for name in cfg[packages] if name.startswith('nodejs')], packages)
 
-    def test_the_terminals_client_is_tested_against_the_bundle_with_the_pinned_node(self):
-        # Its tests start the bundle, so they come after it is made, and
-        # every one of them runs: the build root's `cargo test` leaves out
-        # those that need Node.js.
-        void_base.bundle_harness()
-        self.assertEqual(self.commands[3:], [['cargo', 'test', '--locked', '--', '--include-ignored']])
-        self.assertEqual(self.cwds[3], void_base.ROOT / 'agent/client')
-        self.assertEqual(self.envs[3]['CROWBAR_AGENT_NODE'], '/node/bin/node')
-
-    def test_the_terminals_client_is_built_with_the_desktop_and_goes_on_the_path(self):
-        self.assertIn('agent/client', dict(void_base.PROJECTS))
-        self.assertEqual(void_base.binaries()['crowbar-agent'].name, 'crowbar-agent')
-        # The image step puts each program it is given in /usr/local/bin.
-        image = (Path(void_base.HERE) / 'host/image.sh').read_text()
-        self.assertIn('install -D -m 755 "$path" "$R/usr/local/bin/$(basename "$path")"', image)
-
-    def test_npm_runs_no_script_a_package_brings(self):
-        settings = (void_base.ROOT / 'agent/.npmrc').read_text().split()
-        self.assertIn('ignore-scripts=true', settings)
-
-    def test_the_harnesss_dependencies_are_pinned_to_exact_versions(self):
-        package = json.loads((void_base.ROOT / 'agent/package.json').read_text())
-        versions = {**package['dependencies'], **package['devDependencies']}
-        self.assertIn('@earendil-works/pi-durable', package['dependencies'])
-        for name, version in versions.items():
-            self.assertRegex(version, r'^\d+\.\d+\.\d+$', name)
-        self.assertTrue((void_base.ROOT / 'agent/package-lock.json').exists())
-
-    def test_the_image_step_gets_the_pinned_node_and_the_bundle_the_build_made(self):
+    def test_build_downloads_no_node_bundles_nothing_and_ships_no_crowbar_agent(self):
+        self.assertFalse(hasattr(void_base, 'node'))
+        self.assertFalse(hasattr(void_base, 'bundle_harness'))
+        self.assertNotIn('agent/client', dict(void_base.PROJECTS))
+        self.assertNotIn('crowbar-agent', void_base.PROGRAMS)
+        self.assertFalse((Path(void_base.HERE) / 'desktop/agent-run').exists())
+        image_script = (Path(void_base.HERE) / 'host/image.sh').read_text()
+        for retired in ('crowbar-agent', 'harness.mjs', '$NODE', '$HARNESS'):
+            self.assertNotIn(retired, image_script)
         self.root(['6.18.64_1'], nvidia=['6.18.64_1'])
         void_base.build()
-        image, env = self.image_step()
-        self.assertEqual([env['NODE'], env['NODE_LICENSE']], ['/node/bin/node', '/node/LICENSE'])
-        self.assertEqual(env['HARNESS'], str(void_base.ROOT / 'agent/dist/harness.mjs'))
-        self.assertLess(self.commands.index(['/node/bin/npm', 'test']), self.commands.index(image))
+        _, env = self.image_step()
+        for key in ('NODE', 'NODE_LICENSE', 'HARNESS'):
+            self.assertNotIn(key, env)
+        self.assertFalse(any(cmd and Path(cmd[0]).name == 'npm' for cmd in self.commands))
 
-    def test_the_root_has_the_libraries_nodes_own_binary_links(self):
-        # Beside libc: `ldd` on the pinned binary names these two and libgcc,
-        # which glibc brings.
-        for package in ('libstdc++', 'libatomic'):
-            self.assertIn(package, void_base.CFG['packages'])
+    def test_agent_subcommand_is_gone(self):
+        with patch('sys.argv', ['void_base.py', 'agent']), \
+                patch('sys.stderr', new_callable=io.StringIO), \
+                self.assertRaises(SystemExit) as stopped:
+            void_base.main()
+        self.assertEqual(stopped.exception.code, 2)
+
+    def test_boot_check_fails_if_the_image_holds_harness_node_or_agent_service(self):
+        checks = {name: (command, ok) for name, command, ok, *_ in void_base.CHECKS}
+        command, passes = checks['the image holds no Harness, no Node.js, and no crowbar-agent service']
+        for path in void_base.RETIRED_AGENT_PATHS:
+            self.assertIn(path, command)
+        for cmd in void_base.RETIRED_AGENT_COMMANDS:
+            self.assertIn(cmd, command)
+        self.assertIn('xbps-query -l', command)
+        self.assertTrue(passes('clean\n'))
+        for bad in ('', 'path /usr/local/lib/crowbar-agent\nclean\n',
+                    'path /var/service/crowbar-agent\nclean\n',
+                    'cmd node /usr/bin/node\nclean\n',
+                    'cmd crowbar-agent /usr/local/bin/crowbar-agent\nclean\n',
+                    'pkg nodejs-22.0.0_1\nclean\n'):
+            self.assertFalse(passes(bad), bad)
 
 
 class Account(BuildFixture):
@@ -941,273 +888,13 @@ class DesktopServicesCheck(unittest.TestCase):
         # The services the image step turns on for the desktop, but for
         # Ctrl+Alt+Del's, which the check of every service covers.
         script = (Path(void_base.HERE) / 'host/image.sh').read_text()
-        self.assertIn('for service in compositor shell launcher unlock ctrl-alt-del agent; do', script)
+        self.assertIn('for service in compositor shell launcher unlock ctrl-alt-del; do', script)
         self.assertIn('ln -sfn /etc/sv/seatd "$SV/seatd"', script)
         command = next(command for name, command, *_ in void_base.CHECKS
                        if name == "the desktop's services stay up")
         for service in ('seatd', 'crowbar-compositor', 'crowbar-shell', 'crowbar-launcher',
                         'crowbar-unlock'):
             self.assertIn(f'/var/service/{service}', command)
-
-
-VERSION = '0000000d7b2276657273696f6e223a317d'
-
-
-class HarnessAnswersCheck(unittest.TestCase):
-    """Base's check finds the Harness answering the shell's account on its
-    surface socket, and no other account."""
-
-    def setUp(self):
-        self.passes = void_base.harness_answers
-
-    def heard(self, **other):
-        lines = {'shell': VERSION, 'root': 'refused', 'person': 'refused', 'group': 'refused',
-                 'other': 'error: Permission denied', 'directory': '1003 1001 2750',
-                 'socket': '1003 1001 660', 'shell-account': '1001 1001'}
-        lines.update({name.replace('_', '-'): line for name, line in other.items()})
-        return ''.join(f'{name} {line}\n' for name, line in lines.items())
-
-    def test_the_shell_answered_and_everyone_else_refused_passes(self):
-        self.assertTrue(self.passes(self.heard()))
-
-    def test_the_frame_is_the_version_written_out_by_hand(self):
-        self.assertEqual(bytes.fromhex(VERSION), b'\x00\x00\x00\x0d{"version":1}')
-        self.assertEqual(void_base.VERSION_FRAME, VERSION)
-
-    def test_a_shell_that_is_not_answered_the_version_fails(self):
-        for shell in ('refused', '', 'error: Connection refused', '0000000d7b2276657273696f6e223a327d'):
-            self.assertFalse(self.passes(self.heard(shell=shell)), shell)
-
-    def test_root_or_the_person_answered_fails(self):
-        # Root passes the directory whatever its mode, and the person owns
-        # it: the Harness's own check of the peer is what refuses them.
-        self.assertFalse(self.passes(self.heard(root=VERSION)))
-        self.assertFalse(self.passes(self.heard(person=VERSION)))
-
-    def test_another_user_with_the_shells_group_answered_fails(self):
-        # The directory and the socket let the shell's group in, and the
-        # kernel gives a peer's group ID beside its user ID. The Harness is
-        # to go by the user ID.
-        self.assertFalse(self.passes(self.heard(group=VERSION)))
-        self.assertFalse(self.passes(self.heard(group='error: Permission denied')))
-
-    def test_the_probe_with_the_shells_group_is_another_user(self):
-        command = next(command for name, command, *_ in void_base.CHECKS
-                       if name.startswith('the Harness answers'))
-        self.assertIn('echo "group $(probe crowbar-compositor:crowbar-shell)"', command)
-
-    def test_another_account_that_reaches_the_socket_fails(self):
-        self.assertFalse(self.passes(self.heard(other='refused')))
-        self.assertFalse(self.passes(self.heard(other=VERSION)))
-
-    def test_a_directory_others_may_enter_fails(self):
-        self.assertFalse(self.passes(self.heard(directory='1003 1001 2755')))
-        self.assertFalse(self.passes(self.heard(directory='1003 1003 2750')))
-        self.assertFalse(self.passes(self.heard(directory='0 1001 2750')))
-
-    def test_a_socket_the_shell_could_not_write_to_or_others_could_fails(self):
-        self.assertFalse(self.passes(self.heard(socket='1003 1003 660')))
-        self.assertFalse(self.passes(self.heard(socket='1003 1001 666')))
-
-    def test_nothing_heard_fails(self):
-        self.assertFalse(self.passes(''))
-
-
-class WaitInGuest(unittest.TestCase):
-    """How Base's check waits in the guest for something to hold."""
-
-    def seconds(self, condition, limit):
-        started = time.monotonic()
-        out = subprocess.run(['sh', '-c', void_base.wait_in_guest(condition, limit) + 'echo "tries $n"'],
-                             capture_output=True, text=True, check=True).stdout
-        return time.monotonic() - started, int(out.split()[1])
-
-    def test_a_wait_ends_as_soon_as_what_it_waits_for_holds(self):
-        elapsed, tries = self.seconds('n=$((${n:-0} + 1)); [ "$n" -ge 2 ]', 30)
-        self.assertEqual(tries, 2)
-        self.assertLess(elapsed, 5)
-
-    def test_a_wait_gives_up_when_its_time_is_over_however_long_each_try_takes(self):
-        # A Harness that takes a connection and never answers holds each try
-        # for the probe's whole timeout. Counted in tries, the wait outlasted
-        # the 60 seconds SSH gives a check's command.
-        elapsed, tries = self.seconds('n=$((${n:-0} + 1)); sleep 1; false', 2)
-        self.assertLessEqual(tries, 4)
-        self.assertLess(elapsed, 6)
-
-    def test_every_wait_and_the_probes_after_it_fit_in_the_time_ssh_gives_a_command(self):
-        for name, command, *_ in void_base.CHECKS:
-            if 'Harness' in name:
-                self.assertNotIn('seq ', command, name)
-                probes = command.count('$(probe ')
-                self.assertLess(30 + void_base.PROBE_TIMEOUT * (probes + 1), 60, name)
-
-
-class HarnessRunsCheck(unittest.TestCase):
-    """Base's check finds the Harness's service running the pinned Node.js as
-    the person, with an app's environment, in their home, with its state
-    theirs alone."""
-
-    def setUp(self):
-        self.passes = void_base.harness_runs_as_the_person
-
-    def seen(self, without=(), **other):
-        state = '/home/alex/.local/state/crowbaros/agent'
-        lines = [('service', 'run: /var/service/crowbar-agent: (pid 812) 7s'),
-                 ('process', '1003 1003 1003 12 101'), ('person', '1003 1003 1003 101 12'),
-                 ('program', '/usr/local/lib/crowbar-agent/node'), ('home', '/home/alex'),
-                 ('cwd', '/home/alex'), ('env', 'HOME=/home/alex'),
-                 ('env', 'PATH=/home/alex/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin'),
-                 ('env', 'LANG=C.UTF-8'), ('env', 'XDG_RUNTIME_DIR=/run/user/1003'),
-                 ('env', 'WAYLAND_DISPLAY=wayland-0'), ('env', 'CROWBAR_SESSION=crowbaros'),
-                 ('state', f'700 1003 {state}'), ('state', f'600 1003 {state}/harness.log'),
-                 ('state', f'600 1003 {state}/harness.sqlite'), ('state', f'600 1003 {state}/running'),
-                 ('on-path', '')]
-        lines = [(name, other.get(name.replace('-', '_'), line)) for name, line in lines
-                 if line.split('=')[0] not in without and line.rsplit('/', 1)[-1] not in without]
-        return ''.join(f'{name} {line}'.rstrip() + '\n' for name, line in lines)
-
-    def test_the_person_running_it_at_home_passes(self):
-        self.assertTrue(self.passes(self.seen()))
-
-    def test_another_account_or_other_groups_fails(self):
-        self.assertFalse(self.passes(self.seen(process='0 0 0')))
-        self.assertFalse(self.passes(self.seen(process='1003 1003 1003')))
-        self.assertFalse(self.passes(self.seen(process='1001 1001 1001', person='1001 1001 1001')))
-
-    def test_a_service_runit_has_only_just_started_again_fails(self):
-        self.assertFalse(self.passes(self.seen(service='run: /var/service/crowbar-agent: (pid 812) 1s')))
-        self.assertFalse(self.passes(self.seen(service='down: /var/service/crowbar-agent: 1s, normally up')))
-
-    def test_another_program_or_another_directory_fails(self):
-        self.assertFalse(self.passes(self.seen(program='/usr/bin/node')))
-        self.assertFalse(self.passes(self.seen(cwd='/')))
-
-    def test_an_environment_that_is_not_an_apps_fails(self):
-        for name in ('HOME', 'PATH', 'LANG', 'XDG_RUNTIME_DIR', 'WAYLAND_DISPLAY', 'CROWBAR_SESSION'):
-            self.assertFalse(self.passes(self.seen(without=[name])), name)
-
-    def test_state_others_can_read_or_no_state_fails(self):
-        state = '/home/alex/.local/state/crowbaros/agent'
-        self.assertFalse(self.passes(self.seen().replace(f'700 1003 {state}\n', f'755 1003 {state}\n')))
-        self.assertFalse(self.passes(self.seen().replace('600 1003', '644 1003', 1)))
-        self.assertFalse(self.passes(self.seen().replace(f'600 1003 {state}/harness.log', f'600 0 {state}/harness.log')))
-        self.assertFalse(self.passes(self.seen(without=['harness.log'])))
-        self.assertFalse(self.passes(self.seen(without=['harness.sqlite'])))
-
-    def test_node_or_npm_on_the_path_fails(self):
-        self.assertFalse(self.passes(self.seen(on_path='/usr/bin/node')))
-
-    def test_the_check_looks_where_the_service_puts_things(self):
-        service = (Path(void_base.HERE) / 'desktop/agent-run').read_text()
-        self.assertIn(void_base.HARNESS_NODE, service)
-        self.assertIn(f'--surface-socket {void_base.SURFACE_SOCKET} ', service)
-        self.assertIn('--person-socket "/run/user/$PERSON_UID/crowbar-agent/person" --person-uid "$PERSON_UID"', service)
-        self.assertEqual(void_base.PERSON_SOCKET, f'/run/user/{void_base.PERSON_UID}/crowbar-agent/person')
-        self.assertIn(f'--state "$PERSON_HOME/{void_base.HARNESS_STATE}"', service)
-        image = (Path(void_base.HERE) / 'host/image.sh').read_text()
-        self.assertIn(f'"$R{void_base.HARNESS_NODE}"', image)
-
-
-class HarnessMemoryCheck(unittest.TestCase):
-    """Base's check finds the idle Harness within the memory ADR 0034 allows."""
-
-    def test_less_than_the_limit_passes_and_the_limit_or_no_figure_fails(self):
-        self.assertEqual(void_base.HARNESS_MEMORY_MIB, 150)
-        self.assertTrue(void_base.harness_is_small('98304\n'))
-        self.assertFalse(void_base.harness_is_small('153600\n'))
-        self.assertFalse(void_base.harness_is_small('204800\n'))
-        self.assertFalse(void_base.harness_is_small('\n'))
-        self.assertFalse(void_base.harness_is_small('0\n'))
-
-
-class AgentInATerminalCheck(unittest.TestCase):
-    """Base's check finds the person answered by the Agent in a terminal,
-    from the stub Model, and told plainly when there is no Model."""
-
-    def setUp(self):
-        self.passes = void_base.agent_answers_in_a_terminal
-
-    def seen(self, **other):
-        lines = {'path': '/usr/local/bin/crowbar-agent', 'directory': '1003 700', 'socket': '1003 600',
-                 'before': '1290', 'exit': '0', 'answer': 'Base answers from the stub Model.', 'asked': '1',
-                 'no-model-exit': '1',
-                 'no-model': 'crowbar-agent: No Model is signed in. Sign in to one with `crowbar-agent login`, '
-                             'or choose one with `crowbar-agent model`.',
-                 'after': '1290'}
-        lines.update({name.replace('_', '-'): line for name, line in other.items()})
-        return ''.join(f'{name} {line}'.rstrip() + '\n' for name, line in lines.items())
-
-    def test_an_answer_from_the_stub_and_plain_words_without_it_pass(self):
-        self.assertTrue(self.passes(self.seen()))
-
-    def test_no_answer_or_another_fails(self):
-        self.assertFalse(self.passes(self.seen(answer='')))
-        self.assertFalse(self.passes(self.seen(answer='Hello.')))
-        self.assertFalse(self.passes(self.seen(exit='1')))
-
-    def test_a_request_the_stub_never_got_fails(self):
-        self.assertFalse(self.passes(self.seen(asked='0')))
-
-    def test_a_client_that_is_not_on_the_persons_path_fails(self):
-        self.assertFalse(self.passes(self.seen(path='')))
-
-    def test_a_person_socket_others_can_reach_fails(self):
-        self.assertFalse(self.passes(self.seen(socket='1003 660')))
-        self.assertFalse(self.passes(self.seen(directory='1003 755')))
-        self.assertFalse(self.passes(self.seen(socket='0 600')))
-
-    def test_silence_or_success_with_no_model_fails(self):
-        self.assertFalse(self.passes(self.seen(no_model_exit='0')))
-        self.assertFalse(self.passes(self.seen(no_model='')))
-
-    def test_a_harness_that_did_not_stay_up_fails(self):
-        self.assertFalse(self.passes(self.seen(after='1404')))
-        self.assertFalse(self.passes(self.seen(before='', after='')))
-
-    def test_the_stub_is_written_into_the_guest_and_never_into_the_image(self):
-        command = void_base.stub_model_in_guest()
-        self.assertIn(void_base.STUB_MODEL.read_text(), command)
-        self.assertIn(f'{void_base.HARNESS_NODE} "$d/stub-model.ts"', command)
-        image = (Path(void_base.HERE) / 'host/image.sh').read_text()
-        self.assertNotIn('stub-model', image)
-        # Its end in the guest's shell must be a line the stub does not hold.
-        self.assertNotIn('\nCROWBAR_STUB_MODEL\n', void_base.STUB_MODEL.read_text())
-
-    def test_root_is_refused_by_the_harness_and_told_so(self):
-        told = ('crowbar-agent: The Harness at /run/user/1003/crowbar-agent/person closed the connection: '
-                'it serves another account, or speaks another version than 1.')
-        self.assertTrue(void_base.root_is_refused(f'root-exit 1\nroot {told}\n'))
-        self.assertFalse(void_base.root_is_refused('root-exit 0\nroot No conversations yet.\n'))
-        self.assertFalse(void_base.root_is_refused('root-exit 1\nroot crowbar-agent: The Harness is not running\n'))
-
-    def test_the_check_runs_as_the_person(self):
-        users = {name: user for name, user, _, _ in void_base.boot_checks()}
-        self.assertEqual(users['the person gets an answer from the Agent in a terminal, from a stub Model'],
-                         void_base.LAB_ACCOUNT['name'])
-        self.assertEqual(users['the Harness refuses root on the person socket'], 'root')
-
-
-class HarnessRestartCheck(unittest.TestCase):
-    """Base's check finds runit starting a killed Harness again, which
-    answers, and says in its log that it restarted."""
-
-    def setUp(self):
-        self.passes = void_base.harness_restarted
-
-    def test_a_new_harness_that_answers_and_logged_the_restart_passes(self):
-        self.assertTrue(self.passes(f'before 812\nafter 1290\nshell {VERSION}\nlogged 1\n'))
-
-    def test_the_same_process_or_none_fails(self):
-        self.assertFalse(self.passes(f'before 812\nafter 812\nshell {VERSION}\nlogged 1\n'))
-        self.assertFalse(self.passes(f'before 812\nafter\nshell {VERSION}\nlogged 1\n'))
-        self.assertFalse(self.passes(f'before\nafter 1290\nshell {VERSION}\nlogged 1\n'))
-
-    def test_a_new_harness_that_does_not_answer_fails(self):
-        self.assertFalse(self.passes('before 812\nafter 1290\nshell refused\nlogged 1\n'))
-
-    def test_a_restart_the_log_does_not_record_fails(self):
-        self.assertFalse(self.passes(f'before 812\nafter 1290\nshell {VERSION}\nlogged 0\n'))
 
 
 class RebootCheck(unittest.TestCase):

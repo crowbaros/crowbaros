@@ -191,9 +191,6 @@ class Check:
             'launcher.log': 'cat /var/log/crowbar-launcher.log',
             'unlock.log': 'cat /var/log/crowbar-unlock.log',
             'apps.log': 'cat /var/log/crowbar-apps.log',
-            # What the Harness's service printed, then the Harness's own log.
-            'harness.log': 'cat /var/log/crowbar-agent.log; ' + void_base.PERSON_IN_GUEST
-                           + f'cat "$h/{void_base.HARNESS_STATE}/harness.log"',
             'kernel.log': 'dmesg | tail -200',
         }
         for name, command in commands.items():
@@ -441,7 +438,7 @@ class Check:
         time.sleep(1.5)
         self.capture('07-chromium')
         self.agent_surface()
-        self.agent_conversation()
+        self.agent_not_reachable()
 
     def agent_surface(self):
         """The summon gesture, Super+Space, and the Agent's surface (#294): a
@@ -600,189 +597,22 @@ class Check:
             summon(away, output=output, keyboard=True)
             self.wait('the Agent\'s surface is put away', lambda: not drawn(f'17-put-away-on-{output}', head, point))
 
-    def start_stub_model(self, person, state_dir):
-        """Starts the stub Model (agent/test/stub-model.ts) in the guest as the
-        person, with the image's Node.js, and points the Harness at it with
-        the endpoint file, as Base's boot check does. Returns the directory
-        that holds the stub, its script, and its record of requests."""
-        script = json.dumps([{'text': DRAWER_ANSWER, 'pause_ms': DRAWER_PAUSE_MS}])
-        made = self.guest.ssh(
-            'd=$(mktemp -d) && cat > "$d/stub-model.ts" && '
-            f'printf %s {shlex.quote(script)} > "$d/script.json" && '
-            f'setsid -f {void_base.HARNESS_NODE} "$d/stub-model.ts" --script "$d/script.json" '
-            '--requests "$d/requests" < /dev/null > "$d/out" 2>&1 && echo "$d"',
-            user=person, check=True, timeout=20, input=void_base.STUB_MODEL.read_text())
-        stub = made.stdout.strip()
-        self.log(f'The stub Model runs in the guest from {stub}')
-        url = self.wait('the stub Model listens', lambda: self.guest.ssh(
-            f"sed -n 's/^listening //p' {shlex.quote(stub + '/out')}", user=person, check=False).stdout.strip())
-        endpoint = json.dumps({'url': url, 'model': STUB_MODEL_NAME})
-        self.guest.ssh(f'printf %s {shlex.quote(endpoint)} > {shlex.quote(state_dir + "/endpoint.json")}',
-                       user=person, check=True, timeout=10)
-        self.log(f'The Harness is pointed at the stub Model at {url}')
-        return stub
-
-    def agent_conversation(self):
-        """A first conversation in the Agent's drawer (#295), with the stub
-        Model in the guest (#349): the calm no-Model state, desktop context
-        sent with no window contents, a turn finishing behind the put-away
-        drawer with the mark in the bar and over a fullscreen window, and
-        the answer shown in the drawer. What the Harness sent is read from
-        the stub's record of requests and from the Harness's database."""
-        person, home = self.person()
-        state_dir = f'{home}/{void_base.HARNESS_STATE}'
-        # With no endpoint file and no sign-in, the drawer is connected to
-        # the Harness and calmly reports that no Model is signed in.
-        before_view = self.wait('shell connected to Harness',
-                                lambda: (v := self.agent_view()) and v['state']['connected'] and v)
-        self.check("without a Model, the drawer calmly reports no Model",
-                   before_view['state']['model'] is None
-                   and 'No Model' in (before_view['state']['missing_model'] or ''),
-                   str(before_view['state']['missing_model']))
+    def agent_not_reachable(self):
+        """With the Pi Durable Harness removed (ADR 0036) and Lever not yet
+        present, summoning the Agent's drawer shows that the Agent is not
+        reachable, with no stub Model started."""
         self.key('meta_l', 'spc')
-        self.wait('drawer opens with no Model', lambda: self.agent_view()['drawer_up'])
+        view = self.wait('drawer opens saying the Agent is not reachable',
+                         lambda: (v := self.agent_view()) and v['drawer_up'] and v)
         time.sleep(0.5)
-        self.capture('18-drawer-no-model')
+        self.capture('18-drawer-not-reachable')
+        self.check('the drawer says the Agent is not reachable',
+                   drawer_says_not_reachable(view)
+                   and 'SHELL agent-socket connected=true' not in self.shell_log(),
+                   json.dumps(view))
         self.key('meta_l', 'spc')
-        self.wait('drawer closes with no Model', lambda: not self.agent_view()['drawer_up'])
-
-        stub = None
-        try:
-            stub = self.start_stub_model(person, state_dir)
-            # Put a unique sentinel inside the focused Terminal window: window
-            # contents must never be sent to the Model or saved by the Harness.
-            self.wait('Terminal has focus before drawer conversation',
-                      lambda: ((self.snapshot().get('active') or {}).get('class')) == 'foot')
-            sentinel = f'crowbarsecretwindow{os.urandom(6).hex()}'
-            self.type(f'echo {sentinel}')
-            self.key('ret')
-            time.sleep(0.5)
-
-            # Summon the drawer, see that it shows the stub Model, and ask a
-            # question that only desktop context can answer.
-            self.key('meta_l', 'spc')
-            ready_view = self.wait('drawer shows the stub Model',
-                                   lambda: (v := self.agent_view()) and v['drawer_up']
-                                   and v['state']['model'] is not None and v)
-            model = ready_view['state']['model']
-            self.check("the drawer shows the Model the endpoint file names",
-                       model.get('provider') == 'endpoint' and model.get('model') == STUB_MODEL_NAME,
-                       json.dumps(model))
-            turns_before = len(ready_view['state']['turns'])
-            working_marks = self.shell_log().count('SHELL agent-mark state=working')
-            prompt_text = (
-                'what is the exact app_id of my active window and what windows are open? '
-                'answer in two short sentences.'
-            )
-            self.type(prompt_text)
-            # The stub pauses between words, so the turn is still running
-            # when the drawer is put away.
-            self.key('ret')
-            self.key('meta_l', 'spc')
-            self.wait('drawer put away while turn runs', lambda: not self.agent_view()['drawer_up'])
-            finished = self.wait(
-                'the stub Model finishes the turn behind the put-away drawer',
-                lambda: (v := self.agent_view())
-                and len(v['state']['turns']) > turns_before
-                and turn_state_kind(v['state']['turns'][-1]) != 'working'
-                and v,
-                timeout=60,
-            )
-            turn = finished['state']['turns'][-1]
-            conversation_id = finished['state'].get('conversation') or ''
-            self.check("putting the drawer away stops nothing: the turn enters working, finishes behind it, "
-                       "and the mark shows done in the bar",
-                       self.shell_log().count('SHELL agent-mark state=working') > working_marks
-                       and turn_state_kind(turn) == 'done'
-                       and finished['state']['mark'] == 'done'
-                       and not finished['drawer_up'],
-                       f"turn={turn_state_kind(turn)!r} mark={finished['state']['mark']!r}")
-            self.capture('19-mark-done-in-bar')
-
-            # Fullscreen Terminal covers the bar; the mark overlay appears over it.
-            overlay_logs = self.count('agent mark overlay shown output=Virtual-1')
-            self.key('meta_l', 'f')
-            overlay = self.wait('mark overlay shows over fullscreen window',
-                                lambda: (v := self.agent_view()) and v['mark_overlay']
-                                and self.count('agent mark overlay shown output=Virtual-1') > overlay_logs and v)
-            time.sleep(0.5)
-            self.capture('20-mark-done-over-fullscreen')
-            # Verify the overlay actually painted pixels in the top-right corner
-            # (112x28 at right margin 12, top margin 8 on 1280x960) distinct
-            # from the fullscreen Terminal background sampled at (640, 22).
-            w_px, h_px, rows = guest.png_pixels(self.work / '20-mark-done-over-fullscreen.png')
-            bg = tuple(rows[22][3 * 640:3 * 640 + 3])
-            overlay_drawn = any(
-                not like(tuple(rows[y][3 * x:3 * x + 3]), bg)
-                for y in range(10, 34, 4)
-                for x in range(w_px - 120, w_px - 14, 6)
-            )
-            self.check("the mark shows over a fullscreen window while the drawer is put away",
-                       overlay['mark_overlay'] and overlay['state']['mark'] == 'done' and overlay_drawn,
-                       f"output={overlay.get('mark_overlay_output')!r} overlay_drawn={overlay_drawn}")
-
-            # Summoning the drawer clears the done mark and shows the answer
-            # along with the desktop context the message carried.
-            self.key('meta_l', 'spc')
-            opened = self.wait('drawer opens with answer and clears done mark',
-                               lambda: (v := self.agent_view()) and v['drawer_up']
-                               and v['state']['mark'] == 'idle' and not v['mark_overlay'] and v)
-            time.sleep(0.5)
-            self.capture('21-drawer-answer')
-            shown_turn = opened['state']['turns'][-1]
-            ctx = shown_turn.get('context') or {}
-            active_app = (ctx.get('active') or {}).get('app_id')
-            answer_text = shown_turn.get('answer') or ''
-            self.check("the drawer shows the desktop context and the Model's whole answer",
-                       active_app == 'foot' and answer_text.strip() == DRAWER_ANSWER,
-                       f"active={active_app!r} answer={answer_text[:120]!r}")
-            # Put drawer away and leave fullscreen cleanly.
-            self.key('meta_l', 'spc')
-            self.wait('drawer closes after conversation', lambda: not self.agent_view()['drawer_up'])
-            self.key('meta_l', 'f')
-            self.wait('Terminal leaves fullscreen after conversation',
-                      lambda: not any(c.get('fullscreen') for c in self.snapshot()['clients']))
-
-            # What reached the Model, from the stub's own record: the one
-            # request carried the question with desktop context, and no
-            # request carried the window's contents.
-            requests = self.guest.ssh(f'cat {shlex.quote(stub + "/requests")}',
-                                      user=person, check=True, timeout=10).stdout
-            sent = stub_requests_audit(requests, prompt_text, sentinel)
-            self.check("the Model was sent desktop context with the question, and no window contents",
-                       sent['asked'] == 1 and sent['has_desktop_context'] and sent['has_active_foot']
-                       and sent['has_display'] and not sent['has_sentinel'],
-                       json.dumps(sent))
-
-            # What the Harness kept in harness.sqlite: desktop context on this
-            # exact turn, and no window contents anywhere.
-            audit_payload = json.dumps({
-                'db': f'{state_dir}/harness.sqlite',
-                'conversation': conversation_id,
-                'turn': shown_turn.get('turn'),
-                'prompt': prompt_text,
-                'sentinel': sentinel,
-            })
-            audit_res = self.guest.ssh(
-                'python3 -c ' + shlex.quote(HARNESS_AUDIT_SCRIPT),
-                check=True, timeout=20, input=audit_payload,
-            )
-            audit = json.loads(audit_res.stdout)
-            self.check("the Harness kept desktop context in the sent message and no window contents",
-                       audit['has_conversation']
-                       and audit['has_desktop_context']
-                       and audit['has_active_foot']
-                       and audit['has_display']
-                       and not audit['has_sentinel'],
-                       json.dumps(audit))
-        finally:
-            # The endpoint file and the stub go, so the diagnostics see the
-            # Harness as a person's image has it.
-            try:
-                if self.guest.ssh(stop_stub_model(state_dir, stub), check=False, timeout=10).returncode != 0:
-                    self.log('warning: could not remove the stub Model and its endpoint file')
-            except (OSError, subprocess.TimeoutExpired) as error:
-                self.log(f'warning: could not remove the stub Model and its endpoint file: {error}')
+        self.wait('drawer closes after unreachable check',
+                  lambda: not self.agent_view()['drawer_up'])
 
     def compositor_restart(self):
         """The compositor's service restarts while the person uses the desktop.
@@ -1174,14 +1004,6 @@ STILL_WINDOW = 12
 BAR_FOLLOWS = 2 * 1000 / 60
 
 
-# The name the endpoint file gives the stub Model, and its answer to the
-# drawer's question, a word at a time with a pause before each, so the turn
-# is still running when the drawer is put away.
-STUB_MODEL_NAME = 'stub-1'
-DRAWER_ANSWER = 'Your active window is foot, a Terminal, and it is the only window open.'
-DRAWER_PAUSE_MS = 400
-
-
 QMP_PUNCTUATION = {
     ' ': ('spc',),
     '-': ('minus',),
@@ -1199,10 +1021,19 @@ QMP_PUNCTUATION = {
 }
 
 
-def turn_state_kind(turn):
-    """Extracts the TurnState tag from a shell `AgentViewSnapshot` turn."""
-    state = (turn or {}).get('state')
-    return state.get('kind') if isinstance(state, dict) else state
+def drawer_says_not_reachable(view):
+    """Whether the shell's Agent view snapshot is in the drawer state that
+    renders 'Agent is not reachable': drawer up, no mark overlay, not
+    connected to an Agent service, no Model, no turns, and mark idle."""
+    state = (view or {}).get('state') or {}
+    return (
+        bool((view or {}).get('drawer_up'))
+        and not (view or {}).get('mark_overlay')
+        and not state.get('connected')
+        and state.get('model') is None
+        and state.get('turns') == []
+        and state.get('mark') == 'idle'
+    )
 
 
 def qmp_keys_for_text(text):
@@ -1219,174 +1050,6 @@ def qmp_keys_for_text(text):
             raise ValueError(f'unsupported character for QMP typing: {ch!r}')
     return chords
 
-
-def message_text(content):
-    """The text of a chat message's content, as a string or a list of parts."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return ''.join(part.get('text', '') for part in content
-                       if isinstance(part, dict) and part.get('type') == 'text'
-                       and isinstance(part.get('text'), str))
-    return ''
-
-
-ACTIVE_FOOT = re.compile(r'^Active window: .*\(app_id: foot\)$', re.MULTILINE)
-DISPLAY_ONE = re.compile(r'^Displays:\n(?:- .*\n)*- Virtual-1:', re.MULTILINE)
-
-
-def stub_requests_audit(record, prompt, sentinel):
-    """What the stub Model's record of requests says the Harness sent: how
-    many requests asked `prompt`, whether the last user message of one that
-    did carried desktop context naming foot as the active window and
-    Virtual-1 as a display, and whether any request held `sentinel`."""
-    asking = []
-    for line in record.splitlines():
-        try:
-            body = json.loads(line)
-        except ValueError:
-            continue
-        users = [m for m in (body.get('messages') or [])
-                 if isinstance(m, dict) and m.get('role') == 'user']
-        last = message_text(users[-1].get('content')) if users else ''
-        if prompt in last:
-            asking.append(last)
-    with_context = [text for text in asking if '[Desktop context]' in text]
-    return {
-        'asked': len(asking),
-        'has_desktop_context': bool(with_context),
-        'has_active_foot': any(ACTIVE_FOOT.search(text) for text in with_context),
-        'has_display': any(DISPLAY_ONE.search(text) for text in with_context),
-        'has_sentinel': sentinel in record,
-    }
-
-
-def stop_stub_model(state_dir, stub):
-    """The guest command that removes the endpoint file and, when `stub` is
-    its directory, stops the stub Model and removes its directory. The
-    pattern's bracket keeps pkill from matching the shell that runs it."""
-    stop = f'rm -f {shlex.quote(state_dir + "/endpoint.json")}'
-    if stub:
-        stop += (f"; pkill -f {shlex.quote(stub + '/[s]tub-model.ts')}; "
-                 f"rm -rf {shlex.quote(stub)}")
-    return stop
-
-
-# Audits harness.sqlite for desktop context on the tested drawer turn, and
-# for the absence of window contents (sentinel) anywhere in it.
-HARNESS_AUDIT_SCRIPT = r"""
-import json, re, sqlite3, sys
-
-spec = json.load(sys.stdin)
-conn = sqlite3.connect(spec["db"])
-
-def user_text(content):
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(
-            part.get("text", "")
-            for part in content
-            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
-        )
-    return ""
-
-# Resolve the Harness conversation ID to its stored conversation row ID via
-# the `crowbar.conversations` document (base + delta revisions).
-conv = spec.get("conversation") or ""
-target_turn = spec.get("turn")
-target_at = None
-tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-if conv and {"documents", "document_revisions", "entries"}.issubset(tables):
-    doc_ids = [
-        row[0]
-        for row in conn.execute("SELECT id FROM documents WHERE kind = '\"crowbar.conversations\"'")
-    ]
-    for doc_id in doc_ids:
-        for (kind, content_raw) in conn.execute(
-            "SELECT kind, content FROM document_revisions WHERE document_id = ? ORDER BY seq",
-            (doc_id,),
-        ):
-            try:
-                content = json.loads(content_raw)
-            except ValueError:
-                continue
-            if kind == "base" and isinstance(content, dict):
-                entry = (content.get("conversations") or {}).get(conv)
-                if isinstance(entry, dict) and isinstance(entry.get("at"), int):
-                    target_at = entry["at"]
-            elif kind == "delta" and isinstance(content, list):
-                for op in content:
-                    if not isinstance(op, list) or len(op) < 2:
-                        continue
-                    if op[0] == "r" and isinstance(op[1], dict):
-                        entry = (op[1].get("conversations") or {}).get(conv)
-                        if isinstance(entry, dict) and isinstance(entry.get("at"), int):
-                            target_at = entry["at"]
-                    elif len(op) >= 3:
-                        path, val = op[1], op[2]
-                        if path == ["conversations"] and isinstance(val, dict):
-                            entry = val.get(conv)
-                            if isinstance(entry, dict) and isinstance(entry.get("at"), int):
-                                target_at = entry["at"]
-                        elif path == ["conversations", conv] and isinstance(val, dict) and isinstance(val.get("at"), int):
-                            target_at = val["at"]
-                        elif path == ["conversations", conv, "at"] and isinstance(val, int):
-                            target_at = val
-
-# Positive checks inspect only the stored `crowbar.message` entry's user-role
-# Model input for this exact conversation and positive integer turn, so neither
-# another conversation, another turn, nor an assistant reply can satisfy them.
-valid_turn = isinstance(target_turn, int) and not isinstance(target_turn, bool) and target_turn > 0
-target_user_texts = []
-if target_at is not None and valid_turn:
-    for (record_raw,) in conn.execute("SELECT record FROM entries WHERE conversation_id = ?", (target_at,)):
-        if not isinstance(record_raw, str):
-            continue
-        try:
-            record = json.loads(record_raw)
-        except ValueError:
-            continue
-        if not isinstance(record, dict) or record.get("kind") != "crowbar.message":
-            continue
-        if (record.get("data") or {}).get("turn") != target_turn:
-            continue
-        for msg in record.get("model") or []:
-            if isinstance(msg, dict) and msg.get("role") == "user":
-                text = user_text(msg.get("content"))
-                if text:
-                    target_user_texts.append(text)
-
-# Full-DB scan solely for the negative check (no window-content sentinel).
-blobs = []
-for table in sorted(tables):
-    for row in conn.execute(f'SELECT * FROM "{table}"'):
-        for cell in row:
-            if isinstance(cell, str):
-                blobs.append(cell)
-            elif isinstance(cell, (bytes, bytearray)):
-                blobs.append(cell.decode("utf-8", errors="ignore"))
-conn.close()
-
-prompt = spec["prompt"]
-matching_prompts = [s for s in target_user_texts if prompt in s and "[Desktop context]" in s]
-active_re = re.compile(r"^Active window: .*\(app_id: foot\)$", re.MULTILINE)
-display_re = re.compile(r"^Displays:\n(?:- .*\n)*- Virtual-1:", re.MULTILINE)
-
-has_conversation = target_at is not None
-has_desktop_context = bool(matching_prompts)
-has_active_foot = any(active_re.search(s) for s in matching_prompts)
-has_display = any(display_re.search(s) for s in matching_prompts)
-
-joined = "\n".join(blobs)
-print(json.dumps({
-    "has_conversation": has_conversation,
-    "has_desktop_context": has_desktop_context,
-    "has_active_foot": has_active_foot,
-    "has_display": has_display,
-    "has_sentinel": spec["sentinel"] in joined,
-}))
-"""
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
