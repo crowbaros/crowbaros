@@ -888,13 +888,95 @@ class DesktopServicesCheck(unittest.TestCase):
         # The services the image step turns on for the desktop, but for
         # Ctrl+Alt+Del's, which the check of every service covers.
         script = (Path(void_base.HERE) / 'host/image.sh').read_text()
-        self.assertIn('for service in compositor shell launcher unlock ctrl-alt-del; do', script)
+        self.assertIn('for service in compositor shell launcher unlock ctrl-alt-del lever; do', script)
         self.assertIn('ln -sfn /etc/sv/seatd "$SV/seatd"', script)
         command = next(command for name, command, *_ in void_base.CHECKS
                        if name == "the desktop's services stay up")
         for service in ('seatd', 'crowbar-compositor', 'crowbar-shell', 'crowbar-launcher',
-                        'crowbar-unlock'):
+                        'crowbar-unlock', 'crowbar-lever'):
             self.assertIn(f'/var/service/{service}', command)
+
+
+class LeverChecks(unittest.TestCase):
+    """Base builds `crowbar-lever`, installs its runit service, points the
+    shell at its surface socket, and checks it at boot."""
+
+    OK_STATUS = f'ok {void_base.VERSION_FRAME} {{"reply":"status","version":"0.1.0","harness_started":false,"harnesses":[]}}'
+
+    def test_lever_is_built_and_wired_into_base(self):
+        self.assertIn('lever', dict(void_base.PROJECTS))
+        self.assertEqual(void_base.PROGRAMS['crowbar-lever'], 'lever')
+        self.assertEqual(void_base.binaries()['crowbar-lever'].name, 'crowbar-lever')
+        lever_run = (Path(void_base.HERE) / 'desktop/lever-run').read_text()
+        self.assertIn('/usr/local/bin/crowbar-launcher as-app', lever_run)
+        self.assertIn('/usr/local/bin/crowbar-lever', lever_run)
+        self.assertIn(void_base.LEVER_SURFACE_SOCKET, lever_run)
+        self.assertIn(void_base.LEVER_STATE, lever_run)
+        shell_run = (Path(void_base.HERE) / 'desktop/shell-run').read_text()
+        self.assertIn(f'CROWBAR_LEVER_SOCKET={void_base.LEVER_SURFACE_SOCKET}', shell_run)
+
+    def test_lever_answers_surface_socket_check(self):
+        good = '\n'.join([
+            f'shell {self.OK_STATUS}',
+            'root refused',
+            'person refused',
+            'group refused',
+            'other error: Permission denied',
+            f'directory {void_base.PERSON_UID} 1001 2750',
+            f'socket {void_base.PERSON_UID} 1001 660',
+            'shell-account 1001 1001',
+        ]) + '\n'
+        self.assertTrue(void_base.lever_answers_surface(good))
+        self.assertFalse(void_base.lever_answers_surface(good.replace('root refused', f'root {self.OK_STATUS}')))
+        self.assertFalse(void_base.lever_answers_surface(good.replace('"harness_started":false', '"harness_started":true')))
+        self.assertFalse(void_base.lever_answers_surface(good.replace('2750', '755')))
+
+    def test_lever_answers_person_socket_check(self):
+        good = '\n'.join([
+            f'person {self.OK_STATUS}',
+            'root refused',
+            'shell error: Permission denied',
+            f'directory {void_base.PERSON_UID} 700',
+            f'socket {void_base.PERSON_UID} 600',
+        ]) + '\n'
+        self.assertTrue(void_base.lever_answers_person(good))
+        self.assertFalse(void_base.lever_answers_person(good.replace('root refused', f'root {self.OK_STATUS}')))
+        self.assertFalse(void_base.lever_answers_person(good.replace('600', '660')))
+
+    def test_lever_runs_as_the_person_check(self):
+        uid = void_base.PERSON_UID
+        state = f'/home/crowbar/{void_base.LEVER_STATE}'
+        good = '\n'.join([
+            'service run: /var/service/crowbar-lever: (pid 812) 5s',
+            f'process {uid} {uid} {uid} 10 990',
+            f'person {uid} {uid} {uid} 10 990',
+            f'program {void_base.LEVER_PROGRAM}',
+            'cwd /home/crowbar',
+            'home /home/crowbar',
+            'env HOME=/home/crowbar',
+            f'env XDG_RUNTIME_DIR=/run/user/{uid}',
+            'env WAYLAND_DISPLAY=wayland-0',
+            'env CROWBAR_SESSION=crowbaros',
+            'env PATH=/home/crowbar/.local/bin:/usr/local/bin:/usr/bin:/bin',
+            'env LANG=C.UTF-8',
+            f'state 700 {uid} {state}',
+            f'state 600 {uid} {state}/lever.log',
+            f'state 600 {uid} {state}/lever.sqlite',
+            f'state 600 {uid} {state}/running',
+        ]) + '\n'
+        self.assertTrue(void_base.lever_runs_as_the_person(good))
+        self.assertFalse(void_base.lever_runs_as_the_person(good.replace('state 600', 'state 644', 1)))
+        self.assertFalse(void_base.lever_runs_as_the_person(good.replace('lever.sqlite', 'other.db')))
+        self.assertFalse(void_base.lever_runs_as_the_person(good.replace('env CROWBAR_SESSION=crowbaros\n', '')))
+
+    def test_lever_restarted_and_memory_checks(self):
+        good = f'before 400\nafter 512\nshell {self.OK_STATUS}\nlogged 1\n'
+        self.assertTrue(void_base.lever_restarted(good))
+        self.assertFalse(void_base.lever_restarted(good.replace('after 512', 'after 400')))
+        self.assertFalse(void_base.lever_restarted(good.replace('logged 1', 'logged 0')))
+        self.assertTrue(void_base.lever_is_small('4096\n'))
+        self.assertFalse(void_base.lever_is_small(f'{50 * 1024}\n'))
+        self.assertFalse(void_base.lever_is_small('0\n'))
 
 
 class RebootCheck(unittest.TestCase):

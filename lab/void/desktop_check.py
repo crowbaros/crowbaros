@@ -190,6 +190,7 @@ class Check:
             'shell.log': 'cat /var/log/crowbar-shell.log',
             'launcher.log': 'cat /var/log/crowbar-launcher.log',
             'unlock.log': 'cat /var/log/crowbar-unlock.log',
+            'lever.log': 'cat /var/log/crowbar-lever.log',
             'apps.log': 'cat /var/log/crowbar-apps.log',
             'kernel.log': 'dmesg | tail -200',
         }
@@ -224,8 +225,8 @@ class Check:
         self.wait("the shell's lock screen is back after Base's checks restart the compositor",
                   lambda: shell_log().count('SHELL lock open=true') > locks
                   and self.snapshot().get('connected') and self.snapshot().get('locked'), timeout=60)
-        self.check('seatd and four desktop services supervised',
-                   all(line.startswith('run: ') for line in self.run('sv status seatd crowbar-compositor crowbar-shell crowbar-launcher crowbar-unlock').splitlines()))
+        self.check('seatd and five desktop services supervised',
+                   all(line.startswith('run: ') for line in self.run('sv status seatd crowbar-compositor crowbar-shell crowbar-launcher crowbar-unlock crowbar-lever').splitlines()))
         digests = self.run('sha256sum ' + ' '.join('/usr/local/bin/' + n for n in built))
         self.check('guest binaries match this build', all(f'{h}  /usr/local/bin/{n}' in digests for n, h in built.items()))
         for name in built:
@@ -438,7 +439,7 @@ class Check:
         time.sleep(1.5)
         self.capture('07-chromium')
         self.agent_surface()
-        self.agent_not_reachable()
+        self.agent_reached_no_harness()
 
     def agent_surface(self):
         """The summon gesture, Super+Space, and the Agent's surface (#294): a
@@ -597,21 +598,21 @@ class Check:
             summon(away, output=output, keyboard=True)
             self.wait('the Agent\'s surface is put away', lambda: not drawn(f'17-put-away-on-{output}', head, point))
 
-    def agent_not_reachable(self):
-        """With the Pi Durable Harness removed (ADR 0036) and Lever not yet
-        present, summoning the Agent's drawer shows that the Agent is not
-        reachable, with no stub Model started."""
+    def agent_reached_no_harness(self):
+        """With Lever running from boot (ADR 0036) and driving no harness yet,
+        summoning the Agent's drawer shows that the shell reached Lever and
+        that no harness is started to answer."""
         self.key('meta_l', 'spc')
-        view = self.wait('drawer opens saying the Agent is not reachable',
-                         lambda: (v := self.agent_view()) and v['drawer_up'] and v)
+        view = self.wait('drawer opens connected to Lever with no harness',
+                         lambda: (v := self.agent_view()) and drawer_reached_lever_with_no_harness(v) and v)
         time.sleep(0.5)
-        self.capture('18-drawer-not-reachable')
-        self.check('the drawer says the Agent is not reachable',
-                   drawer_says_not_reachable(view)
-                   and 'SHELL agent-socket connected=true' not in self.shell_log(),
+        self.capture('18-drawer-no-harness')
+        self.check('the drawer shows the Agent is reachable and has no harness',
+                   drawer_reached_lever_with_no_harness(view)
+                   and 'SHELL agent-socket connected=true' in self.shell_log(),
                    json.dumps(view))
         self.key('meta_l', 'spc')
-        self.wait('drawer closes after unreachable check',
+        self.wait('drawer closes after Lever status check',
                   lambda: not self.agent_view()['drawer_up'])
 
     def compositor_restart(self):
@@ -1021,15 +1022,19 @@ QMP_PUNCTUATION = {
 }
 
 
-def drawer_says_not_reachable(view):
-    """Whether the shell's Agent view snapshot is in the drawer state that
-    renders 'Agent is not reachable': drawer up, no mark overlay, not
-    connected to an Agent service, no Model, no turns, and mark idle."""
+def drawer_reached_lever_with_no_harness(view):
+    """Whether the shell's Agent view snapshot shows the drawer up, connected
+    to Lever, with Lever's version reported and no harness started."""
     state = (view or {}).get('state') or {}
     return (
         bool((view or {}).get('drawer_up'))
         and not (view or {}).get('mark_overlay')
-        and not state.get('connected')
+        and bool(state.get('configured'))
+        and bool(state.get('connected'))
+        and isinstance(state.get('lever_version'), str)
+        and bool(state.get('lever_version'))
+        and state.get('harness_started') is False
+        and state.get('no_harness') is True
         and state.get('model') is None
         and state.get('turns') == []
         and state.get('mark') == 'idle'

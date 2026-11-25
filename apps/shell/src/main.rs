@@ -1257,6 +1257,8 @@ impl Render for AgentSurface {
             model.name.clone()
         } else if !state.configured || !state.connected {
             "Offline".into()
+        } else if state.no_harness {
+            "Connected · No harness".into()
         } else {
             "No Model".into()
         };
@@ -1443,6 +1445,33 @@ impl Render for AgentSurface {
                             ),
                     ),
             );
+        } else if state.no_harness {
+            let detail = match &state.lever_version {
+                Some(ver) => format!(
+                    "Reached Lever {ver}, but no harness is started to answer yet."
+                ),
+                None => "Reached the Agent, but no harness is started to answer yet.".into(),
+            };
+            body = body.child(
+                div()
+                    .pt(px(12.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Agent is reachable — no harness yet"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .line_height(px(18.))
+                            .text_color(rgb(p.muted))
+                            .child(detail),
+                    ),
+            );
         } else if state.model.is_none() {
             let reason = state.missing_model.clone().unwrap_or_else(|| {
                 "Sign in to a Model from a terminal to talk with the Agent.".into()
@@ -1574,6 +1603,8 @@ impl Render for AgentSurface {
                         None
                     } else if !state.configured || !state.connected {
                         Some("The Agent isn't running right now. Reconnecting automatically.".into())
+                    } else if state.no_harness {
+                        None
                     } else if state.model.is_none() {
                         Some(state.missing_model.clone().unwrap_or_else(|| {
                             "No Model is signed in. Run `crowbar-agent login` in a terminal.".into()

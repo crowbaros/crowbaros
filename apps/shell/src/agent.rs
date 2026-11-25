@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-//! The shell's client of the Harness's surface socket (ADR 0035).
+//! The shell's client of Lever's surface socket (ADR 0036).
 //!
 //! Speaks the shared framing (4-byte big-endian length + UTF-8 JSON,
-//! `{"version":1}` first) over `CROWBAR_AGENT_SOCKET`, keeping the drawer's
-//! conversation state and the mark (`idle`, `working`, `done`). Blocking I/O
-//! on dedicated background threads wakes GPUI only when a frame arrives, so a
-//! still desktop draws nothing.
+//! `{"version":1}` first) over `CROWBAR_LEVER_SOCKET`, keeping the drawer's
+//! state and the mark (`idle`, `working`, `done`). Blocking I/O on dedicated
+//! background threads wakes GPUI only when a frame arrives, so a still desktop
+//! draws nothing.
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -110,6 +110,9 @@ pub enum AgentEvent {
     Connected,
     Disconnected,
     Status {
+        lever_version: Option<String>,
+        harness_started: bool,
+        harnesses: Vec<String>,
         model: Option<ModelInfo>,
         missing: Option<String>,
     },
@@ -199,6 +202,9 @@ impl CommandSender {
 pub struct AgentState {
     pub configured: bool,
     pub connected: bool,
+    pub lever_version: Option<String>,
+    pub harness_started: bool,
+    pub no_harness: bool,
     pub sending: bool,
     pub model: Option<ModelInfo>,
     pub missing_model: Option<String>,
@@ -235,7 +241,7 @@ impl AgentState {
     }
 
     pub fn can_send(&self) -> bool {
-        self.connected && !self.working() && !self.sending
+        self.connected && !self.working() && !self.sending && !self.no_harness
     }
 
     pub fn current_turn(&self) -> Option<u64> {
@@ -252,16 +258,40 @@ impl AgentState {
                 changed
             }
             AgentEvent::Disconnected => {
-                let changed = self.connected || self.sending;
+                let changed = self.connected
+                    || self.sending
+                    || self.lever_version.is_some()
+                    || self.harness_started
+                    || self.no_harness;
                 self.connected = false;
                 self.sending = false;
+                self.lever_version = None;
+                self.harness_started = false;
+                self.no_harness = false;
                 changed
             }
-            AgentEvent::Status { model, missing } => {
-                let changed = self.model != model || self.missing_model != missing;
+            AgentEvent::Status {
+                lever_version,
+                harness_started,
+                harnesses,
+                model,
+                missing,
+            } => {
+                let no_harness = lever_version.is_some()
+                    && !harness_started
+                    && harnesses.is_empty()
+                    && model.is_none();
+                let changed = self.model != model
+                    || self.missing_model != missing
+                    || self.lever_version != lever_version
+                    || self.harness_started != harness_started
+                    || self.no_harness != no_harness;
                 self.model = model;
                 self.missing_model = missing;
-                if self.model.is_some() {
+                self.lever_version = lever_version;
+                self.harness_started = harness_started;
+                self.no_harness = no_harness;
+                if self.model.is_some() || self.no_harness {
                     self.error = None;
                 }
                 changed
@@ -642,6 +672,28 @@ pub fn parse_harness_message(msg: &serde_json::Value) -> Option<AgentEvent> {
     if let Some(reply) = msg.get("reply").and_then(|v| v.as_str()) {
         return match reply {
             "status" => {
+                let lever_version = msg
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let harness_started = msg
+                    .get("harness_started")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let harnesses = msg
+                    .get("harnesses")
+                    .and_then(|v| v.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| {
+                                item.as_str()
+                                    .or_else(|| item.get("name").and_then(|n| n.as_str()))
+                                    .map(str::to_string)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 let model = msg
                     .get("model")
                     .filter(|v| !v.is_null())
@@ -650,7 +702,13 @@ pub fn parse_harness_message(msg: &serde_json::Value) -> Option<AgentEvent> {
                     .get("missing")
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
-                Some(AgentEvent::Status { model, missing })
+                Some(AgentEvent::Status {
+                    lever_version,
+                    harness_started,
+                    harnesses,
+                    model,
+                    missing,
+                })
             }
             "sent" => Some(AgentEvent::Sent {
                 conversation: msg.get("conversation")?.as_str()?.to_string(),
@@ -766,9 +824,9 @@ fn parse_turn(value: &serde_json::Value) -> Option<Turn> {
     })
 }
 
-/// Starts the background client for `CROWBAR_AGENT_SOCKET`, if configured.
+/// Starts the background client for `CROWBAR_LEVER_SOCKET`, if configured.
 pub fn start_from_env(events: session::Sender) -> Option<CommandSender> {
-    let path = std::env::var_os("CROWBAR_AGENT_SOCKET").map(PathBuf::from)?;
+    let path = std::env::var_os("CROWBAR_LEVER_SOCKET").map(PathBuf::from)?;
     Some(start(path, events))
 }
 
@@ -989,6 +1047,9 @@ mod tests {
         state.apply(AgentEvent::Connected, true);
         state.apply(
             AgentEvent::Status {
+                lever_version: None,
+                harness_started: true,
+                harnesses: vec!["opencode".into()],
                 model: Some(ModelInfo {
                     provider: "endpoint".into(),
                     provider_name: "Endpoint".into(),
@@ -1324,5 +1385,62 @@ mod tests {
                 .map(|w| w.app_id.as_str()),
             Some("foot")
         );
+    }
+
+    #[test]
+    fn surface_client_connects_to_lever_and_reports_no_harness() {
+        let base = std::env::temp_dir();
+        let root = if base.as_os_str().len() > 48 {
+            PathBuf::from("/tmp")
+        } else {
+            base
+        };
+        let dir = root.join(format!("cs-lever-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let sock = dir.join("surface");
+        let listener = UnixListener::bind(&sock).unwrap();
+
+        let server = std::thread::spawn(move || {
+            let (mut peer, _) = listener.accept().unwrap();
+            let v = read_frame(&mut peer).unwrap();
+            assert_eq!(v, serde_json::json!({ "version": 1 }));
+            peer.write_all(&encode_frame(&serde_json::json!({ "version": 1 })))
+                .unwrap();
+
+            let status_req = read_frame(&mut peer).unwrap();
+            assert_eq!(status_req["op"], "status");
+            peer.write_all(&encode_frame(&serde_json::json!({
+                "reply": "status",
+                "version": "0.1.0",
+                "harness_started": false,
+                "harnesses": []
+            })))
+            .unwrap();
+        });
+
+        let (tx, mut rx) = session::channel();
+        let _sender = start(sock.clone(), tx);
+
+        let mut state = AgentState::new(true);
+        futures::executor::block_on(async {
+            while let Some(ev) = rx.next().await {
+                if let session::Event::Agent(agent_ev) = ev {
+                    state.apply(agent_ev, true);
+                    if state.connected && state.lever_version.is_some() {
+                        break;
+                    }
+                }
+            }
+        });
+
+        server.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(state.connected);
+        assert_eq!(state.lever_version.as_deref(), Some("0.1.0"));
+        assert!(!state.harness_started);
+        assert!(state.no_harness);
+        assert!(!state.can_send());
+        assert_eq!(state.mark, Mark::Idle);
     }
 }

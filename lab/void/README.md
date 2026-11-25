@@ -134,8 +134,8 @@ still opening the launcher; the gesture doing nothing while locked, with the
 drawer up or put away after unlock as it was; and, with a second display
 plugged in, the drawer on whichever display the pointer is on. A still
 desktop with the drawer up must commit and draw nothing, too. It checks that
-the drawer says the Agent is not reachable until Lever answers, and starts no
-stub Model.
+the drawer connects to Lever's surface socket and shows that the Agent is
+reachable with no harness yet, and starts no stub Model.
 It checks that apps run as the person at the ordinary socket for apps, that
 copy and paste, the primary selection, and drag and drop work between two apps,
 that Fulcrum's Harness socket serves the person alone, and that the shell's

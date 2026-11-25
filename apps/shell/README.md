@@ -68,16 +68,15 @@ historical behavior evidence, not a current Fedora workflow.
   drawer away and the window that had the keyboard has it back. The drawer's
   close control puts it away too. Escape does not. Locking leaves the drawer
   as it is, and it is up or put away after unlock as it was.
-- When `CROWBAR_AGENT_SOCKET` is set, the shell connects to the Agent's surface
-  socket with backoff using the shared version-1 framing, sends messages from
-  the drawer's composer on Enter, and streams answers together with the desktop
-  context each message carried. Putting the drawer away stops nothing: a
-  working turn finishes behind it. The mark (`Working` and `Done`) is shown in
-  the bar and, whenever a fullscreen window covers the bar while the drawer is
-  put away, in a floating overlay surface (`crowbaros-mark`) at the top right.
-  Until Lever answers, no Agent socket is running in Base and the drawer calmly
-  says the Agent is not reachable. The shell's own `crowbar-shell`-only
-  `control.sock` answers `agent` (drawer and mark state) beside `snapshot`.
+- When `CROWBAR_LEVER_SOCKET` is set, the shell connects to Lever's surface
+  socket (`/run/crowbar-lever/surface`) with backoff using the shared version-1
+  framing, asks `status`, and while Lever drives no harness yet shows that the
+  Agent is reachable with no harness to answer. Putting the drawer away stops
+  nothing. The mark (`Working` and `Done`) is shown in the bar and, whenever a
+  fullscreen window covers the bar while the drawer is put away, in a floating
+  overlay surface (`crowbaros-mark`) at the top right. The shell's own
+  `crowbar-shell`-only `control.sock` answers `agent` (drawer and mark state)
+  beside `snapshot`.
 - The desktop starts locked. While the compositor has it locked, the shell
   shows its lock screen, and the bar's lock button and Super+L lock it. The
   lock screen takes the person's password at once and sends it to Base's

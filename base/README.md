@@ -22,10 +22,10 @@ base/void_base.py root key       # name what installs the Void root, as CI's cac
 | Part | What it is |
 | --- | --- |
 | Packages | `base-minimal`, `linux`, and NVIDIA's driver (`nvidia`, with `linux-headers`, `dkms`, and `pahole` to build its kernel module), `btrfs-progs`, `grub-x86_64-efi`, `mtools`, `openssh`, `sudo`, `dhcpcd`, `iproute2`; for real machines, Intel's microcode (`intel-ucode`), `iwd` for Wi-Fi, `wireless-regdb`, and Mesa's Vulkan drivers for Intel and AMD GPUs, beside the firmware and AMD's microcode `linux` already brings; and what the desktop needs: `seatd`, Mesa with lavapipe, Wayland, `foot`, Chromium, and others, from Void's `current` repository and, for NVIDIA's driver, its `nonfree` repository ([`config.json`](config.json)) |
-| Desktop | Fulcrum (`compositor/`), the shell, Files, Studio Settings, and the desktop's helpers ([`helpers/`](helpers/README.md)), built and tested in a Void build root of their own so they link Void's libraries, in `/usr/local/bin`. Their runit services are in [`desktop/`](desktop/) |
+| Desktop | Fulcrum (`compositor/`), the shell, Files, Studio Settings, Lever (`lever/`), and the desktop's helpers ([`helpers/`](helpers/README.md)), built and tested in a Void build root of their own so they link Void's libraries, in `/usr/local/bin`. Their runit services are in [`desktop/`](desktop/) |
 | Disk | GPT. An ESP holds a standalone GRUB at `\EFI\BOOT\BOOTX64.EFI`, the path any UEFI firmware boots without a boot entry. The root is Btrfs, labelled `crowbaros-root` |
 | Boot | GRUB finds the root by label and reads `/boot/grub/grub.cfg` there. The kernel and initramfs are the ones xbps built. The kernel's command line adds `nvidia-drm.modeset=1 nvidia-drm.fbdev=1` |
-| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `dbus`, `iwd`, `seatd`, the system's log (`socklog` and `nanoklogd`, kept in `/var/log/socklog`), and the desktop's five: the compositor on virtual terminal 2, the shell, the launcher, the unlock helper, and the service that reboots for Ctrl+Alt+Del. Root logs in over SSH with a key made for the lab, and has no password; the person's account takes the same key. SSH takes keys only |
+| Services | runit, with gettys on the consoles and the serial port, `dhcpcd`, `sshd`, `dbus`, `iwd`, `seatd`, the system's log (`socklog` and `nanoklogd`, kept in `/var/log/socklog`), and the desktop's six: the compositor on virtual terminal 2, the shell, the launcher, the unlock helper, Lever, and the service that reboots for Ctrl+Alt+Del. Root logs in over SSH with a key made for the lab, and has no password; the person's account takes the same key. SSH takes keys only |
 
 The VM is QEMU with KVM, OVMF firmware, virtio disk and network, SSH
 forwarded to `127.0.0.1:22240`, and for the desktop a virtio GPU, keyboard, and
@@ -162,10 +162,14 @@ with no NVIDIA card in the VM, not loaded, that the module is set to save
 video memory across a suspend to `/var/tmp` and that `/var/tmp` is on the
 disk, that restarting the compositor's
 service leaves one new compositor running, that `seatd`, the compositor, the
-shell, the launcher, and the unlock helper then stay up and the shell's
+shell, the launcher, the unlock helper, and Lever then stay up and the shell's
 service runs the shell, that the compositor answers the unlock helper's
-`lock`, that the image holds no retired Harness, no Node.js, and no
-`crowbar-agent` service, and that the kernel logged nothing critical.
+`lock`, that Lever answers version 1 and `status` on its surface and person
+sockets for the shell and the person alone, runs as the person in the
+launcher's app environment with its state theirs alone, restarts after a kill
+with a restart entry in its log, and stays under 50 MiB idle, that the image
+holds no retired Harness, no Node.js, and no `crowbar-agent` service, and that
+the kernel logged nothing critical.
 
 The lab's two graphical checks boot a copy of this image under UEFI as well.
 The desktop check runs all of these Base boot checks alongside the desktop
