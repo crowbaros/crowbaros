@@ -326,68 +326,50 @@ class Runs(unittest.TestCase):
 
 
 
-class StubModelAndTyping(unittest.TestCase):
-    """The desktop check needs no Model key: the drawer talks to the stub
-    Model in the guest, and what the Harness sent is read from the stub's
-    record of requests. It also encodes QMP text cleanly."""
+class DrawerNotReachableAndTyping(unittest.TestCase):
+    """Without the Pi Durable Harness, the desktop check starts no stub Model,
+    checks that the drawer says the Agent is not reachable, and still encodes
+    QMP text cleanly."""
 
-    def test_the_stub_model_and_its_answer_are_what_the_check_points_at(self):
-        self.assertTrue(base.STUB_MODEL.is_file())
-        self.assertIn('foot', desktop_check.DRAWER_ANSWER)
+    def view(self, **changes):
+        state = {
+            'configured': False,
+            'connected': False,
+            'sending': False,
+            'model': None,
+            'missing_model': None,
+            'conversation': None,
+            'turns': [],
+            'error': None,
+            'mark': 'idle',
+        }
+        state.update(changes.pop('state', {}))
+        snapshot = {
+            'drawer_up': True,
+            'mark_overlay': False,
+            'mark_overlay_output': None,
+            'state': state,
+        }
+        snapshot.update(changes)
+        return snapshot
 
-    def stub_record(self, *user_messages, system='You are the Agent.'):
-        """A stub record of one request per user message, each the whole
-        conversation up to it, as the chat API carries it."""
-        lines, messages = [], [{'role': 'system', 'content': system}]
-        for content in user_messages:
-            messages = messages + [{'role': 'user', 'content': content}]
-            lines.append(json.dumps({'model': 'stub-1', 'stream': True, 'messages': messages}))
-            messages = messages + [{'role': 'assistant', 'content': 'An answer.'}]
-        return '\n'.join(lines) + '\n'
+    def test_an_open_disconnected_drawer_with_no_model_or_turns_passes(self):
+        self.assertTrue(desktop_check.drawer_says_not_reachable(self.view()))
+        self.assertTrue(desktop_check.drawer_says_not_reachable(self.view(state={'configured': True})))
 
-    def test_the_stub_record_shows_desktop_context_sent_with_the_question(self):
-        prompt = 'what is the exact app_id of my active window?'
-        context = ('[Desktop context]\nWorkspace: 1\nActive window: ~ (app_id: foot)\n'
-                   'Displays:\n- Virtual-1: 1280x960 at (0, 0), scale 1x\n\n')
-        sent = desktop_check.stub_requests_audit(
-            self.stub_record([{'type': 'text', 'text': context + prompt}]), prompt, 'crowbarsecretwindow1')
-        self.assertEqual(sent, {'asked': 1, 'has_desktop_context': True, 'has_active_foot': True,
-                                'has_display': True, 'has_sentinel': False})
+    def test_a_closed_or_connected_drawer_fails(self):
+        self.assertFalse(desktop_check.drawer_says_not_reachable(self.view(drawer_up=False)))
+        self.assertFalse(desktop_check.drawer_says_not_reachable(self.view(state={'connected': True})))
+        self.assertFalse(desktop_check.drawer_says_not_reachable(self.view(state={'model': {'model': 'x'}})))
+        self.assertFalse(desktop_check.drawer_says_not_reachable(self.view(state={'turns': [{'turn': 1}]})))
+        self.assertFalse(desktop_check.drawer_says_not_reachable(self.view(state={'mark': 'working'})))
+        self.assertFalse(desktop_check.drawer_says_not_reachable(self.view(mark_overlay=True)))
 
-    def test_the_stub_record_catches_a_question_sent_with_no_context_or_with_window_contents(self):
-        prompt = 'what is the exact app_id of my active window?'
-        bare = desktop_check.stub_requests_audit(self.stub_record(prompt), prompt, 'crowbarsecretwindow1')
-        self.assertEqual((bare['asked'], bare['has_desktop_context']), (1, False))
-        # Context in the system prompt, or in an earlier message, is not
-        # context sent with this question.
-        context = '[Desktop context]\nActive window: ~ (app_id: foot)\nDisplays:\n- Virtual-1: 1x1\n\n'
-        elsewhere = desktop_check.stub_requests_audit(
-            self.stub_record(context + 'hello', prompt, system=context), prompt, 'x')
-        self.assertEqual((elsewhere['asked'], elsewhere['has_desktop_context']), (1, False))
-        leaked = desktop_check.stub_requests_audit(
-            self.stub_record(context + prompt + ' crowbarsecretwindow1'), prompt, 'crowbarsecretwindow1')
-        self.assertTrue(leaked['has_sentinel'])
-        # A question asked twice is caught as two requests.
-        twice = desktop_check.stub_requests_audit(self.stub_record(context + prompt, context + prompt), prompt, 'x')
-        self.assertEqual(twice['asked'], 2)
-
-    def test_stopping_the_stub_stops_it_and_not_the_shell_that_asks(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        state, stub = Path(temporary.name) / 'state', Path(temporary.name) / 'stub'
-        state.mkdir()
-        stub.mkdir()
-        (state / 'endpoint.json').write_text('{}')
-        (stub / 'stub-model.ts').write_text('import time\ntime.sleep(60)\n')
-        running = subprocess.Popen(['python3', str(stub / 'stub-model.ts')])
-        self.addCleanup(running.kill)
-        stopped = subprocess.run(['sh', '-c', desktop_check.stop_stub_model(str(state), str(stub))])
-        self.assertEqual(stopped.returncode, 0)
-        self.assertIsNotNone(running.wait(timeout=5))
-        self.assertFalse((state / 'endpoint.json').exists())
-        self.assertFalse(stub.exists())
-        # With no stub started, only the endpoint file goes.
-        self.assertEqual(desktop_check.stop_stub_model('/s', None), "rm -f /s/endpoint.json")
+    def test_the_desktop_check_starts_no_stub_model(self):
+        source = Path(desktop_check.__file__).read_text()
+        self.assertNotIn('stub-model', source)
+        self.assertNotIn('STUB_MODEL', source)
+        self.assertNotIn('HARNESS_NODE', source)
 
     def test_qmp_keys_for_text_maps_spaces_punctuation_and_case(self):
         self.assertEqual(
@@ -397,129 +379,6 @@ class StubModelAndTyping(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             desktop_check.qmp_keys_for_text('bad\n')
-
-    def test_turn_state_kind_reads_tagged_shell_turn_state(self):
-        self.assertEqual(desktop_check.turn_state_kind({'state': {'kind': 'working'}}), 'working')
-        self.assertEqual(desktop_check.turn_state_kind({'state': {'kind': 'done'}}), 'done')
-        self.assertEqual(
-            desktop_check.turn_state_kind({'state': {'kind': 'failed', 'message': 'err'}}),
-            'failed',
-        )
-        self.assertIsNone(desktop_check.turn_state_kind({}))
-
-    def test_embedded_guest_script_compiles_cleanly(self):
-        compile(desktop_check.HARNESS_AUDIT_SCRIPT, '<HARNESS_AUDIT_SCRIPT>', 'exec')
-
-    def test_harness_audit_script_verifies_exact_turn_context_and_rejects_decoy(self):
-        import sqlite3, sys
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        work = Path(temporary.name)
-        db = work / 'harness.sqlite'
-
-        prompt = 'what is the exact app_id of my active window?'
-        full_user_content = (
-            '[Desktop context]\nWorkspace: 1\nActive window: ~ (app_id: foot)\n'
-            'Windows by workspace:\n- Workspace 1: ~ (app_id: foot) [active]\n'
-            'Displays:\n- Virtual-1: 1280x960 at (0, 0), scale 1x\n\n' + prompt
-        )
-        conn = sqlite3.connect(db)
-        conn.execute('CREATE TABLE documents (id INTEGER PRIMARY KEY, kind TEXT NOT NULL)')
-        conn.execute('CREATE TABLE document_revisions (document_id INTEGER NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, content TEXT NOT NULL)')
-        conn.execute('CREATE TABLE entries (id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL, record TEXT NOT NULL)')
-        conn.execute('INSERT INTO documents (id, kind) VALUES (2, ?)', ('"crowbar.conversations"',))
-        # Decoy conversation (at=3) in base revision; target conversation (at=9) in delta revision.
-        conn.execute(
-            'INSERT INTO document_revisions (document_id, seq, kind, content) VALUES (2, 1, ?, ?)',
-            ('base', json.dumps({'conversations': {'decoy111': {'at': 3, 'started': 1, 'title': '', 'turns': 1}}})),
-        )
-        conn.execute(
-            'INSERT INTO document_revisions (document_id, seq, kind, content) VALUES (2, 2, ?, ?)',
-            ('delta', json.dumps([['s', ['conversations', 'real2222'], {'at': 9, 'started': 2, 'title': '', 'turns': 1}]])),
-        )
-        def msg_entry(turn, content):
-            return json.dumps({
-                'kind': 'crowbar.message',
-                'data': {'turn': turn, 'text': prompt},
-                'model': [{'role': 'user', 'content': content, 'timestamp': 1}],
-            })
-
-        def assistant_entry(content):
-            return json.dumps({
-                'kind': 'pi.assistant',
-                'model': [{'role': 'assistant', 'content': [{'type': 'text', 'text': content}], 'timestamp': 2}],
-            })
-
-        # Cross-conversation decoy (at=3, turn 1 with full desktop context),
-        # same-conversation plain user message (at=9, turn 1, NO context),
-        # same-conversation assistant reply echoing the prompt + context markers,
-        # and same-conversation wrong-turn user message (turn 2 with context):
-        # ALL combined MUST still fail when auditing conversation 'real2222' turn 1.
-        conn.execute(
-            'INSERT INTO entries (id, conversation_id, record) VALUES (1, 3, ?)',
-            (msg_entry(1, full_user_content),),
-        )
-        conn.execute(
-            'INSERT INTO entries (id, conversation_id, record) VALUES (2, 9, ?)',
-            (msg_entry(1, prompt),),
-        )
-        conn.execute(
-            'INSERT INTO entries (id, conversation_id, record) VALUES (3, 9, ?)',
-            (assistant_entry('You asked: ' + full_user_content),),
-        )
-        conn.execute(
-            'INSERT INTO entries (id, conversation_id, record) VALUES (4, 9, ?)',
-            (msg_entry(2, full_user_content),),
-        )
-        conn.commit()
-        conn.close()
-
-        spec = {
-            'db': str(db),
-            'conversation': 'real2222',
-            'turn': 1,
-            'prompt': prompt,
-            'sentinel': 'crowbarsecretwindowabcdef',
-        }
-        res = subprocess.run(
-            [sys.executable, '-c', desktop_check.HARNESS_AUDIT_SCRIPT],
-            input=json.dumps(spec), text=True, capture_output=True, check=True,
-        )
-        audit = json.loads(res.stdout)
-        self.assertTrue(audit['has_conversation'])
-        self.assertFalse(audit['has_desktop_context'])
-        self.assertFalse(audit['has_active_foot'])
-        self.assertFalse(audit['has_display'])
-
-        # Now replace turn 1 on conversation_id=9 with the real user-role Model input carrying desktop context.
-        conn = sqlite3.connect(db)
-        conn.execute(
-            'UPDATE entries SET record = ? WHERE id = 2',
-            (msg_entry(1, full_user_content),),
-        )
-        conn.commit()
-        conn.close()
-
-        res2 = subprocess.run(
-            [sys.executable, '-c', desktop_check.HARNESS_AUDIT_SCRIPT],
-            input=json.dumps(spec), text=True, capture_output=True, check=True,
-        )
-        audit2 = json.loads(res2.stdout)
-        self.assertTrue(audit2['has_conversation'])
-        self.assertTrue(audit2['has_desktop_context'])
-        self.assertTrue(audit2['has_active_foot'])
-        self.assertTrue(audit2['has_display'])
-        self.assertFalse(audit2['has_sentinel'])
-
-        # Missing or null turn must fail closed rather than widening to the whole conversation.
-        for bad_turn in (None, 0, True, '1'):
-            bad_spec = dict(spec, turn=bad_turn)
-            res_bad = subprocess.run(
-                [sys.executable, '-c', desktop_check.HARNESS_AUDIT_SCRIPT],
-                input=json.dumps(bad_spec), text=True, capture_output=True, check=True,
-            )
-            audit_bad = json.loads(res_bad.stdout)
-            self.assertFalse(audit_bad['has_desktop_context'], f'turn={bad_turn!r} should fail closed')
 
 
 if __name__ == '__main__':

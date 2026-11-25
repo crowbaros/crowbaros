@@ -10,9 +10,7 @@
 # once this script has finished it) PUBKEY HOSTNAME ROOT_LABEL ESP_LABEL ESP_MIB ROOT_GIB,
 # KVER (the kernel to boot, which void_base.py checked), KERNEL_ARGS (added to
 # the kernel's command line), NVIDIA_OPTIONS (for NVIDIA's `nvidia` module),
-# and for the desktop DESKTOP (base/desktop) and REPO_ROOT. For the Harness,
-# NODE is the pinned Node.js binary, NODE_LICENSE its license, and HARNESS the
-# one file the build bundled from agent/. The person's
+# and for the desktop DESKTOP (base/desktop) and REPO_ROOT. The person's
 # account is PERSON_UID, PERSON, and PERSON_FULL_NAME, with PERSON_PASSWORD_HASH
 # from the account file or, for the lab account, PERSON_PASSWORD, and
 # PERSON_SSH_KEYS, its public keys from the account file, one per line. Its arguments are the
@@ -75,16 +73,15 @@ GROW
 # Wi-Fi and `wheel` for sudo, whose password unlocks the desktop and as whom
 # every app runs. Its UID is fixed, as the desktop's services find it by UID.
 # runit starts the seat manager, the compositor on virtual terminal 2 in place
-# of its getty, the shell, the launcher, as the person, the unlock helper, the
-# service that reboots for Ctrl+Alt+Del, and the Harness, as the person; see
-# desktop/ and helpers/. The compositor's service stops a compositor its
-# openvt left behind.
+# of its getty, the shell, the launcher, as the person, the unlock helper, and
+# the service that reboots for Ctrl+Alt+Del; see desktop/ and helpers/. The
+# compositor's service stops a compositor its openvt left behind.
 ln -sfn /etc/sv/seatd "$SV/seatd"
 rm -f "$SV/agetty-tty2"
 chroot "$R" useradd -m -u 1000 -G _seatd crowbar-compositor
 chroot "$R" useradd -m -u 1001 crowbar-shell
 chroot "$R" useradd -m -u "$PERSON_UID" -G netdev,wheel -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
-for service in compositor shell launcher unlock ctrl-alt-del agent; do
+for service in compositor shell launcher unlock ctrl-alt-del; do
   install -D -m 755 "$DESKTOP/$service-run" "$R/etc/sv/crowbar-$service/run"
   ln -sfn "/etc/sv/crowbar-$service" "$SV/crowbar-$service"
 done
@@ -95,13 +92,6 @@ for helper in unlock launcher shell-connect ctrl-alt-del; do
   ln -sfn crowbar-helpers "$R/usr/local/bin/crowbar-$helper"
 done
 install -D -m 755 "$DESKTOP/zzz-lock" "$R/etc/zzz.d/suspend/50-crowbar-lock"
-# The Harness (ADR 0034): Node.js's own binary and the one file the build
-# bundled, in a directory of their own. Neither is on PATH, and the image has
-# no npm and no node_modules. The `crowbar-agent` service, above, runs them as
-# the person from boot.
-install -D -m 755 "$NODE" "$R/usr/local/lib/crowbar-agent/node"
-install -m 644 "$HARNESS" "$R/usr/local/lib/crowbar-agent/harness.mjs"
-install -D -m 644 "$NODE_LICENSE" "$R/usr/share/licenses/crowbar-agent/LICENSE.nodejs"
 # The person is in `wheel`, so sudo takes their password. Rebooting and powering
 # off take none, as on a desktop with logind: `reboot` and `poweroff` in
 # /usr/local/bin ask sudo for them.

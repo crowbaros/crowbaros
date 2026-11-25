@@ -3,8 +3,6 @@
   "void_repository": "https://repo-default.voidlinux.org/current",
   "xbps_static_url": "https://repo-default.voidlinux.org/static/xbps-static-static-0.60.4_1.x86_64-musl.tar.xz",
   "xbps_static_sha256": "603b3c55e9cabd5af79b461b929b14e1556a443c97b5714d188681c2172d9e28",
-  "node_url": "https://nodejs.org/dist/v26.13.1/node-v26.13.1-linux-x64.tar.xz",
-  "node_sha256": "5c063e46bab0fbc1c17cc445d7ff129cbdcd0471be6ed83b6ab864f8143bc864",
   "packages": [
     "base-minimal",
     "linux",
@@ -49,9 +47,7 @@
     "dejavu-fonts-ttf",
     "xcursor-vanilla-dmz",
     "dbus",
-    "glib",
-    "libstdc++",
-    "libatomic"
+    "glib"
   ],
   "lab_packages": ["python3"],
   "build_packages": [
