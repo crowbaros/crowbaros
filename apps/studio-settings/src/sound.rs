@@ -7,7 +7,7 @@
 
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -234,11 +234,78 @@ fn run_wpctl(args: &[&str]) -> Result<(), SoundError> {
     }
 }
 
+fn is_pw_mon_trigger(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with("changed:")
+        || trimmed.starts_with("added:")
+        || trimmed.starts_with("removed:")
+        || trimmed.contains("default.audio.")
+        || trimmed.contains("Props")
+        || trimmed.contains(":volume")
+        || trimmed.contains(":mute")
+}
+
+/// Trailing-edge coalescer for PipeWire watcher events: waits until a burst of
+/// monitor events settles (up to `max_wait`) before querying audio state, then
+/// emits a [`SoundSnapshot`] only when it differs from the previous emission.
+///
+/// Unlike a leading-edge drop filter, this never drops a `changed:` volume or
+/// mute event that arrives shortly after an `added:` client event or during
+/// initial `pw-mon` startup.
+fn coalesce_watcher_events<F>(
+    ping_rx: Receiver<()>,
+    tx: Sender<SoundSnapshot>,
+    settle: Duration,
+    max_wait: Duration,
+    mut fetch: F,
+) where
+    F: FnMut() -> Result<SoundSnapshot, SoundError>,
+{
+    let mut last_sent: Option<SoundSnapshot> = None;
+
+    while ping_rx.recv().is_ok() {
+        let burst_start = Instant::now();
+        loop {
+            let remaining_max = max_wait.saturating_sub(burst_start.elapsed());
+            if remaining_max.is_zero() {
+                break;
+            }
+            let wait = settle.min(remaining_max);
+            match ping_rx.recv_timeout(wait) {
+                Ok(()) => continue,
+                Err(RecvTimeoutError::Timeout) => break,
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        if let Ok(current) = fetch()
+            && last_sent.as_ref() != Some(&current)
+        {
+            last_sent = Some(current.clone());
+            if tx.send(current).is_err() {
+                break;
+            }
+        }
+    }
+}
+
 /// Spawns an event-driven watcher (`pw-mon --no-colors`) that sends updated
 /// [`SoundSnapshot`] values only when the parsed audio state actually changes.
 /// While audio is idle, `pw-mon` produces no output and the UI receives zero
 /// wakeups.
 pub fn spawn_sound_watcher(tx: Sender<SoundSnapshot>) {
+    let (ping_tx, ping_rx) = mpsc::channel();
+    let _ = thread::Builder::new()
+        .name("crowbar-sound-coalesce".into())
+        .spawn(move || {
+            coalesce_watcher_events(
+                ping_rx,
+                tx,
+                Duration::from_millis(80),
+                Duration::from_millis(250),
+                fetch_sound,
+            );
+        });
+
     let _ = thread::Builder::new()
         .name("crowbar-sound-watch".into())
         .spawn(move || {
@@ -257,35 +324,14 @@ pub fn spawn_sound_watcher(tx: Sender<SoundSnapshot>) {
             };
             let mut reader = BufReader::new(stdout);
             let mut line = String::new();
-            let mut last_snapshot = fetch_sound().ok();
-            let mut last_check = Instant::now();
 
             loop {
                 line.clear();
                 match reader.read_line(&mut line) {
                     Ok(0) | Err(_) => break,
                     Ok(_) => {
-                        let trimmed = line.trim();
-                        // Only react to meaningful graph/property change lines, debounced.
-                        if !(trimmed.starts_with("changed:")
-                            || trimmed.starts_with("added:")
-                            || trimmed.starts_with("removed:")
-                            || trimmed.contains("default.audio.")
-                            || trimmed.contains("Props:"))
-                        {
-                            continue;
-                        }
-                        if last_check.elapsed() < Duration::from_millis(120) {
-                            continue;
-                        }
-                        last_check = Instant::now();
-                        if let Ok(current) = fetch_sound()
-                            && last_snapshot.as_ref() != Some(&current)
-                        {
-                            last_snapshot = Some(current.clone());
-                            if tx.send(current).is_err() {
-                                break;
-                            }
+                        if is_pw_mon_trigger(&line) && ping_tx.send(()).is_err() {
+                            break;
                         }
                     }
                 }
@@ -384,5 +430,61 @@ Audio
         assert_eq!(format_wpctl_volume(0.65), "0.65");
         assert_eq!(format_wpctl_volume(2.5), "1.50");
         assert_eq!(format_wpctl_volume(f32::NAN), "0.00");
+    }
+
+    #[test]
+    fn watcher_coalesces_burst_and_never_drops_trailing_volume_change() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicU32, Ordering},
+        };
+
+        let volume_pct = Arc::new(AtomicU32::new(100));
+        let fetch_vol = Arc::clone(&volume_pct);
+        let (ping_tx, ping_rx) = mpsc::channel();
+        let (out_tx, out_rx) = mpsc::channel();
+
+        let handle = thread::spawn(move || {
+            coalesce_watcher_events(
+                ping_rx,
+                out_tx,
+                Duration::from_millis(25),
+                Duration::from_millis(100),
+                move || {
+                    let v = fetch_vol.load(Ordering::SeqCst) as f32 / 100.0;
+                    Ok(SoundSnapshot {
+                        sinks: vec![AudioEndpoint {
+                            id: 32,
+                            name: "Dummy Output".into(),
+                            volume: v,
+                            muted: false,
+                            is_default: true,
+                        }],
+                        sources: Vec::new(),
+                    })
+                },
+            );
+        });
+
+        // Simulate `wpctl` connecting (`added:`) while volume is still 100%,
+        // followed 5ms later by the actual volume mutation (`changed:`) to 65%
+        // well inside the debounce window. A leading-edge drop filter would
+        // drop the 65% change; trailing-edge coalescing must deliver 65%.
+        ping_tx.send(()).unwrap();
+        thread::sleep(Duration::from_millis(5));
+        volume_pct.store(65, Ordering::SeqCst);
+        ping_tx.send(()).unwrap();
+
+        let first = out_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("coalesced snapshot must arrive");
+        assert_eq!(first.sinks[0].volume_percent(), 65);
+
+        // An unchanged burst must emit nothing (preserving idle zero-commit behavior).
+        ping_tx.send(()).unwrap();
+        assert!(out_rx.recv_timeout(Duration::from_millis(80)).is_err());
+
+        drop(ping_tx);
+        handle.join().unwrap();
     }
 }
