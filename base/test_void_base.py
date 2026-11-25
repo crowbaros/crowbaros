@@ -560,7 +560,7 @@ class Desktop(BuildFixture):
 
 class NoHarnessOrNode(BuildFixture):
     """Base carries no Pi Durable Harness, no Node.js, and no `crowbar-agent`
-    service or binary (ADR 0036)."""
+    runit service (ADR 0036). `crowbar-agent` itself is Lever's Rust client."""
 
     def test_config_has_no_node_pin_and_no_nodejs_package(self):
         cfg = json.loads((Path(void_base.HERE) / 'config.json').read_text())
@@ -569,11 +569,11 @@ class NoHarnessOrNode(BuildFixture):
         for packages in ('packages', 'lab_packages', 'build_packages'):
             self.assertFalse([name for name in cfg[packages] if name.startswith('nodejs')], packages)
 
-    def test_build_downloads_no_node_bundles_nothing_and_ships_no_crowbar_agent(self):
+    def test_build_downloads_no_node_bundles_nothing_and_ships_no_harness(self):
         self.assertFalse(hasattr(void_base, 'node'))
         self.assertFalse(hasattr(void_base, 'bundle_harness'))
         self.assertNotIn('agent/client', dict(void_base.PROJECTS))
-        self.assertNotIn('crowbar-agent', void_base.PROGRAMS)
+        self.assertEqual(void_base.PROGRAMS['crowbar-agent'], 'lever')
         self.assertFalse((Path(void_base.HERE) / 'desktop/agent-run').exists())
         image_script = (Path(void_base.HERE) / 'host/image.sh').read_text()
         for retired in ('crowbar-agent', 'harness.mjs', '$NODE', '$HARNESS'):
@@ -604,7 +604,6 @@ class NoHarnessOrNode(BuildFixture):
         for bad in ('', 'path /usr/local/lib/crowbar-agent\nclean\n',
                     'path /var/service/crowbar-agent\nclean\n',
                     'cmd node /usr/bin/node\nclean\n',
-                    'cmd crowbar-agent /usr/local/bin/crowbar-agent\nclean\n',
                     'pkg nodejs-22.0.0_1\nclean\n'):
             self.assertFalse(passes(bad), bad)
 
@@ -906,7 +905,9 @@ class LeverChecks(unittest.TestCase):
     def test_lever_is_built_and_wired_into_base(self):
         self.assertIn('lever', dict(void_base.PROJECTS))
         self.assertEqual(void_base.PROGRAMS['crowbar-lever'], 'lever')
+        self.assertEqual(void_base.PROGRAMS['crowbar-agent'], 'lever')
         self.assertEqual(void_base.binaries()['crowbar-lever'].name, 'crowbar-lever')
+        self.assertEqual(void_base.binaries()['crowbar-agent'].name, 'crowbar-agent')
         lever_run = (Path(void_base.HERE) / 'desktop/lever-run').read_text()
         self.assertIn('/usr/local/bin/crowbar-launcher as-app', lever_run)
         self.assertIn('/usr/local/bin/crowbar-lever', lever_run)

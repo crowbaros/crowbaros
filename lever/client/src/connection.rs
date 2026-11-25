@@ -1,10 +1,10 @@
-//! One connection to the Harness's person socket, and everything the client
-//! waits on at once: the Harness, the person's typing, and Ctrl-C.
+//! One connection to Lever's person socket, and everything the client waits on
+//! at once: Lever, the person's typing, and Ctrl-C.
 //!
-//! The Harness's framing (`agent/README.md`): a message is a frame, its
-//! length in four bytes, the most significant first, and then that many bytes
-//! of JSON. The first frame each way states the protocol version and nothing
-//! else, and the client states it first.
+//! Lever's framing (`lever/README.md`): a message is a frame, its length in
+//! four bytes, the most significant first, and then that many bytes of JSON.
+//! The first frame each way states the protocol version and nothing else, and
+//! the client states it first.
 
 use crate::sys;
 use serde_json::{Value, json};
@@ -17,18 +17,18 @@ use std::path::PathBuf;
 
 /// The version of the person socket's protocol this client speaks.
 const VERSION: u32 = 1;
-/// The longest frame the client takes from the Harness: a long conversation, resumed.
+/// The longest frame the client takes from Lever: a long thread, resumed.
 const MAX_FRAME: usize = 64 * 1024 * 1024;
 
-/// Where the Harness listens for the person: in their runtime directory,
-/// which is `/run/user/<user ID>` where nothing says otherwise, as on a
-/// console or over SSH.
+/// Where Lever listens for the person: in their runtime directory, which is
+/// `/run/user/<user ID>` where nothing says otherwise, as on a console or over
+/// SSH.
 pub fn socket_path() -> PathBuf {
     let runtime = match std::env::var_os("XDG_RUNTIME_DIR") {
         Some(runtime) if !runtime.is_empty() => PathBuf::from(runtime),
         _ => PathBuf::from(format!("/run/user/{}", sys::uid())),
     };
-    runtime.join("crowbar-agent/person")
+    runtime.join("crowbar-lever/person")
 }
 
 /// Text from outside the client, as a terminal may be given it. A Model is
@@ -55,28 +55,18 @@ pub fn plain(text: &str) -> Cow<'_, str> {
     Cow::Owned(shown.collect())
 }
 
-/// A field of a message that is text, or nothing where it is not. Every
-/// word of the Harness's that the client shows comes through here, so it is
-/// `plain`.
+/// A field of a message that is text, or nothing where it is not. Every word
+/// of Lever's that the client shows comes through here, so it is `plain`.
 pub fn text<'a>(message: &'a Value, field: &str) -> Cow<'a, str> {
     plain(message.get(field).and_then(Value::as_str).unwrap_or_default())
 }
-
-/// What a client does when no Model answers: the Harness says why, and the
-/// client says what to type.
-pub const NO_MODEL: &str = "Sign in to one with `crowbar-agent login`, or choose one with `crowbar-agent model`.";
 
 /// When a reply is an error, says it to the person, and gives its code.
 pub fn refused(reply: &Value) -> Option<Cow<'_, str>> {
     if text(reply, "reply") != "error" {
         return None;
     }
-    let hint = if text(reply, "code") == "no-model" {
-        format!(" {NO_MODEL}")
-    } else {
-        String::new()
-    };
-    eprintln!("crowbar-agent: {}{hint}", text(reply, "message"));
+    eprintln!("crowbar-agent: {}", text(reply, "message"));
     Some(text(reply, "code"))
 }
 
@@ -96,7 +86,7 @@ pub enum Typing {
 
 /// What the client waited for, and got.
 pub enum Happening {
-    /// An event from the Harness.
+    /// An event from Lever.
     Event(Value),
     /// A line the person typed, without its end.
     Line(String),
@@ -108,7 +98,7 @@ pub enum Happening {
 
 pub struct Connection {
     stream: UnixStream,
-    /// Bytes from the Harness that do not make a whole frame yet.
+    /// Bytes from Lever that do not make a whole frame yet.
     received: Vec<u8>,
     /// Events that came while a reply was waited for.
     events: VecDeque<Value>,
@@ -123,16 +113,16 @@ pub struct Connection {
     /// at again until a line is wanted.
     typed_ahead: bool,
     /// How many replies are still to come to requests `send` did not wait
-    /// for. The Harness answers in the order it was asked, so they come
-    /// before the reply to any request made since.
+    /// for. Lever answers in the order it was asked, so they come before the
+    /// reply to any request made since.
     owed: usize,
 }
 
-/// Why there is no connection to the Harness.
+/// Why there is no connection to Lever.
 pub enum Unconnected {
     /// In words for the person.
     Why(String),
-    /// The person pressed Ctrl-C while the Harness was waited for.
+    /// The person pressed Ctrl-C while Lever was waited for.
     Interrupted,
 }
 
@@ -145,7 +135,7 @@ fn framed(received: &mut Vec<u8>) -> Result<Option<Value>> {
     if length > MAX_FRAME {
         return Err(Error::new(
             ErrorKind::InvalidData,
-            "The Harness sent a frame too long to read",
+            "Lever sent a frame too long to read",
         ));
     }
     if received.len() < 4 + length {
@@ -157,13 +147,13 @@ fn framed(received: &mut Vec<u8>) -> Result<Option<Value>> {
 }
 
 impl Connection {
-    /// Connects to the Harness and states the version. An error says why
-    /// not, in words for the person.
+    /// Connects to Lever and states the version. An error says why not, in
+    /// words for the person.
     pub fn connect() -> std::result::Result<Connection, Unconnected> {
         let path = socket_path();
         let stream = UnixStream::connect(&path).map_err(|error| {
             Unconnected::Why(format!(
-                "The Harness is not running: nothing answers at {} ({error}).",
+                "Lever is not running: nothing answers at {} ({error}).",
                 path.display()
             ))
         })?;
@@ -175,9 +165,9 @@ impl Connection {
         match answered {
             Ok(answer) if answer == stated => Ok(connection),
             Err(error) if error.kind() == ErrorKind::Interrupted => Err(Unconnected::Interrupted),
-            // The Harness closes a peer it does not serve, or whose version it does not speak, and says nothing.
+            // Lever closes a peer it does not serve, or whose version it does not speak, and says nothing.
             _ => Err(Unconnected::Why(format!(
-                "The Harness at {} closed the connection: it serves another account, or speaks another version than {VERSION}.",
+                "Lever at {} closed the connection: it serves another account, or speaks another version than {VERSION}.",
                 path.display()
             ))),
         }
@@ -206,23 +196,20 @@ impl Connection {
             .write_all(&[&length.to_be_bytes(), message.as_bytes()].concat())
     }
 
-    /// Reads more from the Harness. An error at its end.
+    /// Reads more from Lever. An error at its end.
     fn receive(&mut self) -> Result<()> {
         let mut bytes = [0u8; 65536];
         let count = self.stream.read(&mut bytes)?;
         if count == 0 {
-            return Err(Error::new(
-                ErrorKind::UnexpectedEof,
-                "The Harness closed the connection",
-            ));
+            return Err(Error::new(ErrorKind::UnexpectedEof, "Lever closed the connection"));
         }
         self.received.extend_from_slice(&bytes[..count]);
         Ok(())
     }
 
-    /// The next message from the Harness, waited for. Ctrl-C ends the
-    /// wait, with an error of the kind `Interrupted`: a Harness that is slow
-    /// to answer, or does not, is still one the person can leave.
+    /// The next message from Lever, waited for. Ctrl-C ends the wait, with an
+    /// error of the kind `Interrupted`: a Lever that is slow to answer, or
+    /// does not, is still one the person can leave.
     fn message(&mut self) -> Result<Value> {
         loop {
             if let Some(message) = framed(&mut self.received)? {
@@ -235,9 +222,9 @@ impl Connection {
         }
     }
 
-    /// Sends a request, and gives its reply. Events that come first are
-    /// kept for `next`, in their order. So are the replies to requests
-    /// `send` did not wait for, which are not this one's.
+    /// Sends a request, and gives its reply. Events that come first are kept
+    /// for `next`, in their order. So are the replies to requests `send` did
+    /// not wait for, which are not this one's.
     pub fn request(&mut self, request: Value) -> Result<Value> {
         self.write(&request)?;
         loop {
@@ -301,7 +288,7 @@ impl Connection {
             let mut waited = vec![self.interrupts, self.stream.as_raw_fd()];
             let looked_at = match typing {
                 Typing::Waits => false,
-                // Not while part of a message of the Harness's is here and the rest on its way:
+                // Not while part of a message of Lever's is here and the rest on its way:
                 // it comes before anything typed, as a whole one does.
                 _ if !self.received.is_empty() => false,
                 Typing::Wanted => true,
@@ -317,10 +304,10 @@ impl Connection {
                 sys::read(self.interrupts, &mut byte)?;
                 return Ok(Happening::Interrupt);
             }
-            // What the Harness sent comes before anything typed, which
-            // stays the terminal's until nothing of the Harness's waits: a
-            // turn another client began is then on the screen before a line
-            // is taken, and Ctrl-C in it drops that line as a terminal does.
+            // What Lever sent comes before anything typed, which stays the
+            // terminal's until nothing of Lever's waits: a turn another client
+            // began is then on the screen before a line is taken, and Ctrl-C
+            // in it drops that line as a terminal does.
             if ready[1] {
                 self.receive()?;
                 continue;
@@ -347,7 +334,6 @@ mod tests {
 
     #[test]
     fn a_frame_is_taken_whole_however_its_bytes_arrive() {
-        // `{"reply":"ok"}` and then `{"event":"done"}`, each after its length, written out by hand.
         let bytes = b"\x00\x00\x00\x0e{\"reply\":\"ok\"}\x00\x00\x00\x10{\"event\":\"done\"}";
         let mut received = Vec::new();
         let mut messages = Vec::new();
@@ -361,10 +347,8 @@ mod tests {
         assert!(received.is_empty());
     }
 
-    /// A connection to a peer of the test's own, which answers with `replies` once it has had `requests` frames.
     fn against(requests: usize, replies: &'static [&'static str]) -> (Connection, [UnixStream; 2]) {
         let (ours, mut theirs) = UnixStream::pair().unwrap();
-        // Nothing is ever written to this one, and both its ends stay open: no Ctrl-C comes.
         let (quiet, kept) = UnixStream::pair().unwrap();
         std::thread::spawn(move || {
             let mut length = [0u8; 4];
@@ -378,7 +362,6 @@ mod tests {
                 let framed = [&(reply.len() as u32).to_be_bytes(), reply.as_bytes()].concat();
                 theirs.write_all(&framed).unwrap();
             }
-            // Stays open until the test is done with it.
             let _ = theirs.read(&mut length);
         });
         (Connection::over(ours, quiet.as_raw_fd()), [quiet, kept])
@@ -386,68 +369,63 @@ mod tests {
 
     #[test]
     fn a_reply_to_a_request_that_was_not_waited_for_is_not_taken_for_the_next_requests() {
-        // A stop that was sent and not waited for, as after a second Ctrl-C, and then the person's next message.
-        let (mut harness, _quiet) = against(
+        let (mut lever, _quiet) = against(
             2,
             &[
                 r#"{"reply":"ok"}"#,
-                r#"{"event":"stopped","turn":1}"#,
-                r#"{"reply":"sent","turn":2}"#,
+                r#"{"event":"stopped","thread":"t-1","turn":1}"#,
+                r#"{"reply":"sent","thread":"t-1","turn":2}"#,
             ],
         );
-        harness.send(json!({"op": "stop"})).unwrap();
+        lever.send(json!({"op": "stop"})).unwrap();
         assert_eq!(
-            harness.request(json!({"op": "send"})).unwrap(),
-            json!({"reply": "sent", "turn": 2})
+            lever.request(json!({"op": "send"})).unwrap(),
+            json!({"reply": "sent", "thread": "t-1", "turn": 2})
         );
         assert!(
-            matches!(harness.next(Typing::Waits).unwrap(), Happening::Event(event) if event == json!({"event": "stopped", "turn": 1}))
+            matches!(lever.next(Typing::Waits).unwrap(), Happening::Event(event) if event == json!({"event": "stopped", "thread": "t-1", "turn": 1}))
         );
 
-        // One that `next` gave is not waited for again.
-        let (mut harness, _quiet) = against(1, &[r#"{"reply":"ok"}"#, r#"{"reply":"sent","turn":2}"#]);
-        harness.send(json!({"op": "stop"})).unwrap();
+        let (mut lever, _quiet) = against(1, &[r#"{"reply":"ok"}"#, r#"{"reply":"sent","thread":"t-1","turn":2}"#]);
+        lever.send(json!({"op": "stop"})).unwrap();
         assert!(
-            matches!(harness.next(Typing::Waits).unwrap(), Happening::Event(reply) if reply == json!({"reply": "ok"}))
+            matches!(lever.next(Typing::Waits).unwrap(), Happening::Event(reply) if reply == json!({"reply": "ok"}))
         );
         assert_eq!(
-            harness.request(json!({"op": "send"})).unwrap(),
-            json!({"reply": "sent", "turn": 2})
+            lever.request(json!({"op": "send"})).unwrap(),
+            json!({"reply": "sent", "thread": "t-1", "turn": 2})
         );
     }
 
     #[test]
-    fn what_the_harness_sent_is_given_before_anything_typed_is_read() {
-        // A turn another client began, and a line the person had typed, both there at once at the prompt.
-        let (mut harness, _quiet) = against(0, &[r#"{"event":"message","turn":2}"#]);
+    fn what_lever_sent_is_given_before_anything_typed_is_read() {
+        let (mut lever, _quiet) = against(0, &[r#"{"event":"message","thread":"t-1","turn":2}"#]);
         let (typing, mut keys) = UnixStream::pair().unwrap();
-        harness.input = typing.as_raw_fd();
+        lever.input = typing.as_raw_fd();
         keys.write_all(b"a draft\n").unwrap();
-        sys::readable(&[harness.stream.as_raw_fd()]).unwrap();
+        sys::readable(&[lever.stream.as_raw_fd()]).unwrap();
         assert!(
-            matches!(harness.next(Typing::Wanted).unwrap(), Happening::Event(event) if event == json!({"event": "message", "turn": 2}))
+            matches!(lever.next(Typing::Wanted).unwrap(), Happening::Event(event) if event == json!({"event": "message", "thread": "t-1", "turn": 2}))
         );
-        // The line is the terminal's still, which drops it at Ctrl-C.
-        assert_eq!(sys::waiting(harness.input), Some(8));
-        assert!(harness.typed.is_empty());
-        // Seen there while the turn is watched, it is left there.
-        harness.events.push_back(json!({"event": "done", "turn": 2}));
-        harness.typed_ahead = true;
-        assert!(matches!(harness.next(Typing::Wanted).unwrap(), Happening::Event(_)));
-        // And looked at afresh once a line is wanted, though an event came first: it may have been dropped since.
-        assert!(!harness.typed_ahead);
-        assert!(matches!(harness.next(Typing::Wanted).unwrap(), Happening::Line(line) if line == "a draft"));
+        assert_eq!(sys::waiting(lever.input), Some(8));
+        assert!(lever.typed.is_empty());
+        lever
+            .events
+            .push_back(json!({"event": "done", "thread": "t-1", "turn": 2}));
+        lever.typed_ahead = true;
+        assert!(matches!(lever.next(Typing::Wanted).unwrap(), Happening::Event(_)));
+        assert!(!lever.typed_ahead);
+        assert!(matches!(lever.next(Typing::Wanted).unwrap(), Happening::Line(line) if line == "a draft"));
     }
 
     #[test]
-    fn a_message_of_the_harnesss_that_comes_in_two_parts_is_given_before_anything_typed() {
+    fn a_message_of_levers_that_comes_in_two_parts_is_given_before_anything_typed() {
         let (ours, mut theirs) = UnixStream::pair().unwrap();
         let (quiet, _kept) = UnixStream::pair().unwrap();
-        let mut harness = Connection::over(ours, quiet.as_raw_fd());
+        let mut lever = Connection::over(ours, quiet.as_raw_fd());
         let (typing, mut keys) = UnixStream::pair().unwrap();
-        harness.input = typing.as_raw_fd();
-        // The start of a long message another client sent, and a line the person typed, both there. The rest comes after.
-        let message = r#"{"event":"message","turn":2}"#;
+        lever.input = typing.as_raw_fd();
+        let message = r#"{"event":"message","thread":"t-1","turn":2}"#;
         let framed = [&(message.len() as u32).to_be_bytes(), message.as_bytes()].concat();
         theirs.write_all(&framed[..10]).unwrap();
         keys.write_all(b"a draft\n").unwrap();
@@ -457,19 +435,18 @@ mod tests {
             theirs
         });
         assert!(
-            matches!(harness.next(Typing::Wanted).unwrap(), Happening::Event(event) if event == json!({"event": "message", "turn": 2}))
+            matches!(lever.next(Typing::Wanted).unwrap(), Happening::Event(event) if event == json!({"event": "message", "thread": "t-1", "turn": 2}))
         );
-        assert_eq!(sys::waiting(harness.input), Some(8));
+        assert_eq!(sys::waiting(lever.input), Some(8));
         let _theirs = rest.join().unwrap();
     }
 
     #[test]
-    fn what_the_harness_says_is_shown_with_no_character_that_drives_a_terminal() {
+    fn what_lever_says_is_shown_with_no_character_that_drives_a_terminal() {
         assert!(matches!(
             plain("Plain words,\n\tand a tab. Ünïcödé too."),
             Cow::Borrowed(_)
         ));
-        // Setting the clipboard, clearing the screen, and a line written over.
         assert_eq!(
             plain("\x1b]52;c;aGk=\x07 \x1b[2J safe\rfake\r\n\u{9b}31m\x7f\0"),
             "␛]52;c;aGk=␇ ␛[2J safefake\n\u{fffd}31m␡␀"

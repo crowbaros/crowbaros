@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 publish = false
-description = "The person's way to the Agent from any terminal: a client of the Harness's person socket. Part of CrowbarOS."
+description = "The person's way to the Agent from any terminal: a client of Lever's person socket. Part of CrowbarOS."
 
 [[bin]]
 name = "crowbar-agent"

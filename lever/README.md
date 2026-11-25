@@ -6,14 +6,24 @@ harnesses and keeps the record of every thread
 One runs on each machine from boot as the person's account, in the launcher's
 environment for apps, supervised by runit (`crowbar-lever`).
 
-Lever currently listens on its two sockets, verifies peer identity, keeps its
-database and private log in the person's home, and answers `status` requests
-reporting that no harness is started yet. Driving a harness over the Agent
-Client Protocol follows in the next slice (#374).
+Lever listens on its surface and person sockets, verifies peer identity with
+`SO_PEERCRED`, speaks Agent Client Protocol (ACP) version 1 over a child
+harness's standard input and output using its own JSON-RPC 2.0 loop and the
+pinned `agent-client-protocol-schema` crate (`=1.22.0`), keeps every thread in
+its private SQLite database, and runs many threads at once on one harness
+process. Lever starts the harness on demand when a thread needs it and stops it
+after 10 minutes with no thread working.
+
+This workspace also holds:
+
+- `crowbar-stub-harness` (`src/bin/stub_harness.rs`): a scripted ACP v1 stub
+  harness in Rust for Lever's and `crowbar-agent`'s tests.
+- [`client/`](client/README.md) (`crowbar-agent`): the person's terminal client
+  of Lever's person socket.
 
 ## Build and test
 
-From this directory:
+From this directory (builds and tests both `crowbar-lever` and `crowbar-agent`):
 
 ```sh
 cargo fmt --check
@@ -21,16 +31,15 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 ```
 
-`lever/client/` holds `crowbar-agent`, excluded from this Cargo package until
-it is ported to Lever in #374.
-
 ## Invocation
 
 ```sh
 crowbar-lever \
   --state <dir> \
   --surface-socket <path> --shell-uid <uid> \
-  --person-socket <path> --person-uid <uid>
+  --person-socket <path> --person-uid <uid> \
+  [--harness <program> [--harness-arg <arg>]... [--harness-name <name>]] \
+  [--idle-timeout-ms <ms>]
 ```
 
 On Base:
@@ -39,9 +48,64 @@ On Base:
 - `--surface-socket` is `/run/crowbar-lever/surface`, for `crowbar-shell`'s UID
 - `--person-socket` is `/run/user/1003/crowbar-lever/person`, for the person's UID
 
-Told to stop (`SIGTERM` or `SIGINT`), Lever closes its peer connections,
-removes its sockets and `running` marker, closes its database cleanly, logs the
-stop, and exits with status `0`.
+When `--harness` is omitted (as on Base before OpenCode is bundled), Lever runs
+with no harness configured and refuses `send` with `no-harness`. When
+`--harness` is given, Lever starts the harness child only when a thread needs
+it and stops it after `--idle-timeout-ms` (default `600000`, 10 minutes) with
+no working thread. The harness child dies with Lever.
+
+Told to stop (`SIGTERM` or `SIGINT`), Lever closes its peer connections, stops
+any running harness child, marks any turn still working `interrupted`, removes
+its sockets and `running` marker, closes its database cleanly, logs the stop,
+and exits with status `0`.
+
+## The harness
+
+Lever is the client in ACP and the harness is the agent. What Lever does with
+ACP today:
+
+- **One session for each thread.** A thread's first turn asks the harness for
+  a session (`session/new`), and Lever keeps its ID with the thread. A harness
+  that was stopped and started again is asked to load it (`session/load`) when
+  it says it can, and Lever drops what the harness replays as it loads: the
+  record has it already.
+- **A session that cannot be picked up again is replaced, and the thread says
+  so.** When the harness cannot load sessions, or the load fails, Lever asks
+  for a new session and puts a note in the thread. The harness then has none
+  of the thread's earlier turns. Giving a new session the thread so far, as
+  ADR 0036 has it, is not built yet.
+- **A session is one thread's alone.** A harness that gives a thread a session
+  ID another thread holds, or is loading, fails that turn, and so does a
+  session with no ID. A thread never loads a session another thread holds.
+  Lever uses a session only once its database has it as the thread's: a turn
+  whose session the database did not take fails, and its message is not sent
+  to the harness. When a harness that was started again
+  gives a thread an ID the record has for an older thread, the ID is the newer
+  thread's from then on, and the older thread is given a new session, with the
+  note, at its next turn.
+- **How a turn ends.** `end_turn` is `done`. `cancelled`, or the JSON-RPC
+  error for a cancelled request (`-32800`), is `stopped`. Any other stop
+  reason, and any other error, is `failed`, whether or not a stop was asked
+  for.
+- **Updates.** A piece of the agent's message is `text`, a tool call and its
+  updates are an `act`, and a session's new title is `thread-updated`. Every
+  other update is a `note`, the ones ACP defines among them (a thought, a
+  plan, a usage report), until Lever shows them as their own kinds.
+- **An update that comes after its turn ended goes to the thread's newest
+  turn.** ACP gives an update no turn. Lever takes what the harness has said
+  before it hears a peer, so an update that is already there when the next
+  message arrives stays with the turn it came in. One that comes later still
+  is recorded with the turn that is working then.
+- **Requests from the harness are refused.** Lever tells the harness it reads
+  and writes no files and runs no terminals for it, and answers every request
+  the harness makes of it, `session/request_permission` among them, with
+  JSON-RPC's "method not found". Carrying a harness's requests to the person
+  is a later part of
+  [Milestone 3](https://github.com/crowbaros/crowbaros/issues/371).
+- **Lever reads at most 256 KiB from the harness each time it wakes**, so a
+  harness that never stops writing holds back neither Lever's peers nor a stop
+  signal. A harness that writes more than 16 MiB with no line end is stopped,
+  and its working turns are `interrupted`.
 
 ## Channels and framing
 
@@ -62,10 +126,29 @@ is closed.
 
 Each socket keeps up to 64 connections open, counted apart, so the person's
 clients cannot use up the shell's. One more is closed at once without a reply.
-While 1 MiB of replies wait for a peer, Lever reads no more from it: a peer
-that reads slowly, or not at all, finds its own writes stall, and loses
-nothing it sent. A peer that closes its sending side still gets the replies to
-what it sent before Lever closes the connection.
+While 1 MiB of replies wait for a peer, Lever reads no more from it and
+answers no more of what it has read from it: a peer that reads slowly, or not
+at all, finds its own writes stall, and loses nothing it sent. Lever answers
+the rest as the peer takes its replies. A peer that closes its sending side
+still gets the replies to what it sent before Lever closes the connection, and
+what a peer sent whole before it went away altogether is still carried out.
+
+Events are not held back in that way, because a thread goes on working whether
+or not a peer that watches it reads. A peer that lets more than 4 MiB of
+events wait, over and above the longest one still waiting, is closed, and
+Lever's log says why. One event longer than that still reaches a peer that
+reads, and a peer that is still taking a long reply is given that much more
+room. The
+record has what a closed peer missed: it connects again and reads it with
+`resume`.
+
+Every thread ID, turn number, act ID, and note ID on both sockets is Lever's
+own. Lever puts no harness session ID, tool call ID, or wire message type in
+any field of its own, and takes those IDs out of a harness's error messages
+and of the updates it shows as notes. An act's detail is the text the harness
+gave for it, or the command or path its raw input or output names, and never
+the raw value itself. What a harness writes in an answer, or in an act's title
+and text, crosses as the harness wrote it.
 
 ### Handshake (protocol version 1)
 
@@ -81,7 +164,12 @@ connection at once without replying.
 ### Messages
 
 Once both sides have stated version 1, the peer sends JSON objects carrying an
-`"op"` string and Lever answers with JSON objects carrying a `"reply"` string.
+`"op"` string. Lever answers each request with a JSON object carrying a
+`"reply"` string, and pushes live thread updates carrying an `"event"` string
+to peers subscribed to that thread (via `send` or `resume`). The events a
+request brings about are pushed before any later request is answered, so a
+record read with `resume` and the events that come after it never say the
+same thing twice.
 
 #### `status`
 
@@ -94,12 +182,108 @@ Request:
 Reply:
 
 ```json
-{"reply":"status","version":"0.1.0","harness_started":false,"harnesses":[]}
+{"reply":"status","version":"0.1.0","harness_started":false,"harnesses":[{"id":"harness-1","name":"Stub"}]}
 ```
 
 - `version`: Lever's version string.
-- `harness_started`: `false` while no harness process is running.
-- `harnesses`: list of available harnesses (empty until Lever drives harnesses).
+- `harness_started`: `true` while the harness child process is running.
+- `harnesses`: configured harnesses as `{id, name}` entries (empty when no
+  harness is configured).
+
+#### `list`
+
+Lists all threads in Lever's database, newest activity first.
+
+Request:
+
+```json
+{"op":"list"}
+```
+
+Reply:
+
+```json
+{"reply":"list","threads":[{"thread":"t-01a2b3c4d5e6","title":"List the files","cwd":"/home/crowbar","started":1764000000,"updated":1764000005,"turns":1,"state":"done","working":false}]}
+```
+
+- `state`: the newest turn's state (`"working"`, `"done"`, `"stopped"`,
+  `"failed"`, `"interrupted"`, or `"idle"`).
+- `working`: `true` while a turn on this thread is running.
+
+#### `send`
+
+Sends a message to a thread, starting a new thread when `thread` is omitted or
+`null`, and subscribes this connection to events for that thread.
+
+Request:
+
+```json
+{"op":"send","thread":null,"text":"List the files","cwd":"/home/crowbar"}
+```
+
+- `thread`: existing thread ID, or `null`/omitted to start a new thread.
+- `text`: non-empty message text.
+- `cwd`: optional absolute path for a new thread's working directory (defaults
+  to `$HOME`).
+
+Reply:
+
+```json
+{"reply":"sent","thread":"t-01a2b3c4d5e6","turn":1}
+```
+
+Errors: `no-harness`, `no-thread`, `working`, `invalid-request`, and
+`storage-error` when Lever's database does not take the turn, or has yet to
+take how the thread's last turn ended.
+
+#### `resume`
+
+Reads a thread's full record from Lever's database (without starting a harness)
+and subscribes this connection to future events for that thread. The reply is
+one frame that holds the whole record, so a client must take frames as large
+as its longest thread. `crowbar-agent` takes frames up to 64 MiB, and says
+that Lever sent a frame too long to read when a record is longer. Reading a
+record in parts is not built yet.
+
+Request:
+
+```json
+{"op":"resume","thread":"t-01a2b3c4d5e6"}
+```
+
+Reply:
+
+```json
+{"reply":"resumed","thread":"t-01a2b3c4d5e6","title":"List the files","cwd":"/home/crowbar","started":1764000000,"updated":1764000005,"working":false,"turns":[{"turn":1,"message":"List the files","answer":"Here are the files.","state":"done","acts":[{"act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","state":"done","detail":"Cargo.toml"}],"notes":[{"note":"note-01a2b3c4d5e6","text":"Cache warm"}]}]}
+```
+
+When a turn ended with `"state":"failed"`, the turn object also carries
+`"error":"..."`.
+
+Errors: `no-thread`, `invalid-request`.
+
+#### `stop`
+
+Stops the currently working turn on a thread and tells the harness to cancel
+it. When `turn` is given, only that turn is stopped. The reply says that Lever
+took the request, not that the turn stopped: a turn the harness had not begun
+is `stopped` at once, and one it was working on ends when the harness answers,
+as `stopped`, or as `failed` if the harness failed instead. A thread with no
+turn working is answered `ok` too.
+
+Request:
+
+```json
+{"op":"stop","thread":"t-01a2b3c4d5e6","turn":1}
+```
+
+Reply:
+
+```json
+{"reply":"ok"}
+```
+
+Errors: `no-thread`, `invalid-request`.
 
 #### `error`
 
@@ -111,8 +295,8 @@ A request Lever cannot answer gets one of three outcomes:
   {"reply":"error","code":"unsupported","message":"This request is not supported."}
   ```
 
-- JSON that is not an object with a string `"op"` is answered, and the
-  connection stays open:
+- JSON that is not an object with a string `"op"` (or fails field validation)
+  is answered, and the connection stays open:
 
   ```json
   {"reply":"error","code":"invalid-request","message":"Expected a JSON object with a string op field."}
@@ -121,15 +305,91 @@ A request Lever cannot answer gets one of three outcomes:
 - A frame that is not JSON gets no reply, and Lever closes the connection. The
   peer connects again and states its version to go on.
 
+#### Events
+
+Pushed to every connection subscribed to `thread`:
+
+- **`message`** — a turn began with the person's message:
+
+  ```json
+  {"event":"message","thread":"t-01a2b3c4d5e6","turn":1,"text":"List the files"}
+  ```
+
+- **`text`** — a streamed piece of the answer (also taken if it arrives after a
+  turn ended):
+
+  ```json
+  {"event":"text","thread":"t-01a2b3c4d5e6","turn":1,"text":"Here are the files."}
+  ```
+
+- **`act`** — an act started, progressed, or finished (with Lever's own `act`
+  ID, `kind` in `read`, `edit`, `delete`, `move`, `search`, `command`, `think`,
+  `fetch`, `mode`, `other`, `state` in `pending`, `working`, `done`, `failed`,
+  and optional `detail`):
+
+  ```json
+  {"event":"act","thread":"t-01a2b3c4d5e6","turn":1,"act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","state":"done","detail":"Cargo.toml"}
+  ```
+
+- **`note`** — an update Lever shows as neither text nor an act, kept as JSON
+  in SQLite and shown plainly (also taken if it arrives after a turn ended).
+  A note can also be Lever's own, as when a thread's harness began a new
+  session for it:
+
+  ```json
+  {"event":"note","thread":"t-01a2b3c4d5e6","turn":1,"note":"note-01a2b3c4d5e6","text":"Cache warm"}
+  ```
+
+- **`thread-updated`** — the thread's title changed:
+
+  ```json
+  {"event":"thread-updated","thread":"t-01a2b3c4d5e6","title":"Inspect workspace"}
+  ```
+
+- **`done`** — the turn finished normally:
+
+  ```json
+  {"event":"done","thread":"t-01a2b3c4d5e6","turn":1}
+  ```
+
+- **`stopped`** — the turn was stopped by `stop`:
+
+  ```json
+  {"event":"stopped","thread":"t-01a2b3c4d5e6","turn":1}
+  ```
+
+- **`failed`** — the turn failed with a reason. A turn the harness finished
+  also fails, with "Lever could not save all of this turn.", when Lever's
+  database did not take all of it: the answer still reached who was watching,
+  and the record does not have all of it.
+
+  ```json
+  {"event":"failed","thread":"t-01a2b3c4d5e6","turn":1,"message":"The harness reported an error."}
+  ```
+
+- **`interrupted`** — the harness exited unexpectedly mid-turn, or Lever
+  stopped or restarted with the turn still working:
+
+  ```json
+  {"event":"interrupted","thread":"t-01a2b3c4d5e6","turn":1}
+  ```
+
 ## State and logging
 
 Lever stores its state in `--state` (mode `0700`, owned by the person):
 
 - `lever.sqlite` (mode `0600`, SQLite WAL mode with `synchronous = NORMAL`,
-  plus `0600` sidecar `-wal`/`-shm` files): Lever's database.
+  plus `0600` sidecar `-wal`/`-shm` files): Lever's database holding `threads`,
+  `turns`, `acts`, and `notes` (with `raw_json` keeping the JSON of each
+  update shown as a note). A write the database does not take is logged as an
+  `error` that names what could not be done and nothing a thread said. How a
+  turn ended is tried again until the database takes it, so a thread is not
+  left `working` in the record after its turn is over, and `list` and `resume`
+  say how the turn ended in the meantime.
 - `lever.log` (mode `0600`, rotated at 4 MiB to `lever.log.1`): UTC-timestamped
-  lines for `start`, `restart`, `listening`, `connection`, `stop`, and `error`.
-  Nothing a peer sent is ever written to `lever.log`.
+  lines for `start`, `restart`, `listening`, `connection`, `harness`, `stop`,
+  and `error`. Nothing a peer sent, a thread said, or a harness answered is
+  ever written to `lever.log`.
 - `running` (mode `0600`): holds Lever's PID while running and is removed on a
   clean stop. If present at the next start, Lever logs a `restart` entry naming
-  the previous PID.
+  the previous PID and marks any still-working turns `interrupted`.

@@ -1,11 +1,15 @@
 //! Linux system calls std does not expose: peer credentials, signal pipe,
-//! polling, and file mode helpers.
+//! polling, file mode helpers, non-blocking pipes, random bytes, and child
+//! process death-with-parent.
 
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 static SIGNAL_PIPE_WRITE: AtomicI32 = AtomicI32::new(-1);
 
@@ -111,7 +115,8 @@ pub fn peer_uid(socket: &impl AsRawFd) -> io::Result<u32> {
     Ok(cred.uid)
 }
 
-/// Waits on `fds` until at least one descriptor is ready or a signal interrupts.
+/// Waits on `fds` until at least one descriptor is ready, `timeout_ms` elapses,
+/// or a signal interrupts.
 pub fn poll(fds: &mut [libc::pollfd], timeout_ms: libc::c_int) -> io::Result<usize> {
     // SAFETY: `fds` is a valid mutable slice of `pollfd`.
     let rc = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
@@ -123,6 +128,20 @@ pub fn poll(fds: &mut [libc::pollfd], timeout_ms: libc::c_int) -> io::Result<usi
         return Err(err);
     }
     Ok(rc as usize)
+}
+
+/// Marks a file descriptor non-blocking.
+pub fn set_nonblocking(fd: RawFd) -> io::Result<()> {
+    // SAFETY: `fcntl` on an open file descriptor.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `fcntl` with `O_NONBLOCK` added to the existing flags.
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// Sets the file mode bits on an open descriptor.
@@ -147,5 +166,84 @@ pub fn remove_stale_socket(path: &Path) -> io::Result<()> {
         Ok(_) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e),
+    }
+}
+
+/// Generates `bytes` of random data formatted as lowercase hex, for Lever's
+/// own thread IDs.
+pub fn random_hex(bytes: usize) -> String {
+    let mut buf = vec![0u8; bytes];
+    let mut filled = 0;
+    while filled < buf.len() {
+        // SAFETY: `buf[filled..]` is valid writable memory of the passed length.
+        let rc = unsafe { libc::getrandom(buf[filled..].as_mut_ptr().cast(), buf.len() - filled, 0) };
+        if rc < 0 {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            // The kernel gave no random bytes. An ID must still differ from
+            // the one before it, so the rest comes from the process ID, the
+            // time, and a count of the IDs made this way.
+            static MADE: AtomicU64 = AtomicU64::new(0);
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos() as u64);
+            let mut seed = u64::from(std::process::id()) ^ nanos.rotate_left(17) ^ MADE.fetch_add(1, Ordering::Relaxed);
+            for slot in &mut buf[filled..] {
+                // SplitMix64: each step gives eight well-mixed bits.
+                seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                let mut mixed = seed;
+                mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+                *slot = (mixed ^ (mixed >> 31)) as u8;
+            }
+            break;
+        }
+        filled += rc as usize;
+    }
+    let mut hex = String::with_capacity(bytes * 2);
+    for byte in buf {
+        use std::fmt::Write as _;
+        let _ = write!(&mut hex, "{byte:02x}");
+    }
+    hex
+}
+
+/// Spawns a harness child with piped stdin/stdout and null stderr, arranged
+/// so the kernel sends `SIGTERM` to the child if Lever dies unexpectedly.
+pub fn spawn_harness(program: &str, args: &[String]) -> io::Result<Child> {
+    // SAFETY: `getpid` cannot fail.
+    let parent_pid = unsafe { libc::getpid() };
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    // SAFETY: `prctl(PR_SET_PDEATHSIG)`, `getppid`, and `_exit` are
+    // async-signal-safe.
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // Lever died before the kernel was asked to tell this child, so
+            // nothing will. The child still has Lever's own handler for
+            // `SIGTERM`, which only writes to a pipe, so raising the signal
+            // would end nothing: the child ends itself.
+            if libc::getppid() != parent_pid {
+                libc::_exit(128 + libc::SIGTERM);
+            }
+            Ok(())
+        });
+    }
+    cmd.spawn()
+}
+
+/// Sends a signal to a child process.
+pub fn signal_pid(pid: u32, sig: libc::c_int) {
+    // SAFETY: sending a signal to Lever's own child process.
+    unsafe {
+        let _ = libc::kill(pid as libc::pid_t, sig);
     }
 }

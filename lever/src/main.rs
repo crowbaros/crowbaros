@@ -1,15 +1,20 @@
 //! Lever (`crowbar-lever`): the CrowbarOS service that runs from boot as the
 //! person, answers the shell on its surface socket and the person's clients on
-//! its person socket, and keeps its state in the person's home.
+//! its person socket, drives a harness over ACP, and keeps the record of every
+//! thread in the person's home.
 
+mod acp;
 mod channel;
 mod frames;
 mod log;
+mod service;
 mod store;
 mod sys;
 
+use acp::HarnessConfig;
 use channel::{Channel, LEVER_VERSION, Peer};
 use log::{Event, Log};
+use service::{Broadcast, DEFAULT_IDLE_TIMEOUT, Service, unix_now};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::fd::AsRawFd;
@@ -17,7 +22,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use store::Store;
 use sys::SignalPipe;
 
@@ -31,7 +36,9 @@ const MAX_ACCEPTS: usize = 32;
 const USAGE: &str = "usage: crowbar-lever \
   --state <dir> \
   --surface-socket <path> --shell-uid <uid> \
-  --person-socket <path> --person-uid <uid>";
+  --person-socket <path> --person-uid <uid> \
+  [--harness <program> [--harness-arg <arg>]... [--harness-name <name>]] \
+  [--idle-timeout-ms <ms>]";
 
 struct Options {
     state: PathBuf,
@@ -39,6 +46,8 @@ struct Options {
     shell_uid: u32,
     person_socket: PathBuf,
     person_uid: u32,
+    harness: Option<HarnessConfig>,
+    idle_timeout: Duration,
 }
 
 fn parse_options(args: &[String]) -> Option<Options> {
@@ -47,6 +56,10 @@ fn parse_options(args: &[String]) -> Option<Options> {
     let mut shell_uid = None;
     let mut person_socket = None;
     let mut person_uid = None;
+    let mut harness_program = None;
+    let mut harness_name = None;
+    let mut harness_args = Vec::new();
+    let mut idle_timeout = None;
 
     let mut iter = args.iter();
     while let Some(flag) = iter.next() {
@@ -60,9 +73,35 @@ fn parse_options(args: &[String]) -> Option<Options> {
             "--shell-uid" if shell_uid.is_none() => shell_uid = Some(value.parse::<u32>().ok()?),
             "--person-socket" if person_socket.is_none() => person_socket = Some(PathBuf::from(value)),
             "--person-uid" if person_uid.is_none() => person_uid = Some(value.parse::<u32>().ok()?),
+            "--harness" if harness_program.is_none() => harness_program = Some(value.clone()),
+            "--harness-name" if harness_name.is_none() => harness_name = Some(value.clone()),
+            "--harness-arg" => harness_args.push(value.clone()),
+            "--idle-timeout-ms" if idle_timeout.is_none() => {
+                idle_timeout = Some(Duration::from_millis(value.parse::<u64>().ok()?));
+            }
             _ => return None,
         }
     }
+
+    let harness = match harness_program {
+        Some(program) => {
+            let name = harness_name.unwrap_or_else(|| {
+                Path::new(&program)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("harness")
+                    .to_string()
+            });
+            Some(HarnessConfig {
+                id: "harness-1".to_string(),
+                name,
+                program,
+                args: harness_args,
+            })
+        }
+        None if harness_name.is_some() || !harness_args.is_empty() => return None,
+        None => None,
+    };
 
     Some(Options {
         state: state?,
@@ -70,6 +109,8 @@ fn parse_options(args: &[String]) -> Option<Options> {
         shell_uid: shell_uid?,
         person_socket: person_socket?,
         person_uid: person_uid?,
+        harness,
+        idle_timeout: idle_timeout.unwrap_or(DEFAULT_IDLE_TIMEOUT),
     })
 }
 
@@ -143,6 +184,30 @@ fn accept_pending(listener: &UnixListener, channel: Channel, peers: &mut Vec<Pee
     }
 }
 
+fn deliver_broadcasts(broadcasts: &[Broadcast], peers: &mut [Peer], keep: &[bool], log: &mut Log) {
+    if broadcasts.is_empty() {
+        return;
+    }
+    for (idx, peer) in peers.iter_mut().enumerate() {
+        if !keep[idx] {
+            continue;
+        }
+        let mut queued = false;
+        for b in broadcasts {
+            if peer.is_subscribed(&b.thread_id) {
+                peer.queue_event(&b.message);
+                queued = true;
+            }
+        }
+        // A peer that cannot be sent to is dropped at its next turn in the
+        // loop, where what it had sent is carried out first.
+        if queued && !(peer.on_writable() && peer.keeps_up(log)) {
+            peer.on_gone(log);
+            peer.lose();
+        }
+    }
+}
+
 fn write_marker(marker: &Path, pid: u32) -> Result<(), String> {
     let mut file = OpenOptions::new()
         .create(true)
@@ -187,7 +252,8 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
     let signals = SignalPipe::install().map_err(|e| format!("could not install signal pipe: {e}"))?;
     write_marker(&marker, pid)?;
 
-    let store = Store::open(&options.state.join("lever.sqlite"))?;
+    let store = Store::open(&options.state.join("lever.sqlite"), unix_now())?;
+    let mut service = Service::new(store, options.harness, options.idle_timeout);
 
     if let Some(parent) = options.person_socket.parent() {
         ensure_private_dir(parent)?;
@@ -238,8 +304,12 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         if let Some(sig) = signals.take_signal() {
             break sig;
         }
+        service.on_wake(log);
 
-        let mut pollfds = Vec::with_capacity(3 + peers.len());
+        let harness_stdout_fd = service.harness_stdout_fd();
+        let harness_stdin_fd = service.harness_stdin_fd();
+
+        let mut pollfds = Vec::with_capacity(5 + peers.len());
         pollfds.push(libc::pollfd {
             fd: signals.fd(),
             events: libc::POLLIN,
@@ -269,8 +339,34 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
                 revents: 0,
             });
         }
+        let existing_len = peers.len();
+        let stdout_idx = harness_stdout_fd.map(|fd| {
+            let i = pollfds.len();
+            pollfds.push(libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            });
+            i
+        });
+        let stdin_idx = harness_stdin_fd.map(|fd| {
+            let i = pollfds.len();
+            pollfds.push(libc::pollfd {
+                fd,
+                events: libc::POLLOUT,
+                revents: 0,
+            });
+            i
+        });
 
-        sys::poll(&mut pollfds, -1).map_err(|e| format!("poll failed: {e}"))?;
+        // A peer whose requests wait, and who has made room for their
+        // replies, is answered now and not at the next thing that happens.
+        let timeout_ms = if peers.iter().any(|peer| peer.is_held() || peer.is_lost()) {
+            0
+        } else {
+            service.poll_timeout_ms()
+        };
+        sys::poll(&mut pollfds, timeout_ms).map_err(|e| format!("poll failed: {e}"))?;
 
         if pollfds[0].revents & libc::POLLIN != 0
             && let Some(sig) = signals.take_signal()
@@ -285,48 +381,83 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
             accept_pending(&surface_listener, surface_channel, &mut peers, log);
         }
 
-        // Process existing peers (indices 3..3+old_len), keeping newly accepted peers.
-        let existing_len = pollfds.len() - 3;
         let mut keep = vec![true; peers.len()];
+
+        // The harness first, and what it said to who is watching, before any
+        // peer is heard: an update that is already here belongs to the turn
+        // it came in, not to one a peer is about to begin, and a peer that
+        // resumes a thread reads the record with that update in it once.
+        let mut broadcasts: Vec<Broadcast> = Vec::new();
+        if let Some(i) = stdout_idx {
+            let revents = pollfds[i].revents;
+            if revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+                broadcasts.extend(service.on_harness_readable(log));
+            }
+        }
+        // Its input next, while this is still the harness that was polled: a
+        // peer below may have Lever start another.
+        if let Some(i) = stdin_idx {
+            let revents = pollfds[i].revents;
+            if revents & (libc::POLLOUT | libc::POLLERR | libc::POLLHUP) != 0 {
+                broadcasts.extend(service.on_harness_writable(log));
+            }
+        }
+        deliver_broadcasts(&broadcasts, &mut peers, &keep, log);
+        broadcasts.clear();
+
+        // Process existing peers (indices 3..3+existing_len), keeping newly
+        // accepted peers. What one peer's request has to tell who is
+        // watching is told before the next peer is heard, so a peer that
+        // resumes a thread is not then told of a turn its record has.
         for (idx, pfd) in pollfds[3..3 + existing_len].iter().enumerate() {
             let revents = pfd.revents;
-            if revents == 0 {
+            let peer = &mut peers[idx];
+            if !keep[idx] || (revents == 0 && !peer.is_held() && !peer.is_lost()) {
                 continue;
             }
-            let peer = &mut peers[idx];
-            let mut alive = true;
-            if revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 && peer.wants_read() {
-                alive = peer.on_readable(log);
+            broadcasts.clear();
+            let mut alive = !peer.is_lost();
+            if alive && revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 && peer.wants_read() {
+                let (still_alive, peer_broadcasts) = peer.on_readable(&mut service, log);
+                alive = still_alive;
+                broadcasts.extend(peer_broadcasts);
             }
             if alive && (revents & libc::POLLOUT != 0) && peer.wants_write() {
+                alive = peer.on_writable();
+            }
+            // Not while this peer has something to tell who is watching:
+            // that is told first, and its next request is answered at the
+            // next pass.
+            if alive && broadcasts.is_empty() && peer.is_held() {
+                broadcasts.extend(peer.dispatch(&mut service, log));
                 alive = peer.on_writable();
             }
             if revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
                 alive = false;
             }
-            // A peer that has hung up while Lever was not reading it, because
-            // it had sent all it would or had replies waiting, can take
-            // nothing more.
             if revents & libc::POLLHUP != 0 && !peer.wants_read() {
                 alive = false;
             }
             if !alive {
+                broadcasts.extend(peer.finish_requests(&mut service, log));
                 peer.on_gone(log);
             }
             keep[idx] = alive;
+            deliver_broadcasts(&broadcasts, &mut peers, &keep, log);
         }
+
         let mut iter = keep.into_iter();
         peers.retain(|_| iter.next().unwrap_or(true));
     };
 
-    // Clean stop: close active peers, stop listening, remove sockets, close DB,
-    // remove running marker, and log the stop signal.
+    // Clean stop: close active peers, stop harness, stop listening, remove sockets,
+    // close DB, remove running marker, and log the stop signal.
     peers.clear();
     drop(surface_listener);
     drop(person_listener);
     let _ = std::fs::remove_file(&options.surface_socket);
     let _ = std::fs::remove_file(&options.person_socket);
-    store.close()?;
+    service.shutdown(log)?;
     let _ = std::fs::remove_file(&marker);
     let _ = log.write(Event::Stop, sys::signal_name(stop_sig));
     Ok(())
