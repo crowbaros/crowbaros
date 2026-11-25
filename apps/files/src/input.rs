@@ -531,7 +531,7 @@ impl Element for TextElement {
                             bounds.bottom(),
                         ),
                     ),
-                    rgba(input.palette.selection_bg),
+                    rgba(input.palette.selection_bg()),
                 )),
                 None,
             )

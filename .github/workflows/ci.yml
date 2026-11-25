@@ -90,7 +90,7 @@ jobs:
               lever/*|.github/workflows/ci.yml) lever=true ;;
             esac
             case "$f" in
-              base/*|compositor/*|lever/*|apps/shell/*|apps/files/*|apps/studio-settings/*|.github/workflows/ci.yml) boot=true ;;
+              base/*|compositor/*|lever/*|libs/*|apps/shell/*|apps/files/*|apps/studio-settings/*|.github/workflows/ci.yml) boot=true ;;
             esac
           done < "$files"
           printf 'code=%s\ncompositor=%s\nlever=%s\nboot=%s\n' "$code" "$compositor" "$lever" "$boot" | tee -a "$GITHUB_OUTPUT"
@@ -115,13 +115,36 @@ jobs:
           python3 -m unittest discover -s .github/workflows -p "test_*.py"
           python3 -m unittest discover -s apps/shell/packaging -p "test_*.py"
 
+  theme:
+    name: Theme library (libs/crowbar-theme)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: libs/crowbar-theme
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Test
+        run: cargo test --locked
+
   shell:
     name: Interface (${{ matrix.project }})
     needs: changes
     if: needs.changes.outputs.code == 'true'
     strategy:
       matrix:
-        project: [apps/shell, apps/files, apps/studio-settings]
+        project: [apps/shell, apps/files, apps/studio-settings, libs/crowbar-ui]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -336,9 +359,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             .lab/base/target
-          key: base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/files/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock', 'lever/Cargo.lock') }}-${{ github.sha }}
+          key: base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/files/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'libs/crowbar-theme/Cargo.lock', 'libs/crowbar-ui/Cargo.lock', 'base/helpers/Cargo.lock', 'lever/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/files/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'base/helpers/Cargo.lock', 'lever/Cargo.lock') }}-
+            base-build-${{ hashFiles('base/config.json', 'compositor/Cargo.lock', 'apps/shell/Cargo.lock', 'apps/files/Cargo.lock', 'apps/studio-settings/Cargo.lock', 'libs/crowbar-theme/Cargo.lock', 'libs/crowbar-ui/Cargo.lock', 'base/helpers/Cargo.lock', 'lever/Cargo.lock') }}-
             base-build-
 
       # Cargo rebuilds a crate whose files are newer than its last build, and
@@ -460,7 +483,7 @@ jobs:
   gate:
     name: CI passed
     if: always()
-    needs: [changes, check, shell, helpers, lever, compositor, boot]
+    needs: [changes, check, theme, shell, helpers, lever, compositor, boot]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

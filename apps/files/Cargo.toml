@@ -8,6 +8,8 @@ description = "CrowbarOS Files — quiet, keyboard-first file manager"
 
 [dependencies]
 gpui = { version = "=0.2.2", default-features = false, features = ["wayland"] }
+crowbar-theme = { path = "../../libs/crowbar-theme" }
+crowbar-ui = { path = "../../libs/crowbar-ui" }
 chrono = "0.4"
 env_logger = "0.11"
 log = "0.4"
