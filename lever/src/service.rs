@@ -2,7 +2,7 @@
 //! ACP harness lifecycle (including the idle timer), active turns across
 //! concurrent threads, and Lever's wire messages.
 
-use crate::acp::{AcpEvent, AcpHarness, HarnessConfig, TurnOutcome};
+use crate::acp::{AcpEvent, AcpHarness, HarnessConfig, ModelCatalog, TurnOutcome};
 use crate::channel::LEVER_VERSION;
 use crate::log::{Event, Log};
 use crate::store::{ActPatch, ActRecord, NoteRecord, Store, ThreadRecord, ThreadSummary, TurnRecord};
@@ -24,6 +24,9 @@ const UNSAVED_MESSAGE: &str = "Lever could not save all of this turn.";
 /// What a turn failed with when the database did not take the session the
 /// harness gave its thread.
 const UNSAVED_SESSION_MESSAGE: &str = "Lever could not save this thread's session.";
+/// What Lever says when free hosted Models are off and no provider is signed in.
+const NO_MODEL_MESSAGE: &str =
+    "No Model is available. Choose OpenCode's free hosted Models or sign in with `crowbar-agent login`.";
 /// The note a thread gets when its harness session could not be picked up
 /// again, and what Lever keeps as that note's source.
 const NEW_SESSION_NOTE: &str = "The harness could not pick this thread's session up again. It began a new one, which has none of the turns before.";
@@ -35,9 +38,31 @@ pub struct Broadcast {
     pub message: Value,
 }
 
+/// One deferred reply targeted at a specific peer connection.
+pub struct PeerReply {
+    pub peer_id: u64,
+    pub message: Value,
+    pub subscribe: Option<String>,
+}
+
+/// Outbound messages produced by harness activity or timers.
+#[derive(Default)]
+pub struct Effects {
+    pub broadcasts: Vec<Broadcast>,
+    pub replies: Vec<PeerReply>,
+}
+
+impl Effects {
+    fn extend(&mut self, other: Effects) {
+        self.broadcasts.extend(other.broadcasts);
+        self.replies.extend(other.replies);
+    }
+}
+
 /// Result of handling one request from a peer.
 pub struct RequestOutcome {
-    pub reply: Value,
+    /// Immediate reply, or `None` when the reply waits on the harness.
+    pub reply: Option<Value>,
     /// Thread ID to subscribe the requesting peer to, if any.
     pub subscribe: Option<String>,
     /// Broadcasts to emit to subscribed peers after the reply is queued.
@@ -47,6 +72,7 @@ pub struct RequestOutcome {
 enum TurnDispatch {
     WaitingForInit,
     WaitingForSession,
+    WaitingForModel { session_id: String },
     PromptInFlight { session_id: String },
 }
 
@@ -55,9 +81,19 @@ struct WorkingTurn {
     message: String,
     cwd: String,
     existing_session_id: Option<String>,
+    desired_model: Option<String>,
     dispatch: TurnDispatch,
     /// Something of this turn did not reach the database.
     unsaved: bool,
+}
+
+struct PendingSetModel {
+    peer_id: u64,
+    thread_id: String,
+    model: String,
+    /// True when `session/set_config_option` is already in flight on an active
+    /// session; false when waiting on the harness's Model catalogue probe.
+    in_flight_on_session: bool,
 }
 
 /// How a turn ended, kept until the database has it.
@@ -72,9 +108,15 @@ pub struct Service {
     store: Store,
     harness_config: Option<HarnessConfig>,
     harness: Option<AcpHarness>,
+    model_catalog: Option<ModelCatalog>,
+    /// True when `free_hosted_models` changed while the harness was busy, so
+    /// it should be stopped as soon as all active work finishes.
+    harness_env_stale: bool,
     idle_timeout: Duration,
     idle_since: Option<Instant>,
     working_turns: HashMap<String, WorkingTurn>,
+    pending_models: Vec<u64>,
+    pending_set_models: Vec<PendingSetModel>,
     /// Ends the database did not take, tried again on each wake.
     unsaved_endings: Vec<Ending>,
 }
@@ -85,9 +127,13 @@ impl Service {
             store,
             harness_config,
             harness: None,
+            model_catalog: None,
+            harness_env_stale: false,
             idle_timeout,
             idle_since: None,
             working_turns: HashMap::new(),
+            pending_models: Vec::new(),
+            pending_set_models: Vec::new(),
             unsaved_endings: Vec::new(),
         }
     }
@@ -101,6 +147,14 @@ impl Service {
             .as_ref()
             .filter(|h| h.wants_write())
             .and_then(AcpHarness::stdin_fd)
+    }
+
+    fn has_active_work(&self) -> bool {
+        !self.working_turns.is_empty() || !self.pending_models.is_empty() || !self.pending_set_models.is_empty()
+    }
+
+    fn free_hosted_models(&self) -> bool {
+        self.store.free_hosted_models().unwrap_or(false)
     }
 
     /// Timeout in milliseconds for `poll(2)`, or `-1` when Lever waits for
@@ -118,23 +172,33 @@ impl Service {
     /// How long the harness may still sit idle, when it is idle.
     fn idle_remaining(&self) -> Option<Duration> {
         let since = self.idle_since?;
-        if self.harness.is_none() || !self.working_turns.is_empty() {
+        if self.harness.is_none() || self.has_active_work() {
             return None;
         }
         Some(self.idle_timeout.saturating_sub(since.elapsed()))
     }
 
     /// What Lever does each time it wakes: saves the ends of turns the
-    /// database did not take before, and stops the harness if no thread has
-    /// worked for `idle_timeout`.
+    /// database did not take before, stops a harness whose environment changed
+    /// once it is idle, and stops the harness if no thread has worked for
+    /// `idle_timeout`.
     pub fn on_wake(&mut self, log: &mut Log) {
         self.save_endings();
-        if self.idle_remaining().is_some_and(|left| left.is_zero()) {
+        if self.harness_env_stale && !self.has_active_work() {
+            self.stop_harness("after free hosted Models setting changed", log);
+        } else if self.idle_remaining().is_some_and(|left| left.is_zero()) {
             self.stop_harness("after idle timeout", log);
         }
     }
 
-    pub fn handle_request(&mut self, value: &Value, log: &mut Log) -> RequestOutcome {
+    /// Drops any deferred replies waiting for a peer that has disconnected.
+    pub fn on_peer_gone(&mut self, peer_id: u64) {
+        self.pending_models.retain(|&id| id != peer_id);
+        self.pending_set_models.retain(|p| p.peer_id != peer_id);
+        self.refresh_idle_timer();
+    }
+
+    pub fn handle_request(&mut self, peer_id: u64, value: &Value, log: &mut Log) -> RequestOutcome {
         let Some(op) = value.as_object().and_then(|o| o.get("op")).and_then(Value::as_str) else {
             return error_outcome("invalid-request", "Expected a JSON object with a string op field.");
         };
@@ -145,35 +209,41 @@ impl Service {
             "send" => self.handle_send(value, log),
             "resume" => self.handle_resume(value),
             "stop" => self.handle_stop(value, log),
+            "models" => self.handle_models(peer_id, value, log),
+            "set-free-models" => self.handle_set_free_models(value, log),
+            "set-model" => self.handle_set_model(peer_id, value, log),
             _ => error_outcome("unsupported", "This request is not supported."),
         }
     }
 
-    pub fn on_harness_writable(&mut self, log: &mut Log) -> Vec<Broadcast> {
+    pub fn on_harness_writable(&mut self, log: &mut Log) -> Effects {
         let ok = self.harness.as_mut().is_none_or(AcpHarness::on_writable);
         if !ok {
             return self.on_harness_exited(log);
         }
-        Vec::new()
+        Effects::default()
     }
 
-    pub fn on_harness_readable(&mut self, log: &mut Log) -> Vec<Broadcast> {
+    pub fn on_harness_readable(&mut self, log: &mut Log) -> Effects {
         let events = match self.harness.as_mut() {
             Some(h) => h.on_readable(),
-            None => return Vec::new(),
+            None => return Effects::default(),
         };
-        let mut broadcasts = Vec::new();
+        let mut effects = Effects::default();
         for ev in events {
             match ev {
                 AcpEvent::Exited => {
-                    broadcasts.extend(self.on_harness_exited(log));
+                    effects.extend(self.on_harness_exited(log));
                     break;
                 }
-                other => broadcasts.extend(self.apply_acp_event(other, log)),
+                other => effects.extend(self.apply_acp_event(other, log)),
             }
         }
+        if self.harness_env_stale && !self.has_active_work() {
+            self.stop_harness("after free hosted Models setting changed", log);
+        }
         self.refresh_idle_timer();
-        broadcasts
+        effects
     }
 
     pub fn shutdown(mut self, log: &mut Log) -> Result<(), String> {
@@ -196,12 +266,13 @@ impl Service {
             .map(|cfg| json!({ "id": cfg.id, "name": cfg.name }))
             .collect();
         RequestOutcome {
-            reply: json!({
+            reply: Some(json!({
                 "reply": "status",
                 "version": LEVER_VERSION,
                 "harness_started": self.harness.is_some(),
                 "harnesses": harnesses,
-            }),
+                "free_hosted_models": self.free_hosted_models(),
+            })),
             subscribe: None,
             broadcasts: Vec::new(),
         }
@@ -224,10 +295,10 @@ impl Service {
                     }
                 }
                 RequestOutcome {
-                    reply: json!({
+                    reply: Some(json!({
                         "reply": "list",
                         "threads": threads.iter().map(thread_summary_json).collect::<Vec<_>>(),
-                    }),
+                    })),
                     subscribe: None,
                     broadcasts: Vec::new(),
                 }
@@ -253,13 +324,196 @@ impl Service {
                 }
                 record.working = record.turns.last().is_some_and(|turn| turn.state == "working");
                 RequestOutcome {
-                    reply: thread_record_json(&record),
+                    reply: Some(thread_record_json(&record)),
                     subscribe: Some(thread_id.to_string()),
                     broadcasts: Vec::new(),
                 }
             }
             Ok(None) => error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
             Err(err) => error_outcome("storage-error", &err),
+        }
+    }
+
+    fn handle_models(&mut self, peer_id: u64, value: &Value, log: &mut Log) -> RequestOutcome {
+        let refresh = match value.get("refresh") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(b)) => *b,
+            _ => return error_outcome("invalid-request", "Expected refresh to be a boolean."),
+        };
+        if self.harness_config.is_none() {
+            return error_outcome("no-harness", "No harness is available.");
+        }
+        if refresh && !self.has_active_work() {
+            if self.harness.is_some() {
+                self.stop_harness("to refresh Models", log);
+            }
+            self.model_catalog = None;
+        }
+        if !refresh && let Some(catalog) = &self.model_catalog {
+            return RequestOutcome {
+                reply: Some(models_reply_json(catalog, self.free_hosted_models())),
+                subscribe: None,
+                broadcasts: Vec::new(),
+            };
+        }
+        if self.harness.is_none()
+            && let Err(err) = self.start_harness(log)
+        {
+            return error_outcome("harness-error", &err);
+        }
+        self.idle_since = None;
+        self.pending_models.push(peer_id);
+        if let Some(harness) = self.harness.as_mut()
+            && harness.is_initialized()
+        {
+            harness.probe_models(&default_cwd());
+        }
+        RequestOutcome {
+            reply: None,
+            subscribe: None,
+            broadcasts: Vec::new(),
+        }
+    }
+
+    fn handle_set_free_models(&mut self, value: &Value, log: &mut Log) -> RequestOutcome {
+        let Some(enabled) = value.get("enabled").and_then(Value::as_bool) else {
+            return error_outcome("invalid-request", "Expected a boolean enabled field.");
+        };
+        let was_enabled = self.free_hosted_models();
+        if let Err(err) = self.store.set_free_hosted_models(enabled) {
+            store_failed(log, &err);
+            return error_outcome("storage-error", &err);
+        }
+        if enabled != was_enabled {
+            self.model_catalog = None;
+            if self.harness.is_some() {
+                if !self.has_active_work() {
+                    self.stop_harness("after free hosted Models setting changed", log);
+                } else {
+                    self.harness_env_stale = true;
+                }
+            }
+        }
+        RequestOutcome {
+            reply: Some(json!({
+                "reply": "free-models",
+                "enabled": enabled,
+            })),
+            subscribe: None,
+            broadcasts: Vec::new(),
+        }
+    }
+
+    fn handle_set_model(&mut self, peer_id: u64, value: &Value, log: &mut Log) -> RequestOutcome {
+        let Some(thread_id) = value.get("thread").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
+            return error_outcome("invalid-request", "Expected a non-empty string thread field.");
+        };
+        let Some(model) = value
+            .get("model")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+        else {
+            return error_outcome("invalid-request", "Expected a non-empty string model field.");
+        };
+        if self.harness_config.is_none() {
+            return error_outcome("no-harness", "No harness is available.");
+        }
+        match self.store.thread_meta(thread_id) {
+            Ok(Some(meta)) => {
+                if meta.working_turn.is_some()
+                    || self.working_turns.contains_key(thread_id)
+                    || self.pending_set_models.iter().any(|p| p.thread_id == thread_id)
+                {
+                    return error_outcome("working", "This thread is already working on a turn.");
+                }
+            }
+            Ok(None) => return error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
+            Err(err) => return error_outcome("storage-error", &err),
+        }
+
+        if let Some(harness) = self.harness.as_mut()
+            && harness.is_initialized()
+            && let Some(session_id) = harness.session_for_thread(thread_id).map(str::to_string)
+        {
+            if let Some(catalog) = &self.model_catalog {
+                if !catalog.supported {
+                    return error_outcome("unsupported", "This harness does not offer Model selection.");
+                }
+                if !catalog.models.iter().any(|m| m.id == model) {
+                    return error_outcome("invalid-model", &format!("The harness does not offer Model {model}."));
+                }
+            }
+            self.idle_since = None;
+            harness.set_session_model(thread_id, None, &session_id, model);
+            self.pending_set_models.push(PendingSetModel {
+                peer_id,
+                thread_id: thread_id.to_string(),
+                model: model.to_string(),
+                in_flight_on_session: true,
+            });
+            return RequestOutcome {
+                reply: None,
+                subscribe: None,
+                broadcasts: Vec::new(),
+            };
+        }
+
+        if let Some(catalog) = self.model_catalog.clone() {
+            return self.finish_set_model_with_catalog(thread_id, model, &catalog, log);
+        }
+
+        if self.harness.is_none()
+            && let Err(err) = self.start_harness(log)
+        {
+            return error_outcome("harness-error", &err);
+        }
+        self.idle_since = None;
+        self.pending_set_models.push(PendingSetModel {
+            peer_id,
+            thread_id: thread_id.to_string(),
+            model: model.to_string(),
+            in_flight_on_session: false,
+        });
+        if let Some(harness) = self.harness.as_mut()
+            && harness.is_initialized()
+        {
+            harness.probe_models(&default_cwd());
+        }
+        RequestOutcome {
+            reply: None,
+            subscribe: None,
+            broadcasts: Vec::new(),
+        }
+    }
+
+    fn finish_set_model_with_catalog(
+        &mut self,
+        thread_id: &str,
+        model: &str,
+        catalog: &ModelCatalog,
+        log: &mut Log,
+    ) -> RequestOutcome {
+        if !catalog.supported {
+            return error_outcome("unsupported", "This harness does not offer Model selection.");
+        }
+        if catalog.models.is_empty() {
+            return error_outcome("no-model", NO_MODEL_MESSAGE);
+        }
+        if !catalog.models.iter().any(|m| m.id == model) {
+            return error_outcome("invalid-model", &format!("The harness does not offer Model {model}."));
+        }
+        if let Err(err) = self.store.set_thread_model(thread_id, model, unix_now()) {
+            store_failed(log, &err);
+            return error_outcome("storage-error", &err);
+        }
+        RequestOutcome {
+            reply: Some(json!({
+                "reply": "model-set",
+                "thread": thread_id,
+                "model": model,
+            })),
+            subscribe: None,
+            broadcasts: Vec::new(),
         }
     }
 
@@ -281,10 +535,23 @@ impl Service {
             Some(Value::String(s)) if Path::new(s).is_absolute() => Some(s.as_str()),
             _ => return error_outcome("invalid-request", "Expected cwd to be an absolute path."),
         };
+        let requested_model = match value.get("model") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) if !s.trim().is_empty() => Some(s.as_str()),
+            _ => return error_outcome("invalid-request", "Expected model to be a non-empty string or null."),
+        };
 
         let Some(harness_name) = self.harness_config.as_ref().map(|c| c.name.clone()) else {
             return error_outcome("no-harness", "No harness is available.");
         };
+
+        if self
+            .model_catalog
+            .as_ref()
+            .is_some_and(|c| c.supported && c.models.is_empty())
+        {
+            return error_outcome("no-model", NO_MODEL_MESSAGE);
+        }
 
         // A thread whose last turn has ended, with that end still to be
         // saved, is not working, and is not free either: the record must
@@ -301,13 +568,17 @@ impl Service {
 
         let now = unix_now();
         let title = initial_title(text);
-        let (thread_id, cwd, existing_session_id, new_thread) = if let Some(tid) = requested_thread {
+        let (thread_id, cwd, existing_session_id, desired_model, new_thread) = if let Some(tid) = requested_thread {
             match self.store.thread_meta(tid) {
                 Ok(Some(meta)) => {
-                    if meta.working_turn.is_some() || self.working_turns.contains_key(tid) {
+                    if meta.working_turn.is_some()
+                        || self.working_turns.contains_key(tid)
+                        || self.pending_set_models.iter().any(|p| p.thread_id == tid)
+                    {
                         return error_outcome("working", "This thread is already working on a turn.");
                     }
-                    (tid.to_string(), meta.cwd, meta.harness_session_id, false)
+                    let model = requested_model.map(str::to_string).or(meta.model);
+                    (tid.to_string(), meta.cwd, meta.harness_session_id, model, false)
                 }
                 Ok(None) => return error_outcome("no-thread", &format!("There is no thread {tid}.")),
                 Err(err) => return error_outcome("storage-error", &err),
@@ -315,10 +586,15 @@ impl Service {
         } else {
             let tid = format!("t-{}", sys::random_hex(6));
             let cwd = requested_cwd.map(str::to_string).unwrap_or_else(default_cwd);
-            (tid, cwd, None, true)
+            (tid, cwd, None, requested_model.map(str::to_string), true)
         };
 
-        let thread = new_thread.then_some((title.as_str(), cwd.as_str(), Some(harness_name.as_str())));
+        let thread = new_thread.then_some((
+            title.as_str(),
+            cwd.as_str(),
+            Some(harness_name.as_str()),
+            desired_model.as_deref(),
+        ));
         let turn = match self.store.begin_turn(&thread_id, thread, text, now) {
             Ok(turn) => turn,
             Err(err) => {
@@ -345,6 +621,7 @@ impl Service {
                 message: text.to_string(),
                 cwd: cwd.clone(),
                 existing_session_id: existing_session_id.clone(),
+                desired_model,
                 dispatch: TurnDispatch::WaitingForInit,
                 unsaved: false,
             },
@@ -356,7 +633,7 @@ impl Service {
         {
             broadcasts.extend(self.fail_turn(&thread_id, turn, &err, log));
             return RequestOutcome {
-                reply: json!({ "reply": "sent", "thread": thread_id, "turn": turn }),
+                reply: Some(json!({ "reply": "sent", "thread": thread_id, "turn": turn })),
                 subscribe: Some(thread_id),
                 broadcasts,
             };
@@ -367,11 +644,11 @@ impl Service {
         }
 
         RequestOutcome {
-            reply: json!({
+            reply: Some(json!({
                 "reply": "sent",
                 "thread": thread_id,
                 "turn": turn,
-            }),
+            })),
             subscribe: Some(thread_id),
             broadcasts,
         }
@@ -397,7 +674,7 @@ impl Service {
 
         let Some(active) = self.working_turns.get_mut(thread_id) else {
             return RequestOutcome {
-                reply: json!({ "reply": "ok" }),
+                reply: Some(json!({ "reply": "ok" })),
                 subscribe: None,
                 broadcasts: Vec::new(),
             };
@@ -406,7 +683,7 @@ impl Service {
             && active.turn != t
         {
             return RequestOutcome {
-                reply: json!({ "reply": "ok" }),
+                reply: Some(json!({ "reply": "ok" })),
                 subscribe: None,
                 broadcasts: Vec::new(),
             };
@@ -420,7 +697,7 @@ impl Service {
                 }
                 Vec::new()
             }
-            TurnDispatch::WaitingForInit | TurnDispatch::WaitingForSession => {
+            TurnDispatch::WaitingForInit | TurnDispatch::WaitingForSession | TurnDispatch::WaitingForModel { .. } => {
                 let turn = active.turn;
                 self.working_turns.remove(thread_id);
                 self.end_turn(thread_id, turn, "stopped", None, log);
@@ -437,7 +714,7 @@ impl Service {
         };
 
         RequestOutcome {
-            reply: json!({ "reply": "ok" }),
+            reply: Some(json!({ "reply": "ok" })),
             subscribe: None,
             broadcasts,
         }
@@ -449,12 +726,15 @@ impl Service {
             .as_ref()
             .ok_or_else(|| "No harness is available.".to_string())?
             .clone();
-        let harness = AcpHarness::spawn(&cfg)?;
+        let free_hosted_models = self.free_hosted_models();
+        let harness = AcpHarness::spawn(&cfg, free_hosted_models)?;
         let _ = log.write(
             Event::Harness,
             &format!("started {} (process {})", cfg.name, harness.pid()),
         );
         self.harness = Some(harness);
+        self.model_catalog = None;
+        self.harness_env_stale = false;
         Ok(())
     }
 
@@ -469,6 +749,8 @@ impl Service {
                 .unwrap_or("harness");
             let _ = log.write(Event::Harness, &format!("stopped {name} (process {pid}) {reason}"));
         }
+        self.model_catalog = None;
+        self.harness_env_stale = false;
         self.idle_since = None;
     }
 
@@ -480,8 +762,15 @@ impl Service {
             return;
         };
         if let Some(session_id) = harness.session_for_thread(thread_id).map(str::to_string) {
-            harness.send_prompt(thread_id, active.turn, &session_id, &active.message);
-            active.dispatch = TurnDispatch::PromptInFlight { session_id };
+            if let Some(model) = active.desired_model.clone()
+                && harness.session_current_model(&session_id) != Some(model.as_str())
+            {
+                harness.set_session_model(thread_id, Some(active.turn), &session_id, &model);
+                active.dispatch = TurnDispatch::WaitingForModel { session_id };
+            } else {
+                harness.send_prompt(thread_id, active.turn, &session_id, &active.message);
+                active.dispatch = TurnDispatch::PromptInFlight { session_id };
+            }
         } else {
             // A harness that was started again has seen none of this
             // thread's acts, and may still name them.
@@ -498,7 +787,7 @@ impl Service {
         }
     }
 
-    fn apply_acp_event(&mut self, event: AcpEvent, log: &mut Log) -> Vec<Broadcast> {
+    fn apply_acp_event(&mut self, event: AcpEvent, log: &mut Log) -> Effects {
         match event {
             AcpEvent::Initialized => {
                 let waiting: Vec<String> = self
@@ -510,7 +799,12 @@ impl Service {
                 for tid in waiting {
                     self.dispatch_turn(&tid);
                 }
-                Vec::new()
+                let needs_probe =
+                    !self.pending_models.is_empty() || self.pending_set_models.iter().any(|p| !p.in_flight_on_session);
+                if needs_probe && let Some(harness) = self.harness.as_mut() {
+                    harness.probe_models(&default_cwd());
+                }
+                Effects::default()
             }
             AcpEvent::InitializeFailed { message } => {
                 // What the harness said goes to the turns it fails, which
@@ -521,18 +815,82 @@ impl Service {
                     .iter()
                     .map(|(tid, t)| (tid.clone(), t.turn))
                     .collect();
-                let mut broadcasts = Vec::new();
+                let mut effects = Effects::default();
                 for (tid, turn) in tids {
-                    broadcasts.extend(self.fail_turn(&tid, turn, &message, log));
+                    effects.broadcasts.extend(self.fail_turn(&tid, turn, &message, log));
                 }
+                effects.replies.extend(self.fail_pending_peer_requests(&message));
                 self.stop_harness("after initialize failure", log);
-                broadcasts
+                effects
+            }
+            AcpEvent::ModelsProbed(result) => {
+                let mut effects = Effects::default();
+                match result {
+                    Ok(catalog) => {
+                        let free = self.free_hosted_models();
+                        for peer_id in self.pending_models.drain(..) {
+                            effects.replies.push(PeerReply {
+                                peer_id,
+                                message: models_reply_json(&catalog, free),
+                                subscribe: None,
+                            });
+                        }
+                        let mut remaining = Vec::new();
+                        let pending = std::mem::take(&mut self.pending_set_models);
+                        for item in pending {
+                            if item.in_flight_on_session {
+                                remaining.push(item);
+                            } else {
+                                let outcome =
+                                    self.finish_set_model_with_catalog(&item.thread_id, &item.model, &catalog, log);
+                                if let Some(reply) = outcome.reply {
+                                    effects.replies.push(PeerReply {
+                                        peer_id: item.peer_id,
+                                        message: reply,
+                                        subscribe: outcome.subscribe,
+                                    });
+                                }
+                            }
+                        }
+                        self.pending_set_models = remaining;
+                        self.model_catalog = Some(catalog);
+                    }
+                    Err(msg) => {
+                        for peer_id in self.pending_models.drain(..) {
+                            effects.replies.push(PeerReply {
+                                peer_id,
+                                message: error_json("harness-error", &msg),
+                                subscribe: None,
+                            });
+                        }
+                        let mut remaining = Vec::new();
+                        for item in std::mem::take(&mut self.pending_set_models) {
+                            if item.in_flight_on_session {
+                                remaining.push(item);
+                            } else {
+                                effects.replies.push(PeerReply {
+                                    peer_id: item.peer_id,
+                                    message: error_json("harness-error", &msg),
+                                    subscribe: None,
+                                });
+                            }
+                        }
+                        self.pending_set_models = remaining;
+                    }
+                }
+                effects
             }
             AcpEvent::SessionReady {
                 thread_id,
                 session_id,
                 afresh,
+                catalog,
+                current_model,
             } => {
+                let mut effects = Effects::default();
+                if let Some(cat) = catalog {
+                    self.model_catalog = Some(cat);
+                }
                 // The record must say the session is this thread's before
                 // Lever uses it. Otherwise the record could still give its ID
                 // to the thread that had it before, to load at a later start.
@@ -546,52 +904,184 @@ impl Service {
                         .get(&thread_id)
                         .filter(|active| matches!(active.dispatch, TurnDispatch::WaitingForSession))
                         .map(|active| active.turn);
-                    return match waiting {
-                        Some(turn) => self.fail_turn(&thread_id, turn, UNSAVED_SESSION_MESSAGE, log),
-                        None => Vec::new(),
-                    };
+                    if let Some(turn) = waiting {
+                        effects
+                            .broadcasts
+                            .extend(self.fail_turn(&thread_id, turn, UNSAVED_SESSION_MESSAGE, log));
+                    }
+                    return effects;
                 }
-                let broadcasts = if afresh {
+                if afresh {
                     let after_turn = !self.working_turns.contains_key(&thread_id);
-                    self.record_note(&thread_id, NEW_SESSION_SOURCE, NEW_SESSION_NOTE, after_turn, log)
-                } else {
-                    Vec::new()
-                };
+                    effects.broadcasts.extend(self.record_note(
+                        &thread_id,
+                        NEW_SESSION_SOURCE,
+                        NEW_SESSION_NOTE,
+                        after_turn,
+                        log,
+                    ));
+                }
                 // The session is the thread's. The turn that waits for it is
                 // the one working now: the turn that first asked may have
                 // been stopped since.
+                let desired_model = self
+                    .working_turns
+                    .get(&thread_id)
+                    .filter(|active| matches!(active.dispatch, TurnDispatch::WaitingForSession))
+                    .and_then(|active| active.desired_model.clone());
                 if let Some(active) = self.working_turns.get_mut(&thread_id)
                     && matches!(active.dispatch, TurnDispatch::WaitingForSession)
                     && let Some(harness) = self.harness.as_mut()
                 {
-                    harness.send_prompt(&thread_id, active.turn, &session_id, &active.message);
-                    active.dispatch = TurnDispatch::PromptInFlight { session_id };
+                    if let Some(model) = desired_model
+                        && current_model.as_deref() != Some(model.as_str())
+                    {
+                        harness.set_session_model(&thread_id, Some(active.turn), &session_id, &model);
+                        active.dispatch = TurnDispatch::WaitingForModel { session_id };
+                    } else {
+                        if let Some(ref model) = current_model {
+                            let _ = self.store.set_thread_model(&thread_id, model, unix_now());
+                        }
+                        harness.send_prompt(&thread_id, active.turn, &session_id, &active.message);
+                        active.dispatch = TurnDispatch::PromptInFlight { session_id };
+                    }
                 }
-                broadcasts
+                effects
             }
             AcpEvent::SessionFailed {
                 thread_id,
                 turn,
                 message,
-            } => self.fail_turn(&thread_id, turn, &message, log),
+                no_models,
+            } => {
+                let display = if no_models {
+                    self.model_catalog = Some(ModelCatalog {
+                        supported: true,
+                        models: Vec::new(),
+                        default_model: None,
+                        config_id: None,
+                    });
+                    NO_MODEL_MESSAGE.to_string()
+                } else {
+                    message
+                };
+                Effects {
+                    broadcasts: self.fail_turn(&thread_id, turn, &display, log),
+                    replies: Vec::new(),
+                }
+            }
+            AcpEvent::ModelSet {
+                thread_id,
+                turn,
+                model,
+                catalog,
+            } => {
+                let mut effects = Effects::default();
+                if let Some(cat) = catalog {
+                    self.model_catalog = Some(cat);
+                }
+                if let Err(err) = self.store.set_thread_model(&thread_id, &model, unix_now()) {
+                    store_failed(log, &err);
+                    if let Some(t) = turn {
+                        effects
+                            .broadcasts
+                            .extend(self.fail_turn(&thread_id, t, UNSAVED_MESSAGE, log));
+                    } else if let Some(pos) = self
+                        .pending_set_models
+                        .iter()
+                        .position(|p| p.in_flight_on_session && p.thread_id == thread_id)
+                    {
+                        let item = self.pending_set_models.remove(pos);
+                        effects.replies.push(PeerReply {
+                            peer_id: item.peer_id,
+                            message: error_json("storage-error", &err),
+                            subscribe: None,
+                        });
+                    }
+                    return effects;
+                }
+                if let Some(t) = turn {
+                    if let Some(active) = self.working_turns.get_mut(&thread_id)
+                        && active.turn == t
+                        && let TurnDispatch::WaitingForModel { session_id } = &active.dispatch
+                        && let Some(harness) = self.harness.as_mut()
+                    {
+                        let sid = session_id.clone();
+                        harness.send_prompt(&thread_id, active.turn, &sid, &active.message);
+                        active.dispatch = TurnDispatch::PromptInFlight { session_id: sid };
+                    }
+                } else if let Some(pos) = self
+                    .pending_set_models
+                    .iter()
+                    .position(|p| p.in_flight_on_session && p.thread_id == thread_id)
+                {
+                    let item = self.pending_set_models.remove(pos);
+                    effects.replies.push(PeerReply {
+                        peer_id: item.peer_id,
+                        message: json!({
+                            "reply": "model-set",
+                            "thread": thread_id,
+                            "model": model,
+                        }),
+                        subscribe: None,
+                    });
+                }
+                effects
+            }
+            AcpEvent::ModelSetFailed {
+                thread_id,
+                turn,
+                message,
+            } => {
+                let mut effects = Effects::default();
+                if let Some(t) = turn {
+                    effects.broadcasts.extend(self.fail_turn(&thread_id, t, &message, log));
+                } else if let Some(pos) = self
+                    .pending_set_models
+                    .iter()
+                    .position(|p| p.in_flight_on_session && p.thread_id == thread_id)
+                {
+                    let item = self.pending_set_models.remove(pos);
+                    effects.replies.push(PeerReply {
+                        peer_id: item.peer_id,
+                        message: error_json("invalid-model", &message),
+                        subscribe: None,
+                    });
+                }
+                effects
+            }
+            AcpEvent::CatalogUpdated {
+                thread_id,
+                catalog,
+                current_model,
+            } => {
+                self.model_catalog = Some(catalog);
+                if let Some(model) = current_model {
+                    let _ = self.store.set_thread_model(&thread_id, &model, unix_now());
+                }
+                Effects::default()
+            }
             AcpEvent::TextChunk { thread_id, text } => {
                 let Some(turn) = self.turn_for_update(&thread_id) else {
-                    return Vec::new();
+                    return Effects::default();
                 };
                 // The answer still goes to who is watching. The turn's end
                 // says that not all of it was saved.
                 if let Err(err) = self.store.append_answer(&thread_id, turn, &text, unix_now()) {
                     self.could_not_save(&thread_id, &err, log);
                 }
-                vec![Broadcast {
-                    thread_id: thread_id.clone(),
-                    message: json!({
-                        "event": "text",
-                        "thread": thread_id,
-                        "turn": turn,
-                        "text": text,
-                    }),
-                }]
+                Effects {
+                    broadcasts: vec![Broadcast {
+                        thread_id: thread_id.clone(),
+                        message: json!({
+                            "event": "text",
+                            "thread": thread_id,
+                            "turn": turn,
+                            "text": text,
+                        }),
+                    }],
+                    replies: Vec::new(),
+                }
             }
             AcpEvent::Act {
                 thread_id,
@@ -603,7 +1093,7 @@ impl Service {
                 detail,
             } => {
                 let Some(turn) = self.turn_for_update(&thread_id) else {
-                    return Vec::new();
+                    return Effects::default();
                 };
                 let patch = ActPatch {
                     thread_id: &thread_id,
@@ -619,27 +1109,33 @@ impl Service {
                     Ok(saved) => saved,
                     Err(err) => {
                         self.could_not_save(&thread_id, &err, log);
-                        return Vec::new();
+                        return Effects::default();
                     }
                 };
-                vec![Broadcast {
-                    thread_id: thread_id.clone(),
-                    message: act_event_json(&thread_id, recorded_turn, &act),
-                }]
+                Effects {
+                    broadcasts: vec![Broadcast {
+                        thread_id: thread_id.clone(),
+                        message: act_event_json(&thread_id, recorded_turn, &act),
+                    }],
+                    replies: Vec::new(),
+                }
             }
             AcpEvent::TitleUpdated { thread_id, title } => {
                 if let Err(err) = self.store.update_thread_title(&thread_id, &title, unix_now()) {
                     self.could_not_save(&thread_id, &err, log);
-                    return Vec::new();
+                    return Effects::default();
                 }
-                vec![Broadcast {
-                    thread_id: thread_id.clone(),
-                    message: json!({
-                        "event": "thread-updated",
-                        "thread": thread_id,
-                        "title": title,
-                    }),
-                }]
+                Effects {
+                    broadcasts: vec![Broadcast {
+                        thread_id: thread_id.clone(),
+                        message: json!({
+                            "event": "thread-updated",
+                            "thread": thread_id,
+                            "title": title,
+                        }),
+                    }],
+                    replies: Vec::new(),
+                }
             }
             AcpEvent::UnknownUpdate {
                 thread_id,
@@ -647,7 +1143,10 @@ impl Service {
                 plain_text,
             } => {
                 let after_turn = !self.working_turns.contains_key(&thread_id);
-                self.record_note(&thread_id, &raw_json, &plain_text, after_turn, log)
+                Effects {
+                    broadcasts: self.record_note(&thread_id, &raw_json, &plain_text, after_turn, log),
+                    replies: Vec::new(),
+                }
             }
             AcpEvent::PromptFinished {
                 thread_id,
@@ -660,7 +1159,7 @@ impl Service {
                     .get(&thread_id)
                     .is_none_or(|active| active.turn != turn)
                 {
-                    return Vec::new();
+                    return Effects::default();
                 }
                 let unsaved = self
                     .working_turns
@@ -670,7 +1169,7 @@ impl Service {
                     TurnOutcome::Done if unsaved => TurnOutcome::Failed(UNSAVED_MESSAGE.to_string()),
                     other => other,
                 };
-                match outcome {
+                let broadcasts = match outcome {
                     TurnOutcome::Done => {
                         self.end_turn(&thread_id, turn, "done", None, log);
                         vec![Broadcast {
@@ -705,13 +1204,36 @@ impl Service {
                             }),
                         }]
                     }
+                };
+                Effects {
+                    broadcasts,
+                    replies: Vec::new(),
                 }
             }
-            AcpEvent::Exited => Vec::new(),
+            AcpEvent::Exited => Effects::default(),
         }
     }
 
-    fn on_harness_exited(&mut self, log: &mut Log) -> Vec<Broadcast> {
+    fn fail_pending_peer_requests(&mut self, message: &str) -> Vec<PeerReply> {
+        let mut replies = Vec::new();
+        for peer_id in self.pending_models.drain(..) {
+            replies.push(PeerReply {
+                peer_id,
+                message: error_json("harness-error", message),
+                subscribe: None,
+            });
+        }
+        for item in self.pending_set_models.drain(..) {
+            replies.push(PeerReply {
+                peer_id: item.peer_id,
+                message: error_json("harness-error", message),
+                subscribe: None,
+            });
+        }
+        replies
+    }
+
+    fn on_harness_exited(&mut self, log: &mut Log) -> Effects {
         if let Some(harness) = self.harness.take() {
             let pid = harness.pid();
             let fault = harness.fault();
@@ -727,7 +1249,11 @@ impl Service {
             };
             let _ = log.write(Event::Harness, &what);
         }
+        self.model_catalog = None;
+        self.harness_env_stale = false;
         self.idle_since = None;
+
+        let replies = self.fail_pending_peer_requests("The harness exited unexpectedly.");
 
         // Every turn that was working is interrupted, and each end goes the
         // way every other end does, so one the database does not take now is
@@ -738,7 +1264,7 @@ impl Service {
             .map(|(thread_id, active)| (thread_id, active.turn))
             .collect();
         interrupted.sort();
-        interrupted
+        let broadcasts = interrupted
             .into_iter()
             .map(|(thread_id, turn)| {
                 self.end_turn(&thread_id, turn, "interrupted", None, log);
@@ -751,7 +1277,8 @@ impl Service {
                     }),
                 }
             })
-            .collect()
+            .collect();
+        Effects { broadcasts, replies }
     }
 
     /// Fails the working turn of a thread. A failure that comes for a turn
@@ -868,7 +1395,7 @@ impl Service {
     }
 
     fn refresh_idle_timer(&mut self) {
-        if self.harness.is_some() && self.working_turns.is_empty() {
+        if self.harness.is_some() && !self.has_active_work() {
             if self.idle_since.is_none() {
                 self.idle_since = Some(Instant::now());
             }
@@ -884,20 +1411,39 @@ fn store_failed(log: &mut Log, err: &str) {
     let _ = log.write(Event::Error, &format!("storage: {err}"));
 }
 
+fn error_json(code: &str, message: &str) -> Value {
+    json!({
+        "reply": "error",
+        "code": code,
+        "message": message,
+    })
+}
+
 fn error_outcome(code: &str, message: &str) -> RequestOutcome {
     RequestOutcome {
-        reply: json!({
-            "reply": "error",
-            "code": code,
-            "message": message,
-        }),
+        reply: Some(error_json(code, message)),
         subscribe: None,
         broadcasts: Vec::new(),
     }
 }
 
-fn thread_summary_json(t: &ThreadSummary) -> Value {
+fn models_reply_json(catalog: &ModelCatalog, free_hosted_models: bool) -> Value {
+    let models: Vec<Value> = catalog
+        .models
+        .iter()
+        .map(|m| json!({ "id": m.id, "name": m.name }))
+        .collect();
     json!({
+        "reply": "models",
+        "supported": catalog.supported,
+        "models": models,
+        "default": catalog.default_model,
+        "free_hosted_models": free_hosted_models,
+    })
+}
+
+fn thread_summary_json(t: &ThreadSummary) -> Value {
+    let mut obj = json!({
         "thread": t.id,
         "title": t.title,
         "cwd": t.cwd,
@@ -906,11 +1452,15 @@ fn thread_summary_json(t: &ThreadSummary) -> Value {
         "turns": t.turns,
         "state": t.state,
         "working": t.working,
-    })
+    });
+    if let Some(model) = &t.model {
+        obj["model"] = json!(model);
+    }
+    obj
 }
 
 fn thread_record_json(r: &ThreadRecord) -> Value {
-    json!({
+    let mut obj = json!({
         "reply": "resumed",
         "thread": r.id,
         "title": r.title,
@@ -919,7 +1469,11 @@ fn thread_record_json(r: &ThreadRecord) -> Value {
         "updated": r.updated,
         "working": r.working,
         "turns": r.turns.iter().map(turn_record_json).collect::<Vec<_>>(),
-    })
+    });
+    if let Some(model) = &r.model {
+        obj["model"] = json!(model);
+    }
+    obj
 }
 
 fn turn_record_json(t: &TurnRecord) -> Value {

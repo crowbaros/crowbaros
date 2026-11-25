@@ -327,9 +327,9 @@ class Runs(unittest.TestCase):
 
 
 class DrawerReachedLeverAndTyping(unittest.TestCase):
-    """With Lever running and no harness started yet, the desktop check starts
-    no stub Model, checks that the drawer reached Lever with no harness, and
-    still encodes QMP text cleanly."""
+    """With Lever running and OpenCode configured but not started while idle,
+    the desktop check checks that the drawer reached Lever idle, and still
+    encodes QMP text cleanly."""
 
     def view(self, **changes):
         state = {
@@ -337,7 +337,7 @@ class DrawerReachedLeverAndTyping(unittest.TestCase):
             'connected': True,
             'lever_version': '0.1.0',
             'harness_started': False,
-            'no_harness': True,
+            'no_harness': False,
             'sending': False,
             'model': None,
             'missing_model': None,
@@ -356,20 +356,20 @@ class DrawerReachedLeverAndTyping(unittest.TestCase):
         snapshot.update(changes)
         return snapshot
 
-    def test_an_open_drawer_connected_to_lever_with_no_harness_passes(self):
-        self.assertTrue(desktop_check.drawer_reached_lever_with_no_harness(self.view()))
+    def test_an_open_drawer_connected_to_idle_lever_passes(self):
+        self.assertTrue(desktop_check.drawer_reached_lever_idle(self.view()))
 
     def test_a_closed_disconnected_or_harness_started_drawer_fails(self):
-        self.assertFalse(desktop_check.drawer_reached_lever_with_no_harness(self.view(drawer_up=False)))
-        self.assertFalse(desktop_check.drawer_reached_lever_with_no_harness(self.view(state={'connected': False})))
-        self.assertFalse(desktop_check.drawer_reached_lever_with_no_harness(self.view(state={'configured': False})))
-        self.assertFalse(desktop_check.drawer_reached_lever_with_no_harness(self.view(state={'lever_version': None})))
-        self.assertFalse(desktop_check.drawer_reached_lever_with_no_harness(self.view(state={'harness_started': True})))
-        self.assertFalse(desktop_check.drawer_reached_lever_with_no_harness(self.view(state={'no_harness': False})))
-        self.assertFalse(desktop_check.drawer_reached_lever_with_no_harness(self.view(state={'model': {'model': 'x'}})))
-        self.assertFalse(desktop_check.drawer_reached_lever_with_no_harness(self.view(state={'turns': [{'turn': 1}]})))
-        self.assertFalse(desktop_check.drawer_reached_lever_with_no_harness(self.view(state={'mark': 'working'})))
-        self.assertFalse(desktop_check.drawer_reached_lever_with_no_harness(self.view(mark_overlay=True)))
+        self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(drawer_up=False)))
+        self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'connected': False})))
+        self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'configured': False})))
+        self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'lever_version': None})))
+        self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'harness_started': True})))
+        self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'no_harness': True})))
+        self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'model': {'model': 'x'}})))
+        self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'turns': [{'turn': 1}]})))
+        self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(state={'mark': 'working'})))
+        self.assertFalse(desktop_check.drawer_reached_lever_idle(self.view(mark_overlay=True)))
 
     def test_the_desktop_check_starts_no_stub_model(self):
         source = Path(desktop_check.__file__).read_text()

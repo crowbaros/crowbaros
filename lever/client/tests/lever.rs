@@ -731,6 +731,9 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let sent_ops = Arc::new(Mutex::new(BTreeSet::<String>::new()));
     let ops_ref = sent_ops.clone();
     let reply_status = find_reply("status");
+    let reply_models = find_reply("models");
+    let reply_free_models = find_reply("free-models");
+    let reply_model_set = find_reply("model-set");
     let reply_list = find_reply("list");
     let reply_sent = find_reply("sent");
     let reply_resumed = find_reply("resumed");
@@ -747,9 +750,9 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let ev_interrupted = find_event("interrupted");
 
     let server_ops = doc_ops.clone();
-    // Serve 10 short connections exercising every documented op, reply (including error), and event.
+    // Serve 13 short connections exercising every documented op, reply (including error), and event.
     let server = std::thread::spawn(move || {
-        for turn_case in 0..10 {
+        for turn_case in 0..13 {
             let (mut stream, _) = listener.accept().expect("accept client");
             let ver = read_framed(&mut stream);
             assert_eq!(ver, json!({ "version": 1 }));
@@ -791,6 +794,9 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
                     write_framed(&mut stream, &ev_text);
                     write_framed(&mut stream, &ev_done);
                 }
+                (10, "models") => write_framed(&mut stream, &reply_models),
+                (11, "set-free-models") => write_framed(&mut stream, &reply_free_models),
+                (12, "set-model") => write_framed(&mut stream, &reply_model_set),
                 other => panic!("unexpected connection {other:?}"),
             }
             // Hold the connection open until the client closes it, as Lever does.
@@ -838,6 +844,93 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
         "{more:?}"
     );
 
+    let models = lab.run(&["models"], "");
+    assert_eq!(models.status, 0, "{models:?}");
+    assert!(models.out.contains("stub/stub-1"), "{models:?}");
+    assert!(models.out.contains("(default)"), "{models:?}");
+
+    let free = lab.run(&["free-models", "on"], "");
+    assert_eq!(free.status, 0, "{free:?}");
+    assert!(free.err.contains("turned on"), "{free:?}");
+
+    let set_m = lab.run(&["--resume", "t-01a2b3c4d5e6", "--model", "stub/stub-1"], "");
+    assert_eq!(set_m.status, 0, "{set_m:?}");
+    assert!(set_m.err.contains("stub/stub-1"), "{set_m:?}");
+
     server.join().unwrap();
     assert_eq!(*sent_ops.lock().unwrap(), doc_ops);
+}
+
+#[test]
+fn choice_of_free_models_model_selection_and_login_work_from_the_terminal() {
+    let lab = Lab::with_script(json!({
+        "no_models_when_free_disabled": true,
+        "models": [
+            { "id": "stub/stub-1", "name": "Stub One" },
+            { "id": "stub/stub-2", "name": "Stub Two" }
+        ],
+        "default_model": "stub/stub-1",
+        "turns": [
+            { "steps": [{ "kind": "text", "text": "Reply from {model}" }] },
+            { "steps": [{ "kind": "text", "text": "Next from {model}" }] }
+        ]
+    }));
+
+    // Before choosing, free hosted Models are off, no Models are listed, and a message is refused.
+    let before = lab.run(&["free-models"], "");
+    assert_eq!((before.status, before.out.as_str()), (0, "Free hosted Models: off.\n"));
+
+    let empty_models = lab.run(&["models"], "");
+    assert_eq!(empty_models.status, 0, "{empty_models:?}");
+    assert!(empty_models.err.contains("No Models are available"), "{empty_models:?}");
+
+    let refused = lab.run(&["Hello"], "");
+    assert_eq!(refused.status, 1, "{refused:?}");
+    assert!(refused.err.contains("No Model is available"), "{refused:?}");
+
+    // Interactive `crowbar-agent` offers the choice; picking 1 enables free hosted Models and answers.
+    let chose = lab.run(&[], "1\nHello\n");
+    assert_eq!(chose.status, 0, "{chose:?}");
+    assert!(chose.err.contains("1. Use OpenCode's free hosted Models"), "{chose:?}");
+    assert!(chose.err.contains("2. Sign in to a provider"), "{chose:?}");
+    assert_eq!(chose.out, "Reply from stub/stub-1\n");
+
+    // `models` now lists both Models and marks the default.
+    let listed = lab.run(&["models"], "");
+    assert_eq!(listed.status, 0, "{listed:?}");
+    assert!(listed.out.contains("stub/stub-1  Stub One  (default)"), "{listed:?}");
+    assert!(listed.out.contains("stub/stub-2  Stub Two"), "{listed:?}");
+
+    // Switch the thread's Model and verify the next turn uses it.
+    let thread = only_thread(&lab);
+    let set = lab.run(&["--resume", &thread, "--model", "stub/stub-2"], "");
+    assert_eq!(set.status, 0, "{set:?}");
+    let next = lab.run(&["--resume", &thread, "Again"], "");
+    assert_eq!(
+        (next.status, next.out.as_str()),
+        (0, "Next from stub/stub-2\n"),
+        "{next:?}"
+    );
+
+    // `crowbar-agent login` runs `opencode auth login` directly, holding and relaying no credential.
+    let fake_bin = lab.directory.join("bin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    let login_log = lab.directory.join("login-args.txt");
+    let fake_opencode = fake_bin.join("opencode");
+    fs::write(
+        &fake_opencode,
+        format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > {}\n", login_log.display()),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&fake_opencode, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut cmd = lab.agent(&["login"]);
+    let path_env = format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap_or_default());
+    cmd.env("PATH", path_env);
+    let ran = Ran::of(run(cmd, ""));
+    assert_eq!(ran.status, 0, "{ran:?}");
+    assert_eq!(fs::read_to_string(&login_log).unwrap(), "auth\nlogin\n");
 }

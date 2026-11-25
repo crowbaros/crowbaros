@@ -5,13 +5,16 @@
 use crate::channel::LEVER_VERSION;
 use crate::sys;
 use agent_client_protocol_schema::v1::{
-    AGENT_METHOD_NAMES, CLIENT_METHOD_NAMES, CancelNotification, ContentBlock, Error as AcpError, ErrorCode,
-    Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest, LoadSessionResponse,
-    NewSessionRequest, NewSessionResponse, Notification, PromptRequest, PromptResponse, Request, RequestId, Response,
-    SessionId, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
+    AGENT_METHOD_NAMES, CLIENT_METHOD_NAMES, CancelNotification, CloseSessionRequest, ContentBlock, Error as AcpError,
+    ErrorCode, Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest,
+    LoadSessionResponse, NewSessionRequest, NewSessionResponse, Notification, PermissionOptionKind, PromptRequest,
+    PromptResponse, Request, RequestId, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    Response, SelectedPermissionOutcome, SessionConfigId, SessionConfigKind, SessionConfigOption,
+    SessionConfigOptionCategory, SessionConfigSelectOptions, SessionId, SessionUpdate, SetSessionConfigOptionRequest,
+    SetSessionConfigOptionResponse, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
 };
 use agent_client_protocol_schema::{MaybeUndefined, ProtocolVersion};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
@@ -37,6 +40,25 @@ pub struct HarnessConfig {
     pub name: String,
     pub program: String,
     pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+/// One Model option offered by a harness.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelOption {
+    pub id: String,
+    pub name: String,
+}
+
+/// The Models a harness offers via ACP session configuration options.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelCatalog {
+    /// Whether this harness exposes Model selection (or reported that no
+    /// Models are currently available).
+    pub supported: bool,
+    pub models: Vec<ModelOption>,
+    pub default_model: Option<String>,
+    pub config_id: Option<String>,
 }
 
 /// How an ACP prompt turn ended.
@@ -54,17 +76,37 @@ pub enum AcpEvent {
     InitializeFailed {
         message: String,
     },
+    ModelsProbed(Result<ModelCatalog, String>),
     SessionReady {
         thread_id: String,
         session_id: String,
         /// The thread had a session before, and this is not it: the harness
         /// begins with none of the thread's earlier turns.
         afresh: bool,
+        catalog: Option<ModelCatalog>,
+        current_model: Option<String>,
     },
     SessionFailed {
         thread_id: String,
         turn: u64,
         message: String,
+        no_models: bool,
+    },
+    ModelSet {
+        thread_id: String,
+        turn: Option<u64>,
+        model: String,
+        catalog: Option<ModelCatalog>,
+    },
+    ModelSetFailed {
+        thread_id: String,
+        turn: Option<u64>,
+        message: String,
+    },
+    CatalogUpdated {
+        thread_id: String,
+        catalog: ModelCatalog,
+        current_model: Option<String>,
     },
     TextChunk {
         thread_id: String,
@@ -98,6 +140,8 @@ pub enum AcpEvent {
 
 enum PendingRpc {
     Initialize,
+    ProbeModels,
+    CloseProbe,
     NewSession {
         thread_id: String,
         turn: u64,
@@ -108,6 +152,12 @@ enum PendingRpc {
         turn: u64,
         session_id: String,
         cwd: String,
+    },
+    SetModel {
+        thread_id: String,
+        turn: Option<u64>,
+        session_id: String,
+        model: String,
     },
     Prompt {
         thread_id: String,
@@ -127,9 +177,13 @@ pub struct AcpHarness {
     next_id: i64,
     initialized: bool,
     supports_load_session: bool,
+    supports_close_session: bool,
+    probing_models: bool,
+    model_config_id: Option<String>,
     pending: HashMap<i64, PendingRpc>,
     thread_to_session: HashMap<String, String>,
     session_to_thread: HashMap<String, String>,
+    session_models: HashMap<String, String>,
     loading_sessions: HashSet<String>,
     /// Why Lever is ending this harness, when the harness did not end itself.
     fault: Option<&'static str>,
@@ -141,8 +195,16 @@ pub struct AcpHarness {
 impl AcpHarness {
     /// Spawns the configured harness child, configures non-blocking pipes, and
     /// queues the ACP v1 `initialize` request.
-    pub fn spawn(config: &HarnessConfig) -> Result<Self, String> {
-        let mut child = sys::spawn_harness(&config.program, &config.args)
+    pub fn spawn(config: &HarnessConfig, free_hosted_models: bool) -> Result<Self, String> {
+        let existing_config = config
+            .env
+            .iter()
+            .rev()
+            .find(|(k, _)| k == "OPENCODE_CONFIG_CONTENT")
+            .map(|(_, v)| v.clone())
+            .or_else(|| std::env::var("OPENCODE_CONFIG_CONTENT").ok());
+        let (env_set, env_remove) = build_harness_env(&config.env, existing_config.as_deref(), free_hosted_models);
+        let mut child = sys::spawn_harness(&config.program, &config.args, &env_set, &env_remove)
             .map_err(|e| format!("could not start harness {}: {e}", config.name))?;
         let stdin = child
             .stdin
@@ -173,9 +235,13 @@ impl AcpHarness {
             next_id: 1,
             initialized: false,
             supports_load_session: false,
+            supports_close_session: false,
+            probing_models: false,
+            model_config_id: None,
             pending: HashMap::new(),
             thread_to_session: HashMap::new(),
             session_to_thread: HashMap::new(),
+            session_models: HashMap::new(),
             loading_sessions: HashSet::new(),
             fault: None,
             thread_tool_ids: HashMap::new(),
@@ -222,7 +288,47 @@ impl AcpHarness {
     pub fn forget_session(&mut self, thread_id: &str) {
         if let Some(session_id) = self.thread_to_session.remove(thread_id) {
             self.session_to_thread.remove(&session_id);
+            self.session_models.remove(&session_id);
         }
+    }
+
+    pub fn session_current_model(&self, session_id: &str) -> Option<&str> {
+        self.session_models.get(session_id).map(String::as_str)
+    }
+
+    /// Probes the harness's offered Models by opening a session, reading its
+    /// `configOptions`, and closing that session if the harness supports
+    /// `session/close`. Only one probe runs at a time.
+    pub fn probe_models(&mut self, cwd: &str) {
+        if self.probing_models {
+            return;
+        }
+        self.probing_models = true;
+        let req = NewSessionRequest::new(PathBuf::from(cwd));
+        let id = self.send_request(AGENT_METHOD_NAMES.session_new, &req);
+        self.pending.insert(id, PendingRpc::ProbeModels);
+        let _ = self.on_writable();
+    }
+
+    /// Sets the Model on an active ACP session through `session/set_config_option`.
+    pub fn set_session_model(&mut self, thread_id: &str, turn: Option<u64>, session_id: &str, model: &str) {
+        let config_id = self.model_config_id.as_deref().unwrap_or("model");
+        let req = SetSessionConfigOptionRequest::new(
+            SessionId::new(session_id.to_string()),
+            SessionConfigId::new(config_id.to_string()),
+            model,
+        );
+        let id = self.send_request(AGENT_METHOD_NAMES.session_set_config_option, &req);
+        self.pending.insert(
+            id,
+            PendingRpc::SetModel {
+                thread_id: thread_id.to_string(),
+                turn,
+                session_id: session_id.to_string(),
+                model: model.to_string(),
+            },
+        );
+        let _ = self.on_writable();
     }
 
     /// Starts or reloads an ACP session for `thread_id`. A thread has one
@@ -443,6 +549,11 @@ impl AcpHarness {
         self.queue_json(&serde_json::to_value(msg).expect("serialize JSON-RPC notification"));
     }
 
+    fn send_result_response<R: serde::Serialize>(&mut self, id: RequestId, result: R) {
+        let msg = JsonRpcMessage::wrap(Response::<R, AcpError>::new(id, Ok(result)));
+        self.queue_json(&serde_json::to_value(msg).expect("serialize JSON-RPC result response"));
+    }
+
     fn send_error_response(&mut self, id: RequestId, err: AcpError) {
         let msg = JsonRpcMessage::wrap(Response::<Value, AcpError>::new(id, Err(err)));
         self.queue_json(&serde_json::to_value(msg).expect("serialize JSON-RPC error response"));
@@ -487,10 +598,35 @@ impl AcpHarness {
         let has_id = value.get("id").is_some_and(|id| !id.is_null());
 
         if has_method && has_id {
-            // A request from the harness. Lever carries none of them to the
-            // person yet (`lever/README.md`, The harness), so each is refused.
             if let Ok(id) = serde_json::from_value::<RequestId>(value["id"].clone()) {
-                self.send_error_response(id, AcpError::method_not_found());
+                let method = value.get("method").and_then(Value::as_str).unwrap_or("");
+                if method == CLIENT_METHOD_NAMES.session_request_permission {
+                    // Carrying permission requests to the person is #378. Until
+                    // then, answer with a valid ACP decline rather than -32601
+                    // so a harness does not treat Lever as a broken client.
+                    let outcome = value
+                        .get("params")
+                        .and_then(|p| serde_json::from_value::<RequestPermissionRequest>(p.clone()).ok())
+                        .and_then(|req| {
+                            req.options
+                                .iter()
+                                .find(|o| o.kind == PermissionOptionKind::RejectOnce)
+                                .or_else(|| {
+                                    req.options
+                                        .iter()
+                                        .find(|o| o.kind == PermissionOptionKind::RejectAlways)
+                                })
+                                .map(|o| {
+                                    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                                        o.option_id.clone(),
+                                    ))
+                                })
+                        })
+                        .unwrap_or(RequestPermissionOutcome::Cancelled);
+                    self.send_result_response(id, RequestPermissionResponse::new(outcome));
+                } else {
+                    self.send_error_response(id, AcpError::method_not_found());
+                }
                 let _ = self.on_writable();
             }
             return;
@@ -521,16 +657,32 @@ impl AcpHarness {
             let raw_msg = error
                 .map(|e| e.message)
                 .unwrap_or_else(|| "The harness reported an error.".to_string());
+            let no_models = is_no_models_error(err_val, &raw_msg);
             match pending {
                 PendingRpc::Initialize => events.push(AcpEvent::InitializeFailed {
                     message: self.redact_for_thread(None, &raw_msg),
                 }),
+                PendingRpc::ProbeModels => {
+                    self.probing_models = false;
+                    if no_models {
+                        events.push(AcpEvent::ModelsProbed(Ok(ModelCatalog {
+                            supported: true,
+                            models: Vec::new(),
+                            default_model: None,
+                            config_id: None,
+                        })));
+                    } else {
+                        events.push(AcpEvent::ModelsProbed(Err(self.redact_for_thread(None, &raw_msg))));
+                    }
+                }
+                PendingRpc::CloseProbe => {}
                 PendingRpc::NewSession { thread_id, turn, .. } => {
                     let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
                     events.push(AcpEvent::SessionFailed {
                         thread_id,
                         turn,
                         message,
+                        no_models,
                     });
                 }
                 PendingRpc::LoadSession {
@@ -541,6 +693,14 @@ impl AcpHarness {
                 } => {
                     self.loading_sessions.remove(&session_id);
                     self.request_new_session(&thread_id, turn, &cwd, true);
+                }
+                PendingRpc::SetModel { thread_id, turn, .. } => {
+                    let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
+                    events.push(AcpEvent::ModelSetFailed {
+                        thread_id,
+                        turn,
+                        message,
+                    });
                 }
                 // The harness says the turn was cancelled, with an error
                 // where ACP has `StopReason::Cancelled`. Any other error is
@@ -570,6 +730,7 @@ impl AcpHarness {
                 Ok(resp) if resp.protocol_version == ProtocolVersion::V1 => {
                     self.initialized = true;
                     self.supports_load_session = resp.agent_capabilities.load_session;
+                    self.supports_close_session = resp.agent_capabilities.session_capabilities.close.is_some();
                     events.push(AcpEvent::Initialized);
                 }
                 Ok(_) => events.push(AcpEvent::InitializeFailed {
@@ -579,6 +740,37 @@ impl AcpHarness {
                     message: "The harness returned an invalid initialization response.".to_string(),
                 }),
             },
+            PendingRpc::ProbeModels => {
+                self.probing_models = false;
+                match serde_json::from_value::<NewSessionResponse>(result) {
+                    Ok(resp) => {
+                        let catalog = resp
+                            .config_options
+                            .as_deref()
+                            .and_then(extract_model_catalog)
+                            .unwrap_or(ModelCatalog {
+                                supported: false,
+                                models: Vec::new(),
+                                default_model: None,
+                                config_id: None,
+                            });
+                        if let Some(ref cid) = catalog.config_id {
+                            self.model_config_id = Some(cid.clone());
+                        }
+                        if self.supports_close_session && !resp.session_id.0.is_empty() {
+                            let close = CloseSessionRequest::new(resp.session_id);
+                            let cid = self.send_request(AGENT_METHOD_NAMES.session_close, &close);
+                            self.pending.insert(cid, PendingRpc::CloseProbe);
+                            let _ = self.on_writable();
+                        }
+                        events.push(AcpEvent::ModelsProbed(Ok(catalog)));
+                    }
+                    Err(_) => events.push(AcpEvent::ModelsProbed(Err(
+                        "The harness returned an invalid session response.".to_string(),
+                    ))),
+                }
+            }
+            PendingRpc::CloseProbe => {}
             PendingRpc::NewSession {
                 thread_id,
                 turn,
@@ -588,17 +780,28 @@ impl AcpHarness {
                 // tell it from another nor load it again.
                 Ok(resp) if !resp.session_id.0.is_empty() => {
                     let sid = resp.session_id.0.as_ref().to_string();
+                    let catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
+                    let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
+                    if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
+                        self.model_config_id = Some(cid.clone());
+                    }
                     if self.bind_session(&thread_id, &sid) {
+                        if let Some(ref m) = current_model {
+                            self.session_models.insert(sid.clone(), m.clone());
+                        }
                         events.push(AcpEvent::SessionReady {
                             thread_id,
                             session_id: sid,
                             afresh,
+                            catalog,
+                            current_model,
                         });
                     } else {
                         events.push(AcpEvent::SessionFailed {
                             thread_id,
                             turn,
                             message: "The harness gave this thread a session that another thread is using.".to_string(),
+                            no_models: false,
                         });
                     }
                 }
@@ -606,6 +809,7 @@ impl AcpHarness {
                     thread_id,
                     turn,
                     message: "The harness could not start a thread.".to_string(),
+                    no_models: false,
                 }),
             },
             PendingRpc::LoadSession {
@@ -616,16 +820,52 @@ impl AcpHarness {
             } => {
                 self.loading_sessions.remove(&session_id);
                 match serde_json::from_value::<LoadSessionResponse>(result) {
-                    Ok(_) if self.bind_session(&thread_id, &session_id) => {
+                    Ok(resp) if self.bind_session(&thread_id, &session_id) => {
+                        let catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
+                        let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
+                        if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
+                            self.model_config_id = Some(cid.clone());
+                        }
+                        if let Some(ref m) = current_model {
+                            self.session_models.insert(session_id.clone(), m.clone());
+                        }
                         events.push(AcpEvent::SessionReady {
                             thread_id,
                             session_id,
                             afresh: false,
+                            catalog,
+                            current_model,
                         });
                     }
                     _ => self.request_new_session(&thread_id, turn, &cwd, true),
                 }
             }
+            PendingRpc::SetModel {
+                thread_id,
+                turn,
+                session_id,
+                model,
+            } => match serde_json::from_value::<SetSessionConfigOptionResponse>(result) {
+                Ok(resp) => {
+                    let catalog = extract_model_catalog(&resp.config_options);
+                    let applied = catalog.as_ref().and_then(|c| c.default_model.clone()).unwrap_or(model);
+                    if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
+                        self.model_config_id = Some(cid.clone());
+                    }
+                    self.session_models.insert(session_id, applied.clone());
+                    events.push(AcpEvent::ModelSet {
+                        thread_id,
+                        turn,
+                        model: applied,
+                        catalog,
+                    });
+                }
+                Err(_) => events.push(AcpEvent::ModelSetFailed {
+                    thread_id,
+                    turn,
+                    message: "The harness returned an invalid configuration response.".to_string(),
+                }),
+            },
             PendingRpc::Prompt { thread_id, turn } => match serde_json::from_value::<PromptResponse>(result) {
                 Ok(resp) => {
                     let outcome = match resp.stop_reason {
@@ -740,8 +980,44 @@ impl AcpHarness {
                     }
                 }
             }
-            // Any other update (known to the schema or unknown/future) is kept
-            // as JSON in the record and rendered plainly.
+            Ok(SessionUpdate::ConfigOptionUpdate(cfg)) => {
+                if let Some(catalog) = extract_model_catalog(&cfg.config_options) {
+                    if let Some(ref cid) = catalog.config_id {
+                        self.model_config_id = Some(cid.clone());
+                    }
+                    let current_model = catalog.default_model.clone();
+                    if let Some(ref m) = current_model {
+                        self.session_models.insert(session_id.to_string(), m.clone());
+                    }
+                    events.push(AcpEvent::CatalogUpdated {
+                        thread_id,
+                        catalog,
+                        current_model,
+                    });
+                }
+            }
+            // Known ACP v1 updates that Lever does not show as thread notes:
+            // thoughts stream a few tokens at a time, available commands arrive
+            // on every new session, and modes, plans, usage, and notices are
+            // either dropped on purpose or handled in their own slices.
+            Ok(
+                SessionUpdate::UserMessageChunk(_)
+                | SessionUpdate::AgentThoughtChunk(_)
+                | SessionUpdate::AvailableCommandsUpdate(_)
+                | SessionUpdate::CurrentModeUpdate(_)
+                | SessionUpdate::UsageUpdate(_)
+                | SessionUpdate::Plan(_)
+                | SessionUpdate::PlanUpdate(_)
+                | SessionUpdate::PlanRemoved(_)
+                | SessionUpdate::Notice(_)
+                | SessionUpdate::CompactionUpdate(_)
+                | SessionUpdate::CompactionSummaryChunk(_)
+                | SessionUpdate::SubagentUpdate(_)
+                | SessionUpdate::SessionMessage(_)
+                | SessionUpdate::SessionMessageChunk(_),
+            ) => {}
+            // Any unrecognized or future update is kept as JSON in the record
+            // and rendered plainly.
             Ok(_) | Err(_) => {
                 let plain = self.render_unknown_update(&thread_id, raw_update);
                 events.push(AcpEvent::UnknownUpdate {
@@ -839,6 +1115,99 @@ impl AcpHarness {
             redact(&parts.join(" "))
         }
     }
+}
+
+/// Builds the environment overrides Lever passes to a harness child:
+/// any `--harness-env` entries, `OPENCODE_CONFIG_CONTENT` with OpenCode's
+/// self-update disabled (preserving any keys already present), and
+/// `OPENCODE_DISABLE_FREE_MODELS=1` until the person chooses free hosted Models.
+fn build_harness_env(
+    extra: &[(String, String)],
+    existing_config_content: Option<&str>,
+    free_hosted_models: bool,
+) -> (Vec<(String, String)>, Vec<&'static str>) {
+    let mut env_set: Vec<(String, String)> = extra
+        .iter()
+        .filter(|(k, _)| k != "OPENCODE_CONFIG_CONTENT" && k != "OPENCODE_DISABLE_FREE_MODELS")
+        .cloned()
+        .collect();
+    env_set.push((
+        "OPENCODE_CONFIG_CONTENT".to_string(),
+        opencode_config_content(existing_config_content),
+    ));
+    let mut env_remove = Vec::new();
+    if free_hosted_models {
+        env_remove.push("OPENCODE_DISABLE_FREE_MODELS");
+    } else {
+        env_set.push(("OPENCODE_DISABLE_FREE_MODELS".to_string(), "1".to_string()));
+    }
+    (env_set, env_remove)
+}
+
+/// Produces the `OPENCODE_CONFIG_CONTENT` JSON string with OpenCode's
+/// self-update switched off, merging into any existing JSON object from the
+/// environment without touching any file in the person's home.
+fn opencode_config_content(existing: Option<&str>) -> String {
+    let mut map = existing
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .and_then(|val| val.as_object().cloned())
+        .unwrap_or_default();
+    map.insert("update".to_string(), json!("disable"));
+    Value::Object(map).to_string()
+}
+
+/// Whether a JSON-RPC error from `session/new` means the harness has no Models
+/// available (for example OpenCode's `CatalogNotReady` when free hosted Models
+/// are switched off and no provider is signed in).
+fn is_no_models_error(err_val: &Value, message: &str) -> bool {
+    let error_name = err_val
+        .get("data")
+        .and_then(|d| d.get("errorName"))
+        .and_then(Value::as_str);
+    if error_name == Some("CatalogNotReady") {
+        return true;
+    }
+    message.to_ascii_lowercase().contains("no models are available")
+}
+
+/// Extracts the Model selector from ACP session configuration options.
+fn extract_model_catalog(options: &[SessionConfigOption]) -> Option<ModelCatalog> {
+    let opt = options
+        .iter()
+        .find(|o| o.category == Some(SessionConfigOptionCategory::Model))
+        .or_else(|| options.iter().find(|o| o.id.0.as_ref() == "model"))?;
+    let SessionConfigKind::Select(select) = &opt.kind else {
+        return None;
+    };
+    let mut models = Vec::new();
+    match &select.options {
+        SessionConfigSelectOptions::Ungrouped(items) => {
+            for item in items {
+                models.push(ModelOption {
+                    id: item.value.0.as_ref().to_string(),
+                    name: item.name.clone(),
+                });
+            }
+        }
+        SessionConfigSelectOptions::Grouped(groups) => {
+            for group in groups {
+                for item in &group.options {
+                    models.push(ModelOption {
+                        id: item.value.0.as_ref().to_string(),
+                        name: item.name.clone(),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+    let default_model = (!select.current_value.0.is_empty()).then(|| select.current_value.0.as_ref().to_string());
+    Some(ModelCatalog {
+        supported: true,
+        models,
+        default_model,
+        config_id: Some(opt.id.0.as_ref().to_string()),
+    })
 }
 
 fn map_tool_kind(kind: ToolKind) -> &'static str {
@@ -997,5 +1366,59 @@ mod tests {
             Some("3 passed".to_string())
         );
         assert_eq!(tool_detail(&[], Some(&output), None), None);
+    }
+
+    #[test]
+    fn opencode_config_content_disables_self_update_and_preserves_other_keys() {
+        assert_eq!(
+            serde_json::from_str::<Value>(&opencode_config_content(None)).unwrap(),
+            json!({ "update": "disable" })
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&opencode_config_content(Some(
+                r#"{"model":"stub/stub-1","update":"auto"}"#
+            )))
+            .unwrap(),
+            json!({ "model": "stub/stub-1", "update": "disable" })
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&opencode_config_content(Some("not-json"))).unwrap(),
+            json!({ "update": "disable" })
+        );
+    }
+
+    #[test]
+    fn harness_env_toggles_free_hosted_models_without_losing_extra_env() {
+        let extra = vec![("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "1".to_string())];
+        let (set_off, rm_off) = build_harness_env(&extra, None, false);
+        assert!(set_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "1".into())));
+        assert!(set_off.contains(&("OPENCODE_DISABLE_FREE_MODELS".into(), "1".into())));
+        assert!(
+            set_off
+                .iter()
+                .any(|(k, v)| k == "OPENCODE_CONFIG_CONTENT" && v.contains("disable"))
+        );
+        assert!(rm_off.is_empty());
+
+        let (set_on, rm_on) = build_harness_env(&extra, None, true);
+        assert!(set_on.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "1".into())));
+        assert!(!set_on.iter().any(|(k, _)| k == "OPENCODE_DISABLE_FREE_MODELS"));
+        assert_eq!(rm_on, vec!["OPENCODE_DISABLE_FREE_MODELS"]);
+    }
+
+    #[test]
+    fn no_models_error_is_recognized_by_error_name_or_message() {
+        assert!(is_no_models_error(
+            &json!({ "code": -32603, "message": "Internal error", "data": { "errorName": "CatalogNotReady" } }),
+            "Internal error"
+        ));
+        assert!(is_no_models_error(
+            &json!({ "code": -32603, "message": "Internal error: No models are available" }),
+            "Internal error: No models are available"
+        ));
+        assert!(!is_no_models_error(
+            &json!({ "code": -32603, "message": "Timeout" }),
+            "Timeout"
+        ));
     }
 }

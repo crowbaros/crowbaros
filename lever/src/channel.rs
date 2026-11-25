@@ -36,6 +36,7 @@ pub struct Channel {
 }
 
 pub struct Peer {
+    id: u64,
     stream: UnixStream,
     channel: Channel,
     reader: FrameReader,
@@ -56,6 +57,10 @@ pub struct Peer {
     /// Requests this peer sent may be waiting, read and unanswered, for it
     /// to take the replies before them.
     held: bool,
+    /// This peer has one request waiting on an asynchronous reply from the
+    /// harness (such as `models` or `set-model`). Further requests from this
+    /// peer stay buffered until that reply is delivered.
+    waiting_reply: bool,
     /// The peer has closed its sending side. It is still owed the replies to
     /// what it sent.
     input_ended: bool,
@@ -68,8 +73,9 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub fn new(stream: UnixStream, channel: Channel) -> Self {
+    pub fn new(id: u64, stream: UnixStream, channel: Channel) -> Self {
         Self {
+            id,
             stream,
             channel,
             reader: FrameReader::new(MAX_FRAME),
@@ -79,6 +85,7 @@ impl Peer {
             queued: 0,
             taken: 0,
             held: false,
+            waiting_reply: false,
             input_ended: false,
             lost: false,
             subscriptions: HashSet::new(),
@@ -86,6 +93,10 @@ impl Peer {
             closing: false,
             closed_logged: false,
         }
+    }
+
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     pub fn fd(&self) -> RawFd {
@@ -97,16 +108,33 @@ impl Peer {
     }
 
     /// Whether Lever reads more from this peer: not while replies wait up
-    /// to the mark, and not while requests it has read are unanswered, or
-    /// those would pile up in their place.
+    /// to the mark, not while requests it has read are unanswered, and not
+    /// while a deferred reply from the harness is in flight.
     pub fn wants_read(&self) -> bool {
-        !self.closing && !self.input_ended && !self.held && self.write_buf.len() < WAITING_MARK
+        !self.closing && !self.input_ended && !self.held && !self.waiting_reply && self.write_buf.len() < WAITING_MARK
     }
 
     /// Whether requests this peer sent wait to be answered, and it has taken
     /// enough of its replies for Lever to answer more of them.
     pub fn is_held(&self) -> bool {
-        self.held && !self.closing && self.write_buf.len() < WAITING_MARK
+        self.held && !self.closing && !self.waiting_reply && self.write_buf.len() < WAITING_MARK
+    }
+
+    pub fn is_waiting_reply(&self) -> bool {
+        self.waiting_reply
+    }
+
+    /// Delivers a deferred reply from the harness to this peer and lets any
+    /// further buffered requests proceed on the next pass.
+    pub fn deliver_reply(&mut self, msg: &Value, subscribe: Option<String>) {
+        self.waiting_reply = false;
+        if let Some(thread_id) = subscribe {
+            self.subscriptions.insert(thread_id);
+        }
+        self.queue(msg);
+        if !self.closing {
+            self.held = true;
+        }
     }
 
     pub fn is_done(&self) -> bool {
@@ -264,7 +292,7 @@ impl Peer {
             }
             // Requests it sent before it closed are still answered.
             self.input_ended = true;
-            if !self.held {
+            if !self.held && !self.waiting_reply {
                 self.closing = true;
             }
             return (self.on_writable(), Vec::new());
@@ -288,7 +316,7 @@ impl Peer {
     pub fn dispatch(&mut self, service: &mut Service, log: &mut Log) -> Vec<Broadcast> {
         let mut broadcasts = Vec::new();
         self.held = false;
-        while !self.closing {
+        while !self.closing && !self.waiting_reply {
             if self.write_buf.len() >= WAITING_MARK {
                 self.held = true;
                 break;
@@ -296,6 +324,9 @@ impl Peer {
             match self.reader.next_frame() {
                 Ok(Some(frame)) => {
                     self.handle_frame(&frame, service, log, &mut broadcasts);
+                    if self.waiting_reply {
+                        break;
+                    }
                     if !broadcasts.is_empty() {
                         self.held = true;
                         break;
@@ -360,11 +391,14 @@ impl Peer {
             return;
         };
 
-        let outcome = service.handle_request(&value, log);
+        let outcome = service.handle_request(self.id, &value, log);
         if let Some(thread_id) = outcome.subscribe {
             self.subscriptions.insert(thread_id);
         }
-        self.queue(&outcome.reply);
+        match outcome.reply {
+            Some(reply) => self.queue(&reply),
+            None => self.waiting_reply = true,
+        }
         broadcasts.extend(outcome.broadcasts);
     }
 }

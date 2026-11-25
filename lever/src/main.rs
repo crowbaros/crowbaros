@@ -14,7 +14,7 @@ mod sys;
 use acp::HarnessConfig;
 use channel::{Channel, LEVER_VERSION, Peer};
 use log::{Event, Log};
-use service::{Broadcast, DEFAULT_IDLE_TIMEOUT, Service, unix_now};
+use service::{Broadcast, DEFAULT_IDLE_TIMEOUT, Effects, PeerReply, Service, unix_now};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::fd::AsRawFd;
@@ -37,7 +37,7 @@ const USAGE: &str = "usage: crowbar-lever \
   --state <dir> \
   --surface-socket <path> --shell-uid <uid> \
   --person-socket <path> --person-uid <uid> \
-  [--harness <program> [--harness-arg <arg>]... [--harness-name <name>]] \
+  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>]] \
   [--idle-timeout-ms <ms>]";
 
 struct Options {
@@ -59,6 +59,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
     let mut harness_program = None;
     let mut harness_name = None;
     let mut harness_args = Vec::new();
+    let mut harness_env = Vec::new();
     let mut idle_timeout = None;
 
     let mut iter = args.iter();
@@ -76,6 +77,13 @@ fn parse_options(args: &[String]) -> Option<Options> {
             "--harness" if harness_program.is_none() => harness_program = Some(value.clone()),
             "--harness-name" if harness_name.is_none() => harness_name = Some(value.clone()),
             "--harness-arg" => harness_args.push(value.clone()),
+            "--harness-env" => {
+                let (k, v) = value.split_once('=')?;
+                if k.is_empty() {
+                    return None;
+                }
+                harness_env.push((k.to_string(), v.to_string()));
+            }
             "--idle-timeout-ms" if idle_timeout.is_none() => {
                 idle_timeout = Some(Duration::from_millis(value.parse::<u64>().ok()?));
             }
@@ -97,9 +105,10 @@ fn parse_options(args: &[String]) -> Option<Options> {
                 name,
                 program,
                 args: harness_args,
+                env: harness_env,
             })
         }
-        None if harness_name.is_some() || !harness_args.is_empty() => return None,
+        None if harness_name.is_some() || !harness_args.is_empty() || !harness_env.is_empty() => return None,
         None => None,
     };
 
@@ -134,7 +143,13 @@ fn bind_socket(path: &Path, mode: u32) -> Result<UnixListener, String> {
     Ok(listener)
 }
 
-fn accept_pending(listener: &UnixListener, channel: Channel, peers: &mut Vec<Peer>, log: &mut Log) {
+fn accept_pending(
+    listener: &UnixListener,
+    channel: Channel,
+    peers: &mut Vec<Peer>,
+    next_peer_id: &mut u64,
+    log: &mut Log,
+) {
     let mut open = peers.iter().filter(|peer| peer.is_on(channel)).count();
     for _ in 0..MAX_ACCEPTS {
         match listener.accept() {
@@ -158,7 +173,9 @@ fn accept_pending(listener: &UnixListener, channel: Channel, peers: &mut Vec<Pee
                         continue;
                     }
                     let _ = log.write(Event::Connection, &format!("{} connected", channel.peer));
-                    peers.push(Peer::new(stream, channel));
+                    let id = *next_peer_id;
+                    *next_peer_id += 1;
+                    peers.push(Peer::new(id, stream, channel));
                     open += 1;
                 }
                 Ok(uid) => {
@@ -180,6 +197,22 @@ fn accept_pending(listener: &UnixListener, channel: Channel, peers: &mut Vec<Pee
                 let _ = log.write(Event::Error, &format!("accept failed: {e}"));
                 break;
             }
+        }
+    }
+}
+
+fn deliver_replies(replies: &[PeerReply], peers: &mut [Peer], keep: &[bool], log: &mut Log) {
+    for reply in replies {
+        for (idx, peer) in peers.iter_mut().enumerate() {
+            if !keep[idx] || peer.id() != reply.peer_id {
+                continue;
+            }
+            peer.deliver_reply(&reply.message, reply.subscribe.clone());
+            if !peer.on_writable() {
+                peer.on_gone(log);
+                peer.lose();
+            }
+            break;
         }
     }
 }
@@ -300,6 +333,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
     );
 
     let mut peers: Vec<Peer> = Vec::new();
+    let mut next_peer_id: u64 = 1;
     let stop_sig = loop {
         if let Some(sig) = signals.take_signal() {
             break sig;
@@ -375,10 +409,10 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         }
 
         if pollfds[1].revents & libc::POLLIN != 0 {
-            accept_pending(&person_listener, person_channel, &mut peers, log);
+            accept_pending(&person_listener, person_channel, &mut peers, &mut next_peer_id, log);
         }
         if pollfds[2].revents & libc::POLLIN != 0 {
-            accept_pending(&surface_listener, surface_channel, &mut peers, log);
+            accept_pending(&surface_listener, surface_channel, &mut peers, &mut next_peer_id, log);
         }
 
         let mut keep = vec![true; peers.len()];
@@ -387,11 +421,13 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         // peer is heard: an update that is already here belongs to the turn
         // it came in, not to one a peer is about to begin, and a peer that
         // resumes a thread reads the record with that update in it once.
-        let mut broadcasts: Vec<Broadcast> = Vec::new();
+        let mut effects = Effects::default();
         if let Some(i) = stdout_idx {
             let revents = pollfds[i].revents;
             if revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
-                broadcasts.extend(service.on_harness_readable(log));
+                let got = service.on_harness_readable(log);
+                effects.broadcasts.extend(got.broadcasts);
+                effects.replies.extend(got.replies);
             }
         }
         // Its input next, while this is still the harness that was polled: a
@@ -399,11 +435,14 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         if let Some(i) = stdin_idx {
             let revents = pollfds[i].revents;
             if revents & (libc::POLLOUT | libc::POLLERR | libc::POLLHUP) != 0 {
-                broadcasts.extend(service.on_harness_writable(log));
+                let got = service.on_harness_writable(log);
+                effects.broadcasts.extend(got.broadcasts);
+                effects.replies.extend(got.replies);
             }
         }
-        deliver_broadcasts(&broadcasts, &mut peers, &keep, log);
-        broadcasts.clear();
+        deliver_replies(&effects.replies, &mut peers, &keep, log);
+        deliver_broadcasts(&effects.broadcasts, &mut peers, &keep, log);
+        let mut broadcasts: Vec<Broadcast> = Vec::new();
 
         // Process existing peers (indices 3..3+existing_len), keeping newly
         // accepted peers. What one peer's request has to tell who is
@@ -435,10 +474,11 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
             if revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
                 alive = false;
             }
-            if revents & libc::POLLHUP != 0 && !peer.wants_read() {
+            if revents & libc::POLLHUP != 0 && !peer.wants_read() && !peer.is_waiting_reply() {
                 alive = false;
             }
             if !alive {
+                service.on_peer_gone(peer.id());
                 broadcasts.extend(peer.finish_requests(&mut service, log));
                 peer.on_gone(log);
             }

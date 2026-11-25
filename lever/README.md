@@ -38,7 +38,7 @@ crowbar-lever \
   --state <dir> \
   --surface-socket <path> --shell-uid <uid> \
   --person-socket <path> --person-uid <uid> \
-  [--harness <program> [--harness-arg <arg>]... [--harness-name <name>]] \
+  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>]] \
   [--idle-timeout-ms <ms>]
 ```
 
@@ -47,12 +47,20 @@ On Base:
 - `--state` is `$HOME/.local/state/crowbaros/lever`
 - `--surface-socket` is `/run/crowbar-lever/surface`, for `crowbar-shell`'s UID
 - `--person-socket` is `/run/user/1003/crowbar-lever/person`, for the person's UID
+- `--harness` is `/usr/local/bin/opencode` with `--harness-arg acp` and
+  `--harness-name OpenCode`
 
-When `--harness` is omitted (as on Base before OpenCode is bundled), Lever runs
+When `--harness` is omitted, Lever runs
 with no harness configured and refuses `send` with `no-harness`. When
-`--harness` is given, Lever starts the harness child only when a thread needs
-it and stops it after `--idle-timeout-ms` (default `600000`, 10 minutes) with
-no working thread. The harness child dies with Lever.
+`--harness` is given, Lever starts the harness child only when a thread or a
+Model query needs it and stops it after `--idle-timeout-ms` (default `600000`,
+10 minutes) with no working thread or pending Model query. The harness child
+runs in Lever's environment (on Base, the launcher's environment for apps) with
+OpenCode's self-update turned off through `OPENCODE_CONFIG_CONTENT`
+(`{"update":"disable"}`, merged with any existing keys) and
+`OPENCODE_DISABLE_FREE_MODELS=1` until the person enables OpenCode's free
+hosted Models. Lever writes nothing in the person's own OpenCode files. The
+harness child dies with Lever.
 
 Told to stop (`SIGTERM` or `SIGINT`), Lever closes its peer connections, stops
 any running harness child, marks any turn still working `interrupted`, removes
@@ -88,20 +96,25 @@ ACP today:
   reason, and any other error, is `failed`, whether or not a stop was asked
   for.
 - **Updates.** A piece of the agent's message is `text`, a tool call and its
-  updates are an `act`, and a session's new title is `thread-updated`. Every
-  other update is a `note`, the ones ACP defines among them (a thought, a
-  plan, a usage report), until Lever shows them as their own kinds.
+  updates are an `act`, a session's new title is `thread-updated`, and
+  `config_option_update` refreshes the harness's Models and the thread's
+  current Model. Other ACP v1 updates that Lever does not yet show as their own
+  kinds (`agent_thought_chunk`, `available_commands_update`,
+  `current_mode_update`, `usage_update`, `plan`, `notice`, compaction, and
+  subagent updates) are dropped on purpose so threads are not flooded with
+  per-token or boilerplate notes. Any genuinely unrecognized or future update
+  is kept as JSON in the record and shown plainly as a `note`.
 - **An update that comes after its turn ended goes to the thread's newest
   turn.** ACP gives an update no turn. Lever takes what the harness has said
   before it hears a peer, so an update that is already there when the next
   message arrives stays with the turn it came in. One that comes later still
   is recorded with the turn that is working then.
-- **Requests from the harness are refused.** Lever tells the harness it reads
-  and writes no files and runs no terminals for it, and answers every request
-  the harness makes of it, `session/request_permission` among them, with
-  JSON-RPC's "method not found". Carrying a harness's requests to the person
-  is a later part of
-  [Milestone 3](https://github.com/crowbaros/crowbaros/issues/371).
+- **Requests from the harness.** Lever tells the harness it reads and writes no
+  files and runs no terminals for it, and answers those requests with
+  JSON-RPC's "method not found". Until carrying permission requests to the
+  person is built ([Milestone 3](https://github.com/crowbaros/crowbaros/issues/371)),
+  `session/request_permission` is answered with a valid ACP decline (selecting
+  the reject option when offered, or `cancelled`) rather than an RPC error.
 - **Lever reads at most 256 KiB from the harness each time it wakes**, so a
   harness that never stops writing holds back neither Lever's peers nor a stop
   signal. A harness that writes more than 16 MiB with no line end is stopped,
@@ -182,13 +195,84 @@ Request:
 Reply:
 
 ```json
-{"reply":"status","version":"0.1.0","harness_started":false,"harnesses":[{"id":"harness-1","name":"Stub"}]}
+{"reply":"status","version":"0.1.0","harness_started":false,"harnesses":[{"id":"harness-1","name":"Stub"}],"free_hosted_models":false}
 ```
 
 - `version`: Lever's version string.
 - `harness_started`: `true` while the harness child process is running.
 - `harnesses`: configured harnesses as `{id, name}` entries (empty when no
   harness is configured).
+- `free_hosted_models`: `true` once the person has enabled OpenCode's free
+  hosted Models, `false` otherwise.
+
+#### `models`
+
+Lists the Models the configured harness offers via ACP session configuration
+options, starting the harness on demand if needed. Pass `"refresh": true` to
+restart an idle harness first (for instance after signing in to a provider).
+
+Request:
+
+```json
+{"op":"models"}
+```
+
+Reply:
+
+```json
+{"reply":"models","supported":true,"models":[{"id":"stub/stub-1","name":"Stub One"}],"default":"stub/stub-1","free_hosted_models":false}
+```
+
+- `supported`: `true` when the harness exposes Model selection (or reported
+  that no Models are currently available), `false` otherwise.
+- `models`: `{id, name}` entries offered by the harness (empty when none are
+  available).
+- `default`: the harness's default Model ID, or `null`.
+- `free_hosted_models`: Lever's saved setting.
+
+Errors: `no-harness`, `harness-error`, `invalid-request`.
+
+#### `set-free-models`
+
+Saves the person's choice for OpenCode's free hosted Models. When changed, an
+idle harness is stopped immediately (or as soon as active work finishes) so the
+next start applies the new `OPENCODE_DISABLE_FREE_MODELS` setting.
+
+Request:
+
+```json
+{"op":"set-free-models","enabled":true}
+```
+
+Reply:
+
+```json
+{"reply":"free-models","enabled":true}
+```
+
+Errors: `invalid-request`, `storage-error`.
+
+#### `set-model`
+
+Sets a thread's Model to one offered by the harness, applying it through ACP's
+`session/set_config_option` on an active session (or validating against the
+harness's offered Models and applying it on the next turn) and saving it on the
+thread in SQLite.
+
+Request:
+
+```json
+{"op":"set-model","thread":"t-01a2b3c4d5e6","model":"stub/stub-1"}
+```
+
+Reply:
+
+```json
+{"reply":"model-set","thread":"t-01a2b3c4d5e6","model":"stub/stub-1"}
+```
+
+Errors: `no-harness`, `no-thread`, `working`, `unsupported`, `no-model`,
+`invalid-model`, `harness-error`, `invalid-request`, `storage-error`.
 
 #### `list`
 
@@ -225,6 +309,7 @@ Request:
 - `text`: non-empty message text.
 - `cwd`: optional absolute path for a new thread's working directory (defaults
   to `$HOME`).
+- `model`: optional Model ID to select for the thread before sending the turn.
 
 Reply:
 
@@ -232,8 +317,8 @@ Reply:
 {"reply":"sent","thread":"t-01a2b3c4d5e6","turn":1}
 ```
 
-Errors: `no-harness`, `no-thread`, `working`, `invalid-request`, and
-`storage-error` when Lever's database does not take the turn, or has yet to
+Errors: `no-harness`, `no-model`, `no-thread`, `working`, `invalid-request`,
+and `storage-error` when Lever's database does not take the turn, or has yet to
 take how the thread's last turn ended.
 
 #### `resume`

@@ -261,7 +261,8 @@ fn both_sockets_speak_version_one_and_answer_status() {
                 "reply": "status",
                 "version": env!("CARGO_PKG_VERSION"),
                 "harness_started": false,
-                "harnesses": []
+                "harnesses": [],
+                "free_hosted_models": false
             })
         );
     }
@@ -1437,11 +1438,36 @@ fn lever_speaks_every_message_documented_in_readme() {
     );
     assert_eq!(
         doc_ops,
-        BTreeSet::from(["list", "resume", "send", "status", "stop"].map(str::to_string))
+        BTreeSet::from(
+            [
+                "list",
+                "models",
+                "resume",
+                "send",
+                "set-free-models",
+                "set-model",
+                "status",
+                "stop",
+            ]
+            .map(str::to_string)
+        )
     );
     assert_eq!(
         doc_replies,
-        BTreeSet::from(["error", "list", "ok", "resumed", "sent", "status"].map(str::to_string))
+        BTreeSet::from(
+            [
+                "error",
+                "free-models",
+                "list",
+                "model-set",
+                "models",
+                "ok",
+                "resumed",
+                "sent",
+                "status",
+            ]
+            .map(str::to_string)
+        )
     );
     assert_eq!(
         doc_events,
@@ -1469,6 +1495,11 @@ fn lever_speaks_every_message_documented_in_readme() {
     std::fs::write(
         &script,
         serde_json::to_string(&json!({
+            "models": [
+                { "id": "stub/stub-1", "name": "Stub One" },
+                { "id": "stub/stub-2", "name": "Stub Two" }
+            ],
+            "default_model": "stub/stub-1",
             "turns": [
                 {
                     "steps": [
@@ -1504,10 +1535,14 @@ fn lever_speaks_every_message_documented_in_readme() {
         v
     };
 
-    // status + error
+    // status + error + set-free-models + models
     write_frame(&mut peer, &json!({ "op": "status" })).unwrap();
     record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
     write_frame(&mut peer, &json!({ "op": "unsupported-op" })).unwrap();
+    record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    write_frame(&mut peer, &json!({ "op": "set-free-models", "enabled": true })).unwrap();
+    record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    write_frame(&mut peer, &json!({ "op": "models" })).unwrap();
     record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
 
     // Turn 1: send -> message, act, note, thread-updated, text, done
@@ -1525,7 +1560,13 @@ fn lever_speaks_every_message_documented_in_readme() {
         }
     }
 
-    // list + resume
+    // set-model + list + resume
+    write_frame(
+        &mut peer,
+        &json!({ "op": "set-model", "thread": thread_id, "model": "stub/stub-2" }),
+    )
+    .unwrap();
+    record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
     write_frame(&mut peer, &json!({ "op": "list" })).unwrap();
     record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
     write_frame(&mut peer, &json!({ "op": "resume", "thread": thread_id })).unwrap();
@@ -1577,7 +1618,13 @@ fn lever_speaks_every_message_documented_in_readme() {
         if let Some(name) = block.get("reply").and_then(Value::as_str) {
             let actual = &seen_replies[name];
             let doc_keys: BTreeSet<&str> = block.as_object().unwrap().keys().map(String::as_str).collect();
-            let actual_keys: BTreeSet<&str> = actual.as_object().unwrap().keys().map(String::as_str).collect();
+            let actual_keys: BTreeSet<&str> = actual
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .filter(|k| !(*k == "model" && name == "resumed"))
+                .collect();
             assert_eq!(actual_keys, doc_keys, "reply {name:?} keys drifted from README");
         }
         if let Some(name) = block.get("event").and_then(Value::as_str) {
@@ -2822,6 +2869,187 @@ fn a_harness_started_again_has_the_ids_of_earlier_acts_taken_out_of_what_it_says
     assert_eq!(end["message"], "Could not go on from [redacted].");
     let record = resume(&mut peer, &thread);
     assert_eq!(record["turns"][1]["error"], "Could not go on from [redacted].");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn harness_env_disables_autoupdate_and_free_models_until_chosen_and_selects_models() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "no_models_when_free_disabled": true,
+            "models": [
+                { "id": "stub/stub-1", "name": "Stub One" },
+                { "id": "stub/stub-2", "name": "Stub Two" }
+            ],
+            "default_model": "stub/stub-1",
+            "turns": [
+                { "steps": [{ "kind": "text", "text": "first on {model}" }] },
+                { "steps": [{ "kind": "text", "text": "second on {model}" }] },
+                { "steps": [{ "kind": "text", "text": "restarted on {model}" }] }
+            ]
+        }),
+    );
+    let env_out = dir.0.join("env.json");
+    let stub_bin = env!("CARGO_BIN_EXE_crowbar-stub-harness");
+    let extra = vec![
+        "--harness".into(),
+        stub_bin.into(),
+        "--harness-name".into(),
+        "OpenCode".into(),
+        "--harness-arg".into(),
+        "--script".into(),
+        "--harness-arg".into(),
+        script.to_str().unwrap().into(),
+        "--harness-arg".into(),
+        "--env-out".into(),
+        "--harness-arg".into(),
+        env_out.to_str().unwrap().into(),
+        "--harness-env".into(),
+        "OPENCODE_DISABLE_MODELS_FETCH=1".into(),
+    ];
+
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+
+    // Idle Lever starts no harness and has free_hosted_models = false.
+    write_frame(&mut peer, &json!({ "op": "status" })).unwrap();
+    let status = read_frame(&mut peer).unwrap();
+    assert_eq!(status["harness_started"], false);
+    assert_eq!(status["free_hosted_models"], false);
+    assert!(!env_out.exists(), "idle Lever must not start the harness");
+
+    // Before the person chooses, models is empty and OPENCODE_DISABLE_FREE_MODELS=1 + update:disable are passed.
+    write_frame(&mut peer, &json!({ "op": "models" })).unwrap();
+    let models = read_frame(&mut peer).unwrap();
+    assert_eq!(models["reply"], "models");
+    assert_eq!(models["supported"], true);
+    assert_eq!(models["models"], json!([]));
+    assert_eq!(models["free_hosted_models"], false);
+
+    let env1: Value = serde_json::from_str(&std::fs::read_to_string(&env_out).unwrap()).unwrap();
+    assert_eq!(env1["OPENCODE_DISABLE_FREE_MODELS"], "1");
+    assert_eq!(env1["OPENCODE_DISABLE_MODELS_FETCH"], "1");
+    let cfg1: Value = serde_json::from_str(env1["OPENCODE_CONFIG_CONTENT"].as_str().unwrap()).unwrap();
+    assert_eq!(cfg1["update"], "disable");
+
+    // Sending a message with no Models available is refused with `no-model` and the reason.
+    write_frame(&mut peer, &json!({ "op": "send", "text": "Hello" })).unwrap();
+    let refused = read_frame(&mut peer).unwrap();
+    assert_eq!(refused["reply"], "error");
+    assert_eq!(refused["code"], "no-model");
+    assert!(refused["message"].as_str().unwrap().contains("No Model is available"));
+
+    // Enabling free hosted Models stops the idle harness and restarts without OPENCODE_DISABLE_FREE_MODELS.
+    write_frame(&mut peer, &json!({ "op": "set-free-models", "enabled": true })).unwrap();
+    let toggled = read_frame(&mut peer).unwrap();
+    assert_eq!(toggled, json!({ "reply": "free-models", "enabled": true }));
+
+    write_frame(&mut peer, &json!({ "op": "models" })).unwrap();
+    let models = read_frame(&mut peer).unwrap();
+    assert_eq!(models["free_hosted_models"], true);
+    assert_eq!(models["default"], "stub/stub-1");
+    assert_eq!(models["models"].as_array().unwrap().len(), 2);
+
+    let env2: Value = serde_json::from_str(&std::fs::read_to_string(&env_out).unwrap()).unwrap();
+    assert!(env2["OPENCODE_DISABLE_FREE_MODELS"].is_null());
+    let cfg2: Value = serde_json::from_str(env2["OPENCODE_CONFIG_CONTENT"].as_str().unwrap()).unwrap();
+    assert_eq!(cfg2["update"], "disable");
+
+    // Turn 1 uses default model stub/stub-1.
+    let (tid, turn1) = send(&mut peer, None, "one");
+    let ev1 = turn_events(&mut peer, &tid, turn1);
+    assert_eq!(text_of(&ev1), "first on stub/stub-1");
+
+    // Invalid Model is rejected cleanly.
+    write_frame(
+        &mut peer,
+        &json!({ "op": "set-model", "thread": tid, "model": "stub/missing" }),
+    )
+    .unwrap();
+    let bad = read_frame(&mut peer).unwrap();
+    assert_eq!(bad["reply"], "error");
+    assert_eq!(bad["code"], "invalid-model");
+
+    // Switch thread to stub/stub-2 and run turn 2.
+    write_frame(
+        &mut peer,
+        &json!({ "op": "set-model", "thread": tid, "model": "stub/stub-2" }),
+    )
+    .unwrap();
+    let set_ok = read_frame(&mut peer).unwrap();
+    assert_eq!(
+        set_ok,
+        json!({ "reply": "model-set", "thread": tid, "model": "stub/stub-2" })
+    );
+    let (_, turn2) = send(&mut peer, Some(&tid), "two");
+    let ev2 = turn_events(&mut peer, &tid, turn2);
+    assert_eq!(text_of(&ev2), "second on stub/stub-2");
+
+    // Restart Lever: free_hosted_models and the thread's chosen Model persist and apply on turn 3.
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+    drop(peer);
+
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let rec = resume(&mut peer, &tid);
+    assert_eq!(rec["model"], "stub/stub-2");
+    let (_, turn3) = send(&mut peer, Some(&tid), "three");
+    let ev3 = turn_events(&mut peer, &tid, turn3);
+    assert_eq!(text_of(&ev3), "first on stub/stub-2");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn known_acp_updates_like_thoughts_and_available_commands_do_not_become_notes() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "emit_available_commands": true,
+            "turns": [
+                {
+                    "steps": [
+                        { "kind": "thought", "text": "thinking " },
+                        { "kind": "thought", "text": "hard" },
+                        { "kind": "available_commands" },
+                        { "kind": "unknown", "update": { "sessionUpdate": "vendor_real_note", "summary": "Keep me" } },
+                        { "kind": "text", "text": "Clean answer." }
+                    ]
+                }
+            ]
+        }),
+    );
+
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (tid, turn) = send(&mut peer, None, "go");
+    let evs = turn_events(&mut peer, &tid, turn);
+    assert_eq!(text_of(&evs), "Clean answer.");
+
+    let notes: Vec<&str> = evs
+        .iter()
+        .filter(|e| e["event"] == "note")
+        .filter_map(|e| e["text"].as_str())
+        .collect();
+    assert_eq!(notes, vec!["Keep me"]);
+
+    let rec = resume(&mut peer, &tid);
+    let saved_notes: Vec<&str> = rec["turns"][0]["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|n| n["text"].as_str())
+        .collect();
+    assert_eq!(saved_notes, vec!["Keep me"]);
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));

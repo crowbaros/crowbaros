@@ -207,6 +207,11 @@ def fetch():
                   "usr/bin/xbps-install.static")
 
 
+def opencode():
+    """Where the pinned OpenCode binary is unpacked (ADR 0036)."""
+    return pinned("opencode", CFG["opencode_url"], CFG["opencode_sha256"], "opencode") / "opencode"
+
+
 def install(target, packages, what, force, missing=lambda: None, repositories=(REPOSITORY,)):
     """Install a Void root of these packages, from these repositories, at `target`.
 
@@ -629,7 +634,9 @@ def build(force=False, lab_account=False):
     # guest with `python3 -c`. It comes from the root's own package index, so
     # it matches what the root was installed with.
     lab_packages = CFG["lab_packages"] if lab_account else []
+    stub_model = str(ROOT / "lab/void/stub_model.py") if lab_account else ""
     xbps = fetch() if lab_packages else None
+    opencode_bin = opencode()
     if not KEY.exists():
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "crowbaros-base", "-f", KEY)
     # The image is written beside its place and moved there only when it is
@@ -643,7 +650,9 @@ def build(force=False, lab_account=False):
                ESP_MIB=str(CFG["esp_mib"]), ROOT_GIB=str(CFG["root_gib"]),
                KVER=image_kernel(ROOTFS), KERNEL_ARGS=" ".join(CFG["kernel_args"]),
                NVIDIA_OPTIONS=" ".join(CFG["nvidia_options"]),
-               DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT), PERSON_UID=str(PERSON_UID),
+               DESKTOP=str(HERE / "desktop"), REPO_ROOT=str(ROOT),
+               OPENCODE=str(opencode_bin), STUB_MODEL=stub_model,
+               PERSON_UID=str(PERSON_UID),
                PERSON=account["name"], PERSON_FULL_NAME=account["full_name"],
                PERSON_PASSWORD_HASH=account["password_hash"], PERSON_PASSWORD=account["password"],
                PERSON_SSH_KEYS="".join(key + "\n" for key in account["ssh_keys"]),
@@ -934,7 +943,8 @@ def only(lines, label):
 
 def lever_status_ok(answer):
     """Whether `answer` from `LEVER_PROBE` shows version 1 echoed and a
-    `status` reply with Lever's version and no harness started."""
+    `status` reply with Lever's version, OpenCode configured, free hosted
+    Models switched off, and no OpenCode started while idle."""
     if not answer or not answer.startswith(f"ok {VERSION_FRAME} "):
         return False
     try:
@@ -945,7 +955,8 @@ def lever_status_ok(answer):
             and status.get("reply") == "status"
             and isinstance(status.get("version"), str) and bool(status["version"])
             and status.get("harness_started") is False
-            and status.get("harnesses") == [])
+            and status.get("free_hosted_models") is False
+            and status.get("harnesses") == [{"id": "harness-1", "name": "OpenCode"}])
 
 
 def lever_answers_surface(out):
@@ -1073,6 +1084,158 @@ def mpv_defaults_ready(out):
             and bool(only(lines, "mpv")) and only(lines, "mpv").startswith("mpv ")
             and only(lines, "conf") == "yes"
             and "=> /" in out and "not found" not in out)
+
+
+def opencode_and_tools_installed(out):
+    """Whether OpenCode (at the pinned version), ripgrep, and git are on PATH."""
+    lines = labelled(out)
+    return (only(lines, "opencode-path") == "/usr/local/bin/opencode"
+            and CFG["opencode_version"] in (only(lines, "opencode-version") or "")
+            and bool(only(lines, "rg-path"))
+            and bool(only(lines, "git-path")))
+
+
+def opencode_stub_turn_ok(out):
+    """Whether the OpenCode + stub Model boot check saw:
+    - no OpenCode running while Lever is idle before and after,
+    - a message refused before a Model is available,
+    - `crowbar-agent models` listing both stub Models,
+    - a message answered on the default stub Model,
+    - switching the thread's Model and running a shell command as the person,
+    - the person's OpenCode config file untouched by Lever."""
+    lines = labelled(out)
+    person = only(lines, "person") or ""
+    return (bool(person)
+            and only(lines, "idle-before") == "none"
+            and only(lines, "refused-rc") == "1"
+            and "No Model is available" in (only(lines, "refused-err") or "")
+            and only(lines, "models-rc") == "0"
+            and "stub/stub-1" in " ".join(lines.get("models-out", []))
+            and "stub/stub-2" in " ".join(lines.get("models-out", []))
+            and only(lines, "hello-rc") == "0"
+            and "Hello from stub-1!" in " ".join(lines.get("hello-out", []))
+            and only(lines, "set-model-rc") == "0"
+            and only(lines, "cmd-rc") == "0"
+            and "Command ran on stub-2 as:" in " ".join(lines.get("cmd-out", []))
+            and person in " ".join(lines.get("cmd-out", []))
+            and str(PERSON_UID) in " ".join(lines.get("cmd-out", []))
+            and only(lines, "config-unchanged") == "yes"
+            and only(lines, "idle-after") == "none")
+
+
+# Guest script for the OpenCode + stub Model boot check. Runs in the lab guest
+# against `/usr/local/lib/crowbar-lab/stub-model.py`, with OpenCode's other
+# Models and catalogue fetch switched off, and cleans up back to a pristine
+# idle Lever afterwards.
+OPENCODE_STUB_CHECK = (
+    PERSON_IN_GUEST
+    + LEVER_PROBE
+    + """\
+echo "person $u";
+cd "$h";
+if pgrep -x opencode >/dev/null 2>&1; then echo "idle-before running"; else echo "idle-before none"; fi;
+tmp=$(mktemp -d /tmp/crowbar-stub-check.XXXXXX);
+orig_run="$tmp/lever-run.orig";
+cp /etc/sv/crowbar-lever/run "$orig_run";
+stub_pid="";
+cleanup() {
+  [ -n "$stub_pid" ] && kill "$stub_pid" 2>/dev/null || true;
+  cp "$orig_run" /etc/sv/crowbar-lever/run;
+  chmod 755 /etc/sv/crowbar-lever/run;
+  rm -rf "$h/.config/opencode" "$h/.local/share/opencode" "$h/.local/state/crowbaros/lever" "$tmp";
+  sv restart /var/service/crowbar-lever >/dev/null 2>&1 || true;
+  pkill -x opencode 2>/dev/null || true;
+};
+trap cleanup EXIT;
+sed 's|--harness-name OpenCode|--harness-name OpenCode --harness-env OPENCODE_DISABLE_MODELS_FETCH=1|' "$orig_run" > /etc/sv/crowbar-lever/run;
+chmod 755 /etc/sv/crowbar-lever/run;
+sv restart /var/service/crowbar-lever >/dev/null;
+"""
+    + wait_in_guest(f"s=$(probe {LEVER_PERSON_SOCKET} \"$u\"); case \"$s\" in 'ok {VERSION_FRAME} '*) true;; *) false;; esac")
+    + """\
+refused_err=$(su -s /bin/sh "$u" -c '/usr/local/bin/crowbar-agent "hello" >/dev/null' 2>&1); rc=$?;
+echo "refused-rc $rc";
+echo "refused-err $(printf '%s' "$refused_err" | tr '\\n' ' ')";
+cat > "$tmp/script.json" <<'SCRIPT'
+{
+  "models": ["stub-1", "stub-2"],
+  "rules": [
+    {
+      "match": "run-whoami",
+      "reasoning": "Checking whoami.",
+      "tool_call": {
+        "name": "shell",
+        "arguments": {"command": "id -un && id -u", "description": "Check current user"}
+      },
+      "after_tool": "Command ran on {model} as: {tool_output}"
+    },
+    {
+      "match": "hello",
+      "reply": "Hello from {model}!"
+    }
+  ],
+  "default_reply": "Stub ({model}): {prompt}"
+}
+SCRIPT
+python3 /usr/local/lib/crowbar-lab/stub-model.py --script "$tmp/script.json" --port-file "$tmp/port" --log "$tmp/stub.jsonl" >/dev/null 2>&1 &
+stub_pid=$!;
+"""
+    + wait_in_guest('[ -s "$tmp/port" ]', seconds=15)
+    + """\
+port=$(cat "$tmp/port");
+install -d -o "$u" -g "$u" -m 700 "$h/.config/opencode";
+cat > "$h/.config/opencode/opencode.json" <<CFG
+{
+  "provider": {
+    "stub": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Stub",
+      "options": {
+        "baseURL": "http://127.0.0.1:$port/v1",
+        "apiKey": "stub-key"
+      },
+      "models": {
+        "stub-1": {"name": "Stub One"},
+        "stub-2": {"name": "Stub Two"}
+      }
+    }
+  },
+  "model": "stub/stub-1",
+  "enabled_providers": ["stub"]
+}
+CFG
+chown "$u:$u" "$h/.config/opencode/opencode.json";
+cfg_before=$(sha256sum "$h/.config/opencode/opencode.json" | awk '{print $1}');
+sv restart /var/service/crowbar-lever >/dev/null;
+"""
+    + wait_in_guest(f"s=$(probe {LEVER_PERSON_SOCKET} \"$u\"); case \"$s\" in 'ok {VERSION_FRAME} '*) true;; *) false;; esac")
+    + """\
+models_out=$(su -s /bin/sh "$u" -c '/usr/local/bin/crowbar-agent models' 2>&1); rc=$?;
+echo "models-rc $rc";
+printf '%s\\n' "$models_out" | sed 's/^/models-out /';
+hello_out=$(su -s /bin/sh "$u" -c '/usr/local/bin/crowbar-agent "hello"' 2>"$tmp/hello.err"); rc=$?;
+echo "hello-rc $rc";
+printf '%s\\n' "$hello_out" | sed 's/^/hello-out /';
+[ "$rc" -ne 0 ] && printf '%s\\n' "$(cat "$tmp/hello.err")" | sed 's/^/hello-err /';
+tid=$(su -s /bin/sh "$u" -c '/usr/local/bin/crowbar-agent --list' | awk 'NR==1{print $1}');
+su -s /bin/sh "$u" -c "/usr/local/bin/crowbar-agent --resume '$tid' --model stub/stub-2" >/dev/null 2>&1;
+echo "set-model-rc $?";
+cmd_out=$(su -s /bin/sh "$u" -c "/usr/local/bin/crowbar-agent --resume '$tid' 'please run-whoami'" 2>"$tmp/cmd.err"); rc=$?;
+echo "cmd-rc $rc";
+printf '%s\\n' "$cmd_out" | sed 's/^/cmd-out /';
+[ "$rc" -ne 0 ] && printf '%s\\n' "$(cat "$tmp/cmd.err")" | sed 's/^/cmd-err /';
+oc_rss=$(ps -C opencode -o rss= 2>/dev/null | awk '{s+=$1; n+=1} END{printf "%d %d", n+0, s+0}');
+echo "opencode-working $oc_rss";
+cfg_after=$(sha256sum "$h/.config/opencode/opencode.json" | awk '{print $1}');
+if [ "$cfg_before" = "$cfg_after" ]; then echo "config-unchanged yes"; else echo "config-unchanged no"; fi;
+trap - EXIT;
+cleanup;
+"""
+    + wait_in_guest(f"s=$(probe {LEVER_PERSON_SOCKET} \"$u\"); case \"$s\" in 'ok {VERSION_FRAME} '*) true;; *) false;; esac")
+    + """\
+if pgrep -x opencode >/dev/null 2>&1; then echo "idle-after running"; else echo "idle-after none"; fi;
+"""
+)
 
 
 # What a booted base must show, as (name, guest command, test on its output).
@@ -1239,6 +1402,15 @@ CHECKS = [
      "test -f /etc/mpv/mpv.conf && echo 'conf yes' || echo 'conf no'; "
      "ldd /usr/bin/mpv",
      lambda out: mpv_defaults_ready(out)),
+    ("OpenCode, ripgrep, and git are on PATH",
+     "echo \"opencode-path $(command -v opencode)\"; "
+     "echo \"opencode-version $(opencode --version)\"; "
+     "echo \"rg-path $(command -v rg)\"; "
+     "echo \"git-path $(command -v git)\"",
+     lambda out: opencode_and_tools_installed(out)),
+    ("OpenCode answers through Lever against the stub Model and runs a command as the person",
+     OPENCODE_STUB_CHECK,
+     lambda out: opencode_stub_turn_ok(out)),
     # ADR 0036 retired the Pi Durable Harness and Node.js: fail if the image
     # still carries any Harness files, Node.js, or the `crowbar-agent` service.
     ("the image holds no Harness, no Node.js, and no crowbar-agent service",
@@ -1305,7 +1477,7 @@ def check():
              f"disk sha256 {hashed['sha256']}", f"login prompt after {to_login:.1f}s", ""]
     failed = 0
     for name, user, command, ok in boot_checks():
-        result = ssh(command, user=user)
+        result = ssh(command, timeout=120, user=user)
         passed = result.returncode == 0 and ok(result.stdout)
         failed += not passed
         lines.append(f"{'PASS' if passed else 'FAIL'}: {name}")

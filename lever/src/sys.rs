@@ -212,7 +212,12 @@ pub fn random_hex(bytes: usize) -> String {
 
 /// Spawns a harness child with piped stdin/stdout and null stderr, arranged
 /// so the kernel sends `SIGTERM` to the child if Lever dies unexpectedly.
-pub fn spawn_harness(program: &str, args: &[String]) -> io::Result<Child> {
+pub fn spawn_harness(
+    program: &str,
+    args: &[String],
+    env_set: &[(String, String)],
+    env_remove: &[&str],
+) -> io::Result<Child> {
     // SAFETY: `getpid` cannot fail.
     let parent_pid = unsafe { libc::getpid() };
     let mut cmd = Command::new(program);
@@ -220,6 +225,12 @@ pub fn spawn_harness(program: &str, args: &[String]) -> io::Result<Child> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    for key in env_remove {
+        cmd.env_remove(key);
+    }
+    for (key, value) in env_set {
+        cmd.env(key, value);
+    }
     // SAFETY: `prctl(PR_SET_PDEATHSIG)`, `getppid`, and `_exit` are
     // async-signal-safe.
     unsafe {

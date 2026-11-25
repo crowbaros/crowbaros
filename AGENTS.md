@@ -74,6 +74,7 @@ sides hold.
 | --- | --- | --- |
 | The compositor check or guest driver in `lab/void/` | `lab/void/compositor_check.py` | The evidence log it writes |
 | The desktop: how `base/` builds or runs the compositor, the shell, Lever, or the apps, or `lever/`, or the desktop check or guest driver in `lab/void/` | `lab/void/desktop_check.py` | The run's `desktop.log` and `results.json` |
+| The pinned version of OpenCode (`opencode_*` in [`base/config.json`](base/config.json)) | `lab/void/desktop_check.py` | The run's `desktop.log` and `results.json` |
 | How the compositor serves clients: [`compositor/`](compositor/README.md) | `lab/void/compositor_check.py` | The evidence log it writes |
 | `apps/` | The app's Void build and run steps in its README | Before and after captures; a short recording for motion |
 
