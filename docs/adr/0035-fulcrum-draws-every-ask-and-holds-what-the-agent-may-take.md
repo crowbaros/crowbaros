@@ -1,6 +1,6 @@
 # Fulcrum draws every ask and holds what the Agent may take
 
-**Status:** proposed on November 21, 2026, by Jim Martin.
+**Status:** withdrawn on November 23, 2026, by Jim Martin, before it was accepted. Proposed on November 21 by Jim Martin. It was written for the Harness of ADR 0034, which [ADR 0036](0036-lever-drives-the-harnesses-a-person-has-and-crowbaros-builds-none.md) replaces. New records will settle how Fulcrum serves Lever, draws the asks, and gives the Agent a pointer, a keyboard, and workspaces. The text below stays as it was proposed.
 
 [ADR 0032](0032-fulcrum-serves-the-shell-and-the-persons-apps.md) settled what Fulcrum offers the shell and the apps, and left what it offers the Agent to Milestone 3. [ADR 0034](0034-pi-durable-runs-the-agent-behind-a-protocol-crowbaros-owns.md) made Pi Durable the Harness, running as the person's account: any program running as the person can pose as it. Fulcrum listens and the Harness connects. The vision needs three things here: the compositor owns the summon gesture, a yes comes from the person's own hand, and the Agent looks at the screen only when the person asks. The glossary has the rest: the summon gesture, the Agent's surface, the mark, shares, allowances, asks, the yes, the modes, and the root helper.
 
