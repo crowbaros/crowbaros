@@ -145,7 +145,8 @@ ACP today:
   stopped subagent reports to the parent session too, so a Stop that leaves
   nothing of the thread working holds until the person's next message: a
   turn the harness begins meanwhile is stopped as it begins, with any
-  subagent it starts, and asks the person nothing. A Stop of one turn leaves
+  subagent it starts, and asks the person nothing. When the record cannot
+  take that turn, the harness is stopped. A Stop of one turn leaves
   an older turn's subagent working, with any subagent it launches, and the
   harness running for them.
 - **Models and their providers.** The Models are the values of the session

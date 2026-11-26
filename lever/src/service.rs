@@ -238,6 +238,8 @@ pub struct Service {
     /// next message: a turn the harness begins on one is stopped as it
     /// begins, as what reports to it was.
     held_stops: HashSet<String>,
+    /// Why the harness is to be stopped once the event in hand is applied.
+    kill_wanted: Option<&'static str>,
     /// The harness session IDs of the subagents heard of since the harness
     /// last started.
     harness_children: HashSet<String>,
@@ -308,6 +310,7 @@ impl Service {
             working_turns: HashMap::new(),
             subagent_threads: HashSet::new(),
             held_stops: HashSet::new(),
+            kill_wanted: None,
             harness_children: HashSet::new(),
             working_subagents: HashMap::new(),
             waiting: HashMap::new(),
@@ -850,6 +853,7 @@ impl Service {
             None => return Effects::default(),
         };
         let mut effects = Effects::default();
+        let pid = self.harness.as_ref().map(AcpHarness::pid);
         for ev in events {
             match ev {
                 AcpEvent::Exited => {
@@ -857,6 +861,14 @@ impl Service {
                     break;
                 }
                 other => effects.extend(self.apply_acp_event(other, log)),
+            }
+            if let Some(why) = self.kill_wanted.take() {
+                effects.extend(self.kill_harness(why, log));
+            }
+            // What came after in the same read was the stopped harness's:
+            // it says nothing of the work Lever has ended.
+            if self.harness.as_ref().map(AcpHarness::pid) != pid {
+                break;
             }
         }
         if self.harness_env_stale && !self.has_active_work() {
@@ -2786,7 +2798,11 @@ impl Service {
                             TurnDispatch::PromptInFlight { .. } | TurnDispatch::HarnessStarted { .. }
                         )
                     });
-                    if prompt_sent {
+                    // While a mode Lever asked for settles, what the harness
+                    // says the mode is goes by: how the change ends says what
+                    // the thread's is.
+                    let settling_mode = self.modes_in_flight.iter().any(|(t, _)| *t == thread_id);
+                    if prompt_sent && !settling_mode {
                         if let Some(active) = self.working_turns.get_mut(&thread_id) {
                             active.mode = mode.clone();
                         }
@@ -4057,8 +4073,15 @@ impl Service {
             None => match self.store.begin_harness_turn(thread_id, now) {
                 Ok(turn) => turn,
                 Err(err) => {
-                    // What the harness says still goes to the newest turn.
                     store_failed(log, &err);
+                    // Under a Stop that holds, what the harness goes on with
+                    // is stopped though it cannot be recorded: with no turn to
+                    // stop, the harness is.
+                    if held {
+                        self.kill_wanted = Some("it went on under a Stop, and Lever could not record a turn for it");
+                        return None;
+                    }
+                    // What the harness says still goes to the newest turn.
                     return self.turn_for_update(thread_id);
                 }
             },

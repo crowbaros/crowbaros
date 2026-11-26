@@ -123,6 +123,14 @@ struct Script {
     /// error, though the harness offers it.
     #[serde(default)]
     refuse_mode: Option<String>,
+    /// With `refuse_mode`: the refusal comes in one write with a word that
+    /// this subagent (a child session ID) still runs.
+    #[serde(default)]
+    refusal_rides_with: Option<String>,
+    /// A mode `session/set_config_option` takes is said in a
+    /// `config_option_update` before the answer.
+    #[serde(default)]
+    mode_update_first: bool,
     /// If true, `session/set_config_option` for an effort is answered with
     /// the effort the session was at, and the new one comes in a
     /// `config_option_update` that follows, as OpenCode does while another
@@ -509,6 +517,12 @@ impl Writer {
         let mut out = self.stdout.lock().unwrap();
         let _ = out.write_all(bytes);
         let _ = out.flush();
+    }
+
+    /// Writes messages in one write, so the reader takes them in one read.
+    fn send_together(&self, values: &[Value]) {
+        let text: String = values.iter().map(|v| format!("{v}\n")).collect();
+        self.send_unfinished(text.as_bytes());
     }
 
     fn send(&self, value: &Value) {
@@ -1914,7 +1928,30 @@ fn run(options: Options) -> Result<(), String> {
                         .map(|v| v.0.as_ref().to_string())
                         .unwrap_or_default();
                     if set_req.config_id.0.as_ref() == "mode" {
-                        if !modes.offered || !modes.has(&val) || script.refuse_mode.as_deref() == Some(val.as_str()) {
+                        let refused = script.refuse_mode.as_deref() == Some(val.as_str());
+                        if refused && let Some(child) = &script.refusal_rides_with {
+                            let error = JsonRpcMessage::wrap(Response::<Value, AcpError>::new(
+                                id,
+                                Err(AcpError::invalid_params().data(json!("unknown mode"))),
+                            ));
+                            writer.send_together(&[
+                                serde_json::to_value(error).expect("serialize error response"),
+                                json!({
+                                    "jsonrpc": "2.0",
+                                    "method": "opencode/session/child_update",
+                                    "params": {
+                                        "rootSessionId": sid,
+                                        "childSessionId": child,
+                                        "parentSessionId": sid,
+                                        "depth": 1,
+                                        "type": "status",
+                                        "status": "running",
+                                    },
+                                }),
+                            ]);
+                            continue;
+                        }
+                        if !modes.offered || !modes.has(&val) || refused {
                             writer.send_error(id, AcpError::invalid_params().data(json!("unknown mode")));
                             continue;
                         }
@@ -1932,6 +1969,12 @@ fn run(options: Options) -> Result<(), String> {
                         .unwrap_or_default();
                         if script.partial_config_replies {
                             opts.retain(|o| o.id.0.as_ref() == "mode");
+                        }
+                        if script.mode_update_first {
+                            writer.send_update(
+                                &set_req.session_id,
+                                SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(opts.clone())),
+                            );
                         }
                         let delay = Duration::from_millis(script.set_config_delay_ms);
                         let writer = writer.clone();

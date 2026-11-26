@@ -8396,3 +8396,153 @@ fn a_mode_the_live_session_refuses_between_turns_leaves_the_thread_as_it_was() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn a_turn_the_record_cannot_take_under_a_held_stop_stops_the_harness() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [{
+                "steps": [
+                    { "kind": "subagent_start", "id": "ses_ran", "title": "Ran", "prompt": "Run" },
+                    { "kind": "subagent_end", "subagent": "ses_ran", "status": "completed" },
+                    { "kind": "text", "text": "Handed off." }
+                ],
+                "after": [
+                    { "kind": "pause_ms", "ms": 800 },
+                    { "kind": "text", "text": "Went on." }
+                ]
+            }]
+        }),
+    );
+    let extra = stub_extra(&script, &["--wake-quiet-ms", "60000"]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    assert_eq!(
+        ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }))["reply"],
+        "ok"
+    );
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    refuse_writes(&db, "INSERT ON turns");
+
+    // The harness goes on, and the record takes no turn for it.
+    wait_until("the harness is stopped", || {
+        ask_lever(&mut peer, json!({ "op": "status" }))["harness_started"] == false
+    });
+    db.execute_batch("DROP TRIGGER refused").unwrap();
+    drop(db);
+    let record = resume(&mut peer, &thread);
+    assert_eq!(record["turns"].as_array().unwrap().len(), 1, "{record}");
+    assert_eq!(record["turns"][0]["answer"], "Handed off.", "{record}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn what_comes_in_one_read_after_the_harness_is_stopped_is_not_taken() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            // The session takes Full access, and refuses to go back to Ask
+            // first, with a word that the subagent runs in the same read.
+            "refuse_mode": "crowbar-ask-first",
+            "refusal_rides_with": "ses_bg",
+            "turns": [{
+                "steps": [
+                    { "kind": "subagent_start", "id": "ses_bg", "title": "Background", "prompt": "Work" },
+                    { "kind": "text", "text": "Handed off." }
+                ],
+                "after": [{ "kind": "subagent_stall", "subagent": "ses_bg" }]
+            }]
+        }),
+    );
+    let extra = stub_extra(&script, &[]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    let mut working = false;
+    read_until(&mut peer, |v| {
+        working |= v["event"] == "subagent" && v["state"] == "working";
+        v["event"] == "done" && v["turn"] == turn
+    });
+    assert!(working, "the subagent was never told of");
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    refuse_writes(&db, "UPDATE OF mode ON threads");
+    let set = ask_lever(
+        &mut peer,
+        json!({ "op": "set-mode", "thread": thread, "mode": "full-access" }),
+    );
+    assert_eq!(set["code"], "storage-error", "{set}");
+    wait_until("the harness is stopped", || {
+        ask_lever(&mut peer, json!({ "op": "status" }))["harness_started"] == false
+    });
+    db.execute_batch("DROP TRIGGER refused").unwrap();
+    drop(db);
+    let listed = ask_lever(&mut peer, json!({ "op": "list" }));
+    assert_eq!(listed["threads"][0]["working"], false, "{listed}");
+    let record = resume(&mut peer, &thread);
+    assert_ne!(record["turns"][0]["subagents"][0]["state"], "working", "{record}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn what_the_harness_says_of_a_mode_that_settles_is_not_told_until_it_has() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "mode_update_first": true,
+            "turns": [{ "steps": [{ "kind": "text", "text": "Done." }] }]
+        }),
+    );
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    refuse_writes(&db, "UPDATE OF mode ON threads");
+    write_frame(
+        &mut peer,
+        &json!({ "op": "set-mode", "thread": thread, "mode": "full-access" }),
+    )
+    .unwrap();
+    let mut told = Vec::new();
+    let reply = read_until(&mut peer, |v| {
+        if v["event"] == "thread-updated" && v.get("mode").is_some() {
+            told.push(v.clone());
+        }
+        v.get("reply").is_some()
+    });
+    assert_eq!(reply["code"], "storage-error", "{reply}");
+    // The session goes back to Ask first, and still nobody is told of Full access.
+    std::thread::sleep(Duration::from_millis(400));
+    write_frame(&mut peer, &json!({ "op": "status" })).unwrap();
+    read_until(&mut peer, |v| {
+        if v["event"] == "thread-updated" && v.get("mode").is_some() {
+            told.push(v.clone());
+        }
+        v["reply"] == "status"
+    });
+    assert!(
+        told.iter().all(|v| v["mode"] == "ask-first"),
+        "a mode the thread does not have was told: {told:?}"
+    );
+    db.execute_batch("DROP TRIGGER refused").unwrap();
+    drop(db);
+    assert_eq!(resume(&mut peer, &thread)["mode"], "ask-first");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
