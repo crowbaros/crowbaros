@@ -7357,3 +7357,37 @@ fn what_a_new_harness_says_after_a_turn_opens_no_harness_turn_for_an_old_harness
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn an_act_a_stopped_harness_turn_closes_spares_the_harness() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = wake_script(
+        &dir.0,
+        json!([
+            { "kind": "text", "text": "Reported." },
+            { "kind": "act", "id": "call_cut", "tool_kind": "command", "title": "long", "status": "in_progress" },
+            { "kind": "pause_ms", "ms": 400 },
+            // The harness closes the act when it stops, and says nothing more.
+            { "kind": "act_update", "id": "call_cut", "status": "failed", "content": "Cancelled" }
+        ]),
+    );
+    let extra = stub_extra(&script, &["--wake-quiet-ms", "60000", "--stop-timeout-ms", "900"]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Look");
+    read_until(&mut peer, |v| {
+        v["event"] == "act" && v["turn"] == turn + 1 && v["state"] == "working"
+    });
+    write_frame(&mut peer, &json!({ "op": "stop", "thread": thread })).unwrap();
+    read_until(&mut peer, |v| {
+        v["event"] == "act" && v["turn"] == turn + 1 && v["state"] == "failed"
+    });
+    read_until(&mut peer, |v| v["event"] == "stopped" && v["turn"] == turn + 1);
+    write_frame(&mut peer, &json!({ "op": "status" })).unwrap();
+    let status = read_until(&mut peer, |v| v["reply"] == "status");
+    assert_eq!(status["harness_started"], true, "{status}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}

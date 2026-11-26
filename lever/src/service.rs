@@ -3738,7 +3738,12 @@ impl Service {
         log: &mut Log,
     ) -> Option<u64> {
         if let Some(active) = self.working_turns.get_mut(thread_id) {
-            if let TurnDispatch::HarnessStarted { last_heard, .. } = &mut active.dispatch {
+            // After a Stop, only what goes on counts as the harness going on:
+            // an act it closes is the Stop going through.
+            let goes_on = opens || active.stop_asked.is_none();
+            if let TurnDispatch::HarnessStarted { last_heard, .. } = &mut active.dispatch
+                && goes_on
+            {
                 *last_heard = Instant::now();
             }
             return Some(active.turn);

@@ -2124,3 +2124,46 @@ fn ctrl_c_while_only_a_subagent_works_stops_it_with_exit_status_130() {
     assert_eq!(running.ended(), 130);
     assert!(running.err.lock().unwrap().contains("[subagent] Linger (stopped)"));
 }
+
+#[test]
+fn ctrl_c_once_a_newer_turn_ended_stops_an_older_turns_subagent() {
+    let lab = Lab::with_script(json!({
+        "turns": [
+            {
+                "match": "first",
+                "steps": [
+                    { "kind": "subagent_start", "id": "ses_cli_older", "title": "Older", "prompt": "Wait" },
+                    { "kind": "text", "text": "Started." }
+                ],
+                "after": [{ "kind": "subagent_stall", "subagent": "ses_cli_older" }]
+            },
+            { "match": "second", "steps": [{ "kind": "pause_ms", "ms": 1200 }, { "kind": "text", "text": "Second." }] }
+        ]
+    }));
+    // Turn 1 leaves its subagent working, and turn 2 is working: neither
+    // client that sent them stops them by leaving.
+    let first = Running::start(lab.agent(&["first"]));
+    first.wait_for_err("[subagent] Older (working)");
+    first.signal(libc::SIGTERM);
+    let thread = only_thread(&lab);
+    let second = Running::start(lab.agent(&["--resume", &thread, "second"]));
+    std::thread::sleep(Duration::from_millis(200));
+    second.signal(libc::SIGTERM);
+
+    // Resumed, the thread is watched through turn 2's end, and on, for
+    // turn 1's subagent. Ctrl-C then stops that subagent, and the prompt
+    // comes back.
+    let (mut keys, screen) = terminal();
+    let mut shown = lab.agent(&["--resume", &thread]);
+    shown.stdin(screen);
+    let mut shown = Running::start(shown);
+    shown.wait_for_out("Second.");
+    std::thread::sleep(Duration::from_millis(200));
+    shown.signal(libc::SIGINT);
+    shown.wait_for_err("[subagent] Older (stopped)");
+    assert!(!lab.run(&["--list"], "").out.contains("(working)"));
+    keys.write_all(&[0x04]).expect("Ctrl-D");
+    wait_for("the client to leave", || {
+        shown.child.try_wait().expect("try_wait").is_some()
+    });
+}
