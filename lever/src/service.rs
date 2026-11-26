@@ -2,7 +2,7 @@
 //! ACP harness lifecycle (including the idle timer), active turns across
 //! concurrent threads, and Lever's wire messages.
 
-use crate::acp::{self, AcpEvent, AcpHarness, HarnessConfig, ModelCatalog, TurnOutcome};
+use crate::acp::{self, AcpEvent, AcpHarness, EffortOption, HarnessCommand, HarnessConfig, ModelCatalog, TurnOutcome};
 use crate::channel::LEVER_VERSION;
 use crate::fulcrum;
 use crate::log::{Event, Log};
@@ -12,7 +12,7 @@ use crate::store::{
 };
 use crate::sys;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -85,6 +85,7 @@ enum TurnDispatch {
     WaitingForInit,
     WaitingForSession,
     WaitingForModel,
+    WaitingForEffort,
     WaitingForMode,
     PromptInFlight { session_id: String },
 }
@@ -96,6 +97,9 @@ struct WorkingTurn {
     cwd: String,
     existing_session_id: Option<String>,
     desired_model: Option<String>,
+    /// The thread's effort, which the session is set to before the prompt
+    /// when its Model offers it.
+    desired_effort: Option<String>,
     /// The thread's mode, which the session is set to before the prompt.
     mode: String,
     dispatch: TurnDispatch,
@@ -170,9 +174,27 @@ pub struct Service {
     activity: (Vec<String>, Vec<String>),
     pending_models: Vec<u64>,
     pending_set_models: Vec<PendingSetModel>,
+    /// The effort levels of each Model, as the harness now running said them.
+    /// A Model with none has an empty list.
+    efforts: HashMap<String, Vec<EffortOption>>,
+    /// Peers that wait for a Model's effort levels.
+    pending_efforts: Vec<(u64, String)>,
+    /// The commands the harness last reported for a session Lever opened to
+    /// read what it offers, and those each thread's session last reported.
+    commands: Option<Vec<HarnessCommand>>,
+    thread_commands: HashMap<String, Vec<HarnessCommand>>,
+    /// Whether the running harness has already completed a probe for what it
+    /// offers, so polling `commands` does not re-probe when a harness sends
+    /// no `available_commands_update`.
+    commands_probed: bool,
+    /// Threads whose effort was saved via `set-effort` while idle and has not
+    /// yet been applied to the harness session on the next turn.
+    pending_effort_threads: HashSet<String>,
+    /// What the harness offers is to be read once it is initialized.
+    probe_wanted: bool,
     /// Threads whose turn was stopped while the harness set the session's
-    /// mode. Each stays working until the harness answers, so no turn after
-    /// it runs in a mode it did not ask for.
+    /// mode or effort. Each stays working until the harness answers, so no
+    /// turn after it runs in a mode it did not ask for.
     /// When Lever stopped each turn, so a harness that never answers is
     /// ended after `stop_timeout`, as one that ignores a Stop is.
     modes_in_flight: Vec<(String, Instant)>,
@@ -206,6 +228,13 @@ impl Service {
             activity: (Vec::new(), Vec::new()),
             pending_models: Vec::new(),
             pending_set_models: Vec::new(),
+            efforts: HashMap::new(),
+            pending_efforts: Vec::new(),
+            commands: None,
+            thread_commands: HashMap::new(),
+            commands_probed: false,
+            pending_effort_threads: HashSet::new(),
+            probe_wanted: false,
             modes_in_flight: Vec::new(),
             unsaved_endings: Vec::new(),
             unsaved_request_ends: Vec::new(),
@@ -229,7 +258,21 @@ impl Service {
             || !self.waiting.is_empty()
             || !self.pending_models.is_empty()
             || !self.pending_set_models.is_empty()
+            || !self.pending_efforts.is_empty()
             || !self.modes_in_flight.is_empty()
+            || self.probe_wanted
+            || self.harness.as_ref().is_some_and(AcpHarness::probing_models)
+    }
+
+    /// Whether Lever is still setting a thread's session to what the thread
+    /// asks: until it has, what the harness says the session is at is not
+    /// the thread's.
+    fn settling(&self, thread_id: &str) -> bool {
+        self.working_turns
+            .get(thread_id)
+            .is_some_and(|active| !matches!(active.dispatch, TurnDispatch::PromptInFlight { .. }))
+            || self.pending_set_models.iter().any(|p| p.thread_id == thread_id)
+            || self.modes_in_flight.iter().any(|(t, _)| t == thread_id)
     }
 
     /// Whether a thread is busy: a turn works on it, or the harness has yet
@@ -412,6 +455,7 @@ impl Service {
     /// until the harness answers, with `peer_id` cleared so no reply is sent.
     pub fn on_peer_gone(&mut self, peer_id: u64) {
         self.pending_models.retain(|&id| id != peer_id);
+        self.pending_efforts.retain(|(id, _)| *id != peer_id);
         self.pending_set_models.retain_mut(|p| {
             if p.peer_id == Some(peer_id) {
                 if p.in_flight_on_session {
@@ -466,6 +510,9 @@ impl Service {
                 self.handle_set_free_models(value, log)
             }
             "set-model" => self.handle_set_model(peer_id, value, log),
+            "commands" => self.handle_commands(value, log),
+            "efforts" => self.handle_efforts(peer_id, value, log),
+            "set-effort" => self.handle_set_effort(value, log),
             _ => error_outcome("unsupported", "This request is not supported."),
         }
     }
@@ -663,6 +710,7 @@ impl Service {
         if let Some(h) = self.harness.as_mut() {
             h.forget_session(thread);
         }
+        self.thread_commands.remove(thread);
         RequestOutcome {
             reply: Some(json!({"reply":"deleted", "thread":thread, "warning":warning})),
             subscribe: None,
@@ -805,6 +853,225 @@ impl Service {
         }
     }
 
+    /// Has the harness say what it offers, starting it if need be: its
+    /// Models, its modes, and the commands that follow.
+    fn read_what_the_harness_offers(&mut self, log: &mut Log) {
+        if self.harness.is_none() && self.start_harness(log).is_err() {
+            return;
+        }
+        self.idle_since = None;
+        match self.harness.as_mut() {
+            Some(harness) if harness.is_initialized() => harness.probe_models(&default_cwd()),
+            _ => self.probe_wanted = true,
+        }
+    }
+
+    fn handle_commands(&mut self, value: &Value, log: &mut Log) -> RequestOutcome {
+        let thread_id = match value.get("thread") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) if !s.is_empty() => Some(s.as_str()),
+            _ => return error_outcome("invalid-request", "Expected thread to be a string or null."),
+        };
+        if self.harness_config.is_none() {
+            return error_outcome("no-harness", "No harness is available.");
+        }
+        if let Some(tid) = thread_id {
+            match self.store.thread_meta(tid) {
+                Ok(Some(_)) => {}
+                Ok(None) => return error_outcome("no-thread", &format!("There is no thread {tid}.")),
+                Err(err) => return error_outcome("storage-error", &err),
+            }
+        }
+        let known = thread_id
+            .and_then(|tid| self.thread_commands.get(tid))
+            .or(self.commands.as_ref());
+        let mut reply = json!({
+            "reply": "commands",
+            "known": known.is_some(),
+            "commands": commands_json(known.map(Vec::as_slice).unwrap_or(&[])),
+        });
+        if let Some(tid) = thread_id {
+            reply["thread"] = json!(tid);
+        }
+        // What the harness offers is not known yet: it is asked once, and the
+        // answer comes as a `commands` event to whoever watches.
+        let probing = self.probe_wanted || self.harness.as_ref().is_some_and(AcpHarness::probing_models);
+        if known.is_none() && !self.commands_probed && !probing && !self.harness_env_stale {
+            self.read_what_the_harness_offers(log);
+        }
+        RequestOutcome {
+            reply: Some(reply),
+            subscribe: None,
+            broadcasts: Vec::new(),
+        }
+    }
+
+    fn handle_efforts(&mut self, peer_id: u64, value: &Value, log: &mut Log) -> RequestOutcome {
+        let Some(model) = value
+            .get("model")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+        else {
+            return error_outcome("invalid-request", "Expected a non-empty string model field.");
+        };
+        if self.harness_config.is_none() {
+            return error_outcome("no-harness", "No harness is available.");
+        }
+        if self.harness_env_stale {
+            return error_outcome(
+                "working",
+                "Lever is restarting the harness after the free hosted Models setting changed; try again when active turns finish.",
+            );
+        }
+        if let Some(levels) = self.efforts.get(model) {
+            return RequestOutcome {
+                reply: Some(efforts_reply_json(model, levels)),
+                subscribe: None,
+                broadcasts: Vec::new(),
+            };
+        }
+        if let Some(catalog) = &self.model_catalog
+            && catalog.supported
+            && !catalog.models.is_empty()
+            && !catalog.models.iter().any(|m| m.id == model)
+        {
+            return error_outcome("invalid-model", &format!("The harness does not offer Model {model}."));
+        }
+        if self.harness.is_none()
+            && let Err(err) = self.start_harness(log)
+        {
+            return error_outcome("harness-error", &err);
+        }
+        self.idle_since = None;
+        self.pending_efforts.push((peer_id, model.to_string()));
+        if let Some(harness) = self.harness.as_mut()
+            && harness.is_initialized()
+        {
+            harness.probe_efforts(&default_cwd(), model);
+        }
+        RequestOutcome {
+            reply: None,
+            subscribe: None,
+            broadcasts: Vec::new(),
+        }
+    }
+
+    /// Whether `effort` is one a thread on `model` can take: a level of the
+    /// Model, where Lever knows the Model's levels. One it does not know is
+    /// let through, and the harness decides when the turn sets it.
+    fn check_effort(&self, model: Option<&str>, effort: &str) -> Result<(), RequestOutcome> {
+        let model = model.or_else(|| self.model_catalog.as_ref().and_then(|c| c.default_model.as_deref()));
+        if let Some(levels) = model.and_then(|m| self.efforts.get(m))
+            && !levels.iter().any(|level| level.id == effort)
+        {
+            return Err(error_outcome(
+                "invalid-effort",
+                &format!("This thread's Model does not offer the effort {effort}."),
+            ));
+        }
+        Ok(())
+    }
+
+    fn handle_set_effort(&mut self, value: &Value, log: &mut Log) -> RequestOutcome {
+        let Some(thread_id) = value.get("thread").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
+            return error_outcome("invalid-request", "Expected a non-empty string thread field.");
+        };
+        let effort = match value.get("effort") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) if !s.trim().is_empty() => Some(s.as_str()),
+            _ => return error_outcome("invalid-request", "Expected effort to be a non-empty string or null."),
+        };
+        self.save_endings();
+        let model = match self.store.thread_meta(thread_id) {
+            Ok(Some(meta)) => {
+                if meta.working_turn.is_some() || self.thread_busy(thread_id) {
+                    return error_outcome("working", "This thread is already working on a turn.");
+                }
+                meta.model
+            }
+            Ok(None) => return error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
+            Err(err) => return error_outcome("storage-error", &err),
+        };
+        if let Some(effort) = effort
+            && let Err(outcome) = self.check_effort(model.as_deref(), effort)
+        {
+            return outcome;
+        }
+        if let Err(err) = self.store.set_thread_effort(thread_id, effort, unix_now()) {
+            store_failed(log, &err);
+            return error_outcome("storage-error", &err);
+        }
+        self.pending_effort_threads.insert(thread_id.to_string());
+        RequestOutcome {
+            reply: Some(json!({ "reply": "effort-set", "thread": thread_id, "effort": effort })),
+            subscribe: None,
+            broadcasts: vec![Broadcast {
+                thread_id: thread_id.to_string(),
+                message: json!({ "event": "thread-updated", "thread": thread_id, "effort": effort }),
+            }],
+        }
+    }
+
+    /// The event that tells who watches a thread its Model, when the record
+    /// has another. Asked before the Model is saved.
+    fn model_changes(&self, thread_id: &str, model: &str) -> Option<Broadcast> {
+        match self.store.thread_meta(thread_id) {
+            Ok(Some(meta)) if meta.model.as_deref() != Some(model) => Some(Broadcast {
+                thread_id: thread_id.to_string(),
+                message: json!({ "event": "thread-updated", "thread": thread_id, "model": model }),
+            }),
+            _ => None,
+        }
+    }
+
+    /// Saves a thread's effort where the record has another, and tells who
+    /// watches the thread.
+    fn save_effort(&mut self, thread_id: &str, effort: Option<&str>, log: &mut Log) -> Vec<Broadcast> {
+        match self.store.thread_meta(thread_id) {
+            Ok(Some(meta)) if meta.effort.as_deref() != effort => {}
+            _ => return Vec::new(),
+        }
+        if let Err(err) = self.store.set_thread_effort(thread_id, effort, unix_now()) {
+            self.could_not_save(thread_id, &err, log);
+            return Vec::new();
+        }
+        vec![Broadcast {
+            thread_id: thread_id.to_string(),
+            message: json!({ "event": "thread-updated", "thread": thread_id, "effort": effort }),
+        }]
+    }
+
+    /// Keeps what the harness says of a thread's session: the effort levels
+    /// of its Model, and the effort it is at. That effort is the thread's,
+    /// unless the turn that waits has one of its own the Model offers, which
+    /// it sets before its prompt.
+    fn mirror_effort(&mut self, thread_id: &str, log: &mut Log) -> Vec<Broadcast> {
+        let Some(harness) = self.harness.as_ref() else {
+            return Vec::new();
+        };
+        let Some(session_id) = harness.session_for_thread(thread_id) else {
+            return Vec::new();
+        };
+        let selector = harness.session_effort(session_id).cloned();
+        if let Some(model) = harness.session_current_model(session_id) {
+            self.efforts.insert(
+                model.to_string(),
+                selector.as_ref().map(|s| s.options.clone()).unwrap_or_default(),
+            );
+        }
+        let wanted = self
+            .working_turns
+            .get(thread_id)
+            .filter(|active| !matches!(active.dispatch, TurnDispatch::PromptInFlight { .. }))
+            .and_then(|active| active.desired_effort.clone());
+        let effort = match (&selector, wanted) {
+            (Some(selector), Some(wanted)) if selector.offers(&wanted) => Some(wanted),
+            (Some(selector), _) => Some(selector.current.clone()),
+            (None, _) => None,
+        };
+        self.save_effort(thread_id, effort.as_deref(), log)
+    }
+
     fn handle_set_free_models(&mut self, value: &Value, log: &mut Log) -> RequestOutcome {
         let Some(enabled) = value.get("enabled").and_then(Value::as_bool) else {
             return error_outcome("invalid-request", "Expected a boolean enabled field.");
@@ -940,9 +1207,15 @@ impl Service {
         if !catalog.models.iter().any(|m| m.id == model) {
             return error_outcome("invalid-model", &format!("The harness does not offer Model {model}."));
         }
+        let mut broadcasts: Vec<Broadcast> = self.model_changes(thread_id, model).into_iter().collect();
         if let Err(err) = self.store.set_thread_model(thread_id, model, unix_now()) {
             store_failed(log, &err);
             return error_outcome("storage-error", &err);
+        }
+        // An effort is a level of one Model: another Model begins at its own.
+        if !broadcasts.is_empty() {
+            self.pending_effort_threads.remove(thread_id);
+            broadcasts.extend(self.save_effort(thread_id, None, log));
         }
         RequestOutcome {
             reply: Some(json!({
@@ -951,7 +1224,7 @@ impl Service {
                 "model": model,
             })),
             subscribe: None,
-            broadcasts: Vec::new(),
+            broadcasts,
         }
     }
 
@@ -985,6 +1258,11 @@ impl Service {
                 Err(outcome) => return outcome,
             },
             _ => return error_outcome("invalid-request", "Expected mode to be a string or null."),
+        };
+        let requested_effort = match value.get("effort") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) if !s.trim().is_empty() => Some(s.as_str()),
+            _ => return error_outcome("invalid-request", "Expected effort to be a non-empty string or null."),
         };
 
         let Some(harness_name) = self.harness_config.as_ref().map(|c| c.name.clone()) else {
@@ -1022,32 +1300,56 @@ impl Service {
         let now = unix_now();
         let title = initial_title(text);
         let mut mode_changed = false;
-        let (thread_id, cwd, existing_session_id, desired_model, mode, new_thread) = if let Some(tid) = requested_thread
-        {
-            match self.store.thread_meta(tid) {
-                Ok(Some(meta)) => {
-                    if meta.working_turn.is_some() || self.thread_busy(tid) {
-                        return error_outcome("working", "This thread is already working on a turn.");
+        let mut effort_changed = requested_effort.is_some();
+        let (thread_id, cwd, existing_session_id, desired_model, desired_effort, mode, new_thread) =
+            if let Some(tid) = requested_thread {
+                match self.store.thread_meta(tid) {
+                    Ok(Some(meta)) => {
+                        if meta.working_turn.is_some() || self.thread_busy(tid) {
+                            return error_outcome("working", "This thread is already working on a turn.");
+                        }
+                        mode_changed = requested_mode.is_some_and(|m| m != meta.mode);
+                        effort_changed = requested_effort.is_some_and(|e| meta.effort.as_deref() != Some(e));
+                        let model = requested_model
+                            .map(str::to_string)
+                            .or(meta.model)
+                            .or_else(|| self.model_catalog.as_ref().and_then(|c| c.default_model.clone()));
+                        let effort = requested_effort.map(str::to_string).or(meta.effort);
+                        let mode = requested_mode.map(str::to_string).unwrap_or(meta.mode);
+                        (
+                            tid.to_string(),
+                            meta.cwd,
+                            meta.harness_session_id,
+                            model,
+                            effort,
+                            mode,
+                            false,
+                        )
                     }
-                    mode_changed = requested_mode.is_some_and(|m| m != meta.mode);
-                    let model = requested_model
-                        .map(str::to_string)
-                        .or(meta.model)
-                        .or_else(|| self.model_catalog.as_ref().and_then(|c| c.default_model.clone()));
-                    let mode = requested_mode.map(str::to_string).unwrap_or(meta.mode);
-                    (tid.to_string(), meta.cwd, meta.harness_session_id, model, mode, false)
+                    Ok(None) => return error_outcome("no-thread", &format!("There is no thread {tid}.")),
+                    Err(err) => return error_outcome("storage-error", &err),
                 }
-                Ok(None) => return error_outcome("no-thread", &format!("There is no thread {tid}.")),
-                Err(err) => return error_outcome("storage-error", &err),
-            }
-        } else {
-            let tid = format!("t-{}", sys::random_hex(6));
-            let cwd = requested_cwd.map(str::to_string).unwrap_or_else(default_cwd);
-            let mode = requested_mode
-                .map(str::to_string)
-                .unwrap_or_else(|| self.default_mode());
-            (tid, cwd, None, requested_model.map(str::to_string), mode, true)
-        };
+            } else {
+                let tid = format!("t-{}", sys::random_hex(6));
+                let cwd = requested_cwd.map(str::to_string).unwrap_or_else(default_cwd);
+                let mode = requested_mode
+                    .map(str::to_string)
+                    .unwrap_or_else(|| self.default_mode());
+                (
+                    tid,
+                    cwd,
+                    None,
+                    requested_model.map(str::to_string),
+                    requested_effort.map(str::to_string),
+                    mode,
+                    true,
+                )
+            };
+        if let Some(effort) = requested_effort
+            && let Err(outcome) = self.check_effort(desired_model.as_deref(), effort)
+        {
+            return outcome;
+        }
 
         // Messages from the Agent's surface carry desktop context fetched from
         // Fulcrum (active window title/app_id, windows by workspace, displays —
@@ -1103,6 +1405,12 @@ impl Service {
                 message: json!({ "event": "thread-updated", "thread": thread_id, "mode": mode }),
             });
         }
+        // The effort a message asks for is the thread's from this turn on.
+        // Where the thread's Model turns out not to offer it, the thread
+        // takes the effort the harness has it at.
+        if effort_changed {
+            broadcasts.extend(self.save_effort(&thread_id, requested_effort, log));
+        }
         broadcasts.push(Broadcast {
             thread_id: thread_id.clone(),
             message: msg_event,
@@ -1118,6 +1426,7 @@ impl Service {
                 cwd: cwd.clone(),
                 existing_session_id: existing_session_id.clone(),
                 desired_model,
+                desired_effort,
                 mode,
                 dispatch: TurnDispatch::WaitingForInit,
                 unsaved: false,
@@ -1212,9 +1521,9 @@ impl Service {
                 }
                 Vec::new()
             }
-            TurnDispatch::WaitingForMode => {
-                // The mode is being set on the session, and the prompt is
-                // not sent: the turn ends now. Its session is the thread's
+            TurnDispatch::WaitingForMode | TurnDispatch::WaitingForEffort => {
+                // The mode, or the effort, is being set on the session, and
+                // the prompt is not sent: the turn ends now. Its session is the thread's
                 // still, and the thread stays busy until the harness answers,
                 // so the next turn knows which mode the session is in.
                 let turn = active.turn;
@@ -1453,6 +1762,7 @@ impl Service {
         );
         self.harness = Some(harness);
         self.model_catalog = None;
+        self.efforts.clear();
         self.harness_env_stale = false;
         Ok(())
     }
@@ -1469,6 +1779,12 @@ impl Service {
             let _ = log.write(Event::Harness, &format!("stopped {name} (process {pid}) {reason}"));
         }
         self.model_catalog = None;
+        self.efforts.clear();
+        self.commands = None;
+        self.thread_commands.clear();
+        self.commands_probed = false;
+        self.pending_effort_threads.clear();
+        self.probe_wanted = false;
         self.harness_env_stale = false;
         self.idle_since = None;
     }
@@ -1518,10 +1834,23 @@ impl Service {
         let Some(session_id) = harness.session_for_thread(thread_id).map(str::to_string) else {
             return;
         };
+        // The thread's effort, where the session's Model offers it and the
+        // session is at another. One the Model does not offer is not asked.
+        let effort = active.desired_effort.as_deref().filter(|wanted| {
+            harness
+                .session_effort(&session_id)
+                .is_some_and(|selector| selector.offers(wanted) && selector.current != *wanted)
+        });
+        if let Some(effort) = effort {
+            harness.set_session_effort(thread_id, active.turn, &session_id, effort);
+            active.dispatch = TurnDispatch::WaitingForEffort;
+            return;
+        }
         if harness.has_modes() && harness.session_current_mode(&session_id) != Some(active.mode.as_str()) {
             harness.set_session_mode(thread_id, active.turn, &session_id, &active.mode);
             active.dispatch = TurnDispatch::WaitingForMode;
         } else {
+            self.pending_effort_threads.remove(thread_id);
             harness.send_prompt(
                 thread_id,
                 active.turn,
@@ -1546,10 +1875,16 @@ impl Service {
                 for tid in waiting {
                     self.dispatch_turn(&tid);
                 }
-                let needs_probe =
-                    !self.pending_models.is_empty() || self.pending_set_models.iter().any(|p| !p.in_flight_on_session);
+                let needs_probe = std::mem::take(&mut self.probe_wanted)
+                    || !self.pending_models.is_empty()
+                    || self.pending_set_models.iter().any(|p| !p.in_flight_on_session);
                 if needs_probe && let Some(harness) = self.harness.as_mut() {
                     harness.probe_models(&default_cwd());
+                }
+                if let Some(harness) = self.harness.as_mut() {
+                    for (_, model) in &self.pending_efforts {
+                        harness.probe_efforts(&default_cwd(), model);
+                    }
                 }
                 self.dispatch_deletes()
             }
@@ -1614,6 +1949,7 @@ impl Service {
                             } else {
                                 let outcome =
                                     self.finish_set_model_with_catalog(&item.thread_id, &item.model, &catalog, log);
+                                effects.broadcasts.extend(outcome.broadcasts);
                                 if let (Some(peer_id), Some(reply)) = (item.peer_id, outcome.reply) {
                                     effects.replies.push(PeerReply {
                                         peer_id,
@@ -1624,6 +1960,7 @@ impl Service {
                             }
                         }
                         self.pending_set_models = remaining;
+                        self.commands_probed = true;
                         self.update_model_catalog(catalog, true);
                     }
                     Err(msg) => {
@@ -1710,11 +2047,14 @@ impl Service {
                         harness.set_session_model(&thread_id, Some(active.turn), &session_id, &model);
                         active.dispatch = TurnDispatch::WaitingForModel;
                     } else {
-                        if let Some(ref model) = current_model
-                            && let Err(err) = self.store.set_thread_model(&thread_id, model, unix_now())
-                        {
-                            store_failed(log, &err);
+                        if let Some(ref model) = current_model {
+                            let changes = self.model_changes(&thread_id, model);
+                            match self.store.set_thread_model(&thread_id, model, unix_now()) {
+                                Ok(()) => effects.broadcasts.extend(changes),
+                                Err(err) => store_failed(log, &err),
+                            }
                         }
+                        effects.broadcasts.extend(self.mirror_effort(&thread_id, log));
                         self.continue_turn(&thread_id);
                     }
                 }
@@ -1762,6 +2102,7 @@ impl Service {
                         return effects;
                     }
                 }
+                let changes = self.model_changes(&thread_id, &model);
                 if let Err(err) = self.store.set_thread_model(&thread_id, &model, unix_now()) {
                     store_failed(log, &err);
                     if let Some(t) = turn {
@@ -1784,10 +2125,13 @@ impl Service {
                     }
                     return effects;
                 }
+                effects.broadcasts.extend(changes);
+                self.pending_effort_threads.remove(&thread_id);
                 if let Some(t) = turn {
                     if self.working_turns.get(&thread_id).is_some_and(|active| {
                         active.turn == t && matches!(active.dispatch, TurnDispatch::WaitingForModel)
                     }) {
+                        effects.broadcasts.extend(self.mirror_effort(&thread_id, log));
                         self.continue_turn(&thread_id);
                     }
                 } else if let Some(pos) = self
@@ -1796,6 +2140,7 @@ impl Service {
                     .position(|p| p.in_flight_on_session && p.thread_id == thread_id)
                 {
                     let item = self.pending_set_models.remove(pos);
+                    effects.broadcasts.extend(self.mirror_effort(&thread_id, log));
                     if let Some(peer_id) = item.peer_id {
                         effects.replies.push(PeerReply {
                             peer_id,
@@ -1851,16 +2196,40 @@ impl Service {
                 catalog,
                 current_model,
                 current_mode,
+                effort_changed,
             } => {
                 if let Some(catalog) = catalog {
                     self.update_model_catalog(catalog, false);
                 }
-                if let Some(model) = current_model
-                    && let Err(err) = self.store.set_thread_model(&thread_id, &model, unix_now())
+                if let Some(harness) = self.harness.as_ref()
+                    && let Some(session_id) = harness.session_for_thread(&thread_id)
+                    && let Some(model) = harness.session_current_model(session_id)
+                    && let Some(selector) = harness.session_effort(session_id)
                 {
-                    store_failed(log, &err);
+                    self.efforts.insert(model.to_string(), selector.options.clone());
                 }
                 let mut effects = Effects::default();
+                // What the harness says the session is at is the thread's,
+                // once Lever has set the session to what the thread asks.
+                // A `set-effort` saved while idle stays pending until the next
+                // turn applies it, unless the session switched Models.
+                if !self.settling(&thread_id) {
+                    let mut model_changed = false;
+                    if let Some(model) = current_model {
+                        let changes = self.model_changes(&thread_id, &model);
+                        model_changed = changes.is_some();
+                        match self.store.set_thread_model(&thread_id, &model, unix_now()) {
+                            Ok(()) => effects.broadcasts.extend(changes),
+                            Err(err) => store_failed(log, &err),
+                        }
+                    }
+                    if model_changed {
+                        self.pending_effort_threads.remove(&thread_id);
+                        effects.broadcasts.extend(self.mirror_effort(&thread_id, log));
+                    } else if effort_changed && !self.pending_effort_threads.contains(&thread_id) {
+                        effects.broadcasts.extend(self.mirror_effort(&thread_id, log));
+                    }
+                }
                 // The harness changed the session's mode itself: the thread
                 // is in that mode now. A turn that has yet to send its prompt
                 // sets its own mode on the session still, and keeps it.
@@ -1906,6 +2275,100 @@ impl Service {
                     broadcasts: self.fail_turn(&thread_id, turn, &message, log),
                     replies: Vec::new(),
                 }
+            }
+            AcpEvent::EffortSet { thread_id, turn } => {
+                self.pending_effort_threads.remove(&thread_id);
+                if self
+                    .working_turns
+                    .get(&thread_id)
+                    .is_some_and(|a| a.turn == turn && matches!(a.dispatch, TurnDispatch::WaitingForEffort))
+                {
+                    self.continue_turn(&thread_id);
+                } else {
+                    self.modes_in_flight.retain(|(t, _)| *t != thread_id);
+                }
+                Effects::default()
+            }
+            AcpEvent::EffortSetFailed {
+                thread_id,
+                turn,
+                message,
+            } => {
+                self.pending_effort_threads.remove(&thread_id);
+                self.modes_in_flight.retain(|(t, _)| *t != thread_id);
+                let mut broadcasts = self.fail_turn(&thread_id, turn, &message, log);
+                // The thread is at the effort the harness has it at, not the
+                // one it refused, so the next turn does not ask for it again.
+                broadcasts.extend(self.mirror_effort(&thread_id, log));
+                Effects {
+                    broadcasts,
+                    replies: Vec::new(),
+                }
+            }
+            AcpEvent::EffortsProbed { model, result } => {
+                let mut effects = Effects::default();
+                let waiting: Vec<u64> = self
+                    .pending_efforts
+                    .iter()
+                    .filter(|(_, wanted)| *wanted == model)
+                    .map(|(peer_id, _)| *peer_id)
+                    .collect();
+                self.pending_efforts.retain(|(_, wanted)| *wanted != model);
+                if self.harness_env_stale {
+                    let msg = "Lever is restarting the harness after the free hosted Models setting changed; try again when active turns finish.";
+                    for peer_id in waiting {
+                        effects.replies.push(PeerReply {
+                            peer_id,
+                            message: error_json("working", msg),
+                            subscribe: None,
+                        });
+                    }
+                    return effects;
+                }
+                let message = match result {
+                    Ok(levels) => {
+                        let reply = efforts_reply_json(&model, &levels);
+                        self.efforts.insert(model, levels);
+                        reply
+                    }
+                    Err(message) => error_json("harness-error", &message),
+                };
+                for peer_id in waiting {
+                    effects.replies.push(PeerReply {
+                        peer_id,
+                        message: message.clone(),
+                        subscribe: None,
+                    });
+                }
+                effects
+            }
+            AcpEvent::Commands { thread_id, commands } => {
+                let mut effects = Effects::default();
+                match thread_id {
+                    Some(thread_id) => {
+                        if self.thread_commands.get(&thread_id) != Some(&commands) {
+                            effects.broadcasts.push(Broadcast {
+                                thread_id: thread_id.clone(),
+                                message: json!({
+                                    "event": "commands",
+                                    "thread": thread_id,
+                                    "commands": commands_json(&commands),
+                                }),
+                            });
+                            self.thread_commands.insert(thread_id, commands);
+                        }
+                    }
+                    None => {
+                        if self.commands.as_ref() != Some(&commands) {
+                            effects.broadcasts.push(Broadcast {
+                                thread_id: ACTIVITY.to_string(),
+                                message: json!({ "event": "commands", "commands": commands_json(&commands) }),
+                            });
+                            self.commands = Some(commands);
+                        }
+                    }
+                }
+                effects
             }
             AcpEvent::PermissionRequested {
                 thread_id,
@@ -2117,6 +2580,13 @@ impl Service {
                 });
             }
         }
+        for (peer_id, _) in self.pending_efforts.drain(..) {
+            replies.push(PeerReply {
+                peer_id,
+                message: error_json("harness-error", message),
+                subscribe: None,
+            });
+        }
         replies
     }
 
@@ -2242,6 +2712,12 @@ impl Service {
     /// interrupted.
     fn after_harness_gone(&mut self, why: &str, log: &mut Log) -> Effects {
         self.model_catalog = None;
+        self.efforts.clear();
+        self.commands = None;
+        self.thread_commands.clear();
+        self.commands_probed = false;
+        self.pending_effort_threads.clear();
+        self.probe_wanted = false;
         self.harness_env_stale = false;
         self.idle_since = None;
 
@@ -2434,7 +2910,14 @@ fn models_reply_json(catalog: &ModelCatalog, free_hosted_models: bool) -> Value 
     let models: Vec<Value> = catalog
         .models
         .iter()
-        .map(|m| json!({ "id": m.id, "name": m.name }))
+        .map(|m| {
+            let mut model = json!({ "id": m.id, "name": m.name });
+            if let Some((id, name)) = &m.provider {
+                model["provider"] = json!(id);
+                model["provider_name"] = json!(name);
+            }
+            model
+        })
         .collect();
     json!({
         "reply": "models",
@@ -2448,6 +2931,30 @@ fn models_reply_json(catalog: &ModelCatalog, free_hosted_models: bool) -> Value 
             .map(|m| json!({ "id": m, "name": acp::mode_name(m).unwrap_or(m) }))
             .collect::<Vec<_>>(),
     })
+}
+
+fn efforts_reply_json(model: &str, levels: &[EffortOption]) -> Value {
+    json!({
+        "reply": "efforts",
+        "model": model,
+        "efforts": levels
+            .iter()
+            .map(|level| json!({ "id": level.id, "name": level.name }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn commands_json(commands: &[HarnessCommand]) -> Vec<Value> {
+    commands
+        .iter()
+        .map(|command| {
+            let mut entry = json!({ "name": command.name, "description": command.description });
+            if let Some(hint) = &command.hint {
+                entry["hint"] = json!(hint);
+            }
+            entry
+        })
+        .collect()
 }
 
 fn thread_summary_json(t: &ThreadSummary) -> Value {
@@ -2467,6 +2974,9 @@ fn thread_summary_json(t: &ThreadSummary) -> Value {
     if let Some(model) = &t.model {
         obj["model"] = json!(model);
     }
+    if let Some(effort) = &t.effort {
+        obj["effort"] = json!(effort);
+    }
     obj
 }
 
@@ -2485,6 +2995,9 @@ fn thread_record_json(r: &ThreadRecord) -> Value {
     if let Some(model) = &r.model {
         obj["model"] = json!(model);
     }
+    if let Some(effort) = &r.effort {
+        obj["effort"] = json!(effort);
+    }
     obj
 }
 
@@ -2494,6 +3007,7 @@ fn turn_record_json(t: &TurnRecord) -> Value {
         "message": t.message,
         "answer": t.answer,
         "state": t.state,
+        "started": t.started,
         "acts": t.acts.iter().map(act_record_json).collect::<Vec<_>>(),
         "requests": t.requests.iter().map(request_record_json).collect::<Vec<_>>(),
         "notes": t.notes.iter().map(note_record_json).collect::<Vec<_>>(),
@@ -2506,6 +3020,9 @@ fn turn_record_json(t: &TurnRecord) -> Value {
     }
     if let Some(err) = &t.error {
         obj["error"] = json!(err);
+    }
+    if let Some(ended) = t.ended {
+        obj["ended"] = json!(ended);
     }
     obj
 }

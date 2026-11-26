@@ -5,7 +5,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const BIN: &str = env!("CARGO_BIN_EXE_crowbar-lever");
 const STUB_BIN: &str = env!("CARGO_BIN_EXE_crowbar-stub-harness");
@@ -1456,11 +1456,14 @@ fn lever_speaks_every_message_documented_in_readme() {
                 "answer",
                 "archive",
                 "delete",
+                "commands",
+                "efforts",
                 "list",
                 "models",
                 "resume",
                 "send",
                 "set-default-mode",
+                "set-effort",
                 "set-free-models",
                 "set-mode",
                 "set-model",
@@ -1476,9 +1479,12 @@ fn lever_speaks_every_message_documented_in_readme() {
         BTreeSet::from(
             [
                 "activity",
+                "commands",
                 "default-mode",
                 "archived",
                 "deleted",
+                "effort-set",
+                "efforts",
                 "error",
                 "free-models",
                 "list",
@@ -1502,6 +1508,7 @@ fn lever_speaks_every_message_documented_in_readme() {
                 "threads",
                 "act",
                 "activity",
+                "commands",
                 "done",
                 "failed",
                 "interrupted",
@@ -1525,11 +1532,12 @@ fn lever_speaks_every_message_documented_in_readme() {
         &script,
         serde_json::to_string(&json!({
             "models": [
-                { "id": "stub/stub-1", "name": "Stub One" },
+                { "id": "stub/stub-1", "name": "Stub One", "efforts": ["low", "high"] },
                 { "id": "stub/stub-2", "name": "Stub Two" }
             ],
             "default_model": "stub/stub-1",
             "modes": true,
+            "commands": [{ "name": "review", "description": "review changes", "hint": "commit, branch, or pr" }],
             "turns": [
                 {
                     "match": "Ask",
@@ -1563,13 +1571,21 @@ fn lever_speaks_every_message_documented_in_readme() {
                   replies: &mut std::collections::BTreeMap<String, Value>,
                   events: &mut std::collections::BTreeMap<String, Value>|
      -> Value {
-        // The first of each is kept: a later `thread-updated` says the mode
-        // where the README's says the title.
+        // The first of each is kept. Of `thread-updated` and `commands`, it
+        // is the first that says what the README's says: the title, and a
+        // thread's commands.
         if let Some(r) = v.get("reply").and_then(Value::as_str) {
             replies.entry(r.to_string()).or_insert_with(|| v.clone());
         }
         if let Some(e) = v.get("event").and_then(Value::as_str) {
-            events.entry(e.to_string()).or_insert_with(|| v.clone());
+            let as_documented = match e {
+                "thread-updated" => v.get("title").is_some(),
+                "commands" => v.get("thread").is_some(),
+                _ => true,
+            };
+            if as_documented {
+                events.entry(e.to_string()).or_insert_with(|| v.clone());
+            }
         }
         v
     };
@@ -1583,10 +1599,20 @@ fn lever_speaks_every_message_documented_in_readme() {
     record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
     write_frame(&mut peer, &json!({ "op": "models" })).unwrap();
     record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    // efforts + commands, asked until the harness has named its commands, so
+    // none comes as an event of its own once this peer watches.
+    write_frame(&mut peer, &json!({ "op": "efforts", "model": "stub/stub-1" })).unwrap();
+    record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    wait_until("the harness to name its commands", || {
+        write_frame(&mut peer, &json!({ "op": "commands" })).unwrap();
+        read_frame(&mut peer).unwrap()["known"] == true
+    });
+    write_frame(&mut peer, &json!({ "op": "commands" })).unwrap();
+    record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
     write_frame(&mut peer, &json!({ "op": "watch" })).unwrap();
     record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
 
-    // Turn 1: send -> message, act, note, thread-updated, text, done
+    // Turn 1: send -> message, commands, act, note, thread-updated, text, done
     write_frame(
         &mut peer,
         &json!({ "op": "send", "thread": null, "text": "List the files", "cwd": dir.0.to_str().unwrap() }),
@@ -1626,13 +1652,23 @@ fn lever_speaks_every_message_documented_in_readme() {
         }
     }
 
-    // set-model + set-mode + set-default-mode + list + resume
+    // set-effort + set-model + set-mode + set-default-mode + list + resume
+    write_frame(
+        &mut peer,
+        &json!({ "op": "set-effort", "thread": thread_id, "effort": "high" }),
+    )
+    .unwrap();
+    while !seen_replies.contains_key("effort-set") {
+        record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    }
     write_frame(
         &mut peer,
         &json!({ "op": "set-model", "thread": thread_id, "model": "stub/stub-2" }),
     )
     .unwrap();
-    record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    while !seen_replies.contains_key("model-set") {
+        record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    }
     write_frame(
         &mut peer,
         &json!({ "op": "set-mode", "thread": thread_id, "mode": "full-access" }),
@@ -1714,7 +1750,7 @@ fn lever_speaks_every_message_documented_in_readme() {
                 .unwrap()
                 .keys()
                 .map(String::as_str)
-                .filter(|k| !(*k == "model" && name == "resumed"))
+                .filter(|k| !(matches!(*k, "model" | "effort") && name == "resumed"))
                 .collect();
             assert_eq!(actual_keys, doc_keys, "reply {name:?} keys drifted from README");
         }
@@ -3191,6 +3227,11 @@ fn surface_socket_cannot_toggle_free_models_and_model_switch_preserves_default()
     .unwrap();
     let set_ok = read_frame(&mut person).unwrap();
     assert_eq!(set_ok["reply"], "model-set");
+    // Who watches the thread is told its Model.
+    assert_eq!(
+        read_frame(&mut person).unwrap(),
+        json!({ "event": "thread-updated", "thread": tid, "model": "stub/stub-2" })
+    );
 
     write_frame(&mut person, &json!({ "op": "models" })).unwrap();
     let m2 = read_frame(&mut person).unwrap();
@@ -3238,8 +3279,7 @@ fn free_models_off_while_working_refuses_new_sends_until_harness_restarts() {
     let (tid, t1) = send(&mut p1, None, "hold");
     let ev = read_frame(&mut p1).unwrap();
     assert_eq!(ev["event"], "message");
-    let ev = read_frame(&mut p1).unwrap();
-    assert_eq!(ev["event"], "text");
+    read_until(&mut p1, |ev| ev["event"] == "text");
 
     // Turn free hosted Models off from a second client while turn 1 is still working.
     let mut p2 = handshake(&lever.person);
@@ -3485,12 +3525,30 @@ fn surface_send_attaches_fulcrum_desktop_context_and_falls_back_when_fulcrum_is_
     assert_eq!(rec["turns"][0]["context"]["active"]["app_id"], "foot");
     assert_eq!(rec["turns"][0]["message"], "what is open?");
 
-    // Harness received fenced desktop context with the prompt.
+    // Harness received fenced desktop context as an assistant-audience block
+    // separate from the person's text, so leading slash commands remain visible.
     let log_after_1 = std::fs::read_to_string(&rpc_log).unwrap();
     assert!(log_after_1.contains("<desktop-context>"), "{log_after_1}");
     assert!(log_after_1.contains("[Desktop context"), "{log_after_1}");
     assert!(log_after_1.contains("terminal (app_id: foot)"), "{log_after_1}");
     assert!(log_after_1.contains("Virtual-1: 1280x960"), "{log_after_1}");
+    let prompt_req = log_after_1
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|v| v["method"] == "session/prompt")
+        .expect("session/prompt logged");
+    let blocks = prompt_req["params"]["prompt"].as_array().expect("prompt blocks");
+    assert_eq!(blocks.len(), 2, "expected context + user text blocks: {prompt_req}");
+    assert_eq!(blocks[0]["annotations"]["audience"], json!(["assistant"]), "{blocks:?}");
+    assert!(
+        blocks[0]["text"].as_str().unwrap_or("").contains("[Desktop context"),
+        "{blocks:?}"
+    );
+    assert!(
+        blocks[1].get("annotations").is_none(),
+        "user prompt block must not carry assistant audience: {blocks:?}"
+    );
+    assert_eq!(blocks[1]["text"], "what is open?");
 
     // 2. Remove Fulcrum socket: next surface send succeeds with NO desktop context.
     let _ = std::fs::remove_file(&fulcrum_sock);
@@ -4931,4 +4989,680 @@ fn delete_removes_the_record_and_asks_the_harness_but_keeps_history_on_failure()
         lever.signal(libc::SIGTERM);
         assert!(lever.wait().success());
     }
+}
+
+/// What the stub harness was asked to set of `config` on its sessions, in its
+/// log, in order.
+fn stub_config_set(log: &Path, config: &str) -> Vec<String> {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|v| v["method"] == "session/set_config_option" && v["params"]["configId"] == config)
+        .filter_map(|v| v["params"]["value"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// The prompts the stub harness was sent, in its log, each as one text.
+fn stub_prompts(log: &Path) -> Vec<String> {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|v| v["method"] == "session/prompt")
+        .map(|v| {
+            v["params"]["prompt"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|block| block["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .collect()
+}
+
+/// A script with three Models from two providers: one with effort levels,
+/// one with fewer, and one with none.
+fn effort_script(dir: &Path, more: Value) -> PathBuf {
+    let mut script = json!({
+        "models": [
+            { "id": "stub/stub-1", "name": "stub/Stub One", "efforts": ["low", "high"] },
+            { "id": "stub/stub-2", "name": "stub/Stub Two" },
+            { "id": "other/stub-3", "name": "other/Stub Three", "efforts": ["low"] }
+        ],
+        "default_model": "stub/stub-1",
+        // Every turn says the Model and the effort its session is at.
+        "turns": [{ "match": "", "steps": [{ "kind": "text", "text": "{model} at {effort}" }] }]
+    });
+    for (key, value) in more.as_object().unwrap() {
+        script[key] = value.clone();
+    }
+    write_script(dir, &script)
+}
+
+#[test]
+fn models_say_each_models_provider_apart_from_its_name() {
+    let dir = TempDir::new();
+    let script = effort_script(&dir.0, json!({}));
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let models = ask_lever(&mut peer, json!({ "op": "models" }));
+    assert_eq!(
+        models["models"],
+        json!([
+            { "id": "stub/stub-1", "name": "Stub One", "provider": "stub", "provider_name": "stub" },
+            { "id": "stub/stub-2", "name": "Stub Two", "provider": "stub", "provider_name": "stub" },
+            { "id": "other/stub-3", "name": "Stub Three", "provider": "other", "provider_name": "other" }
+        ])
+    );
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_models_effort_levels_are_read_from_the_harness_and_kept() {
+    let dir = TempDir::new();
+    let script = effort_script(&dir.0, json!({}));
+    let stub_log = dir.0.join("stub.log");
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, Some(&stub_log), None);
+    let mut peer = handshake(&lever.person);
+
+    // The harness is started for the asking, and a session opened, set to
+    // the Model, read, and closed.
+    let levels = ask_lever(&mut peer, json!({ "op": "efforts", "model": "other/stub-3" }));
+    assert_eq!(
+        levels,
+        json!({ "reply": "efforts", "model": "other/stub-3", "efforts": [
+            { "id": "low", "name": "Low" },
+            { "id": "default", "name": "Default" }
+        ]})
+    );
+    assert_eq!(stub_config_set(&stub_log, "model"), ["other/stub-3"]);
+    let methods = |log: &Path| -> Vec<String> {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter_map(|v| v["method"].as_str().map(str::to_string))
+            .collect()
+    };
+    wait_until("the session to be closed", || {
+        methods(&stub_log)
+            == [
+                "initialize",
+                "session/new",
+                "session/set_config_option",
+                "session/close",
+            ]
+    });
+
+    // What Lever has read, it does not read again.
+    let again = ask_lever(&mut peer, json!({ "op": "efforts", "model": "other/stub-3" }));
+    assert_eq!(again, levels);
+    assert_eq!(methods(&stub_log).len(), 4);
+
+    // The Model a new session is at needs no setting, and one with no
+    // levels has an empty list.
+    let default = ask_lever(&mut peer, json!({ "op": "efforts", "model": "stub/stub-1" }));
+    assert_eq!(
+        default["efforts"],
+        json!([
+            { "id": "low", "name": "Low" },
+            { "id": "high", "name": "High" },
+            { "id": "default", "name": "Default" }
+        ])
+    );
+    let none = ask_lever(&mut peer, json!({ "op": "efforts", "model": "stub/stub-2" }));
+    assert_eq!(none["efforts"], json!([]));
+    assert_eq!(stub_config_set(&stub_log, "model"), ["other/stub-3", "stub/stub-2"]);
+
+    // A Model the harness is known not to offer has no levels to read.
+    ask_lever(&mut peer, json!({ "op": "models" }));
+    let unknown = ask_lever(&mut peer, json!({ "op": "efforts", "model": "stub/none" }));
+    assert_eq!(unknown["code"], "invalid-model", "{unknown}");
+    let bad = ask_lever(&mut peer, json!({ "op": "efforts" }));
+    assert_eq!(bad["code"], "invalid-request", "{bad}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_thread_keeps_its_effort_and_each_turn_runs_at_it() {
+    let dir = TempDir::new();
+    let script = effort_script(&dir.0, json!({}));
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+
+    // A new thread's first message says its effort, and who watches is told
+    // the thread's Model and effort as Lever knows them.
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": null, "text": "hello", "cwd": "/tmp", "effort": "high" }),
+    )
+    .unwrap();
+    let sent = read_until(&mut peer, |f| f.get("reply").is_some());
+    let thread = sent["thread"].as_str().unwrap().to_string();
+    let events = turn_events(&mut peer, &thread, 1);
+    assert_eq!(text_of(&events), "stub/stub-1 at high");
+    assert_eq!(stub_config_set(&stub_log, "effort"), ["high"]);
+    let record = resume(&mut peer, &thread);
+    assert_eq!(
+        (&record["model"], &record["effort"]),
+        (&json!("stub/stub-1"), &json!("high"))
+    );
+    let listed = ask_lever(&mut peer, json!({ "op": "list" }));
+    assert_eq!(listed["threads"][0]["effort"], "high");
+
+    // The next turn asks the harness for nothing: the session is at it.
+    let (_, turn) = send(&mut peer, Some(&thread), "again");
+    assert_eq!(text_of(&turn_events(&mut peer, &thread, turn)), "stub/stub-1 at high");
+    assert_eq!(stub_config_set(&stub_log, "effort"), ["high"]);
+
+    // `set-effort` applies from the next turn, and is refused for a level
+    // the thread's Model is known not to have.
+    let set = ask_lever(
+        &mut peer,
+        json!({ "op": "set-effort", "thread": thread, "effort": "low" }),
+    );
+    assert_eq!(set, json!({ "reply": "effort-set", "thread": thread, "effort": "low" }));
+    assert_eq!(
+        read_frame(&mut peer).unwrap(),
+        json!({ "event": "thread-updated", "thread": thread, "effort": "low" })
+    );
+    let refused = ask_lever(
+        &mut peer,
+        json!({ "op": "set-effort", "thread": thread, "effort": "max" }),
+    );
+    assert_eq!(refused["code"], "invalid-effort", "{refused}");
+    let refused = ask_lever(
+        &mut peer,
+        json!({ "op": "send", "thread": thread, "text": "no", "effort": "max" }),
+    );
+    assert_eq!(refused["code"], "invalid-effort", "{refused}");
+    let (_, turn) = send(&mut peer, Some(&thread), "lower");
+    assert_eq!(text_of(&turn_events(&mut peer, &thread, turn)), "stub/stub-1 at low");
+
+    // The effort outlasts Lever and the harness: a harness started again has
+    // the session at its own effort, and Lever sets the thread's.
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+    assert_eq!(resume(&mut peer, &thread)["effort"], "low");
+    let (_, turn) = send(&mut peer, Some(&thread), "after a restart");
+    assert_eq!(text_of(&turn_events(&mut peer, &thread, turn)), "stub/stub-1 at low");
+    assert_eq!(stub_config_set(&stub_log, "effort"), ["high", "low", "low"]);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn an_effort_is_one_models_and_a_thread_given_another_model_takes_what_the_harness_has() {
+    let dir = TempDir::new();
+    let script = effort_script(&dir.0, json!({}));
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": null, "text": "hello", "cwd": "/tmp", "effort": "high" }),
+    )
+    .unwrap();
+    let thread = read_until(&mut peer, |f| f.get("reply").is_some())["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    turn_events(&mut peer, &thread, 1);
+
+    // A Model that has no `high`: it is not asked for, and the thread is at
+    // the effort the harness has the session at.
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": thread, "text": "on three", "model": "other/stub-3" }),
+    )
+    .unwrap();
+    let mut told = Vec::new();
+    let events = loop {
+        let frame = read_frame(&mut peer).unwrap();
+        if frame["event"] == "thread-updated" {
+            told.push(frame);
+        } else if frame["event"] == "done" {
+            break told;
+        } else if frame["event"] == "text" {
+            assert_eq!(frame["text"], "other/stub-3 at default");
+        }
+    };
+    assert_eq!(
+        events,
+        [
+            json!({ "event": "thread-updated", "thread": thread, "model": "other/stub-3" }),
+            json!({ "event": "thread-updated", "thread": thread, "effort": "default" }),
+        ]
+    );
+    assert_eq!(stub_config_set(&stub_log, "effort"), ["high"]);
+
+    // `set-model` on the thread's session: a Model with no levels leaves the
+    // thread with no effort.
+    let set = ask_lever(
+        &mut peer,
+        json!({ "op": "set-model", "thread": thread, "model": "stub/stub-2" }),
+    );
+    assert_eq!(set["reply"], "model-set", "{set}");
+    assert_eq!(
+        [read_frame(&mut peer).unwrap(), read_frame(&mut peer).unwrap()],
+        [
+            json!({ "event": "thread-updated", "thread": thread, "model": "stub/stub-2" }),
+            json!({ "event": "thread-updated", "thread": thread, "effort": null }),
+        ]
+    );
+    let record = resume(&mut peer, &thread);
+    assert_eq!(record["model"], "stub/stub-2");
+    assert!(record.get("effort").is_none(), "{record}");
+    // Lever has that Model's levels from the session, with no session of
+    // its own opened to read them.
+    let news = |log: &Path| {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .matches("\"session/new\"")
+            .count()
+    };
+    let before = news(&stub_log);
+    let none = ask_lever(&mut peer, json!({ "op": "efforts", "model": "stub/stub-2" }));
+    assert_eq!(none["efforts"], json!([]));
+    assert_eq!(news(&stub_log), before);
+    let (_, turn) = send(&mut peer, Some(&thread), "on two");
+    assert_eq!(text_of(&turn_events(&mut peer, &thread, turn)), "stub/stub-2 at none");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_thread_with_no_session_given_another_model_has_no_effort_until_its_next_turn() {
+    let dir = TempDir::new();
+    let script = effort_script(&dir.0, json!({}));
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": null, "text": "hello", "cwd": "/tmp", "effort": "high" }),
+    )
+    .unwrap();
+    let thread = read_until(&mut peer, |f| f.get("reply").is_some())["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    turn_events(&mut peer, &thread, 1);
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+
+    // Lever started again holds no session of the thread's.
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+    resume(&mut peer, &thread);
+    let set = ask_lever(
+        &mut peer,
+        json!({ "op": "set-model", "thread": thread, "model": "other/stub-3" }),
+    );
+    assert_eq!(set["reply"], "model-set", "{set}");
+    assert_eq!(
+        [read_frame(&mut peer).unwrap(), read_frame(&mut peer).unwrap()],
+        [
+            json!({ "event": "thread-updated", "thread": thread, "model": "other/stub-3" }),
+            json!({ "event": "thread-updated", "thread": thread, "effort": null }),
+        ]
+    );
+    let (_, turn) = send(&mut peer, Some(&thread), "on three");
+    let events = turn_events(&mut peer, &thread, turn);
+    assert_eq!(text_of(&events), "other/stub-3 at default");
+    assert_eq!(resume(&mut peer, &thread)["effort"], "default");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_turn_whose_effort_the_harness_refuses_fails_and_the_thread_goes_back_to_the_sessions() {
+    let dir = TempDir::new();
+    let script = effort_script(&dir.0, json!({ "refuse_effort": "high" }));
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": null, "text": "hello", "cwd": "/tmp", "effort": "high" }),
+    )
+    .unwrap();
+    let thread = read_until(&mut peer, |f| f.get("reply").is_some())["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let events = turn_events(&mut peer, &thread, 1);
+    assert_eq!(events.last().unwrap()["event"], "failed", "{events:?}");
+    assert!(stub_prompts(&stub_log).is_empty(), "the prompt was sent");
+    assert_eq!(resume(&mut peer, &thread)["effort"], "default");
+
+    // The next turn asks for nothing the harness refused.
+    let (_, turn) = send(&mut peer, Some(&thread), "again");
+    assert_eq!(
+        text_of(&turn_events(&mut peer, &thread, turn)),
+        "stub/stub-1 at default"
+    );
+    assert_eq!(stub_config_set(&stub_log, "effort"), ["high"]);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_turn_stopped_while_its_effort_is_set_holds_the_thread_until_the_harness_answers() {
+    let dir = TempDir::new();
+    let script = effort_script(&dir.0, json!({ "set_config_delay_ms": 600 }));
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, _) = send(&mut peer, None, "hello");
+    read_until(&mut peer, |f| f["event"] == "done");
+
+    // The harness takes the effort at once, and answers late; the turn is
+    // stopped before it answers.
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": thread, "text": "harder", "effort": "high" }),
+    )
+    .unwrap();
+    wait_until("Lever asks for the effort", || {
+        stub_config_set(&stub_log, "effort") == ["high"]
+    });
+    ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }));
+    read_until(&mut peer, |f| f["event"] == "stopped");
+    assert_eq!(stub_prompts(&stub_log).len(), 1, "the stopped turn's prompt was sent");
+
+    // Until it answers, the thread takes no message and no other effort.
+    let busy = ask_lever(&mut peer, json!({ "op": "send", "thread": thread, "text": "now" }));
+    assert_eq!(busy["code"], "working", "{busy}");
+    let busy = ask_lever(
+        &mut peer,
+        json!({ "op": "set-effort", "thread": thread, "effort": "low" }),
+    );
+    assert_eq!(busy["code"], "working", "{busy}");
+
+    // Then the thread is free, and its next turn runs at the effort it has.
+    wait_until("the thread is free", || {
+        ask_lever(
+            &mut peer,
+            json!({ "op": "set-effort", "thread": thread, "effort": "high" }),
+        )["reply"]
+            == "effort-set"
+    });
+    let (_, turn) = send(&mut peer, Some(&thread), "now");
+    assert_eq!(text_of(&turn_events(&mut peer, &thread, turn)), "stub/stub-1 at high");
+    assert_eq!(stub_config_set(&stub_log, "effort"), ["high"]);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn the_harness_s_commands_are_kept_for_each_thread_and_a_command_is_sent_as_a_message() {
+    let dir = TempDir::new();
+    let commands = json!([
+        { "name": "review", "description": "review changes", "hint": "commit, branch, or pr" },
+        { "name": "compact", "description": "Compact the session" }
+    ]);
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "commands": commands,
+            "turns": [{ "steps": [{ "kind": "text", "text": "Reviewed." }] }]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+    assert_eq!(
+        ask_lever(&mut peer, json!({ "op": "status" }))["harness_started"],
+        false
+    );
+
+    // Lever answers at once that it has none yet, starts the harness, and
+    // tells who watches what the harness names.
+    ask_lever(&mut peer, json!({ "op": "watch" }));
+    let unknown = ask_lever(&mut peer, json!({ "op": "commands" }));
+    assert_eq!(unknown, json!({ "reply": "commands", "known": false, "commands": [] }));
+    let told = read_until(&mut peer, |f| f["event"] == "commands");
+    assert_eq!(told, json!({ "event": "commands", "commands": commands }));
+    let known = ask_lever(&mut peer, json!({ "op": "commands" }));
+    assert_eq!(
+        known,
+        json!({ "reply": "commands", "known": true, "commands": commands })
+    );
+
+    // A command is a message that begins with `/` and its name, sent as it
+    // is. The thread's session names its commands, and the thread has them.
+    let (thread, turn) = send(&mut peer, None, "/review the last commit");
+    let events = turn_events(&mut peer, &thread, turn);
+    assert_eq!(text_of(&events), "Reviewed.");
+    assert_eq!(stub_prompts(&stub_log), ["/review the last commit"]);
+    let of_thread = ask_lever(&mut peer, json!({ "op": "commands", "thread": thread }));
+    assert_eq!(
+        of_thread,
+        json!({ "reply": "commands", "known": true, "thread": thread, "commands": commands })
+    );
+    let record = resume(&mut peer, &thread);
+    assert_eq!(record["turns"][0]["message"], "/review the last commit");
+
+    let missing = ask_lever(&mut peer, json!({ "op": "commands", "thread": "t-none" }));
+    assert_eq!(missing["code"], "no-thread", "{missing}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_threads_commands_come_as_an_event_to_who_watches_it() {
+    let dir = TempDir::new();
+    let commands = json!([{ "name": "review", "description": "review changes" }]);
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "commands": commands,
+            "turns": [{ "steps": [{ "kind": "pause_ms", "ms": 50 }, { "kind": "text", "text": "Hello." }] }]
+        }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "hello");
+    let told = read_until(&mut peer, |f| f["event"] == "commands");
+    assert_eq!(
+        told,
+        json!({ "event": "commands", "thread": thread, "commands": commands })
+    );
+    // They are no part of the thread's record: nothing of them is a note.
+    let events = turn_events(&mut peer, &thread, turn);
+    assert!(events.iter().all(|e| e["event"] != "note"), "{events:?}");
+    let record = resume(&mut peer, &thread);
+    assert_eq!(record["turns"][0]["notes"], json!([]));
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_record_says_when_each_turn_began_and_ended() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({ "turns": [
+            { "steps": [{ "kind": "text", "text": "Hello." }] },
+            { "steps": [{ "kind": "text", "text": "Wait" }], "stall": true }
+        ]}),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let before = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let (thread, turn) = send(&mut peer, None, "hello");
+    turn_events(&mut peer, &thread, turn);
+    send(&mut peer, Some(&thread), "wait");
+    read_until(&mut peer, |f| f["event"] == "text");
+    let record = resume(&mut peer, &thread);
+    let (first, second) = (&record["turns"][0], &record["turns"][1]);
+    let began = first["started"].as_u64().unwrap();
+    assert!(began >= before && began <= before + 60, "{first}");
+    assert!(first["ended"].as_u64().unwrap() >= began, "{first}");
+    assert!(second["started"].as_u64().unwrap() >= began, "{second}");
+    assert!(second.get("ended").is_none(), "a working turn has not ended: {second}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn an_effort_answered_with_the_one_before_is_taken_and_the_update_after_says_so() {
+    let dir = TempDir::new();
+    let script = effort_script(&dir.0, json!({ "effort_answer_lags": true }));
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+
+    // As OpenCode answers while another of its sessions works: with the
+    // effort the session was at, and the new one in an update that follows.
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": null, "text": "hello", "cwd": "/tmp", "model": "other/stub-3", "effort": "low" }),
+    )
+    .unwrap();
+    let thread = read_until(&mut peer, |f| f.get("reply").is_some())["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let events = turn_events(&mut peer, &thread, 1);
+    assert_eq!(events.last().unwrap()["event"], "done", "{events:?}");
+    assert_eq!(text_of(&events), "other/stub-3 at low");
+    assert_eq!(
+        stub_config_set(&stub_log, "effort"),
+        ["low"],
+        "the effort is asked for once"
+    );
+    let record = resume(&mut peer, &thread);
+    assert_eq!(
+        (&record["model"], &record["effort"]),
+        (&json!("other/stub-3"), &json!("low"))
+    );
+
+    // The next turn has nothing to set.
+    let (_, turn) = send(&mut peer, Some(&thread), "again");
+    assert_eq!(text_of(&turn_events(&mut peer, &thread, turn)), "other/stub-3 at low");
+    assert_eq!(stub_config_set(&stub_log, "effort"), ["low"]);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_catalog_update_between_set_effort_and_send_keeps_the_picked_effort() {
+    let dir = TempDir::new();
+    let script = effort_script(&dir.0, json!({ "emit_catalog_update_on_new_session": true }));
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+
+    // Turn 1 starts a live session at the default effort ("default").
+    let (thread, turn) = send(&mut peer, None, "first");
+    assert_eq!(
+        text_of(&turn_events(&mut peer, &thread, turn)),
+        "stub/stub-1 at default"
+    );
+
+    // Pick "high" while idle (saved for the next turn; live session is still "default").
+    write_frame(
+        &mut peer,
+        &json!({ "op": "set-effort", "thread": thread, "effort": "high" }),
+    )
+    .unwrap();
+    let reply = read_until(&mut peer, |f| f.get("reply").is_some());
+    assert_eq!(reply["reply"], "effort-set", "{reply}");
+    assert_eq!(reply["effort"], "high", "{reply}");
+
+    // Trigger a catalog update on the idle session (via an `efforts` probe for
+    // another Model, which opens a new probe session and emits a
+    // `config_option_update` naming the live session's previous "default" effort).
+    write_frame(&mut peer, &json!({ "op": "efforts", "model": "other/stub-3" })).unwrap();
+    let efforts_reply = read_until(&mut peer, |f| f.get("reply").is_some());
+    assert_eq!(efforts_reply["reply"], "efforts", "{efforts_reply}");
+
+    // The saved effort must still be "high", and the next turn must apply it.
+    let record = resume(&mut peer, &thread);
+    assert_eq!(record["effort"], "high", "{record}");
+    let (_, turn2) = send(&mut peer, Some(&thread), "second");
+    assert_eq!(text_of(&turn_events(&mut peer, &thread, turn2)), "stub/stub-1 at high");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn commands_refuses_with_no_harness_and_does_not_reprobe_when_harness_names_none() {
+    // Without a harness configured, `commands` fails immediately with `no-harness`.
+    let dir_none = TempDir::new();
+    let mut lever_none = RunningLever::start(&dir_none.0, my_uid(), my_uid());
+    let mut peer_none = handshake(&lever_none.person);
+    write_frame(&mut peer_none, &json!({ "op": "commands" })).unwrap();
+    let reply = read_frame(&mut peer_none).unwrap();
+    assert_eq!(reply["reply"], "error", "{reply}");
+    assert_eq!(reply["code"], "no-harness", "{reply}");
+    lever_none.signal(libc::SIGTERM);
+    assert_eq!(lever_none.wait().code(), Some(0));
+
+    // With a harness that never emits `available_commands_update`, repeated
+    // `commands` polls must not spawn repeated probe sessions.
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [{ "steps": [{ "kind": "text", "text": "ok" }] }]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+
+    // First `commands` triggers one probe; wait for models so the probe finishes.
+    write_frame(&mut peer, &json!({ "op": "commands" })).unwrap();
+    let first = read_frame(&mut peer).unwrap();
+    assert_eq!(first["reply"], "commands", "{first}");
+    write_frame(&mut peer, &json!({ "op": "models" })).unwrap();
+    let models = read_frame(&mut peer).unwrap();
+    assert_eq!(models["reply"], "models", "{models}");
+
+    // Polling `commands` repeatedly afterwards opens no further probe sessions.
+    for _ in 0..5 {
+        write_frame(&mut peer, &json!({ "op": "commands" })).unwrap();
+        let polled = read_frame(&mut peer).unwrap();
+        assert_eq!(polled["reply"], "commands", "{polled}");
+    }
+    let log = std::fs::read_to_string(&stub_log).unwrap();
+    let new_sessions = log
+        .lines()
+        .filter(|line| line.contains("\"method\":\"session/new\""))
+        .count();
+    assert_eq!(new_sessions, 1, "expected exactly one probe session, log:\n{log}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
 }

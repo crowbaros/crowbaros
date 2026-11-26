@@ -91,18 +91,62 @@ historical behavior evidence, not a current Fedora workflow.
 - A request from the harness shows in its turn: the exact command, or the file
   and the change, with removed (`-`) and added (`+`) lines told apart in the
   mono face, and one control per answer it offers, named as the harness names
-  them. A click sends `answer`; the card then says what was answered, or that
+  them. A click sends `answer`, and so does Alt with a digit, for the answer
+  at that place of the request that has waited longest; the card then says
+  what was answered, or that
   the request was withdrawn. A request waits with no time limit, as long as
   Lever says it does, after its turn ended too: the drawer redraws it when
   summoned again and after the shell restarts, from `resume`. Stop shows
   while the thread works or a request of its waits, and withdraws it. A long
   change shows as Lever cut it, what it takes out and what it puts in.
-- The drawer's header shows the thread's mode. Its control opens a menu of the
-  modes Lever offers, asked for with `models` only when the menu opens, since
-  that starts the harness. Picking one sends `set-mode`, or, for the drawer's
-  new thread, goes with its first message. The control rests while the thread
-  works. The menu also sets the mode new threads start in
-  (`set-default-mode`), Ask first or Full access, and shows which it is.
+- The person drives a thread from the drawer's message box, with slash
+  commands. A `/` that begins the message lists them above the box, narrowed
+  as the person
+  types: a name's start before its middle, and then what a command does. Up
+  and Down move through the list, Enter or Tab takes a row, a click does too,
+  and Escape closes the list and keeps what was typed. The drawer's own
+  commands come first: `/model`, `/effort`, `/mode`, `/default-mode`, `/new`,
+  `/threads`, and, where they apply, `/stop`, `/archive`, and `/delete`. One
+  the thread cannot take now, as `/mode` while a turn works, is shown with
+  the reason, and taking it changes nothing.
+- A command that needs a choice lists the choices in the same place: `/mode`
+  the modes Lever offers, `/default-mode` the modes new threads may start in,
+  `/effort` the effort levels of the thread's Model, and `/model` the Models.
+  The list starts on the choice the thread is at. A command typed whole, as
+  `/mode plan`, needs no list. What a list needs is asked of Lever when the
+  list opens, with `models` and `efforts`, since that starts the harness.
+- `/model` is the Model picker: the providers the harness has Models from on
+  a rail, the Models of the one picked, and, once the person types, a search
+  through every provider with no rail. Left and Right move between providers.
+  Picking a Model sends `set-model`, and where the Model has effort levels
+  the drawer lists them next. A thread keeps its Model and effort, and the
+  drawer shows them as soon as Lever says them. For the drawer's new thread
+  a pick goes with its first message, and a new thread starts with the Model
+  and effort last picked. The shell keeps those beside the active thread in
+  its runtime directory, so they outlast the shell and not a restart of the
+  machine. Which harnesses, providers, and Models are offered is the
+  harness's to say until Studio Settings has a screen for it.
+- The commands the thread's harness offers follow the drawer's own in the
+  list, each marked with the harness's name and described in the harness's
+  words (`commands`). Taking one puts `/` and its name in the message box, for
+  the person to add to and send as the thread's next message. Anything typed
+  after a `/` that is no command of the drawer's goes to the harness as it
+  is.
+- The message box holds many lines: Enter sends, Shift+Enter begins a new
+  line, and pasted text keeps its lines. It grows with what it holds, to
+  eight lines, and then scrolls. What the person typed in a thread and did
+  not send is there when they come back to that thread, and when the drawer
+  is put away and summoned again. One quiet line under the box says the
+  thread's Model, effort, and mode. While a turn works the box takes
+  commands and no message.
+- An answer shows as the Markdown it is: paragraphs, headings, lists, quotes,
+  strong and emphasised words, links (with destinations shown beside titled
+  links; clicking copies the URL to the clipboard since the shell runs as its
+  own account), inline code, and fenced code in the
+  mono face, read again as each piece arrives. The person's message sits to
+  the right. While a turn works its acts show as lines, with how long the
+  turn has worked. When it ends they fold into one line, as `Worked for 12s ·
+  3 acts`, which opens, and an act's line opens to what it gave.
 - The mark covers every thread, from Lever's `activity`: `Waiting` while any
   request waits, else `Working` while any thread works, else `Done` once the
   last working thread ends with the drawer put away, until the drawer is
@@ -112,20 +156,24 @@ historical behavior evidence, not a current Fedora workflow.
   its own, not even for a request.
 - The shell's own `crowbar-shell`-only `control.sock` answers `agent` beside
   `snapshot`: whether the drawer is up and on which display, the mark, the
-  thread with its turns, requests, and mode, the starting mode, whether the
-  mode menu is open, and `controls`, the bounds of each control the drawer
-  shows, in the display's logical pixels, for checks to click: `mode`,
-  `mode:<id>`, `default-mode:<id>`, `answer:<request>:<answer>`, `send`,
-  `stop`, and `close`. Thread navigation adds `new-thread`, `threads`,
-  `thread:<id>`, `archive`, `delete`, `cancel-delete`, and `confirm-delete`.
-  A control scrolled out of view is left out.
-- The drawer has a thread list and a thread view. **Threads** (or `Ctrl+L`)
-  returns to the list, grouped by folder with newest activity first. **New
-  thread** (`Ctrl+N`) starts in the person's home; terminal threads keep their
+  thread with its turns, requests, Model, effort, and mode, the starting
+  mode, what the message box holds (`draft`), the list open above it
+  (`list`: what it is a list of, its rows in order, and the row the keys are
+  on), and `controls`, the bounds of each control the drawer shows, in the
+  display's logical pixels, for checks to click: `answer:<request>:<answer>`,
+  `acts:<turn>`, `act:<id>`, `context:<turn>`, `newest`, `send`, `stop`, and
+  `close`, and, of an open list, `command:<name>`, `choice:<value>`, and
+  `provider:<id>`. Thread navigation adds `new-thread`, `threads`,
+  `thread:<id>`, `cancel-delete`, and `confirm-delete`. A control scrolled
+  out of view is left out.
+- The drawer has a thread list and a thread view. **Threads**, `/threads`, or
+  `Ctrl+L` returns to the list, grouped by folder with newest activity first.
+  **New thread**, `/new`, or `Ctrl+N` starts in the person's home; terminal
+  threads keep their
   terminal's working directory. Summoning returns to the view left behind.
   Opening a record reads Lever's history without starting its harness. Tab and
   Shift+Tab move among controls; Enter activates the focused control.
-- **Archive** hides a thread but keeps its record. **Delete…** asks for
+- `/archive` hides a thread but keeps its record. `/delete` asks for
   confirmation; Escape cancels that confirmation. Stop active work before
   deleting it. Lever requests harness session deletion, and explains when the
   harness cannot remove its own copy. The Mark follows all threads, including
@@ -134,8 +182,10 @@ historical behavior evidence, not a current Fedora workflow.
   takes precedence when another thread finishes. Stop also withdraws requests
   that remain after a turn ends, before the thread can be deleted.
 - Streamed answers follow the bottom only while the person is already near it.
-  Long act details expand to the complete command/output; desktop context after
-  the first turn is collapsed until requested.
+  Scrolled up, the thread holds its place and shows **Newest**, which goes
+  back to its newest line. What an act gave shows its first lines, and all
+  of it when asked; desktop context after the first turn is collapsed until
+  requested.
 - The desktop starts locked. While the compositor has it locked, the shell
   shows its lock screen, and the bar's lock button and Super+L lock it. The
   lock screen takes the person's password at once and sends it to Base's

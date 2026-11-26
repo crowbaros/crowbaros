@@ -18,6 +18,7 @@ pub struct ThreadSummary {
     pub title: String,
     pub cwd: String,
     pub model: Option<String>,
+    pub effort: Option<String>,
     pub started: i64,
     pub updated: i64,
     pub turns: u64,
@@ -37,6 +38,8 @@ pub struct ThreadMeta {
     pub harness_session_id: Option<String>,
     /// The Model chosen for this thread, if any.
     pub model: Option<String>,
+    /// The effort chosen for this thread, one of its Model's levels, if any.
+    pub effort: Option<String>,
     pub mode: String,
     pub latest_turn: Option<u64>,
     pub working_turn: Option<u64>,
@@ -48,6 +51,7 @@ pub struct ThreadRecord {
     pub title: String,
     pub cwd: String,
     pub model: Option<String>,
+    pub effort: Option<String>,
     pub mode: String,
     pub started: i64,
     pub updated: i64,
@@ -65,6 +69,9 @@ pub struct TurnRecord {
     pub error: Option<String>,
     /// The mode the turn began in, absent for turns recorded before modes.
     pub mode: Option<String>,
+    /// When the turn began, and when it ended, if it has.
+    pub started: i64,
+    pub ended: Option<i64>,
     pub acts: Vec<ActRecord>,
     pub requests: Vec<RequestRecord>,
     pub notes: Vec<NoteRecord>,
@@ -178,6 +185,7 @@ impl Store {
                  harness_session_id TEXT,\n\
                  model TEXT,\n\
                  mode TEXT,\n\
+                 effort TEXT,\n\
                  created_at INTEGER NOT NULL,\n\
                  updated_at INTEGER NOT NULL\n\
              );\n\
@@ -239,6 +247,7 @@ impl Store {
         ensure_column(&conn, "turns", "context", "TEXT")?;
         ensure_column(&conn, "threads", "mode", "TEXT")?;
         ensure_column(&conn, "turns", "mode", "TEXT")?;
+        ensure_column(&conn, "threads", "effort", "TEXT")?;
 
         // Any turn left working by a Lever that ended abruptly is interrupted,
         // and a request that waited went with the harness that asked it.
@@ -366,17 +375,17 @@ impl Store {
     }
 
     pub fn thread_meta(&self, thread_id: &str) -> Result<Option<ThreadMeta>, String> {
-        type Row = (String, Option<String>, Option<String>, Option<String>);
+        type Row = (String, Option<String>, Option<String>, Option<String>, Option<String>);
         let row: Option<Row> = self
             .conn
             .query_row(
-                "SELECT cwd, harness_session_id, model, mode FROM threads WHERE id = ?1",
+                "SELECT cwd, harness_session_id, model, mode, effort FROM threads WHERE id = ?1",
                 params![thread_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .optional()
             .map_err(|e| format!("could not query thread: {e}"))?;
-        let Some((cwd, harness_session_id, model, mode)) = row else {
+        let Some((cwd, harness_session_id, model, mode, effort)) = row else {
             return Ok(None);
         };
         let latest_turn: Option<u64> = self
@@ -405,6 +414,7 @@ impl Store {
             cwd,
             harness_session_id,
             model,
+            effort,
             mode: mode.unwrap_or_else(|| STARTING_MODE.to_string()),
             latest_turn,
             working_turn,
@@ -428,6 +438,17 @@ impl Store {
                 params![model, now, thread_id],
             )
             .map_err(|e| format!("could not update thread model: {e}"))?;
+        Ok(())
+    }
+
+    /// Saves a thread's effort, or that it has none.
+    pub fn set_thread_effort(&self, thread_id: &str, effort: Option<&str>, now: i64) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE threads SET effort = ?1, updated_at = ?2 WHERE id = ?3",
+                params![effort, now, thread_id],
+            )
+            .map_err(|e| format!("could not update thread effort: {e}"))?;
         Ok(())
     }
 
@@ -724,7 +745,7 @@ impl Store {
                         (SELECT COUNT(*) FROM turns WHERE thread_id = t.id), \
                         (SELECT state FROM turns WHERE thread_id = t.id ORDER BY turn_number DESC LIMIT 1), \
                         EXISTS (SELECT 1 FROM requests WHERE thread_id = t.id AND state = 'waiting'), \
-                        t.mode, t.archived \
+                        t.mode, t.archived, t.effort \
                  FROM threads t \
                  ORDER BY t.updated_at DESC, t.rowid DESC",
             )
@@ -739,6 +760,7 @@ impl Store {
                     title: r.get(1)?,
                     cwd: r.get(2)?,
                     model: r.get(3)?,
+                    effort: r.get(11)?,
                     started: r.get(4)?,
                     updated: r.get(5)?,
                     turns: r.get::<_, i64>(6)? as u64,
@@ -776,11 +798,20 @@ impl Store {
     }
 
     pub fn get_thread(&self, thread_id: &str) -> Result<Option<ThreadRecord>, String> {
-        type Row = (String, String, String, Option<String>, Option<String>, i64, i64);
+        type Row = (
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            i64,
+            i64,
+            Option<String>,
+        );
         let row: Option<Row> = self
             .conn
             .query_row(
-                "SELECT id, title, cwd, model, mode, created_at, updated_at FROM threads WHERE id = ?1",
+                "SELECT id, title, cwd, model, mode, created_at, updated_at, effort FROM threads WHERE id = ?1",
                 params![thread_id],
                 |r| {
                     Ok((
@@ -791,19 +822,20 @@ impl Store {
                         r.get(4)?,
                         r.get(5)?,
                         r.get(6)?,
+                        r.get(7)?,
                     ))
                 },
             )
             .optional()
             .map_err(|e| format!("could not query thread: {e}"))?;
-        let Some((id, title, cwd, model, mode, started, updated)) = row else {
+        let Some((id, title, cwd, model, mode, started, updated, effort)) = row else {
             return Ok(None);
         };
 
         let mut turn_stmt = self
             .conn
             .prepare(
-                "SELECT turn_number, message, context, answer, state, error, mode \
+                "SELECT turn_number, message, context, answer, state, error, mode, created_at, ended_at \
                  FROM turns WHERE thread_id = ?1 ORDER BY turn_number ASC",
             )
             .map_err(|e| format!("could not prepare turns query: {e}"))?;
@@ -819,6 +851,8 @@ impl Store {
                     state: r.get(4)?,
                     error: r.get(5)?,
                     mode: r.get(6)?,
+                    started: r.get(7)?,
+                    ended: r.get(8)?,
                     acts: Vec::new(),
                     requests: Vec::new(),
                     notes: Vec::new(),
@@ -895,6 +929,7 @@ impl Store {
             title,
             cwd,
             model,
+            effort,
             mode: mode.unwrap_or_else(|| STARTING_MODE.to_string()),
             started,
             updated,

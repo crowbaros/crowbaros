@@ -24,18 +24,23 @@ usage: crowbar-agent                          talk with the Agent, a line at a t
        crowbar-agent --resume ID \"<request>\"  one more turn of it, and out
        crowbar-agent --resume ID --model M    set a thread's Model
        crowbar-agent --model M \"<request>\"    start a thread with Model M
+       crowbar-agent --resume ID --effort E   set a thread's effort
        crowbar-agent --resume ID --mode MODE  set a thread's mode
        crowbar-agent --mode MODE \"<request>\"  start a thread in a mode
        crowbar-agent --resume ID --answer R A answer a thread's request R with A
        crowbar-agent --stop ID                stop the working turn of a thread
        crowbar-agent models                   list the Models the harness offers
+       crowbar-agent efforts M                list the effort levels of Model M
+       crowbar-agent commands                 list the slash commands the harness offers
        crowbar-agent free-models [on|off]     show or switch OpenCode's free hosted Models
        crowbar-agent default-mode [MODE]      show or set the mode new threads start in
        crowbar-agent login                    sign in to a provider with OpenCode
        crowbar-agent status                   Lever's status and available harnesses
 
 Modes are ask-first, full-access, and plan. New threads start in ask-first
-or full-access. Ctrl-C stops the turn the Agent is working on. Ctrl-D leaves.";
+or full-access. A command of the harness's is sent as a request that begins
+with / and its name. Ctrl-C stops the turn the Agent is working on. Ctrl-D
+leaves.";
 
 /// What the command line asks for.
 #[derive(Debug, PartialEq)]
@@ -61,6 +66,10 @@ enum Command {
         thread: String,
         mode: String,
     },
+    SetEffort {
+        thread: String,
+        effort: String,
+    },
     Answer {
         thread: String,
         request: String,
@@ -78,6 +87,10 @@ enum Command {
         thread: String,
     },
     Models,
+    Efforts {
+        model: String,
+    },
+    Commands,
     FreeModels {
         enabled: Option<bool>,
     },
@@ -88,7 +101,8 @@ enum Command {
 }
 
 /// Reads the command line, without the program's name. `status`, `models`,
-/// `free-models`, and `login` are commands only as the first word: a request
+/// `efforts`, `commands`, `free-models`, and `login` are commands only as the
+/// first word: a request
 /// that starts with one goes in quotes with the rest of it, or after `--`.
 fn command(args: &[String]) -> Result<Command, String> {
     if let Some(flag @ ("--archive" | "--delete")) = args.first().map(String::as_str) {
@@ -103,6 +117,7 @@ fn command(args: &[String]) -> Result<Command, String> {
     }
     let (mut resumed, mut model, mut stop, mut list, mut words) = (None, None, None, false, Vec::new());
     let (mut mode, mut answer): (Option<String>, Option<(String, String)>) = (None, None);
+    let mut effort: Option<String> = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         // An option comes before the request. A dash inside a request is the request's.
@@ -139,6 +154,15 @@ fn command(args: &[String]) -> Result<Command, String> {
                 }
                 mode = Some(value.clone());
             }
+            "--effort" if effort.is_none() => {
+                let value = rest
+                    .next()
+                    .ok_or("--effort needs an effort, as `crowbar-agent efforts` shows them")?;
+                if value.trim().is_empty() {
+                    return Err("--effort needs a non-empty effort".to_string());
+                }
+                effort = Some(value.clone());
+            }
             "--answer" if answer.is_none() => {
                 let request = rest
                     .next()
@@ -154,6 +178,9 @@ fn command(args: &[String]) -> Result<Command, String> {
                 );
             }
             "--" => {
+                if effort.is_some() {
+                    return Err("--effort takes nothing but --resume".to_string());
+                }
                 if list || stop.is_some() || answer.is_some() {
                     return Err("-- cannot be combined with --list, --stop, or --answer".to_string());
                 }
@@ -168,16 +195,29 @@ fn command(args: &[String]) -> Result<Command, String> {
                     message: words.join(" "),
                 });
             }
-            "--list" | "--resume" | "--model" | "--mode" | "--answer" | "--stop" => {
+            "--list" | "--resume" | "--model" | "--mode" | "--effort" | "--answer" | "--stop" => {
                 return Err(format!("{arg} is given twice"));
             }
             option if option.starts_with('-') => return Err(format!("no option {option}")),
             _ => words.push(arg.clone()),
         }
     }
-    if list || stop.is_some() || resumed.is_some() || model.is_some() || mode.is_some() || answer.is_some() {
+    if list
+        || stop.is_some()
+        || resumed.is_some()
+        || model.is_some()
+        || mode.is_some()
+        || effort.is_some()
+        || answer.is_some()
+    {
         let alone = |what: &str| -> Result<(), String> {
-            if resumed.is_none() && model.is_none() && mode.is_none() && answer.is_none() && words.is_empty() {
+            if resumed.is_none()
+                && model.is_none()
+                && mode.is_none()
+                && effort.is_none()
+                && answer.is_none()
+                && words.is_empty()
+            {
                 Ok(())
             } else {
                 Err(format!("{what} takes nothing else"))
@@ -194,6 +234,16 @@ fn command(args: &[String]) -> Result<Command, String> {
         if let Some(thread) = stop {
             alone("--stop")?;
             return Ok(Command::Stop { thread });
+        }
+        if let Some(level) = effort {
+            let Some(thread) = resumed else {
+                return Err("--effort needs --resume ID, the thread to set".to_string());
+            };
+            return if model.is_none() && mode.is_none() && answer.is_none() && words.is_empty() {
+                Ok(Command::SetEffort { thread, effort: level })
+            } else {
+                Err("--effort takes nothing but --resume".to_string())
+            };
         }
         if let Some((request, chosen)) = answer {
             let Some(thread) = resumed else {
@@ -250,6 +300,12 @@ fn command(args: &[String]) -> Result<Command, String> {
         Some("status") => Err("status takes nothing else".to_string()),
         Some("models") if words.len() == 1 => Ok(Command::Models),
         Some("models") => Err("models takes nothing else".to_string()),
+        Some("efforts") if words.len() == 2 => Ok(Command::Efforts {
+            model: words[1].clone(),
+        }),
+        Some("efforts") => Err("efforts takes a Model ID, as `crowbar-agent models` shows it".to_string()),
+        Some("commands") if words.len() == 1 => Ok(Command::Commands),
+        Some("commands") => Err("commands takes nothing else".to_string()),
         Some("login") if words.len() == 1 => Ok(Command::Login),
         Some("login") => Err("login takes nothing else".to_string()),
         Some("free-models") if words.len() == 1 => Ok(Command::FreeModels { enabled: None }),
@@ -317,6 +373,7 @@ fn main() -> ExitCode {
         ),
         Command::SetModel { thread, model } => talk::set_model(&mut lever, thread, model),
         Command::SetMode { thread, mode } => talk::set_mode(&mut lever, thread, mode),
+        Command::SetEffort { thread, effort } => talk::set_effort(&mut lever, thread, effort),
         Command::Answer {
             thread,
             request,
@@ -327,6 +384,8 @@ fn main() -> ExitCode {
         Command::List => talk::list(&mut lever),
         Command::Stop { thread } => talk::stop(&mut lever, thread),
         Command::Models => talk::models(&mut lever),
+        Command::Efforts { model } => talk::efforts(&mut lever, model),
+        Command::Commands => talk::commands(&mut lever),
         Command::FreeModels { enabled } => talk::free_models(&mut lever, *enabled),
         Command::Status => talk::status(&mut lever),
         Command::Login | Command::Help | Command::Version => Ok(Ended::Done),
@@ -442,6 +501,23 @@ mod tests {
             })
         );
         assert_eq!(read(&["models"]), Ok(Command::Models));
+        assert_eq!(
+            read(&["efforts", "stub/stub-1"]),
+            Ok(Command::Efforts {
+                model: "stub/stub-1".into()
+            })
+        );
+        assert_eq!(read(&["commands"]), Ok(Command::Commands));
+        assert_eq!(
+            read(&["--resume", "t-k3f9q2xz", "--effort", "high"]),
+            Ok(Command::SetEffort {
+                thread: "t-k3f9q2xz".into(),
+                effort: "high".into()
+            })
+        );
+        assert!(read(&["--effort", "high"]).is_err());
+        assert!(read(&["--resume", "t-k3f9q2xz", "--effort", "high", "and a request"]).is_err());
+        assert!(read(&["efforts"]).is_err());
         assert_eq!(read(&["free-models"]), Ok(Command::FreeModels { enabled: None }));
         assert_eq!(
             read(&["free-models", "on"]),

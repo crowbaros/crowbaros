@@ -19,11 +19,14 @@ crowbar-agent --resume ID              # go on with a thread
 crowbar-agent --resume ID "<request>"  # one more turn of it, and out
 crowbar-agent --resume ID --model M    # set a thread's Model
 crowbar-agent --model M "<request>"    # start a thread with Model M
+crowbar-agent --resume ID --effort E   # set a thread's effort
 crowbar-agent --resume ID --mode MODE  # set a thread's mode
 crowbar-agent --mode MODE "<request>"  # start a thread in a mode
 crowbar-agent --resume ID --answer R A # answer a thread's request R with A
 crowbar-agent --stop ID                # stop the working turn of a thread
 crowbar-agent models                   # list the Models the harness offers
+crowbar-agent efforts M                # list the effort levels of Model M
+crowbar-agent commands                 # list the slash commands the harness offers
 crowbar-agent free-models [on|off]     # show or switch OpenCode's free hosted Models
 crowbar-agent default-mode [MODE]      # show or set the mode new threads start in
 crowbar-agent login                    # sign in to a provider with OpenCode
@@ -42,6 +45,16 @@ crowbar-agent status                   # Lever's status, what works, and what wa
 - **Listing and selecting Models.** `crowbar-agent models` lists the Models the
   harness offers, marking the default. `--model M` sets a thread's Model (alone
   with `--resume ID`, or alongside a message).
+- **Effort.** `crowbar-agent efforts M` lists the effort levels of a Model,
+  and says when it has none. `--resume ID --effort E` sets a thread's effort
+  from its next turn. A new thread starts at its Model's own effort: the
+  client sets one only on a thread that exists.
+- **The harness's slash commands.** `crowbar-agent commands` lists the slash
+  commands the harness offers, each as it is typed, with the harness's
+  description. One is
+  sent as a request that begins with `/` and its name, as
+  `crowbar-agent "/review"`, or at the prompt. The harness takes it for a
+  command or for words: the client and Lever only pass it on.
 
 - **A request waits for the person.** In Ask first, a thread asks before it
   runs a command or edits a file. The request goes to standard error with the
@@ -86,8 +99,8 @@ crowbar-agent status                   # Lever's status, what works, and what wa
 - **A client that goes away stops nothing.** When its terminal closes or its
   SSH connection drops, the turn goes on in Lever. `--list` shows it as
   `(working)`, `--resume ID` picks it up, and `--stop ID` or Ctrl-C stops it.
-- **`status`, `models`, `free-models`, `default-mode`, and `login` are
-  commands only as the first word.** A request that starts with one goes in quotes with the rest of
+- **`status`, `models`, `efforts`, `commands`, `free-models`, `default-mode`,
+  and `login` are commands only as the first word.** A request that starts with one goes in quotes with the rest of
   it, or after `--`: `crowbar-agent -- status of my disk`.
 
 | Exit status | When |

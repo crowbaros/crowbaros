@@ -873,8 +873,22 @@ finally:
         tmp = '/tmp/crowbar-drawer-check'
         self.run(f'rm -rf {tmp} && mkdir -p {tmp}')
         stub_script = {
-            'models': ['stub-1'],
+            'models': ['stub-1', 'spare-1'],
             'rules': [
+                {
+                    'match': 'show-markdown',
+                    'reply': (
+                        '## What I found\n\n'
+                        'The check ran **twice** and `echo` printed its mark. See '
+                        '[the lab guide](https://example.org/lab) for more.\n\n'
+                        '1. Build the image\n'
+                        '2. Boot a copy of it\n'
+                        '   - under UEFI\n\n'
+                        '```sh\nlab/void/desktop_check.py\n```\n\n'
+                        '> A turn that ends folds its acts into one line.\n\n'
+                        'MARKDOWN_OK'
+                    ),
+                },
                 {
                     'match': 'run-cmd',
                     'tool_call': {
@@ -976,10 +990,17 @@ finally:
                         'name': 'Stub',
                         'options': {'baseURL': f'http://127.0.0.1:{port}/v1', 'apiKey': 'stub-key'},
                         'models': {'stub-1': {'name': 'Stub One'}},
-                    }
+                    },
+                    # A second provider, so the Model picker has a rail.
+                    'spare': {
+                        'npm': '@ai-sdk/openai-compatible',
+                        'name': 'Spare',
+                        'options': {'baseURL': f'http://127.0.0.1:{port}/v1', 'apiKey': 'stub-key'},
+                        'models': {'spare-1': {'name': 'Spare One'}},
+                    },
                 },
                 'model': 'stub/stub-1',
-                'enabled_providers': ['stub'],
+                'enabled_providers': ['stub', 'spare'],
                 # A refusal of the person's own, which Ask first must keep.
                 'permission': {'bash': {'echo DENIED_*': 'deny'}},
             }
@@ -1002,6 +1023,27 @@ finally:
                 return next((r for t in view['state']['turns'] for r in t.get('requests', [])
                              if r['state'] == 'waiting'), None)
 
+            def listed(view):
+                """The list open above the drawer's message box, or none."""
+                return view.get('list') or {}
+
+            def arrow_to(key, target, what='highlighted'):
+                """Presses an arrow key until the open list is on `target`. A
+                list goes round its ends, so a key the guest repeats, held as
+                long as the lab holds one, still comes to it."""
+                for _ in range(24):
+                    if listed(self.agent_view()).get(what) == target:
+                        return True
+                    self.key(key)
+                    time.sleep(0.3)
+                return listed(self.agent_view()).get(what) == target
+
+            def empty_the_box():
+                """Takes out what the message box holds, a character at a time."""
+                for _ in self.agent_view().get('draft', ''):
+                    self.key('backspace')
+                self.wait('the message box is empty', lambda: self.agent_view().get('draft') == '')
+
             # 1. A new thread starts in Ask first: the command waits on a
             # request with the exact command, through the drawer put away
             # and the desktop locked, with the mark showing waiting, and runs
@@ -1012,9 +1054,12 @@ finally:
             self.wait('new thread composer opens', lambda: not self.agent_view()['state']['list_view'])
             self.type('please run-cmd')
             self.key('ret')
+            # The request is in the thread once the drawer has drawn it,
+            # with a control for each answer.
             asked = self.wait(
                 'the command raises a request in the thread',
-                lambda: (v := self.agent_view()) and waiting_request(v) and v,
+                lambda: (v := self.agent_view()) and waiting_request(v)
+                and control(v, f"answer:{waiting_request(v)['request']}:once") and v,
                 timeout=45,
             )
             time.sleep(0.5)
@@ -1118,7 +1163,9 @@ finally:
             refusal = self.wait('the second command raises a request',
                                 lambda: (v := self.agent_view()) and len(v['state']['turns']) >= 2
                                 and waiting_request(v) and v, timeout=45)
-            click_control(f"answer:{waiting_request(refusal)['request']}:no")
+            # Answered from the keyboard: Alt and a digit take the answer at
+            # that place of the request that has waited longest. No is third.
+            self.key('alt', '3')
             refused = self.wait(
                 'turn 2 ends after the person said no',
                 lambda: (v := self.agent_view()) and v['state']['turns'][1]['state']['kind'] != 'working' and v,
@@ -1136,27 +1183,191 @@ finally:
                 json.dumps(turn2),
             )
 
-            # 1c. Full access from the drawer's mode menu: the same command
-            # runs with no request. Full access becomes the starting mode too.
-            click_control('mode')
-            menu = self.wait('the mode menu offers the harness\'s modes',
-                             lambda: (v := self.agent_view()) and v.get('mode_menu_open')
-                             and control(v, 'mode:full-access') and v, timeout=60)
+            # The message box holds many lines, and keeps what was typed and
+            # not sent while the drawer is put away.
+            self.type('line one')
+            self.key('shift', 'ret')
+            self.type('line two')
+            held = self.wait('Shift+Enter begins a new line',
+                             lambda: (v := self.agent_view()) and v.get('draft') == 'line one\nline two' and v)
+            self.key('meta_l', 'spc')
+            self.wait('drawer put away with words in the message box', lambda: not self.agent_view()['drawer_up'])
+            self.key('meta_l', 'spc')
+            kept = self.wait('the drawer comes back with the words',
+                             lambda: (v := self.agent_view()) and v['drawer_up'] and v.get('draft') and v)
             time.sleep(0.4)
-            self.capture('20a-drawer-mode-menu')
-            self.check('the mode menu offers Ask first, Full access, and Plan, and no others',
-                       [m['id'] for m in menu['state'].get('modes', [])] == ['ask-first', 'full-access', 'plan'],
-                       json.dumps(menu['state'].get('modes')))
-            click_control('mode:full-access')
-            self.wait('the thread is in Full access', lambda: self.agent_view()['state'].get('mode') == 'full-access')
-            click_control('mode')
-            click_control('default-mode:full-access')
+            self.capture('19e-drawer-draft-kept')
+            self.check(
+                'the message box holds many lines, Shift+Enter sends nothing, and what was typed and not sent is '
+                'there when the drawer is summoned again',
+                kept.get('draft') == 'line one\nline two' and len(held['state']['turns']) == 2
+                and len(kept['state']['turns']) == 2,
+                json.dumps(kept.get('draft')),
+            )
+            empty_the_box()
+
+            # 1c. The thread is driven from the message box. A slash and the
+            # start of a name find a command of the harness's, and taking it
+            # puts it in the message box for the person to add to and send.
+            self.type('/rev')
+            found = self.wait("typing finds a command of the harness's",
+                              lambda: (v := self.agent_view()) and listed(v).get('highlighted') == 'command:review'
+                              and control(v, 'command:review') and v, timeout=60)
+            time.sleep(0.4)
+            self.capture('20-drawer-harness-command')
+            self.key('ret')
+            filled = self.wait('taking it puts it in the message box',
+                               lambda: (v := self.agent_view()) and v.get('draft') == '/review ' and v)
+            self.check(
+                "a command the harness offers is found by its name, and taking it puts it in the message box and "
+                'sends nothing',
+                listed(found)['items'][0] == 'command:review' and not filled.get('list')
+                and len(filled['state']['turns']) == 2 and not filled['state'].get('sending'),
+                json.dumps({'found': listed(found)['items'], 'draft': filled.get('draft')}),
+            )
+            empty_the_box()
+            # A slash alone lists the drawer's commands and then the
+            # harness's own.
+            self.type('/')
+            commands = self.wait(
+                "a slash lists the commands, the harness's among them",
+                lambda: (v := self.agent_view()) and listed(v).get('kind') == 'commands'
+                and 'command:compact' in listed(v).get('items', []) and control(v, 'command:mode') and v,
+                timeout=60,
+            )
+            time.sleep(0.4)
+            self.capture('20a-drawer-commands')
+            items = listed(commands)['items']
+            own = ['command:model', 'command:effort', 'command:mode', 'command:default-mode', 'command:new',
+                   'command:threads', 'command:archive', 'command:delete']
+            self.check(
+                "a slash lists the drawer's commands, then the commands the harness offers, and the keys start "
+                'on the first',
+                items[:len(own)] == own
+                and {'command:compact', 'command:review', 'command:init'} <= set(items[len(own):])
+                and listed(commands).get('highlighted') == 'command:model'
+                and [c['name'] for c in commands['state'].get('thread_commands') or commands['state']['commands']]
+                == [i.split(':', 1)[1] for i in items[len(own):]],
+                json.dumps(items),
+            )
+            # Typing narrows the list. Escape closes it and keeps what was typed.
+            self.type('mo')
+            narrowed = self.wait('typing narrows the list',
+                                 lambda: (v := self.agent_view()) and listed(v).get('items', [])[:3]
+                                 == ['command:model', 'command:mode', 'command:default-mode'] and v)
+            self.key('esc')
+            closed = self.wait('Escape closes the list', lambda: (v := self.agent_view()) and not v.get('list') and v)
+            self.check('typing narrows the list of commands, and Escape closes it and keeps what was typed',
+                       'command:new' not in listed(narrowed)['items'] and closed.get('draft') == '/mo'
+                       and closed['drawer_up'],
+                       json.dumps({'narrowed': listed(narrowed)['items'], 'draft': closed.get('draft')}))
+            # The next key brings the list back. Down and Enter take /mode,
+            # which lists the modes the harness offers in the same place.
+            self.type('d')
+            self.wait('the list comes back as the person types on',
+                      lambda: listed(self.agent_view()).get('highlighted') == 'command:model')
+            self.check('Down moves through the list of commands', arrow_to('down', 'command:mode'))
+            self.key('ret')
+            modes = self.wait("/mode lists the harness's modes",
+                              lambda: (v := self.agent_view()) and listed(v).get('kind') == 'modes'
+                              and len(listed(v).get('items', [])) == 3 and control(v, 'choice:full-access') and v,
+                              timeout=60)
+            time.sleep(0.4)
+            self.capture('20b-drawer-mode-list')
+            self.check(
+                'taking /mode lists Ask first, Full access, and Plan, and no others, starting on the mode the '
+                'thread is in',
+                listed(modes)['items'] == ['choice:ask-first', 'choice:full-access', 'choice:plan']
+                and listed(modes)['highlighted'] == 'choice:ask-first'
+                and modes.get('draft') == '/mode '
+                and [m['id'] for m in modes['state'].get('modes', [])] == ['ask-first', 'full-access', 'plan'],
+                json.dumps(listed(modes)),
+            )
+            self.check('Down moves through the list of choices', arrow_to('down', 'choice:full-access'))
+            self.key('ret')
+            picked = self.wait('the thread is in Full access',
+                               lambda: (v := self.agent_view()) and v['state'].get('mode') == 'full-access'
+                               and not v.get('list') and v)
+            self.check('picking a mode from the list sets the thread to it and empties the message box',
+                       picked.get('draft') == '' and not control(picked, 'mode'), json.dumps(picked.get('draft')))
+            # A command typed whole needs no list.
+            self.type('/default-mode full-access')
+            self.key('ret')
             self.wait('new threads start in Full access',
                       lambda: self.agent_view()['state'].get('default_mode') == 'full-access')
+            # One the thread cannot take says why, and changes nothing.
+            self.type('/mode nonesuch')
+            self.key('ret')
+            refused = self.wait('a mode the harness does not offer is refused',
+                                lambda: (v := self.agent_view()) and v['state'].get('error') and v)
+            self.check('a command the thread cannot take says why and changes nothing',
+                       'No mode by that name' in refused['state']['error']
+                       and refused['state'].get('mode') == 'full-access' and refused.get('draft') == '/mode nonesuch',
+                       refused['state']['error'])
+            empty_the_box()
+
+            # 1d. /model lists the Models the harness offers: the providers
+            # on a rail, the Models of one, and a search through all of them.
+            self.type('/model ')
+            picker = self.wait(
+                '/model lists the Models of the provider the thread is at',
+                lambda: (v := self.agent_view()) and listed(v).get('kind') == 'models'
+                and listed(v).get('items') == ['choice:stub/stub-1'] and control(v, 'provider:spare') and v,
+                timeout=60,
+            )
             time.sleep(0.4)
-            self.capture('20b-drawer-default-mode')
-            click_control('mode')
-            self.wait('the mode menu closes', lambda: not self.agent_view().get('mode_menu_open'))
+            self.capture('20c-drawer-model-picker')
+            self.check(
+                "the Model picker opens on the thread's Model, with each provider on the rail",
+                listed(picker).get('provider') == 'stub'
+                and listed(picker).get('highlighted') == 'choice:stub/stub-1'
+                and bool(control(picker, 'provider:stub'))
+                and {(m['id'], m['name'], m.get('provider')) for m in picker['state']['models']}
+                == {('stub/stub-1', 'Stub One', 'stub'), ('spare/spare-1', 'Spare One', 'spare')},
+                json.dumps({'list': listed(picker), 'models': picker['state']['models']}),
+            )
+            arrow_to('right', 'spare', 'provider')
+            other = self.wait('Right moves to the next provider',
+                              lambda: (v := self.agent_view()) and listed(v).get('provider') == 'spare' and v)
+            self.type('one')
+            found = self.wait('a search looks through every provider',
+                              lambda: (v := self.agent_view()) and len(listed(v).get('items', [])) == 2 and v)
+            time.sleep(0.4)
+            self.capture('20d-drawer-model-search')
+            self.check(
+                'the rail moves between providers, and a search looks through all of them with no rail',
+                listed(other).get('items') == ['choice:spare/spare-1']
+                and set(listed(found)['items']) == {'choice:stub/stub-1', 'choice:spare/spare-1'}
+                and not control(found, 'provider:spare') and listed(found).get('provider') is None,
+                json.dumps({'other': listed(other), 'found': listed(found)}),
+            )
+            empty_the_box()
+            self.type('/model spare')
+            self.wait('the search finds one Model', lambda: listed(self.agent_view()).get('items') == ['choice:spare/spare-1'])
+            self.key('ret')
+            modeled = self.wait('the thread has the Model picked',
+                                lambda: (v := self.agent_view()) and v['state'].get('model') == 'spare/spare-1' and v)
+            # The Model has effort levels, as OpenCode gives a Model of this
+            # kind: the drawer lists them next, on the one the thread is at.
+            levels = self.wait("the picked Model's effort levels are listed next",
+                               lambda: (v := self.agent_view()) and listed(v).get('kind') == 'efforts'
+                               and listed(v).get('items') and v, timeout=30)
+            time.sleep(0.4)
+            self.capture('20e-drawer-effort-list')
+            self.check(
+                'the drawer shows the thread on the Model picked as soon as Lever says so, and then lists that '
+                "Model's effort levels, on the one the thread is at",
+                modeled['state'].get('model') == 'spare/spare-1' and modeled['drawer_up']
+                and levels.get('draft') == '/effort '
+                and listed(levels)['items'] == ['choice:low', 'choice:medium', 'choice:high', 'choice:default']
+                and listed(levels)['highlighted'] == 'choice:default'
+                and levels['state'].get('effort') == 'default',
+                json.dumps(listed(levels)),
+            )
+            self.check('Up moves to the level before', arrow_to('up', 'choice:high'))
+            self.key('ret')
+            self.wait('the thread is at the effort picked',
+                      lambda: (v := self.agent_view()) and v['state'].get('effort') == 'high' and not v.get('list'))
             self.type('please run-cmd again')
             self.key('ret')
             full = self.wait(
@@ -1176,6 +1387,12 @@ finally:
                 and any('declined' in out for out in told[0].get('history_tool_outputs', [])),
                 json.dumps({'turn': turn3, 'told': told[:1]}),
             )
+            self.check('the turn after a Model and an effort are picked runs on that Model, at that effort',
+                       bool(told) and told[0].get('model') == 'spare-1' and 'spare-1' in turn3.get('answer', '')
+                       and told[0].get('effort') == 'high' and full['state'].get('effort') == 'high',
+                       json.dumps({'model': told[0].get('model') if told else None,
+                                   'effort': told[0].get('effort') if told else None,
+                                   'thread': full['state'].get('effort'), 'answer': turn3.get('answer')}))
             self.check('the drawer\'s choices stick: the thread is in Full access and so is the starting mode',
                        full['state'].get('mode') == 'full-access' and full['state'].get('default_mode') == 'full-access')
 
@@ -1250,10 +1467,13 @@ finally:
             )
             time.sleep(0.3)
             self.capture('23-drawer-working-stop')
-            # Click the Stop button at the right end of the drawer's composer bar.
-            click_v1(1240, 904)
+            # /stop stops the turn: the drawer takes a command while the
+            # thread works, though it takes no message.
+            working = self.agent_view()
+            self.type('/stop')
+            self.key('ret')
             stopped_view = self.wait(
-                'turn 5 ends as stopped after clicking Stop',
+                'turn 5 ends as stopped after /stop',
                 lambda: (v := self.agent_view())
                 and len(v['state']['turns']) >= 5
                 and v['state']['turns'][4]['state']['kind'] == 'stopped'
@@ -1265,8 +1485,10 @@ finally:
             self.capture('24-drawer-stopped')
             leftover = self.guest.ssh("pgrep -af '[s]leep 45'", check=False).stdout.strip()
             self.check(
-                'Stop ends the turn as stopped and kills every command it started',
-                stopped_view['state']['turns'][4]['state']['kind'] == 'stopped' and not leftover,
+                '/stop ends the turn as stopped and kills every command it started, and the Stop control was '
+                'there while it worked',
+                stopped_view['state']['turns'][4]['state']['kind'] == 'stopped' and not leftover
+                and bool(control(working, 'stop')) and stopped_view.get('draft') == '',
                 f'leftover={leftover!r}',
             )
 
@@ -1385,6 +1607,64 @@ finally:
                 lambda: (v := self.agent_view()) and len(v['state']['turns']) == 1
                 and v['state']['turns'][0]['state']['kind'] == 'done' and v, timeout=30)
             second_id = second['state']['thread']
+            # The new thread starts with the Model last picked. Its turn has
+            # ended, so its acts are folded into one line, which opens.
+            folded = self.wait('the ended turn folds its acts',
+                               lambda: (v := self.agent_view()) and control(v, 'acts:1') and v)
+            act_id = second['state']['turns'][0]['acts'][0]['id']
+            click_control('acts:1')
+            opened = self.wait('the fold opens', lambda: (v := self.agent_view()) and control(v, f'act:{act_id}') and v)
+            turn = second['state']['turns'][0]
+            self.check(
+                'a new thread starts with the Model last picked, and an ended turn folds its acts into one line '
+                'that opens',
+                second['state'].get('model') == 'spare/spare-1'
+                and not control(folded, f'act:{act_id}') and bool(control(opened, f'act:{act_id}'))
+                and isinstance(turn.get('started'), int) and turn.get('ended', 0) >= turn['started'],
+                json.dumps({'model': second['state'].get('model'), 'started': turn.get('started'),
+                            'ended': turn.get('ended')}),
+            )
+            self.type('please show-markdown')
+            self.key('ret')
+            marked = self.wait('the answer in Markdown arrives',
+                               lambda: (v := self.agent_view()) and len(v['state']['turns']) == 2
+                               and v['state']['turns'][1]['state']['kind'] == 'done' and v, timeout=30)
+            time.sleep(0.5)
+            self.capture('28a-thread-markdown')
+            self.check('an answer written in Markdown is kept as it was written, for the drawer to lay out',
+                       'MARKDOWN_OK' in marked['state']['turns'][1].get('answer', '')
+                       and '```sh' in marked['state']['turns'][1]['answer'],
+                       marked['state']['turns'][1].get('answer', '')[:80])
+            # Sending a harness slash command from the drawer (with desktop
+            # context attached) runs the harness's command instead of sending
+            # literal `/init` as plain text.
+            stub_count_before_cmd = len([
+                line for line in self.run(f'cat {tmp}/stub.jsonl').splitlines() if line.strip()
+            ])
+            self.type('/in')
+            self.wait('typing /in finds OpenCode /init',
+                      lambda: (v := self.agent_view()) and listed(v).get('highlighted') == 'command:init' and v,
+                      timeout=30)
+            self.key('ret')
+            self.wait('taking /init puts it in the message box',
+                      lambda: self.agent_view().get('draft') == '/init ')
+            self.key('ret')
+            ran_cmd = self.wait('the harness slash command turn finishes in the thread',
+                                lambda: (v := self.agent_view()) and len(v['state']['turns']) == 3
+                                and v['state']['turns'][2]['state']['kind'] == 'done' and v, timeout=45)
+            stub_after_cmd = [
+                json.loads(line)
+                for line in self.run(f'cat {tmp}/stub.jsonl').splitlines()[stub_count_before_cmd:]
+                if line.strip()
+            ]
+            cmd_prompts = [e.get('prompt', '') for e in stub_after_cmd if e.get('has_tools')]
+            self.check(
+                'sending a harness slash command from the drawer executes it as a command and shows its turn',
+                ran_cmd['state']['turns'][2].get('message') == '/init'
+                and bool(cmd_prompts)
+                and any('AGENTS.md' in p and p.strip() != '/init' for p in cmd_prompts),
+                json.dumps({'turn': ran_cmd['state']['turns'][2], 'prompts': [p[:120] for p in cmd_prompts]}),
+            )
             self.check('new drawer thread starts at home while terminal thread keeps its cwd',
                 second_id != terminal_id and second['state']['mark'] == 'working'
                 and any(t['thread'] == second_id and t['cwd'] == home for t in second['state']['threads'])
@@ -1401,7 +1681,8 @@ finally:
             self.key('ret')
             self.wait('keyboard opens newest thread record', lambda: not self.agent_view()['state']['list_view'] and self.agent_view()['state']['thread'] == second_id)
             self.capture('29-thread-opened-from-list')
-            click_control('archive')
+            self.type('/archive')
+            self.key('ret')
             self.wait('archive returns to list and hides the thread', lambda: self.agent_view()['state']['list_view']
                 and any(t['thread'] == second_id and t['archived'] for t in self.agent_view()['state']['threads']))
             self.check('drawer archive hides the thread while keeping its record',
@@ -1420,12 +1701,16 @@ finally:
             self.wait('list reopens after terminal deletion', lambda: self.agent_view()['drawer_up'] and self.agent_view()['state']['list_view'])
             click_control(f'thread:{thread_id}')
             self.wait('remaining record opens', lambda: not self.agent_view()['state']['list_view'] and self.agent_view()['state']['thread'] == thread_id)
-            click_control('delete')
+            self.type('/delete')
+            self.key('ret')
+            self.wait('/delete asks before it deletes', lambda: control(self.agent_view(), 'confirm-delete'))
             time.sleep(0.3)
             self.capture('30-thread-delete-confirmation')
             self.key('esc')
             self.check('canceling drawer deletion retains the thread', self.agent_view()['state']['thread'] == thread_id)
-            click_control('delete')
+            self.type('/delete')
+            self.key('ret')
+            self.wait('/delete asks again', lambda: control(self.agent_view(), 'confirm-delete'))
             self.key('tab')
             self.key('tab')
             self.key('ret')
