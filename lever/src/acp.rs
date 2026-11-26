@@ -6,18 +6,18 @@ use crate::channel::LEVER_VERSION;
 use crate::opencode;
 use crate::sys;
 use agent_client_protocol_schema::v1::{
-    AGENT_METHOD_NAMES, AvailableCommandInput, CLIENT_METHOD_NAMES, CancelNotification, CancelRequestNotification,
-    CloseSessionRequest, ContentBlock, Error as AcpError, ErrorCode, Implementation, InitializeRequest,
-    InitializeResponse, JsonRpcMessage, LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse,
-    Notification, PROTOCOL_LEVEL_METHOD_NAMES, PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId,
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, Response, SelectedPermissionOutcome,
-    SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOptions,
-    SessionId, SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason,
-    ToolCallContent, ToolCallStatus, ToolKind,
+    AGENT_METHOD_NAMES, Annotations, AvailableCommandInput, CLIENT_METHOD_NAMES, CancelNotification,
+    CancelRequestNotification, CloseSessionRequest, ContentBlock, Error as AcpError, ErrorCode, Implementation,
+    InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
+    NewSessionResponse, Notification, PROTOCOL_LEVEL_METHOD_NAMES, PermissionOptionKind, PromptRequest, PromptResponse,
+    Request, RequestId, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, Response, Role,
+    SelectedPermissionOutcome, SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigSelectOptions, SessionId, SessionUpdate, SetSessionConfigOptionRequest,
+    SetSessionConfigOptionResponse, StopReason, TextContent, ToolCallContent, ToolCallStatus, ToolKind,
 };
 use agent_client_protocol_schema::{MaybeUndefined, ProtocolVersion};
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::PathBuf;
@@ -209,6 +209,8 @@ pub enum AcpEvent {
         current_model: Option<String>,
         /// The session's mode changed to this one of Lever's.
         current_mode: Option<String>,
+        /// Whether the session's effort selector changed in this update.
+        effort_changed: bool,
     },
     ModeSet {
         thread_id: String,
@@ -375,7 +377,8 @@ pub struct AcpHarness {
     session_efforts: HashMap<String, EffortSelector>,
     /// Sessions Lever opened to read what the harness offers, and closed.
     /// What the harness says of one after is its commands, which Lever keeps.
-    probe_sessions: HashSet<String>,
+    /// Bounded so long-running harnesses do not accumulate stale probe IDs.
+    probe_sessions: VecDeque<String>,
     /// Models whose effort levels are being read.
     probing_efforts: HashSet<String>,
     loading_sessions: HashSet<String>,
@@ -451,7 +454,7 @@ impl AcpHarness {
             session_to_thread: HashMap::new(),
             session_models: HashMap::new(),
             session_efforts: HashMap::new(),
-            probe_sessions: HashSet::new(),
+            probe_sessions: VecDeque::new(),
             probing_efforts: HashSet::new(),
             loading_sessions: HashSet::new(),
             fault: None,
@@ -580,13 +583,25 @@ impl AcpHarness {
         let _ = self.on_writable();
     }
 
+    /// Records a probe session ID while bounding history to recent probes.
+    fn remember_probe_session(&mut self, session_id: String) {
+        if self.probe_sessions.iter().any(|s| s == &session_id) {
+            return;
+        }
+        const MAX_PROBE_SESSIONS: usize = 16;
+        if self.probe_sessions.len() >= MAX_PROBE_SESSIONS {
+            self.probe_sessions.pop_front();
+        }
+        self.probe_sessions.push_back(session_id);
+    }
+
     /// Closes a session Lever opened to read what the harness offers. What
     /// the harness says of it after is taken for its commands alone.
     fn close_probe(&mut self, session_id: SessionId) {
         if session_id.0.is_empty() {
             return;
         }
-        self.probe_sessions.insert(session_id.0.as_ref().to_string());
+        self.remember_probe_session(session_id.0.as_ref().to_string());
         if self.supports_close_session {
             let close = CloseSessionRequest::new(session_id);
             let id = self.send_request(AGENT_METHOD_NAMES.session_close, &close);
@@ -672,6 +687,11 @@ impl AcpHarness {
         self.send_result_response(permission.rpc_id, RequestPermissionResponse::new(outcome));
         let _ = self.on_writable();
         true
+    }
+
+    /// Whether a Model catalog probe is currently in flight.
+    pub fn probing_models(&self) -> bool {
+        self.probing_models
     }
 
     /// Probes the harness's offered Models by opening a session, reading its
@@ -799,12 +819,15 @@ impl AcpHarness {
         true
     }
 
-    /// Sends a `session/prompt` request for an active session, prepending
-    /// desktop context when present.
+    /// Sends a `session/prompt` request for an active session, attaching
+    /// desktop context as assistant-audience context so harnesses still see
+    /// leading slash commands in the person's text.
     pub fn send_prompt(&mut self, thread_id: &str, turn: u64, session_id: &str, context: Option<&str>, text: &str) {
         let mut blocks = Vec::new();
         if let Some(ctx) = context {
-            blocks.push(ContentBlock::from(format!("{ctx}\n")));
+            blocks.push(ContentBlock::Text(
+                TextContent::new(format!("{ctx}\n")).annotations(Annotations::new().audience(vec![Role::Assistant])),
+            ));
         }
         blocks.push(ContentBlock::from(text.to_string()));
         let req = PromptRequest::new(SessionId::new(session_id.to_string()), blocks);
@@ -1522,7 +1545,7 @@ impl AcpHarness {
                             .or_else(|| self.model_config_id.clone())
                             .unwrap_or_else(|| "model".to_string());
                         let session_id = resp.session_id.0.as_ref().to_string();
-                        self.probe_sessions.insert(session_id.clone());
+                        self.remember_probe_session(session_id.clone());
                         let req = SetSessionConfigOptionRequest::new(
                             resp.session_id,
                             SessionConfigId::new(config_id),
@@ -1601,7 +1624,7 @@ impl AcpHarness {
         // commands are no history, and are kept, as are those of a session
         // Lever opened to read what the harness offers.
         let loading = self.loading_sessions.contains(session_id);
-        if loading || self.probe_sessions.contains(session_id) {
+        if loading || self.probe_sessions.iter().any(|s| s == session_id) {
             let thread_id = if loading { self.loading_thread(session_id) } else { None };
             if (thread_id.is_some() || !loading)
                 && let Ok(SessionUpdate::AvailableCommandsUpdate(update)) =
@@ -1713,6 +1736,7 @@ impl AcpHarness {
                         catalog,
                         current_model,
                         current_mode,
+                        effort_changed,
                     });
                 }
             }

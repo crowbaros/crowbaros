@@ -41,7 +41,7 @@ def _latest_turn(messages):
     """
     system_parts = []
     last_user_idx = -1
-    prompt_text = ""
+    user_parts = []
     for idx, msg in enumerate(messages):
         if not isinstance(msg, dict):
             continue
@@ -51,8 +51,11 @@ def _latest_turn(messages):
         elif role == "user":
             text = _extract_text(msg.get("content", ""))
             if text:
+                if last_user_idx != idx - 1:
+                    user_parts = []
+                user_parts.append(text)
                 last_user_idx = idx
-                prompt_text = text
+    prompt_text = "\n".join(user_parts)
     tool_output = None
     if last_user_idx >= 0:
         for msg in messages[last_user_idx + 1:]:

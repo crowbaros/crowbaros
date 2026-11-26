@@ -3525,12 +3525,30 @@ fn surface_send_attaches_fulcrum_desktop_context_and_falls_back_when_fulcrum_is_
     assert_eq!(rec["turns"][0]["context"]["active"]["app_id"], "foot");
     assert_eq!(rec["turns"][0]["message"], "what is open?");
 
-    // Harness received fenced desktop context with the prompt.
+    // Harness received fenced desktop context as an assistant-audience block
+    // separate from the person's text, so leading slash commands remain visible.
     let log_after_1 = std::fs::read_to_string(&rpc_log).unwrap();
     assert!(log_after_1.contains("<desktop-context>"), "{log_after_1}");
     assert!(log_after_1.contains("[Desktop context"), "{log_after_1}");
     assert!(log_after_1.contains("terminal (app_id: foot)"), "{log_after_1}");
     assert!(log_after_1.contains("Virtual-1: 1280x960"), "{log_after_1}");
+    let prompt_req = log_after_1
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|v| v["method"] == "session/prompt")
+        .expect("session/prompt logged");
+    let blocks = prompt_req["params"]["prompt"].as_array().expect("prompt blocks");
+    assert_eq!(blocks.len(), 2, "expected context + user text blocks: {prompt_req}");
+    assert_eq!(blocks[0]["annotations"]["audience"], json!(["assistant"]), "{blocks:?}");
+    assert!(
+        blocks[0]["text"].as_str().unwrap_or("").contains("[Desktop context"),
+        "{blocks:?}"
+    );
+    assert!(
+        blocks[1].get("annotations").is_none(),
+        "user prompt block must not carry assistant audience: {blocks:?}"
+    );
+    assert_eq!(blocks[1]["text"], "what is open?");
 
     // 2. Remove Fulcrum socket: next surface send succeeds with NO desktop context.
     let _ = std::fs::remove_file(&fulcrum_sock);
@@ -5549,6 +5567,101 @@ fn an_effort_answered_with_the_one_before_is_taken_and_the_update_after_says_so(
     let (_, turn) = send(&mut peer, Some(&thread), "again");
     assert_eq!(text_of(&turn_events(&mut peer, &thread, turn)), "other/stub-3 at low");
     assert_eq!(stub_config_set(&stub_log, "effort"), ["low"]);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_catalog_update_between_set_effort_and_send_keeps_the_picked_effort() {
+    let dir = TempDir::new();
+    let script = effort_script(&dir.0, json!({ "emit_catalog_update_on_new_session": true }));
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+
+    // Turn 1 starts a live session at the default effort ("default").
+    let (thread, turn) = send(&mut peer, None, "first");
+    assert_eq!(
+        text_of(&turn_events(&mut peer, &thread, turn)),
+        "stub/stub-1 at default"
+    );
+
+    // Pick "high" while idle (saved for the next turn; live session is still "default").
+    write_frame(
+        &mut peer,
+        &json!({ "op": "set-effort", "thread": thread, "effort": "high" }),
+    )
+    .unwrap();
+    let reply = read_until(&mut peer, |f| f.get("reply").is_some());
+    assert_eq!(reply["reply"], "effort-set", "{reply}");
+    assert_eq!(reply["effort"], "high", "{reply}");
+
+    // Trigger a catalog update on the idle session (via an `efforts` probe for
+    // another Model, which opens a new probe session and emits a
+    // `config_option_update` naming the live session's previous "default" effort).
+    write_frame(&mut peer, &json!({ "op": "efforts", "model": "other/stub-3" })).unwrap();
+    let efforts_reply = read_until(&mut peer, |f| f.get("reply").is_some());
+    assert_eq!(efforts_reply["reply"], "efforts", "{efforts_reply}");
+
+    // The saved effort must still be "high", and the next turn must apply it.
+    let record = resume(&mut peer, &thread);
+    assert_eq!(record["effort"], "high", "{record}");
+    let (_, turn2) = send(&mut peer, Some(&thread), "second");
+    assert_eq!(text_of(&turn_events(&mut peer, &thread, turn2)), "stub/stub-1 at high");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn commands_refuses_with_no_harness_and_does_not_reprobe_when_harness_names_none() {
+    // Without a harness configured, `commands` fails immediately with `no-harness`.
+    let dir_none = TempDir::new();
+    let mut lever_none = RunningLever::start(&dir_none.0, my_uid(), my_uid());
+    let mut peer_none = handshake(&lever_none.person);
+    write_frame(&mut peer_none, &json!({ "op": "commands" })).unwrap();
+    let reply = read_frame(&mut peer_none).unwrap();
+    assert_eq!(reply["reply"], "error", "{reply}");
+    assert_eq!(reply["code"], "no-harness", "{reply}");
+    lever_none.signal(libc::SIGTERM);
+    assert_eq!(lever_none.wait().code(), Some(0));
+
+    // With a harness that never emits `available_commands_update`, repeated
+    // `commands` polls must not spawn repeated probe sessions.
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [{ "steps": [{ "kind": "text", "text": "ok" }] }]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+
+    // First `commands` triggers one probe; wait for models so the probe finishes.
+    write_frame(&mut peer, &json!({ "op": "commands" })).unwrap();
+    let first = read_frame(&mut peer).unwrap();
+    assert_eq!(first["reply"], "commands", "{first}");
+    write_frame(&mut peer, &json!({ "op": "models" })).unwrap();
+    let models = read_frame(&mut peer).unwrap();
+    assert_eq!(models["reply"], "models", "{models}");
+
+    // Polling `commands` repeatedly afterwards opens no further probe sessions.
+    for _ in 0..5 {
+        write_frame(&mut peer, &json!({ "op": "commands" })).unwrap();
+        let polled = read_frame(&mut peer).unwrap();
+        assert_eq!(polled["reply"], "commands", "{polled}");
+    }
+    let log = std::fs::read_to_string(&stub_log).unwrap();
+    let new_sessions = log
+        .lines()
+        .filter(|line| line.contains("\"method\":\"session/new\""))
+        .count();
+    assert_eq!(new_sessions, 1, "expected exactly one probe session, log:\n{log}");
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));

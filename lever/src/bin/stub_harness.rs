@@ -121,6 +121,11 @@ struct Script {
     /// of its sessions works.
     #[serde(default)]
     effort_answer_lags: bool,
+    /// If true, each new session also emits a `config_option_update` on all
+    /// already-open sessions with their current options, as OpenCode does when
+    /// reloading its catalog.
+    #[serde(default)]
+    emit_catalog_update_on_new_session: bool,
     /// Updates sent on `session/load` before it is answered, as a harness
     /// replays a session's history.
     #[serde(default)]
@@ -1162,6 +1167,39 @@ fn run(options: Options) -> Result<(), String> {
                         .session_id
                         .clone()
                         .unwrap_or_else(|| format!("{}{n}", script.session_prefix));
+                    if script.emit_catalog_update_on_new_session {
+                        let existing: Vec<_> = {
+                            let models_map = session_models.lock().unwrap();
+                            let modes_map = session_modes.lock().unwrap();
+                            let efforts_map = session_efforts.lock().unwrap();
+                            models_map
+                                .keys()
+                                .filter(|existing_sid| existing_sid.as_str() != sid.as_str())
+                                .map(|existing_sid| {
+                                    (
+                                        existing_sid.clone(),
+                                        models_map.get(existing_sid).cloned(),
+                                        modes_map.get(existing_sid).cloned(),
+                                        efforts_map.get(existing_sid).cloned(),
+                                    )
+                                })
+                                .collect()
+                        };
+                        for (existing_sid, m, mo, ef) in existing {
+                            if let Some(opts) = build_config_options(
+                                script.models.as_deref(),
+                                m.as_deref(),
+                                &modes,
+                                mo.as_deref(),
+                                ef.as_deref(),
+                            ) {
+                                writer.send_update(
+                                    &SessionId::new(existing_sid),
+                                    SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(opts)),
+                                );
+                            }
+                        }
+                    }
                     if let Some(ref dm) = default_model {
                         session_models.lock().unwrap().insert(sid.clone(), dm.clone());
                     }

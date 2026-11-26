@@ -140,7 +140,9 @@ historical behavior evidence, not a current Fedora workflow.
   thread's Model, effort, and mode. While a turn works the box takes
   commands and no message.
 - An answer shows as the Markdown it is: paragraphs, headings, lists, quotes,
-  strong and emphasised words, links, inline code, and fenced code in the
+  strong and emphasised words, links (with destinations shown beside titled
+  links; clicking copies the URL to the clipboard since the shell runs as its
+  own account), inline code, and fenced code in the
   mono face, read again as each piece arrives. The person's message sits to
   the right. While a turn works its acts show as lines, with how long the
   turn has worked. When it ends they fold into one line, as `Worked for 12s ·

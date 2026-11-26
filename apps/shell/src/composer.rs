@@ -137,6 +137,8 @@ pub struct Composer {
     /// How many rows the text wrapped to, when it was last laid out.
     rows: usize,
     scroll_y: Pixels,
+    /// True after mouse-wheel scrolling until the caret moves or text changes.
+    manual_scroll: bool,
     /// Where Up and Down keep the caret, across rows of other lengths.
     goal_x: Option<Pixels>,
     is_selecting: bool,
@@ -158,6 +160,7 @@ impl Composer {
             laid: Laid::default(),
             rows: 1,
             scroll_y: px(0.),
+            manual_scroll: false,
             goal_x: None,
             is_selecting: false,
             max_len,
@@ -181,6 +184,7 @@ impl Composer {
         self.marked_range = None;
         self.goal_x = None;
         self.scroll_y = px(0.);
+        self.manual_scroll = false;
         cx.notify();
     }
 
@@ -196,6 +200,7 @@ impl Composer {
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.selected_range = offset..offset;
         self.selection_reversed = false;
+        self.manual_scroll = false;
         cx.notify()
     }
 
@@ -209,6 +214,7 @@ impl Composer {
             self.selection_reversed = !self.selection_reversed;
             self.selected_range = self.selected_range.end..self.selected_range.start;
         }
+        self.manual_scroll = false;
         cx.notify()
     }
 
@@ -411,6 +417,20 @@ impl Composer {
         self.is_selecting = false;
     }
 
+    fn on_scroll_wheel(&mut self, event: &ScrollWheelEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let delta = event.delta.pixel_delta(px(LINE_HEIGHT)).y;
+        let max_scroll = px((self.rows as f32 - MAX_LINES as f32).max(0.) * LINE_HEIGHT);
+        if max_scroll <= px(0.) {
+            return;
+        }
+        let next = (self.scroll_y - delta).clamp(px(0.), max_scroll);
+        if next != self.scroll_y {
+            self.scroll_y = next;
+            self.manual_scroll = true;
+            cx.notify();
+        }
+    }
+
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.is_selecting {
             self.select_to(self.index_for_mouse_position(event.position), cx);
@@ -452,11 +472,26 @@ impl Composer {
     }
 
     fn replace(&mut self, range: Range<usize>, new_text: &str) -> bool {
-        if self.content.len().saturating_sub(range.len()) + new_text.len() > self.max_len {
-            return false;
-        }
-        self.content = (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..]).into();
+        let base_len = self.content.len().saturating_sub(range.len());
+        let allowed = self.max_len.saturating_sub(base_len);
+        let insert = if new_text.len() > allowed {
+            if allowed == 0 {
+                return false;
+            }
+            let mut end = allowed;
+            while end > 0 && !new_text.is_char_boundary(end) {
+                end -= 1;
+            }
+            if end == 0 {
+                return false;
+            }
+            &new_text[..end]
+        } else {
+            new_text
+        };
+        self.content = (self.content[0..range.start].to_owned() + insert + &self.content[range.end..]).into();
         self.goal_x = None;
+        self.manual_scroll = false;
         true
     }
 }
@@ -704,12 +739,17 @@ impl Element for ComposerElement {
         };
         let caret_top = px(caret_row as f32 * LINE_HEIGHT);
         let height = bounds.size.height;
-        let scroll_y = input
-            .scroll_y
-            .min(caret_top)
-            .max(caret_top + line_height - height)
-            .min((px(rows as f32 * LINE_HEIGHT) - height).max(px(0.)))
-            .max(px(0.));
+        let max_scroll = (px(rows as f32 * LINE_HEIGHT) - height).max(px(0.));
+        let scroll_y = if input.manual_scroll {
+            input.scroll_y.clamp(px(0.), max_scroll)
+        } else {
+            input
+                .scroll_y
+                .min(caret_top)
+                .max(caret_top + line_height - height)
+                .min(max_scroll)
+                .max(px(0.))
+        };
 
         let mut selection = Vec::new();
         let mut caret = None;
@@ -836,6 +876,7 @@ impl Render for Composer {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
+            .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
             .text_color(rgb(self.palette.text))
             .line_height(px(LINE_HEIGHT))
             .text_size(px(TEXT_SIZE))

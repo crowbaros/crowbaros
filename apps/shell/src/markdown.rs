@@ -171,8 +171,13 @@ fn inline(source: &str, look: &Look, out: &mut Line) {
                     let label = &rest[1..mid];
                     let end = rest[mid + 2..].find(')')?;
                     let target = rest[mid + 2..mid + 2 + end].trim();
-                    (!label.is_empty() && !label.contains('\n') && !target.is_empty() && !target.contains(' '))
-                        .then_some((label, target, mid + 2 + end + 1))
+                    (!label.is_empty()
+                        && !label.contains('\n')
+                        && !label.contains('[')
+                        && !label.contains(']')
+                        && !target.is_empty()
+                        && !target.contains(' '))
+                    .then_some((label, target, mid + 2 + end + 1))
                 });
                 match link {
                     Some((label, target, len)) => {
@@ -513,6 +518,18 @@ mod tests {
                 Block::Code { language: None, text: "tilde".into() },
             ]
         );
+    }
+
+    #[test]
+    fn brackets_before_a_link_stay_plain_text() {
+        let parsed = line("See [1] in [the guide](https://example.org) now.");
+        assert_eq!(parsed.text, "See [1] in the guide now.");
+        let links: Vec<_> = parsed
+            .spans
+            .iter()
+            .filter_map(|s| s.look.link.as_deref().map(|u| (&parsed.text[s.range.clone()], u)))
+            .collect();
+        assert_eq!(links, vec![("the guide", "https://example.org")]);
     }
 
     #[test]

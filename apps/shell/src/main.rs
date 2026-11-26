@@ -3339,15 +3339,29 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 if is_sent {
                     if let Some(w) = model.read(cx).agent {
                         let _ = w.update(cx, |view, _, cx| {
+                            if let Some(key) = view.submitted_key.take() {
+                                view.model.update(cx, |m, _| {
+                                    m.agent_drafts.remove(&key);
+                                });
+                            }
                             if let Some(submitted) = view.submitted_draft.take() {
                                 let current = view.input.read(cx).text();
                                 if let Some(next) = agent::draft_after_send(&current, &submitted) {
                                     view.input.update(cx, |input, cx| input.set_text(next, cx));
                                 }
                             }
-                            view.scroll_to_bottom = true;
-                            view.scroll.scroll_to_bottom();
+                            if view.near_bottom() {
+                                view.scroll_to_bottom = true;
+                                view.scroll.scroll_to_bottom();
+                            }
                             cx.notify();
+                        });
+                    } else {
+                        model.update(cx, |m, _| {
+                            m.agent_drafts.remove("");
+                            if let Some(tid) = m.agent_state.thread.clone() {
+                                m.agent_drafts.remove(&tid);
+                            }
                         });
                     }
                 } else if changed && should_scroll {
@@ -3514,7 +3528,7 @@ fn main() -> anyhow::Result<()> {
             KeyBinding::new("left", PrevMonth, Some("Calendar")),
             KeyBinding::new("right", NextMonth, Some("Calendar")),
             KeyBinding::new("enter", Unlock, Some("Lock")),
-            KeyBinding::new("enter", SendMessage, Some("AgentSurface")),
+            KeyBinding::new("enter", SendMessage, Some("AgentSurface && !Composer")),
             KeyBinding::new("tab", Next, Some("AgentSurface")),
             KeyBinding::new("shift-tab", Previous, Some("AgentSurface")),
         ]);

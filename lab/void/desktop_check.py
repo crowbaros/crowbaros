@@ -1609,6 +1609,36 @@ finally:
                        'MARKDOWN_OK' in marked['state']['turns'][1].get('answer', '')
                        and '```sh' in marked['state']['turns'][1]['answer'],
                        marked['state']['turns'][1].get('answer', '')[:80])
+            # Sending a harness slash command from the drawer (with desktop
+            # context attached) runs the harness's command instead of sending
+            # literal `/init` as plain text.
+            stub_count_before_cmd = len([
+                line for line in self.run(f'cat {tmp}/stub.jsonl').splitlines() if line.strip()
+            ])
+            self.type('/in')
+            self.wait('typing /in finds OpenCode /init',
+                      lambda: (v := self.agent_view()) and listed(v).get('highlighted') == 'command:init' and v,
+                      timeout=30)
+            self.key('ret')
+            self.wait('taking /init puts it in the message box',
+                      lambda: self.agent_view().get('draft') == '/init ')
+            self.key('ret')
+            ran_cmd = self.wait('the harness slash command turn finishes in the thread',
+                                lambda: (v := self.agent_view()) and len(v['state']['turns']) == 3
+                                and v['state']['turns'][2]['state']['kind'] == 'done' and v, timeout=45)
+            stub_after_cmd = [
+                json.loads(line)
+                for line in self.run(f'cat {tmp}/stub.jsonl').splitlines()[stub_count_before_cmd:]
+                if line.strip()
+            ]
+            cmd_prompts = [e.get('prompt', '') for e in stub_after_cmd if e.get('has_tools')]
+            self.check(
+                'sending a harness slash command from the drawer executes it as a command and shows its turn',
+                ran_cmd['state']['turns'][2].get('message') == '/init'
+                and bool(cmd_prompts)
+                and any('AGENTS.md' in p and p.strip() != '/init' for p in cmd_prompts),
+                json.dumps({'turn': ran_cmd['state']['turns'][2], 'prompts': [p[:120] for p in cmd_prompts]}),
+            )
             self.check('new drawer thread starts at home while terminal thread keeps its cwd',
                 second_id != terminal_id and second['state']['mark'] == 'working'
                 and any(t['thread'] == second_id and t['cwd'] == home for t in second['state']['threads'])

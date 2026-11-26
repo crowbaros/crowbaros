@@ -460,7 +460,7 @@ Reply:
 - `commands`: each command's `name`, the harness's `description` of it, and
   the `hint` the harness gives for what to type after it, when it gives one.
 
-Errors: `no-thread`, `invalid-request`, `storage-error`.
+Errors: `no-harness`, `no-thread`, `invalid-request`, `storage-error`.
 
 #### `list`
 

@@ -951,6 +951,10 @@ pub struct AgentState {
     pub default_model: Option<String>,
     /// Lever has said what the harness offers on this connection.
     pub offer_known: bool,
+    /// Bumped whenever the drawer should retry catalog/effort/command lookups
+    /// (on disconnect, reconnect, error, or free-models toggle).
+    #[serde(skip)]
+    pub catalog_epoch: u64,
     /// The effort levels of each Model Lever has said them for.
     pub efforts: std::collections::BTreeMap<String, Vec<EffortInfo>>,
     /// The harness's commands, and those of the drawer's thread once Lever
@@ -1306,6 +1310,8 @@ impl AgentState {
             || self.free_hosted_models != status.free_hosted_models
             || self.no_harness != no_harness
             || (status.default_mode.is_some() && self.default_mode != status.default_mode);
+        let free_changed = self.free_hosted_models != status.free_hosted_models;
+        let harness_came_up = !self.harness_started && status.harness_started && self.models.is_empty();
         if status.default_mode.is_some() {
             self.default_mode = status.default_mode;
         }
@@ -1314,6 +1320,14 @@ impl AgentState {
         self.harnesses = status.harnesses;
         self.free_hosted_models = status.free_hosted_models;
         self.no_harness = no_harness;
+        if free_changed || harness_came_up {
+            self.offer_known = false;
+            self.modes_error = None;
+            if free_changed {
+                self.efforts.clear();
+            }
+            self.catalog_epoch = self.catalog_epoch.wrapping_add(1);
+        }
         if self.no_harness {
             self.error = None;
         }
@@ -1418,7 +1432,9 @@ impl AgentState {
                 let busy = threads.iter().any(|t| t.working || t.waiting);
                 if let Some(selected) = threads.iter().find(|t| Some(t.thread.as_str()) == self.thread.as_deref()) {
                     self.title = (!selected.title.is_empty()).then(|| selected.title.clone());
-                    self.model = selected.model.clone();
+                    if selected.model.is_some() {
+                        self.model = selected.model.clone();
+                    }
                 }
                 self.threads = threads;
                 self.list_received = true;
@@ -1450,6 +1466,7 @@ impl AgentState {
                 self.sending = false;
                 self.error = resume_error;
                 self.missing_model = None;
+                self.catalog_epoch = self.catalog_epoch.wrapping_add(1);
                 changed |= self.apply_status(status);
                 if let Some(resumed) = resumed {
                     if self.thread.is_none() { self.list_view = false; }
@@ -1510,7 +1527,10 @@ impl AgentState {
                 self.working_threads.clear();
                 self.waiting_threads.clear();
                 self.modes_loading = false;
+                self.modes_error = None;
                 self.offer_known = false;
+                self.efforts.clear();
+                self.catalog_epoch = self.catalog_epoch.wrapping_add(1);
                 self.connected = false;
                 self.sending = false;
                 self.active_turn = None;
@@ -1848,12 +1868,13 @@ impl AgentState {
                         request.sending = None;
                     }
                 }
+                self.catalog_epoch = self.catalog_epoch.wrapping_add(1);
                 if self.modes_loading
                     && !matches!(code.as_str(), "no-model" | "no-thread" | "disconnected")
                 {
-                    // Asked while the mode menu opened: `models` failed.
+                    // Asked while a catalog menu opened: `models` failed.
                     self.modes_loading = false;
-                    self.modes_error = Some("Modes are not available right now.".into());
+                    self.modes_error = Some("Models and modes are not available right now.".into());
                     return true;
                 }
                 self.modes_loading = false;
@@ -5670,7 +5691,10 @@ mod tests {
         assert!(state.ask_offer());
         state.apply(AgentEvent::Error { code: "harness-error".into(), message: "boom".into() }, true);
         assert!(!state.modes_loading);
-        assert_eq!(state.modes_error.as_deref(), Some("Modes are not available right now."));
+        assert_eq!(
+            state.modes_error.as_deref(),
+            Some("Models and modes are not available right now.")
+        );
         assert_eq!(state.error, None);
 
         assert_eq!(mode_name("full-access", &[]), "Full access");
@@ -6374,5 +6398,80 @@ mod tests {
         assert_eq!(read_picks(Some(&path)), (None, None));
         assert_eq!(read_picks(None), (None, None));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn threads_snapshot_keeps_optimistic_model_and_status_or_error_bumps_catalog_epoch() {
+        let mut state = AgentState::new(true);
+        state.connected = true;
+        state.last_model = Some("acme/large".into());
+        state.apply(
+            AgentEvent::Sent {
+                thread: "t-new".into(),
+                turn: 1,
+            },
+            true,
+        );
+        assert_eq!(state.model.as_deref(), Some("acme/large"));
+
+        // A `threads` snapshot arriving before Lever persists the Model must
+        // not blank out the optimistic Model.
+        state.apply(
+            AgentEvent::Threads {
+                threads: vec![ThreadSummary {
+                    thread: "t-new".into(),
+                    title: "Hello".into(),
+                    cwd: "/home/person".into(),
+                    model: None,
+                    mode: Some("ask-first".into()),
+                    state: "working".into(),
+                    turns: 1,
+                    archived: false,
+                    working: true,
+                    waiting: false,
+                    started: 1,
+                    updated: 1,
+                }],
+                finished: false,
+            },
+            true,
+        );
+        assert_eq!(state.model.as_deref(), Some("acme/large"));
+
+        // Toggling free hosted Models invalidates the cached catalog and bumps
+        // `catalog_epoch` so the drawer retries lookups.
+        state.offer_known = true;
+        state.efforts.insert("acme/large".into(), vec![]);
+        let before = state.catalog_epoch;
+        state.apply(
+            AgentEvent::Status(StatusInfo {
+                lever_version: "0.1.0".into(),
+                harness_started: true,
+                harnesses: vec!["OpenCode".into()],
+                free_hosted_models: true,
+                default_mode: Some("ask-first".into()),
+            }),
+            true,
+        );
+        assert!(!state.offer_known);
+        assert!(state.efforts.is_empty());
+        assert_ne!(state.catalog_epoch, before);
+
+        // An error while loading the offer also bumps `catalog_epoch` and sets
+        // a neutral error note.
+        let before_err = state.catalog_epoch;
+        assert!(state.ask_offer());
+        state.apply(
+            AgentEvent::Error {
+                code: "harness-error".into(),
+                message: "boom".into(),
+            },
+            true,
+        );
+        assert_ne!(state.catalog_epoch, before_err);
+        assert_eq!(
+            state.modes_error.as_deref(),
+            Some("Models and modes are not available right now.")
+        );
     }
 }

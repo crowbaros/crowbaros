@@ -50,6 +50,7 @@ pub(crate) struct AgentSurface {
     pub(crate) scroll: ScrollHandle,
     pub(crate) scroll_to_bottom: bool,
     pub(crate) submitted_draft: Option<String>,
+    pub(crate) submitted_key: Option<String>,
     _input_sub: Subscription,
     /// The display the drawer is on, and where its left edge is on it.
     output: String,
@@ -58,6 +59,9 @@ pub(crate) struct AgentSurface {
     /// The row of the open list the keys are on, and the list it is a row of.
     highlight: usize,
     list_for: String,
+    /// The last message-box text seen by the observer, so focus/caret/layout
+    /// notifications do not clear unrelated errors.
+    last_text: String,
     /// What the message box held when Escape closed its list.
     dismissed: Option<String>,
     /// What the message box held when the drawer last said why something
@@ -67,16 +71,52 @@ pub(crate) struct AgentSurface {
     provider: Option<String>,
     /// The Model just picked, whose effort levels are offered next.
     effort_after: Option<String>,
-    /// Enter is down, and when it last came: a key held down sends Enter
-    /// again and again, and one press is one Enter.
-    enter_down: bool,
-    enter_at: Option<Instant>,
+    /// The catalog epoch last seen from `AgentState`, so disconnect/error/
+    /// free-model changes reset cached fetch guards.
+    seen_catalog_epoch: u64,
+    /// The kind of list open on the previous render, to reset transient state
+    /// when a picker closes.
+    last_menu_kind: Option<MenuKind>,
     /// What the drawer has asked Lever for since it came up.
     asked_offer: bool,
     asked_efforts: HashSet<String>,
     asked_commands: Option<Option<String>>,
     /// Wakes the drawer each second while a turn works, for how long it has.
     _tick: Task<()>,
+}
+
+/// Plain Enter in the focused message box counts once per physical press;
+/// held key repeats and modified Enters (like Shift+Enter) are not taken.
+fn should_take_composer_enter(is_held: bool, modifiers: &Modifiers, input_focused: bool) -> bool {
+    input_focused
+        && !is_held
+        && !modifiers.shift
+        && !modifiers.control
+        && !modifiers.alt
+        && !modifiers.platform
+}
+
+/// Alt+digit answers a waiting permission request only on an initial key press
+/// while viewing the thread (never on key repeat, in the thread list, or over
+/// the delete confirmation).
+fn should_answer_with_alt_digit(is_held: bool, list_view: bool, confirm_delete: bool) -> bool {
+    !is_held && !list_view && !confirm_delete
+}
+
+/// Identity key for the open slash menu used to reset highlight to `menu.start()`
+/// when the list switches kind, query, provider, or finishes loading its rows.
+fn list_for_key(menu: &Menu, draft: &str) -> String {
+    let named = match slash::typed(draft) {
+        slash::Typed::Name(query) => query.to_string(),
+        slash::Typed::Command { arg, .. } => arg.to_string(),
+        slash::Typed::Words => String::new(),
+    };
+    format!(
+        "{:?}|{named}|{:?}|{}",
+        menu.kind,
+        menu.provider,
+        menu.items.is_empty()
+    )
 }
 
 /// The key a thread's unsent words are kept under: its ID, or nothing for
@@ -97,8 +137,10 @@ impl AgentSurface {
         let focus = cx.focus_handle();
         let state = &model.read(cx).agent_state;
         let scroll_to_bottom = !state.turns.is_empty();
+        let seen_catalog_epoch = state.catalog_epoch;
         // What the person typed in this thread and did not send.
         let draft = model.read(cx).agent_drafts.get(&draft_key(state)).cloned();
+        let last_text = draft.clone().unwrap_or_default();
         if state.list_view {
             window.focus(&focus);
         } else {
@@ -109,6 +151,8 @@ impl AgentSurface {
         }
         let input_sub = cx.observe(&input, |this, input, cx| {
             let text = input.read(cx).text();
+            let text_changed = text != this.last_text;
+            this.last_text = text.clone();
             if this.dismissed.as_deref().is_some_and(|closed| closed != text) {
                 this.dismissed = None;
             }
@@ -117,14 +161,15 @@ impl AgentSurface {
                     return;
                 }
                 // What the drawer said of the last thing typed is said: it
-                // goes as the person types on.
-                if this.said_of.as_deref() != Some(text.as_str()) {
+                // goes once the person edits the text, never on focus/layout.
+                if text_changed && this.said_of.as_deref() != Some(text.as_str()) {
                     this.said_of = None;
                     m.agent_state.error = None;
                 }
                 let key = draft_key(&m.agent_state);
-                // A command is not a draft: it is carried out or dropped.
-                if text.trim().is_empty() || text.starts_with('/') {
+                // Keep plain words, Unix paths, and harness commands as drafts;
+                // only empty text and drawer-owned commands are not kept.
+                if text.trim().is_empty() || slash::is_drawer_command(&text) {
                     m.agent_drafts.remove(&key);
                 } else {
                     m.agent_drafts.insert(key, text);
@@ -157,18 +202,20 @@ impl AgentSurface {
             scroll: ScrollHandle::new(),
             scroll_to_bottom,
             submitted_draft: None,
+            submitted_key: None,
             _input_sub: input_sub,
             output,
             left,
             frame: Rc::new(RefCell::new(ControlFrame::default())),
             highlight: 0,
             list_for: String::new(),
+            last_text,
             dismissed: None,
             said_of: None,
             provider: None,
             effort_after: None,
-            enter_down: false,
-            enter_at: None,
+            seen_catalog_epoch,
+            last_menu_kind: None,
             asked_offer: false,
             asked_efforts: Default::default(),
             asked_commands: None,
@@ -227,6 +274,7 @@ impl AgentSurface {
                 self.expanded_context.clear();
                 self.opened_turns.clear();
                 self.asked_commands = None;
+                self.provider = None;
                 self.effort_after = None;
                 self.scroll.set_offset(point(px(0.), px(0.)));
                 self.scroll_to_bottom = true;
@@ -378,7 +426,7 @@ impl AgentSurface {
     }
 
     pub(crate) fn near_bottom(&self) -> bool {
-        self.scroll.max_offset().height + self.scroll.offset().y <= px(40.)
+        self.scroll.max_offset().height + self.scroll.offset().y <= px(2.)
     }
 
     /// Puts the surface away. The keyboard goes back to the window that had
@@ -441,13 +489,16 @@ impl AgentSurface {
 
     /// Carries out a command of the drawer's own.
     fn run(&mut self, run: Run, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_text("", cx);
-        self.model.update(cx, |m, _| m.agent_state.error = None);
         match run {
             Run::PickModel(model) => {
                 let (tx, pick, known) = self.model.update(cx, |m, _| {
                     let pick = m.agent_state.pick_model(&model);
-                    agent::save_picks(m.agent_state.last_model.as_deref(), m.agent_state.last_effort.as_deref());
+                    if pick != agent::SettingPick::Refused {
+                        agent::save_picks(
+                            m.agent_state.last_model.as_deref(),
+                            m.agent_state.last_effort.as_deref(),
+                        );
+                    }
                     (
                         m.agent_tx.clone(),
                         pick,
@@ -457,6 +508,9 @@ impl AgentSurface {
                 if pick == agent::SettingPick::Refused {
                     return self.refuse("The Agent is working on this thread. /stop ends the turn.".into(), cx);
                 }
+                self.set_text("", cx);
+                self.model.update(cx, |m, _| m.agent_state.error = None);
+                self.provider = None;
                 if let Some(tx) = tx {
                     if let agent::SettingPick::SetThread { thread, value } = pick {
                         tx.set_model(thread, value);
@@ -472,9 +526,19 @@ impl AgentSurface {
             Run::PickEffort(effort) => {
                 let (tx, pick) = self.model.update(cx, |m, _| {
                     let pick = m.agent_state.pick_effort(&effort);
-                    agent::save_picks(m.agent_state.last_model.as_deref(), m.agent_state.last_effort.as_deref());
+                    if pick != agent::SettingPick::Refused {
+                        agent::save_picks(
+                            m.agent_state.last_model.as_deref(),
+                            m.agent_state.last_effort.as_deref(),
+                        );
+                    }
                     (m.agent_tx.clone(), pick)
                 });
+                if pick == agent::SettingPick::Refused {
+                    return self.refuse("The Agent is working on this thread. /stop ends the turn.".into(), cx);
+                }
+                self.set_text("", cx);
+                self.model.update(cx, |m, _| m.agent_state.error = None);
                 if let (Some(tx), agent::SettingPick::SetThread { thread, value }) = (tx, pick) {
                     tx.set_effort(thread, Some(value));
                 }
@@ -483,20 +547,47 @@ impl AgentSurface {
                 let (tx, pick) = self
                     .model
                     .update(cx, |m, _| (m.agent_tx.clone(), m.agent_state.pick_mode(&mode)));
+                if pick == agent::ModePick::Refused {
+                    return self.refuse("The Agent is working on this thread. /stop ends the turn.".into(), cx);
+                }
+                self.set_text("", cx);
+                self.model.update(cx, |m, _| m.agent_state.error = None);
                 if let (Some(tx), agent::ModePick::SetThread { thread, mode }) = (tx, pick) {
                     tx.set_mode(thread, mode);
                 }
             }
             Run::PickDefaultMode(mode) => {
+                self.set_text("", cx);
+                self.model.update(cx, |m, _| m.agent_state.error = None);
                 if let Some(tx) = self.model.read(cx).agent_tx.clone() {
                     tx.set_default_mode(mode);
                 }
             }
-            Run::New => self.action(ThreadAction::New, window, cx),
-            Run::Threads => self.action(ThreadAction::List, window, cx),
-            Run::Stop => self.stop_turn(cx),
-            Run::Archive => self.action(ThreadAction::Archive, window, cx),
-            Run::Delete => self.action(ThreadAction::AskDelete, window, cx),
+            Run::New => {
+                self.set_text("", cx);
+                self.model.update(cx, |m, _| m.agent_state.error = None);
+                self.action(ThreadAction::New, window, cx);
+            }
+            Run::Threads => {
+                self.set_text("", cx);
+                self.model.update(cx, |m, _| m.agent_state.error = None);
+                self.action(ThreadAction::List, window, cx);
+            }
+            Run::Stop => {
+                self.set_text("", cx);
+                self.model.update(cx, |m, _| m.agent_state.error = None);
+                self.stop_turn(cx);
+            }
+            Run::Archive => {
+                self.set_text("", cx);
+                self.model.update(cx, |m, _| m.agent_state.error = None);
+                self.action(ThreadAction::Archive, window, cx);
+            }
+            Run::Delete => {
+                self.set_text("", cx);
+                self.model.update(cx, |m, _| m.agent_state.error = None);
+                self.action(ThreadAction::AskDelete, window, cx);
+            }
         }
         sync_agent_view(&self.model, cx);
         cx.notify();
@@ -540,10 +631,6 @@ impl AgentSurface {
             state.sending = true;
             state.error = None;
             let thread = state.thread.clone();
-            // What is sent is no longer what was typed and not sent. A new
-            // thread's words were kept under no ID, which the thread is
-            // about to have.
-            m.agent_drafts.remove(&thread.clone().unwrap_or_default());
             // A new thread starts with the mode, Model, and effort picked
             // for it, or with those the person last picked.
             let (mode, model, effort) = if thread.is_none() {
@@ -563,6 +650,7 @@ impl AgentSurface {
         if let Some(tx) = tx {
             let message = trimmed.to_string();
             self.submitted_draft = Some(query);
+            self.submitted_key = Some(thread.clone().unwrap_or_default());
             self.dismissed = None;
             sync_agent_view(&self.model, cx);
             tx.send_with(thread, message, mode, model, effort);
@@ -587,6 +675,9 @@ impl AgentSurface {
     fn answer_waiting(&mut self, place: usize, cx: &mut Context<Self>) -> bool {
         let found = {
             let state = &self.model.read(cx).agent_state;
+            if state.list_view || self.confirm_delete {
+                return false;
+            }
             state.turns.iter().find_map(|turn| {
                 turn.requests
                     .iter()
@@ -1116,7 +1207,7 @@ impl AgentSurface {
 }
 
 /// A line of an answer, with each part in its look.
-fn styled(line: &markdown::Line, p: Palette, weight: FontWeight) -> AnyElement {
+fn styled(id: String, line: &markdown::Line, p: Palette, weight: FontWeight) -> AnyElement {
     if line.text.is_empty() {
         return div().into_any_element();
     }
@@ -1164,23 +1255,62 @@ fn styled(line: &markdown::Line, p: Palette, weight: FontWeight) -> AnyElement {
             }),
         }
     };
+    let mut display = String::with_capacity(line.text.len());
     let mut runs = Vec::new();
+    let mut link_ranges: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut link_urls: Vec<String> = Vec::new();
     let mut at = 0;
     for span in &line.spans {
         if span.range.start > at {
-            runs.push(run(span.range.start - at, None));
+            let chunk = &line.text[at..span.range.start];
+            display.push_str(chunk);
+            runs.push(run(chunk.len(), None));
         }
-        runs.push(run(span.range.len(), Some(&span.look)));
+        let start_in_display = display.len();
+        let chunk = &line.text[span.range.clone()];
+        display.push_str(chunk);
+        runs.push(run(chunk.len(), Some(&span.look)));
+        if let Some(url) = &span.look.link {
+            // Show the destination beside a titled link so the person sees
+            // where it goes; clicking copies the URL to the clipboard.
+            if chunk != url.as_str() {
+                let suffix = format!(" ({url})");
+                display.push_str(&suffix);
+                runs.push(TextRun {
+                    len: suffix.len(),
+                    font: plain(weight),
+                    color: rgb(p.muted).into(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                });
+            }
+            link_ranges.push(start_in_display..display.len());
+            link_urls.push(url.clone());
+        }
         at = span.range.end;
     }
     if at < line.text.len() {
-        runs.push(run(line.text.len() - at, None));
+        let chunk = &line.text[at..];
+        display.push_str(chunk);
+        runs.push(run(chunk.len(), None));
     }
-    StyledText::new(line.text.clone()).with_runs(runs).into_any_element()
+    let text = StyledText::new(display).with_runs(runs);
+    if link_ranges.is_empty() {
+        text.into_any_element()
+    } else {
+        InteractiveText::new(SharedString::from(id), text)
+            .on_click(link_ranges, move |ix, _, cx| {
+                if let Some(url) = link_urls.get(ix) {
+                    cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
+                }
+            })
+            .into_any_element()
+    }
 }
 
 /// An answer, laid out as the Markdown it is.
-fn answer(text: &str, p: Palette) -> Div {
+fn answer(turn: u64, text: &str, p: Palette) -> Div {
     let mut out = div()
         .w_full()
         .flex()
@@ -1189,9 +1319,10 @@ fn answer(text: &str, p: Palette) -> Div {
         .text_size(px(13.))
         .line_height(px(19.5))
         .text_color(rgb(p.text));
-    for block in markdown::blocks(text) {
+    for (block_ix, block) in markdown::blocks(text).into_iter().enumerate() {
+        let id = format!("md-{turn}-{block_ix}");
         out = out.child(match block {
-            markdown::Block::Paragraph(line) => div().w_full().child(styled(&line, p, FontWeight::NORMAL)),
+            markdown::Block::Paragraph(line) => div().w_full().child(styled(id, &line, p, FontWeight::NORMAL)),
             markdown::Block::Heading { level, line } => {
                 let (size, weight) = match level {
                     1 => (16., FontWeight::BOLD),
@@ -1203,7 +1334,7 @@ fn answer(text: &str, p: Palette) -> Div {
                     .pt(px(2.))
                     .text_size(px(size))
                     .line_height(px(size * 1.4))
-                    .child(styled(&line, p, weight))
+                    .child(styled(id, &line, p, weight))
             }
             markdown::Block::Code { text, .. } => div()
                 .w_full()
@@ -1219,7 +1350,8 @@ fn answer(text: &str, p: Palette) -> Div {
                 .child(if text.is_empty() { " ".to_string() } else { text }),
             markdown::Block::List(items) => {
                 let mut list = div().w_full().flex().flex_col().gap(px(3.));
-                for item in items {
+                for (item_ix, item) in items.into_iter().enumerate() {
+                    let item_id = format!("{id}-{item_ix}");
                     list = list.child(
                         div()
                             .w_full()
@@ -1238,7 +1370,7 @@ fn answer(text: &str, p: Palette) -> Div {
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .child(styled(&item.line, p, FontWeight::NORMAL)),
+                                    .child(styled(item_id, &item.line, p, FontWeight::NORMAL)),
                             ),
                     );
                 }
@@ -1249,7 +1381,7 @@ fn answer(text: &str, p: Palette) -> Div {
                 .pl(px(10.))
                 .border_l_2()
                 .border_color(rgb(p.line))
-                .child(styled(&line, p, FontWeight::NORMAL)),
+                .child(styled(id, &line, p, FontWeight::NORMAL)),
             markdown::Block::Table(rows) => {
                 let mut table = div()
                     .w_full()
@@ -1304,21 +1436,33 @@ impl Render for AgentSurface {
                 }
             }
         }
+        // Reset cached fetch guards whenever Lever disconnects, reconnects,
+        // reports an error, or changes free hosted Models availability.
+        if self.seen_catalog_epoch != state.catalog_epoch {
+            self.seen_catalog_epoch = state.catalog_epoch;
+            self.asked_offer = false;
+            self.asked_efforts.clear();
+            self.asked_commands = None;
+        }
         let draft = self.input.read(cx).text();
         let can_send = state.can_send() && !draft.trim().is_empty();
         let menu = self.list(cx);
+        let menu_kind = menu.as_ref().map(|m| m.kind);
+        if self.last_menu_kind == Some(MenuKind::Models) && menu_kind != Some(MenuKind::Models) {
+            self.provider = None;
+            if state.models.is_empty() || state.modes_error.is_some() {
+                self.asked_offer = false;
+            }
+        }
+        if self.last_menu_kind == Some(MenuKind::Efforts) && menu_kind != Some(MenuKind::Efforts) {
+            self.asked_efforts.retain(|m| state.efforts.contains_key(m));
+        }
+        self.last_menu_kind = menu_kind;
         // The list starts on the choice the thread is at each time it is a
-        // list of something else.
+        // list of something else, or once its choices arrive from Lever.
         let list_for = menu
             .as_ref()
-            .map(|menu| {
-                let named = match slash::typed(&draft) {
-                    slash::Typed::Name(query) => query.to_string(),
-                    slash::Typed::Command { arg, .. } => arg.to_string(),
-                    slash::Typed::Words => String::new(),
-                };
-                format!("{:?}|{named}|{:?}", menu.kind, menu.provider)
-            })
+            .map(|menu| list_for_key(menu, &draft))
             .unwrap_or_default();
         if list_for != self.list_for {
             self.highlight = menu.as_ref().map(Menu::start).unwrap_or(0);
@@ -1659,7 +1803,7 @@ impl Render for AgentSurface {
                 }
                 // The answer, and how the turn ended when it did not end done.
                 if !turn.answer.is_empty() {
-                    turn_col = turn_col.child(answer(&turn.answer, p));
+                    turn_col = turn_col.child(answer(turn.turn, &turn.answer, p));
                 }
                 let ended = match &turn.state {
                     agent::TurnState::Stopped if acts.is_none() => Some("Stopped."),
@@ -1745,30 +1889,6 @@ impl Render for AgentSurface {
             .track_focus(&self.focus)
             .on_action(cx.listener(|_, _: &Next, w, _| w.focus_next()))
             .on_action(cx.listener(|_, _: &Previous, w, _| w.focus_prev()))
-            .on_action(cx.listener(|this, _: &SendMessage, w, cx| {
-                if !this.input.focus_handle(cx).is_focused(w) {
-                    return;
-                }
-                // Enter that comes again while the key is still down is the
-                // key repeating, and does nothing: taking a command that
-                // lists choices would else take the first choice with it.
-                // A key whose release was never seen counts as up again
-                // once it has been quiet.
-                let repeated = this.enter_down
-                    && this
-                        .enter_at
-                        .is_some_and(|at| at.elapsed() < Duration::from_millis(700));
-                this.enter_down = true;
-                this.enter_at = Some(Instant::now());
-                if !repeated {
-                    this.enter(w, cx);
-                }
-            }))
-            .on_key_up(cx.listener(|this, event: &KeyUpEvent, _, _| {
-                if event.keystroke.key == "enter" {
-                    this.enter_down = false;
-                }
-            }))
             // The keys the message box passes on while a list is open.
             .on_action(cx.listener(|this, _: &composer::Up, _, cx| this.step(-1, cx)))
             .on_action(cx.listener(|this, _: &composer::Down, _, cx| this.step(1, cx)))
@@ -1790,7 +1910,18 @@ impl Render for AgentSurface {
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, w, cx| {
                 let key = event.keystroke.key.as_str();
-                if event.keystroke.modifiers.control {
+                if key == "enter"
+                    && !event.keystroke.modifiers.shift
+                    && !event.keystroke.modifiers.control
+                    && !event.keystroke.modifiers.alt
+                    && !event.keystroke.modifiers.platform
+                    && this.input.focus_handle(cx).is_focused(w)
+                {
+                    cx.stop_propagation();
+                    if should_take_composer_enter(event.is_held, &event.keystroke.modifiers, true) {
+                        this.enter(w, cx);
+                    }
+                } else if event.keystroke.modifiers.control {
                     match key {
                         "n" => {
                             cx.stop_propagation();
@@ -1805,7 +1936,10 @@ impl Render for AgentSurface {
                 } else if event.keystroke.modifiers.alt
                     && let Some(digit) = key.chars().next().and_then(|c| c.to_digit(10)).filter(|d| *d >= 1)
                 {
-                    if this.answer_waiting(digit as usize - 1, cx) {
+                    let list_view = this.model.read(cx).agent_state.list_view;
+                    if should_answer_with_alt_digit(event.is_held, list_view, this.confirm_delete)
+                        && this.answer_waiting(digit as usize - 1, cx)
+                    {
                         cx.stop_propagation();
                     }
                 } else if key == "escape" && this.confirm_delete {
@@ -2099,5 +2233,53 @@ impl Render for AgentSurface {
                 .left_0()
                 .size_0()
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{list_for_key, should_answer_with_alt_digit, should_take_composer_enter};
+    use crate::{agent, slash};
+    use gpui::Modifiers;
+
+    #[test]
+    fn held_enter_and_modified_enter_are_ignored_in_composer() {
+        let plain = Modifiers::default();
+        assert!(should_take_composer_enter(false, &plain, true));
+        assert!(!should_take_composer_enter(true, &plain, true));
+        assert!(!should_take_composer_enter(false, &plain, false));
+        assert!(!should_take_composer_enter(false, &Modifiers::shift(), true));
+        assert!(!should_take_composer_enter(false, &Modifiers::control(), true));
+        assert!(!should_take_composer_enter(false, &Modifiers::alt(), true));
+    }
+
+    #[test]
+    fn alt_digit_is_ignored_when_held_or_away_from_thread() {
+        assert!(should_answer_with_alt_digit(false, false, false));
+        assert!(!should_answer_with_alt_digit(true, false, false));
+        assert!(!should_answer_with_alt_digit(false, true, false));
+        assert!(!should_answer_with_alt_digit(false, false, true));
+    }
+
+    #[test]
+    fn list_for_key_changes_when_async_choices_arrive() {
+        let mut state = agent::AgentState::new(true);
+        state.connected = true;
+        state.list_view = false;
+        state.thread = Some("t-1".into());
+        state.mode = Some("plan".into());
+        let loading = slash::menu("/mode ", &state, None).unwrap();
+        assert!(loading.items.is_empty());
+
+        state.offer_known = true;
+        state.modes = ["ask-first", "full-access", "plan"]
+            .map(|id| agent::ModeInfo {
+                id: id.into(),
+                name: String::new(),
+            })
+            .to_vec();
+        let loaded = slash::menu("/mode ", &state, None).unwrap();
+        assert_eq!(loaded.start(), 2);
+        assert_ne!(list_for_key(&loading, "/mode "), list_for_key(&loaded, "/mode "));
     }
 }

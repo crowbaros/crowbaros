@@ -300,6 +300,16 @@ fn narrowed(items: Vec<(Item, String)>, query: &str, loose: bool) -> Vec<Item> {
     found.into_iter().map(|(_, _, item)| item).collect()
 }
 
+/// Whether `text` is a slash command owned by the drawer itself (not plain
+/// words or a harness command). Used so unsent drafts of plain text, paths,
+/// and harness commands are preserved while abandoned drawer commands are not.
+pub fn is_drawer_command(text: &str) -> bool {
+    match typed(text) {
+        Typed::Name(name) | Typed::Command { name, .. } => Own::named(name).is_some(),
+        Typed::Words => false,
+    }
+}
+
 /// The list the message box calls for, if it calls for one: the commands
 /// while a name is typed, and the choices of a command that takes one.
 /// `provider` is the provider picked in the rail of a list of Models.
@@ -415,6 +425,9 @@ fn models(query: &str, state: &AgentState, provider: Option<&str>) -> Menu {
         }
     }
     if state.models.is_empty() {
+        // Reopening the picker with an empty catalog asks Lever to refresh in
+        // case the person signed in or enabled free hosted Models since.
+        menu.wants = Some(Wants::Offer);
         menu.note = Some(
             state
                 .missing_model
@@ -889,5 +902,25 @@ mod tests {
         assert_eq!(resolve("/nothing-known", &state), Resolve::Send);
         assert_eq!(resolve("/etc/hosts is wrong", &state), Resolve::Send);
         assert!(menu("/review the last commit", &state, None).is_none());
+    }
+
+    #[test]
+    fn only_drawer_owned_commands_are_excluded_from_drafts_and_empty_catalog_retries() {
+        assert!(is_drawer_command("/mode"));
+        assert!(is_drawer_command("/mode plan"));
+        assert!(is_drawer_command("/model "));
+        assert!(is_drawer_command("/delete"));
+        assert!(!is_drawer_command("/review focus on lock screen"));
+        assert!(!is_drawer_command("/rev"));
+        assert!(!is_drawer_command("/etc/hosts is wrong"));
+        assert!(!is_drawer_command("/mode\nplan"));
+        assert!(!is_drawer_command("hello"));
+
+        let mut state = ready();
+        state.models.clear();
+        state.offer_known = true;
+        let picker = menu("/model ", &state, None).unwrap();
+        assert_eq!(picker.wants, Some(Wants::Offer));
+        assert_eq!(picker.note.as_deref(), Some("The harness offers no Model right now."));
     }
 }
