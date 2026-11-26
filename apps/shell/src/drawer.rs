@@ -153,6 +153,15 @@ pub(crate) fn reconcile_draft_on_sent(
     }
 }
 
+/// Whether closing `closed` should reset `asked_offer` so reopening retries
+/// a failed or empty catalog lookup (including `/effort` when no Model is known).
+fn should_reset_offer_on_menu_close(closed: Option<MenuKind>, state: &agent::AgentState) -> bool {
+    matches!(
+        closed,
+        Some(MenuKind::Models | MenuKind::Modes | MenuKind::DefaultModes | MenuKind::Efforts)
+    ) && (state.modes_error.is_some() || state.models.is_empty() || state.modes.is_empty())
+}
+
 /// Identity key for the open slash menu used to reset highlight to `menu.start()`
 /// when the list switches kind, query, provider, or finishes loading its rows.
 fn list_for_key(menu: &Menu, draft: &str) -> String {
@@ -1503,11 +1512,7 @@ impl Render for AgentSurface {
             if self.last_menu_kind == Some(MenuKind::Models) {
                 self.provider = None;
             }
-            if matches!(
-                self.last_menu_kind,
-                Some(MenuKind::Models | MenuKind::Modes | MenuKind::DefaultModes)
-            ) && (state.modes_error.is_some() || state.models.is_empty() || state.modes.is_empty())
-            {
+            if should_reset_offer_on_menu_close(self.last_menu_kind, &state) {
                 self.asked_offer = false;
             }
             if self.last_menu_kind == Some(MenuKind::Efforts) {
@@ -2297,8 +2302,10 @@ impl Render for AgentSurface {
 #[cfg(test)]
 mod tests {
     use super::{
-        list_for_key, reconcile_draft_on_sent, should_answer_with_alt_digit, should_take_composer_enter,
+        list_for_key, reconcile_draft_on_sent, should_answer_with_alt_digit,
+        should_reset_offer_on_menu_close, should_take_composer_enter,
     };
+    use crate::slash::MenuKind;
     use crate::{agent, slash};
     use gpui::Modifiers;
     use std::collections::HashMap;
@@ -2374,5 +2381,27 @@ mod tests {
         reconcile_draft_on_sent(&mut drafts, "", "t-2", "hello", None);
         assert!(!drafts.contains_key(""));
         assert_eq!(drafts.get("t-2").map(String::as_str), Some("rewritten before ack"));
+    }
+
+    #[test]
+    fn closing_effort_menu_resets_offer_guard_after_failed_model_lookup() {
+        let mut state = agent::AgentState::new(true);
+        state.modes_error = Some("Models and modes are not available right now.".into());
+        assert!(should_reset_offer_on_menu_close(Some(MenuKind::Efforts), &state));
+        assert!(should_reset_offer_on_menu_close(Some(MenuKind::Models), &state));
+        assert!(!should_reset_offer_on_menu_close(Some(MenuKind::Commands), &state));
+
+        state.modes_error = None;
+        state.models.push(agent::ModelInfo {
+            id: "acme/small".into(),
+            name: "Small".into(),
+            provider: Some("acme".into()),
+            provider_name: Some("Acme".into()),
+        });
+        state.modes.push(agent::ModeInfo {
+            id: "ask-first".into(),
+            name: "Ask first".into(),
+        });
+        assert!(!should_reset_offer_on_menu_close(Some(MenuKind::Efforts), &state));
     }
 }

@@ -3285,10 +3285,7 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
             }
             session::Event::Agent(agent_event) => {
                 let is_sent = matches!(agent_event, agent::AgentEvent::Sent { .. });
-                let is_error_or_disconnect = matches!(
-                    agent_event,
-                    agent::AgentEvent::Error { .. } | agent::AgentEvent::Disconnected
-                );
+                let is_disconnected = matches!(agent_event, agent::AgentEvent::Disconnected);
                 let is_lifecycle = matches!(agent_event, agent::AgentEvent::Lifecycle { .. });
                 let should_scroll = matches!(
                     agent_event,
@@ -3344,7 +3341,7 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                         if view.model.read(cx).agent_state.list_view { window.focus(&view.focus); }
                     });
                 }
-                if is_error_or_disconnect {
+                if is_disconnected {
                     model.update(cx, |m, _| {
                         m.agent_submitted = None;
                     });
