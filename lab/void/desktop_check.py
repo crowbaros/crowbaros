@@ -1971,6 +1971,8 @@ finally:
                     f'crowbar-agent --resume {mode_thread} --mode {mode}'
                 )
                 mode_took.append(round(time.monotonic() - began, 2))
+                self.wait(f'the drawer shows {mode} while the subagent works',
+                          lambda: self.agent_view()['state']['mode'] == mode, timeout=10)
             mode_after = self.agent_view()
             self.check(
                 'a mode change while a subagent works is taken by the live session at once and stops nothing',
