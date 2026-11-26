@@ -280,6 +280,12 @@ class Check:
         self.key('esc')
         self.key('down')
         self.capture(f'monitor-{theme}-system-process')
+        before = len(log())
+        self.key('ctrl', 'k')
+        self.wait('Monitor refuses Force Quit for a system process',
+                  lambda: 'MONITOR page=processes confirmation=false' in log()[before:])
+        self.check('System PID 1 remains running',
+                   self.guest.ssh('kill -0 1', check=False).returncode == 0)
         self.key('alt', '3')
         self.wait('Monitor opens Services & Storage', lambda: 'MONITOR page=services' in log())
         self.wait('Monitor receives read-only system details', lambda: 'details=true' in log())

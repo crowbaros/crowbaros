@@ -212,9 +212,11 @@ pub fn process_rows(processes: &[Process], query: &str, sort: Sort, descending: 
         .iter()
         .enumerate()
         .filter(|(_, p)| {
-            p.name.to_lowercase().contains(&query)
-                || p.pid.to_string().contains(&query)
-                || p.user.to_lowercase().contains(&query)
+            if let Ok(pid) = query.parse::<u32>() {
+                p.pid == pid
+            } else {
+                p.name.to_lowercase().contains(&query) || p.user.to_lowercase().contains(&query)
+            }
         })
         .map(|(i, _)| i)
         .collect();
@@ -374,6 +376,16 @@ mod tests {
         assert_eq!(process_rows(&[a.clone(), b.clone()], "", Sort::Cpu, true), vec![1, 0]);
         assert_eq!(process_rows(&[a.clone(), b.clone()], "42", Sort::Name, false), vec![0]);
         assert_eq!(process_rows(&[a, b], "NAME", Sort::Pid, true), vec![0, 1]);
+    }
+    #[test]
+    fn numeric_query_identifies_one_pid_without_substring_matches() {
+        let a = process();
+        let b = Process {
+            pid: 142,
+            name: "worker42".into(),
+            ..a.clone()
+        };
+        assert_eq!(process_rows(&[a, b], "42", Sort::Cpu, true), vec![0]);
     }
     #[test]
     fn byte_units() {

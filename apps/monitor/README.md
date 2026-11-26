@@ -6,7 +6,8 @@ It reads `/proc` and DRM sysfs directly. NVIDIA metrics use the installed
 `nvidia-smi`, when available. Missing metrics say **Unavailable**; they are
 not shown as zero.
 
-The Processes table searches by name, PID, or account and sorts by each column.
+The Processes table searches by name, exact numeric PID, or account and sorts by
+each column.
 CPU percentages use 100% for one fully used core. End Process sends SIGTERM;
 Force Quit asks for confirmation before sending SIGKILL. Both are restricted
 to processes owned by the person, excluding Monitor itself and exited processes.
