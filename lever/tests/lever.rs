@@ -7106,6 +7106,60 @@ fn a_request_in_the_name_of_another_threads_subagent_is_put_to_nobody() {
 }
 
 #[test]
+fn a_subagent_that_starts_and_asks_while_its_thread_is_deleted_goes_nowhere() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "delete_session": true,
+            // The harness takes its time over the delete, and meanwhile a
+            // subagent of the thread starts and asks.
+            "delete_delay_ms": 1500,
+            "turns": [{
+                "steps": [{ "kind": "text", "text": "Done." }],
+                "after": [
+                    { "kind": "pause_ms", "ms": 300 },
+                    { "kind": "subagent_start", "id": "ses_late", "title": "Late", "prompt": "Late work" },
+                    {
+                        "kind": "subagent_ask",
+                        "subagent": "ses_late",
+                        "id": "call_late",
+                        "tool_kind": "read",
+                        "title": "Read /tmp/late",
+                        "raw_input": { "path": "/tmp/late" },
+                        "output": "late"
+                    },
+                    { "kind": "subagent_end", "subagent": "ses_late", "status": "completed" }
+                ]
+            }]
+        }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    write_frame(&mut peer, &json!({ "op": "delete", "thread": thread })).unwrap();
+    let mut told = Vec::new();
+    let reply = read_until(&mut peer, |v| {
+        if v["event"] == "subagent" || v["event"] == "request" || v["event"] == "message" {
+            told.push(v.clone());
+        }
+        v.get("reply").is_some()
+    });
+    assert_eq!(reply["reply"], "deleted", "{reply}");
+    assert!(told.is_empty(), "a thread being deleted told of its harness: {told:?}");
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    let subagents: i64 = db
+        .query_row("SELECT count(*) FROM subagents", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(subagents, 0);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
 fn a_turn_the_harness_began_waits_its_quiet_from_when_its_subagent_ended() {
     let dir = TempDir::new();
     let uid = my_uid();

@@ -80,6 +80,10 @@ struct Script {
     delete_session: bool,
     #[serde(default)]
     delete_session_error: Option<ScriptError>,
+    /// Waits this long before it answers `session/delete`, and goes on with
+    /// its other work meanwhile.
+    #[serde(default)]
+    delete_delay_ms: u64,
     #[serde(default = "default_true")]
     load_session: bool,
     #[serde(default = "default_session_prefix")]
@@ -1839,7 +1843,16 @@ fn run(options: Options) -> Result<(), String> {
                 match serde_json::from_value::<agent_client_protocol_schema::v1::DeleteSessionRequest>(params) {
                     Ok(req) => {
                         session_models.lock().unwrap().remove(req.session_id.0.as_ref());
-                        writer.send_result(id, json!({}));
+                        let delay = Duration::from_millis(script.delete_delay_ms);
+                        if delay.is_zero() {
+                            writer.send_result(id, json!({}));
+                        } else {
+                            let writer = writer.clone();
+                            workers.push(thread::spawn(move || {
+                                thread::sleep(delay);
+                                writer.send_result(id, json!({}));
+                            }));
+                        }
                     }
                     Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
                 }
