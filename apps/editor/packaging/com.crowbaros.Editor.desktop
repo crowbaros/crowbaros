@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Editor
+Comment=Edit text, Markdown, and configuration files
+Exec=crowbaros-editor %F
+Icon=accessories-text-editor
+StartupWMClass=com.crowbaros.Editor
+Terminal=false
+Categories=Utility;TextEditor;
+MimeType=text/plain;text/markdown;application/json;

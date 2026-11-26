@@ -207,6 +207,30 @@ class Check:
         except (OSError, RuntimeError, ValueError) as error:
             self.log(f'Could not capture final display: {error}')
 
+    def editor_check(self, theme):
+        person, _ = self.person()
+        handler = self.run(f"su -s /bin/sh {person} -c 'xdg-mime query default text/plain'").strip()
+        self.check(f'Editor handles plain text in {theme}', handler == 'com.crowbaros.Editor.desktop', handler)
+        path = self.python("""
+import tempfile
+with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
+    note.write('Notes from the desktop')
+    print(note.name)
+""", person).strip()
+        self.capture(f'editor-{theme}-before')
+        self.as_app('xdg-open ' + shlex.quote(path), '/tmp/editor-open.log')
+        self.wait('Editor opens the note and takes focus',
+                  lambda: self.snapshot()['active'].get('class') == 'com.crowbaros.Editor')
+        self.key('ctrl', 'a')
+        self.type('saved note')
+        self.key('ctrl', 's')
+        self.wait('Editor saves the edited note', lambda: self.run('cat ' + shlex.quote(path)) == 'saved note')
+        self.capture(f'editor-{theme}-after')
+        self.key('ctrl', 'w')
+        self.wait('Editor closes the saved note',
+                  lambda: not any(c['class'] == 'com.crowbaros.Editor' for c in self.snapshot()['clients']))
+        self.check(f'Editor opens, edits, saves and closes a file in {theme}', True)
+
     def checks(self, built):
         self.qmp = self.guest.qmp()
         self.ready()
@@ -244,6 +268,7 @@ class Check:
         self.wait('the password unlocks', lambda: not self.snapshot().get('locked') and 'SHELL lock open=false' in shell_log())
         self.check("the person's password unlocks the session", 'SHELL unlock ok=true' in shell_log())
         self.capture('01-boot')
+        self.editor_check('dark')
         self.check('fresh guest has no saved preferences', self.preferences() is None)
         self.click(680, 935)  # Terminal dock entry (Applications · Files · Chromium · Terminal · Settings).
         terminal = self.wait('terminal launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
@@ -491,6 +516,7 @@ for name, original in {original_files!r}.items():
         self.wait('Calendar closes in Light theme',
                   lambda: self.shell_log().count('SHELL calendar open=false') > cal_light)
         self.still('a still desktop after Quick Settings, Calendar, and OSD auto-dismiss commits nothing and draws nothing')
+        self.editor_check('light')
         log_offset = len(self.app_log())
         self.click(720, 935)
         self.wait('Settings restored Light after reboot', lambda: 'event=opened theme=Light' in self.app_log()[log_offset:])

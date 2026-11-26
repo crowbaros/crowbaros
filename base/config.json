@@ -58,6 +58,7 @@
     "bluez",
     "mpv",
     "xdg-utils",
+    "perl-File-MimeInfo",
     "ripgrep",
     "git"
   ],

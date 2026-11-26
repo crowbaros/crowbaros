@@ -1,4 +1,7 @@
 [Default Applications]
+text/plain=com.crowbaros.Editor.desktop
+text/markdown=com.crowbaros.Editor.desktop
+application/json=com.crowbaros.Editor.desktop
 inode/directory=com.crowbaros.Files.desktop
 x-scheme-handler/http=chromium.desktop
 x-scheme-handler/https=chromium.desktop
