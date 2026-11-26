@@ -5510,3 +5510,46 @@ fn a_record_says_when_each_turn_began_and_ended() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn an_effort_answered_with_the_one_before_is_taken_and_the_update_after_says_so() {
+    let dir = TempDir::new();
+    let script = effort_script(&dir.0, json!({ "effort_answer_lags": true }));
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+
+    // As OpenCode answers while another of its sessions works: with the
+    // effort the session was at, and the new one in an update that follows.
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": null, "text": "hello", "cwd": "/tmp", "model": "other/stub-3", "effort": "low" }),
+    )
+    .unwrap();
+    let thread = read_until(&mut peer, |f| f.get("reply").is_some())["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let events = turn_events(&mut peer, &thread, 1);
+    assert_eq!(events.last().unwrap()["event"], "done", "{events:?}");
+    assert_eq!(text_of(&events), "other/stub-3 at low");
+    assert_eq!(
+        stub_config_set(&stub_log, "effort"),
+        ["low"],
+        "the effort is asked for once"
+    );
+    let record = resume(&mut peer, &thread);
+    assert_eq!(
+        (&record["model"], &record["effort"]),
+        (&json!("other/stub-3"), &json!("low"))
+    );
+
+    // The next turn has nothing to set.
+    let (_, turn) = send(&mut peer, Some(&thread), "again");
+    assert_eq!(text_of(&turn_events(&mut peer, &thread, turn)), "other/stub-3 at low");
+    assert_eq!(stub_config_set(&stub_log, "effort"), ["low"]);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}

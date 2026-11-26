@@ -60,10 +60,17 @@ pub(crate) struct AgentSurface {
     list_for: String,
     /// What the message box held when Escape closed its list.
     dismissed: Option<String>,
+    /// What the message box held when the drawer last said why something
+    /// was not done.
+    said_of: Option<String>,
     /// The provider picked in the rail beside the list of Models.
     provider: Option<String>,
     /// The Model just picked, whose effort levels are offered next.
     effort_after: Option<String>,
+    /// Enter is down, and when it last came: a key held down sends Enter
+    /// again and again, and one press is one Enter.
+    enter_down: bool,
+    enter_at: Option<Instant>,
     /// What the drawer has asked Lever for since it came up.
     asked_offer: bool,
     asked_efforts: HashSet<String>,
@@ -109,6 +116,12 @@ impl AgentSurface {
                 if m.agent_state.list_view {
                     return;
                 }
+                // What the drawer said of the last thing typed is said: it
+                // goes as the person types on.
+                if this.said_of.as_deref() != Some(text.as_str()) {
+                    this.said_of = None;
+                    m.agent_state.error = None;
+                }
                 let key = draft_key(&m.agent_state);
                 // A command is not a draft: it is carried out or dropped.
                 if text.trim().is_empty() || text.starts_with('/') {
@@ -151,8 +164,11 @@ impl AgentSurface {
             highlight: 0,
             list_for: String::new(),
             dismissed: None,
+            said_of: None,
             provider: None,
             effort_after: None,
+            enter_down: false,
+            enter_at: None,
             asked_offer: false,
             asked_efforts: Default::default(),
             asked_commands: None,
@@ -402,6 +418,7 @@ impl AgentSurface {
 
     /// Says why something was not done, where the drawer says such things.
     fn refuse(&mut self, why: String, cx: &mut Context<Self>) {
+        self.said_of = Some(self.input.read(cx).text());
         self.model.update(cx, |m, _| m.agent_state.error = Some(why));
         sync_agent_view(&self.model, cx);
         cx.notify();
@@ -523,6 +540,10 @@ impl AgentSurface {
             state.sending = true;
             state.error = None;
             let thread = state.thread.clone();
+            // What is sent is no longer what was typed and not sent. A new
+            // thread's words were kept under no ID, which the thread is
+            // about to have.
+            m.agent_drafts.remove(&thread.clone().unwrap_or_default());
             // A new thread starts with the mode, Model, and effort picked
             // for it, or with those the person last picked.
             let (mode, model, effort) = if thread.is_none() {
@@ -1722,8 +1743,27 @@ impl Render for AgentSurface {
             .on_action(cx.listener(|_, _: &Next, w, _| w.focus_next()))
             .on_action(cx.listener(|_, _: &Previous, w, _| w.focus_prev()))
             .on_action(cx.listener(|this, _: &SendMessage, w, cx| {
-                if this.input.focus_handle(cx).is_focused(w) {
+                if !this.input.focus_handle(cx).is_focused(w) {
+                    return;
+                }
+                // Enter that comes again while the key is still down is the
+                // key repeating, and does nothing: taking a command that
+                // lists choices would else take the first choice with it.
+                // A key whose release was never seen counts as up again
+                // once it has been quiet.
+                let repeated = this.enter_down
+                    && this
+                        .enter_at
+                        .is_some_and(|at| at.elapsed() < Duration::from_millis(700));
+                this.enter_down = true;
+                this.enter_at = Some(Instant::now());
+                if !repeated {
                     this.enter(w, cx);
+                }
+            }))
+            .on_key_up(cx.listener(|this, event: &KeyUpEvent, _, _| {
+                if event.keystroke.key == "enter" {
+                    this.enter_down = false;
                 }
             }))
             // The keys the message box passes on while a list is open.

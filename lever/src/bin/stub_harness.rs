@@ -115,6 +115,12 @@ struct Script {
     /// Model offers it.
     #[serde(default)]
     refuse_effort: Option<String>,
+    /// If true, `session/set_config_option` for an effort is answered with
+    /// the effort the session was at, and the new one comes in a
+    /// `config_option_update` that follows, as OpenCode does while another
+    /// of its sessions works.
+    #[serde(default)]
+    effort_answer_lags: bool,
     /// Updates sent on `session/load` before it is answered, as a harness
     /// replays a session's history.
     #[serde(default)]
@@ -1253,24 +1259,40 @@ fn run(options: Options) -> Result<(), String> {
                             writer.send_error(id, AcpError::invalid_params().data(json!("unknown effort")));
                             continue;
                         }
-                        session_efforts.lock().unwrap().insert(sid.clone(), val.clone());
+                        let before = session_efforts.lock().unwrap().insert(sid.clone(), val.clone());
                         let mode = session_modes.lock().unwrap().get(&sid).cloned();
-                        let mut opts = build_config_options(
-                            script.models.as_deref(),
-                            model.as_deref(),
-                            &modes,
-                            mode.as_deref(),
-                            Some(&val),
-                        )
-                        .unwrap_or_default();
+                        let options = |effort: Option<&str>| {
+                            build_config_options(
+                                script.models.as_deref(),
+                                model.as_deref(),
+                                &modes,
+                                mode.as_deref(),
+                                effort,
+                            )
+                            .unwrap_or_default()
+                        };
+                        let mut opts = options(Some(&val));
                         if script.partial_config_replies {
                             opts.retain(|o| o.id.0.as_ref() == "effort");
                         }
+                        // The answer that lags says the effort before, and
+                        // the update after it the effort now.
+                        let lagging = script.effort_answer_lags.then(|| options(before.as_deref()));
                         let delay = Duration::from_millis(script.set_config_delay_ms);
                         let writer = writer.clone();
+                        let session = SessionId::new(sid.clone());
                         let respond = move || {
                             thread::sleep(delay);
-                            writer.send_result(id, SetSessionConfigOptionResponse::new(opts));
+                            match lagging {
+                                Some(old) => {
+                                    writer.send_result(id, SetSessionConfigOptionResponse::new(old));
+                                    writer.send_update(
+                                        &session,
+                                        SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(opts)),
+                                    );
+                                }
+                                None => writer.send_result(id, SetSessionConfigOptionResponse::new(opts)),
+                            }
                         };
                         if delay.is_zero() {
                             respond();

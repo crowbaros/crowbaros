@@ -130,8 +130,11 @@ ACP today:
   with `session/set_config_option`, when the Model offers it and the session
   is at another. An effort the Model does not offer is not asked for, and the
   thread takes the effort the harness has the session at. A turn whose effort
-  the harness refuses fails, and the thread goes back to the effort the
-  session is at. When the harness changes a session's Model or effort itself,
+  the harness refuses, by answering with an error, fails, and the thread goes
+  back to the effort the session is at. An answer with no error is the
+  effort taken, whatever effort the answer names: OpenCode, while another of
+  its sessions works, answers with the effort the session was at, and says
+  the new one in a `config_option_update` that follows. When the harness changes a session's Model or effort itself,
   the thread takes it.
 - **Slash commands.** Lever keeps the slash commands each thread's session
   last named in an `available_commands_update`, and those of the session it

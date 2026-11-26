@@ -1481,32 +1481,20 @@ impl AcpHarness {
                 effort,
             } => match serde_json::from_value::<SetSessionConfigOptionResponse>(result) {
                 Ok(resp) => {
-                    // As with a mode: what the harness says the effort is now
-                    // is what it is, and one that says nothing took it.
+                    // A harness that answers with no error took the effort.
+                    // What its answer says the effort is does not decide
+                    // it: OpenCode, while another of its sessions works,
+                    // answers with the effort the session was at, and says
+                    // the new one in an update that follows. That update,
+                    // as any does, says what the session is at from then on.
                     self.take_modes(&session_id, Some(&resp.config_options));
-                    match extract_effort(&resp.config_options) {
-                        Some(selector) if selector.current != effort => {
-                            self.session_efforts.insert(session_id, selector);
-                            events.push(AcpEvent::EffortSetFailed {
-                                thread_id,
-                                turn,
-                                message: "The harness did not take this thread's effort.".to_string(),
-                            });
-                        }
-                        told => {
-                            match told {
-                                Some(selector) => {
-                                    self.session_efforts.insert(session_id, selector);
-                                }
-                                None => {
-                                    if let Some(selector) = self.session_efforts.get_mut(&session_id) {
-                                        selector.current = effort;
-                                    }
-                                }
-                            }
-                            events.push(AcpEvent::EffortSet { thread_id, turn });
-                        }
+                    let told =
+                        extract_effort(&resp.config_options).or_else(|| self.session_efforts.get(&session_id).cloned());
+                    if let Some(mut selector) = told {
+                        selector.current = effort;
+                        self.session_efforts.insert(session_id, selector);
                     }
+                    events.push(AcpEvent::EffortSet { thread_id, turn });
                 }
                 Err(_) => events.push(AcpEvent::EffortSetFailed {
                     thread_id,

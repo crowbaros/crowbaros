@@ -229,6 +229,9 @@ def make_handler(script, log_path=None, forbidden=None):
                 "model": model,
                 "stream": stream,
                 "has_tools": bool(body.get("tools")),
+                # The effort the harness asks of the Model, as the
+                # OpenAI-compatible API carries it, when it asks one.
+                "effort": body.get("reasoning_effort"),
                 "prompt": prompt,
                 "tool_output": tool_output,
                 "history_tool_outputs": _tool_outputs(messages),

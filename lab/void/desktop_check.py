@@ -1001,6 +1001,17 @@ finally:
                 """The list open above the drawer's message box, or none."""
                 return view.get('list') or {}
 
+            def arrow_to(key, target, what='highlighted'):
+                """Presses an arrow key until the open list is on `target`. A
+                list goes round its ends, so a key the guest repeats, held as
+                long as the lab holds one, still comes to it."""
+                for _ in range(24):
+                    if listed(self.agent_view()).get(what) == target:
+                        return True
+                    self.key(key)
+                    time.sleep(0.3)
+                return listed(self.agent_view()).get(what) == target
+
             def empty_the_box():
                 """Takes out what the message box holds, a character at a time."""
                 for _ in self.agent_view().get('draft', ''):
@@ -1017,9 +1028,12 @@ finally:
             self.wait('new thread composer opens', lambda: not self.agent_view()['state']['list_view'])
             self.type('please run-cmd')
             self.key('ret')
+            # The request is in the thread once the drawer has drawn it,
+            # with a control for each answer.
             asked = self.wait(
                 'the command raises a request in the thread',
-                lambda: (v := self.agent_view()) and waiting_request(v) and v,
+                lambda: (v := self.agent_view()) and waiting_request(v)
+                and control(v, f"answer:{waiting_request(v)['request']}:once") and v,
                 timeout=45,
             )
             time.sleep(0.5)
@@ -1182,9 +1196,7 @@ finally:
             self.type('d')
             self.wait('the list comes back as the person types on',
                       lambda: listed(self.agent_view()).get('highlighted') == 'command:model')
-            self.key('down')
-            self.wait('Down moves to the next command',
-                      lambda: listed(self.agent_view()).get('highlighted') == 'command:mode')
+            self.check('Down moves through the list of commands', arrow_to('down', 'command:mode'))
             self.key('ret')
             modes = self.wait("/mode lists the harness's modes",
                               lambda: (v := self.agent_view()) and listed(v).get('kind') == 'modes'
@@ -1201,7 +1213,7 @@ finally:
                 and [m['id'] for m in modes['state'].get('modes', [])] == ['ask-first', 'full-access', 'plan'],
                 json.dumps(listed(modes)),
             )
-            self.key('down')
+            self.check('Down moves through the list of choices', arrow_to('down', 'choice:full-access'))
             self.key('ret')
             picked = self.wait('the thread is in Full access',
                                lambda: (v := self.agent_view()) and v['state'].get('mode') == 'full-access'
@@ -1244,7 +1256,7 @@ finally:
                 == {('stub/stub-1', 'Stub One', 'stub'), ('spare/spare-1', 'Spare One', 'spare')},
                 json.dumps({'list': listed(picker), 'models': picker['state']['models']}),
             )
-            self.key('right')
+            arrow_to('right', 'spare', 'provider')
             other = self.wait('Right moves to the next provider',
                               lambda: (v := self.agent_view()) and listed(v).get('provider') == 'spare' and v)
             self.type('one')
@@ -1265,20 +1277,27 @@ finally:
             self.key('ret')
             modeled = self.wait('the thread has the Model picked',
                                 lambda: (v := self.agent_view()) and v['state'].get('model') == 'spare/spare-1' and v)
-            # A Model with no effort levels: the levels are not offered, and
-            # /effort says so.
-            self.type('/effort ')
-            effortless = self.wait('/effort says the Model has no effort levels',
-                                   lambda: (v := self.agent_view()) and 'no effort levels' in (listed(v).get('note') or '') and v)
+            # The Model has effort levels, as OpenCode gives a Model of this
+            # kind: the drawer lists them next, on the one the thread is at.
+            levels = self.wait("the picked Model's effort levels are listed next",
+                               lambda: (v := self.agent_view()) and listed(v).get('kind') == 'efforts'
+                               and listed(v).get('items') and v, timeout=30)
+            time.sleep(0.4)
+            self.capture('20e-drawer-effort-list')
             self.check(
-                'the drawer shows the thread on the Model picked as soon as Lever says so, and says of a Model '
-                'with no effort levels that it has none',
+                'the drawer shows the thread on the Model picked as soon as Lever says so, and then lists that '
+                "Model's effort levels, on the one the thread is at",
                 modeled['state'].get('model') == 'spare/spare-1' and modeled['drawer_up']
-                and listed(effortless).get('kind') == 'efforts' and not listed(effortless).get('items')
-                and effortless['state'].get('effort') is None,
-                json.dumps(listed(effortless)),
+                and levels.get('draft') == '/effort '
+                and listed(levels)['items'] == ['choice:low', 'choice:medium', 'choice:high', 'choice:default']
+                and listed(levels)['highlighted'] == 'choice:default'
+                and levels['state'].get('effort') == 'default',
+                json.dumps(listed(levels)),
             )
-            empty_the_box()
+            self.check('Up moves to the level before', arrow_to('up', 'choice:high'))
+            self.key('ret')
+            self.wait('the thread is at the effort picked',
+                      lambda: (v := self.agent_view()) and v['state'].get('effort') == 'high' and not v.get('list'))
             self.type('please run-cmd again')
             self.key('ret')
             full = self.wait(
@@ -1298,9 +1317,12 @@ finally:
                 and any('declined' in out for out in told[0].get('history_tool_outputs', [])),
                 json.dumps({'turn': turn3, 'told': told[:1]}),
             )
-            self.check('the turn after a Model is picked runs on that Model',
-                       bool(told) and told[0].get('model') == 'spare-1' and 'spare-1' in turn3.get('answer', ''),
-                       json.dumps({'model': told[0].get('model') if told else None, 'answer': turn3.get('answer')}))
+            self.check('the turn after a Model and an effort are picked runs on that Model, at that effort',
+                       bool(told) and told[0].get('model') == 'spare-1' and 'spare-1' in turn3.get('answer', '')
+                       and told[0].get('effort') == 'high' and full['state'].get('effort') == 'high',
+                       json.dumps({'model': told[0].get('model') if told else None,
+                                   'effort': told[0].get('effort') if told else None,
+                                   'thread': full['state'].get('effort'), 'answer': turn3.get('answer')}))
             self.check('the drawer\'s choices stick: the thread is in Full access and so is the starting mode',
                        full['state'].get('mode') == 'full-access' and full['state'].get('default_mode') == 'full-access')
 
