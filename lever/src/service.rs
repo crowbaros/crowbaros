@@ -3520,12 +3520,14 @@ impl Service {
             return effects;
         };
         // A request that begins a turn under a Stop that holds asks nothing
-        // of the person either.
+        // of the person either, nor one that comes under it to a turn that
+        // has ended.
         if harness_subagent_id.is_none()
-            && self
-                .working_turns
-                .get(thread_id)
-                .is_some_and(|active| active.turn == turn && active.stop_asked.is_some())
+            && (self.held_stops.contains(thread_id)
+                || self
+                    .working_turns
+                    .get(thread_id)
+                    .is_some_and(|active| active.turn == turn && active.stop_asked.is_some()))
         {
             if let Some(harness) = self.harness.as_mut() {
                 harness.answer_permission(handle, None);
@@ -3973,8 +3975,11 @@ impl Service {
             }
         };
         let now = unix_now();
+        // What a held Stop catches begins a turn of its own: a turn that
+        // ended before the Stop keeps how it ended.
+        let held = self.held_stops.contains(thread_id);
         let reopened = match self.store.latest_turn(thread_id) {
-            Ok(Some((turn, state, true))) if state == "done" => {
+            Ok(Some((turn, state, true))) if state == "done" && !held => {
                 match self.store.reopen_harness_turn(thread_id, turn, now) {
                     Ok(true) => Some(turn),
                     Ok(false) => None,
@@ -3998,7 +4003,6 @@ impl Service {
             },
         };
         self.idle_since = None;
-        let held = self.held_stops.contains(thread_id);
         if held && let Some(harness) = self.harness.as_mut() {
             harness.cancel_session(&session_id);
         }
