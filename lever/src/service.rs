@@ -582,11 +582,16 @@ impl Service {
                 else {
                     return false;
                 };
+                // What an older turn still does was not stopped with this
+                // one, and does not hold it.
                 t.stop_asked
                     .is_some_and(|asked| asked.elapsed() >= self.stop_timeout && *last_heard <= asked)
                     && open_acts.is_empty()
-                    && !self.waiting.values().any(|w| &w.thread_id == *tid)
-                    && !self.working_subagents.values().any(|s| &s.thread_id == *tid)
+                    && !self.waiting.values().any(|w| &w.thread_id == *tid && w.turn == t.turn)
+                    && !self
+                        .working_subagents
+                        .values()
+                        .any(|s| &s.thread_id == *tid && (s.turn == t.turn || s.stop_asked.is_some()))
             })
             .map(|(tid, t)| (tid.clone(), t.turn))
             .collect();
@@ -3172,13 +3177,14 @@ impl Service {
             state: None,
             error: None,
         };
-        let (recorded_turn, record) = match self.store.upsert_subagent(&patch, unix_now()) {
+        let (recorded_turn, mut record) = match self.store.upsert_subagent(&patch, unix_now()) {
             Ok(saved) => saved,
             Err(err) => {
                 self.could_not_save(thread_id, &err, log);
                 return None;
             }
         };
+        self.with_unsaved_end(&mut record);
         if record.state == "working" {
             let prev_stop = self
                 .working_subagents
@@ -3240,7 +3246,7 @@ impl Service {
             .ok()
             .flatten();
         let mut broadcasts = Vec::new();
-        let (recorded_turn, record) = match self.store.upsert_subagent(&patch, now) {
+        let (recorded_turn, mut record) = match self.store.upsert_subagent(&patch, now) {
             Ok(saved) => saved,
             Err(err) => {
                 self.could_not_save(thread_id, &err, log);
@@ -3295,6 +3301,13 @@ impl Service {
                 };
             }
         };
+        // An end the database has yet to take is how the subagent ended,
+        // whatever the record still says.
+        let before = if self.with_unsaved_end(&mut record) {
+            before.map(|(title, _, _)| (title, record.state.clone(), record.error.clone()))
+        } else {
+            before
+        };
         let tracked_changed = if record.state == "working" {
             self.track_working_subagent(thread_id, recorded_turn, harness_subagent_id, &record, stop_asked)
         } else {
@@ -3343,17 +3356,23 @@ impl Service {
     ) -> Effects {
         let mut effects = Effects::default();
         // A turn or subagent the person asked to stop asks nothing more of
-        // them, nor does a thread being deleted.
+        // them, nor does a thread being deleted. A Stop of one turn leaves a
+        // subagent of an older turn to ask; one Lever has yet to hear of is
+        // stopped with the turn it joins, below.
+        let stopped_turn = self
+            .working_turns
+            .get(thread_id)
+            .filter(|active| active.stop_asked.is_some())
+            .map(|active| active.turn);
         let stopping = self.deleting(thread_id)
-            || self
-                .working_turns
-                .get(thread_id)
-                .is_some_and(|active| active.stop_asked.is_some())
-            || harness_subagent_id.is_some_and(|cid| {
-                self.working_subagents
+            || match harness_subagent_id {
+                None => stopped_turn.is_some(),
+                Some(cid) => self
+                    .working_subagents
                     .values()
-                    .any(|s| s.thread_id == thread_id && s.harness_session_id == cid && s.stop_asked.is_some())
-            });
+                    .find(|s| s.thread_id == thread_id && s.harness_session_id == cid)
+                    .is_some_and(|s| s.stop_asked.is_some() || stopped_turn == Some(s.turn)),
+            };
         // What the thread's own session asks wakes a thread whose subagents ran.
         let turn = if stopping {
             None
@@ -3622,6 +3641,22 @@ impl Service {
                 error: error.map(str::to_string),
             });
         }
+    }
+
+    /// Gives a subagent's record the end the database has yet to take, if it
+    /// has one, so a late word of the subagent does not bring it back to
+    /// work. Says whether it had one.
+    fn with_unsaved_end(&self, record: &mut SubagentRecord) -> bool {
+        let Some(end) = self
+            .unsaved_subagent_endings
+            .iter()
+            .find(|e| e.subagent_id == record.id)
+        else {
+            return false;
+        };
+        record.state = end.state.to_string();
+        record.error = end.error.clone();
+        true
     }
 
     fn end_subagent(
