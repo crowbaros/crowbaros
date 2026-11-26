@@ -299,6 +299,7 @@ fn number(path: impl AsRef<Path>) -> Option<u64> {
 }
 fn gpus() -> Vec<Gpu> {
     let mut result = Vec::new();
+    let mut nvidia = false;
     if let Ok(entries) = fs::read_dir("/sys/class/drm") {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -311,6 +312,7 @@ fn gpus() -> Vec<Gpu> {
             let dev = entry.path().join("device");
             let vendor = read(dev.join("vendor")).unwrap_or_default();
             if vendor.trim() == "0x10de" && Path::new("/usr/bin/nvidia-smi").exists() {
+                nvidia = true;
                 continue;
             }
             result.push(Gpu {
@@ -323,27 +325,22 @@ fn gpus() -> Vec<Gpu> {
             });
         }
     }
-    if Path::new("/usr/bin/nvidia-smi").exists() {
+    if nvidia {
         if let Ok(text) = command(
             "/usr/bin/nvidia-smi",
             &[
-                "--query-gpu=name,utilization.gpu,memory.used,memory.total",
+                "--query-gpu=index,name,utilization.gpu,memory.used,memory.total",
                 "--format=csv,noheader,nounits",
             ],
         ) {
-            for line in text.lines() {
-                let f: Vec<_> = line.split(',').map(str::trim).collect();
-                if f.len() == 4 {
-                    result.push(Gpu {
-                        name: f[0].to_string(),
-                        utilization: f[1]
-                            .parse::<f64>()
-                            .ok()
-                            .filter(|v| v.is_finite() && (0. ..=100.).contains(v)),
-                        used: f[2].parse::<u64>().ok().and_then(|v| v.checked_mul(1024 * 1024)),
-                        total: f[3].parse::<u64>().ok().and_then(|v| v.checked_mul(1024 * 1024)),
-                    });
-                }
+            let parsed = parse_nvidia(&text);
+            if parsed.is_empty() {
+                result.push(Gpu {
+                    name: "NVIDIA · metrics unavailable".into(),
+                    ..Gpu::default()
+                });
+            } else {
+                result.extend(parsed);
             }
         } else {
             result.push(Gpu {
@@ -354,6 +351,25 @@ fn gpus() -> Vec<Gpu> {
     }
     result.sort_by(|a, b| a.name.cmp(&b.name));
     result
+}
+fn parse_nvidia(text: &str) -> Vec<Gpu> {
+    text.lines()
+        .filter_map(|line| {
+            let f: Vec<_> = line.split(',').map(str::trim).collect();
+            if f.len() != 5 || f[0].parse::<u32>().is_err() {
+                return None;
+            }
+            Some(Gpu {
+                name: format!("{} · {}", f[0], f[1]),
+                utilization: f[2]
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|v| v.is_finite() && (0. ..=100.).contains(v)),
+                used: f[3].parse::<u64>().ok().and_then(|v| v.checked_mul(1024 * 1024)),
+                total: f[4].parse::<u64>().ok().and_then(|v| v.checked_mul(1024 * 1024)),
+            })
+        })
+        .collect()
 }
 fn details() -> Details {
     let services = match fs::read_dir("/var/service") {
@@ -435,6 +451,22 @@ fn log_tail(path: &Path) -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn nvidia_devices_have_distinct_history_keys_and_missing_metrics_stay_unknown() {
+        let cards = parse_nvidia("0, Example GPU, 25, 512, 4096\n1, Example GPU, [Not Supported], N/A, N/A");
+        assert_eq!(cards.len(), 2);
+        assert_ne!(cards[0].name, cards[1].name);
+        assert_eq!(cards[0].utilization, Some(25.));
+        assert_eq!(cards[0].used, Some(512 * 1024 * 1024));
+        assert!(cards[1].utilization.is_none());
+        assert!(cards[1].used.is_none());
+        assert!(parse_nvidia("Failed to initialize the driver").is_empty());
+        assert!(
+            parse_nvidia("0, Example, NaN, 18446744073709551615, 4")[0]
+                .used
+                .is_none()
+        );
+    }
     #[test]
     fn device_changes_do_not_create_spikes() {
         let before = BTreeMap::from([("a".into(), Counters { read: 100, write: 200 })]);
