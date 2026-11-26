@@ -1288,7 +1288,6 @@ impl Render for AgentSurface {
         let tx = m.agent_tx.clone();
         let show_stop = state.can_stop();
         let draft = self.input.read(cx).text();
-        let can_send = state.can_send() && !draft.trim().is_empty();
         let now = agent::unix_now();
 
         // The Model just picked is at hand, and Lever has said its effort
@@ -1306,6 +1305,7 @@ impl Render for AgentSurface {
             }
         }
         let draft = self.input.read(cx).text();
+        let can_send = state.can_send() && !draft.trim().is_empty();
         let menu = self.list(cx);
         // The list starts on the choice the thread is at each time it is a
         // list of something else.
@@ -1583,7 +1583,10 @@ impl Render for AgentSurface {
                 }
                 // The turn's acts: each as it happens while the turn works,
                 // and folded into one line once it has ended.
-                let elapsed = turn.elapsed(now).map(agent::format_elapsed);
+                let elapsed = turn.elapsed(now).map(|seconds| match seconds {
+                    0 if !working => "under a second".to_string(),
+                    seconds => agent::format_elapsed(seconds),
+                });
                 let acts = match turn.acts.len() {
                     0 => None,
                     1 => Some("1 act".to_string()),

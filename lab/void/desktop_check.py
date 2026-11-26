@@ -1137,7 +1137,9 @@ finally:
             refusal = self.wait('the second command raises a request',
                                 lambda: (v := self.agent_view()) and len(v['state']['turns']) >= 2
                                 and waiting_request(v) and v, timeout=45)
-            click_control(f"answer:{waiting_request(refusal)['request']}:no")
+            # Answered from the keyboard: Alt and a digit take the answer at
+            # that place of the request that has waited longest. No is third.
+            self.key('alt', '3')
             refused = self.wait(
                 'turn 2 ends after the person said no',
                 lambda: (v := self.agent_view()) and v['state']['turns'][1]['state']['kind'] != 'working' and v,
@@ -1154,6 +1156,29 @@ finally:
                 and 'Should not run' not in turn2.get('answer', ''),
                 json.dumps(turn2),
             )
+
+            # The message box holds many lines, and keeps what was typed and
+            # not sent while the drawer is put away.
+            self.type('line one')
+            self.key('shift', 'ret')
+            self.type('line two')
+            held = self.wait('Shift+Enter begins a new line',
+                             lambda: (v := self.agent_view()) and v.get('draft') == 'line one\nline two' and v)
+            self.key('meta_l', 'spc')
+            self.wait('drawer put away with words in the message box', lambda: not self.agent_view()['drawer_up'])
+            self.key('meta_l', 'spc')
+            kept = self.wait('the drawer comes back with the words',
+                             lambda: (v := self.agent_view()) and v['drawer_up'] and v.get('draft') and v)
+            time.sleep(0.4)
+            self.capture('19e-drawer-draft-kept')
+            self.check(
+                'the message box holds many lines, Shift+Enter sends nothing, and what was typed and not sent is '
+                'there when the drawer is summoned again',
+                kept.get('draft') == 'line one\nline two' and len(held['state']['turns']) == 2
+                and len(kept['state']['turns']) == 2,
+                json.dumps(kept.get('draft')),
+            )
+            empty_the_box()
 
             # 1c. The thread is driven from the message box. A slash lists
             # the drawer's commands and then the harness's own, asked of the
