@@ -278,7 +278,10 @@ enum Step {
     ModeChange {
         mode: String,
     },
-    /// Starts a subagent session (`protocol`: `"opencode"` or `"acp"`).
+    /// Starts a subagent session (`protocol`: `"opencode"` or `"acp"`). With
+    /// `launched_by`, the subagent of that ID launches it, as OpenCode
+    /// reports a nested launch: its launcher call comes as an update of the
+    /// launching subagent's session.
     SubagentStart {
         id: String,
         title: String,
@@ -286,6 +289,15 @@ enum Step {
         prompt: Option<String>,
         #[serde(default = "default_subagent_protocol")]
         protocol: String,
+        #[serde(default)]
+        launched_by: Option<String>,
+        /// Leaves the launcher call open, naming no child, and says nothing
+        /// of the child: a launch the harness has yet to report.
+        #[serde(default)]
+        hold_launcher: bool,
+        /// Ends the launcher call failed, after it named its child.
+        #[serde(default)]
+        launch_fails: bool,
     },
     /// Streams an answer text chunk from a subagent.
     SubagentText {
@@ -877,11 +889,25 @@ fn send_opencode_child_status(
     status: &str,
     error: Option<&str>,
 ) {
+    send_opencode_nested_status(writer, root_sid, None, child_sid, title, status, error);
+}
+
+/// A child's status, as OpenCode says it of a child of `parent_sid` (a
+/// subagent) or, with none, of the root.
+fn send_opencode_nested_status(
+    writer: &Writer,
+    root_sid: &SessionId,
+    parent_sid: Option<&str>,
+    child_sid: &str,
+    title: Option<&str>,
+    status: &str,
+    error: Option<&str>,
+) {
     let mut params = json!({
         "rootSessionId": root_sid.0.as_ref(),
         "childSessionId": child_sid,
-        "parentSessionId": root_sid.0.as_ref(),
-        "depth": 1,
+        "parentSessionId": parent_sid.unwrap_or(root_sid.0.as_ref()),
+        "depth": if parent_sid.is_some() { 2 } else { 1 },
         "type": "status",
         "status": status,
     });
@@ -938,6 +964,71 @@ fn run_subagent_step(
             title,
             prompt,
             protocol,
+            launched_by: Some(parent),
+            ..
+        } => {
+            // OpenCode 2.4.1 reports a subagent's own launcher call as an
+            // update of that subagent's session: its ID and title carry the
+            // subagent's, and its output names the new child's session.
+            subagent_titles.insert(id.clone(), title.clone());
+            active_cancels
+                .lock()
+                .unwrap()
+                .entry(id.clone())
+                .or_insert_with(|| Arc::new(CancelFlag::new()));
+            let parent_title = subagent_titles.get(parent).cloned();
+            let wrapper_id = format!("{parent}:call_subagent_{id}");
+            let wrapper_title = match &parent_title {
+                Some(t) => format!("{t}: subagent"),
+                None => "subagent".to_string(),
+            };
+            let mut input = json!({ "description": title, "agent": "general" });
+            if let Some(p) = prompt {
+                input["prompt"] = json!(p);
+            }
+            let meta =
+                json!({ "opencode/child-session": { "id": parent, "parentID": session_id.0.as_ref(), "depth": 1 } });
+            let _ = protocol;
+            send_opencode_child_update(
+                writer,
+                session_id,
+                parent,
+                parent_title.as_deref(),
+                json!({
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": wrapper_id,
+                    "title": wrapper_title,
+                    "kind": "think",
+                    "status": "pending",
+                    "rawInput": input,
+                    "_meta": meta,
+                }),
+            );
+            send_opencode_nested_status(writer, session_id, Some(parent), id, Some(title), "created", None);
+            send_opencode_child_update(
+                writer,
+                session_id,
+                parent,
+                parent_title.as_deref(),
+                json!({
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": wrapper_id,
+                    "status": "completed",
+                    "content": [{ "type": "content", "content": { "type": "text", "text": format!("The subagent is working in the background (sessionID: {id}).") } }],
+                    "rawOutput": { "metadata": { "sessionID": id, "status": "running" } },
+                    "_meta": meta,
+                }),
+            );
+            send_opencode_nested_status(writer, session_id, Some(parent), id, Some(title), "running", None);
+        }
+        Step::SubagentStart {
+            id,
+            title,
+            prompt,
+            protocol,
+            launched_by: None,
+            hold_launcher,
+            launch_fails,
         } => {
             subagent_titles.insert(id.clone(), title.clone());
             active_cancels
@@ -986,12 +1077,24 @@ fn run_subagent_step(
                     session_id,
                     SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(ToolCallId::new(wrapper_id.clone()), in_prog)),
                 );
+                if *hold_launcher {
+                    return;
+                }
                 send_opencode_child_status(writer, session_id, id, Some(title), "created", None);
+                let (end, said) = if *launch_fails {
+                    (
+                        ToolCallStatus::Failed,
+                        format!("Could not start the subagent (sessionID: {id})."),
+                    )
+                } else {
+                    (
+                        ToolCallStatus::Completed,
+                        format!("The subagent is working in the background (sessionID: {id})."),
+                    )
+                };
                 let completed = ToolCallUpdateFields::new()
-                    .status(ToolCallStatus::Completed)
-                    .content(vec![ToolCallContent::from(ContentBlock::from(format!(
-                        "The subagent is working in the background (sessionID: {id})."
-                    )))])
+                    .status(end)
+                    .content(vec![ToolCallContent::from(ContentBlock::from(said))])
                     .raw_output(json!({
                         "metadata": { "sessionID": id, "status": "running", "truncated": false }
                     }));
@@ -999,7 +1102,9 @@ fn run_subagent_step(
                     session_id,
                     SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(ToolCallId::new(wrapper_id), completed)),
                 );
-                send_opencode_child_status(writer, session_id, id, Some(title), "running", None);
+                if !*launch_fails {
+                    send_opencode_child_status(writer, session_id, id, Some(title), "running", None);
+                }
             }
         }
         Step::SubagentText {

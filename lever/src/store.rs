@@ -71,6 +71,10 @@ pub struct TurnRecord {
     pub error: Option<String>,
     /// The mode the turn began in, absent for turns recorded before modes.
     pub mode: Option<String>,
+    /// `harness` for a turn the harness began itself, with no message from
+    /// the person, as when a subagent's report wakes its thread; absent for
+    /// the person's turns.
+    pub origin: Option<String>,
     /// When the turn began, and when it ended, if it has.
     pub started: i64,
     pub ended: Option<i64>,
@@ -249,6 +253,7 @@ impl Store {
                  state TEXT NOT NULL,\n\
                  error TEXT,\n\
                  mode TEXT,\n\
+                 origin TEXT,\n\
                  created_at INTEGER NOT NULL,\n\
                  ended_at INTEGER,\n\
                  UNIQUE(thread_id, turn_number)\n\
@@ -332,6 +337,7 @@ impl Store {
         ensure_column(&conn, "turns", "mode", "TEXT")?;
         ensure_column(&conn, "threads", "effort", "TEXT")?;
         ensure_column(&conn, "requests", "subagent_id", "TEXT")?;
+        ensure_column(&conn, "turns", "origin", "TEXT")?;
 
         // Any turn or subagent left working by a Lever that ended abruptly is
         // interrupted, and a request that waited went with the harness that asked it.
@@ -362,6 +368,17 @@ impl Store {
             .map_err(|(_, e)| format!("could not close database {}: {e}", path.display()))?;
         tighten_permissions(&path)?;
         Ok(())
+    }
+
+    /// Runs `write` in one transaction, which is rolled back when it fails.
+    fn all_or_none<T>(&self, what: &str, write: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        let all = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| format!("could not {what}: {e}"))?;
+        let done = write()?;
+        all.commit().map_err(|e| format!("could not {what}: {e}"))?;
+        Ok(done)
     }
 
     fn touch_thread(&self, thread_id: &str, now: i64) -> Result<(), String> {
@@ -601,6 +618,64 @@ impl Store {
             )
             .map_err(|e| format!("could not update thread title: {e}"))?;
         Ok(())
+    }
+
+    /// Begins a turn the harness began itself, with no message from the
+    /// person: what it says after a turn of the thread ended is kept apart
+    /// from that turn.
+    pub fn begin_harness_turn(&self, thread_id: &str, now: i64) -> Result<u64, String> {
+        let all = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| format!("could not begin a turn: {e}"))?;
+        let turn = self.create_turn(thread_id, "", None, now)?;
+        self.conn
+            .execute(
+                "UPDATE turns SET origin = 'harness' WHERE thread_id = ?1 AND turn_number = ?2",
+                params![thread_id, turn as i64],
+            )
+            .map_err(|e| format!("could not mark the turn the harness began: {e}"))?;
+        all.commit().map_err(|e| format!("could not begin a turn: {e}"))?;
+        Ok(turn)
+    }
+
+    /// Makes a turn the harness began, and Lever ended as done when the
+    /// harness went quiet, work again, when it is the thread's newest. Says
+    /// whether it did.
+    pub fn reopen_harness_turn(&self, thread_id: &str, turn_number: u64, now: i64) -> Result<bool, String> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE turns SET state = 'working', ended_at = NULL \
+                 WHERE thread_id = ?1 AND turn_number = ?2 AND origin = 'harness' AND state = 'done' \
+                 AND turn_number = (SELECT MAX(turn_number) FROM turns WHERE thread_id = ?1)",
+                params![thread_id, turn_number as i64],
+            )
+            .map_err(|e| format!("could not reopen the turn: {e}"))?;
+        if changed > 0 {
+            self.touch_thread(thread_id, now)?;
+        }
+        Ok(changed > 0)
+    }
+
+    /// A thread's newest turn: its number, its state, and whether the
+    /// harness began it.
+    pub fn latest_turn(&self, thread_id: &str) -> Result<Option<(u64, String, bool)>, String> {
+        self.conn
+            .query_row(
+                "SELECT turn_number, state, origin = 'harness' FROM turns WHERE thread_id = ?1 \
+                 ORDER BY turn_number DESC LIMIT 1",
+                params![thread_id],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)? as u64,
+                        r.get(1)?,
+                        r.get::<_, Option<bool>>(2)?.unwrap_or(false),
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| format!("could not query the newest turn: {e}"))
     }
 
     fn create_turn(&self, thread_id: &str, message: &str, context: Option<&str>, now: i64) -> Result<u64, String> {
@@ -980,7 +1055,7 @@ impl Store {
         let mut turn_stmt = self
             .conn
             .prepare(
-                "SELECT turn_number, message, context, answer, state, error, mode, created_at, ended_at \
+                "SELECT turn_number, message, context, answer, state, error, mode, created_at, ended_at, origin \
                  FROM turns WHERE thread_id = ?1 ORDER BY turn_number ASC",
             )
             .map_err(|e| format!("could not prepare turns query: {e}"))?;
@@ -998,6 +1073,7 @@ impl Store {
                     mode: r.get(6)?,
                     started: r.get(7)?,
                     ended: r.get(8)?,
+                    origin: r.get(9)?,
                     acts: Vec::new(),
                     requests: Vec::new(),
                     notes: Vec::new(),
@@ -1288,7 +1364,29 @@ impl Store {
 
     /// Inserts or updates a subagent owned by `patch.thread_id` and returns
     /// `(recorded_turn, SubagentRecord)` with Lever's own `sub-...` ID.
+    /// A subagent's title, state, and error as the record has them, if it
+    /// has the subagent.
+    pub fn subagent_summary(
+        &self,
+        thread_id: &str,
+        harness_session_id: &str,
+    ) -> Result<Option<(String, String, Option<String>)>, String> {
+        self.conn
+            .query_row(
+                "SELECT title, state, error FROM subagents WHERE thread_id = ?1 AND harness_session_id = ?2",
+                params![thread_id, harness_session_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(|e| format!("could not query subagent: {e}"))
+    }
+
     pub fn upsert_subagent(&self, patch: &SubagentPatch<'_>, now: i64) -> Result<(u64, SubagentRecord), String> {
+        // All of it, or none: the record never holds half a change.
+        self.all_or_none("keep a subagent", || self.upsert_subagent_unguarded(patch, now))
+    }
+
+    fn upsert_subagent_unguarded(&self, patch: &SubagentPatch<'_>, now: i64) -> Result<(u64, SubagentRecord), String> {
         type Row = (String, u64, String, String, Option<String>, i64, Option<i64>);
         let existing: Option<Row> = self
             .conn
@@ -1424,6 +1522,20 @@ impl Store {
         error: Option<&str>,
         now: i64,
     ) -> Result<(), String> {
+        // All of it, or none: the record never holds half a change.
+        self.all_or_none("end a subagent", || {
+            self.finish_subagent_unguarded(thread_id, subagent_id, state, error, now)
+        })
+    }
+
+    fn finish_subagent_unguarded(
+        &self,
+        thread_id: &str,
+        subagent_id: &str,
+        state: &str,
+        error: Option<&str>,
+        now: i64,
+    ) -> Result<(), String> {
         self.conn
             .execute(
                 "UPDATE subagents SET state = ?1, error = COALESCE(?2, error), ended_at = COALESCE(ended_at, ?3) \
@@ -1439,6 +1551,20 @@ impl Store {
     /// role join into one message, except a `prompt` that repeats the newest
     /// prompt verbatim is skipped. Returns `true` if anything was stored.
     pub fn append_subagent_message(
+        &self,
+        thread_id: &str,
+        subagent_id: &str,
+        role: &str,
+        text: &str,
+        now: i64,
+    ) -> Result<bool, String> {
+        // All of it, or none: the record never holds half a change.
+        self.all_or_none("keep a subagent's message", || {
+            self.append_subagent_message_unguarded(thread_id, subagent_id, role, text, now)
+        })
+    }
+
+    fn append_subagent_message_unguarded(
         &self,
         thread_id: &str,
         subagent_id: &str,
@@ -1495,6 +1621,13 @@ impl Store {
     /// Inserts or updates an act belonging to a subagent, returning Lever's
     /// own act ID (`act-...`).
     pub fn upsert_subagent_act(&self, patch: &SubagentActPatch<'_>, now: i64) -> Result<ActRecord, String> {
+        // All of it, or none: the record never holds half a change.
+        self.all_or_none("keep a subagent's act", || {
+            self.upsert_subagent_act_unguarded(patch, now)
+        })
+    }
+
+    fn upsert_subagent_act_unguarded(&self, patch: &SubagentActPatch<'_>, now: i64) -> Result<ActRecord, String> {
         let existing: Option<(String, String, String, String, Option<String>)> = self
             .conn
             .query_row(
@@ -1809,6 +1942,108 @@ mod tests {
             1,
             "no request is left that nobody can answer"
         );
+        store.close().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn a_v6_database_takes_subagents_and_harness_turns_and_keeps_no_half_subagent() {
+        let dir = std::env::temp_dir().join(format!(
+            "crowbar-lever-store-v6-{}-{}",
+            std::process::id(),
+            crate::sys::random_hex(4)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("lever.db");
+
+        // The schema a Lever before subagents left: no subagent tables, no
+        // `requests.subagent_id`, no `turns.origin`.
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO meta (key, value) VALUES ('schema_version', '6');
+                 CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, cwd TEXT NOT NULL,
+                     harness_name TEXT, harness_session_id TEXT, model TEXT, mode TEXT, effort TEXT,
+                     archived INTEGER NOT NULL DEFAULT 0,
+                     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+                 CREATE TABLE turns (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+                     turn_number INTEGER NOT NULL, message TEXT NOT NULL, context TEXT,
+                     answer TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, error TEXT, mode TEXT,
+                     created_at INTEGER NOT NULL, ended_at INTEGER, UNIQUE(thread_id, turn_number));
+                 CREATE TABLE requests (id TEXT PRIMARY KEY,
+                     thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+                     turn_number INTEGER NOT NULL, act_id TEXT, kind TEXT NOT NULL, title TEXT NOT NULL,
+                     detail TEXT, path TEXT, answers TEXT NOT NULL, state TEXT NOT NULL, answer TEXT,
+                     seq INTEGER NOT NULL);
+                 INSERT INTO threads (id, title, cwd, mode, created_at, updated_at)
+                 VALUES ('t-v6', 'Old thread', '/tmp', 'ask-first', 100, 100);
+                 INSERT INTO turns (thread_id, turn_number, message, state, created_at, ended_at)
+                 VALUES ('t-v6', 1, 'hello', 'done', 100, 101);
+                 INSERT INTO requests (id, thread_id, turn_number, kind, title, answers, state, seq)
+                 VALUES ('r-old', 't-v6', 1, 'command', 'ls', '[]', 'waiting', 1);",
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&db, 200).unwrap();
+        let rec = store.get_thread("t-v6").unwrap().unwrap();
+        assert_eq!(rec.turns[0].origin, None, "a turn from before is the person's");
+        assert_eq!(rec.turns[0].requests[0].state, "withdrawn");
+        assert_eq!(rec.turns[0].requests[0].subagent, None);
+
+        let patch = SubagentPatch {
+            thread_id: "t-v6",
+            turn_number: 1,
+            harness_session_id: "ses-child",
+            title: Some("Look around"),
+            state: Some("working"),
+            error: None,
+        };
+        let (turn, sub) = store.upsert_subagent(&patch, 102).unwrap();
+        assert_eq!((turn, sub.state.as_str()), (1, "working"));
+
+        // A turn the harness began is its own, and only the newest is reopened.
+        let woke = store.begin_harness_turn("t-v6", 103).unwrap();
+        assert_eq!(woke, 2);
+        assert_eq!(
+            store.latest_turn("t-v6").unwrap(),
+            Some((2, "working".to_string(), true))
+        );
+        store.finish_turn("t-v6", 2, "done", None, 104).unwrap();
+        assert!(store.reopen_harness_turn("t-v6", 2, 105).unwrap());
+        assert_eq!(
+            store.latest_turn("t-v6").unwrap(),
+            Some((2, "working".to_string(), true))
+        );
+        store.finish_turn("t-v6", 2, "done", None, 106).unwrap();
+        store.begin_turn("t-v6", None, "next", None, None, 107).unwrap();
+        assert!(
+            !store.reopen_harness_turn("t-v6", 2, 108).unwrap(),
+            "a turn with a newer one after it stays ended"
+        );
+        assert!(
+            !store.reopen_harness_turn("t-v6", 1, 108).unwrap(),
+            "the person's turn is not reopened"
+        );
+        let rec = store.get_thread("t-v6").unwrap().unwrap();
+        assert_eq!(rec.turns[1].origin.as_deref(), Some("harness"));
+        assert_eq!(rec.turns[1].message, "");
+
+        // A subagent the database takes only part of is not kept at all.
+        store
+            .conn
+            .execute_batch("CREATE TRIGGER refused BEFORE UPDATE ON threads BEGIN SELECT RAISE(ABORT, 'refused'); END")
+            .unwrap();
+        let partial = SubagentPatch {
+            harness_session_id: "ses-half",
+            ..patch
+        };
+        assert!(store.upsert_subagent(&partial, 109).is_err());
+        store.conn.execute_batch("DROP TRIGGER refused").unwrap();
+        let rec = store.get_thread("t-v6").unwrap().unwrap();
+        let subagents: usize = rec.turns.iter().map(|t| t.subagents.len()).sum();
+        assert_eq!(subagents, 1, "no subagent is left working that Lever does not hold");
         store.close().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
