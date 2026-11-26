@@ -116,11 +116,11 @@ pub struct Connection {
     /// for. Lever answers in the order it was asked, so they come before the
     /// reply to any request made since.
     owed: usize,
-    /// A Stop sent, until Lever replies to it: its thread and turn, and how
-    /// many replies are still to come up to and including its own. A
+    /// Each Stop sent, until Lever replies to it: its thread and turn, and
+    /// how many replies are still to come up to and including its own. A
     /// request of that turn that waits, and that Lever sent before it took
     /// the Stop, is one the Stop withdraws, and is not given.
-    stopping: Option<(String, u64, usize)>,
+    stopping: Vec<(String, u64, usize)>,
     /// Requests set aside so, by ID: their withdrawal, when it comes, is
     /// set aside too, as nothing was shown of them. Any other end is shown.
     set_aside: Vec<String>,
@@ -193,7 +193,7 @@ impl Connection {
             typing_ended: false,
             typed_ahead: false,
             owed: 0,
-            stopping: None,
+            stopping: Vec::new(),
             set_aside: Vec::new(),
         }
     }
@@ -257,18 +257,16 @@ impl Connection {
     /// given: Lever sent it before it took the Stop.
     pub fn stop(&mut self, thread: &str, turn: u64) -> Result<()> {
         self.send(serde_json::json!({ "op": "stop", "thread": thread, "turn": turn }))?;
-        self.stopping = Some((thread.to_string(), turn, self.owed));
+        self.stopping.push((thread.to_string(), turn, self.owed));
         Ok(())
     }
 
     /// Takes note of a reply: one fewer is still to come before the Stop's.
     fn replied(&mut self) {
-        if let Some((_, _, left)) = self.stopping.as_mut() {
+        self.stopping.retain_mut(|(_, _, left)| {
             *left -= 1;
-            if *left == 0 {
-                self.stopping = None;
-            }
-        }
+            *left > 0
+        });
     }
 
     /// Whether a message is a request the Stop under way withdraws, or the
@@ -285,7 +283,7 @@ impl Connection {
             self.set_aside.retain(|r| *r != id);
             return self.set_aside.len() < before && text(message, "state") == "withdrawn";
         }
-        let withdrawn = self.stopping.as_ref().is_some_and(|(thread, turn, _)| {
+        let withdrawn = self.stopping.iter().any(|(thread, turn, _)| {
             text(message, "thread") == thread.as_str() && message.get("turn").and_then(Value::as_u64) == Some(*turn)
         });
         if withdrawn {
@@ -453,6 +451,47 @@ mod tests {
             lever.request(json!({"op": "send"})).unwrap(),
             json!({"reply": "sent", "thread": "t-1", "turn": 2})
         );
+    }
+
+    #[test]
+    fn each_stop_sets_aside_its_turns_waiting_requests_until_lever_replies_to_it() {
+        let request = |id: &str, turn: u64| {
+            format!(r#"{{"event":"request","thread":"t-1","turn":{turn},"request":"{id}","state":"waiting"}}"#)
+        };
+        let frames: Vec<String> = vec![
+            request("r-2", 1),
+            request("r-5", 3),
+            r#"{"reply":"ok"}"#.to_string(),
+            request("r-6", 1),
+            r#"{"reply":"ok"}"#.to_string(),
+            request("r-7", 3),
+        ];
+        let frames: &'static [&'static str] = Box::leak(
+            frames
+                .into_iter()
+                .map(|f| &*Box::leak(f.into_boxed_str()))
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        let (mut lever, _quiet) = against(2, frames);
+        // Two Stops go before Lever replies to either.
+        lever.stop("t-1", 1).unwrap();
+        lever.stop("t-1", 3).unwrap();
+        let mut given = Vec::new();
+        for _ in 0..4 {
+            match lever.next(Typing::Waits).unwrap() {
+                Happening::Event(event) => given.push(
+                    event
+                        .get("request")
+                        .and_then(Value::as_str)
+                        .unwrap_or("reply")
+                        .to_string(),
+                ),
+                _ => panic!("only Lever speaks here"),
+            }
+        }
+        // What each Stop withdraws is set aside; what comes after its reply is not.
+        assert_eq!(given, ["reply", "r-6", "reply", "r-7"]);
     }
 
     #[test]
