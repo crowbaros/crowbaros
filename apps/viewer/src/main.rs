@@ -911,20 +911,17 @@ impl Render for Viewer {
                             entity.update(cx, |s, cx| {
                                 let page = {
                                     let scroll = s.scroll.0.borrow();
-                                    scroll
-                                        .last_item_size
-                                        .map(|size| {
-                                            let count = match &s.document {
-                                                Some(Document::Pdf(doc)) => doc.page_count(),
-                                                _ => 0,
-                                            };
-                                            view_model::page_from_scroll(
-                                                f32::from(scroll.base_handle.offset().y),
-                                                f32::from(size.item.height),
-                                                count,
-                                            )
-                                        })
-                                        .unwrap_or(0)
+                                    let count = match &s.document {
+                                        Some(Document::Pdf(doc)) => doc.page_count(),
+                                        _ => 0,
+                                    };
+                                    // GPUI's last_item_size holds the viewport,
+                                    // not the height of one PDF page row.
+                                    view_model::page_from_scroll(
+                                        f32::from(scroll.base_handle.offset().y),
+                                        s.pdf_layout().1,
+                                        count,
+                                    )
                                 };
                                 if page != s.page {
                                     s.page = page;

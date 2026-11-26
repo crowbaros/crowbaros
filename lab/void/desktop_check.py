@@ -442,6 +442,9 @@ result = subprocess.run(['wl-paste', '--no-newline', '--type', {mime!r}],
                         env=env, check=True, stdout=subprocess.PIPE, timeout=12)
 print(base64.b64encode(result.stdout).decode('ascii'))
 ''', person)
+        # wl-paste's fallback reader briefly maps its own surface to receive
+        # the selection. Return the keyboard with a real click after it exits.
+        self.click(640, 480)
         self.wait('Viewer regains focus after the clipboard reader',
                   lambda: self.snapshot()['active'].get('class') == 'com.crowbaros.Viewer')
         return base64.b64decode(encoded.strip())
@@ -532,6 +535,14 @@ print(base64.b64encode(result.stdout).decode('ascii'))
                 self.key('ret')
                 self.wait('Viewer renders the requested PDF page',
                           lambda: 'VIEWER page=2' in self.run('cat ' + logfile))
+                first_page = self.count('VIEWER page=1', logfile)
+                self.qmp.pointer(550 / 1280, 450 / 960)
+                for down in (True, False):
+                    self.qmp.command('input-send-event', events=[
+                        {'type': 'btn', 'data': {'down': down, 'button': 'wheel-up'}}])
+                self.wait('scrolling above page two follows the actual PDF row height',
+                          lambda: self.count('VIEWER page=1', logfile) > first_page)
+                self.check(f'Viewer follows continuous PDF scrolling in {theme}', True)
                 self.key('ctrl', 'f')
                 self.type('CrowbarOS')
                 self.key('ret')

@@ -57,7 +57,7 @@ window GPUI has dropped.
 
 ## GPUI builds without warnings
 
-`gpui-0.2.2-builds-without-warnings.patch`, applied last, is ours. Each build
+`gpui-0.2.2-builds-without-warnings.patch`, applied fourth, is ours. Each build
 of GPUI 0.2.2 for Wayland printed three warnings and a fourth about a crate it
 depends on. Two of them name code a later Rust will refuse to build. The patch
 changes nothing GPUI does:
@@ -81,5 +81,49 @@ lockfile loses one of the three.
 The gpui-probe builds the published crate with no patches, so its build still
 takes `proc-macro-error2` and prints that warning.
 
-All four patches serve both apps: Studio Settings takes the shell's prepared
-source through its `[patch.crates-io]`.
+## Image copies offer image bytes
+
+`gpui-0.2.2-image-clipboard.patch`, applied fifth, is ours. GPUI 0.2.2's
+Wayland backend advertised only text MIME types when copying a clipboard
+item and sent only its text entries. Viewer could report an image copied,
+but another application could neither request nor receive its PNG (#362).
+
+The clipboard now advertises each image's actual MIME type and sends its
+encoded bytes when that type is requested. It still offers the three text
+aliases for text entries, concatenates text entries as before, and preserves
+the process-local MIME marker used to retain clipboard metadata. Mixed items
+offer both kinds, without duplicate MIME types. Primary selection keeps its
+existing text behavior. No re-encoding or image decoding runs in the clipboard
+callback.
+
+The shell's `tests/gpui_clipboard.rs` compiles the patched MIME/payload selector
+with GPUI's real clipboard types. It checks exact binary payloads, all image
+formats, text aliases and metadata, and mixed entries. `tests/gpui_source.rs`
+also checks that the actual Wayland offer and send paths call this selector.
+Viewer's desktop check copies a rotated PNG and decodes the received bytes in
+another process; unit tests alone do not prove Wayland delivery.
+
+## Pointer axes work without an optional source
+
+`gpui-0.2.2-optional-axis-source.patch`, applied sixth, is ours. Wayland
+permits pointer `axis` events without `axis_source` or a discrete wheel event.
+GPUI 0.2.2 initialized its source as Wheel and discarded continuous axes for
+that source, so Fulcrum's valid Axis + Frame sequence did not scroll a window.
+Viewer's distant-thumbnail check exposed the failure (#362).
+
+Every axis now contributes to that frame's continuous delta. At Frame, a
+discrete or value120 delta takes precedence when present; otherwise GPUI uses
+the continuous pixels. Both are consumed, and only one scroll event is sent.
+This preserves wheel line units and fractional high-resolution steps without
+doubling their accompanying continuous motion. Touchpad pixel scaling remains
+unchanged. Source state is no longer needed and cannot leak between frames.
+
+`tests/gpui_axis.rs` compiles the patched decision with actual GPUI point and
+scroll types. It checks bare and touchpad axes, discrete precedence, fractional
+steps, and successive frames. `tests/gpui_source.rs` also checks that the
+Wayland event handler accumulates bare axes and routes each frame through that
+decision. Viewer's desktop check scrolls to a thumbnail outside the initial
+page cache to verify delivery in a real window.
+
+All six patches serve the GPUI apps that take the shell's prepared source
+through their `[patch.crates-io]`.
