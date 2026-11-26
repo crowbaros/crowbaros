@@ -194,13 +194,15 @@ pub enum RequestView {
     Sending(String),
     /// Answered, with the answer's name.
     Answered(String),
-    /// Withdrawn, or no longer waiting because its turn ended.
+    /// Withdrawn, or no longer waiting because its turn was interrupted.
     Withdrawn,
 }
 
-/// A request waits only while its turn works: one Lever still calls
-/// `waiting` in a turn that ended (as after a lost connection) is shown as
-/// withdrawn, with no answer controls.
+/// A request waits as long as Lever says it does, after its turn ended too:
+/// a harness may ask after a turn, and the request waits on it all the same.
+/// Only one in a turn the drawer saw interrupted, as when Lever went away,
+/// is shown as withdrawn, with no answer controls: Lever withdraws what a
+/// harness asked when it ends.
 pub fn request_view(turn_state: &TurnState, request: &Request) -> RequestView {
     match request.state {
         RequestState::Answered => RequestView::Answered(
@@ -211,7 +213,7 @@ pub fn request_view(turn_state: &TurnState, request: &Request) -> RequestView {
                 .unwrap_or_else(|| "Answered".into()),
         ),
         RequestState::Withdrawn => RequestView::Withdrawn,
-        RequestState::Waiting if !matches!(turn_state, TurnState::Working) => {
+        RequestState::Waiting if matches!(turn_state, TurnState::Interrupted) => {
             RequestView::Withdrawn
         }
         RequestState::Waiting => match &request.sending {
@@ -231,9 +233,11 @@ pub enum DetailLine {
 
 /// Splits a request's detail into lines for the drawer. A command is shown
 /// as it is; any other detail's lines that begin `-` or `+` are a diff's
-/// removed and added lines. Very long detail is cut, saying how much.
+/// removed and added lines. Lever cuts a long change itself, so both what
+/// it takes out and what it puts in show, in at most 402 lines: the drawer
+/// shows all of that, and cuts only longer detail, saying how much.
 pub fn request_detail_lines(kind: &str, detail: &str) -> Vec<(DetailLine, String)> {
-    const MAX_LINES: usize = 200;
+    const MAX_LINES: usize = 402;
     let diff = kind != "command";
     let lines: Vec<&str> = detail.trim_end_matches('\n').lines().collect();
     let mut out: Vec<(DetailLine, String)> = lines
@@ -760,6 +764,12 @@ impl AgentState {
                 .turns
                 .last()
                 .is_some_and(|t| matches!(t.state, TurnState::Working))
+    }
+
+    /// Stop is offered while the thread works, or while a request of its
+    /// waits: Stop withdraws it.
+    pub fn can_stop(&self) -> bool {
+        self.connected && (self.working() || self.waiting())
     }
 
     pub fn can_send(&self) -> bool {
@@ -4576,6 +4586,36 @@ mod tests {
     }
 
     #[test]
+    fn a_request_after_its_turn_is_answered_and_stop_withdraws_it() {
+        let mut state = connected_state(true);
+        state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
+        state.apply(
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "run".into(), context: None },
+            true,
+        );
+        state.apply(AgentEvent::Done { thread: "t-1".into(), turn: 1 }, true);
+        assert!(!state.can_stop(), "nothing works and nothing waits");
+
+        // The harness asks after its turn ended, as a subagent's would.
+        state.apply(
+            AgentEvent::Request {
+                thread: "t-1".into(),
+                turn: 1,
+                request: sample_request("r-1", RequestState::Waiting),
+            },
+            true,
+        );
+        assert_eq!(
+            request_view(&state.turns[0].state, &state.turns[0].requests[0]),
+            RequestView::Waiting
+        );
+        assert!(state.waiting());
+        assert!(state.can_stop(), "Stop withdraws what waits");
+        assert_eq!(state.current_turn(), None, "Stop names no turn: none works");
+        assert_eq!(state.begin_answer("r-1", "once").as_deref(), Some("t-1"));
+    }
+
+    #[test]
     fn a_request_waits_then_is_answered_or_withdrawn() {
         let mut state = connected_state(true);
         state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
@@ -4660,11 +4700,14 @@ mod tests {
         );
         assert_eq!(state.mark, Mark::Working);
 
-        // One still called waiting in a turn that ended shows no answer controls.
+        // One Lever says waits, waits, whether or not its turn still works:
+        // a harness may ask after its turn. Only one in a turn the drawer saw
+        // interrupted shows no answer controls.
         let waiting = sample_request("r-3", RequestState::Waiting);
         assert_eq!(request_view(&TurnState::Interrupted, &waiting), RequestView::Withdrawn);
-        assert_eq!(request_view(&TurnState::Stopped, &waiting), RequestView::Withdrawn);
         assert_eq!(request_view(&TurnState::Working, &waiting), RequestView::Waiting);
+        assert_eq!(request_view(&TurnState::Done, &waiting), RequestView::Waiting);
+        assert_eq!(request_view(&TurnState::Stopped, &waiting), RequestView::Waiting);
 
         // An unnamed answer gets a plain name.
         assert_eq!(RequestAnswer { answer: "no".into(), name: " ".into() }.label(), "Refuse");
@@ -4925,10 +4968,21 @@ mod tests {
                 (DetailLine::Added, "+new line".to_string()),
             ]
         );
-        let long: String = (0..250).map(|i| format!("+{i}\n")).collect();
-        let lines = request_detail_lines("edit", &long);
-        assert_eq!(lines.len(), 201);
-        assert_eq!(lines[200], (DetailLine::Plain, "… 50 more lines".to_string()));
+        // A change Lever cut, as long as Lever makes one, shows whole: what
+        // it takes out and what it puts in.
+        let mut cut: Vec<String> = (0..200).map(|i| format!("-old {i}")).collect();
+        cut.push("… 250 more lines taken out".into());
+        cut.extend((0..200).map(|i| format!("+new {i}")));
+        cut.push("… 250 more lines put in".into());
+        let lines = request_detail_lines("edit", &cut.join("\n"));
+        assert_eq!(lines.len(), 402);
+        assert_eq!(lines[201], (DetailLine::Added, "+new 0".to_string()));
+        assert_eq!(lines[401], (DetailLine::Plain, "… 250 more lines put in".to_string()));
+        // Longer detail is cut, saying how much.
+        let long: String = (0..450).map(|i| format!("{i}\n")).collect();
+        let lines = request_detail_lines("command", &long);
+        assert_eq!(lines.len(), 403);
+        assert_eq!(lines[402], (DetailLine::Plain, "… 48 more lines".to_string()));
     }
 
     #[test]

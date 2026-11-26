@@ -3033,7 +3033,7 @@ impl Render for AgentSurface {
         }
         let shown_mode = state.shown_mode();
         let working = state.working();
-        let show_stop = state.connected && working;
+        let show_stop = state.can_stop();
         let draft = self.input.read(cx).query();
         let can_send = state.can_send() && !draft.trim().is_empty();
         self.input.update(cx, |input, _| input.palette = p);
