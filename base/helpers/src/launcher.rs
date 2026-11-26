@@ -6,8 +6,8 @@
 //! with its groups, before it reads a request. Every app it starts runs as
 //! the person, with their home, at the compositor's socket for apps (ADR
 //! 0032), as an app would on any desktop. It takes requests only from the
-//! shell's user ID. Its other request reads the person's saved appearance for
-//! the shell.
+//! shell's user ID. Read-only requests give the shell the person's saved
+//! appearance, Input, and Power preferences from fixed filenames.
 
 use crate::request;
 use crate::sys::{self, Account};
@@ -52,6 +52,12 @@ pub fn desktop_path(value: &str) -> Result<PathBuf, String> {
 /// None when there is none. No symbolic link is followed on the way, and the
 /// file must be a regular one, the person's alone, of at most 64 KiB.
 pub fn appearance(home: &Path, uid: u32) -> Result<Option<Value>, String> {
+    preferences(home, uid, "appearance.json")
+}
+
+/// Reads one fixed preference filename with the same bounds and ownership
+/// checks as appearance. Callers choose the filename, never a request.
+fn preferences(home: &Path, uid: u32, filename: &str) -> Result<Option<Value>, String> {
     use std::os::fd::AsRawFd;
     let found = (|| -> io::Result<File> {
         let home = home.to_str().ok_or_else(|| io::Error::other("The home is not UTF-8"))?;
@@ -59,11 +65,7 @@ pub fn appearance(home: &Path, uid: u32) -> Result<Option<Value>, String> {
         for name in [".config", "crowbaros"] {
             directory = sys::open_at(directory.as_raw_fd(), name, libc::O_RDONLY | libc::O_DIRECTORY)?;
         }
-        let file = sys::open_at(
-            directory.as_raw_fd(),
-            "appearance.json",
-            libc::O_RDONLY | libc::O_NONBLOCK,
-        )?;
+        let file = sys::open_at(directory.as_raw_fd(), filename, libc::O_RDONLY | libc::O_NONBLOCK)?;
         Ok(File::from(file))
     })();
     let file = match found {
@@ -488,6 +490,12 @@ fn dispatch(request: serde_json::Map<String, Value>, person: &Account, run: &mut
         Some("appearance") if request.len() == 1 => {
             Ok(json!({"ok": true, "preferences": appearance(&person.dir, person.uid)?}))
         }
+        Some("input_preferences") if request.len() == 1 => {
+            Ok(json!({"ok": true, "preferences": preferences(&person.dir, person.uid, "input.json")?}))
+        }
+        Some("power_preferences") if request.len() == 1 => {
+            Ok(json!({"ok": true, "preferences": preferences(&person.dir, person.uid, "power.json")?}))
+        }
         Some("launch") if request.len() == 2 => {
             let entry = request
                 .get("desktop")
@@ -787,6 +795,42 @@ mod tests {
         std::fs::write(home.folder().join("appearance.json"), r#"{"theme":"light"}"#).unwrap();
         let (reply, _) = ask(b"{\"op\":\"appearance\"}\n", SHELL_UID, &person(home.path()));
         assert_eq!(reply, json!({"ok": true, "preferences": {"theme": "light"}}));
+    }
+
+    #[test]
+    fn saved_input_and_power_are_available_only_to_the_shell_from_fixed_files() {
+        let home = Home::new();
+        let person = person(home.path());
+        for (op, filename, saved) in [
+            (
+                "input_preferences",
+                "input.json",
+                json!({"schema_version": 1, "layout": "gb"}),
+            ),
+            (
+                "power_preferences",
+                "power.json",
+                json!({"schema_version": 1, "lock_after_secs": 600}),
+            ),
+        ] {
+            let request = format!("{}\n", json!({"op": op}));
+            let (reply, _) = ask(request.as_bytes(), SHELL_UID, &person);
+            assert_eq!(reply, json!({"ok": true, "preferences": null}));
+            std::fs::write(home.folder().join(filename), saved.to_string()).unwrap();
+            let (reply, ran) = ask(request.as_bytes(), SHELL_UID, &person);
+            assert_eq!(reply, json!({"ok": true, "preferences": saved}));
+            assert!(ran.is_empty());
+            let (reply, _) = ask(request.as_bytes(), person.uid, &person);
+            assert_eq!(reply["ok"], false);
+            let request_with_path = format!("{}\n", json!({"op": op, "path": "/etc/shadow"}));
+            let (reply, _) = ask(request_with_path.as_bytes(), SHELL_UID, &person);
+            assert_eq!(reply["ok"], false);
+            std::fs::remove_file(home.folder().join(filename)).unwrap();
+            std::os::unix::fs::symlink("appearance.json", home.folder().join(filename)).unwrap();
+            std::fs::write(home.folder().join("appearance.json"), "{}").unwrap();
+            let (reply, _) = ask(request.as_bytes(), SHELL_UID, &person);
+            assert_eq!(reply["ok"], false);
+        }
     }
 
     #[test]

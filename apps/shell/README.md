@@ -103,9 +103,14 @@ historical behavior evidence, not a current Fedora workflow.
   starts it as the person's account. The shell reads the person's saved
   appearance through a read-only request to the launcher, and follows the
   theme they saved; it does not theme other apps.
-- The shell lends Studio Settings the display layout through a bounded socket
+- The shell lends Studio Settings display, Input, and Power settings through a bounded socket
   of its own (`CROWBAR_DISPLAY_SOCKET`), which takes only the person's and
-  the shell's user IDs and passes on only `outputs` and `configure_output`.
+  the shell's user IDs and passes on only `outputs`, `configure_output`,
+  `input_config`, `configure_input`, `power_config`, and `configure_power`.
+  Before serving requests, it reads saved Input and Power files through the
+  launcher and restores them through the same validation. This runs at every
+  shell start, including after a compositor restart or reboot; it never
+  gives apps general shell or compositor control.
 - Desktop-entry discovery honors XDG precedence, visibility, locale, and executable availability. Search text is never executed as a command.
 - The compositor and the shell restart independently under runit. A shell
   restart keeps the person's windows open; a compositor restart comes back

@@ -408,10 +408,47 @@ class Check:
         self.check("the person writes a file in their home",
                    self.run(f"stat -c %U {kept}").strip() == person)
         followed = self.shell_log().count('SHELL appearance theme=Light')
+        # Persist non-default values without applying them. Only startup
+        # restoration can make these live after the compositor is recreated.
+        saved_input = {'schema_version': 1, 'layout': 'gb', 'repeat_rate': 40,
+                       'repeat_delay': 300, 'pointer_speed': 4, 'natural_scroll': True}
+        saved_power = {'schema_version': 1, 'lock_after_secs': 600, 'suspend_after_secs': 1800}
+        original_input = self.displays({'op': 'input_config'})
+        original_power = self.displays({'op': 'power_config'})
+        original_files = json.loads(self.python(f"""
+import json, pathlib
+folder = pathlib.Path({home!r}) / '.config/crowbaros'
+folder.mkdir(parents=True, exist_ok=True)
+original = {{}}
+for name, settings in {dict(input=saved_input, power=saved_power)!r}.items():
+    path = folder / (name + '.json')
+    original[name] = path.read_text() if path.exists() else None
+    path.write_text(json.dumps(settings))
+    path.chmod(0o600)
+print(json.dumps(original))
+""", person))
         boot_id = self.run('cat /proc/sys/kernel/random/boot_id').strip()
         self.run("nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &")
         self.wait('new boot ID after clean reboot', lambda: (r := self.guest.ssh('cat /proc/sys/kernel/random/boot_id', check=False, timeout=6)).returncode == 0 and r.stdout.strip() != boot_id, timeout=180)
         self.ready()
+        for kind, expected, original in [('input', saved_input, original_input),
+                                         ('power', saved_power, original_power)]:
+            live = self.displays({'op': kind + '_config'})
+            self.check(f'saved {kind} settings take effect after a clean reboot before Settings opens',
+                       all(live.get(key) == value for key, value in expected.items()
+                           if key != 'schema_version'))
+            restore = {key: original[key] for key in expected if key != 'schema_version'}
+            self.displays({'op': 'configure_' + kind, **restore})
+        self.python(f"""
+import pathlib
+folder = pathlib.Path({home!r}) / '.config/crowbaros'
+for name, original in {original_files!r}.items():
+    path = folder / (name + '.json')
+    if original is None:
+        path.unlink(missing_ok=True)
+    else:
+        path.write_text(original)
+""", person)
         self.wait('the session starts locked after reboot', lambda: self.snapshot().get('locked'))
         self.unlock()
         self.wait('the password unlocks after reboot', lambda: not self.snapshot().get('locked'))

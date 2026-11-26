@@ -63,6 +63,11 @@ and updates Fulcrum's idle timer live, `src/default_apps.rs` reads installed `.d
 and updates `$XDG_CONFIG_HOME/mimeapps.list` atomically, `src/system_info.rs` reads live host,
 OS, kernel, CPU, memory, GPU, and root disk summaries for the About page, `src/theme.rs` maps
 brand tokens, and `src/main.rs` presents the surface.
+At desktop startup, the launcher reads the person's private Input and Power
+files for the shell, which validates and restores them through the bounded
+settings bridge before accepting live changes. They take effect after a reboot
+or compositor restart without opening Settings. Invalid saved files leave the
+compositor's defaults in place and are reported in the shell log.
 Preferences are schema 1 JSON at `$XDG_CONFIG_HOME/crowbaros/appearance.json`
 (falling back to `~/.config/crowbaros/appearance.json`). New files are mode 0600.
 Unknown/malformed data is rejected. Save locks, checks for external changes,
