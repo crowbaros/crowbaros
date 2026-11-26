@@ -826,6 +826,7 @@ impl CommandSender {
     pub fn lifecycle(&self, thread: String, delete: bool) { let _ = self.tx.send(AgentCommand::Lifecycle { thread, delete }); }
 
     /// Sends a message. `mode` is the mode a new thread starts in.
+    #[cfg(test)]
     pub fn send_message(&self, thread: Option<String>, text: String, mode: Option<String>) {
         self.send_with(thread, text, mode, None, None);
     }
@@ -990,12 +991,31 @@ pub struct AgentViewSnapshot {
     pub drawer_output: Option<String>,
     pub mark_overlay: bool,
     pub mark_overlay_output: Option<String>,
-    pub mode_menu_open: bool,
-    /// The drawer's controls in view as it last drew: `mode`, `mode:<id>`,
-    /// `default-mode:<id>`, `answer:<request>:<answer>`, `send`, `stop`,
-    /// `close`.
+    /// The list open above the message box, if one is.
+    pub list: Option<ListSnapshot>,
+    /// What the message box holds.
+    pub draft: String,
+    /// The drawer's controls in view as it last drew: `send`, `stop`,
+    /// `close`, `threads`, `newest`, `answer:<request>:<answer>`,
+    /// `acts:<turn>`, `act:<id>`, `context:<turn>`, and, of an open list,
+    /// `command:<name>`, `choice:<value>`, and `provider:<id>`.
     pub controls: Vec<ControlBounds>,
     pub state: AgentState,
+}
+
+/// The list open above the drawer's message box, as the control socket
+/// says it: what it is a list of, its rows' IDs in order, and the row the
+/// keys are on.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct ListSnapshot {
+    /// `commands`, `models`, `efforts`, `modes`, or `defaultmodes`.
+    pub kind: String,
+    pub items: Vec<String>,
+    pub highlighted: Option<String>,
+    /// The provider whose Models a list of Models shows.
+    pub provider: Option<String>,
+    /// What the list says in place of rows.
+    pub note: Option<String>,
 }
 
 /// What picking a Model or an effort in the drawer does.
@@ -1201,9 +1221,10 @@ impl AgentState {
         !self.connected || self.no_harness || self.sending || self.loading || self.working()
     }
 
-    /// The person opened the mode menu: ask Lever for its modes. Returns
-    /// whether to send `models`; the modes already known stay shown meanwhile.
-    pub fn open_mode_menu(&mut self) -> bool {
+    /// A list needs what the harness offers: ask Lever for its Models and
+    /// modes. Returns whether to send `models`; what is already known stays
+    /// shown meanwhile.
+    pub fn ask_offer(&mut self) -> bool {
         if !self.connected || self.no_harness {
             return false;
         }
@@ -5561,7 +5582,7 @@ mod tests {
         assert_eq!(state.shown_mode().as_deref(), Some("ask-first"));
 
         // Opening the menu asks for the modes once connected.
-        assert!(state.open_mode_menu());
+        assert!(state.ask_offer());
         assert!(state.modes_loading);
         state.apply(
             AgentEvent::Offer(Offer {
@@ -5646,7 +5667,7 @@ mod tests {
         assert_eq!(state.mode.as_deref(), Some("full-access"));
 
         // `models` failing while the menu loads says so in the menu alone.
-        assert!(state.open_mode_menu());
+        assert!(state.ask_offer());
         state.apply(AgentEvent::Error { code: "harness-error".into(), message: "boom".into() }, true);
         assert!(!state.modes_loading);
         assert_eq!(state.modes_error.as_deref(), Some("Modes are not available right now."));
@@ -5792,7 +5813,7 @@ mod tests {
             state.apply(ev, false);
             if step == 0 && state.connected && state.watching {
                 step = 1;
-                assert!(state.open_mode_menu());
+                assert!(state.ask_offer());
                 sender.fetch_modes();
             } else if step == 1 && !state.modes.is_empty() {
                 step = 2;
@@ -5950,4 +5971,408 @@ mod tests {
         assert_eq!(state.mark, Mark::Waiting, "list snapshots must not hide a permission request");
     }
 
+
+    fn offer() -> Offer {
+        let model = |id: &str, name: &str, provider: &str, provider_name: &str| ModelInfo {
+            id: id.into(),
+            name: name.into(),
+            provider: Some(provider.into()),
+            provider_name: Some(provider_name.into()),
+        };
+        Offer {
+            models: vec![
+                model("acme/small", "Small", "acme", "Acme"),
+                model("acme/large", "Large", "acme", "Acme"),
+                model("other/tiny", "Tiny", "other", "other"),
+            ],
+            default_model: Some("acme/small".into()),
+            modes: Vec::new(),
+        }
+    }
+
+    fn levels(ids: &[&str]) -> Vec<EffortInfo> {
+        ids.iter()
+            .map(|id| EffortInfo { id: (*id).into(), name: id.to_uppercase() })
+            .collect()
+    }
+
+    #[test]
+    fn parses_models_with_their_providers_efforts_and_commands() {
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({
+                "reply": "models", "supported": true, "default": "acme/small", "modes": [],
+                "models": [
+                    { "id": "acme/small", "name": "Small", "provider": "acme", "provider_name": "Acme" },
+                    { "id": "plain", "name": "Plain" },
+                    { "name": "a Model with no ID" }
+                ]
+            })),
+            Some(LeverMessage::Models(Offer {
+                models: vec![
+                    ModelInfo {
+                        id: "acme/small".into(),
+                        name: "Small".into(),
+                        provider: Some("acme".into()),
+                        provider_name: Some("Acme".into()),
+                    },
+                    ModelInfo { id: "plain".into(), name: "Plain".into(), provider: None, provider_name: None },
+                ],
+                default_model: Some("acme/small".into()),
+                modes: Vec::new(),
+            }))
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({
+                "reply": "efforts", "model": "acme/small",
+                "efforts": [{ "id": "low", "name": "Low" }, { "id": "default" }]
+            })),
+            Some(LeverMessage::Efforts {
+                model: "acme/small".into(),
+                efforts: vec![
+                    EffortInfo { id: "low".into(), name: "Low".into() },
+                    EffortInfo { id: "default".into(), name: "default".into() },
+                ],
+            })
+        );
+        let review = CommandInfo {
+            name: "review".into(),
+            description: "review changes".into(),
+            hint: Some("commit, branch, or pr".into()),
+        };
+        let listed = serde_json::json!([
+            { "name": "review", "description": "review changes", "hint": "commit, branch, or pr" }
+        ]);
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "reply": "commands", "known": false, "commands": [] })),
+            Some(LeverMessage::Commands { thread: None, commands: Vec::new(), known: false })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "reply": "commands", "known": true, "thread": "t-1", "commands": listed })),
+            Some(LeverMessage::Commands { thread: Some("t-1".into()), commands: vec![review.clone()], known: true })
+        );
+        // The event, for a thread and for the harness.
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "event": "commands", "thread": "t-1", "commands": listed })),
+            Some(LeverMessage::Commands { thread: Some("t-1".into()), commands: vec![review.clone()], known: true })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "event": "commands", "commands": listed })),
+            Some(LeverMessage::Commands { thread: None, commands: vec![review], known: true })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "reply": "model-set", "thread": "t-1", "model": "acme/large" })),
+            Some(LeverMessage::ModelSet { thread: "t-1".into(), model: "acme/large".into() })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "reply": "effort-set", "thread": "t-1", "effort": null })),
+            Some(LeverMessage::EffortSet { thread: "t-1".into(), effort: None })
+        );
+        // `thread-updated` says a Model, and an effort or that there is none.
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "event": "thread-updated", "thread": "t-1", "model": "acme/large" })),
+            Some(LeverMessage::ThreadUpdated {
+                thread: "t-1".into(), title: None, mode: None, model: Some("acme/large".into()), effort: None,
+            })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "event": "thread-updated", "thread": "t-1", "effort": null })),
+            Some(LeverMessage::ThreadUpdated { thread: "t-1".into(), title: None, mode: None, model: None, effort: Some(None) })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "event": "thread-updated", "thread": "t-1", "effort": "high" })),
+            Some(LeverMessage::ThreadUpdated {
+                thread: "t-1".into(), title: None, mode: None, model: None, effort: Some(Some("high".into())),
+            })
+        );
+        // A record says when each turn began and ended.
+        let Some(LeverMessage::Resumed(record)) = parse_lever_message(&serde_json::json!({
+            "reply": "resumed", "thread": "t-1", "title": "", "cwd": "/", "working": false,
+            "model": "acme/small", "effort": "high",
+            "turns": [{ "turn": 1, "message": "hi", "answer": "", "state": "done", "started": 100, "ended": 112 }]
+        })) else {
+            panic!("a record");
+        };
+        assert_eq!(record.effort.as_deref(), Some("high"));
+        assert_eq!((record.turns[0].started, record.turns[0].ended), (Some(100), Some(112)));
+        assert_eq!(record.turns[0].elapsed(500), Some(12));
+    }
+
+    #[test]
+    fn how_long_a_turn_worked_reads_as_seconds_minutes_and_hours() {
+        assert_eq!(
+            [0, 8, 59, 60, 65, 3599, 3600, 3725, -3].map(format_elapsed),
+            ["0s", "8s", "59s", "1m 00s", "1m 05s", "59m 59s", "1h 00m", "1h 02m", "0s"]
+        );
+        let mut turn = Turn {
+            turn: 1,
+            message: String::new(),
+            context: None,
+            acts: Vec::new(),
+            notes: Vec::new(),
+            requests: Vec::new(),
+            mode: None,
+            answer: String::new(),
+            state: TurnState::Working,
+            started: Some(100),
+            ended: None,
+        };
+        // A working turn has worked until now, and an ended one until it ended.
+        assert_eq!(turn.elapsed(130), Some(30));
+        turn.state = TurnState::Done;
+        assert_eq!(turn.elapsed(130), None);
+        turn.ended = Some(104);
+        assert_eq!(turn.elapsed(130), Some(4));
+        turn.started = None;
+        assert_eq!(turn.elapsed(130), None);
+    }
+
+    #[test]
+    fn the_rail_has_each_provider_once_in_the_harness_s_order() {
+        let mut models = offer().models;
+        models.push(ModelInfo { id: "plain".into(), name: "Plain".into(), provider: None, provider_name: None });
+        let rail: Vec<(String, String)> = providers(&models).into_iter().map(|p| (p.id, p.name)).collect();
+        assert_eq!(
+            rail,
+            [("acme".into(), "Acme".into()), ("other".into(), "other".into()), (String::new(), "Other".into())]
+        );
+    }
+
+    #[test]
+    fn a_new_thread_starts_with_the_model_and_effort_last_picked() {
+        let mut state = connected_state(true);
+        state.list_view = false;
+        // With nothing picked, the drawer shows the harness's own Model once
+        // Lever has said it.
+        assert_eq!(state.shown_model(), None);
+        state.apply(AgentEvent::Offer(offer()), true);
+        assert!(state.offer_known);
+        assert_eq!(state.shown_model().as_deref(), Some("acme/small"));
+        assert_eq!((state.new_thread_model(), state.shown_effort()), (None, None));
+        assert_eq!(state.model_label("acme/large"), "Large");
+        assert_eq!(state.model_label("gone/model-x"), "model-x");
+
+        // A pick for the thread that has not begun is held, and remembered.
+        assert_eq!(state.pick_model("other/tiny"), SettingPick::Pending);
+        assert_eq!(state.shown_model().as_deref(), Some("other/tiny"));
+        state.apply(AgentEvent::Efforts { model: "other/tiny".into(), efforts: levels(&["low", "high"]) }, true);
+        assert_eq!(state.pick_effort("high"), SettingPick::Pending);
+        assert_eq!(state.shown_effort().as_deref(), Some("high"));
+        assert_eq!(state.effort_label(Some("other/tiny"), "high"), "HIGH");
+        assert_eq!(state.effort_label(Some("acme/small"), "xhigh"), "Xhigh");
+        assert_eq!(
+            (state.last_model.as_deref(), state.last_effort.as_deref()),
+            (Some("other/tiny"), Some("high"))
+        );
+
+        // The first message begins the thread with them.
+        assert_eq!(
+            (state.new_thread_model().as_deref(), state.new_thread_effort().as_deref()),
+            (Some("other/tiny"), Some("high"))
+        );
+        state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
+        assert_eq!((state.model.as_deref(), state.effort.as_deref()), (Some("other/tiny"), Some("high")));
+        assert_eq!((state.pending_model.clone(), state.pending_effort.clone()), (None, None));
+
+        // The next new thread starts with what was last picked.
+        state.apply(
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "hi".into(), context: None },
+            true,
+        );
+        state.apply(AgentEvent::Done { thread: "t-1".into(), turn: 1 }, true);
+        assert!(state.select_thread(None));
+        assert_eq!(
+            (state.shown_model().as_deref(), state.shown_effort().as_deref()),
+            (Some("other/tiny"), Some("high"))
+        );
+        // Another Model begins at its own effort.
+        assert_eq!(state.pick_model("acme/large"), SettingPick::Pending);
+        assert_eq!((state.shown_effort(), state.last_effort.clone()), (None, None));
+
+        // A Model the harness no longer offers is not asked for.
+        state.select_thread(None);
+        state.last_model = Some("gone/model".into());
+        assert_eq!(state.new_thread_model(), None);
+        assert_eq!(state.shown_model().as_deref(), Some("acme/small"));
+    }
+
+    #[test]
+    fn a_thread_shows_its_model_and_effort_as_soon_as_lever_says_them() {
+        let mut state = connected_state(true);
+        state.apply(AgentEvent::Offer(offer()), true);
+        state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
+        state.apply(
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "hi".into(), context: None },
+            true,
+        );
+        let told = |model: Option<&str>, effort: Option<Option<&str>>| AgentEvent::ThreadUpdated {
+            thread: "t-1".into(),
+            title: None,
+            mode: None,
+            model: model.map(str::to_string),
+            effort: effort.map(|e| e.map(str::to_string)),
+        };
+        assert!(state.apply(told(Some("acme/large"), None), true));
+        assert_eq!(state.shown_model().as_deref(), Some("acme/large"));
+        assert!(state.apply(told(None, Some(Some("high"))), true));
+        assert_eq!(state.shown_effort().as_deref(), Some("high"));
+        assert!(!state.apply(told(Some("acme/large"), Some(Some("high"))), true), "nothing changed");
+        assert!(state.apply(told(None, Some(None)), true));
+        assert_eq!(state.shown_effort(), None);
+        // What is said of another thread is not this one's.
+        let other = AgentEvent::ThreadUpdated {
+            thread: "t-2".into(), title: None, mode: None, model: Some("other/tiny".into()), effort: None,
+        };
+        assert!(!state.apply(other, true));
+
+        // While the thread works its settings rest, and a pick is refused.
+        assert_eq!(state.pick_model("other/tiny"), SettingPick::Refused);
+        assert_eq!(state.pick_effort("low"), SettingPick::Refused);
+        state.apply(AgentEvent::Done { thread: "t-1".into(), turn: 1 }, true);
+        assert!(state.turns[0].ended.is_some() && state.turns[0].started.is_some());
+        assert_eq!(
+            state.pick_model("other/tiny"),
+            SettingPick::SetThread { thread: "t-1".into(), value: "other/tiny".into() }
+        );
+        assert_eq!(state.shown_model().as_deref(), Some("acme/large"), "until Lever says it took it");
+        assert!(state.apply(AgentEvent::ModelSet { thread: "t-1".into(), model: "other/tiny".into() }, true));
+        assert_eq!(
+            state.pick_effort("low"),
+            SettingPick::SetThread { thread: "t-1".into(), value: "low".into() }
+        );
+        assert!(state.apply(AgentEvent::EffortSet { thread: "t-1".into(), effort: Some("low".into()) }, true));
+        assert_eq!(state.shown_effort().as_deref(), Some("low"));
+
+        // Lever's refusals are said in the drawer's words.
+        state.apply(AgentEvent::Error { code: "invalid-effort".into(), message: "x".into() }, true);
+        assert_eq!(state.error.as_deref(), Some("This thread's Model does not offer that effort."));
+        state.apply(AgentEvent::Error { code: "invalid-model".into(), message: "x".into() }, true);
+        assert_eq!(state.error.as_deref(), Some("The Agent does not offer that Model."));
+    }
+
+    #[test]
+    fn a_thread_has_the_commands_its_session_named_and_else_the_harness_s() {
+        let named = |name: &str| CommandInfo { name: name.into(), description: String::new(), hint: None };
+        let mut state = connected_state(true);
+        assert!(state.harness_commands().is_empty());
+        assert!(!state.apply(
+            AgentEvent::Commands { thread: None, commands: Vec::new(), known: false },
+            true
+        ));
+        assert!(state.apply(
+            AgentEvent::Commands { thread: None, commands: vec![named("review")], known: true },
+            true
+        ));
+        assert_eq!(state.harness_commands(), [named("review")]);
+        state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
+        // Another thread's commands are not this one's.
+        assert!(!state.apply(
+            AgentEvent::Commands { thread: Some("t-2".into()), commands: vec![named("deploy")], known: true },
+            true
+        ));
+        assert_eq!(state.harness_commands(), [named("review")]);
+        assert!(state.apply(
+            AgentEvent::Commands { thread: Some("t-1".into()), commands: vec![named("deploy")], known: true },
+            true
+        ));
+        assert_eq!(state.harness_commands(), [named("deploy")]);
+        // A thread left takes its commands with it.
+        state.apply(
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "hi".into(), context: None },
+            true,
+        );
+        state.apply(AgentEvent::Done { thread: "t-1".into(), turn: 1 }, true);
+        assert!(state.select_thread(None));
+        assert_eq!(state.harness_commands(), [named("review")]);
+    }
+
+    #[test]
+    fn the_surface_client_asks_lever_for_models_efforts_and_commands_and_sets_them() {
+        let dir = short_temp_dir("picks");
+        let socket = dir.join("surface");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            assert_eq!(read_frame(&mut stream).unwrap(), serde_json::json!({ "version": 1 }));
+            stream.write_all(&encode_frame(&serde_json::json!({ "version": 1 }))).unwrap();
+            let mut asked = Vec::new();
+            loop {
+                let Ok(request) = read_frame(&mut stream) else {
+                    return asked;
+                };
+                let reply = match request["op"].as_str().unwrap() {
+                    "status" => serde_json::json!({
+                        "reply": "status", "version": "0.1.0", "harness_started": false,
+                        "harnesses": [{ "id": "harness-1", "name": "OpenCode" }], "free_hosted_models": false
+                    }),
+                    "list" => serde_json::json!({ "reply": "list", "threads": [] }),
+                    "watch" => serde_json::json!({ "reply": "activity", "working": [], "waiting": [] }),
+                    "efforts" => serde_json::json!({ "reply": "efforts", "model": request["model"], "efforts": [] }),
+                    "commands" => serde_json::json!({ "reply": "commands", "known": true, "commands": [] }),
+                    "set-model" => serde_json::json!({ "reply": "model-set", "thread": "t-1", "model": request["model"] }),
+                    "set-effort" => serde_json::json!({ "reply": "effort-set", "thread": "t-1", "effort": request["effort"] }),
+                    "send" => {
+                        asked.push(request);
+                        return asked;
+                    }
+                    other => panic!("unexpected {other}"),
+                };
+                if !matches!(request["op"].as_str(), Some("status" | "list" | "watch")) {
+                    asked.push(request);
+                }
+                stream.write_all(&encode_frame(&reply)).unwrap();
+            }
+        });
+        let (tx, mut rx) = session::channel();
+        let sender = start_with_options(socket, tx.clone(), Duration::from_secs(5), None);
+        run_with_deadline(&mut rx, &tx, Duration::from_secs(10), |event| {
+            matches!(event, AgentEvent::Connected { .. })
+        });
+        sender.fetch_efforts("acme/small".into());
+        sender.fetch_commands(None);
+        sender.fetch_commands(Some("t-1".into()));
+        sender.set_model("t-1".into(), "acme/large".into());
+        sender.set_effort("t-1".into(), Some("high".into()));
+        sender.set_effort("t-1".into(), None);
+        sender.send_with(
+            None,
+            "hello".into(),
+            Some("plan".into()),
+            Some("acme/large".into()),
+            Some("high".into()),
+        );
+        assert_eq!(
+            server.join().unwrap(),
+            [
+                serde_json::json!({ "op": "efforts", "model": "acme/small" }),
+                serde_json::json!({ "op": "commands" }),
+                serde_json::json!({ "op": "commands", "thread": "t-1" }),
+                serde_json::json!({ "op": "set-model", "thread": "t-1", "model": "acme/large" }),
+                serde_json::json!({ "op": "set-effort", "thread": "t-1", "effort": "high" }),
+                serde_json::json!({ "op": "set-effort", "thread": "t-1", "effort": null }),
+                serde_json::json!({
+                    "op": "send", "thread": null, "text": "hello",
+                    "mode": "plan", "model": "acme/large", "effort": "high"
+                }),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_model_and_effort_last_picked_are_kept_for_the_next_shell() {
+        let dir = short_temp_dir("last");
+        let path = dir.join("last-picks");
+        assert_eq!(read_picks(Some(&path)), (None, None));
+        write_picks(Some(&path), Some("acme/large"), Some("high"));
+        assert_eq!(read_picks(Some(&path)), (Some("acme/large".into()), Some("high".into())));
+        write_picks(Some(&path), Some("acme/small"), None);
+        assert_eq!(read_picks(Some(&path)), (Some("acme/small".into()), None));
+        // An effort is one Model's: with no Model there is none.
+        write_picks(Some(&path), None, Some("high"));
+        assert_eq!(read_picks(Some(&path)), (None, None));
+        std::fs::write(&path, "not json").unwrap();
+        assert_eq!(read_picks(Some(&path)), (None, None));
+        assert_eq!(read_picks(None), (None, None));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

@@ -66,19 +66,6 @@ impl TextInput {
     pub fn query(&self) -> String {
         self.content.to_string()
     }
-    pub fn clear(&mut self, cx: &mut Context<Self>) {
-        self.set_text("", cx);
-    }
-    pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
-        let text: SharedString = text.into();
-        let end = text.len();
-        self.content = text;
-        self.selected_range = end..end;
-        self.selection_reversed = false;
-        self.marked_range = None;
-        self.scroll_x = px(0.);
-        cx.notify();
-    }
 
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
