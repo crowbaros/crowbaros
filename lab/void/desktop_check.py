@@ -69,6 +69,12 @@ class Check:
             except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
                 pass
             time.sleep(0.5)
+        # What the drawer showed when it was waited for in vain, for the
+        # evidence: a wait on it says only that it was not as asked.
+        try:
+            (self.work / 'timeout-agent-view.json').write_text(json.dumps(self.agent_view(), indent=1))
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
+            pass
         raise TimeoutError(name)
 
     def snapshot(self):
