@@ -108,6 +108,9 @@ struct Waiting {
     handle: u64,
     thread_id: String,
     turn: u64,
+    /// The request as the record has it, so how it ends can be said though
+    /// the database takes nothing.
+    record: RequestRecord,
 }
 
 /// How a request ended, kept until the database has it.
@@ -1184,13 +1187,7 @@ impl Service {
             return no_request();
         };
         let handle = waiting.handle;
-        let offered = match self.store.requests_of(thread_id, Some(request_id)) {
-            Ok(found) => found
-                .into_iter()
-                .next()
-                .is_some_and(|(_, record)| record.answers.iter().any(|(a, _)| a == answer)),
-            Err(err) => return error_outcome("storage-error", &err),
-        };
+        let offered = waiting.record.answers.iter().any(|(a, _)| a == answer);
         if !offered {
             return error_outcome("invalid-answer", &format!("This request does not offer {answer}."));
         }
@@ -1238,15 +1235,7 @@ impl Service {
                     state,
                     answer: answer.map(str::to_string),
                 });
-                let Some(mut record) = self
-                    .store
-                    .requests_of(&waiting.thread_id, Some(request_id))
-                    .ok()
-                    .and_then(|found| found.into_iter().next())
-                    .map(|(_, record)| record)
-                else {
-                    return Vec::new();
-                };
+                let mut record = waiting.record;
                 record.state = state.to_string();
                 record.answer = answer.map(str::to_string);
                 (waiting.thread_id, waiting.turn, record)
@@ -2027,6 +2016,7 @@ impl Service {
                         handle,
                         thread_id: thread_id.to_string(),
                         turn,
+                        record: record.clone(),
                     },
                 );
                 effects.broadcasts.push(Broadcast {

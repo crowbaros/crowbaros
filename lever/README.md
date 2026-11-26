@@ -65,7 +65,8 @@ OpenCode's self-update turned off and the Ask first agent added through
 the person enables OpenCode's free hosted Models. Lever writes nothing in the
 person's own OpenCode files. The harness child dies with Lever. Lever is the
 subreaper of what the harness starts: a process whose parent ends before it
-comes to Lever, which waits for it when it ends.
+comes to Lever, which waits for it when it ends. One an earlier harness left
+running, as a server started in the background, is left to run.
 
 Told to stop (`SIGTERM` or `SIGINT`), Lever closes its peer connections, stops
 any running harness child, marks any turn still working `interrupted`, removes
@@ -176,7 +177,8 @@ ACP today:
   the turn to end. When it has not, Lever ends the turn as `stopped`, and stops
   the harness with every process under it, so no command the turn started goes
   on: each process is held still (`SIGSTOP`) and the tree read again until no
-  process is new, then all are killed, those whose parent had ended too. Every
+  process is new, then all are killed, those whose parent had ended too. What
+  started before this harness did is not its, and goes on. Every
   other turn working on that harness is `interrupted`, or `stopped` if the
   person had asked to stop it, and its requests are withdrawn. A harness that
   ends by itself while a Stop waits on it is ended the same way, with every

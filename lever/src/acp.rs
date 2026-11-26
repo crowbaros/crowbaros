@@ -263,6 +263,9 @@ enum PendingRpc {
 
 pub struct AcpHarness {
     child: Child,
+    /// When the harness started, so what it left behind is told from what
+    /// an earlier one did.
+    started: u64,
     stdin: Option<ChildStdin>,
     stdout: ChildStdout,
     write_buf: Vec<u8>,
@@ -336,7 +339,9 @@ impl AcpHarness {
             ));
         }
 
+        let started = sys::start_time(child.id()).unwrap_or(0);
         let mut harness = Self {
+            started,
             child,
             stdin: Some(stdin),
             stdout,
@@ -684,7 +689,8 @@ impl AcpHarness {
     /// on.
     pub fn kill_tree(mut self) {
         self.stdin.take();
-        sys::kill_all_under_lever();
+        let pid = self.child.id();
+        sys::kill_all_of_harness(pid, self.started);
         let _ = self.child.kill();
         let _ = self.child.wait();
         // What it left behind ended too, and is Lever's to wait for. One
@@ -692,12 +698,10 @@ impl AcpHarness {
         let deadline = Instant::now() + Duration::from_secs(1);
         loop {
             sys::reap_orphans(None);
-            if sys::descendants(std::process::id()).is_empty() || Instant::now() >= deadline {
+            if sys::live_of_harness(pid, self.started).is_empty() || Instant::now() >= deadline {
                 break;
             }
-            if !sys::live_under_lever().is_empty() {
-                sys::kill_all_under_lever();
-            }
+            sys::kill_all_of_harness(pid, self.started);
             std::thread::sleep(Duration::from_millis(5));
         }
     }

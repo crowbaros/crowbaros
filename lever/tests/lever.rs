@@ -4667,3 +4667,101 @@ fn a_harness_that_never_answers_a_stopped_turns_mode_is_ended_and_the_thread_is_
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn a_stop_the_harness_ignores_ends_what_it_started_and_not_what_an_earlier_harness_left() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let earlier_file = dir.0.join("earlier.pid");
+    let stuck_file = dir.0.join("stuck.pid");
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                {
+                    "match": "leave",
+                    "steps": [
+                        { "kind": "spawn", "pid_file": earlier_file.to_str().unwrap(), "detach": true },
+                        { "kind": "text", "text": "Left a server running." }
+                    ]
+                },
+                {
+                    "match": "ignore",
+                    "steps": [
+                        { "kind": "spawn", "pid_file": stuck_file.to_str().unwrap(), "detach": true },
+                        { "kind": "text", "text": "Working" }
+                    ],
+                    "stall": true,
+                    "ignore_cancel": true
+                }
+            ]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(
+        &script,
+        &stub_log,
+        &["--idle-timeout-ms", "300", "--stop-timeout-ms", "500"],
+    );
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+
+    // One harness leaves a command running in the background, and is
+    // stopped when idle.
+    send(&mut peer, None, "leave");
+    read_until(&mut peer, |f| f["event"] == "done");
+    let earlier: u32 = std::fs::read_to_string(&earlier_file).unwrap().trim().parse().unwrap();
+    wait_until("the idle harness is stopped", || {
+        ask_lever(&mut peer, json!({ "op": "status" }))["harness_started"] == false
+    });
+
+    // The next one ignores a Stop: what it started ends, and what the one
+    // before left goes on.
+    let (stuck, _) = send(&mut peer, None, "ignore");
+    read_until(&mut peer, |f| f["event"] == "text" && f["thread"] == stuck.as_str());
+    let mine: u32 = std::fs::read_to_string(&stuck_file).unwrap().trim().parse().unwrap();
+    ask_lever(&mut peer, json!({ "op": "stop", "thread": stuck }));
+    read_until(&mut peer, |f| f["event"] == "stopped");
+    wait_until("the stopped turn's command ends", || !alive(mine));
+    let still = alive(earlier);
+    unsafe { libc::kill(earlier as libc::pid_t, libc::SIGKILL) };
+    assert!(still, "what an earlier harness left is not this one's to end");
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn how_a_request_ends_is_told_though_the_database_can_be_neither_read_nor_written() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = ask_script(&dir.0);
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, _) = send(&mut peer, None, "please run it");
+    let request = read_until(&mut peer, |f| f["event"] == "request");
+
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    db.busy_timeout(Duration::from_secs(5)).unwrap();
+    db.execute_batch("ALTER TABLE requests RENAME TO requests_away")
+        .unwrap();
+    ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }));
+    let withdrawn = read_until(&mut peer, |f| f["event"] == "request");
+    assert_eq!(
+        (
+            withdrawn["request"].clone(),
+            withdrawn["state"].as_str(),
+            withdrawn["detail"].as_str()
+        ),
+        (request["request"].clone(), Some("withdrawn"), Some("echo hi && id -un"))
+    );
+    db.execute_batch("ALTER TABLE requests_away RENAME TO requests")
+        .unwrap();
+    wait_until("the end is saved", || {
+        db.query_row("SELECT state FROM requests", [], |r| r.get::<_, String>(0))
+            .is_ok_and(|state| state == "withdrawn")
+    });
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}

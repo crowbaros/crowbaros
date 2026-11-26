@@ -238,9 +238,12 @@ fn watch(
             show_request(&mut answer, &request, thread, false)?;
         }
     }
+    // How the turn ended, once it has while a request asked for here still
+    // waits: the request is answered here before the prompt comes back.
+    let mut ended: Option<Ended> = None;
     loop {
-        if turn.is_none() && open.is_empty() {
-            return Ok(Some(Ended::Done));
+        if (turn.is_none() || ended.is_some()) && open.is_empty() {
+            return Ok(Some(ended.unwrap_or(Ended::Done)));
         }
         if asking.is_none()
             && taken.is_none()
@@ -339,33 +342,45 @@ fn watch(
             show_act(&mut answer, &event)?;
             continue;
         }
-        if event.get("turn").and_then(Value::as_u64) != turn {
+        if ended.is_some() || event.get("turn").and_then(Value::as_u64) != turn {
             continue;
         }
-        match &*text(&event, "event") {
-            "text" => answer.write(&text(&event, "text"))?,
-            "note" => show_note(&mut answer, &event)?,
+        let end = match &*text(&event, "event") {
+            "text" => {
+                answer.write(&text(&event, "text"))?;
+                continue;
+            }
+            "note" => {
+                show_note(&mut answer, &event)?;
+                continue;
+            }
             "done" => {
                 answer.end()?;
-                return Ok(Some(Ended::Done));
+                Ended::Done
             }
             "stopped" => {
                 answer.end()?;
                 eprintln!("Stopped.");
-                return Ok(Some(Ended::Stopped));
+                Ended::Stopped
             }
             "failed" => {
                 answer.end()?;
                 eprintln!("crowbar-agent: The Agent gave no answer: {}", text(&event, "message"));
-                return Ok(Some(Ended::Failed));
+                Ended::Failed
             }
             "interrupted" => {
                 answer.end()?;
                 eprintln!("Interrupted.");
-                return Ok(Some(Ended::Failed));
+                Ended::Failed
             }
-            _ => {}
+            _ => continue,
+        };
+        // On a terminal, a request that still waits is asked for first,
+        // unless the person is stopping.
+        if !prompted || stopping || open.is_empty() {
+            return Ok(Some(end));
         }
+        ended = Some(end);
     }
 }
 

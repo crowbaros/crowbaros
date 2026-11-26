@@ -329,31 +329,51 @@ pub fn reap_orphans(keep: Option<u32>) {
     }
 }
 
-/// A process's state letter from `/proc`, or `None` when it is gone.
-fn process_state(pid: u32) -> Option<char> {
+/// The fields of a process's `/proc` stat after its command name, or `None`
+/// when it is gone.
+fn stat_fields(pid: u32) -> Option<Vec<String>> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    stat.rfind(')')
-        .and_then(|at| stat[at + 1..].trim_start().chars().next())
+    let rest = &stat[stat.rfind(')')? + 1..];
+    Some(rest.split_whitespace().map(str::to_string).collect())
 }
 
-/// Every process under Lever that has not ended.
-pub fn live_under_lever() -> Vec<u32> {
-    // SAFETY: `getpid` cannot fail.
-    let me = unsafe { libc::getpid() } as u32;
-    descendants(me)
-        .into_iter()
-        .filter(|&pid| !matches!(process_state(pid), None | Some('Z' | 'X')))
-        .collect()
+/// A process's state letter, or `None` when it is gone.
+fn process_state(pid: u32) -> Option<char> {
+    stat_fields(pid)?.first()?.chars().next()
 }
 
-/// Ends every process under Lever at once: each is held still first, and the
-/// tree read again once each held process has stopped, until no process is
-/// new, so none starts another while the others end. Lever is their
-/// subreaper, so one whose parent ended is under Lever still.
-pub fn kill_all_under_lever() {
+/// When a process started, in clock ticks since boot.
+pub fn start_time(pid: u32) -> Option<u64> {
+    // The 22nd field of the stat; the 3rd after the command name is the 1st.
+    stat_fields(pid)?.get(19)?.parse().ok()
+}
+
+/// Every process of a harness's that has not ended: the harness's own tree,
+/// and those that left it, which came to Lever as their subreaper. One of
+/// Lever's children that started before the harness is not its: an earlier
+/// harness left it, and it is not this one's to end.
+pub fn live_of_harness(harness: u32, started: u64) -> Vec<u32> {
+    let mut found = Vec::new();
+    for root in own_children() {
+        if root != harness && start_time(root).is_none_or(|t| t < started) {
+            continue;
+        }
+        found.push(root);
+        found.extend(descendants(root));
+    }
+    found.retain(|&pid| !matches!(process_state(pid), None | Some('Z' | 'X')));
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+/// Ends every process of a harness's at once: each is held still first,
+/// and they are found again once each held one has stopped, until no
+/// process is new, so none starts another while the others end.
+pub fn kill_all_of_harness(harness: u32, started: u64) {
     let mut held: Vec<u32> = Vec::new();
     for _ in 0..100 {
-        let new: Vec<u32> = live_under_lever()
+        let new: Vec<u32> = live_of_harness(harness, started)
             .into_iter()
             .filter(|pid| !held.contains(pid))
             .collect();

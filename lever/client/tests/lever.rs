@@ -1288,3 +1288,66 @@ fn a_request_that_comes_while_the_prompt_waits_is_asked_for_there() {
     assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
     assert!(lab.rpc_messages().contains(r#""optionId":"once""#));
 }
+
+#[test]
+fn a_request_that_waits_when_its_turn_ends_is_still_asked_for_before_the_prompt() {
+    use std::os::unix::net::UnixListener;
+
+    let lab = Lab::empty();
+    let sock_dir = lab.directory.join("runtime/crowbar-lever");
+    fs::create_dir_all(&sock_dir).unwrap();
+    let listener = UnixListener::bind(sock_dir.join("person")).expect("bind a Lever of the test's");
+    let request = |state: &str| {
+        json!({
+            "event": "request", "thread": "t-1", "turn": 1, "request": "r-1", "kind": "command",
+            "title": "make", "detail": "make", "state": state,
+            "answers": [{ "answer": "once", "name": "Allow once" }, { "answer": "no", "name": "Reject" }]
+        })
+    };
+    let lever = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("crowbar-agent connects");
+        assert_eq!(read_framed(&mut stream), json!({ "version": 1 }));
+        write_framed(&mut stream, &json!({ "version": 1 }));
+        assert_eq!(read_framed(&mut stream)["op"], "models");
+        write_framed(
+            &mut stream,
+            &json!({ "reply": "models", "supported": false, "models": [], "free_hosted_models": false, "modes": [] }),
+        );
+        assert_eq!(read_framed(&mut stream)["op"], "send");
+        write_framed(&mut stream, &json!({ "reply": "sent", "thread": "t-1", "turn": 1 }));
+        // The harness asks, and its turn ends while the request waits.
+        write_framed(&mut stream, &request("waiting"));
+        write_framed(&mut stream, &json!({ "event": "done", "thread": "t-1", "turn": 1 }));
+        let answer = read_framed(&mut stream);
+        write_framed(&mut stream, &json!({ "reply": "ok" }));
+        let mut answered = request("answered");
+        answered["answer"] = json!("once");
+        write_framed(&mut stream, &answered);
+        let mut rest = Vec::new();
+        let _ = stream.read_to_end(&mut rest);
+        answer
+    });
+
+    let (mut keys, screen) = terminal();
+    let mut agent = lab.agent(&[]);
+    agent
+        .stdin(screen.try_clone().expect("the terminal again"))
+        .stdout(Stdio::null())
+        .stderr(screen);
+    let mut child = agent.spawn().expect("crowbar-agent runs");
+    drop(agent);
+    let mut shown = Vec::new();
+    screen_until(&mut keys, &mut shown, "> ");
+    keys.write_all(b"go\n").unwrap();
+    screen_until(&mut keys, &mut shown, "Answer [once/no]: ");
+    // Give the turn's end time to come before the answer is typed.
+    std::thread::sleep(Duration::from_millis(300));
+    keys.write_all(b"once\n").unwrap();
+    screen_until(&mut keys, &mut shown, "[request] answered: once\r\n> ");
+    keys.write_all(&[4]).unwrap();
+    assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
+    assert_eq!(
+        lever.join().unwrap(),
+        json!({ "op": "answer", "thread": "t-1", "request": "r-1", "answer": "once" })
+    );
+}
