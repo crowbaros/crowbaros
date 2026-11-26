@@ -291,8 +291,11 @@ fn watch(
                     open.clear();
                     taken = None;
                     // A turn followed that goes on is followed to its end, which
-                    // brings the prompt back; otherwise the prompt comes back now.
-                    if running.is_some() && running != stopped {
+                    // brings the prompt back, and when it is the turn stopped, its
+                    // end is waited for as the person's own turn's is. Otherwise
+                    // the prompt comes back now.
+                    if running.is_some() {
+                        stopping = running == stopped;
                         continue;
                     }
                     answer.end()?;
