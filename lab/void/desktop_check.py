@@ -1960,6 +1960,25 @@ finally:
                 and v['state']['turns'][0]['subagents'][0]['state']['kind'] == 'working',
                 timeout=60,
             )
+            # A mode change while the subagent works goes to OpenCode's live
+            # session first: OpenCode answers it at once, and nothing stops.
+            mode_thread = self.agent_view()['state']['thread']
+            mode_took = []
+            for mode in ('full-access', 'ask-first'):
+                began = time.monotonic()
+                self.run(
+                    f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} '
+                    f'crowbar-agent --resume {mode_thread} --mode {mode}'
+                )
+                mode_took.append(round(time.monotonic() - began, 2))
+            mode_after = self.agent_view()
+            self.check(
+                'a mode change while a subagent works is taken by the live session at once and stops nothing',
+                all(took < 3 for took in mode_took)
+                and mode_after['state']['mode'] == 'ask-first'
+                and mode_after['state']['turns'][0]['subagents'][0]['state']['kind'] == 'working',
+                json.dumps({'took': mode_took, 'mode': mode_after['state']['mode']}),
+            )
             self.run(f'touch {tmp}/subagent-parent-done')
             sub_waiting = self.wait(
                 'subagent outlives its turn and raises a request in the thread',

@@ -32,11 +32,11 @@ const ACTIVITY: &str = "*activity";
 /// The modes a new thread can start in.
 const STARTING_MODES: [&str; 2] = ["ask-first", "full-access"];
 
-/// How long Lever waits before it tries again to save how a turn ended.
 /// Why a subagent the harness took up again after it restarted is shown as
 /// failed, though it may go on.
 const UNFOLLOWED_MESSAGE: &str = "The Agent took up this subagent again after its harness restarted. The harness \
      does not pass on what it does or asks now, so it cannot be followed here.";
+/// How long Lever waits before it tries again to save how a turn ended.
 const UNSAVED_RETRY: Duration = Duration::from_millis(250);
 /// What a turn failed with when the harness finished it and Lever's database
 /// did not take all of it.
@@ -680,8 +680,9 @@ impl Service {
             }
             effects.extend(self.after_harness_gone("The harness was stopped.", log));
         }
-        // A harness that has not answered a mode change of a stopped turn's
-        // in that time is ended too: until it answers, the thread is held.
+        // A harness that has not answered a mode change in that time, a
+        // stopped turn's or one set between turns, is ended too: until it
+        // answers, the thread is held, and its session's mode is not known.
         let unanswered = self
             .modes_in_flight
             .iter()
