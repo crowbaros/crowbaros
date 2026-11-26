@@ -6,10 +6,10 @@ use crate::channel::LEVER_VERSION;
 use crate::opencode;
 use crate::sys;
 use agent_client_protocol_schema::v1::{
-    AGENT_METHOD_NAMES, CLIENT_METHOD_NAMES, CancelNotification, CancelRequestNotification, CloseSessionRequest,
-    ContentBlock, Error as AcpError, ErrorCode, Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage,
-    LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, Notification,
-    PROTOCOL_LEVEL_METHOD_NAMES, PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId,
+    AGENT_METHOD_NAMES, AvailableCommandInput, CLIENT_METHOD_NAMES, CancelNotification, CancelRequestNotification,
+    CloseSessionRequest, ContentBlock, Error as AcpError, ErrorCode, Implementation, InitializeRequest,
+    InitializeResponse, JsonRpcMessage, LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse,
+    Notification, PROTOCOL_LEVEL_METHOD_NAMES, PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, Response, SelectedPermissionOutcome,
     SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOptions,
     SessionId, SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason,
@@ -93,7 +93,42 @@ pub struct HarnessConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelOption {
     pub id: String,
+    /// The Model's name, without its provider.
     pub name: String,
+    /// The provider the harness has this Model from: its ID and its name.
+    pub provider: Option<(String, String)>,
+}
+
+/// One effort level a harness offers for a session's Model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffortOption {
+    pub id: String,
+    pub name: String,
+}
+
+/// A session's effort selector, as Lever reads it from its configuration
+/// options: the levels of the session's Model, and the one it is at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffortSelector {
+    config_id: String,
+    pub options: Vec<EffortOption>,
+    pub current: String,
+}
+
+impl EffortSelector {
+    pub fn offers(&self, effort: &str) -> bool {
+        self.options.iter().any(|o| o.id == effort)
+    }
+}
+
+/// One command a harness offers the person, to send as a message that begins
+/// with `/` and its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HarnessCommand {
+    pub name: String,
+    pub description: String,
+    /// What the harness says to type after the name, when it says.
+    pub hint: Option<String>,
 }
 
 /// The Models a harness offers via ACP session configuration options.
@@ -184,6 +219,28 @@ pub enum AcpEvent {
         turn: u64,
         message: String,
     },
+    EffortSet {
+        thread_id: String,
+        turn: u64,
+    },
+    EffortSetFailed {
+        thread_id: String,
+        turn: u64,
+        message: String,
+    },
+    /// The effort levels of a Model, read from a session Lever opened for
+    /// that alone. A Model with none has an empty list.
+    EffortsProbed {
+        model: String,
+        result: Result<Vec<EffortOption>, String>,
+    },
+    /// The commands the harness offers: a thread's session's, or with no
+    /// thread, those of a session Lever opened to read what the harness
+    /// offers.
+    Commands {
+        thread_id: Option<String>,
+        commands: Vec<HarnessCommand>,
+    },
     /// The harness asks the person before it acts.
     PermissionRequested {
         thread_id: String,
@@ -262,6 +319,21 @@ enum PendingRpc {
         session_id: String,
         mode: String,
     },
+    SetEffort {
+        thread_id: String,
+        turn: u64,
+        session_id: String,
+        effort: String,
+    },
+    /// A session opened to read a Model's effort levels.
+    ProbeEffortSession {
+        model: String,
+    },
+    /// That session, set to the Model.
+    ProbeEffortModel {
+        model: String,
+        session_id: String,
+    },
     Prompt {
         thread_id: String,
         turn: u64,
@@ -299,6 +371,13 @@ pub struct AcpHarness {
     thread_to_session: HashMap<String, String>,
     session_to_thread: HashMap<String, String>,
     session_models: HashMap<String, String>,
+    /// Each session's effort selector, when its Model has effort levels.
+    session_efforts: HashMap<String, EffortSelector>,
+    /// Sessions Lever opened to read what the harness offers, and closed.
+    /// What the harness says of one after is its commands, which Lever keeps.
+    probe_sessions: HashSet<String>,
+    /// Models whose effort levels are being read.
+    probing_efforts: HashSet<String>,
     loading_sessions: HashSet<String>,
     /// Why Lever is ending this harness, when the harness did not end itself.
     fault: Option<&'static str>,
@@ -371,6 +450,9 @@ impl AcpHarness {
             thread_to_session: HashMap::new(),
             session_to_thread: HashMap::new(),
             session_models: HashMap::new(),
+            session_efforts: HashMap::new(),
+            probe_sessions: HashSet::new(),
+            probing_efforts: HashSet::new(),
             loading_sessions: HashSet::new(),
             fault: None,
             thread_tool_ids: HashMap::new(),
@@ -419,6 +501,7 @@ impl AcpHarness {
             self.session_to_thread.remove(&session_id);
             self.session_models.remove(&session_id);
             self.session_modes.remove(&session_id);
+            self.session_efforts.remove(&session_id);
         }
     }
 
@@ -446,6 +529,97 @@ impl AcpHarness {
     /// A session's mode, as Lever's mode ID, when it is one of Lever's.
     pub fn session_current_mode(&self, session_id: &str) -> Option<&str> {
         self.session_modes.get(session_id).map(String::as_str)
+    }
+
+    /// A session's effort selector, when its Model has effort levels.
+    pub fn session_effort(&self, session_id: &str) -> Option<&EffortSelector> {
+        self.session_efforts.get(session_id)
+    }
+
+    /// Sets an active session's effort, one its selector offers, through
+    /// `session/set_config_option`.
+    pub fn set_session_effort(&mut self, thread_id: &str, turn: u64, session_id: &str, effort: &str) {
+        let config_id = self
+            .session_efforts
+            .get(session_id)
+            .map(|sel| sel.config_id.clone())
+            .unwrap_or_else(|| "effort".to_string());
+        let req = SetSessionConfigOptionRequest::new(
+            SessionId::new(session_id.to_string()),
+            SessionConfigId::new(config_id),
+            effort,
+        );
+        let id = self.send_request(AGENT_METHOD_NAMES.session_set_config_option, &req);
+        self.pending.insert(
+            id,
+            PendingRpc::SetEffort {
+                thread_id: thread_id.to_string(),
+                turn,
+                session_id: session_id.to_string(),
+                effort: effort.to_string(),
+            },
+        );
+        let _ = self.on_writable();
+    }
+
+    /// Reads a Model's effort levels by opening a session, setting it to the
+    /// Model, reading its `configOptions`, and closing it. One read runs for
+    /// a Model at a time.
+    pub fn probe_efforts(&mut self, cwd: &str, model: &str) {
+        if !self.probing_efforts.insert(model.to_string()) {
+            return;
+        }
+        let req = NewSessionRequest::new(PathBuf::from(cwd));
+        let id = self.send_request(AGENT_METHOD_NAMES.session_new, &req);
+        self.pending.insert(
+            id,
+            PendingRpc::ProbeEffortSession {
+                model: model.to_string(),
+            },
+        );
+        let _ = self.on_writable();
+    }
+
+    /// Closes a session Lever opened to read what the harness offers. What
+    /// the harness says of it after is taken for its commands alone.
+    fn close_probe(&mut self, session_id: SessionId) {
+        if session_id.0.is_empty() {
+            return;
+        }
+        self.probe_sessions.insert(session_id.0.as_ref().to_string());
+        if self.supports_close_session {
+            let close = CloseSessionRequest::new(session_id);
+            let id = self.send_request(AGENT_METHOD_NAMES.session_close, &close);
+            self.pending.insert(id, PendingRpc::CloseProbe);
+            let _ = self.on_writable();
+        }
+    }
+
+    /// Reads a session's effort selector from its configuration options, and
+    /// keeps it. Options that name the session's Model and no effort say the
+    /// Model has no effort levels; options that name neither say nothing.
+    fn take_effort(&mut self, session_id: &str, options: &[SessionConfigOption]) {
+        match extract_effort(options) {
+            Some(selector) => {
+                self.session_efforts.insert(session_id.to_string(), selector);
+            }
+            None if model_option(options).is_some() => {
+                self.session_efforts.remove(session_id);
+            }
+            None => {}
+        }
+    }
+
+    /// The thread whose session is being loaded under this ID.
+    fn loading_thread(&self, session_id: &str) -> Option<String> {
+        self.pending.values().find_map(|pending| match pending {
+            PendingRpc::LoadSession {
+                thread_id,
+                session_id: loading,
+                ..
+            } if loading == session_id => Some(thread_id.clone()),
+            _ => None,
+        })
     }
 
     /// Whether the harness has a mode selector Lever can set.
@@ -1046,6 +1220,29 @@ impl AcpHarness {
                         message,
                     });
                 }
+                PendingRpc::SetEffort { thread_id, turn, .. } => {
+                    let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
+                    events.push(AcpEvent::EffortSetFailed {
+                        thread_id,
+                        turn,
+                        message,
+                    });
+                }
+                PendingRpc::ProbeEffortSession { model } => {
+                    self.probing_efforts.remove(&model);
+                    events.push(AcpEvent::EffortsProbed {
+                        model,
+                        result: Err(self.redact_for_thread(None, &raw_msg)),
+                    });
+                }
+                PendingRpc::ProbeEffortModel { model, session_id } => {
+                    self.probing_efforts.remove(&model);
+                    self.close_probe(SessionId::new(session_id));
+                    events.push(AcpEvent::EffortsProbed {
+                        model,
+                        result: Err(self.redact_for_thread(None, &raw_msg)),
+                    });
+                }
                 // The harness says the turn was cancelled, with an error
                 // where ACP has `StopReason::Cancelled`. Any other error is
                 // a failure, whether or not a stop was asked for.
@@ -1113,13 +1310,20 @@ impl AcpHarness {
                         if let Some(ref cid) = catalog.config_id {
                             self.model_config_id = Some(cid.clone());
                         }
-                        if self.supports_close_session && !resp.session_id.0.is_empty() {
-                            let close = CloseSessionRequest::new(resp.session_id);
-                            let cid = self.send_request(AGENT_METHOD_NAMES.session_close, &close);
-                            self.pending.insert(cid, PendingRpc::CloseProbe);
-                            let _ = self.on_writable();
-                        }
+                        // The session is at the harness's default Model, so
+                        // its options say that Model's effort levels too.
+                        let efforts = catalog.default_model.clone().map(|model| AcpEvent::EffortsProbed {
+                            model,
+                            result: Ok(resp
+                                .config_options
+                                .as_deref()
+                                .and_then(extract_effort)
+                                .map(|selector| selector.options)
+                                .unwrap_or_default()),
+                        });
+                        self.close_probe(resp.session_id);
                         events.push(AcpEvent::ModelsProbed(Ok(catalog)));
+                        events.extend(efforts);
                     }
                     Err(_) => events.push(AcpEvent::ModelsProbed(Err(
                         "The harness returned an invalid session response.".to_string(),
@@ -1145,6 +1349,7 @@ impl AcpHarness {
                         if let Some(ref m) = current_model {
                             self.session_models.insert(sid.clone(), m.clone());
                         }
+                        self.take_effort(&sid, resp.config_options.as_deref().unwrap_or(&[]));
                         let modes = self.take_modes(&sid, resp.config_options.as_deref());
                         if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
                             cat.modes = selector.modes.clone();
@@ -1189,6 +1394,7 @@ impl AcpHarness {
                         if let Some(ref m) = current_model {
                             self.session_models.insert(session_id.clone(), m.clone());
                         }
+                        self.take_effort(&session_id, resp.config_options.as_deref().unwrap_or(&[]));
                         let modes = self.take_modes(&session_id, resp.config_options.as_deref());
                         if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
                             cat.modes = selector.modes.clone();
@@ -1222,6 +1428,7 @@ impl AcpHarness {
                     ) {
                         cat.modes = selector.modes;
                     }
+                    self.take_effort(&session_id, &resp.config_options);
                     self.session_models.insert(session_id, applied.clone());
                     events.push(AcpEvent::ModelSet {
                         thread_id,
@@ -1245,6 +1452,7 @@ impl AcpHarness {
                 Ok(resp) => {
                     // What the harness says the mode is now is what it is. A
                     // harness that says nothing of it took what was asked.
+                    self.take_effort(&session_id, &resp.config_options);
                     let selector = self.take_modes(&session_id, Some(&resp.config_options));
                     match selector {
                         Some(sel) if sel.current.as_deref() != Some(mode.as_str()) => {
@@ -1266,6 +1474,97 @@ impl AcpHarness {
                     message: "The harness returned an invalid configuration response.".to_string(),
                 }),
             },
+            PendingRpc::SetEffort {
+                thread_id,
+                turn,
+                session_id,
+                effort,
+            } => match serde_json::from_value::<SetSessionConfigOptionResponse>(result) {
+                Ok(resp) => {
+                    // As with a mode: what the harness says the effort is now
+                    // is what it is, and one that says nothing took it.
+                    self.take_modes(&session_id, Some(&resp.config_options));
+                    match extract_effort(&resp.config_options) {
+                        Some(selector) if selector.current != effort => {
+                            self.session_efforts.insert(session_id, selector);
+                            events.push(AcpEvent::EffortSetFailed {
+                                thread_id,
+                                turn,
+                                message: "The harness did not take this thread's effort.".to_string(),
+                            });
+                        }
+                        told => {
+                            match told {
+                                Some(selector) => {
+                                    self.session_efforts.insert(session_id, selector);
+                                }
+                                None => {
+                                    if let Some(selector) = self.session_efforts.get_mut(&session_id) {
+                                        selector.current = effort;
+                                    }
+                                }
+                            }
+                            events.push(AcpEvent::EffortSet { thread_id, turn });
+                        }
+                    }
+                }
+                Err(_) => events.push(AcpEvent::EffortSetFailed {
+                    thread_id,
+                    turn,
+                    message: "The harness returned an invalid configuration response.".to_string(),
+                }),
+            },
+            PendingRpc::ProbeEffortSession { model } => match serde_json::from_value::<NewSessionResponse>(result) {
+                Ok(resp) if !resp.session_id.0.is_empty() => {
+                    let options = resp.config_options.as_deref().unwrap_or(&[]);
+                    let at_model = model_option(options)
+                        .and_then(|(_, select)| (select.current_value.0.as_ref() == model).then_some(()))
+                        .is_some();
+                    if at_model {
+                        let efforts = extract_effort(options).map(|s| s.options).unwrap_or_default();
+                        self.probing_efforts.remove(&model);
+                        self.close_probe(resp.session_id);
+                        events.push(AcpEvent::EffortsProbed {
+                            model,
+                            result: Ok(efforts),
+                        });
+                    } else {
+                        let config_id = model_option(options)
+                            .map(|(option, _)| option.id.0.as_ref().to_string())
+                            .or_else(|| self.model_config_id.clone())
+                            .unwrap_or_else(|| "model".to_string());
+                        let session_id = resp.session_id.0.as_ref().to_string();
+                        self.probe_sessions.insert(session_id.clone());
+                        let req = SetSessionConfigOptionRequest::new(
+                            resp.session_id,
+                            SessionConfigId::new(config_id),
+                            model.as_str(),
+                        );
+                        let id = self.send_request(AGENT_METHOD_NAMES.session_set_config_option, &req);
+                        self.pending
+                            .insert(id, PendingRpc::ProbeEffortModel { model, session_id });
+                        let _ = self.on_writable();
+                    }
+                }
+                _ => {
+                    self.probing_efforts.remove(&model);
+                    events.push(AcpEvent::EffortsProbed {
+                        model,
+                        result: Err("The harness returned an invalid session response.".to_string()),
+                    });
+                }
+            },
+            PendingRpc::ProbeEffortModel { model, session_id } => {
+                self.probing_efforts.remove(&model);
+                let result = match serde_json::from_value::<SetSessionConfigOptionResponse>(result) {
+                    Ok(resp) => Ok(extract_effort(&resp.config_options)
+                        .map(|s| s.options)
+                        .unwrap_or_default()),
+                    Err(_) => Err("The harness returned an invalid configuration response.".to_string()),
+                };
+                self.close_probe(SessionId::new(session_id));
+                events.push(AcpEvent::EffortsProbed { model, result });
+            }
             PendingRpc::Prompt { thread_id, turn } => match serde_json::from_value::<PromptResponse>(result) {
                 Ok(resp) => {
                     let outcome = match resp.stop_reason {
@@ -1306,15 +1605,28 @@ impl AcpHarness {
         let Some(session_id) = params.get("sessionId").and_then(Value::as_str) else {
             return;
         };
+        let Some(raw_update) = params.get("update") else {
+            return;
+        };
         // Ignore history replayed by the harness while `session/load` is in flight:
-        // Lever already owns the authoritative record in SQLite.
-        if self.loading_sessions.contains(session_id) {
+        // Lever already owns the authoritative record in SQLite. The session's
+        // commands are no history, and are kept, as are those of a session
+        // Lever opened to read what the harness offers.
+        let loading = self.loading_sessions.contains(session_id);
+        if loading || self.probe_sessions.contains(session_id) {
+            let thread_id = if loading { self.loading_thread(session_id) } else { None };
+            if (thread_id.is_some() || !loading)
+                && let Ok(SessionUpdate::AvailableCommandsUpdate(update)) =
+                    serde_json::from_value::<SessionUpdate>(raw_update.clone())
+            {
+                events.push(AcpEvent::Commands {
+                    thread_id,
+                    commands: harness_commands(update.available_commands),
+                });
+            }
             return;
         }
         let Some(thread_id) = self.session_to_thread.get(session_id).cloned() else {
-            return;
-        };
-        let Some(raw_update) = params.get("update") else {
             return;
         };
 
@@ -1380,8 +1692,17 @@ impl AcpHarness {
                     }
                 }
             }
+            Ok(SessionUpdate::AvailableCommandsUpdate(update)) => {
+                events.push(AcpEvent::Commands {
+                    thread_id: Some(thread_id),
+                    commands: harness_commands(update.available_commands),
+                });
+            }
             Ok(SessionUpdate::ConfigOptionUpdate(cfg)) => {
                 let before = self.session_modes.get(session_id).cloned();
+                let effort_before = self.session_efforts.get(session_id).cloned();
+                self.take_effort(session_id, &cfg.config_options);
+                let effort_changed = effort_before.as_ref() != self.session_efforts.get(session_id);
                 let modes = self.take_modes(session_id, Some(&cfg.config_options));
                 let mut catalog = extract_model_catalog(&cfg.config_options);
                 let mut current_model = None;
@@ -1398,7 +1719,7 @@ impl AcpHarness {
                     }
                 }
                 let current_mode = modes.and_then(|m| m.current).filter(|now| before.as_ref() != Some(now));
-                if catalog.is_some() || current_mode.is_some() {
+                if catalog.is_some() || current_mode.is_some() || effort_changed {
                     events.push(AcpEvent::CatalogUpdated {
                         thread_id,
                         catalog,
@@ -1408,13 +1729,12 @@ impl AcpHarness {
                 }
             }
             // Known ACP v1 updates that Lever does not show as thread notes:
-            // thoughts stream a few tokens at a time, available commands arrive
-            // on every new session, and modes, plans, usage, and notices are
-            // either dropped on purpose or handled in their own slices.
+            // thoughts stream a few tokens at a time, and modes, plans, usage,
+            // and notices are either dropped on purpose or handled in their
+            // own slices.
             Ok(
                 SessionUpdate::UserMessageChunk(_)
                 | SessionUpdate::AgentThoughtChunk(_)
-                | SessionUpdate::AvailableCommandsUpdate(_)
                 | SessionUpdate::CurrentModeUpdate(_)
                 | SessionUpdate::UsageUpdate(_)
                 | SessionUpdate::Plan(_)
@@ -1746,23 +2066,54 @@ fn is_no_models_error(err_val: &Value, message: &str) -> bool {
     message.to_ascii_lowercase().contains("no models are available")
 }
 
-/// Extracts the Model selector from ACP session configuration options.
-fn extract_model_catalog(options: &[SessionConfigOption]) -> Option<ModelCatalog> {
+/// The Model selector among a session's configuration options: the option of
+/// category `model`, or with the ID `model`.
+fn model_option(
+    options: &[SessionConfigOption],
+) -> Option<(
+    &SessionConfigOption,
+    &agent_client_protocol_schema::v1::SessionConfigSelect,
+)> {
     let opt = options
         .iter()
         .find(|o| o.category == Some(SessionConfigOptionCategory::Model))
         .or_else(|| options.iter().find(|o| o.id.0.as_ref() == "model"))?;
-    let SessionConfigKind::Select(select) = &opt.kind else {
-        return None;
-    };
+    match &opt.kind {
+        SessionConfigKind::Select(select) => Some((opt, select)),
+        _ => None,
+    }
+}
+
+/// A Model as the harness lists it with no group: its provider is what its ID
+/// has before the first `/`, as OpenCode's IDs do, and its name loses that
+/// provider where the harness put it there too.
+fn ungrouped_model(id: &str, name: &str) -> ModelOption {
+    let provider = id
+        .split_once('/')
+        .map(|(provider, _)| provider)
+        .filter(|p| !p.is_empty());
+    let short = provider
+        .and_then(|p| name.strip_prefix(p))
+        .and_then(|rest| rest.strip_prefix('/'))
+        .filter(|rest| !rest.trim().is_empty())
+        .unwrap_or(name);
+    ModelOption {
+        id: id.to_string(),
+        name: short.to_string(),
+        provider: provider.map(|p| (p.to_string(), opencode::provider_name(p))),
+    }
+}
+
+/// Extracts the Model selector from ACP session configuration options. A
+/// Model's provider is the group the harness lists it under, or else what
+/// its ID says.
+fn extract_model_catalog(options: &[SessionConfigOption]) -> Option<ModelCatalog> {
+    let (opt, select) = model_option(options)?;
     let mut models = Vec::new();
     match &select.options {
         SessionConfigSelectOptions::Ungrouped(items) => {
             for item in items {
-                models.push(ModelOption {
-                    id: item.value.0.as_ref().to_string(),
-                    name: item.name.clone(),
-                });
+                models.push(ungrouped_model(item.value.0.as_ref(), &item.name));
             }
         }
         SessionConfigSelectOptions::Grouped(groups) => {
@@ -1771,6 +2122,7 @@ fn extract_model_catalog(options: &[SessionConfigOption]) -> Option<ModelCatalog
                     models.push(ModelOption {
                         id: item.value.0.as_ref().to_string(),
                         name: item.name.clone(),
+                        provider: Some((group.group.0.as_ref().to_string(), group.name.clone())),
                     });
                 }
             }
@@ -1785,6 +2137,59 @@ fn extract_model_catalog(options: &[SessionConfigOption]) -> Option<ModelCatalog
         config_id: Some(opt.id.0.as_ref().to_string()),
         modes: Vec::new(),
     })
+}
+
+/// Reads a session's effort selector: the configuration option of category
+/// `thought_level`. A selector with no levels is none.
+fn extract_effort(options: &[SessionConfigOption]) -> Option<EffortSelector> {
+    let opt = options
+        .iter()
+        .find(|o| o.category == Some(SessionConfigOptionCategory::ThoughtLevel))?;
+    let SessionConfigKind::Select(select) = &opt.kind else {
+        return None;
+    };
+    let mut levels = Vec::new();
+    match &select.options {
+        SessionConfigSelectOptions::Ungrouped(items) => {
+            levels.extend(items.iter().map(|item| EffortOption {
+                id: item.value.0.as_ref().to_string(),
+                name: item.name.clone(),
+            }));
+        }
+        SessionConfigSelectOptions::Grouped(groups) => {
+            for group in groups {
+                levels.extend(group.options.iter().map(|item| EffortOption {
+                    id: item.value.0.as_ref().to_string(),
+                    name: item.name.clone(),
+                }));
+            }
+        }
+        _ => {}
+    }
+    if levels.is_empty() {
+        return None;
+    }
+    Some(EffortSelector {
+        config_id: opt.id.0.as_ref().to_string(),
+        options: levels,
+        current: select.current_value.0.as_ref().to_string(),
+    })
+}
+
+/// The commands of an ACP `available_commands_update`, as Lever keeps them.
+fn harness_commands(commands: Vec<agent_client_protocol_schema::v1::AvailableCommand>) -> Vec<HarnessCommand> {
+    commands
+        .into_iter()
+        .filter(|command| !command.name.trim().is_empty())
+        .map(|command| HarnessCommand {
+            name: command.name,
+            description: command.description,
+            hint: match command.input {
+                Some(AvailableCommandInput::Unstructured(input)) if !input.hint.trim().is_empty() => Some(input.hint),
+                _ => None,
+            },
+        })
+        .collect()
 }
 
 fn map_tool_kind(kind: ToolKind) -> &'static str {
@@ -2058,6 +2463,136 @@ mod tests {
         assert!(lines.contains(&"… 250 more lines taken out"), "{shown}");
         assert!(lines.contains(&"+new 0"), "{shown}");
         assert_eq!(lines.last(), Some(&"… 250 more lines put in"));
+    }
+
+    #[test]
+    fn a_models_provider_is_its_group_or_what_its_id_says() {
+        // As OpenCode lists them: no groups, the provider in the ID and at
+        // the front of the name.
+        let ungrouped: Vec<SessionConfigOption> = serde_json::from_value(json!([
+            { "id": "model", "name": "Model", "category": "model", "type": "select",
+              "currentValue": "opencode/big-pickle",
+              "options": [
+                  { "value": "opencode/big-pickle", "name": "opencode/Big Pickle" },
+                  { "value": "openrouter/meta/llama", "name": "openrouter/Llama" },
+                  { "value": "acme/one", "name": "One of Acme's" },
+                  { "value": "plain", "name": "Plain" }
+              ] }
+        ]))
+        .unwrap();
+        let catalog = extract_model_catalog(&ungrouped).unwrap();
+        let model = |id: &str, name: &str, provider: Option<(&str, &str)>| ModelOption {
+            id: id.into(),
+            name: name.into(),
+            provider: provider.map(|(id, name)| (id.into(), name.into())),
+        };
+        assert_eq!(
+            catalog.models,
+            [
+                model("opencode/big-pickle", "Big Pickle", Some(("opencode", "OpenCode"))),
+                model("openrouter/meta/llama", "Llama", Some(("openrouter", "OpenRouter"))),
+                model("acme/one", "One of Acme's", Some(("acme", "acme"))),
+                model("plain", "Plain", None),
+            ]
+        );
+        assert_eq!(catalog.default_model.as_deref(), Some("opencode/big-pickle"));
+
+        // A harness that groups its Models says the provider itself.
+        let grouped: Vec<SessionConfigOption> = serde_json::from_value(json!([
+            { "id": "model", "name": "Model", "category": "model", "type": "select",
+              "currentValue": "m-1",
+              "options": [
+                  { "group": "acme", "name": "Acme AI", "options": [{ "value": "m-1", "name": "One" }] },
+                  { "group": "other", "name": "Other", "options": [{ "value": "o/2", "name": "Two" }] }
+              ] }
+        ]))
+        .unwrap();
+        let catalog = extract_model_catalog(&grouped).unwrap();
+        assert_eq!(
+            catalog.models,
+            [
+                ModelOption {
+                    id: "m-1".into(),
+                    name: "One".into(),
+                    provider: Some(("acme".into(), "Acme AI".into())),
+                },
+                ModelOption {
+                    id: "o/2".into(),
+                    name: "Two".into(),
+                    provider: Some(("other".into(), "Other".into())),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn effort_is_the_thought_level_option_and_a_selector_with_no_levels_is_none() {
+        let options: Vec<SessionConfigOption> = serde_json::from_value(json!([
+            { "id": "model", "name": "Model", "category": "model", "type": "select",
+              "currentValue": "a/b", "options": [{ "value": "a/b", "name": "a/B" }] },
+            { "id": "effort", "name": "Effort", "category": "thought_level", "type": "select",
+              "currentValue": "default",
+              "options": [{ "value": "high", "name": "High" }, { "value": "default", "name": "Default" }] }
+        ]))
+        .unwrap();
+        let selector = extract_effort(&options).unwrap();
+        assert_eq!(selector.current, "default");
+        assert!(selector.offers("high") && !selector.offers("max"));
+        assert_eq!(
+            selector.options,
+            [
+                EffortOption {
+                    id: "high".into(),
+                    name: "High".into()
+                },
+                EffortOption {
+                    id: "default".into(),
+                    name: "Default".into()
+                },
+            ]
+        );
+        // An option that only happens to be named `effort` is not one.
+        let unmarked: Vec<SessionConfigOption> = serde_json::from_value(json!([
+            { "id": "effort", "name": "Effort", "type": "select", "currentValue": "x",
+              "options": [{ "value": "x", "name": "X" }] },
+            { "id": "level", "name": "Level", "category": "thought_level", "type": "select",
+              "currentValue": "", "options": [] }
+        ]))
+        .unwrap();
+        assert_eq!(extract_effort(&unmarked), None);
+    }
+
+    #[test]
+    fn a_command_keeps_its_name_what_the_harness_says_of_it_and_its_hint() {
+        let update: agent_client_protocol_schema::v1::AvailableCommandsUpdate = serde_json::from_value(json!({
+            "availableCommands": [
+                { "name": "review", "description": "review changes", "input": { "hint": "commit, branch, or pr" } },
+                { "name": "compact", "description": "Compact the session" },
+                { "name": " ", "description": "a command with no name" },
+                { "name": "init", "description": "", "input": { "hint": " " } }
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            harness_commands(update.available_commands),
+            [
+                HarnessCommand {
+                    name: "review".into(),
+                    description: "review changes".into(),
+                    hint: Some("commit, branch, or pr".into()),
+                },
+                HarnessCommand {
+                    name: "compact".into(),
+                    description: "Compact the session".into(),
+                    hint: None,
+                },
+                HarnessCommand {
+                    name: "init".into(),
+                    description: String::new(),
+                    hint: None,
+                },
+            ]
+        );
     }
 
     #[test]

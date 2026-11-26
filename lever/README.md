@@ -102,14 +102,43 @@ ACP today:
   reason, and any other error, is `failed`, whether or not a stop was asked
   for.
 - **Updates.** A piece of the agent's message is `text`, a tool call and its
-  updates are an `act`, a session's new title is `thread-updated`, and
+  updates are an `act`, a session's new title is `thread-updated`,
   `config_option_update` refreshes the harness's Models and the thread's
-  current Model. Other ACP v1 updates that Lever does not yet show as their own
-  kinds (`agent_thought_chunk`, `available_commands_update`,
-  `current_mode_update`, `usage_update`, `plan`, `notice`, compaction, and
-  subagent updates) are dropped on purpose so threads are not flooded with
-  per-token or boilerplate notes. Any genuinely unrecognized or future update
-  is kept as JSON in the record and shown plainly as a `note`.
+  current Model and effort, and `available_commands_update` is the thread's
+  `commands`. Other ACP v1 updates that Lever does not yet show as their own
+  kinds (`agent_thought_chunk`, `current_mode_update`, `usage_update`, `plan`,
+  `notice`, compaction, and subagent updates) are dropped on purpose so
+  threads are not flooded with per-token or boilerplate notes. Any genuinely
+  unrecognized or future update is kept as JSON in the record and shown
+  plainly as a `note`.
+- **Models and their providers.** The Models are the values of the session
+  configuration option of category `model`. A Model's provider is the group
+  the harness lists it under. A harness that lists its Models with no groups,
+  as OpenCode does, says the provider in the Model's ID, before the first
+  `/`, and Lever takes it from there, and takes it off the front of the
+  Model's name where the harness put it there too. OpenCode gives a provider
+  only an ID, so Lever names the ones it knows (`opencode` is OpenCode) and
+  gives any other its ID as its name.
+- **Effort.** A session's configuration option of category `thought_level`
+  holds the effort levels of the Model the session is at, and the one it is
+  at. They are the Model's: a session at another Model offers other levels,
+  or none. Lever keeps the levels of each Model it has seen a session at,
+  for as long as that harness runs. Asked for the levels of one it has not
+  seen, it opens a session, sets it to that Model, reads the option, and
+  closes the session. A thread keeps its effort. Before each turn's prompt,
+  after the session's Model, Lever sets the session to the thread's effort
+  with `session/set_config_option`, when the Model offers it and the session
+  is at another. An effort the Model does not offer is not asked for, and the
+  thread takes the effort the harness has the session at. A turn whose effort
+  the harness refuses fails, and the thread goes back to the effort the
+  session is at. When the harness changes a session's Model or effort itself,
+  the thread takes it.
+- **Commands.** Lever keeps the commands each thread's session last named in
+  an `available_commands_update`, and those of the session it opens to read
+  the harness's Models. They are the harness's own, and the person sends one
+  as a message that begins with `/` and its name. Lever does nothing with
+  such a message but send it: the harness takes it for a command or for
+  words.
 - **An update that comes after its turn ended goes to the thread's newest
   turn.** ACP gives an update no turn. Lever takes what the harness has said
   before it hears a peer, so an update that is already there when the next
@@ -295,13 +324,15 @@ Request:
 Reply:
 
 ```json
-{"reply":"models","supported":true,"models":[{"id":"stub/stub-1","name":"Stub One"}],"default":"stub/stub-1","free_hosted_models":false,"modes":[{"id":"ask-first","name":"Ask first"},{"id":"full-access","name":"Full access"},{"id":"plan","name":"Plan"}]}
+{"reply":"models","supported":true,"models":[{"id":"stub/stub-1","name":"Stub One","provider":"stub","provider_name":"stub"}],"default":"stub/stub-1","free_hosted_models":false,"modes":[{"id":"ask-first","name":"Ask first"},{"id":"full-access","name":"Full access"},{"id":"plan","name":"Plan"}]}
 ```
 
 - `supported`: `true` when the harness exposes Model selection (or reported
   that no Models are currently available), `false` otherwise.
 - `models`: `{id, name}` entries offered by the harness (empty when none are
-  available).
+  available), each with the `provider` the harness has it from and that
+  provider's `provider_name`, when the harness says. `name` is the Model's
+  name without its provider.
 - `default`: the harness's default Model ID, or `null`.
 - `free_hosted_models`: Lever's saved setting.
 - `modes`: the modes Lever offers for this harness, as `{id, name}` entries:
@@ -339,7 +370,10 @@ Errors: `unsupported`, `invalid-request`, `storage-error`.
 Sets a thread's Model to one offered by the harness, applying it through ACP's
 `session/set_config_option` on an active session (or validating against the
 harness's offered Models and applying it on the next turn) and saving it on the
-thread in SQLite.
+thread in SQLite. A `thread-updated` event with the Model follows when the
+thread had another. An effort is a level of one Model, so a
+thread given another Model takes the effort the harness has its session at,
+or none until its next turn when it has no session.
 
 Request:
 
@@ -355,6 +389,75 @@ Reply:
 
 Errors: `no-harness`, `no-thread`, `working`, `unsupported`, `no-model`,
 `invalid-model`, `harness-error`, `invalid-request`, `storage-error`.
+
+#### `efforts`
+
+Says the effort levels of one Model the harness offers, starting the harness
+on demand if needed. A Model with none has an empty list. A level's `id` is
+what `send` and `set-effort` take, and its `name` is the harness's.
+
+Request:
+
+```json
+{"op":"efforts","model":"stub/stub-1"}
+```
+
+Reply:
+
+```json
+{"reply":"efforts","model":"stub/stub-1","efforts":[{"id":"low","name":"Low"},{"id":"high","name":"High"},{"id":"default","name":"Default"}]}
+```
+
+Errors: `no-harness`, `working`, `invalid-model` (a Model the harness is known
+not to offer), `harness-error`, `invalid-request`.
+
+#### `set-effort`
+
+Sets a thread's effort, which applies from its next turn. `null` leaves the
+effort to the harness. Either socket may set it.
+
+Request:
+
+```json
+{"op":"set-effort","thread":"t-01a2b3c4d5e6","effort":"high"}
+```
+
+Reply:
+
+```json
+{"reply":"effort-set","thread":"t-01a2b3c4d5e6","effort":"high"}
+```
+
+A `thread-updated` event with the effort follows. Errors: `no-thread`,
+`working`, `invalid-effort` (not a level of the thread's Model, where Lever
+knows the Model's levels), `invalid-request`, `storage-error`.
+
+#### `commands`
+
+Says the commands the harness offers: those a thread's session last named,
+or, with no `thread` or for a thread whose session has named none, those of
+the session Lever opened to read the harness's Models. Lever answers at once
+with what it has. `known` is `false` when the harness has yet to name any, and
+Lever then starts the harness if need be and has it say. What it says comes as
+a `commands` event to connections that sent `watch`. With `thread`, the reply
+carries it.
+
+Request:
+
+```json
+{"op":"commands"}
+```
+
+Reply:
+
+```json
+{"reply":"commands","known":true,"commands":[{"name":"review","description":"review changes","hint":"commit, branch, or pr"}]}
+```
+
+- `commands`: each command's `name`, the harness's `description` of it, and
+  the `hint` the harness gives for what to type after it, when it gives one.
+
+Errors: `no-thread`, `invalid-request`, `storage-error`.
 
 #### `list`
 
@@ -380,6 +483,7 @@ Reply:
 - `waiting`: `true` while a request of this thread waits for the person.
 - `mode`: the thread's mode.
 - `model`: optional Model ID last applied to this thread, omitted when unset.
+- `effort`: optional effort of this thread, omitted when it has none.
 
 A `list` request with `watch: true` also subscribes this connection to metadata
 updates for **all** threads, including archived threads so their work can drive
@@ -455,6 +559,8 @@ Request:
 - `cwd`: optional absolute path for a new thread's working directory (defaults
   to `$HOME`).
 - `model`: optional Model ID to select for the thread before sending the turn.
+- `effort`: optional effort for the thread from this turn on, one of the
+  levels `efforts` gives for its Model.
 - `mode`: optional mode for the thread from this turn on (`ask-first`,
   `full-access`, or `plan`). A new thread without one starts in the starting
   mode. One that changes an existing thread's mode comes with a
@@ -466,8 +572,8 @@ Reply:
 {"reply":"sent","thread":"t-01a2b3c4d5e6","turn":1}
 ```
 
-Errors: `no-harness`, `no-model`, `no-thread`, `working`, `invalid-mode`, `invalid-request`,
-and `storage-error` when Lever's database does not take the turn, or has yet to
+Errors: `no-harness`, `no-model`, `no-thread`, `working`, `invalid-mode`, `invalid-effort`,
+`invalid-request`, and `storage-error` when Lever's database does not take the turn, or has yet to
 take how the thread's last turn ended.
 
 #### `resume`
@@ -488,13 +594,15 @@ Request:
 Reply:
 
 ```json
-{"reply":"resumed","thread":"t-01a2b3c4d5e6","title":"List the files","cwd":"/home/crowbar","started":1764000000,"updated":1764000005,"working":false,"mode":"ask-first","turns":[{"turn":1,"message":"List the files","answer":"Here are the files.","state":"done","mode":"ask-first","acts":[{"act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","state":"done","detail":"Cargo.toml"}],"requests":[{"request":"r-01a2b3c4d5e6","act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","detail":"ls","answers":[{"answer":"once","name":"Allow once"},{"answer":"always","name":"Always allow"},{"answer":"no","name":"Reject"}],"state":"answered","answer":"once"}],"notes":[{"note":"note-01a2b3c4d5e6","text":"Cache warm"}]}]}
+{"reply":"resumed","thread":"t-01a2b3c4d5e6","title":"List the files","cwd":"/home/crowbar","started":1764000000,"updated":1764000005,"working":false,"mode":"ask-first","turns":[{"turn":1,"message":"List the files","answer":"Here are the files.","state":"done","started":1764000000,"ended":1764000005,"mode":"ask-first","acts":[{"act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","state":"done","detail":"Cargo.toml"}],"requests":[{"request":"r-01a2b3c4d5e6","act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","detail":"ls","answers":[{"answer":"once","name":"Allow once"},{"answer":"always","name":"Always allow"},{"answer":"no","name":"Reject"}],"state":"answered","answer":"once"}],"notes":[{"note":"note-01a2b3c4d5e6","text":"Cache warm"}]}]}
 ```
 
 When a turn ended with `"state":"failed"`, the turn object also carries
 `"error":"..."`. When a turn was sent from the drawer with desktop context from
 Fulcrum, it also carries `"context":{...}`. When a thread has a saved Model,
-the reply also carries `"model":"..."`. The reply carries the thread's
+the reply also carries `"model":"..."`, and when it has an effort,
+`"effort":"..."`. Each turn carries when it began (`"started"`) and, once it
+has ended, when (`"ended"`), in seconds. The reply carries the thread's
 `"mode"`, and each turn the mode it began in (`"mode"`, absent for turns
 recorded before modes) and its requests (`"requests":[...]`, each as the
 [`request` event](#events) has it, without `event`, `thread`, and `turn`).
@@ -677,11 +785,23 @@ Pushed to every connection subscribed to `thread`:
   {"event":"request","thread":"t-01a2b3c4d5e6","turn":1,"request":"r-01a2b3c4d5e6","act":"act-01a2b3c4d5e6","kind":"command","title":"echo hi","detail":"echo hi","answers":[{"answer":"once","name":"Allow once"},{"answer":"always","name":"Always allow"},{"answer":"no","name":"Reject"}],"state":"waiting"}
   ```
 
-- **`thread-updated`** — the thread's title or mode changed. It carries
-  `title`, `mode`, or both:
+- **`thread-updated`** — the thread's title, mode, Model, or effort changed.
+  It carries what changed: `title`, `mode`, `model`, and `effort`, which is
+  `null` for a thread that now has none. A thread's Model and effort are told
+  as soon as Lever knows them, the first time as its first turn's session
+  begins:
 
   ```json
   {"event":"thread-updated","thread":"t-01a2b3c4d5e6","title":"Inspect workspace"}
+  ```
+
+- **`commands`** — the commands the thread's session named, each time they
+  change, as the [`commands` reply](#commands) has them. To connections that
+  sent `watch`, with no `thread`, those of the session Lever opened to read
+  what the harness offers:
+
+  ```json
+  {"event":"commands","thread":"t-01a2b3c4d5e6","commands":[{"name":"review","description":"review changes","hint":"commit, branch, or pr"}]}
   ```
 
 - **`activity`** — to connections that sent `watch`, when the threads working
@@ -724,9 +844,10 @@ Pushed to every connection subscribed to `thread`:
 Lever stores its state in `--state` (mode `0700`, owned by the person):
 
 - `lever.sqlite` (mode `0600`, SQLite WAL mode with `synchronous = NORMAL`,
-  plus `0600` sidecar `-wal`/`-shm` files): Lever's database holding `threads`,
-  `turns`, `acts`, `requests`, and `notes` (with `raw_json` keeping the JSON
-  of each update shown as a note), and the starting mode. A request that waits
+  plus `0600` sidecar `-wal`/`-shm` files): Lever's database holding `threads`
+  (each with its Model, effort, and mode), `turns`, `acts`, `requests`, and
+  `notes` (with `raw_json` keeping the JSON of each update shown as a note),
+  and the starting mode. A request that waits
   when Lever starts is withdrawn, as the turn that asked it is interrupted. A write the database does not take is logged as an
   `error` that names what could not be done and nothing a thread said. How a
   turn ended is tried again until the database takes it, so a thread is not

@@ -760,11 +760,14 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let reply_activity = find_reply("activity");
     let reply_mode_set = find_reply("mode-set");
     let reply_default_mode = find_reply("default-mode");
+    let reply_efforts = find_reply("efforts");
+    let reply_effort_set = find_reply("effort-set");
+    let reply_commands = find_reply("commands");
 
     let server_ops = doc_ops.clone();
-    // Serve 18 short connections exercising every documented op, reply (including error), and event.
+    // Serve 21 short connections exercising every documented op, reply (including error), and event.
     let server = std::thread::spawn(move || {
-        for turn_case in 0..18 {
+        for turn_case in 0..21 {
             let (mut stream, _) = listener.accept().expect("accept client");
             let ver = read_framed(&mut stream);
             assert_eq!(ver, json!({ "version": 1 }));
@@ -828,6 +831,9 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
                 (15, "set-default-mode") => write_framed(&mut stream, &reply_default_mode),
                 (16, "archive") => write_framed(&mut stream, &reply_archived),
                 (17, "delete") => write_framed(&mut stream, &reply_deleted),
+                (18, "efforts") => write_framed(&mut stream, &reply_efforts),
+                (19, "set-effort") => write_framed(&mut stream, &reply_effort_set),
+                (20, "commands") => write_framed(&mut stream, &reply_commands),
                 other => panic!("unexpected connection {other:?}"),
             }
             // Hold the connection open until the client closes it, as Lever does.
@@ -922,6 +928,25 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
 
     assert_eq!(lab.run(&["--archive", "t-example"], "").status, 0);
     assert_eq!(lab.run(&["--delete", "t-example"], "").status, 0);
+    let efforts = lab.run(&["efforts", "stub/stub-1"], "");
+    assert_eq!(
+        (efforts.status, efforts.out.as_str()),
+        (0, "low  Low\nhigh  High\ndefault  Default\n"),
+        "{efforts:?}"
+    );
+    let effort = lab.run(&["--resume", "t-01a2b3c4d5e6", "--effort", "high"], "");
+    assert_eq!(
+        (effort.status, effort.err.as_str()),
+        (0, "t-01a2b3c4d5e6 is now at effort high.\n"),
+        "{effort:?}"
+    );
+    let commands = lab.run(&["commands"], "");
+    assert_eq!(
+        (commands.status, commands.out.as_str()),
+        (0, "/review  review changes\n"),
+        "{commands:?}"
+    );
+
     server.join().unwrap();
     assert_eq!(*sent_ops.lock().unwrap(), doc_ops);
 }

@@ -908,6 +908,78 @@ pub fn models(lever: &mut Connection) -> Result<Ended> {
     Ok(Ended::Done)
 }
 
+/// `crowbar-agent efforts M`: list the effort levels of a Model.
+pub fn efforts(lever: &mut Connection, model: &str) -> Result<Ended> {
+    let reply = lever.request(json!({ "op": "efforts", "model": model }))?;
+    if refused(&reply).is_some() {
+        return Ok(Ended::Failed);
+    }
+    let levels = reply
+        .get("efforts")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if levels.is_empty() {
+        eprintln!("{model} has no effort levels.");
+        return Ok(Ended::Done);
+    }
+    for level in &levels {
+        let id = text(level, "id");
+        let name = text(level, "name");
+        if name.is_empty() || name == id {
+            println!("{id}");
+        } else {
+            println!("{id}  {name}");
+        }
+    }
+    Ok(Ended::Done)
+}
+
+/// `crowbar-agent --resume ID --effort E`: set a thread's effort.
+pub fn set_effort(lever: &mut Connection, thread: &str, effort: &str) -> Result<Ended> {
+    let reply = lever.request(json!({ "op": "set-effort", "thread": thread, "effort": effort }))?;
+    if refused(&reply).is_some() {
+        return Ok(Ended::Failed);
+    }
+    eprintln!("{thread} is now at effort {}.", text(&reply, "effort"));
+    Ok(Ended::Done)
+}
+
+/// `crowbar-agent commands`: list the commands the harness offers. Lever
+/// has the harness say when it has not yet, so this asks again for a while.
+pub fn commands(lever: &mut Connection) -> Result<Ended> {
+    let mut reply = lever.request(json!({ "op": "commands" }))?;
+    for _ in 0..50 {
+        if refused(&reply).is_some() {
+            return Ok(Ended::Failed);
+        }
+        if reply.get("known") == Some(&Value::Bool(true)) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        reply = lever.request(json!({ "op": "commands" }))?;
+    }
+    let list = reply
+        .get("commands")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if list.is_empty() {
+        eprintln!("The harness offers no commands.");
+        return Ok(Ended::Done);
+    }
+    for entry in &list {
+        let name = text(entry, "name");
+        let description = text(entry, "description");
+        if description.is_empty() {
+            println!("/{name}");
+        } else {
+            println!("/{name}  {description}");
+        }
+    }
+    Ok(Ended::Done)
+}
+
 /// `crowbar-agent free-models [on|off]`: show or switch OpenCode's free hosted Models.
 pub fn free_models(lever: &mut Connection, enabled: Option<bool>) -> Result<Ended> {
     match enabled {

@@ -163,6 +163,31 @@ pub fn ask_first_permission(documents: &[Value]) -> Value {
     Value::Object(permission)
 }
 
+/// The person's name for a provider OpenCode has Models from, which it gives
+/// only an ID: the provider's own spelling for those known here, and the ID
+/// as it is for any other.
+pub fn provider_name(id: &str) -> String {
+    const NAMES: [(&str, &str); 12] = [
+        ("opencode", "OpenCode"),
+        ("anthropic", "Anthropic"),
+        ("openai", "OpenAI"),
+        ("google", "Google"),
+        ("github-copilot", "GitHub Copilot"),
+        ("openrouter", "OpenRouter"),
+        ("amazon-bedrock", "Amazon Bedrock"),
+        ("azure", "Azure"),
+        ("xai", "xAI"),
+        ("ollama", "Ollama"),
+        ("lmstudio", "LM Studio"),
+        ("mistral", "Mistral"),
+    ];
+    NAMES
+        .iter()
+        .find(|(known, _)| *known == id)
+        .map(|(_, name)| (*name).to_string())
+        .unwrap_or_else(|| id.to_string())
+}
+
 /// Reads JSON with comments and trailing commas, as OpenCode's settings may
 /// have them. What is not an object is not settings.
 pub fn parse_jsonc(text: &str) -> Option<Value> {

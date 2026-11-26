@@ -18,20 +18,27 @@
 //! for the answer, and a reject ends the turn as cancelled. A turn that is
 //! cancelled while it asks withdraws the request with `$/cancel_request`.
 //!
+//! A Model with `efforts` in the script has effort levels as OpenCode's have:
+//! a session configuration option of category `thought_level`, offered only
+//! while the session is at that Model, with those levels and `default`. With
+//! `commands` in the script, each new or loaded session is followed by an
+//! `available_commands_update` that names them.
+//!
 //! Usage:
 //!   crowbar-stub-harness --script <path> [--log <path>]
 
 use agent_client_protocol_schema::ProtocolVersion;
 use agent_client_protocol_schema::v1::{
-    AGENT_METHOD_NAMES, AgentCapabilities, AvailableCommandsUpdate, CLIENT_METHOD_NAMES, CancelNotification,
-    CloseSessionRequest, CloseSessionResponse, ConfigOptionUpdate, ContentBlock, ContentChunk, Diff, Error as AcpError,
-    Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest, LoadSessionResponse,
-    NewSessionRequest, NewSessionResponse, Notification, PROTOCOL_LEVEL_METHOD_NAMES, PermissionOption,
-    PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId, RequestPermissionRequest, Response,
-    SessionCapabilities, SessionCloseCapabilities, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigSelectOption, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
-    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason, TextContent, ToolCall, ToolCallContent,
-    ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    AGENT_METHOD_NAMES, AgentCapabilities, AvailableCommand, AvailableCommandInput, AvailableCommandsUpdate,
+    CLIENT_METHOD_NAMES, CancelNotification, CloseSessionRequest, CloseSessionResponse, ConfigOptionUpdate,
+    ContentBlock, ContentChunk, Diff, Error as AcpError, Implementation, InitializeRequest, InitializeResponse,
+    JsonRpcMessage, LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, Notification,
+    PROTOCOL_LEVEL_METHOD_NAMES, PermissionOption, PermissionOptionKind, PromptRequest, PromptResponse, Request,
+    RequestId, RequestPermissionRequest, Response, SessionCapabilities, SessionCloseCapabilities, SessionConfigOption,
+    SessionConfigOptionCategory, SessionConfigSelectOption, SessionId, SessionInfoUpdate, SessionNotification,
+    SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason, TextContent, ToolCall,
+    ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    UnstructuredCommandInput,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -49,7 +56,23 @@ use std::time::Duration;
 struct StubModel {
     id: String,
     name: String,
+    /// The Model's effort levels. A session at it also offers `default`.
+    #[serde(default)]
+    efforts: Vec<String>,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+struct StubCommand {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    hint: Option<String>,
+}
+
+/// The effort a session begins at, and goes back to at a Model that does not
+/// offer the one it had.
+const DEFAULT_EFFORT: &str = "default";
 
 #[derive(Debug, Deserialize)]
 struct Script {
@@ -84,6 +107,14 @@ struct Script {
     /// If true, sends an `available_commands_update` notification right after `session/new`.
     #[serde(default)]
     emit_available_commands: bool,
+    /// The commands named in an `available_commands_update` after each
+    /// `session/new` and `session/load`.
+    #[serde(default)]
+    commands: Vec<StubCommand>,
+    /// An effort `session/set_config_option` refuses with an error, though a
+    /// Model offers it.
+    #[serde(default)]
+    refuse_effort: Option<String>,
     /// Updates sent on `session/load` before it is answered, as a harness
     /// replays a session's history.
     #[serde(default)]
@@ -896,14 +927,39 @@ fn append_log(log_file: &mut Option<File>, line: &str) {
     }
 }
 
+/// The effort levels a session at `model` offers: the Model's own, then
+/// `default`. None when the Model has no levels.
+fn effort_levels(models: Option<&[StubModel]>, model: Option<&str>) -> Vec<String> {
+    let model = model.or_else(|| models.and_then(|m| m.first()).map(|m| m.id.as_str()));
+    let mut levels = models
+        .and_then(|list| list.iter().find(|m| Some(m.id.as_str()) == model))
+        .map(|m| m.efforts.clone())
+        .unwrap_or_default();
+    if !levels.is_empty() {
+        levels.push(DEFAULT_EFFORT.to_string());
+    }
+    levels
+}
+
+/// A level's name, as OpenCode makes it: its ID with a capital.
+fn effort_name(id: &str) -> String {
+    let mut chars = id.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
 fn build_config_options(
     models: Option<&[StubModel]>,
     current: Option<&str>,
     modes: &Modes,
     current_mode: Option<&str>,
+    effort: Option<&str>,
 ) -> Option<Vec<SessionConfigOption>> {
     let mut options = Vec::new();
     if let Some(models) = models {
+        let levels = effort_levels(Some(models), current);
         let current = current
             .or_else(|| models.first().map(|m| m.id.as_str()))
             .unwrap_or("")
@@ -915,6 +971,20 @@ fn build_config_options(
         options.push(
             SessionConfigOption::select("model", "Model", current, opts).category(SessionConfigOptionCategory::Model),
         );
+        if !levels.is_empty() {
+            let at = effort
+                .filter(|e| levels.iter().any(|level| level == e))
+                .unwrap_or(DEFAULT_EFFORT)
+                .to_string();
+            let opts: Vec<SessionConfigSelectOption> = levels
+                .iter()
+                .map(|level| SessionConfigSelectOption::new(level.clone(), effort_name(level)))
+                .collect();
+            options.push(
+                SessionConfigOption::select("effort", "Effort", at, opts)
+                    .category(SessionConfigOptionCategory::ThoughtLevel),
+            );
+        }
     }
     if modes.offered {
         let opts: Vec<SessionConfigSelectOption> = modes
@@ -962,6 +1032,23 @@ fn run(options: Options) -> Result<(), String> {
     let active_cancels: Arc<Mutex<HashMap<String, Arc<CancelFlag>>>> = Arc::new(Mutex::new(HashMap::new()));
     let session_models: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
     let session_modes: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let session_efforts: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let commands_update = (!script.commands.is_empty()).then(|| {
+        AvailableCommandsUpdate::new(
+            script
+                .commands
+                .iter()
+                .map(|command| {
+                    AvailableCommand::new(command.name.clone(), command.description.clone()).input(
+                        command
+                            .hint
+                            .clone()
+                            .map(|hint| AvailableCommandInput::Unstructured(UnstructuredCommandInput::new(hint))),
+                    )
+                })
+                .collect(),
+        )
+    });
     let always: Arc<Mutex<HashMap<String, Vec<String>>>> = Arc::new(Mutex::new(HashMap::new()));
     let replies: Arc<Replies> = Arc::new(Mutex::new(HashMap::new()));
     let next_request = Arc::new(AtomicU64::new(0));
@@ -1075,12 +1162,17 @@ fn run(options: Options) -> Result<(), String> {
                     session_modes.lock().unwrap().insert(sid.clone(), modes.default.clone());
                     let mut resp = NewSessionResponse::new(SessionId::new(sid.clone()));
                     if let Some(opts) =
-                        build_config_options(script.models.as_deref(), default_model.as_deref(), &modes, None)
+                        build_config_options(script.models.as_deref(), default_model.as_deref(), &modes, None, None)
                     {
                         resp = resp.config_options(opts);
                     }
                     writer.send_result(id, resp);
-                    if script.emit_available_commands {
+                    if let Some(update) = &commands_update {
+                        writer.send_update(
+                            &SessionId::new(sid),
+                            SessionUpdate::AvailableCommandsUpdate(update.clone()),
+                        );
+                    } else if script.emit_available_commands {
                         writer.send_update(
                             &SessionId::new(sid),
                             SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(Vec::new())),
@@ -1107,6 +1199,7 @@ fn run(options: Options) -> Result<(), String> {
             match serde_json::from_value::<CloseSessionRequest>(params) {
                 Ok(close_req) => {
                     session_models.lock().unwrap().remove(close_req.session_id.0.as_ref());
+                    session_efforts.lock().unwrap().remove(close_req.session_id.0.as_ref());
                     writer.send_result(id, CloseSessionResponse::new());
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
@@ -1128,11 +1221,50 @@ fn run(options: Options) -> Result<(), String> {
                         // The mode takes at once; the answer may come later.
                         session_modes.lock().unwrap().insert(sid.clone(), val.clone());
                         let model = session_models.lock().unwrap().get(&sid).cloned();
-                        let mut opts =
-                            build_config_options(script.models.as_deref(), model.as_deref(), &modes, Some(&val))
-                                .unwrap_or_default();
+                        let effort = session_efforts.lock().unwrap().get(&sid).cloned();
+                        let mut opts = build_config_options(
+                            script.models.as_deref(),
+                            model.as_deref(),
+                            &modes,
+                            Some(&val),
+                            effort.as_deref(),
+                        )
+                        .unwrap_or_default();
                         if script.partial_config_replies {
                             opts.retain(|o| o.id.0.as_ref() == "mode");
+                        }
+                        let delay = Duration::from_millis(script.set_config_delay_ms);
+                        let writer = writer.clone();
+                        let respond = move || {
+                            thread::sleep(delay);
+                            writer.send_result(id, SetSessionConfigOptionResponse::new(opts));
+                        };
+                        if delay.is_zero() {
+                            respond();
+                        } else {
+                            workers.push(thread::spawn(respond));
+                        }
+                        continue;
+                    }
+                    if set_req.config_id.0.as_ref() == "effort" {
+                        let model = session_models.lock().unwrap().get(&sid).cloned();
+                        let offered = effort_levels(script.models.as_deref(), model.as_deref()).contains(&val);
+                        if !offered || script.refuse_effort.as_deref() == Some(val.as_str()) {
+                            writer.send_error(id, AcpError::invalid_params().data(json!("unknown effort")));
+                            continue;
+                        }
+                        session_efforts.lock().unwrap().insert(sid.clone(), val.clone());
+                        let mode = session_modes.lock().unwrap().get(&sid).cloned();
+                        let mut opts = build_config_options(
+                            script.models.as_deref(),
+                            model.as_deref(),
+                            &modes,
+                            mode.as_deref(),
+                            Some(&val),
+                        )
+                        .unwrap_or_default();
+                        if script.partial_config_replies {
+                            opts.retain(|o| o.id.0.as_ref() == "effort");
                         }
                         let delay = Duration::from_millis(script.set_config_delay_ms);
                         let writer = writer.clone();
@@ -1159,6 +1291,7 @@ fn run(options: Options) -> Result<(), String> {
                         let models = script.models.clone();
                         let session_models = Arc::clone(&session_models);
                         let mode = session_modes.lock().unwrap().get(&sid).cloned();
+                        let effort = session_efforts.lock().unwrap().get(&sid).cloned();
                         let modes = Arc::clone(&modes);
                         let partial = script.partial_config_replies;
                         let respond = move || {
@@ -1166,8 +1299,14 @@ fn run(options: Options) -> Result<(), String> {
                                 thread::sleep(delay);
                             }
                             session_models.lock().unwrap().insert(sid, val.clone());
-                            let mut opts = build_config_options(models.as_deref(), Some(&val), &modes, mode.as_deref())
-                                .unwrap_or_default();
+                            let mut opts = build_config_options(
+                                models.as_deref(),
+                                Some(&val),
+                                &modes,
+                                mode.as_deref(),
+                                effort.as_deref(),
+                            )
+                            .unwrap_or_default();
                             if partial {
                                 opts.retain(|o| o.id.0.as_ref() == "model");
                             }
@@ -1197,9 +1336,25 @@ fn run(options: Options) -> Result<(), String> {
                             .get(&sid)
                             .cloned()
                             .or_else(|| default_model.clone());
+                        // A session this process did not begin is at the
+                        // default Model, as a new one is.
+                        if let Some(model) = &cur {
+                            session_models
+                                .lock()
+                                .unwrap()
+                                .entry(sid.clone())
+                                .or_insert_with(|| model.clone());
+                        }
                         let mode = session_modes.lock().unwrap().get(&sid).cloned();
-                        let opts =
-                            build_config_options(script.models.as_deref(), cur.as_deref(), &modes, mode.as_deref());
+                        let effort = session_efforts.lock().unwrap().get(&sid).cloned();
+                        let opts = build_config_options(
+                            script.models.as_deref(),
+                            cur.as_deref(),
+                            &modes,
+                            mode.as_deref(),
+                            effort.as_deref(),
+                        );
+                        let commands = commands_update.clone();
                         workers.push(thread::spawn(move || {
                             thread::sleep(delay);
                             for step in &replay {
@@ -1210,6 +1365,10 @@ fn run(options: Options) -> Result<(), String> {
                                 resp = resp.config_options(opts);
                             }
                             writer.send_result(id, resp);
+                            if let Some(update) = commands {
+                                writer
+                                    .send_update(&load_req.session_id, SessionUpdate::AvailableCommandsUpdate(update));
+                            }
                         }));
                     }
                 }
@@ -1228,6 +1387,7 @@ fn run(options: Options) -> Result<(), String> {
             let cancel = Arc::new(CancelFlag::new());
             let sid_key = prompt_req.session_id.0.as_ref().to_string();
             let model = session_models.lock().unwrap().get(&sid_key).cloned();
+            let effort = session_efforts.lock().unwrap().get(&sid_key).cloned();
             active_cancels.lock().unwrap().insert(sid_key.clone(), cancel.clone());
 
             let writer = writer.clone();
@@ -1253,7 +1413,24 @@ fn run(options: Options) -> Result<(), String> {
                 let unheard = CancelFlag::new();
                 let heard = if turn_script.ignore_cancel { &unheard } else { &*cancel };
                 let mut was_cancelled = false;
-                for step in &turn_script.steps {
+                // `{effort}` in a text step is the effort the session is at.
+                let levels = effort_levels(script_models.as_deref(), model.as_deref());
+                let at_effort = match &effort {
+                    Some(effort) if levels.contains(effort) => effort.clone(),
+                    _ if levels.is_empty() => "none".to_string(),
+                    _ => DEFAULT_EFFORT.to_string(),
+                };
+                let steps: Vec<Step> = turn_script
+                    .steps
+                    .iter()
+                    .map(|step| match step {
+                        Step::Text { text } => Step::Text {
+                            text: text.replace("{effort}", &at_effort),
+                        },
+                        other => other.clone(),
+                    })
+                    .collect();
+                for step in &steps {
                     if heard.is_cancelled() {
                         was_cancelled = true;
                         break;
@@ -1269,9 +1446,14 @@ fn run(options: Options) -> Result<(), String> {
                         Step::ModeChange { mode } => {
                             let sid = session_id.0.as_ref().to_string();
                             session_modes.lock().unwrap().insert(sid, mode.clone());
-                            let opts =
-                                build_config_options(script_models.as_deref(), model.as_deref(), &modes, Some(mode))
-                                    .unwrap_or_default();
+                            let opts = build_config_options(
+                                script_models.as_deref(),
+                                model.as_deref(),
+                                &modes,
+                                Some(mode),
+                                effort.as_deref(),
+                            )
+                            .unwrap_or_default();
                             writer.send_update(
                                 &session_id,
                                 SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(opts)),
