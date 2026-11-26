@@ -64,6 +64,8 @@ the built-in background. The person's original preferences are restored even
 when a check fails. The run retains Dark and Light captures and short image
 panning recordings beside `desktop.log` and `results.json`. Recording needs
 `ffmpeg` on the host; the lab image supplies `wl-paste` for clipboard checks.
+The [November 26 validation record](../../docs/development/viewer-validation-2026-11-26.md)
+records the passing full desktop run and its captures and recordings.
 
 ## Image limits
 
