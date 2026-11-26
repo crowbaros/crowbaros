@@ -116,8 +116,9 @@ historical behavior evidence, not a current Fedora workflow.
   mode menu is open, and `controls`, the bounds of each control the drawer
   shows, in the display's logical pixels, for checks to click: `mode`,
   `mode:<id>`, `default-mode:<id>`, `answer:<request>:<answer>`, `send`,
-  `stop`, and `close`. A control of the thread scrolled out of view is left
-  out.
+  `stop`, and `close`. Thread navigation adds `new-thread`, `threads`,
+  `thread:<id>`, `archive`, `delete`, `cancel-delete`, and `confirm-delete`.
+  A control scrolled out of view is left out.
 - The drawer has a thread list and a thread view. **Threads** (or `Ctrl+L`)
   returns to the list, grouped by folder with newest activity first. **New
   thread** (`Ctrl+N`) starts in the person's home; terminal threads keep their
@@ -129,7 +130,9 @@ historical behavior evidence, not a current Fedora workflow.
   deleting it. Lever requests harness session deletion, and explains when the
   harness cannot remove its own copy. The Mark follows all threads, including
   terminal and archived work, while the drawer is hidden or displaying another
-  thread. Working takes precedence when another thread finishes.
+  thread. Waiting requests take precedence over working threads; working
+  takes precedence when another thread finishes. Stop also withdraws requests
+  that remain after a turn ends, before the thread can be deleted.
 - Streamed answers follow the bottom only while the person is already near it.
   Long act details expand to the complete command/output; desktop context after
   the first turn is collapsed until requested.

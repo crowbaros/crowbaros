@@ -237,7 +237,17 @@ fn deliver_broadcasts(broadcasts: &[Broadcast], peers: &mut [Peer], keep: &[bool
     let list_changed = broadcasts.iter().any(|b| {
         matches!(
             b.message["event"].as_str(),
-            Some("message" | "thread-updated" | "done" | "stopped" | "failed" | "interrupted" | "archived" | "deleted")
+            Some(
+                "request"
+                    | "message"
+                    | "thread-updated"
+                    | "done"
+                    | "stopped"
+                    | "failed"
+                    | "interrupted"
+                    | "archived"
+                    | "deleted"
+            )
         )
     });
     let snapshot = if list_changed && peers.iter().any(|p| p.is_subscribed(service::THREAD_LIST_SUBSCRIPTION)) {
@@ -386,7 +396,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         let woke = service.on_wake(log);
         let everyone = vec![true; peers.len()];
         deliver_replies(&woke.replies, &mut peers, &everyone, log);
-        deliver_broadcasts(&woke.broadcasts, &mut peers, &everyone, log);
+        deliver_broadcasts(&woke.broadcasts, &mut peers, &everyone, log, &service);
 
         let harness_stdout_fd = service.harness_stdout_fd();
         let harness_stdin_fd = service.harness_stdin_fd();

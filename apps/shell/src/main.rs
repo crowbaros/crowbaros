@@ -2640,6 +2640,7 @@ impl AgentSurface {
             ThreadAction::New | ThreadAction::Open(_) => {
                 if !self.model.read(cx).agent_state.connected { return; }
                 self.confirm_delete = false;
+                self.mode_menu_open = false;
                 let thread = match action { ThreadAction::Open(t) => Some(t), _ => None };
                 self.model.update(cx, |m, _| {
                     if m.agent_state.select_thread(thread.clone()) && let Some(tx) = &m.agent_tx { tx.select(thread); }
@@ -2656,7 +2657,7 @@ impl AgentSurface {
             ThreadAction::Archive | ThreadAction::Delete => {
                 let delete = matches!(action, ThreadAction::Delete);
                 self.model.update(cx, |m, _| {
-                    if delete && m.agent_state.working() { return; }
+                    if delete && m.agent_state.can_stop() { return; }
                     if let (Some(thread), Some(tx)) = (m.agent_state.thread.clone(), &m.agent_tx) {
                         m.agent_state.loading = true;
                         tx.lifecycle(thread, delete);
@@ -2674,12 +2675,24 @@ impl AgentSurface {
     fn button(&self, id: impl Into<ElementId>, label: impl Into<SharedString>, action: ThreadAction,
         enabled: bool, p: Palette, cx: &mut Context<Self>) -> Stateful<Div> {
         let click = action.clone();
-        div().id(id).tab_index(0).px(px(10.)).py(px(7.)).rounded(px(6.))
+        let (control, in_thread) = match &action {
+            ThreadAction::New => ("new-thread".into(), true),
+            ThreadAction::List => ("threads".into(), false),
+            ThreadAction::Open(thread) => (format!("thread:{thread}"), true),
+            ThreadAction::Archive => ("archive".into(), false),
+            ThreadAction::AskDelete => ("delete".into(), false),
+            ThreadAction::Delete => ("confirm-delete".into(), true),
+            ThreadAction::CancelDelete => ("cancel-delete".into(), true),
+            ThreadAction::Act(id) => (format!("act:{id}"), true),
+            ThreadAction::Context(turn) => (format!("context:{turn}"), true),
+        };
+        div().id(id).relative().tab_index(0).px(px(10.)).py(px(7.)).rounded(px(6.))
             .border_1().border_color(rgb(p.line)).text_size(px(11.5)).text_color(rgb(p.text))
             .focus(move |s| s.border_color(rgb(p.focus)).bg(rgb(p.surface)))
             .when(!enabled, |s| s.opacity(0.5))
             .when(enabled, |s| s.cursor_pointer().hover(move |s| s.bg(rgb(p.surface))))
             .child(label.into())
+            .child(tracked(&self.frame, control, in_thread))
             .on_click(cx.listener(move |this, _, w, cx| { if enabled { this.action(click.clone(), w, cx); } }))
             .on_action(cx.listener(move |this, _: &SendMessage, w, cx| {
                 cx.stop_propagation();
@@ -3142,7 +3155,7 @@ impl Render for AgentSurface {
                 .child(div().line_height(px(19.)).child("Its messages, answers, and acts will be removed. Lever also asks the harness to delete its session. This cannot be undone."))
                 .child(div().flex().gap(px(8.))
                     .child(self.button("cancel-thread-delete", "Cancel", ThreadAction::CancelDelete, true, p, cx))
-                    .child(self.button("confirm-thread-delete", "Delete thread", ThreadAction::Delete, state.connected && !working, p, cx)));
+                    .child(self.button("confirm-thread-delete", "Delete thread", ThreadAction::Delete, state.connected && !show_stop, p, cx)));
         } else if state.list_view {
             body = body.child(div().flex().items_center().justify_between()
                 .child(div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).child("Threads"))
@@ -3158,7 +3171,7 @@ impl Render for AgentSurface {
                     .child(div().w_full().min_w_0().text_ellipsis().font_family("IBM Plex Mono").text_size(px(11.)).text_color(rgb(p.muted)).child(folder));
                 for thread in threads {
                     let title = if thread.title.trim().is_empty() { "Untitled thread".to_string() } else { thread.title.clone() };
-                    let status = if thread.working { "Working…" } else { match thread.state.as_str() {
+                    let status = if thread.waiting { "Waiting" } else if thread.working { "Working…" } else { match thread.state.as_str() {
                         "done" => "Done", "stopped" => "Stopped", "failed" => "Failed", "interrupted" => "Interrupted", _ => "Ready",
                     }};
                     group = group.child(self.button(SharedString::from(format!("thread-{}", thread.thread)), "",
@@ -3638,7 +3651,7 @@ impl Render for AgentSurface {
                         .child(self.button("agent-thread-list", "Threads", ThreadAction::List, !state.sending && !state.loading, p, cx))
                         .when(state.thread.is_some(), |row| row
                             .child(self.button("archive-agent-thread", "Archive", ThreadAction::Archive, state.connected && !state.loading && !state.sending, p, cx))
-                            .child(self.button("delete-agent-thread", "Delete…", ThreadAction::AskDelete, state.connected && !working && !state.loading && !state.sending, p, cx))))
+                            .child(self.button("delete-agent-thread", "Delete…", ThreadAction::AskDelete, state.connected && !show_stop && !state.loading && !state.sending, p, cx))))
                     .child(div().text_size(px(12.)).text_ellipsis().child(state.title.clone().unwrap_or_else(|| "New thread · Home".into())))
             ))
             .when(self.mode_menu_open, |d| d.child(self.mode_menu(&state, p, cx)))

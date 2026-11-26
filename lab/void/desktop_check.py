@@ -1293,8 +1293,6 @@ finally:
                 and restored['state']['turns'][5]['state']['kind'] == 'failed',
                 json.dumps(restored['state']['thread']),
             )
-            # 6. A terminal thread drives the Mark while hidden. A second thread
-            # starts in the drawer while that first thread is still working.
             self.key('meta_l', 'spc')
             self.wait('drawer closed after restart check', lambda: not self.agent_view()['drawer_up'])
 
@@ -1333,6 +1331,7 @@ finally:
                 f'before={settings_before[:12]} after={settings_after[:12]} ask-first-in-hand-config='
                 f'{"crowbar-ask-first" in by_hand}',
             )
+            # 8. Concurrent terminal/drawer work and thread lifecycle.
             self.wait('drawer hidden before terminal thread', lambda: not self.agent_view()['drawer_up'])
             self.as_app('sh -c ' + shlex.quote('cd /tmp && crowbar-agent "please long-stop terminal"'), f'{tmp}/terminal-thread.out')
             terminal_view = self.wait('terminal-started thread drives hidden Mark',
@@ -1374,7 +1373,7 @@ finally:
             self.key('ret')
             self.wait('keyboard opens newest thread record', lambda: not self.agent_view()['state']['list_view'] and self.agent_view()['state']['thread'] == second_id)
             self.capture('29-thread-opened-from-list')
-            click_v1(978, 81)  # Archive in the thread toolbar.
+            click_control('archive')
             self.wait('archive returns to list and hides the thread', lambda: self.agent_view()['state']['list_view']
                 and any(t['thread'] == second_id and t['archived'] for t in self.agent_view()['state']['threads']))
             self.check('drawer archive hides the thread while keeping its record',
@@ -1391,16 +1390,14 @@ finally:
                 terminal_id not in self.run(f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} crowbar-agent --list'))
             self.key('meta_l', 'spc')
             self.wait('list reopens after terminal deletion', lambda: self.agent_view()['drawer_up'] and self.agent_view()['state']['list_view'])
-            self.key('tab')
-            self.key('tab')
-            self.key('ret')
+            click_control(f'thread:{thread_id}')
             self.wait('remaining record opens', lambda: not self.agent_view()['state']['list_view'] and self.agent_view()['state']['thread'] == thread_id)
-            click_v1(1040, 73)
+            click_control('delete')
             time.sleep(0.3)
             self.capture('30-thread-delete-confirmation')
             self.key('esc')
             self.check('canceling drawer deletion retains the thread', self.agent_view()['state']['thread'] == thread_id)
-            click_v1(1040, 73)
+            click_control('delete')
             self.key('tab')
             self.key('tab')
             self.key('ret')

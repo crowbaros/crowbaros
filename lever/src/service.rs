@@ -17,9 +17,10 @@ use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// Default time an idle harness stays running after the last working turn ends.
+/// Metadata subscription for the drawer's thread list.
 pub const THREAD_LIST_SUBSCRIPTION: &str = "@thread-list";
 
+/// Default time an idle harness stays running after the last working turn ends.
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// Default time a harness has to end a turn after Lever asks it to stop.
 pub const DEFAULT_STOP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -621,7 +622,8 @@ impl Service {
             };
         }
         self.save_endings();
-        if self.working_turns.contains_key(thread)
+        if self.thread_busy(thread)
+            || self.waiting.values().any(|request| request.thread_id == thread)
             || meta.working_turn.is_some()
             || self.unsaved_endings.iter().any(|p| p.thread_id == thread)
             || self.pending_set_models.iter().any(|p| p.thread_id == thread)

@@ -830,7 +830,7 @@ impl AgentState {
 
     /// The thread's mode cannot change now: it works, or Lever is out of reach.
     pub fn mode_locked(&self) -> bool {
-        !self.connected || self.no_harness || self.sending || self.working()
+        !self.connected || self.no_harness || self.sending || self.loading || self.working()
     }
 
     /// The person opened the mode menu: ask Lever for its modes. Returns
@@ -897,6 +897,10 @@ impl AgentState {
             } else {
                 Mark::Idle
             }
+        } else if self.connected && self.list_received {
+            if self.threads.iter().any(|t| t.waiting) { Mark::Waiting }
+            else if self.threads.iter().any(|t| t.working) { Mark::Working }
+            else { self.thread_mark }
         } else if self.connected && self.waiting() {
             Mark::Waiting
         } else {
@@ -977,11 +981,11 @@ impl AgentState {
 
     pub fn select_thread(&mut self, thread: Option<String>) -> bool {
         if self.sending || self.loading { return false; }
+        self.clear_thread();
         self.thread = thread;
-        self.title = None;
-        self.model = None;
-        self.turns.clear();
-        self.active_turn = None;
+        self.pending_mode = None;
+        self.working_before_disconnect = None;
+        self.refresh_mark();
         self.error = None;
         self.missing_model = None;
         self.loading = self.thread.is_some();
@@ -1012,16 +1016,14 @@ impl AgentState {
         match event {
             AgentEvent::Threads { threads, finished } => {
                 let ended = self.threads.iter().any(|old| old.working && threads.iter().any(|t| t.thread == old.thread && !t.working));
-                let working = threads.iter().any(|t| t.working);
+                let busy = threads.iter().any(|t| t.working || t.waiting);
                 if let Some(selected) = threads.iter().find(|t| Some(t.thread.as_str()) == self.thread.as_deref()) {
                     self.title = (!selected.title.is_empty()).then(|| selected.title.clone());
                     self.model = selected.model.clone();
                 }
                 self.threads = threads;
                 self.list_received = true;
-                self.mark = if working { Mark::Working }
-                    else if finished || ended { if drawer_up { Mark::Idle } else { Mark::Done } }
-                    else if self.mark == Mark::Working { Mark::Idle } else { self.mark };
+                if !busy && (finished || ended) && !drawer_up { self.thread_mark = Mark::Done; }
                 true
             }
             AgentEvent::Lifecycle { thread, deleted, warning } => {
@@ -1030,11 +1032,8 @@ impl AgentState {
                 if deleted { self.threads.retain(|t| t.thread != thread); }
                 else if let Some(t) = self.threads.iter_mut().find(|t| t.thread == thread) { t.archived = true; }
                 if self.thread.as_deref() == Some(&thread) {
-                    self.thread = None;
-                    self.title = None;
-                    self.model = None;
-                    self.active_turn = None;
-                    self.turns.clear();
+                    self.clear_thread();
+                    self.pending_mode = None;
                     self.list_view = true;
                 }
                 true
@@ -3606,8 +3605,6 @@ mod tests {
             })))
             .unwrap();
 
-            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({"op":"list","watch":true}));
-            peer.write_all(&encode_frame(&serde_json::json!({"reply":"list","threads":[]}))).unwrap();
             // After restoring the thread, the client asks to watch every
             // thread's activity for the mark.
             assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "op": "watch" }));
@@ -3615,6 +3612,8 @@ mod tests {
                 "reply": "activity", "working": [], "waiting": []
             })))
             .unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({"op":"list","watch":true}));
+            peer.write_all(&encode_frame(&serde_json::json!({"reply":"list","threads":[]}))).unwrap();
 
             // Client sends turn 2 and then stops it.
             let send_req = read_frame(&mut peer).unwrap();
@@ -5101,6 +5100,8 @@ mod tests {
                 "reply": "activity", "working": [], "waiting": []
             })))
             .unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({"op":"list","watch":true}));
+            peer.write_all(&encode_frame(&serde_json::json!({"reply":"list","threads":[]}))).unwrap();
 
             // The person opens the mode menu.
             assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "op": "models" }));
@@ -5259,7 +5260,7 @@ mod tests {
         assert_eq!(state.mode.as_deref(), Some("ask-first"));
     }
     fn summary(id: &str, cwd: &str, working: bool) -> ThreadSummary {
-        ThreadSummary { archived: false, thread: id.into(), title: id.into(), cwd: cwd.into(), model: None,
+        ThreadSummary { archived: false, thread: id.into(), title: id.into(), cwd: cwd.into(), model: None, mode: None, waiting: false,
             started: 1, updated: 2, turns: 1, state: if working { "working" } else { "done" }.into(), working }
     }
 
@@ -5310,6 +5311,26 @@ mod tests {
         assert!(s.loading);
         assert!(!s.select_thread(Some("another".into())));
         assert_eq!(s.thread.as_deref(), Some("selected"));
+    }
+
+    #[test]
+    fn selecting_new_thread_clears_the_previous_threads_work_and_mode() {
+        let mut state = connected_state(false);
+        state.thread = Some("working".into());
+        state.thread_mark = Mark::Working;
+        state.active_turn = Some(1);
+        state.mode = Some("full-access".into());
+        state.pending_mode = Some("plan".into());
+        state.default_mode = Some("ask-first".into());
+        state.apply(activity(&["working"], &["waiting"]), false);
+        assert!(state.select_thread(None));
+        assert!(state.can_send());
+        assert!(!state.can_stop());
+        assert_eq!(state.shown_mode().as_deref(), Some("ask-first"));
+        state.apply(AgentEvent::Threads {
+            threads: vec![summary("working", "/tmp", true)], finished: false,
+        }, false);
+        assert_eq!(state.mark, Mark::Waiting, "list snapshots must not hide a permission request");
     }
 
 }

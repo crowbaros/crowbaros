@@ -4178,6 +4178,11 @@ fn a_request_after_its_turn_keeps_the_harness_until_stop_withdraws_it() {
     let stub_log = dir.0.join("stub.log");
     let extra = stub_args(&script, &stub_log, &["--idle-timeout-ms", "300"]);
     let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut watcher = handshake(&lever.surface);
+    assert_eq!(
+        ask_lever(&mut watcher, json!({"op":"list","watch":true}))["reply"],
+        "list"
+    );
     let mut peer = handshake(&lever.person);
     let (thread, _) = send(&mut peer, None, "hello");
     read_until(&mut peer, |f| f["event"] == "done");
@@ -4197,6 +4202,22 @@ fn a_request_after_its_turn_keeps_the_harness_until_stop_withdraws_it() {
             list["threads"][0]["waiting"].clone()
         ),
         (json!(false), json!(true))
+    );
+
+    // A post-turn request still keeps deletion unsafe and the list current.
+    let snapshot = read_until(&mut watcher, |f| {
+        f["event"] == "threads" && f["threads"][0]["waiting"] == true
+    });
+    assert_eq!(snapshot["threads"][0]["working"], false);
+    assert_eq!(snapshot["threads"][0]["archived"], false);
+    assert_eq!(snapshot["threads"][0]["mode"], "ask-first");
+    assert_eq!(
+        ask_lever(&mut peer, json!({"op":"delete","thread":thread}))["code"],
+        "working"
+    );
+    assert_eq!(
+        ask_lever(&mut peer, json!({"op":"resume","thread":thread}))["reply"],
+        "resumed"
     );
 
     // Stop withdraws it though no turn works, and the harness is then idle.
