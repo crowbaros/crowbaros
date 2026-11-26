@@ -8267,3 +8267,74 @@ fn a_request_after_a_stop_of_a_thread_at_rest_is_put_to_nobody() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn a_mode_the_record_does_not_take_is_taken_back_from_the_session() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "turns": [{
+                "steps": [
+                    { "kind": "subagent_start", "id": "ses_waits", "title": "Waits", "prompt": "Wait" },
+                    { "kind": "text", "text": "Handed off." }
+                ],
+                "after": [
+                    { "kind": "subagent_ask", "subagent": "ses_waits", "id": "call_child", "tool_kind": "read",
+                      "title": "Read /tmp/example", "raw_input": { "path": "/tmp/example" }, "output": "example" },
+                    { "kind": "subagent_end", "subagent": "ses_waits", "status": "completed" },
+                    { "kind": "text", "text": "Reported." },
+                    { "kind": "ask", "id": "call_make", "title": "make", "raw_input": { "command": "make" } }
+                ]
+            }]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &["--wake-quiet-ms", "60000"]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    let asked = read_until(&mut peer, |v| v["event"] == "request" && v["state"] == "waiting");
+
+    // The harness takes Full access, and the record does not.
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    db.busy_timeout(Duration::from_secs(5)).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER refuse_mode BEFORE UPDATE OF mode ON threads \
+         BEGIN SELECT RAISE(ABORT, 'refused'); END",
+    )
+    .unwrap();
+    let set = ask_lever(
+        &mut peer,
+        json!({ "op": "set-mode", "thread": thread, "mode": "full-access" }),
+    );
+    assert_eq!(set["code"], "storage-error", "{set}");
+    wait_until("the session goes back to Ask first", || {
+        stub_modes_set(&stub_log) == ["build", "crowbar-ask-first"]
+    });
+    db.execute_batch("DROP TRIGGER refuse_mode").unwrap();
+    drop(db);
+
+    // What the harness goes on with runs in Ask first.
+    wait_until("the thread takes an answer", || {
+        let answered = ask_lever(
+            &mut peer,
+            json!({ "op": "answer", "thread": thread, "request": asked["request"], "answer": "once" }),
+        );
+        answered["code"] != "working"
+    });
+    let make = read_until(&mut peer, |v| {
+        assert!(
+            !(v["event"] == "act" && v["title"] == "make" && v["state"] == "done"),
+            "the command ran without asking: {v}"
+        );
+        v["event"] == "request" && v["state"] == "waiting" && v["title"] == "make"
+    });
+    assert_eq!(make["turn"], turn + 1, "{make}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}

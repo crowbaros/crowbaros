@@ -156,6 +156,12 @@ struct PendingSetMode {
     peer_id: Option<u64>,
     thread_id: String,
     mode: String,
+    /// The mode the thread had, which the session goes back to if the
+    /// record cannot take the new one.
+    previous: String,
+    /// The session is going back to `mode`, the thread's still, after the
+    /// record did not take another.
+    reverting: bool,
 }
 
 struct PendingSetModel {
@@ -713,6 +719,25 @@ impl Service {
     /// stopped, and the harness ends with every process under it, so nothing
     /// the turn started goes on. Every other turn it was working on is
     /// interrupted.
+    /// Stops the harness and every process under it, at once, for `why`.
+    fn kill_harness(&mut self, why: &str, log: &mut Log) -> Effects {
+        let Some(harness) = self.harness.take() else {
+            return Effects::default();
+        };
+        let pid = harness.pid();
+        harness.kill_tree();
+        let name = self
+            .harness_config
+            .as_ref()
+            .map(|c| c.name.as_str())
+            .unwrap_or("harness");
+        let _ = log.write(
+            Event::Harness,
+            &format!("stopped {name} (process {pid}) and every process under it: {why}"),
+        );
+        self.after_harness_gone("The harness was stopped.", log)
+    }
+
     fn force_stop(&mut self, thread_id: &str, turn: u64, log: &mut Log) -> Effects {
         self.working_turns.remove(thread_id);
         self.end_turn(thread_id, turn, "stopped", None, log);
@@ -2018,15 +2043,16 @@ impl Service {
             return outcome;
         }
         self.save_endings();
-        match self.store.thread_meta(thread_id) {
+        let previous = match self.store.thread_meta(thread_id) {
             Ok(Some(meta)) => {
                 if meta.working_turn.is_some() || self.thread_busy(thread_id) {
                     return error_outcome("working", "This thread is already working on a turn.");
                 }
+                meta.mode
             }
             Ok(None) => return error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
             Err(err) => return error_outcome("storage-error", &err),
-        }
+        };
         // A thread whose session is live may have work going on in it, a
         // subagent's or a turn the harness begins: the session takes the mode
         // first, and the thread has it once the session does.
@@ -2041,6 +2067,8 @@ impl Service {
                 peer_id: Some(peer_id),
                 thread_id: thread_id.to_string(),
                 mode: mode.to_string(),
+                previous,
+                reverting: false,
             });
             return RequestOutcome {
                 reply: None,
@@ -2058,10 +2086,39 @@ impl Service {
             return Effects::default();
         };
         let item = self.pending_set_modes.remove(pos);
+        if item.reverting {
+            // The session is in a mode the thread's record does not have:
+            // with nothing else to go on, the harness is stopped.
+            return match failed {
+                Some(_) => self.kill_harness("it did not take back a mode Lever could not save", log),
+                None => Effects::default(),
+            };
+        }
         let outcome = match failed {
             Some(message) => error_outcome("harness-error", message),
             None => self.save_mode(thread_id, &item.mode, log),
         };
+        // The session took a mode the record did not: it goes back to the
+        // thread's, so nothing goes on in it in a mode the person was told
+        // it is not in.
+        let unsaved = outcome
+            .reply
+            .as_ref()
+            .is_some_and(|reply| reply["code"] == "storage-error");
+        if unsaved
+            && let Some(harness) = self.harness.as_mut()
+            && let Some(session_id) = harness.session_for_thread(thread_id).map(str::to_string)
+        {
+            harness.set_session_mode(thread_id, None, &session_id, &item.previous);
+            self.modes_in_flight.push((thread_id.to_string(), Instant::now()));
+            self.pending_set_modes.push(PendingSetMode {
+                peer_id: None,
+                thread_id: thread_id.to_string(),
+                mode: item.previous.clone(),
+                previous: item.previous.clone(),
+                reverting: true,
+            });
+        }
         Effects {
             broadcasts: outcome.broadcasts,
             replies: item

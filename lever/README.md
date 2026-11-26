@@ -736,7 +736,9 @@ A `thread-updated` event with the mode follows. Errors: `no-thread`, `working`
 (a turn of the thread is working), `invalid-mode` (not `ask-first`,
 `full-access`, or `plan`, or one the harness is known not to offer),
 `harness-error` (the harness did not take the mode, or stopped first; the
-thread keeps the mode it had), `invalid-request`, `storage-error`.
+thread keeps the mode it had), `invalid-request`, `storage-error` (the record
+did not take the mode: the session goes back to the thread's, and a harness
+that does not take that back is stopped).
 
 #### `set-default-mode`
 
