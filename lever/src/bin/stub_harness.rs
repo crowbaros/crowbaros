@@ -389,6 +389,12 @@ struct AskStep {
     /// The request does not say what kind of act it asks about.
     #[serde(default)]
     request_without_kind: bool,
+    /// The request is the first word of the act: no tool call comes before it.
+    #[serde(default)]
+    request_without_call: bool,
+    /// Once allowed, the act runs this long before it ends.
+    #[serde(default)]
+    run_ms: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -744,6 +750,8 @@ fn ask(
         output,
         withdraw_after_ms,
         request_without_kind,
+        request_without_call,
+        run_ms,
     } = step;
     let (id, title, raw_input, diff, output) = (
         id.as_str(),
@@ -774,7 +782,9 @@ fn ask(
     if let Some(input) = raw_input {
         call = call.raw_input(input.clone());
     }
-    writer.send_update(session_id, SessionUpdate::ToolCall(call));
+    if !request_without_call {
+        writer.send_update(session_id, SessionUpdate::ToolCall(call));
+    }
 
     let sid = session_id.0.as_ref().to_string();
     let mode = asking
@@ -875,6 +885,7 @@ fn ask(
             }
         }
     }
+    thread::sleep(Duration::from_millis(*run_ms));
     act_update(
         writer,
         session_id,

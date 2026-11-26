@@ -214,6 +214,10 @@ pub struct Service {
     /// Threads that had a subagent in the harness now running: what their
     /// session says after their turn ended is a turn the harness began.
     subagent_threads: HashSet<String>,
+    /// Threads whose Stop left nothing of them working, until the person's
+    /// next message: a turn the harness begins on one is stopped as it
+    /// begins, as what reports to it was.
+    held_stops: HashSet<String>,
     /// Subagents currently working, keyed by Lever's `sub-...` ID.
     working_subagents: HashMap<String, WorkingSubagent>,
     /// Requests that wait, by Lever's request ID.
@@ -278,6 +282,7 @@ impl Service {
             idle_since: None,
             working_turns: HashMap::new(),
             subagent_threads: HashSet::new(),
+            held_stops: HashSet::new(),
             working_subagents: HashMap::new(),
             waiting: HashMap::new(),
             activity: (Vec::new(), Vec::new()),
@@ -985,6 +990,7 @@ impl Service {
 
     fn delete_record(&mut self, thread: &str, warning: Option<&str>) -> RequestOutcome {
         self.subagent_threads.remove(thread);
+        self.held_stops.remove(thread);
         if let Err(e) = self.store.delete_thread(thread) {
             return error_outcome("storage-error", &e);
         }
@@ -1722,7 +1728,10 @@ impl Service {
             requested_mode.filter(|_| !new_thread),
             now,
         ) {
-            Ok(turn) => turn,
+            Ok(turn) => {
+                self.held_stops.remove(&thread_id);
+                turn
+            }
             Err(err) => {
                 store_failed(log, &err);
                 // The turn the harness began has ended all the same.
@@ -1846,6 +1855,20 @@ impl Service {
                 }
                 child_sessions_to_cancel.push(sub.harness_session_id.clone());
             }
+        }
+        // A Stop that leaves nothing of the thread working holds against
+        // what the harness begins on it after, until the person's next
+        // message: OpenCode answers a stopped subagent's report too.
+        let leaves_nothing = self
+            .working_subagents
+            .values()
+            .all(|s| s.thread_id != thread_id || s.stop_asked.is_some())
+            && self
+                .working_turns
+                .get(thread_id)
+                .is_none_or(|active| requested_turn.is_none_or(|t| active.turn == t));
+        if leaves_nothing {
+            self.held_stops.insert(thread_id.to_string());
         }
         if !child_sessions_to_cancel.is_empty()
             && let Some(harness) = self.harness.as_mut()
@@ -2160,6 +2183,7 @@ impl Service {
         self.models_refresh_pending = false;
         self.idle_since = None;
         self.subagent_threads.clear();
+        self.held_stops.clear();
     }
 
     fn dispatch_turn(&mut self, thread_id: &str) {
@@ -2948,17 +2972,7 @@ impl Service {
                         };
                     }
                 };
-                // A turn the harness began is not quiet while an act of it works.
-                if let Some(active) = self.working_turns.get_mut(&thread_id)
-                    && active.turn == recorded_turn
-                    && let TurnDispatch::HarnessStarted { open_acts, .. } = &mut active.dispatch
-                {
-                    if matches!(act.state.as_str(), "pending" | "working") {
-                        open_acts.insert(act.id.clone());
-                    } else {
-                        open_acts.remove(&act.id);
-                    }
-                }
+                self.note_harness_act(&thread_id, recorded_turn, &act.id, &act.state);
                 broadcasts.push(Broadcast {
                     thread_id: thread_id.clone(),
                     message: act_event_json(&thread_id, recorded_turn, &act),
@@ -3220,11 +3234,16 @@ impl Service {
             .values()
             .find(|s| s.thread_id == thread_id && s.harness_session_id == harness_subagent_id)
             .map(|s| s.subagent_id.clone());
-        let stop_asked = existing_id
-            .as_deref()
-            .and_then(|id| self.working_subagents.get(id))
-            .and_then(|s| s.stop_asked)
-            .or_else(|| self.working_turns.get(thread_id).and_then(|t| t.stop_asked));
+        // A subagent Lever knows keeps its own Stop: a Stop of a newer turn
+        // was not for it. One it has yet to hear of is of the turn it joins.
+        let stop_asked = match existing_id.as_deref().and_then(|id| self.working_subagents.get(id)) {
+            Some(sub) => sub.stop_asked,
+            None => self
+                .working_turns
+                .get(thread_id)
+                .filter(|t| t.turn == turn)
+                .and_then(|t| t.stop_asked),
+        };
         let effective_state = match state {
             Some("interrupted") if stop_asked.is_some() => Some("stopped"),
             other => other,
@@ -3448,6 +3467,9 @@ impl Service {
             };
             let act = match self.store.upsert_act(&patch, unix_now()) {
                 Ok((act_turn, act)) => {
+                    // An act a request is the first word of is open as one
+                    // the harness told of first is.
+                    self.note_harness_act(thread_id, act_turn, &act.id, &act.state);
                     effects.broadcasts.push(Broadcast {
                         thread_id: thread_id.to_string(),
                         message: act_event_json(thread_id, act_turn, &act),
@@ -3531,6 +3553,7 @@ impl Service {
     fn after_harness_gone(&mut self, why: &str, log: &mut Log) -> Effects {
         self.model_catalog = None;
         self.subagent_threads.clear();
+        self.held_stops.clear();
         self.efforts.clear();
         self.commands = None;
         self.thread_commands.clear();
@@ -3640,6 +3663,20 @@ impl Service {
                 state,
                 error: error.map(str::to_string),
             });
+        }
+    }
+
+    /// A turn the harness began is not quiet while an act of it works.
+    fn note_harness_act(&mut self, thread_id: &str, turn: u64, act_id: &str, state: &str) {
+        if let Some(active) = self.working_turns.get_mut(thread_id)
+            && active.turn == turn
+            && let TurnDispatch::HarnessStarted { open_acts, .. } = &mut active.dispatch
+        {
+            if matches!(state, "pending" | "working") {
+                open_acts.insert(act_id.to_string());
+            } else {
+                open_acts.remove(act_id);
+            }
         }
     }
 
@@ -3832,6 +3869,10 @@ impl Service {
             },
         };
         self.idle_since = None;
+        let held = self.held_stops.contains(thread_id);
+        if held && let Some(harness) = self.harness.as_mut() {
+            harness.cancel_session(&session_id);
+        }
         self.working_turns.insert(
             thread_id.to_string(),
             WorkingTurn {
@@ -3849,7 +3890,9 @@ impl Service {
                     open_acts: HashSet::new(),
                 },
                 unsaved: false,
-                stop_asked: None,
+                // Asked after it was last heard from, so a turn that says no
+                // more once told to stop ends stopped and spares the harness.
+                stop_asked: held.then(Instant::now),
             },
         );
         broadcasts.push(Broadcast {

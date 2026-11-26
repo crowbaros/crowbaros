@@ -2167,3 +2167,45 @@ fn ctrl_c_once_a_newer_turn_ended_stops_an_older_turns_subagent() {
         shown.child.try_wait().expect("try_wait").is_some()
     });
 }
+
+#[test]
+fn ctrl_c_during_a_newer_turn_stops_it_and_then_an_older_turns_subagent() {
+    let lab = Lab::with_script(json!({
+        "turns": [
+            {
+                "match": "first",
+                "steps": [
+                    { "kind": "subagent_start", "id": "ses_cli_elder", "title": "Elder", "prompt": "Wait" },
+                    { "kind": "text", "text": "Started." }
+                ],
+                "after": [{ "kind": "subagent_stall", "subagent": "ses_cli_elder" }]
+            },
+            { "match": "second", "steps": [{ "kind": "pause_ms", "ms": 5000 }, { "kind": "text", "text": "Second." }] }
+        ]
+    }));
+    let first = Running::start(lab.agent(&["first"]));
+    first.wait_for_err("[subagent] Elder (working)");
+    first.signal(libc::SIGTERM);
+    let thread = only_thread(&lab);
+
+    let second = Running::start(lab.agent(&["--resume", &thread, "second"]));
+    std::thread::sleep(Duration::from_millis(200));
+    second.signal(libc::SIGTERM);
+
+    // Resumed while turn 2 works, the thread is watched through turn 2 and
+    // on, for turn 1's subagent. Ctrl-C while turn 2 works stops turn 2, and
+    // then that subagent: the watch does not wait on it.
+    let (mut keys, screen) = terminal();
+    let mut shown = lab.agent(&["--resume", &thread]);
+    shown.stdin(screen);
+    let mut shown = Running::start(shown);
+    shown.wait_for_err("[subagent] Elder (working)");
+    std::thread::sleep(Duration::from_millis(200));
+    shown.signal(libc::SIGINT);
+    shown.wait_for_err("[subagent] Elder (stopped)");
+    assert!(!lab.run(&["--list"], "").out.contains("(working)"));
+    keys.write_all(&[0x04]).expect("Ctrl-D");
+    wait_for("the client to leave", || {
+        shown.child.try_wait().expect("try_wait").is_some()
+    });
+}

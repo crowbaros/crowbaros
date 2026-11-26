@@ -141,7 +141,12 @@ ACP today:
 - **Stop and OpenCode's background work.** OpenCode's `session/cancel` stops
   only a prompt in flight. A subagent that outlives its turn, and a turn the
   harness began, go on when told to stop, so Lever stops the harness after
-  `--stop-timeout-ms`, as for any Stop the harness does not carry out.
+  `--stop-timeout-ms`, as for any Stop the harness does not carry out. A
+  stopped subagent reports to the parent session too, so a Stop that leaves
+  nothing of the thread working holds until the person's next message: a
+  turn the harness begins meanwhile is stopped as it begins, with any
+  subagent it starts. A Stop of one turn leaves an older turn's subagent
+  working, and the harness running for it.
 - **Models and their providers.** The Models are the values of the session
   configuration option of category `model`. A Model's provider is the group
   the harness lists it under. A harness that lists its Models with no groups,

@@ -354,6 +354,8 @@ fn watch(
     // followed to its end.
     let only_requests = turn.is_none() && !working_here(working_subagents);
     let mut stopping = false;
+    // Whether the whole thread was told to stop, not only the turn followed.
+    let mut thread_stopped = false;
     // The request whose answer is asked for here, and the answers it offers.
     let mut asking: Option<(String, Vec<String>)> = None;
     // The request taken up here, until Lever says how it ended: no other
@@ -450,7 +452,10 @@ fn watch(
                 // whichever turn: the thread is stopped.
                 match turn.filter(|_| ended.is_none()) {
                     Some(turn) => lever.stop(thread, turn)?,
-                    None => lever.send(json!({ "op": "stop", "thread": thread }))?,
+                    None => {
+                        lever.send(json!({ "op": "stop", "thread": thread }))?;
+                        thread_stopped = true;
+                    }
                 }
                 continue;
             }
@@ -617,6 +622,13 @@ fn watch(
             _ => continue,
         };
         *last = end;
+        // The turn followed has ended stopped while an older turn's subagent
+        // still holds the watch: Ctrl-C was for all the watch shows, so the
+        // thread is stopped.
+        if stopping && !thread_stopped && working_here(working_subagents) {
+            lever.send(json!({ "op": "stop", "thread": thread }))?;
+            thread_stopped = true;
+        }
         // On a terminal, a request that still waits is asked for first, and
         // any working subagent keeps the watch open until it finishes.
         if (stopping || !prompted || open.is_empty()) && !working_here(working_subagents) {
