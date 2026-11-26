@@ -82,16 +82,42 @@ historical behavior evidence, not a current Fedora workflow.
   as it is, and it is up or put away after unlock as it was.
 - When `CROWBAR_LEVER_SOCKET` is set, the shell connects to Lever's surface
   socket (`/run/crowbar-lever/surface`) with backoff using the shared version-1
-  framing, waits for Lever's initial `status` (and restores the active or newest
-  thread via `list` and `resume` after a restart) before reporting connected,
-  sends messages and `stop` for the thread, streams the answer, each act, notes,
-  desktop context, and stopped/failed/interrupted states, and shows when no
-  harness is configured. Putting the drawer away stops
-  nothing. The mark (`Working` and `Done`) is shown in the bar and, whenever a
-  fullscreen window covers the bar while the drawer is put away, in a floating
-  overlay surface (`crowbaros-mark`) at the top right. The shell's own
-  `crowbar-shell`-only `control.sock` answers `agent` (drawer and mark state)
-  beside `snapshot`.
+  framing, waits for Lever's initial `status` (and restores the active thread,
+  or after a fresh start the one waiting for the person, else the working or
+  newest one, via `list` and `resume`) before reporting connected, then sends
+  `watch`. It sends messages and `stop` for the thread, streams the answer,
+  each act, notes, desktop context, and stopped/failed/interrupted states, and
+  shows when no harness is configured. Putting the drawer away stops nothing.
+- A request from the harness shows in its turn: the exact command, or the file
+  and the change, with removed (`-`) and added (`+`) lines told apart in the
+  mono face, and one control per answer it offers, named as the harness names
+  them. A click sends `answer`; the card then says what was answered, or that
+  the request was withdrawn. A request waits with no time limit, as long as
+  Lever says it does, after its turn ended too: the drawer redraws it when
+  summoned again and after the shell restarts, from `resume`. Stop shows
+  while the thread works or a request of its waits, and withdraws it. A long
+  change shows as Lever cut it, what it takes out and what it puts in.
+- The drawer's header shows the thread's mode. Its control opens a menu of the
+  modes Lever offers, asked for with `models` only when the menu opens, since
+  that starts the harness. Picking one sends `set-mode`, or, for the drawer's
+  new thread, goes with its first message. The control rests while the thread
+  works. The menu also sets the mode new threads start in
+  (`set-default-mode`), Ask first or Full access, and shows which it is.
+- The mark covers every thread, from Lever's `activity`: `Waiting` while any
+  request waits, else `Working` while any thread works, else `Done` once the
+  last working thread ends with the drawer put away, until the drawer is
+  summoned or put away. It is shown in the bar and, whenever a fullscreen
+  window covers the bar while the drawer is put away, in a floating overlay
+  surface (`crowbaros-mark`) at the top right. The drawer never comes up on
+  its own, not even for a request.
+- The shell's own `crowbar-shell`-only `control.sock` answers `agent` beside
+  `snapshot`: whether the drawer is up and on which display, the mark, the
+  thread with its turns, requests, and mode, the starting mode, whether the
+  mode menu is open, and `controls`, the bounds of each control the drawer
+  shows, in the display's logical pixels, for checks to click: `mode`,
+  `mode:<id>`, `default-mode:<id>`, `answer:<request>:<answer>`, `send`,
+  `stop`, and `close`. A control of the thread scrolled out of view is left
+  out.
 - The desktop starts locked. While the compositor has it locked, the shell
   shows its lock screen, and the bar's lock button and Super+L lock it. The
   lock screen takes the person's password at once and sends it to Base's

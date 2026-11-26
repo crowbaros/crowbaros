@@ -3,15 +3,17 @@
 //! the pinned `agent-client-protocol-schema` v1 types.
 
 use crate::channel::LEVER_VERSION;
+use crate::opencode;
 use crate::sys;
 use agent_client_protocol_schema::v1::{
-    AGENT_METHOD_NAMES, CLIENT_METHOD_NAMES, CancelNotification, CloseSessionRequest, ContentBlock, Error as AcpError,
-    ErrorCode, Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest,
-    LoadSessionResponse, NewSessionRequest, NewSessionResponse, Notification, PermissionOptionKind, PromptRequest,
-    PromptResponse, Request, RequestId, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    Response, SelectedPermissionOutcome, SessionConfigId, SessionConfigKind, SessionConfigOption,
-    SessionConfigOptionCategory, SessionConfigSelectOptions, SessionId, SessionUpdate, SetSessionConfigOptionRequest,
-    SetSessionConfigOptionResponse, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
+    AGENT_METHOD_NAMES, CLIENT_METHOD_NAMES, CancelNotification, CancelRequestNotification, CloseSessionRequest,
+    ContentBlock, Error as AcpError, ErrorCode, Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage,
+    LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, Notification,
+    PROTOCOL_LEVEL_METHOD_NAMES, PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, Response, SelectedPermissionOutcome,
+    SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOptions,
+    SessionId, SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason,
+    ToolCallContent, ToolCallStatus, ToolKind,
 };
 use agent_client_protocol_schema::{MaybeUndefined, ProtocolVersion};
 use serde_json::{Value, json};
@@ -32,6 +34,50 @@ const READ_BUDGET: usize = 256 * 1024;
 /// speaking it, and Lever would otherwise keep all of it in memory.
 const MAX_LINE: usize = 16 * 1024 * 1024;
 const LONG_LINE: &str = "wrote a line longer than 16 MiB";
+
+/// The OpenCode agent that is Lever's Ask first mode.
+pub const ASK_FIRST_AGENT: &str = "crowbar-ask-first";
+/// Lever's modes, in the order it offers them, each with the harness's value
+/// for it and the person's name for it.
+const MODES: [(&str, &str, &str); 3] = [
+    ("ask-first", ASK_FIRST_AGENT, "Ask first"),
+    ("full-access", "build", "Full access"),
+    ("plan", "plan", "Plan"),
+];
+/// The longest a request's detail grows: a change to a long file is shown in
+/// part, and says how much was left out.
+const MAX_DETAIL_LINES: usize = 400;
+/// Lines of a file shown around a change, as a diff has them.
+const DIFF_CONTEXT: usize = 3;
+
+/// Lever's ID for a mode, from the harness's value for it.
+fn lever_mode(harness_value: &str) -> Option<&'static str> {
+    MODES
+        .iter()
+        .find(|(_, value, _)| *value == harness_value)
+        .map(|(id, _, _)| *id)
+}
+
+/// The harness's value for one of Lever's modes.
+fn harness_mode(lever_id: &str) -> Option<&'static str> {
+    MODES
+        .iter()
+        .find(|(id, _, _)| *id == lever_id)
+        .map(|(_, value, _)| *value)
+}
+
+/// The person's name for one of Lever's modes.
+pub fn mode_name(lever_id: &str) -> Option<&'static str> {
+    MODES
+        .iter()
+        .find(|(id, _, _)| *id == lever_id)
+        .map(|(_, _, name)| *name)
+}
+
+/// Whether `id` is one of Lever's modes.
+pub fn is_mode(id: &str) -> bool {
+    harness_mode(id).is_some()
+}
 
 /// Configuration for a harness Lever can start on demand.
 #[derive(Debug, Clone)]
@@ -59,6 +105,21 @@ pub struct ModelCatalog {
     pub models: Vec<ModelOption>,
     pub default_model: Option<String>,
     pub config_id: Option<String>,
+    /// Lever's modes the harness offers, in Lever's order.
+    pub modes: Vec<String>,
+}
+
+/// A session's mode selector, as Lever reads it from its configuration
+/// options.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ModeSelector {
+    config_id: String,
+    /// Lever's modes the harness offers, in Lever's order.
+    modes: Vec<String>,
+    /// The session's mode, when it is one of Lever's.
+    current: Option<String>,
+    /// The harness's value for the session's mode, whatever it is.
+    current_value: String,
 }
 
 /// How an ACP prompt turn ended.
@@ -105,8 +166,37 @@ pub enum AcpEvent {
     },
     CatalogUpdated {
         thread_id: String,
-        catalog: ModelCatalog,
+        catalog: Option<ModelCatalog>,
         current_model: Option<String>,
+        /// The session's mode changed to this one of Lever's.
+        current_mode: Option<String>,
+    },
+    ModeSet {
+        thread_id: String,
+        turn: u64,
+    },
+    ModeSetFailed {
+        thread_id: String,
+        turn: u64,
+        message: String,
+    },
+    /// The harness asks the person before it acts.
+    PermissionRequested {
+        thread_id: String,
+        /// Lever's handle for answering it, never shown to anyone.
+        handle: u64,
+        harness_call_id: String,
+        /// The act's kind, when the harness said it.
+        kind: Option<String>,
+        title: String,
+        detail: Option<String>,
+        path: Option<String>,
+        /// Lever's answers with the harness's names for them.
+        answers: Vec<(String, String)>,
+    },
+    /// The harness withdrew a request it asked.
+    PermissionWithdrawn {
+        handle: u64,
     },
     TextChunk {
         thread_id: String,
@@ -159,6 +249,12 @@ enum PendingRpc {
         session_id: String,
         model: String,
     },
+    SetMode {
+        thread_id: String,
+        turn: u64,
+        session_id: String,
+        mode: String,
+    },
     Prompt {
         thread_id: String,
         turn: u64,
@@ -167,6 +263,9 @@ enum PendingRpc {
 
 pub struct AcpHarness {
     child: Child,
+    /// When the harness started, so what it left behind is told from what
+    /// an earlier one did.
+    started: u64,
     stdin: Option<ChildStdin>,
     stdout: ChildStdout,
     write_buf: Vec<u8>,
@@ -180,7 +279,15 @@ pub struct AcpHarness {
     supports_close_session: bool,
     probing_models: bool,
     model_config_id: Option<String>,
+    mode_config_id: Option<String>,
     pending: HashMap<i64, PendingRpc>,
+    /// Requests the harness asked that wait for an answer, by Lever's handle:
+    /// the harness's ID for the request, and its option for each of Lever's
+    /// answers.
+    permissions: HashMap<u64, Permission>,
+    next_permission: u64,
+    /// Each session's mode, as Lever's mode ID.
+    session_modes: HashMap<String, String>,
     thread_to_session: HashMap<String, String>,
     session_to_thread: HashMap<String, String>,
     session_models: HashMap<String, String>,
@@ -190,6 +297,11 @@ pub struct AcpHarness {
     /// Tool call IDs seen per thread, used only to redact harness error messages
     /// and unrecognized updates without altering normal model output.
     thread_tool_ids: HashMap<String, HashSet<String>>,
+}
+
+struct Permission {
+    rpc_id: RequestId,
+    options: Vec<(String, String)>,
 }
 
 impl AcpHarness {
@@ -203,7 +315,9 @@ impl AcpHarness {
             .find(|(k, _)| k == "OPENCODE_CONFIG_CONTENT")
             .map(|(_, v)| v.clone())
             .or_else(|| std::env::var("OPENCODE_CONFIG_CONTENT").ok());
-        let (env_set, env_remove) = build_harness_env(&config.env, existing_config.as_deref(), free_hosted_models);
+        let person = opencode::person_settings(&config.env, existing_config.as_deref());
+        let (env_set, env_remove) =
+            build_harness_env(&config.env, existing_config.as_deref(), &person, free_hosted_models);
         let mut child = sys::spawn_harness(&config.program, &config.args, &env_set, &env_remove)
             .map_err(|e| format!("could not start harness {}: {e}", config.name))?;
         let stdin = child
@@ -225,7 +339,9 @@ impl AcpHarness {
             ));
         }
 
+        let started = sys::start_time(child.id()).unwrap_or(0);
         let mut harness = Self {
+            started,
             child,
             stdin: Some(stdin),
             stdout,
@@ -238,7 +354,11 @@ impl AcpHarness {
             supports_close_session: false,
             probing_models: false,
             model_config_id: None,
+            mode_config_id: None,
             pending: HashMap::new(),
+            permissions: HashMap::new(),
+            next_permission: 1,
+            session_modes: HashMap::new(),
             thread_to_session: HashMap::new(),
             session_to_thread: HashMap::new(),
             session_models: HashMap::new(),
@@ -289,11 +409,69 @@ impl AcpHarness {
         if let Some(session_id) = self.thread_to_session.remove(thread_id) {
             self.session_to_thread.remove(&session_id);
             self.session_models.remove(&session_id);
+            self.session_modes.remove(&session_id);
         }
     }
 
     pub fn session_current_model(&self, session_id: &str) -> Option<&str> {
         self.session_models.get(session_id).map(String::as_str)
+    }
+
+    /// A session's mode, as Lever's mode ID, when it is one of Lever's.
+    pub fn session_current_mode(&self, session_id: &str) -> Option<&str> {
+        self.session_modes.get(session_id).map(String::as_str)
+    }
+
+    /// Whether the harness has a mode selector Lever can set.
+    pub fn has_modes(&self) -> bool {
+        self.mode_config_id.is_some()
+    }
+
+    /// Sets an active session's mode, one of Lever's, through
+    /// `session/set_config_option`.
+    pub fn set_session_mode(&mut self, thread_id: &str, turn: u64, session_id: &str, mode: &str) {
+        let config_id = self.mode_config_id.clone().unwrap_or_else(|| "mode".to_string());
+        let value = harness_mode(mode).unwrap_or(mode);
+        let req = SetSessionConfigOptionRequest::new(
+            SessionId::new(session_id.to_string()),
+            SessionConfigId::new(config_id),
+            value,
+        );
+        let id = self.send_request(AGENT_METHOD_NAMES.session_set_config_option, &req);
+        self.pending.insert(
+            id,
+            PendingRpc::SetMode {
+                thread_id: thread_id.to_string(),
+                turn,
+                session_id: session_id.to_string(),
+                mode: mode.to_string(),
+            },
+        );
+        let _ = self.on_writable();
+    }
+
+    /// Answers a request the harness asked: with the option it offered for
+    /// Lever's `answer`, or `cancelled` when there is none. Returns `false`
+    /// when the request no longer waits, or offers no such answer.
+    pub fn answer_permission(&mut self, handle: u64, answer: Option<&str>) -> bool {
+        let Some(permission) = self.permissions.get(&handle) else {
+            return false;
+        };
+        let outcome = match answer {
+            None => RequestPermissionOutcome::Cancelled,
+            Some(answer) => match permission.options.iter().find(|(ours, _)| ours == answer) {
+                Some((_, option_id)) => {
+                    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id.clone()))
+                }
+                None => return false,
+            },
+        };
+        let Some(permission) = self.permissions.remove(&handle) else {
+            return false;
+        };
+        self.send_result_response(permission.rpc_id, RequestPermissionResponse::new(outcome));
+        let _ = self.on_writable();
+        true
     }
 
     /// Probes the harness's offered Models by opening a session, reading its
@@ -506,6 +684,28 @@ impl AcpHarness {
         events
     }
 
+    /// Ends the harness and every process under it at once, for a harness
+    /// that did not stop a turn when asked: what the turn started must not go
+    /// on.
+    pub fn kill_tree(mut self) {
+        self.stdin.take();
+        let pid = self.child.id();
+        sys::kill_all_of_harness(pid, self.started);
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        // What it left behind ended too, and is Lever's to wait for. One
+        // that is still there is ended again.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            sys::reap_orphans(None);
+            if sys::live_of_harness(pid, self.started).is_empty() || Instant::now() >= deadline {
+                break;
+            }
+            sys::kill_all_of_harness(pid, self.started);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// Stops and reaps the harness child process.
     pub fn stop(mut self) {
         self.stdin.take();
@@ -604,11 +804,7 @@ impl AcpHarness {
             if let Ok(id) = serde_json::from_value::<RequestId>(value["id"].clone()) {
                 let method = value.get("method").and_then(Value::as_str).unwrap_or("");
                 if method == CLIENT_METHOD_NAMES.session_request_permission {
-                    // Carrying permission requests to the person is #378. Until
-                    // then, answer with a valid ACP decline rather than -32601
-                    // so a harness does not treat Lever as a broken client.
-                    let outcome = decline_permission_outcome(value.get("params"));
-                    self.send_result_response(id, RequestPermissionResponse::new(outcome));
+                    self.handle_permission_request(id, value.get("params"), events);
                 } else {
                     self.send_error_response(id, AcpError::method_not_found());
                 }
@@ -618,6 +814,10 @@ impl AcpHarness {
         }
 
         if has_method {
+            if value.get("method").and_then(Value::as_str) == Some(PROTOCOL_LEVEL_METHOD_NAMES.cancel_request) {
+                self.handle_cancel_request(value.get("params"), events);
+                return;
+            }
             self.handle_notification(&value, events);
             return;
         }
@@ -625,6 +825,122 @@ impl AcpHarness {
         if has_id {
             self.handle_response(value, events);
         }
+    }
+
+    /// Takes a `session/request_permission` to the person, as a request in
+    /// the thread whose session asks it. One for a session Lever holds for no
+    /// thread is answered `cancelled` at once: nobody would see it.
+    fn handle_permission_request(&mut self, rpc_id: RequestId, params: Option<&Value>, events: &mut Vec<AcpEvent>) {
+        let request = params.and_then(|p| serde_json::from_value::<RequestPermissionRequest>(p.clone()).ok());
+        let thread_id = request.as_ref().and_then(|r| {
+            let sid = r.session_id.0.as_ref();
+            (!self.loading_sessions.contains(sid))
+                .then(|| self.session_to_thread.get(sid).cloned())
+                .flatten()
+        });
+        let (Some(request), Some(thread_id)) = (request, thread_id) else {
+            self.send_result_response(
+                rpc_id,
+                RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
+            );
+            let _ = self.on_writable();
+            return;
+        };
+        let mut options = Vec::new();
+        let mut answers = Vec::new();
+        for option in &request.options {
+            let ours = match option.kind {
+                PermissionOptionKind::AllowOnce => "once",
+                PermissionOptionKind::AllowAlways => "always",
+                PermissionOptionKind::RejectOnce => "no",
+                PermissionOptionKind::RejectAlways => "never",
+                _ => continue,
+            };
+            if options.iter().any(|(o, _): &(String, String)| o == ours) {
+                continue;
+            }
+            options.push((ours.to_string(), option.option_id.0.as_ref().to_string()));
+            answers.push((ours.to_string(), option.name.clone()));
+        }
+        if answers.is_empty() {
+            self.send_result_response(
+                rpc_id,
+                RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
+            );
+            let _ = self.on_writable();
+            return;
+        }
+        let call = &request.tool_call;
+        let call_id = call.tool_call_id.0.as_ref().to_string();
+        self.thread_tool_ids
+            .entry(thread_id.clone())
+            .or_default()
+            .insert(call_id.clone());
+        let kind = call.fields.kind.map(|k| map_tool_kind(k).to_string());
+        // The command or the change is shown as the Model wrote it, as an
+        // act's is: the person answers for exactly that.
+        let (detail, path) = request_detail(call.fields.kind, &call.fields);
+        let title = call
+            .fields
+            .title
+            .clone()
+            .filter(|t| !t.trim().is_empty())
+            .or_else(|| path.clone())
+            .or_else(|| detail.as_ref().and_then(|d| d.lines().next().map(str::to_string)))
+            .unwrap_or_else(|| "Act".to_string());
+        let handle = self.next_permission;
+        self.next_permission += 1;
+        self.permissions.insert(handle, Permission { rpc_id, options });
+        events.push(AcpEvent::PermissionRequested {
+            thread_id,
+            handle,
+            harness_call_id: call_id,
+            kind,
+            title,
+            detail,
+            path,
+            answers,
+        });
+    }
+
+    /// The harness withdrew a request it asked (`$/cancel_request`).
+    fn handle_cancel_request(&mut self, params: Option<&Value>, events: &mut Vec<AcpEvent>) {
+        let Some(cancel) = params.and_then(|p| serde_json::from_value::<CancelRequestNotification>(p.clone()).ok())
+        else {
+            return;
+        };
+        let handle = self
+            .permissions
+            .iter()
+            .find(|(_, permission)| permission.rpc_id == cancel.request_id)
+            .map(|(handle, _)| *handle);
+        if let Some(handle) = handle
+            && let Some(permission) = self.permissions.remove(&handle)
+        {
+            // The request still gets its answer, as ACP has it: cancelled.
+            self.send_result_response(
+                permission.rpc_id,
+                RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
+            );
+            let _ = self.on_writable();
+            events.push(AcpEvent::PermissionWithdrawn { handle });
+        }
+    }
+
+    /// Reads a session's mode selector from its configuration options, and
+    /// keeps what Lever needs to set it.
+    fn take_modes(&mut self, session_id: &str, options: Option<&[SessionConfigOption]>) -> Option<ModeSelector> {
+        let selector = options.and_then(extract_modes)?;
+        self.mode_config_id = Some(selector.config_id.clone());
+        match &selector.current {
+            Some(mode) => {
+                self.session_modes.insert(session_id.to_string(), mode.clone());
+            }
+            None => {
+                self.session_modes.remove(session_id);
+            }
+        }
+        Some(selector)
     }
 
     fn handle_response(&mut self, value: Value, events: &mut Vec<AcpEvent>) {
@@ -655,6 +971,7 @@ impl AcpHarness {
                             models: Vec::new(),
                             default_model: None,
                             config_id: None,
+                            modes: Vec::new(),
                         })));
                     } else {
                         events.push(AcpEvent::ModelsProbed(Err(self.redact_for_thread(None, &raw_msg))));
@@ -682,6 +999,14 @@ impl AcpHarness {
                 PendingRpc::SetModel { thread_id, turn, .. } => {
                     let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
                     events.push(AcpEvent::ModelSetFailed {
+                        thread_id,
+                        turn,
+                        message,
+                    });
+                }
+                PendingRpc::SetMode { thread_id, turn, .. } => {
+                    let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
+                    events.push(AcpEvent::ModeSetFailed {
                         thread_id,
                         turn,
                         message,
@@ -729,7 +1054,7 @@ impl AcpHarness {
                 self.probing_models = false;
                 match serde_json::from_value::<NewSessionResponse>(result) {
                     Ok(resp) => {
-                        let catalog = resp
+                        let mut catalog = resp
                             .config_options
                             .as_deref()
                             .and_then(extract_model_catalog)
@@ -738,7 +1063,12 @@ impl AcpHarness {
                                 models: Vec::new(),
                                 default_model: None,
                                 config_id: None,
+                                modes: Vec::new(),
                             });
+                        if let Some(selector) = resp.config_options.as_deref().and_then(extract_modes) {
+                            self.mode_config_id = Some(selector.config_id);
+                            catalog.modes = selector.modes;
+                        }
                         if let Some(ref cid) = catalog.config_id {
                             self.model_config_id = Some(cid.clone());
                         }
@@ -765,7 +1095,7 @@ impl AcpHarness {
                 // tell it from another nor load it again.
                 Ok(resp) if !resp.session_id.0.is_empty() => {
                     let sid = resp.session_id.0.as_ref().to_string();
-                    let catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
+                    let mut catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
                     let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
                     if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
                         self.model_config_id = Some(cid.clone());
@@ -773,6 +1103,10 @@ impl AcpHarness {
                     if self.bind_session(&thread_id, &sid) {
                         if let Some(ref m) = current_model {
                             self.session_models.insert(sid.clone(), m.clone());
+                        }
+                        let modes = self.take_modes(&sid, resp.config_options.as_deref());
+                        if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
+                            cat.modes = selector.modes.clone();
                         }
                         events.push(AcpEvent::SessionReady {
                             thread_id,
@@ -806,13 +1140,17 @@ impl AcpHarness {
                 self.loading_sessions.remove(&session_id);
                 match serde_json::from_value::<LoadSessionResponse>(result) {
                     Ok(resp) if self.bind_session(&thread_id, &session_id) => {
-                        let catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
+                        let mut catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
                         let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
                         if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
                             self.model_config_id = Some(cid.clone());
                         }
                         if let Some(ref m) = current_model {
                             self.session_models.insert(session_id.clone(), m.clone());
+                        }
+                        let modes = self.take_modes(&session_id, resp.config_options.as_deref());
+                        if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
+                            cat.modes = selector.modes.clone();
                         }
                         events.push(AcpEvent::SessionReady {
                             thread_id,
@@ -832,10 +1170,16 @@ impl AcpHarness {
                 model,
             } => match serde_json::from_value::<SetSessionConfigOptionResponse>(result) {
                 Ok(resp) => {
-                    let catalog = extract_model_catalog(&resp.config_options);
+                    let mut catalog = extract_model_catalog(&resp.config_options);
                     let applied = catalog.as_ref().and_then(|c| c.default_model.clone()).unwrap_or(model);
                     if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
                         self.model_config_id = Some(cid.clone());
+                    }
+                    if let (Some(cat), Some(selector)) = (
+                        catalog.as_mut(),
+                        self.take_modes(&session_id, Some(&resp.config_options)),
+                    ) {
+                        cat.modes = selector.modes;
                     }
                     self.session_models.insert(session_id, applied.clone());
                     events.push(AcpEvent::ModelSet {
@@ -846,6 +1190,36 @@ impl AcpHarness {
                     });
                 }
                 Err(_) => events.push(AcpEvent::ModelSetFailed {
+                    thread_id,
+                    turn,
+                    message: "The harness returned an invalid configuration response.".to_string(),
+                }),
+            },
+            PendingRpc::SetMode {
+                thread_id,
+                turn,
+                session_id,
+                mode,
+            } => match serde_json::from_value::<SetSessionConfigOptionResponse>(result) {
+                Ok(resp) => {
+                    // What the harness says the mode is now is what it is. A
+                    // harness that says nothing of it took what was asked.
+                    let selector = self.take_modes(&session_id, Some(&resp.config_options));
+                    match selector {
+                        Some(sel) if sel.current.as_deref() != Some(mode.as_str()) => {
+                            events.push(AcpEvent::ModeSetFailed {
+                                thread_id,
+                                turn,
+                                message: "The harness did not take this thread's mode.".to_string(),
+                            });
+                        }
+                        _ => {
+                            self.session_modes.insert(session_id, mode);
+                            events.push(AcpEvent::ModeSet { thread_id, turn });
+                        }
+                    }
+                }
+                Err(_) => events.push(AcpEvent::ModeSetFailed {
                     thread_id,
                     turn,
                     message: "The harness returned an invalid configuration response.".to_string(),
@@ -966,18 +1340,29 @@ impl AcpHarness {
                 }
             }
             Ok(SessionUpdate::ConfigOptionUpdate(cfg)) => {
-                if let Some(catalog) = extract_model_catalog(&cfg.config_options) {
-                    if let Some(ref cid) = catalog.config_id {
+                let before = self.session_modes.get(session_id).cloned();
+                let modes = self.take_modes(session_id, Some(&cfg.config_options));
+                let mut catalog = extract_model_catalog(&cfg.config_options);
+                let mut current_model = None;
+                if let Some(cat) = catalog.as_mut() {
+                    if let Some(ref cid) = cat.config_id {
                         self.model_config_id = Some(cid.clone());
                     }
-                    let current_model = catalog.default_model.clone();
+                    current_model = cat.default_model.clone();
                     if let Some(ref m) = current_model {
                         self.session_models.insert(session_id.to_string(), m.clone());
                     }
+                    if let Some(selector) = modes.as_ref() {
+                        cat.modes = selector.modes.clone();
+                    }
+                }
+                let current_mode = modes.and_then(|m| m.current).filter(|now| before.as_ref() != Some(now));
+                if catalog.is_some() || current_mode.is_some() {
                     events.push(AcpEvent::CatalogUpdated {
                         thread_id,
                         catalog,
                         current_model,
+                        current_mode,
                     });
                 }
             }
@@ -1111,6 +1496,7 @@ impl AcpHarness {
 fn build_harness_env(
     extra: &[(String, String)],
     existing_config_content: Option<&str>,
+    person: &[Value],
     free_hosted_models: bool,
 ) -> (Vec<(String, String)>, Vec<&'static str>) {
     let mut env_set: Vec<(String, String)> = extra
@@ -1124,7 +1510,7 @@ fn build_harness_env(
         .collect();
     env_set.push((
         "OPENCODE_CONFIG_CONTENT".to_string(),
-        opencode_config_content(existing_config_content),
+        opencode_config_content(existing_config_content, person),
     ));
     let mut env_remove = Vec::new();
     if free_hosted_models {
@@ -1136,33 +1522,173 @@ fn build_harness_env(
     (env_set, env_remove)
 }
 
-/// Produces the `OPENCODE_CONFIG_CONTENT` JSON string with OpenCode's
-/// self-update switched off, merging into any existing JSON object from the
-/// environment without touching any file in the person's home.
-fn opencode_config_content(existing: Option<&str>) -> String {
+/// Produces the `OPENCODE_CONFIG_CONTENT` JSON string: OpenCode's
+/// self-update switched off, and the Ask first agent, built from OpenCode's
+/// own permission settings, added and made the agent a session starts with.
+/// Ask first keeps the person's own rules for commands and edits (`person`,
+/// their settings documents). It merges into any existing JSON object from
+/// the environment, keeping the other agents there, and touches no file in
+/// the person's home.
+fn opencode_config_content(existing: Option<&str>, person: &[Value]) -> String {
     let mut map = existing
-        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .and_then(opencode::parse_jsonc)
         .and_then(|val| val.as_object().cloned())
         .unwrap_or_default();
     map.insert("update".to_string(), json!("disable"));
+    map.insert("default_agent".to_string(), json!(ASK_FIRST_AGENT));
+    let mut agents = map.get("agent").and_then(Value::as_object).cloned().unwrap_or_default();
+    agents.insert(
+        ASK_FIRST_AGENT.to_string(),
+        json!({
+            "mode": "primary",
+            "description": "Asks before it runs a command or edits a file.",
+            "permission": opencode::ask_first_permission(person),
+        }),
+    );
+    map.insert("agent".to_string(), Value::Object(agents));
     Value::Object(map).to_string()
 }
 
-fn decline_permission_outcome(params: Option<&Value>) -> RequestPermissionOutcome {
-    params
-        .and_then(|p| serde_json::from_value::<RequestPermissionRequest>(p.clone()).ok())
-        .and_then(|req| {
-            req.options
-                .iter()
-                .find(|o| o.kind == PermissionOptionKind::RejectOnce)
-                .or_else(|| {
-                    req.options
-                        .iter()
-                        .find(|o| o.kind == PermissionOptionKind::RejectAlways)
-                })
-                .map(|o| RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(o.option_id.clone())))
+/// Reads a session's mode selector: the configuration option of category
+/// `mode`, or with the ID `mode`.
+fn extract_modes(options: &[SessionConfigOption]) -> Option<ModeSelector> {
+    let opt = options
+        .iter()
+        .find(|o| o.category == Some(SessionConfigOptionCategory::Mode))
+        .or_else(|| options.iter().find(|o| o.id.0.as_ref() == "mode"))?;
+    let SessionConfigKind::Select(select) = &opt.kind else {
+        return None;
+    };
+    let mut values = Vec::new();
+    match &select.options {
+        SessionConfigSelectOptions::Ungrouped(items) => {
+            values.extend(items.iter().map(|item| item.value.0.as_ref().to_string()));
+        }
+        SessionConfigSelectOptions::Grouped(groups) => {
+            for group in groups {
+                values.extend(group.options.iter().map(|item| item.value.0.as_ref().to_string()));
+            }
+        }
+        _ => {}
+    }
+    let modes: Vec<String> = MODES
+        .iter()
+        .filter(|(_, value, _)| values.iter().any(|v| v == value))
+        .map(|(id, _, _)| (*id).to_string())
+        .collect();
+    // A selector that offers none of Lever's modes is one Lever leaves alone.
+    if modes.is_empty() {
+        return None;
+    }
+    let current_value = select.current_value.0.as_ref().to_string();
+    Some(ModeSelector {
+        config_id: opt.id.0.as_ref().to_string(),
+        modes,
+        current: lever_mode(&current_value).map(str::to_string),
+        current_value,
+    })
+}
+
+/// What a request shows the person: the exact command, or the file and the
+/// change, and the file's path for an edit.
+fn request_detail(
+    kind: Option<ToolKind>,
+    fields: &agent_client_protocol_schema::v1::ToolCallUpdateFields,
+) -> (Option<String>, Option<String>) {
+    let content = fields.content.as_deref().unwrap_or(&[]);
+    let diffs: Vec<_> = content
+        .iter()
+        .filter_map(|c| match c {
+            ToolCallContent::Diff(diff) => Some(diff),
+            _ => None,
         })
-        .unwrap_or(RequestPermissionOutcome::Cancelled)
+        .collect();
+    if !diffs.is_empty() {
+        let path = diffs[0].path.display().to_string();
+        let parts: Vec<String> = diffs
+            .iter()
+            .map(|d| {
+                let body = line_diff(d.old_text.as_deref(), &d.new_text);
+                if diffs.len() > 1 {
+                    format!("{}\n{body}", d.path.display())
+                } else {
+                    body
+                }
+            })
+            .collect();
+        return (Some(parts.join("\n")), Some(path));
+    }
+    let input = fields.raw_input.as_ref();
+    let text = |name: &str| {
+        input
+            .and_then(|v| v.get(name))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    // A path or a command is something only when it says something. A text
+    // a change takes out or puts in may be empty, as when lines are deleted.
+    let field = |name: &str| text(name).filter(|s| !s.is_empty());
+    let path = field("path").or_else(|| field("filePath")).or_else(|| {
+        fields
+            .locations
+            .as_ref()
+            .and_then(|l| l.first())
+            .map(|l| l.path.display().to_string())
+    });
+    match kind {
+        Some(ToolKind::Execute) => (field("command").or_else(|| fields.title.clone()), None),
+        Some(ToolKind::Edit | ToolKind::Delete | ToolKind::Move) => {
+            let change = match (text("oldString"), text("newString"), text("content")) {
+                (old, Some(new), _) => Some(line_diff(old.as_deref(), &new)),
+                (None, None, Some(content)) => Some(line_diff(None, &content)),
+                _ => None,
+            };
+            (change, path)
+        }
+        _ => (tool_detail(content, None, input), None),
+    }
+}
+
+/// The change from `old` to `new` as lines that begin `-` and `+`, with a few
+/// unchanged lines around it that begin with a space. Only the part between
+/// the lines both share at their start and their end is shown as changed. A
+/// long change is cut short in what it takes out and in what it puts in
+/// alike, so both show, each with a line that says how much was left.
+fn line_diff(old: Option<&str>, new: &str) -> String {
+    let old_lines: Vec<&str> = old.map(|o| o.lines().collect()).unwrap_or_default();
+    let new_lines: Vec<&str> = new.lines().collect();
+    let prefix = old_lines.iter().zip(&new_lines).take_while(|(a, b)| a == b).count();
+    let suffix = old_lines[prefix..]
+        .iter()
+        .rev()
+        .zip(new_lines[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let before = &old_lines[prefix.saturating_sub(DIFF_CONTEXT)..prefix];
+    let removed = &old_lines[prefix..old_lines.len() - suffix];
+    let added = &new_lines[prefix..new_lines.len() - suffix];
+    let after = &new_lines[new_lines.len() - suffix..(new_lines.len() - suffix + DIFF_CONTEXT).min(new_lines.len())];
+
+    let budget = MAX_DETAIL_LINES.saturating_sub(before.len() + after.len());
+    let (keep_removed, keep_added) = if removed.len() + added.len() <= budget {
+        (removed.len(), added.len())
+    } else {
+        let half = budget / 2;
+        let keep_removed = removed.len().min(half.max(budget.saturating_sub(added.len())));
+        (keep_removed, added.len().min(budget - keep_removed))
+    };
+    let mut out: Vec<String> = Vec::new();
+    out.extend(before.iter().map(|l| format!(" {l}")));
+    out.extend(removed[..keep_removed].iter().map(|l| format!("-{l}")));
+    if keep_removed < removed.len() {
+        out.push(format!("… {} more lines taken out", removed.len() - keep_removed));
+    }
+    out.extend(added[..keep_added].iter().map(|l| format!("+{l}")));
+    if keep_added < added.len() {
+        out.push(format!("… {} more lines put in", added.len() - keep_added));
+    }
+    out.extend(after.iter().map(|l| format!(" {l}")));
+    out.join("\n")
 }
 
 /// Whether a JSON-RPC error from `session/new` means the harness has no Models
@@ -1216,6 +1742,7 @@ fn extract_model_catalog(options: &[SessionConfigOption]) -> Option<ModelCatalog
         models,
         default_model,
         config_id: Some(opt.id.0.as_ref().to_string()),
+        modes: Vec::new(),
     })
 }
 
@@ -1378,45 +1905,56 @@ mod tests {
     }
 
     #[test]
-    fn opencode_config_content_disables_self_update_and_preserves_other_keys() {
+    fn opencode_config_content_disables_self_update_adds_ask_first_and_preserves_other_keys() {
+        let ask_first = json!({
+            "mode": "primary",
+            "description": "Asks before it runs a command or edits a file.",
+            "permission": { "bash": { "*": "ask" }, "edit": { "*": "ask" } },
+        });
         assert_eq!(
-            serde_json::from_str::<Value>(&opencode_config_content(None)).unwrap(),
-            json!({ "update": "disable" })
+            serde_json::from_str::<Value>(&opencode_config_content(None, &[])).unwrap(),
+            json!({ "update": "disable", "default_agent": ASK_FIRST_AGENT, "agent": { ASK_FIRST_AGENT: ask_first } })
         );
         assert_eq!(
-            serde_json::from_str::<Value>(&opencode_config_content(Some(
-                r#"{"model":"stub/stub-1","update":"auto"}"#
-            )))
+            serde_json::from_str::<Value>(&opencode_config_content(
+                Some(r#"{"model":"stub/stub-1","update":"auto","agent":{"mine":{"mode":"primary"}}}"#),
+                &[]
+            ))
             .unwrap(),
-            json!({ "model": "stub/stub-1", "update": "disable" })
+            json!({
+                "model": "stub/stub-1",
+                "update": "disable",
+                "default_agent": ASK_FIRST_AGENT,
+                "agent": { "mine": { "mode": "primary" }, ASK_FIRST_AGENT: ask_first },
+            })
         );
         assert_eq!(
-            serde_json::from_str::<Value>(&opencode_config_content(Some("not-json"))).unwrap(),
-            json!({ "update": "disable" })
+            serde_json::from_str::<Value>(&opencode_config_content(Some("not-json"), &[])).unwrap()["update"],
+            json!("disable")
         );
     }
 
     #[test]
     fn harness_env_toggles_free_hosted_models_without_losing_extra_env() {
         // Without extra env, free_hosted_models=false also disables models.opencode.ai fetch.
-        let (default_off, _) = build_harness_env(&[], None, false);
+        let (default_off, _) = build_harness_env(&[], None, &[], false);
         assert!(default_off.contains(&("OPENCODE_DISABLE_FREE_MODELS".into(), "1".into())));
         assert!(default_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "1".into())));
 
-        let (default_on, rm_default_on) = build_harness_env(&[], None, true);
+        let (default_on, rm_default_on) = build_harness_env(&[], None, &[], true);
         assert!(!default_on.iter().any(|(k, _)| k == "OPENCODE_DISABLE_FREE_MODELS"));
         assert!(!default_on.iter().any(|(k, _)| k == "OPENCODE_DISABLE_MODELS_FETCH"));
         assert_eq!(rm_default_on, vec!["OPENCODE_DISABLE_FREE_MODELS"]);
 
         // Even an explicit `=0` cannot re-enable models.opencode.ai fetch while free Models are off.
         let override_zero = vec![("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "0".to_string())];
-        let (forced_off, _) = build_harness_env(&override_zero, None, false);
+        let (forced_off, _) = build_harness_env(&override_zero, None, &[], false);
         assert!(forced_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "1".into())));
         assert!(!forced_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "0".into())));
 
         // Explicit --harness-env OPENCODE_DISABLE_MODELS_FETCH=1 is preserved in both states.
         let extra = vec![("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "1".to_string())];
-        let (set_off, rm_off) = build_harness_env(&extra, None, false);
+        let (set_off, rm_off) = build_harness_env(&extra, None, &[], false);
         assert_eq!(
             set_off
                 .iter()
@@ -1432,7 +1970,7 @@ mod tests {
         );
         assert!(rm_off.is_empty());
 
-        let (set_on, rm_on) = build_harness_env(&extra, None, true);
+        let (set_on, rm_on) = build_harness_env(&extra, None, &[], true);
         assert!(set_on.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "1".into())));
         assert!(!set_on.iter().any(|(k, _)| k == "OPENCODE_DISABLE_FREE_MODELS"));
         assert_eq!(rm_on, vec!["OPENCODE_DISABLE_FREE_MODELS"]);
@@ -1455,30 +1993,110 @@ mod tests {
     }
 
     #[test]
-    fn permission_requests_are_declined_with_reject_option_or_cancelled() {
-        let with_reject = json!({
-            "sessionId": "s1",
-            "toolCall": { "toolCallId": "tc1", "title": "Run shell" },
-            "options": [
-                { "optionId": "allow", "name": "Allow", "kind": "allow_once" },
-                { "optionId": "reject", "name": "Reject", "kind": "reject_once" }
-            ]
-        });
+    fn a_change_shows_as_the_lines_it_removes_and_adds_with_a_few_around_it() {
         assert_eq!(
-            decline_permission_outcome(Some(&with_reject)),
-            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new("reject"))
+            line_diff(Some("alpha line\n"), "beta line\n"),
+            "-alpha line\n+beta line"
         );
+        assert_eq!(line_diff(None, "hello\nworld\n"), "+hello\n+world");
+        let old = "1\n2\n3\n4\n5\n6\n7\n8\n9\n";
+        let new = "1\n2\n3\n4\nfive\n6\n7\n8\n9\n";
+        assert_eq!(line_diff(Some(old), new), " 2\n 3\n 4\n-5\n+five\n 6\n 7\n 8");
+        let long: String = (0..1000).map(|n| format!("{n}\n")).collect();
+        let shown = line_diff(None, &long);
+        assert_eq!(shown.lines().count(), MAX_DETAIL_LINES + 1);
+        assert!(shown.ends_with("… 600 more lines put in"));
 
-        let allow_only = json!({
-            "sessionId": "s1",
-            "toolCall": { "toolCallId": "tc2", "title": "Run shell" },
-            "options": [
-                { "optionId": "allow", "name": "Allow", "kind": "allow_once" }
-            ]
-        });
+        // A long replacement shows what it takes out and what it puts in.
+        let old: String = (0..450).map(|n| format!("old {n}\n")).collect();
+        let new: String = (0..450).map(|n| format!("new {n}\n")).collect();
+        let shown = line_diff(Some(&old), &new);
+        let lines: Vec<&str> = shown.lines().collect();
+        assert_eq!(lines.len(), MAX_DETAIL_LINES + 2);
+        assert_eq!(lines[0], "-old 0");
+        assert!(lines.contains(&"… 250 more lines taken out"), "{shown}");
+        assert!(lines.contains(&"+new 0"), "{shown}");
+        assert_eq!(lines.last(), Some(&"… 250 more lines put in"));
+    }
+
+    #[test]
+    fn modes_are_lever_s_own_and_only_those_the_harness_reports() {
+        let options: Vec<SessionConfigOption> = serde_json::from_value(json!([
+            { "id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "m",
+              "options": [{ "value": "m", "name": "M" }] },
+            { "id": "mode", "name": "Session Mode", "category": "mode", "type": "select",
+              "currentValue": "crowbar-ask-first",
+              "options": [
+                { "value": "crowbar-ask-first", "name": "crowbar-ask-first" },
+                { "value": "build", "name": "Build" },
+                { "value": "plan", "name": "Plan" },
+                { "value": "persons-own", "name": "Theirs" }
+              ] }
+        ]))
+        .unwrap();
+        let selector = extract_modes(&options).unwrap();
+        assert_eq!(selector.config_id, "mode");
+        assert_eq!(selector.modes, vec!["ask-first", "full-access", "plan"]);
+        assert_eq!(selector.current.as_deref(), Some("ask-first"));
+
+        let build_only: Vec<SessionConfigOption> = serde_json::from_value(json!([
+            { "id": "mode", "name": "Mode", "category": "mode", "type": "select", "currentValue": "persons-own",
+              "options": [{ "value": "build", "name": "Build" }, { "value": "persons-own", "name": "Theirs" }] }
+        ]))
+        .unwrap();
+        let selector = extract_modes(&build_only).unwrap();
+        assert_eq!(selector.modes, vec!["full-access"]);
+        assert_eq!(selector.current, None);
+
+        // A harness whose modes are none of Lever's has none Lever sets.
+        let others: Vec<SessionConfigOption> = serde_json::from_value(json!([
+            { "id": "mode", "name": "Mode", "category": "mode", "type": "select", "currentValue": "default",
+              "options": [{ "value": "default", "name": "Default" }, { "value": "yolo", "name": "Yolo" }] }
+        ]))
+        .unwrap();
+        assert_eq!(extract_modes(&others), None);
+    }
+
+    #[test]
+    fn a_request_shows_the_exact_command_or_the_file_and_the_change() {
+        let command: agent_client_protocol_schema::v1::ToolCallUpdateFields = serde_json::from_value(json!({
+            "kind": "execute", "title": "echo hi",
+            "rawInput": { "command": "echo hi && id -un", "cwd": "/tmp" }
+        }))
+        .unwrap();
         assert_eq!(
-            decline_permission_outcome(Some(&allow_only)),
-            RequestPermissionOutcome::Cancelled
+            request_detail(Some(ToolKind::Execute), &command),
+            (Some("echo hi && id -un".to_string()), None)
+        );
+        let edit: agent_client_protocol_schema::v1::ToolCallUpdateFields = serde_json::from_value(json!({
+            "kind": "edit", "title": "/w/seed.txt",
+            "rawInput": { "path": "/w/seed.txt", "oldString": "alpha", "newString": "beta" },
+            "content": [{ "type": "diff", "path": "/w/seed.txt", "oldText": "alpha line\n", "newText": "beta line\n" }]
+        }))
+        .unwrap();
+        assert_eq!(
+            request_detail(Some(ToolKind::Edit), &edit),
+            (
+                Some("-alpha line\n+beta line".to_string()),
+                Some("/w/seed.txt".to_string())
+            )
+        );
+        let raw_edit: agent_client_protocol_schema::v1::ToolCallUpdateFields = serde_json::from_value(json!({
+            "kind": "edit", "rawInput": { "filePath": "/w/new.txt", "content": "hello\n" }
+        }))
+        .unwrap();
+        assert_eq!(
+            request_detail(Some(ToolKind::Edit), &raw_edit),
+            (Some("+hello".to_string()), Some("/w/new.txt".to_string()))
+        );
+        // Lines taken out, with nothing put in their place, are the change.
+        let deletion: agent_client_protocol_schema::v1::ToolCallUpdateFields = serde_json::from_value(json!({
+            "kind": "edit", "rawInput": { "filePath": "/w/old.txt", "oldString": "remove me\n", "newString": "" }
+        }))
+        .unwrap();
+        assert_eq!(
+            request_detail(Some(ToolKind::Edit), &deletion),
+            (Some("-remove me".to_string()), Some("/w/old.txt".to_string()))
         );
     }
 }

@@ -208,6 +208,21 @@ class StubModelTests(unittest.TestCase):
         self.assertNotIn("WINSECRET_ABC", raw_log)
         self.assertNotIn("CLIPSECRET_XYZ", raw_log)
 
+        # Every tool output so far is logged, so a check sees what the
+        # harness told the Model of an act the person refused.
+        self.assertEqual(post({
+            "model": "stub-1",
+            "messages": [
+                {"role": "user", "content": "please run-cmd"},
+                {"role": "assistant", "content": None},
+                {"role": "tool", "content": "The user declined this tool call"},
+                {"role": "user", "content": "and now?"},
+            ],
+        }), 200)
+        last = json.loads(log.read_text().splitlines()[-1])
+        self.assertEqual(last["history_tool_outputs"], ["The user declined this tool call"])
+        self.assertIsNone(last["tool_output"])
+
 
 if __name__ == "__main__":
     unittest.main()

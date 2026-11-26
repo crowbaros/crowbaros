@@ -1101,7 +1101,10 @@ def opencode_stub_turn_ok(out):
     - a message refused before a Model is available,
     - `crowbar-agent models` listing both stub Models,
     - a message answered on the default stub Model,
-    - switching the thread's Model and running a shell command as the person,
+    - switching the thread's Model, and the thread, in Ask first, asking
+      before its shell command runs, with the exact command,
+    - the request answered once from another `crowbar-agent`, and the command
+      then run as the person,
     - the person's OpenCode config file untouched by Lever."""
     lines = labelled(out)
     person = only(lines, "person") or ""
@@ -1115,6 +1118,8 @@ def opencode_stub_turn_ok(out):
             and only(lines, "hello-rc") == "0"
             and "Hello from stub-1!" in " ".join(lines.get("hello-out", []))
             and only(lines, "set-model-rc") == "0"
+            and only(lines, "request-asked") == "[request] Run: id -un && id -u"
+            and only(lines, "answer-rc") == "0"
             and only(lines, "cmd-rc") == "0"
             and "Command ran on stub-2 as:" in " ".join(lines.get("cmd-out", []))
             and person in " ".join(lines.get("cmd-out", []))
@@ -1222,7 +1227,16 @@ printf '%s\\n' "$hello_out" | sed 's/^/hello-out /';
 tid=$(su -s /bin/sh "$u" -c '/usr/local/bin/crowbar-agent --list' | awk 'NR==1{print $1}');
 su -s /bin/sh "$u" -c "/usr/local/bin/crowbar-agent --resume '$tid' --model stub/stub-2" >/dev/null 2>&1;
 echo "set-model-rc $?";
-cmd_out=$(su -s /bin/sh "$u" -c "/usr/local/bin/crowbar-agent --resume '$tid' 'please run-whoami'" 2>"$tmp/cmd.err"); rc=$?;
+: >"$tmp/cmd.err";
+timeout 90 su -s /bin/sh "$u" -c "/usr/local/bin/crowbar-agent --resume '$tid' 'please run-whoami'" >"$tmp/cmd.out" 2>"$tmp/cmd.err" &
+cmd_pid=$!;
+t=$(($(date +%s) + 45)); until grep -q 'Answer with:' "$tmp/cmd.err"; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done;
+echo "request-asked $(grep '^\\[request\\] Run:' "$tmp/cmd.err" | head -1)";
+rid=$(grep 'Answer with:' "$tmp/cmd.err" | head -1 | awk '{for (i = 1; i < NF; i++) if ($i == "--answer") print $(i + 1)}');
+su -s /bin/sh "$u" -c "/usr/local/bin/crowbar-agent --resume '$tid' --answer '$rid' once" >/dev/null 2>&1;
+echo "answer-rc $?";
+wait "$cmd_pid"; rc=$?;
+cmd_out=$(cat "$tmp/cmd.out");
 echo "cmd-rc $rc";
 printf '%s\\n' "$cmd_out" | sed 's/^/cmd-out /';
 [ "$rc" -ne 0 ] && printf '%s\\n' "$(cat "$tmp/cmd.err")" | sed 's/^/cmd-err /';
@@ -1410,7 +1424,7 @@ CHECKS = [
      "echo \"rg-path $(command -v rg)\"; "
      "echo \"git-path $(command -v git)\"",
      lambda out: opencode_and_tools_installed(out)),
-    ("OpenCode answers through Lever against the stub Model and runs a command as the person",
+    ("OpenCode answers through Lever against the stub Model, asks before a command, and runs it as the person once answered",
      OPENCODE_STUB_CHECK,
      lambda out: opencode_stub_turn_ok(out)),
     # ADR 0036 retired the Pi Durable Harness and Node.js: fail if the image

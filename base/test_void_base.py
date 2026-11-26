@@ -959,6 +959,8 @@ class LeverChecks(unittest.TestCase):
             'hello-rc 0',
             'hello-out Hello from stub-1!',
             'set-model-rc 0',
+            'request-asked [request] Run: id -un && id -u',
+            'answer-rc 0',
             'cmd-rc 0',
             f'cmd-out Command ran on stub-2 as: crowbar {void_base.PERSON_UID}',
             'opencode-working 2 450000',
@@ -970,6 +972,9 @@ class LeverChecks(unittest.TestCase):
         self.assertFalse(void_base.opencode_stub_turn_ok(stub_ok.replace('refused-rc 1', 'refused-rc 0')))
         self.assertFalse(void_base.opencode_stub_turn_ok(stub_ok.replace('config-unchanged yes', 'config-unchanged no')))
         self.assertFalse(void_base.opencode_stub_turn_ok(stub_ok.replace('idle-after none', 'idle-after running')))
+        # The command ran without asking first, or its request was not answered.
+        self.assertFalse(void_base.opencode_stub_turn_ok(stub_ok.replace('request-asked [request] Run: id -un && id -u\n', '')))
+        self.assertFalse(void_base.opencode_stub_turn_ok(stub_ok.replace('answer-rc 0', 'answer-rc 1')))
 
     def test_lever_answers_surface_socket_check(self):
         good = '\n'.join([

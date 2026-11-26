@@ -9,7 +9,7 @@ mod theme;
 use catalog::AppEntry;
 use gpui::{layer_shell::*, prelude::*, *};
 use futures::StreamExt;
-use std::{borrow::Cow, path::PathBuf, sync::{Arc, Mutex}, time::{Duration, Instant}};
+use std::{borrow::Cow, cell::RefCell, path::PathBuf, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
 use theme::{Palette, Preferences};
 actions!(shell, [Next, Previous, Open, Close, Unlock, SendMessage, PrevMonth, NextMonth]);
 struct Assets;
@@ -234,6 +234,31 @@ fn render_mark_pill(mark: agent::Mark, p: Palette) -> Option<Stateful<Div>> {
                 .text_color(rgb(p.text))
                 .child(div().size(px(6.)).rounded_full().bg(rgb(p.focus)))
                 .child("Working"),
+        ),
+        // A request waits for the person: a ring, not a dot, in the accent.
+        agent::Mark::Waiting => Some(
+            div()
+                .id("agent-mark")
+                .h(px(18.))
+                .px(px(7.))
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .rounded(px(4.))
+                .bg(rgb(p.surface))
+                .border_1()
+                .border_color(rgb(p.accent))
+                .text_size(px(10.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(p.text))
+                .child(
+                    div()
+                        .size(px(7.))
+                        .rounded_full()
+                        .border_2()
+                        .border_color(rgb(p.accent)),
+                )
+                .child("Waiting"),
         ),
         agent::Mark::Done => Some(
             div()
@@ -2457,7 +2482,68 @@ fn sync_agent_view(model: &Entity<Model>, cx: &App) {
         view.mark_overlay = m.mark_overlay.is_some();
         view.mark_overlay_output = m.mark_overlay.as_ref().map(|(_, out)| out.clone());
         view.state = m.agent_state.clone();
+        if !view.drawer_up {
+            // What the drawer drew last goes with it.
+            view.controls.clear();
+            view.drawer_output = None;
+            view.mode_menu_open = false;
+        }
     }
+}
+/// The controls the drawer lays out in one frame, gathered as it prepaints
+/// so the control socket can say where each is.
+#[derive(Default)]
+struct ControlFrame {
+    /// Each control's ID, bounds in the drawer, and whether it scrolls with
+    /// the thread.
+    controls: Vec<(String, Bounds<Pixels>, bool)>,
+    /// The part of the drawer the thread scrolls in.
+    thread_area: Option<Bounds<Pixels>>,
+}
+/// An empty element over its parent that records the parent's bounds under
+/// `id` as the drawer prepaints.
+fn tracked(frame: &Rc<RefCell<ControlFrame>>, id: String, in_thread: bool) -> impl IntoElement {
+    let frame = frame.clone();
+    canvas(
+        move |bounds, _, _| frame.borrow_mut().controls.push((id, bounds, in_thread)),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+/// The controls of a frame in the display's logical pixels, leaving out
+/// those of the thread scrolled out of view.
+fn controls_on_display(frame: &ControlFrame, left: f32) -> Vec<agent::ControlBounds> {
+    let round = |v: f32| (v * 10.).round() / 10.;
+    let inside = |b: &Bounds<Pixels>, area: &Bounds<Pixels>| {
+        let (top, bottom): (f32, f32) = (b.top().into(), b.bottom().into());
+        let (area_top, area_bottom): (f32, f32) = (area.top().into(), area.bottom().into());
+        top >= area_top - 0.5 && bottom <= area_bottom + 0.5
+    };
+    frame
+        .controls
+        .iter()
+        .filter(|(_, b, in_thread)| {
+            !in_thread || frame.thread_area.as_ref().is_some_and(|area| inside(b, area))
+        })
+        .map(|(id, b, _)| {
+            let (x, y, w, h): (f32, f32, f32, f32) = (
+                b.origin.x.into(),
+                b.origin.y.into(),
+                b.size.width.into(),
+                b.size.height.into(),
+            );
+            agent::ControlBounds {
+                id: id.clone(),
+                x: round(left + x),
+                y: round(y),
+                w: round(w),
+                h: round(h),
+            }
+        })
+        .collect()
 }
 /// Opens, moves, or removes the floating fullscreen mark overlay to match
 /// whether a fullscreen window is covering the bar while the mark is active.
@@ -2523,6 +2609,12 @@ struct AgentSurface {
     scroll_to_bottom: bool,
     submitted_draft: Option<String>,
     _input_sub: Subscription,
+    /// The display the drawer is on, and where its left edge is on it.
+    output: String,
+    left: f32,
+    /// The menu of the thread's modes is open.
+    mode_menu_open: bool,
+    frame: Rc<RefCell<ControlFrame>>,
 }
 impl AgentSurface {
     /// Puts the surface away. The keyboard goes back to the window that had
@@ -2552,25 +2644,84 @@ impl AgentSurface {
         if trimmed.is_empty() {
             return;
         }
-        let (tx, thread) = self.model.update(cx, |m, _| {
+        let (tx, thread, mode) = self.model.update(cx, |m, _| {
             if !m.agent_state.can_send() {
-                return (None, None);
+                return (None, None, None);
             }
             if let Some(tx) = m.agent_tx.clone() {
                 m.agent_state.sending = true;
                 m.agent_state.error = None;
-                (Some(tx), m.agent_state.thread.clone())
+                let thread = m.agent_state.thread.clone();
+                // A new thread starts in the mode picked for it, if any.
+                let mode = thread
+                    .is_none()
+                    .then(|| m.agent_state.pending_mode.clone())
+                    .flatten();
+                (Some(tx), thread, mode)
             } else {
-                (None, None)
+                (None, None, None)
             }
         });
         if let Some(tx) = tx {
             let message = trimmed.to_string();
             self.submitted_draft = Some(query);
+            self.mode_menu_open = false;
             sync_agent_view(&self.model, cx);
-            tx.send_message(thread, message);
+            tx.send_message(thread, message, mode);
             cx.notify();
         }
+    }
+    /// Opens the menu of modes, asking Lever for them, or closes it. It
+    /// does not open while the thread works.
+    fn toggle_mode_menu(&mut self, cx: &mut Context<Self>) {
+        if self.mode_menu_open {
+            self.mode_menu_open = false;
+            cx.notify();
+            return;
+        }
+        let opened = self.model.update(cx, |m, _| {
+            if m.agent_state.mode_locked() {
+                return None;
+            }
+            let fetch = m.agent_state.open_mode_menu();
+            Some((m.agent_tx.clone(), fetch))
+        });
+        let Some((tx, fetch)) = opened else {
+            return;
+        };
+        self.mode_menu_open = true;
+        if fetch && let Some(tx) = tx {
+            tx.fetch_modes();
+        }
+        sync_agent_view(&self.model, cx);
+        cx.notify();
+    }
+    fn pick_mode(&mut self, mode: String, cx: &mut Context<Self>) {
+        let (tx, pick) = self
+            .model
+            .update(cx, |m, _| (m.agent_tx.clone(), m.agent_state.pick_mode(&mode)));
+        if let (Some(tx), agent::ModePick::SetThread { thread, mode }) = (tx, pick) {
+            tx.set_mode(thread, mode);
+        }
+        self.mode_menu_open = false;
+        sync_agent_view(&self.model, cx);
+        cx.notify();
+    }
+    fn pick_default_mode(&mut self, mode: String, cx: &mut Context<Self>) {
+        if let Some(tx) = self.model.read(cx).agent_tx.clone() {
+            tx.set_default_mode(mode);
+        }
+    }
+    fn answer_request(&mut self, request: String, answer: String, cx: &mut Context<Self>) {
+        let (tx, thread) = self.model.update(cx, |m, _| {
+            (m.agent_tx.clone(), m.agent_state.begin_answer(&request, &answer))
+        });
+        if let (Some(tx), Some(thread)) = (tx, thread) {
+            log::info!("SHELL agent-request answer={answer}");
+            tx.answer(thread, request, answer);
+        }
+        sync_agent_view(&self.model, cx);
+        cx.notify();
     }
     fn stop_turn(&mut self, cx: &mut Context<Self>) {
         let (tx, thread, turn) = {
@@ -2585,6 +2736,278 @@ impl AgentSurface {
             tx.stop_turn(thread, turn);
         }
     }
+    /// A request in its turn: the exact command, or the file and the
+    /// change, and one control per answer while it waits.
+    fn request_card(
+        &self,
+        turn_state: &agent::TurnState,
+        req: &agent::Request,
+        p: Palette,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let view = agent::request_view(turn_state, req);
+        let waiting = view == agent::RequestView::Waiting;
+        let (status, status_color) = match &view {
+            agent::RequestView::Waiting => ("Waiting for you".to_string(), p.focus),
+            agent::RequestView::Sending(name) => (format!("Sending: {name}"), p.muted),
+            agent::RequestView::Answered(name) => (format!("Answered: {name}"), p.muted),
+            agent::RequestView::Withdrawn => ("Withdrawn".to_string(), p.muted),
+        };
+        let kind = match req.kind.as_str() {
+            "command" => "Run a command",
+            "edit" => "Edit a file",
+            "delete" => "Delete a file",
+            "move" => "Move a file",
+            "fetch" => "Fetch",
+            "read" => "Read a file",
+            _ => "Act",
+        };
+        let mut card = div()
+            .w_full()
+            .px(px(10.))
+            .py(px(8.))
+            .rounded(px(6.))
+            .bg(rgb(p.surface))
+            .border_1()
+            .border_color(rgb(if waiting { p.accent } else { p.line }))
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(10.5))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(p.muted))
+                            .child(format!("Request · {kind}")),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(px(10.5))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(status_color))
+                            .child(status),
+                    ),
+            );
+        let title = req.title.trim();
+        if !title.is_empty() && title != req.detail.trim() && Some(title) != req.path.as_deref() {
+            card = card.child(
+                div()
+                    .text_size(px(12.))
+                    .line_height(px(17.))
+                    .text_color(rgb(p.text))
+                    .child(title.to_string()),
+            );
+        }
+        if let Some(path) = &req.path {
+            card = card.child(
+                div()
+                    .font_family("IBM Plex Mono")
+                    .text_size(px(11.))
+                    .line_height(px(16.))
+                    .text_color(rgb(p.text))
+                    .child(path.clone()),
+            );
+        }
+        let lines = agent::request_detail_lines(&req.kind, &req.detail);
+        if !lines.is_empty() {
+            let mut detail = div()
+                .w_full()
+                .px(px(8.))
+                .py(px(6.))
+                .rounded(px(4.))
+                .bg(rgb(p.canvas))
+                .border_1()
+                .border_color(rgb(p.line))
+                .flex()
+                .flex_col()
+                .font_family("IBM Plex Mono")
+                .text_size(px(11.))
+                .line_height(px(16.));
+            for (tone, line) in lines {
+                let row = div().w_full().child(if line.is_empty() { " ".to_string() } else { line });
+                detail = detail.child(match tone {
+                    agent::DetailLine::Plain => row.text_color(rgb(p.text)),
+                    agent::DetailLine::Added => row.text_color(rgb(p.focus)),
+                    agent::DetailLine::Removed => row.text_color(rgb(p.muted)).line_through(),
+                });
+            }
+            card = card.child(detail);
+        }
+        if waiting {
+            let mut row = div().w_full().flex().flex_wrap().gap(px(6.));
+            for (i, choice) in req.answers.iter().enumerate() {
+                let id = format!("answer:{}:{}", req.id, choice.answer);
+                let primary = i == 0;
+                let request = req.id.clone();
+                let answer = choice.answer.clone();
+                row = row.child(
+                    div()
+                        .id(SharedString::from(id.clone()))
+                        .relative()
+                        .h(px(26.))
+                        .px(px(10.))
+                        .rounded(px(6.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .text_size(px(11.5))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .when(primary, |b| b.bg(rgb(p.accent)).text_color(rgb(p.on_accent)))
+                        .when(!primary, |b| {
+                            b.bg(rgb(p.canvas))
+                                .border_1()
+                                .border_color(rgb(p.line))
+                                .text_color(rgb(p.text))
+                        })
+                        .child(choice.label())
+                        .child(tracked(&self.frame, id, true))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.answer_request(request.clone(), answer.clone(), cx)
+                        })),
+                );
+            }
+            card = card.child(row);
+        }
+        card
+    }
+    /// The menu of the thread's modes, and of the mode new threads start in.
+    fn mode_menu(&self, state: &agent::AgentState, p: Palette, cx: &mut Context<Self>) -> Div {
+        let current = state.shown_mode();
+        let heading = |text: &'static str| {
+            div()
+                .text_size(px(10.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(p.muted))
+                .child(text)
+        };
+        let mut menu = div()
+            .flex_none()
+            .px(px(12.))
+            .py(px(10.))
+            .border_b_1()
+            .border_color(rgb(p.line))
+            .bg(rgb(p.surface))
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(heading(if state.thread.is_some() {
+                "Mode for this thread"
+            } else {
+                "Mode for the new thread"
+            }));
+        for mode in &state.modes {
+            let id = format!("mode:{}", mode.id);
+            let is_current = current.as_deref() == Some(mode.id.as_str());
+            let pick = mode.id.clone();
+            menu = menu.child(
+                div()
+                    .id(SharedString::from(id.clone()))
+                    .relative()
+                    .w_full()
+                    .h(px(30.))
+                    .px(px(10.))
+                    .rounded(px(6.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .cursor_pointer()
+                    .when(is_current, |r| r.bg(rgb(p.canvas)))
+                    .hover(move |s| s.bg(rgb(p.canvas)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(12.5))
+                            .text_color(rgb(p.text))
+                            .child(agent::mode_name(&mode.id, &state.modes)),
+                    )
+                    .when(is_current, |r| {
+                        r.child(
+                            div()
+                                .text_size(px(10.5))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(p.focus))
+                                .child("Current"),
+                        )
+                    })
+                    .child(tracked(&self.frame, id, false))
+                    .on_click(cx.listener(move |this, _, _, cx| this.pick_mode(pick.clone(), cx))),
+            );
+        }
+        let note = if state.modes.is_empty() {
+            if state.modes_loading {
+                Some("Loading modes…".to_string())
+            } else if let Some(err) = &state.modes_error {
+                Some(err.clone())
+            } else {
+                Some("This harness offers no modes.".to_string())
+            }
+        } else {
+            state.modes_error.clone()
+        };
+        if let Some(note) = note {
+            menu = menu.child(
+                div()
+                    .px(px(10.))
+                    .py(px(4.))
+                    .text_size(px(11.5))
+                    .text_color(rgb(p.muted))
+                    .child(note),
+            );
+        }
+        let defaults: Vec<&agent::ModeInfo> = state
+            .modes
+            .iter()
+            .filter(|m| agent::DEFAULT_MODES.contains(&m.id.as_str()))
+            .collect();
+        if !defaults.is_empty() {
+            let mut row = div().w_full().flex().gap(px(6.));
+            for mode in defaults {
+                let id = format!("default-mode:{}", mode.id);
+                let chosen = state.default_mode.as_deref() == Some(mode.id.as_str());
+                let pick = mode.id.clone();
+                row = row.child(
+                    div()
+                        .id(SharedString::from(id.clone()))
+                        .relative()
+                        .flex_1()
+                        .h(px(28.))
+                        .rounded(px(6.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(11.5))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .when(chosen, |b| b.bg(rgb(p.accent)).text_color(rgb(p.on_accent)))
+                        .when(!chosen, |b| {
+                            b.bg(rgb(p.canvas))
+                                .border_1()
+                                .border_color(rgb(p.line))
+                                .text_color(rgb(p.text))
+                                .cursor_pointer()
+                        })
+                        .child(agent::mode_name(&mode.id, &state.modes))
+                        .child(tracked(&self.frame, id, false))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.pick_default_mode(pick.clone(), cx)
+                        })),
+                );
+            }
+            menu = menu
+                .child(div().pt(px(6.)).child(heading("New threads start in")))
+                .child(row);
+        }
+        menu
+    }
 }
 impl Render for AgentSurface {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2596,14 +3019,20 @@ impl Render for AgentSurface {
                 window.refresh();
             });
         }
+        *self.frame.borrow_mut() = ControlFrame::default();
         let m = self.model.read(cx);
         let p = m.palette();
         let mark = ImageSource::Resource(Resource::Embedded(
             bar_mark_asset(&m.preferences).into(),
         ));
         let state = m.agent_state.clone();
-        let working = state.working();
-        let show_stop = state.connected && working;
+        let agent_view = m.agent_view.clone();
+        let mode_locked = state.mode_locked();
+        if mode_locked {
+            self.mode_menu_open = false;
+        }
+        let shown_mode = state.shown_mode();
+        let show_stop = state.can_stop();
         let draft = self.input.read(cx).query();
         let can_send = state.can_send() && !draft.trim().is_empty();
         self.input.update(cx, |input, _| input.palette = p);
@@ -2781,6 +3210,10 @@ impl Render for AgentSurface {
                         }
                     }
                     turn_col = turn_col.child(act_card);
+                }
+                // Requests the harness made in this turn.
+                for req in &turn.requests {
+                    turn_col = turn_col.child(self.request_card(&turn.state, req, p, cx));
                 }
                 // Notes recorded on this turn.
                 for note in &turn.notes {
@@ -3014,9 +3447,41 @@ impl Render for AgentSurface {
                                     .child(header_sub),
                             ),
                     )
+                    .when_some(shown_mode, |row, mode| {
+                        // The thread's mode, and the control that opens the
+                        // menu of modes. It rests while the thread works.
+                        row.child(
+                            div()
+                                .id("agent-mode")
+                                .relative()
+                                .flex_none()
+                                .h(px(26.))
+                                .px(px(9.))
+                                .rounded(px(6.))
+                                .flex()
+                                .items_center()
+                                .border_1()
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .when(self.mode_menu_open, |b| {
+                                    b.bg(rgb(p.surface)).border_color(rgb(p.focus))
+                                })
+                                .when(!self.mode_menu_open, |b| b.border_color(rgb(p.line)))
+                                .when(mode_locked, |b| b.text_color(rgb(p.muted)))
+                                .when(!mode_locked, |b| {
+                                    b.text_color(rgb(p.text))
+                                        .cursor_pointer()
+                                        .hover(move |s| s.bg(rgb(p.surface)))
+                                })
+                                .child(agent::mode_name(&mode, &state.modes))
+                                .child(tracked(&self.frame, "mode".into(), false))
+                                .on_click(cx.listener(|this, _, _, cx| this.toggle_mode_menu(cx))),
+                        )
+                    })
                     .child(
                         div()
                             .id("close-agent-surface")
+                            .relative()
                             .size(px(30.))
                             .rounded(px(10.))
                             .flex()
@@ -3025,10 +3490,33 @@ impl Render for AgentSurface {
                             .cursor_pointer()
                             .hover(move |s| s.bg(rgb(p.surface)))
                             .child(icon("close", p.muted, 14.))
+                            .child(tracked(&self.frame, "close".into(), false))
                             .on_click(cx.listener(|this, _, w, cx| this.put_away(w, cx))),
                     ),
             )
-            .child(body)
+            .when(self.mode_menu_open, |d| d.child(self.mode_menu(&state, p, cx)))
+            .child({
+                // The thread scrolls here; controls in it count as in view
+                // only within these bounds.
+                let frame = self.frame.clone();
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .child(body)
+                    .child(
+                        canvas(
+                            move |bounds, _, _| frame.borrow_mut().thread_area = Some(bounds),
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full(),
+                    )
+            })
             .when_some(
                 state.error.clone().or_else(|| {
                     if state.turns.is_empty() {
@@ -3084,6 +3572,7 @@ impl Render for AgentSurface {
                                 row.child(
                                     div()
                                         .id("stop-agent-turn")
+                                        .relative()
                                         .px(px(8.))
                                         .h(px(26.))
                                         .rounded(px(6.))
@@ -3098,6 +3587,7 @@ impl Render for AgentSurface {
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_color(rgb(p.text))
                                         .child("Stop")
+                                        .child(tracked(&self.frame, "stop".into(), false))
                                         .on_click(cx.listener(|this, _, _, cx| this.stop_turn(cx))),
                                 )
                             })
@@ -3105,6 +3595,7 @@ impl Render for AgentSurface {
                                 row.child(
                                     div()
                                         .id("send-agent-message")
+                                        .relative()
                                         .size(px(26.))
                                         .rounded(px(6.))
                                         .flex()
@@ -3118,6 +3609,7 @@ impl Render for AgentSurface {
                                         .when(!can_send, |btn| {
                                             btn.child(icon("arrow", p.muted, 14.))
                                         })
+                                        .child(tracked(&self.frame, "send".into(), false))
                                         .on_click(cx.listener(|this, _, _, cx| this.send(cx))),
                                 )
                             }),
@@ -3136,6 +3628,29 @@ impl Render for AgentSurface {
                             .child("put away"),
                     ),
             )
+            .child({
+                // Last to prepaint: hands the frame's controls to the
+                // control socket's snapshot, on the display's coordinates.
+                let frame = self.frame.clone();
+                let left = self.left;
+                let output = self.output.clone();
+                let menu_open = self.mode_menu_open;
+                canvas(
+                    move |_, _, _| {
+                        let controls = controls_on_display(&frame.borrow(), left);
+                        if let Ok(mut view) = agent_view.lock() {
+                            view.controls = controls;
+                            view.drawer_output = Some(output);
+                            view.mode_menu_open = menu_open;
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_0()
+            })
     }
 }
 /// Brings the Agent's surface up on the display the gesture named, a third
@@ -3149,6 +3664,9 @@ fn show_agent_surface(model: &Entity<Model>, summon: &session::Summon, cx: &mut 
         summon.output
     );
     let surface = model.clone();
+    // Where the drawer is on its display, for the control socket's snapshot.
+    let output = summon.output.clone();
+    let left = (summon.width - width).max(0.);
     let result = cx.open_window(
         layer(
             "agent",
@@ -3173,6 +3691,10 @@ fn show_agent_surface(model: &Entity<Model>, summon: &session::Summon, cx: &mut 
                     scroll_to_bottom,
                     submitted_draft: None,
                     _input_sub: input_sub,
+                    output,
+                    left,
+                    mode_menu_open: false,
+                    frame: Rc::new(RefCell::new(ControlFrame::default())),
                 }
             })
         },
@@ -3830,6 +4352,7 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                     agent::AgentEvent::Message { .. }
                         | agent::AgentEvent::Act { .. }
                         | agent::AgentEvent::Note { .. }
+                        | agent::AgentEvent::Request { .. }
                         | agent::AgentEvent::Text { .. }
                         | agent::AgentEvent::Done { .. }
                         | agent::AgentEvent::Stopped { .. }
@@ -3994,10 +4517,8 @@ fn main() -> anyhow::Result<()> {
     let agent_tx = agent::start_from_env(tx.clone());
     let agent_configured = agent_tx.is_some();
     let agent_view = Arc::new(Mutex::new(agent::AgentViewSnapshot {
-        drawer_up: false,
-        mark_overlay: false,
-        mark_overlay_output: None,
         state: agent::AgentState::new(agent_configured),
+        ..Default::default()
     }));
     let _lock = session::server(tx.clone(), agent_view.clone())?;
     session::start_display_bridge();

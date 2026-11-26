@@ -22,13 +22,18 @@ usage: crowbar-agent                          talk with the Agent, a line at a t
        crowbar-agent --resume ID \"<request>\"  one more turn of it, and out
        crowbar-agent --resume ID --model M    set a thread's Model
        crowbar-agent --model M \"<request>\"    start a thread with Model M
+       crowbar-agent --resume ID --mode MODE  set a thread's mode
+       crowbar-agent --mode MODE \"<request>\"  start a thread in a mode
+       crowbar-agent --resume ID --answer R A answer a thread's request R with A
        crowbar-agent --stop ID                stop the working turn of a thread
        crowbar-agent models                   list the Models the harness offers
        crowbar-agent free-models [on|off]     show or switch OpenCode's free hosted Models
+       crowbar-agent default-mode [MODE]      show or set the mode new threads start in
        crowbar-agent login                    sign in to a provider with OpenCode
        crowbar-agent status                   Lever's status and available harnesses
 
-Ctrl-C stops the turn the Agent is working on. Ctrl-D leaves.";
+Modes are ask-first, full-access, and plan. New threads start in ask-first
+or full-access. Ctrl-C stops the turn the Agent is working on. Ctrl-D leaves.";
 
 /// What the command line asks for.
 #[derive(Debug, PartialEq)]
@@ -37,16 +42,30 @@ enum Command {
     Talk {
         resumed: Option<String>,
         model: Option<String>,
+        mode: Option<String>,
     },
     /// One turn, in a new thread or the one named.
     Once {
         resumed: Option<String>,
         model: Option<String>,
+        mode: Option<String>,
         message: String,
     },
     SetModel {
         thread: String,
         model: String,
+    },
+    SetMode {
+        thread: String,
+        mode: String,
+    },
+    Answer {
+        thread: String,
+        request: String,
+        answer: String,
+    },
+    DefaultMode {
+        mode: Option<String>,
     },
     List,
     Stop {
@@ -67,6 +86,7 @@ enum Command {
 /// that starts with one goes in quotes with the rest of it, or after `--`.
 fn command(args: &[String]) -> Result<Command, String> {
     let (mut resumed, mut model, mut stop, mut list, mut words) = (None, None, None, false, Vec::new());
+    let (mut mode, mut answer): (Option<String>, Option<(String, String)>) = (None, None);
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         // An option comes before the request. A dash inside a request is the request's.
@@ -94,6 +114,22 @@ fn command(args: &[String]) -> Result<Command, String> {
                 }
                 model = Some(value.clone());
             }
+            "--mode" if mode.is_none() => {
+                let value = rest
+                    .next()
+                    .ok_or("--mode needs a mode: ask-first, full-access, or plan")?;
+                if value.trim().is_empty() {
+                    return Err("--mode needs a non-empty mode".to_string());
+                }
+                mode = Some(value.clone());
+            }
+            "--answer" if answer.is_none() => {
+                let request = rest
+                    .next()
+                    .ok_or("--answer needs a request's ID and an answer, as the request shows them")?;
+                let chosen = rest.next().ok_or("--answer needs an answer after the request's ID")?;
+                answer = Some((request.clone(), chosen.clone()));
+            }
             "--stop" if stop.is_none() => {
                 stop = Some(
                     rest.next()
@@ -102,8 +138,8 @@ fn command(args: &[String]) -> Result<Command, String> {
                 );
             }
             "--" => {
-                if list || stop.is_some() {
-                    return Err("-- cannot be combined with --list or --stop".to_string());
+                if list || stop.is_some() || answer.is_some() {
+                    return Err("-- cannot be combined with --list, --stop, or --answer".to_string());
                 }
                 words.extend(rest.by_ref().cloned());
                 if words.iter().all(|word| word.trim().is_empty()) {
@@ -112,43 +148,78 @@ fn command(args: &[String]) -> Result<Command, String> {
                 return Ok(Command::Once {
                     resumed,
                     model,
+                    mode,
                     message: words.join(" "),
                 });
             }
-            "--list" | "--resume" | "--model" | "--stop" => return Err(format!("{arg} is given twice")),
+            "--list" | "--resume" | "--model" | "--mode" | "--answer" | "--stop" => {
+                return Err(format!("{arg} is given twice"));
+            }
             option if option.starts_with('-') => return Err(format!("no option {option}")),
             _ => words.push(arg.clone()),
         }
     }
-    if list || stop.is_some() || resumed.is_some() || model.is_some() {
+    if list || stop.is_some() || resumed.is_some() || model.is_some() || mode.is_some() || answer.is_some() {
+        let alone = |what: &str| -> Result<(), String> {
+            if resumed.is_none() && model.is_none() && mode.is_none() && answer.is_none() && words.is_empty() {
+                Ok(())
+            } else {
+                Err(format!("{what} takes nothing else"))
+            }
+        };
         if list {
-            return if stop.is_none() && resumed.is_none() && model.is_none() && words.is_empty() {
+            alone("--list")?;
+            return if stop.is_none() {
                 Ok(Command::List)
             } else {
                 Err("--list takes nothing else".to_string())
             };
         }
         if let Some(thread) = stop {
-            return if resumed.is_none() && model.is_none() && words.is_empty() {
-                Ok(Command::Stop { thread })
+            alone("--stop")?;
+            return Ok(Command::Stop { thread });
+        }
+        if let Some((request, chosen)) = answer {
+            let Some(thread) = resumed else {
+                return Err("--answer needs --resume ID, the request's thread".to_string());
+            };
+            return if model.is_none() && mode.is_none() && words.is_empty() {
+                Ok(Command::Answer {
+                    thread,
+                    request,
+                    answer: chosen,
+                })
             } else {
-                Err("--stop takes nothing else".to_string())
+                Err("--answer takes nothing but --resume".to_string())
             };
         }
-        if let (Some(thread), Some(chosen)) = (&resumed, &model)
+        if let Some(thread) = &resumed
             && words.is_empty()
         {
-            return Ok(Command::SetModel {
-                thread: thread.clone(),
-                model: chosen.clone(),
-            });
+            match (&model, &mode) {
+                (Some(_), Some(_)) => return Err("--model and --mode are set one at a time".to_string()),
+                (Some(chosen), None) => {
+                    return Ok(Command::SetModel {
+                        thread: thread.clone(),
+                        model: chosen.clone(),
+                    });
+                }
+                (None, Some(chosen)) => {
+                    return Ok(Command::SetMode {
+                        thread: thread.clone(),
+                        mode: chosen.clone(),
+                    });
+                }
+                (None, None) => {}
+            }
         }
         return if words.is_empty() {
-            Ok(Command::Talk { resumed, model })
+            Ok(Command::Talk { resumed, model, mode })
         } else {
             Ok(Command::Once {
                 resumed,
                 model,
+                mode,
                 message: words.join(" "),
             })
         };
@@ -157,6 +228,7 @@ fn command(args: &[String]) -> Result<Command, String> {
         None => Ok(Command::Talk {
             resumed: None,
             model: None,
+            mode: None,
         }),
         Some("status") if words.len() == 1 => Ok(Command::Status),
         Some("status") => Err("status takes nothing else".to_string()),
@@ -171,9 +243,15 @@ fn command(args: &[String]) -> Result<Command, String> {
             other => Err(format!("free-models takes `on` or `off`, not `{other}`")),
         },
         Some("free-models") => Err("free-models takes at most `on` or `off`".to_string()),
+        Some("default-mode") if words.len() == 1 => Ok(Command::DefaultMode { mode: None }),
+        Some("default-mode") if words.len() == 2 => Ok(Command::DefaultMode {
+            mode: Some(words[1].clone()),
+        }),
+        Some("default-mode") => Err("default-mode takes at most a mode".to_string()),
         Some(_) => Ok(Command::Once {
             resumed: None,
             model: None,
+            mode: None,
             message: words.join(" "),
         }),
     }
@@ -206,13 +284,29 @@ fn main() -> ExitCode {
         }
     };
     let ended = match &asked {
-        Command::Talk { resumed, model } => talk::repl(&mut lever, resumed.as_deref(), model.as_deref()),
+        Command::Talk { resumed, model, mode } => {
+            talk::repl(&mut lever, resumed.as_deref(), model.as_deref(), mode.as_deref())
+        }
         Command::Once {
             resumed,
             model,
+            mode,
             message,
-        } => talk::once(&mut lever, resumed.as_deref(), model.as_deref(), message),
+        } => talk::once(
+            &mut lever,
+            resumed.as_deref(),
+            model.as_deref(),
+            mode.as_deref(),
+            message,
+        ),
         Command::SetModel { thread, model } => talk::set_model(&mut lever, thread, model),
+        Command::SetMode { thread, mode } => talk::set_mode(&mut lever, thread, mode),
+        Command::Answer {
+            thread,
+            request,
+            answer,
+        } => talk::answer(&mut lever, thread, request, answer),
+        Command::DefaultMode { mode } => talk::default_mode(&mut lever, mode.as_deref()),
         Command::List => talk::list(&mut lever),
         Command::Stop { thread } => talk::stop(&mut lever, thread),
         Command::Models => talk::models(&mut lever),
@@ -250,7 +344,8 @@ mod tests {
             read(&[]),
             Ok(Command::Talk {
                 resumed: None,
-                model: None
+                model: None,
+                mode: None,
             })
         );
         assert_eq!(
@@ -258,6 +353,7 @@ mod tests {
             Ok(Command::Once {
                 resumed: None,
                 model: None,
+                mode: None,
                 message: "what is my hostname?".into()
             })
         );
@@ -267,6 +363,7 @@ mod tests {
             Ok(Command::Once {
                 resumed: None,
                 model: None,
+                mode: None,
                 message: "what time is it".into()
             })
         );
@@ -275,7 +372,8 @@ mod tests {
             read(&["--resume", "t-k3f9q2xz"]),
             Ok(Command::Talk {
                 resumed: id(),
-                model: None
+                model: None,
+                mode: None,
             })
         );
         assert_eq!(
@@ -283,6 +381,7 @@ mod tests {
             Ok(Command::Once {
                 resumed: id(),
                 model: None,
+                mode: None,
                 message: "and then?".into()
             })
         );
@@ -298,6 +397,7 @@ mod tests {
             Ok(Command::Once {
                 resumed: None,
                 model: Some("stub/stub-2".into()),
+                mode: None,
                 message: "hello".into(),
             })
         );
@@ -321,6 +421,45 @@ mod tests {
         assert_eq!(read(&["status"]), Ok(Command::Status));
         assert_eq!(read(&["--help"]), Ok(Command::Help));
         assert_eq!(read(&["--version"]), Ok(Command::Version));
+        assert_eq!(
+            read(&["--resume", "t-k3f9q2xz", "--mode", "full-access"]),
+            Ok(Command::SetMode {
+                thread: "t-k3f9q2xz".into(),
+                mode: "full-access".into(),
+            })
+        );
+        assert_eq!(
+            read(&["--mode", "plan", "look around"]),
+            Ok(Command::Once {
+                resumed: None,
+                model: None,
+                mode: Some("plan".into()),
+                message: "look around".into(),
+            })
+        );
+        assert_eq!(
+            read(&["--mode", "full-access"]),
+            Ok(Command::Talk {
+                resumed: None,
+                model: None,
+                mode: Some("full-access".into()),
+            })
+        );
+        assert_eq!(
+            read(&["--resume", "t-k3f9q2xz", "--answer", "r-1a2b3c4d5e6f", "once"]),
+            Ok(Command::Answer {
+                thread: "t-k3f9q2xz".into(),
+                request: "r-1a2b3c4d5e6f".into(),
+                answer: "once".into(),
+            })
+        );
+        assert_eq!(read(&["default-mode"]), Ok(Command::DefaultMode { mode: None }));
+        assert_eq!(
+            read(&["default-mode", "full-access"]),
+            Ok(Command::DefaultMode {
+                mode: Some("full-access".into())
+            })
+        );
     }
 
     #[test]
@@ -330,6 +469,7 @@ mod tests {
             Ok(Command::Once {
                 resumed: None,
                 model: None,
+                mode: None,
                 message: "status of my disk".into()
             })
         );
@@ -338,6 +478,7 @@ mod tests {
             Ok(Command::Once {
                 resumed: None,
                 model: None,
+                mode: None,
                 message: "status of my disk".into()
             })
         );
@@ -346,6 +487,7 @@ mod tests {
             Ok(Command::Once {
                 resumed: None,
                 model: None,
+                mode: None,
                 message: "login to what".into()
             })
         );
@@ -354,6 +496,7 @@ mod tests {
             Ok(Command::Once {
                 resumed: None,
                 model: None,
+                mode: None,
                 message: "--list".into()
             })
         );
@@ -363,6 +506,7 @@ mod tests {
             Ok(Command::Once {
                 resumed: None,
                 model: None,
+                mode: None,
                 message: "what does -h do".into()
             })
         );
@@ -386,6 +530,13 @@ mod tests {
             &["models", "now"],
             &["login", "now"],
             &["free-models", "maybe"],
+            &["--mode"][..],
+            &["--answer", "r-1"][..],
+            &["--answer", "r-1", "once"][..],
+            &["--resume", "t-k3f9q2xz", "--answer", "r-1", "once", "extra"][..],
+            &["--resume", "t-k3f9q2xz", "--model", "m", "--mode", "plan"][..],
+            &["--list", "--mode", "plan"][..],
+            &["default-mode", "plan", "now"][..],
             &["free-models", "on", "extra"],
             &["--"],
             &["--resume", "t-k3f9q2xz", "--"],
