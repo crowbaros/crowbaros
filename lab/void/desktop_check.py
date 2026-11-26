@@ -1773,24 +1773,36 @@ while True:
 '''.replace('REQUEST', repr(request))
             return json.loads(self.python(code, user='crowbar-shell'))
 
-        def pids():
-            # OpenCode's helpers and exited debug-config processes may also
-            # have its name. Compare live processes, excluding zombies.
+        def pids(root=None):
+            # Compare live processes, excluding zombies. With a root, capture
+            # only that harness's tree: OpenCode started by hand is separate.
             code = """
 import json
 from pathlib import Path
 found = {'crowbar-lever': [], 'opencode': []}
+parents = {}
 for path in Path('/proc').glob('[0-9]*/stat'):
     try:
         stat = path.read_text()
         name = stat[stat.index('(') + 1:stat.rindex(')')]
-        state = stat[stat.rindex(')') + 2:].split()[0]
+        fields = stat[stat.rindex(')') + 2:].split()
+        state = fields[0]
+        parents[int(path.parent.name)] = int(fields[1])
         if name in found and state != 'Z':
             found[name].append(int(path.parent.name))
     except (OSError, ValueError):
         pass
+root = ROOT_PID
+if root is not None:
+    family = {root}
+    while True:
+        children = {pid for pid, parent in parents.items() if parent in family} - family
+        if not children:
+            break
+        family.update(children)
+    found = {name: [pid for pid in ids if pid in family] for name, ids in found.items()}
 print(json.dumps({name: sorted(ids) for name, ids in found.items()}))
-"""
+""".replace('ROOT_PID', repr(root))
             return json.loads(self.python(code))
 
         def open_drawer():
@@ -1886,8 +1898,9 @@ print(json.dumps({name: sorted(ids) for name, ids in found.items()}))
             request = next(r for r in waiting['state']['turns'][-1]['requests'] if r['state'] == 'waiting')
             before = lever({'op': 'list', 'archived': True})['threads']
             old_lever = self.run('pgrep -x crowbar-lever').strip()
-            old_harnesses = pids()['opencode']
-            old_harness = self.run(f'pgrep -P {old_lever} -x opencode').strip()
+            old_harness = int(self.run(f'pgrep -P {old_lever} -x opencode').strip())
+            old_harnesses = pids(root=old_harness)['opencode']
+            self.check('the running harness is in its captured process tree', old_harness in old_harnesses)
             self.capture(f'35-recovery-before-{target.lower()}-death')
             if target == 'Lever':
                 # `once` leaves the current process up but prevents runit from
