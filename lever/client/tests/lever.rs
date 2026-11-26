@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 use std::fs;
 use std::io::{Read, Write};
-use std::os::fd::{FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -111,6 +111,12 @@ impl Lab {
                 .arg(self.rpc_log());
         }
 
+        // Lever reads the person's OpenCode settings: here the person has none.
+        let home = self.directory.join("home");
+        cmd.env("HOME", &home).env("XDG_CONFIG_HOME", home.join(".config"));
+        for key in ["OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT"] {
+            cmd.env_remove(key);
+        }
         let child = cmd
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -1135,4 +1141,114 @@ fn a_thread_s_mode_and_the_starting_mode_are_set_from_the_terminal() {
     assert_eq!((next.status, next.out.as_str()), (0, "Ran.\n"), "{next:?}");
     let bad = lab.run(&["default-mode", "plan"], "");
     assert_eq!(bad.status, 1, "{bad:?}");
+}
+
+/// Reads what the terminal shows until it shows `text`, for ten seconds at most.
+fn screen_until(keys: &mut fs::File, shown: &mut Vec<u8>, text: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut bytes = [0u8; 4096];
+    while !String::from_utf8_lossy(shown).contains(text) {
+        let left = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !left.is_zero(),
+            "the terminal never showed {text:?}: {}",
+            String::from_utf8_lossy(shown)
+        );
+        let mut poll = libc::pollfd {
+            fd: keys.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one valid pollfd.
+        if unsafe { libc::poll(&mut poll, 1, left.as_millis() as libc::c_int) } <= 0 {
+            continue;
+        }
+        let count = keys.read(&mut bytes).expect("the terminal shows more");
+        assert!(count > 0, "the terminal closed before {text:?}");
+        shown.extend_from_slice(&bytes[..count]);
+    }
+}
+
+#[test]
+fn requests_that_wait_after_their_turn_are_each_asked_for_and_then_the_thread_takes_a_message() {
+    use std::os::unix::net::UnixListener;
+
+    let lab = Lab::empty();
+    let sock_dir = lab.directory.join("runtime/crowbar-lever");
+    fs::create_dir_all(&sock_dir).unwrap();
+    let listener = UnixListener::bind(sock_dir.join("person")).expect("bind a Lever of the test's");
+    let request = |id: &str, command: &str, state: &str| {
+        json!({
+            "request": id, "kind": "command", "title": command, "detail": command, "state": state,
+            "answers": [{ "answer": "once", "name": "Allow once" }, { "answer": "no", "name": "Reject" }]
+        })
+    };
+    let waiting = [
+        request("r-1", "make", "waiting"),
+        request("r-2", "make test", "waiting"),
+    ];
+    // A thread whose turn is done, and two requests that came after it.
+    let lever = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("crowbar-agent connects");
+        assert_eq!(read_framed(&mut stream), json!({ "version": 1 }));
+        write_framed(&mut stream, &json!({ "version": 1 }));
+        assert_eq!(read_framed(&mut stream), json!({ "op": "resume", "thread": "t-1" }));
+        write_framed(
+            &mut stream,
+            &json!({
+                "reply": "resumed", "thread": "t-1", "title": "Build", "cwd": "/tmp",
+                "started": 1, "updated": 2, "working": false, "mode": "ask-first",
+                "turns": [{
+                    "turn": 1, "message": "build it", "answer": "Built.", "state": "done",
+                    "acts": [], "requests": waiting, "notes": []
+                }]
+            }),
+        );
+        let mut answers = Vec::new();
+        for _ in 0..2 {
+            let answer = read_framed(&mut stream);
+            write_framed(&mut stream, &json!({ "reply": "ok" }));
+            let id = answer["request"].as_str().unwrap().to_string();
+            let mut ended = request(&id, "", "answered");
+            ended["answer"] = answer["answer"].clone();
+            ended["event"] = json!("request");
+            ended["thread"] = json!("t-1");
+            ended["turn"] = json!(1);
+            write_framed(&mut stream, &ended);
+            answers.push((id, answer["answer"].as_str().unwrap().to_string()));
+        }
+        // Lever stays until crowbar-agent leaves.
+        let mut rest = Vec::new();
+        let _ = stream.read_to_end(&mut rest);
+        answers
+    });
+
+    let (mut keys, screen) = terminal();
+    let mut agent = lab.agent(&["--resume", "t-1"]);
+    agent
+        .stdin(screen.try_clone().expect("the terminal again"))
+        .stdout(Stdio::null())
+        .stderr(screen);
+    let mut child = agent.spawn().expect("crowbar-agent runs");
+    drop(agent);
+    let mut shown = Vec::new();
+    screen_until(&mut keys, &mut shown, "[request] Run: make\r\nAnswer [once/no]: ");
+    keys.write_all(b"once\n").unwrap();
+    // The next is asked for when Lever has the answer to the one before.
+    screen_until(
+        &mut keys,
+        &mut shown,
+        "[request] answered: once\r\n[request] Run: make test\r\nAnswer [once/no]: ",
+    );
+    keys.write_all(b"no\n").unwrap();
+    screen_until(&mut keys, &mut shown, "[request] answered: no\r\n> ");
+    keys.write_all(&[4]).unwrap();
+    assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
+    assert_eq!(
+        lever.join().unwrap(),
+        [
+            ("r-1".to_string(), "once".to_string()),
+            ("r-2".to_string(), "no".to_string())
+        ]
+    );
 }

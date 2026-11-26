@@ -127,7 +127,7 @@ fn show_request(answer: &mut Answer, request: &Value, thread: &str, asking: bool
                 let path = text(request, "path");
                 let named = if path.is_empty() { text(request, "title") } else { path };
                 eprintln!("[request] {what}: {named}");
-                for line in detail.lines().filter(|line| *line != named) {
+                for line in detail.lines() {
                     eprintln!("  {line}");
                 }
             }
@@ -200,7 +200,7 @@ fn turn(
         reply.get("turn").and_then(Value::as_u64),
         Answer::new(),
         Typing::Waits,
-        None,
+        Vec::new(),
     );
     *thread = Some(begun);
     ended.map(|ended| ended.unwrap_or(Ended::Done))
@@ -209,27 +209,48 @@ fn turn(
 /// Writes a turn's answer and acts as they come, until the turn ends. Ctrl-C
 /// stops the turn: Lever is asked to, and the turn's own end is waited for. A
 /// second Ctrl-C does not wait. A request of the thread is shown as it comes,
-/// and on a terminal its answer is asked for: `waiting` is one that already
-/// waits.
+/// and on a terminal its answer is asked for, one request at a time:
+/// `waiting` are those that already wait. With no turn, what is watched is
+/// what waits, until nothing does.
 fn watch(
     lever: &mut Connection,
     thread: &str,
     turn: Option<u64>,
     mut answer: Answer,
     typing: Typing,
-    waiting: Option<Value>,
+    waiting: Vec<Value>,
 ) -> Result<Option<Ended>> {
     let prompted = std::io::stdin().is_terminal();
     let mut stopping = false;
     // The request whose answer is asked for here, and the answers it offers.
     let mut asking: Option<(String, Vec<String>)> = None;
-    if let Some(request) = waiting {
-        show_request(&mut answer, &request, thread, prompted)?;
+    // The request taken up here, until Lever says how it ended: no other
+    // is asked for before.
+    let mut taken: Option<Value> = None;
+    // Requests that wait, by ID, and those still to be asked here, in order.
+    let mut open: Vec<String> = Vec::new();
+    let mut queued: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
+    for request in waiting {
+        open.push(text(&request, "request").into_owned());
         if prompted {
-            asking = Some((text(&request, "request").into_owned(), answers_of(&request)));
+            queued.push_back(request);
+        } else {
+            show_request(&mut answer, &request, thread, false)?;
         }
     }
     loop {
+        if turn.is_none() && open.is_empty() {
+            return Ok(Some(Ended::Done));
+        }
+        if asking.is_none()
+            && taken.is_none()
+            && !stopping
+            && let Some(request) = queued.pop_front()
+        {
+            show_request(&mut answer, &request, thread, true)?;
+            asking = Some((text(&request, "request").into_owned(), answers_of(&request)));
+            taken = Some(request);
+        }
         let now = if stopping {
             Typing::Waits
         } else if asking.is_some() {
@@ -268,8 +289,15 @@ fn watch(
                 continue;
             }
         };
-        // What Lever said of an answer sent from here.
+        // What Lever said of an answer sent from here. One it refused
+        // leaves the request to be asked for again.
         if refused(&event).is_some() {
+            if asking.is_none()
+                && let Some(request) = taken.take()
+                && open.iter().any(|r| *r == text(&request, "request"))
+            {
+                queued.push_front(request);
+            }
             continue;
         }
         if event.get("thread").and_then(Value::as_str) != Some(thread) {
@@ -279,16 +307,28 @@ fn watch(
         if text(&event, "event") == "request" {
             let id = text(&event, "request").into_owned();
             let waits = text(&event, "state") == "waiting";
-            let mine = asking.as_ref().is_some_and(|(r, _)| *r == id);
-            if !waits && mine {
+            if waits {
+                if !open.contains(&id) {
+                    open.push(id);
+                }
+                // On a terminal, asked for when no other is.
+                if prompted && !stopping {
+                    queued.push_back(event);
+                } else {
+                    show_request(&mut answer, &event, thread, false)?;
+                }
+                continue;
+            }
+            open.retain(|r| *r != id);
+            queued.retain(|r| text(r, "request") != id);
+            if taken.as_ref().is_some_and(|r| text(r, "request") == id) {
+                taken = None;
+            }
+            if asking.as_ref().is_some_and(|(r, _)| *r == id) {
                 asking = None;
                 eprintln!();
             }
-            let ask_here = waits && prompted && !stopping && asking.is_none();
-            show_request(&mut answer, &event, thread, ask_here)?;
-            if ask_here {
-                asking = Some((id, answers_of(&event)));
-            }
+            show_request(&mut answer, &event, thread, false)?;
             continue;
         }
         // An act is its own turn's, and may end after a later turn began:
@@ -335,8 +375,8 @@ struct Resumed {
     answer: Answer,
     /// How its newest turn ended, if it has.
     last: Ended,
-    /// A request of the turn still working that waits for the person.
-    waiting: Option<Value>,
+    /// The requests of the thread that wait for the person.
+    waiting: Vec<Value>,
 }
 
 /// Follows a thread that is already there, and shows it as it stands.
@@ -400,8 +440,9 @@ fn resume(lever: &mut Connection, thread: &str) -> Result<Option<Resumed>> {
         waiting: turns
             .iter()
             .flat_map(|turn| turn.get("requests").and_then(Value::as_array).into_iter().flatten())
-            .find(|request| text(request, "state") == "waiting")
-            .cloned(),
+            .filter(|request| text(request, "state") == "waiting")
+            .cloned()
+            .collect(),
     }))
 }
 
@@ -565,7 +606,7 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
             return Ok(Ended::Failed);
         };
         last = stood.last;
-        if stood.working.is_some() || stood.waiting.is_some() {
+        if stood.working.is_some() || !stood.waiting.is_empty() {
             // Ctrl-D leaves a turn that was working when the thread was
             // resumed, as it leaves one that begins after.
             let Some(ended) = watch(
@@ -602,7 +643,14 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
                     let mut answer = Answer::new();
                     answer.write(&format!("\n> {}\n", text(&event, "text")))?;
                     let turn = event.get("turn").and_then(Value::as_u64);
-                    let watched = watch(lever, &text(&event, "thread"), turn, answer, Typing::UntilItEnds, None)?;
+                    let watched = watch(
+                        lever,
+                        &text(&event, "thread"),
+                        turn,
+                        answer,
+                        Typing::UntilItEnds,
+                        Vec::new(),
+                    )?;
                     let Some(ended) = watched else {
                         return Ok(left(last));
                     };
