@@ -121,6 +121,9 @@ pub struct Connection {
     /// request of that turn that waits, and that Lever sent before it took
     /// the Stop, is one the Stop withdraws, and is not given.
     stopping: Option<(String, u64, usize)>,
+    /// Requests set aside so, by ID: their withdrawal, when it comes, is
+    /// set aside too, as nothing was shown of them.
+    set_aside: Vec<String>,
 }
 
 /// Why there is no connection to Lever.
@@ -191,6 +194,7 @@ impl Connection {
             typed_ahead: false,
             owed: 0,
             stopping: None,
+            set_aside: Vec::new(),
         }
     }
 
@@ -267,14 +271,25 @@ impl Connection {
         }
     }
 
-    /// Whether a message is a request the Stop under way withdraws.
-    fn withdrawn_by_stop(&self, message: &Value) -> bool {
-        self.stopping.as_ref().is_some_and(|(thread, turn, _)| {
-            text(message, "event") == "request"
-                && text(message, "state") == "waiting"
-                && text(message, "thread") == thread.as_str()
-                && message.get("turn").and_then(Value::as_u64) == Some(*turn)
-        })
+    /// Whether a message is a request the Stop under way withdraws, or the
+    /// end of one set aside so. Either is not given.
+    fn withdrawn_by_stop(&mut self, message: &Value) -> bool {
+        if text(message, "event") != "request" {
+            return false;
+        }
+        let id = text(message, "request").into_owned();
+        if text(message, "state") != "waiting" {
+            let before = self.set_aside.len();
+            self.set_aside.retain(|r| *r != id);
+            return self.set_aside.len() < before;
+        }
+        let withdrawn = self.stopping.as_ref().is_some_and(|(thread, turn, _)| {
+            text(message, "thread") == thread.as_str() && message.get("turn").and_then(Value::as_u64) == Some(*turn)
+        });
+        if withdrawn {
+            self.set_aside.push(id);
+        }
+        withdrawn
     }
 
     /// Sends a request whose reply is not waited for here: `next` gives it

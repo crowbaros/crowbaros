@@ -1867,13 +1867,19 @@ fn a_request_on_its_way_when_ctrl_c_returns_to_the_prompt_is_not_asked_for_there
     // SAFETY: sending Ctrl-C's signal to our own child process.
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
     screen_until(&mut keys, &mut shown, "[request] withdrawn");
-    screen_until(&mut keys, &mut shown, "[request] withdrawn\r\n[request] withdrawn");
+    // Nothing of r-2 is shown, its withdrawal neither. Ctrl-D comes once
+    // crowbar-agent has had all Lever sent.
+    std::thread::sleep(Duration::from_millis(300));
+    keys.write_all(&[4]).unwrap();
+    let mut rest = [0u8; 4096];
+    let n = keys.read(&mut rest).unwrap_or(0);
+    shown.extend_from_slice(&rest[..n]);
     let screen = String::from_utf8_lossy(&shown).into_owned();
     assert!(
         !screen.contains("make r-2"),
         "r-2 is withdrawn, not asked for: {screen}"
     );
-    keys.write_all(&[4]).unwrap();
+    assert_eq!(screen.matches("[request] withdrawn").count(), 1, "{screen}");
     assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
     lever.join().unwrap();
 }
