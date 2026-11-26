@@ -17,7 +17,7 @@ use crate::slash::{self, Menu, MenuKind, Resolve, Run, Take, Wants};
 use std::collections::HashSet;
 
 /// The most rows of a list shown at once. A longer list moves with the keys.
-const LIST_ROWS: usize = 8;
+const LIST_ROWS: usize = 10;
 
 #[derive(Clone)]
 pub(crate) enum ThreadAction {

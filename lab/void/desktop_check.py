@@ -1180,9 +1180,28 @@ finally:
             )
             empty_the_box()
 
-            # 1c. The thread is driven from the message box. A slash lists
-            # the drawer's commands and then the harness's own, asked of the
-            # harness for the listing.
+            # 1c. The thread is driven from the message box. A slash and the
+            # start of a name find a command of the harness's, and taking it
+            # puts it in the message box for the person to add to and send.
+            self.type('/rev')
+            found = self.wait("typing finds a command of the harness's",
+                              lambda: (v := self.agent_view()) and listed(v).get('highlighted') == 'command:review'
+                              and control(v, 'command:review') and v, timeout=60)
+            time.sleep(0.4)
+            self.capture('20-drawer-harness-command')
+            self.key('ret')
+            filled = self.wait('taking it puts it in the message box',
+                               lambda: (v := self.agent_view()) and v.get('draft') == '/review ' and v)
+            self.check(
+                "a command the harness offers is found by its name, and taking it puts it in the message box and "
+                'sends nothing',
+                listed(found)['items'][0] == 'command:review' and not filled.get('list')
+                and len(filled['state']['turns']) == 2 and not filled['state'].get('sending'),
+                json.dumps({'found': listed(found)['items'], 'draft': filled.get('draft')}),
+            )
+            empty_the_box()
+            # A slash alone lists the drawer's commands and then the
+            # harness's own.
             self.type('/')
             commands = self.wait(
                 "a slash lists the commands, the harness's among them",
