@@ -667,22 +667,7 @@ impl Service {
             .values()
             .any(|s| s.stop_asked.is_some_and(|asked| asked.elapsed() >= self.stop_timeout));
         if overdue_subagent {
-            if let Some(harness) = self.harness.take() {
-                let pid = harness.pid();
-                harness.kill_tree();
-                let name = self
-                    .harness_config
-                    .as_ref()
-                    .map(|c| c.name.as_str())
-                    .unwrap_or("harness");
-                let _ = log.write(
-                    Event::Harness,
-                    &format!(
-                        "stopped {name} (process {pid}) and every process under it: it did not stop a subagent when asked"
-                    ),
-                );
-            }
-            effects.extend(self.after_harness_gone("The harness was stopped.", log));
+            effects.extend(self.kill_harness("it did not stop a subagent when asked", log));
         }
         // A harness that has not answered a mode change in that time, a
         // stopped turn's or one set between turns, is ended too: until it
@@ -691,21 +676,8 @@ impl Service {
             .modes_in_flight
             .iter()
             .any(|(_, asked)| asked.elapsed() >= self.stop_timeout);
-        if unanswered && let Some(harness) = self.harness.take() {
-            let pid = harness.pid();
-            harness.kill_tree();
-            let name = self
-                .harness_config
-                .as_ref()
-                .map(|c| c.name.as_str())
-                .unwrap_or("harness");
-            let _ = log.write(
-                Event::Harness,
-                &format!(
-                    "stopped {name} (process {pid}) and every process under it: it did not answer a change of mode"
-                ),
-            );
-            effects.extend(self.after_harness_gone("The harness was stopped.", log));
+        if unanswered && self.harness.is_some() {
+            effects.extend(self.kill_harness("it did not answer a change of mode", log));
         }
         if self.harness_env_stale && !self.has_active_work() {
             self.stop_harness("after free hosted Models setting changed", log);
@@ -720,37 +692,9 @@ impl Service {
         effects
     }
 
-    /// A harness did not end a turn it was asked to stop. The turn ends as
-    /// stopped, and the harness ends with every process under it, so nothing
-    /// the turn started goes on. Every other turn it was working on is
-    /// interrupted.
-    /// Stops the harness and every process under it, at once, for `why`.
+    /// Stops the harness and every process under it, at once, for `why`, and
+    /// ends what it was working on.
     fn kill_harness(&mut self, why: &str, log: &mut Log) -> Effects {
-        let Some(harness) = self.harness.take() else {
-            return Effects::default();
-        };
-        let pid = harness.pid();
-        harness.kill_tree();
-        let name = self
-            .harness_config
-            .as_ref()
-            .map(|c| c.name.as_str())
-            .unwrap_or("harness");
-        let _ = log.write(
-            Event::Harness,
-            &format!("stopped {name} (process {pid}) and every process under it: {why}"),
-        );
-        self.after_harness_gone("The harness was stopped.", log)
-    }
-
-    fn force_stop(&mut self, thread_id: &str, turn: u64, log: &mut Log) -> Effects {
-        self.working_turns.remove(thread_id);
-        self.end_turn(thread_id, turn, "stopped", None, log);
-        let mut effects = Effects::default();
-        effects.broadcasts.push(Broadcast {
-            thread_id: thread_id.to_string(),
-            message: json!({ "event": "stopped", "thread": thread_id, "turn": turn }),
-        });
         if let Some(harness) = self.harness.take() {
             let pid = harness.pid();
             harness.kill_tree();
@@ -761,12 +705,25 @@ impl Service {
                 .unwrap_or("harness");
             let _ = log.write(
                 Event::Harness,
-                &format!(
-                    "stopped {name} (process {pid}) and every process under it: it did not stop a turn when asked"
-                ),
+                &format!("stopped {name} (process {pid}) and every process under it: {why}"),
             );
         }
-        effects.extend(self.after_harness_gone("The harness was stopped.", log));
+        self.after_harness_gone("The harness was stopped.", log)
+    }
+
+    /// A harness did not end a turn it was asked to stop. The turn ends as
+    /// stopped, and the harness ends with every process under it, so nothing
+    /// the turn started goes on. Every other turn it was working on is
+    /// interrupted.
+    fn force_stop(&mut self, thread_id: &str, turn: u64, log: &mut Log) -> Effects {
+        self.working_turns.remove(thread_id);
+        self.end_turn(thread_id, turn, "stopped", None, log);
+        let mut effects = Effects::default();
+        effects.broadcasts.push(Broadcast {
+            thread_id: thread_id.to_string(),
+            message: json!({ "event": "stopped", "thread": thread_id, "turn": turn }),
+        });
+        effects.extend(self.kill_harness("it did not stop a turn when asked", log));
         effects
     }
 
