@@ -352,6 +352,12 @@ impl Service {
             || self.modes_in_flight.iter().any(|(t, _)| t == thread_id)
     }
 
+    /// Whether a thread is being deleted: what its harness says of it now
+    /// goes nowhere.
+    fn deleting(&self, thread_id: &str) -> bool {
+        self.pending_deletes.iter().any(|p| p.thread == thread_id)
+    }
+
     /// The turn the harness began itself that works on a thread, if one does.
     fn harness_turn(&self, thread_id: &str) -> Option<u64> {
         self.working_turns
@@ -373,8 +379,11 @@ impl Service {
     /// Something that held a turn the harness began has let it go: a
     /// subagent or a request of its thread ended. The quiet it waits for
     /// counts from now, so the harness has time to answer.
+    /// After a Stop, what ends is the Stop going through, not the harness
+    /// going on: the clock is left as it was.
     fn heard_from(&mut self, thread_id: &str) {
         if let Some(active) = self.working_turns.get_mut(thread_id)
+            && active.stop_asked.is_none()
             && let TurnDispatch::HarnessStarted { last_heard, .. } = &mut active.dispatch
         {
             *last_heard = Instant::now();
@@ -1689,6 +1698,16 @@ impl Service {
         let mut broadcasts = Vec::new();
         if let (Some(tid), Some(turn)) = (requested_thread, woken) {
             broadcasts.push(self.end_harness_turn(tid, turn, log));
+            // The record must have how that turn ended before the next one
+            // begins, as for any turn.
+            if self.unsaved_endings.iter().any(|ending| ending.thread_id == tid) {
+                let mut outcome = error_outcome(
+                    "storage-error",
+                    "Lever is still saving how this thread's last turn ended.",
+                );
+                outcome.broadcasts = broadcasts;
+                return outcome;
+            }
         }
         let turn = match self.store.begin_turn(
             &thread_id,
@@ -3141,6 +3160,9 @@ impl Service {
         broadcasts: &mut Vec<Broadcast>,
         log: &mut Log,
     ) -> Option<(u64, SubagentRecord)> {
+        if self.deleting(thread_id) {
+            return None;
+        }
         let turn = self.turn_for_update(thread_id)?;
         let patch = SubagentPatch {
             thread_id,
@@ -3181,6 +3203,9 @@ impl Service {
         error: Option<&str>,
         log: &mut Log,
     ) -> Effects {
+        if self.deleting(thread_id) {
+            return Effects::default();
+        }
         let Some(turn) = self.turn_for_update(thread_id) else {
             return Effects::default();
         };
@@ -3317,11 +3342,13 @@ impl Service {
         log: &mut Log,
     ) -> Effects {
         let mut effects = Effects::default();
-        // A turn or subagent the person asked to stop asks nothing more of them.
-        let stopping = self
-            .working_turns
-            .get(thread_id)
-            .is_some_and(|active| active.stop_asked.is_some())
+        // A turn or subagent the person asked to stop asks nothing more of
+        // them, nor does a thread being deleted.
+        let stopping = self.deleting(thread_id)
+            || self
+                .working_turns
+                .get(thread_id)
+                .is_some_and(|active| active.stop_asked.is_some())
             || harness_subagent_id.is_some_and(|cid| {
                 self.working_subagents
                     .values()

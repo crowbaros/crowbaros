@@ -2036,11 +2036,30 @@ mod tests {
         assert_eq!(rec.turns[1].origin.as_deref(), Some("harness"));
         assert_eq!(rec.turns[1].message, "");
 
-        // A subagent the database takes only part of is not kept at all.
+        // A subagent the database takes only part of is not kept at all,
+        // nor is half a reopened turn.
         store
             .conn
             .execute_batch("CREATE TRIGGER refused BEFORE UPDATE ON threads BEGIN SELECT RAISE(ABORT, 'refused'); END")
             .unwrap();
+        let woke_again = store.begin_harness_turn("t-v6", 110);
+        assert!(
+            woke_again.is_err(),
+            "the thread is not touched, so the turn is not begun"
+        );
+        store.conn.execute_batch("DROP TRIGGER refused").unwrap();
+        let woke_again = store.begin_harness_turn("t-v6", 111).unwrap();
+        store.finish_turn("t-v6", woke_again, "done", None, 112).unwrap();
+        store
+            .conn
+            .execute_batch("CREATE TRIGGER refused BEFORE UPDATE ON threads BEGIN SELECT RAISE(ABORT, 'refused'); END")
+            .unwrap();
+        assert!(store.reopen_harness_turn("t-v6", woke_again, 113).is_err());
+        assert_eq!(
+            store.latest_turn("t-v6").unwrap(),
+            Some((woke_again, "done".to_string(), true)),
+            "a reopen the database takes only part of leaves the turn ended"
+        );
         let partial = SubagentPatch {
             harness_session_id: "ses-half",
             ..patch

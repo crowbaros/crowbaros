@@ -392,6 +392,9 @@ pub struct AcpHarness {
     supports_load_session: bool,
     supports_close_session: bool,
     supports_delete_session: bool,
+    /// The harness says it is OpenCode: its legacy `task` launcher is told by
+    /// its kind alone, which another harness's `Task` act may share.
+    is_opencode: bool,
     probing_models: bool,
     model_config_id: Option<String>,
     mode_config_id: Option<String>,
@@ -512,6 +515,7 @@ impl AcpHarness {
             supports_load_session: false,
             supports_close_session: false,
             supports_delete_session: false,
+            is_opencode: false,
             probing_models: false,
             model_config_id: None,
             mode_config_id: None,
@@ -1457,6 +1461,10 @@ impl AcpHarness {
                     self.supports_load_session = resp.agent_capabilities.load_session;
                     self.supports_close_session = resp.agent_capabilities.session_capabilities.close.is_some();
                     self.supports_delete_session = resp.agent_capabilities.session_capabilities.delete.is_some();
+                    self.is_opencode = resp
+                        .agent_info
+                        .as_ref()
+                        .is_some_and(|info| info.name.eq_ignore_ascii_case("opencode"));
                     events.push(AcpEvent::Initialized);
                 }
                 Ok(_) => events.push(AcpEvent::InitializeFailed {
@@ -1806,7 +1814,7 @@ impl AcpHarness {
         raw_update: &Value,
         events: &mut Vec<AcpEvent>,
     ) -> bool {
-        if !is_opencode_subagent_tool(title, tc.kind, tc.raw_input.as_ref(), raw_update) {
+        if !is_opencode_subagent_tool(title, tc.kind, tc.raw_input.as_ref(), raw_update, self.is_opencode) {
             return false;
         }
         let call_id = tc.tool_call_id.0.as_ref().to_string();
@@ -3119,31 +3127,37 @@ fn extract_opencode_error(error: Option<&Value>) -> Option<String> {
     }
 }
 
-/// Whether a parent session's tool call is OpenCode's subagent launcher tool
-/// (`subagent` or legacy `task` with subagent parameters). Lever keeps the
-/// subagent itself in the thread record instead of exposing OpenCode's wrapper
-/// call and raw `sessionID`.
-fn is_opencode_subagent_tool(title: &str, kind: ToolKind, raw_input: Option<&Value>, raw_update: &Value) -> bool {
-    let meta_name = raw_update
-        .pointer("/_meta/opencode/toolName")
-        .or_else(|| raw_update.pointer("/_meta/toolName"))
-        .and_then(Value::as_str);
-    if matches!(meta_name, Some("subagent" | "task")) {
+/// Whether a session's tool call is OpenCode's subagent launcher tool
+/// (`subagent`, or with `opencode`, the harness being OpenCode, its legacy
+/// `task`). Lever keeps the subagent itself in the thread record instead of
+/// exposing OpenCode's wrapper call and raw `sessionID`. Another harness's
+/// act called `task` is its own act.
+fn is_opencode_subagent_tool(
+    title: &str,
+    kind: ToolKind,
+    raw_input: Option<&Value>,
+    raw_update: &Value,
+    opencode: bool,
+) -> bool {
+    let named = |pointer: &str| {
+        matches!(
+            raw_update.pointer(pointer).and_then(Value::as_str),
+            Some("subagent" | "task")
+        )
+    };
+    if named("/_meta/opencode/toolName") || (opencode && named("/_meta/toolName")) {
         return true;
     }
     let clean = title.trim();
     if clean.eq_ignore_ascii_case("subagent") {
         return true;
     }
-    if clean.eq_ignore_ascii_case("task")
+    opencode
+        && clean.eq_ignore_ascii_case("task")
         && (kind == ToolKind::Think
             || raw_input.is_some_and(|v| {
                 v.get("prompt").is_some() && (v.get("agent").is_some() || v.get("subagent_type").is_some())
             }))
-    {
-        return true;
-    }
-    false
 }
 
 /// Extracts `(title, prompt, child_session_id)` from an OpenCode subagent tool
@@ -3644,7 +3658,31 @@ mod tests {
             "subagent",
             ToolKind::Think,
             Some(&input),
-            &json!({})
+            &json!({}),
+            false
+        ));
+        // OpenCode's legacy `task` launcher is OpenCode's only: another
+        // harness's `Task` act stays an act.
+        assert!(is_opencode_subagent_tool(
+            "task",
+            ToolKind::Think,
+            None,
+            &json!({}),
+            true
+        ));
+        assert!(!is_opencode_subagent_tool(
+            "Task",
+            ToolKind::Think,
+            None,
+            &json!({}),
+            false
+        ));
+        assert!(!is_opencode_subagent_tool(
+            "task",
+            ToolKind::Think,
+            Some(&input),
+            &json!({ "_meta": { "toolName": "task" } }),
+            false
         ));
         assert_eq!(
             extract_subagent_call_fields(Some(&input), Some(&output)),
