@@ -3129,7 +3129,7 @@ impl Service {
         // after its turn has ended.
         let stop_asked = stop_asked.or_else(|| {
             is_new
-                .then(|| self.stop_for_new_subagent(thread_id, recorded_turn))
+                .then(|| self.stop_for_new_subagent(thread_id, harness_subagent_id, recorded_turn))
                 .flatten()
         });
         if is_new
@@ -3158,7 +3158,16 @@ impl Service {
     /// When a subagent Lever first hears of belongs to work the person asked
     /// to stop: the thread's turn it is recorded in was asked to stop, or
     /// has ended stopped and is the thread's newest.
-    fn stop_for_new_subagent(&self, thread_id: &str, recorded_turn: u64) -> Option<Instant> {
+    fn stop_for_new_subagent(&self, thread_id: &str, harness_subagent_id: &str, recorded_turn: u64) -> Option<Instant> {
+        // A nested subagent is stopped as the subagent that launched it is.
+        if let Some(launcher) = self.launcher(thread_id, harness_subagent_id) {
+            return launcher.stop_asked;
+        }
+        // A Stop that holds stops what the harness starts after it, though
+        // it starts it before it says anything.
+        if self.held_stops.contains(thread_id) {
+            return Some(Instant::now());
+        }
         if let Some(active) = self.working_turns.get(thread_id) {
             return active.stop_asked.filter(|_| active.turn == recorded_turn);
         }
@@ -3182,7 +3191,7 @@ impl Service {
         if self.deleting(thread_id) {
             return None;
         }
-        let turn = self.turn_for_update(thread_id)?;
+        let turn = self.turn_for_subagent(thread_id, harness_subagent_id)?;
         let patch = SubagentPatch {
             thread_id,
             turn_number: turn,
@@ -3226,7 +3235,7 @@ impl Service {
         if self.deleting(thread_id) {
             return Effects::default();
         }
-        let Some(turn) = self.turn_for_update(thread_id) else {
+        let Some(turn) = self.turn_for_subagent(thread_id, harness_subagent_id) else {
             return Effects::default();
         };
         let existing_id = self
@@ -3238,11 +3247,7 @@ impl Service {
         // was not for it. One it has yet to hear of is of the turn it joins.
         let stop_asked = match existing_id.as_deref().and_then(|id| self.working_subagents.get(id)) {
             Some(sub) => sub.stop_asked,
-            None => self
-                .working_turns
-                .get(thread_id)
-                .filter(|t| t.turn == turn)
-                .and_then(|t| t.stop_asked),
+            None => self.stop_for_new_subagent(thread_id, harness_subagent_id, turn),
         };
         let effective_state = match state {
             Some("interrupted") if stop_asked.is_some() => Some("stopped"),
@@ -3406,6 +3411,19 @@ impl Service {
             }
             return effects;
         };
+        // A request that begins a turn under a Stop that holds asks nothing
+        // of the person either.
+        if harness_subagent_id.is_none()
+            && self
+                .working_turns
+                .get(thread_id)
+                .is_some_and(|active| active.turn == turn && active.stop_asked.is_some())
+        {
+            if let Some(harness) = self.harness.as_mut() {
+                harness.answer_permission(handle, None);
+            }
+            return effects;
+        }
         let (recorded_turn, subagent_id, act) = if let Some(child_sid) = harness_subagent_id {
             let Some((sub_turn, sub)) =
                 self.ensure_subagent(thread_id, child_sid, subagent_title, &mut effects.broadcasts, log)
@@ -3927,6 +3945,22 @@ impl Service {
             return None;
         }
         Some(self.wake_quiet.saturating_sub(last_heard.elapsed()))
+    }
+
+    /// The working subagent of a thread that launched a nested one.
+    fn launcher(&self, thread_id: &str, harness_subagent_id: &str) -> Option<&WorkingSubagent> {
+        let launcher_sid = self.harness.as_ref()?.launcher_of(harness_subagent_id)?;
+        self.working_subagents
+            .values()
+            .find(|s| s.thread_id == thread_id && s.harness_session_id == launcher_sid)
+    }
+
+    /// The turn a subagent's update belongs to: a nested subagent's is the
+    /// turn of the subagent that launched it, whatever turn works now.
+    fn turn_for_subagent(&self, thread_id: &str, harness_subagent_id: &str) -> Option<u64> {
+        self.launcher(thread_id, harness_subagent_id)
+            .map(|s| s.turn)
+            .or_else(|| self.turn_for_update(thread_id))
     }
 
     fn turn_for_update(&self, thread_id: &str) -> Option<u64> {

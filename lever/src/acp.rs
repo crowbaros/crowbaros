@@ -440,6 +440,8 @@ pub struct AcpHarness {
     /// Subagents whose prompt Lever has passed on, and where it came from, so
     /// one prompt is never shown twice.
     child_prompts: HashMap<String, PromptFrom>,
+    /// The subagent session that launched each nested child, by child.
+    child_launchers: HashMap<String, String>,
     /// Transport failure recorded when Lever cancels an endless retry loop on a
     /// session whose Model is unreachable, turned into `TurnOutcome::Failed`
     /// when the harness answers the cancelled prompt.
@@ -537,6 +539,7 @@ impl AcpHarness {
             child_titles: HashMap::new(),
             pending_subagent_calls: HashMap::new(),
             child_prompts: HashMap::new(),
+            child_launchers: HashMap::new(),
             transport_failures: HashMap::new(),
         };
 
@@ -583,6 +586,11 @@ impl AcpHarness {
         self.thread_to_session.get(thread_id).map(String::as_str)
     }
 
+    /// The subagent session that launched a nested child, if a subagent did.
+    pub fn launcher_of(&self, child_session_id: &str) -> Option<&str> {
+        self.child_launchers.get(child_session_id).map(String::as_str)
+    }
+
     /// Lets go of a thread's session, which Lever will not use.
     pub fn forget_session(&mut self, thread_id: &str) {
         self.transport_failures.remove(thread_id);
@@ -602,6 +610,7 @@ impl AcpHarness {
             self.child_to_thread.remove(&cid);
             self.child_titles.remove(&cid);
             self.child_prompts.remove(&cid);
+            self.child_launchers.remove(&cid);
         }
         self.pending_subagent_calls
             .retain(|_, call| call.thread_id != thread_id);
@@ -1968,6 +1977,9 @@ impl AcpHarness {
         let title_changed = title.is_some() && self.child_titles.get(&cid) != title.as_ref();
         if !self.register_child(thread_id, &cid, title.as_deref()) {
             return false;
+        }
+        if self.child_to_thread.contains_key(session_id) {
+            self.child_launchers.insert(cid.clone(), session_id.to_string());
         }
         let state = end
             .map(str::to_string)

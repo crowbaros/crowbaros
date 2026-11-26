@@ -7737,3 +7737,123 @@ fn an_act_a_stopped_harness_turn_closes_spares_the_harness() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn a_request_that_begins_a_turn_under_a_held_stop_asks_nothing() {
+    let dir = TempDir::new();
+    let script = wake_script(
+        &dir.0,
+        json!([
+            { "kind": "pause_ms", "ms": 300 },
+            { "kind": "ask", "id": "call_wake", "title": "make", "raw_input": { "command": "make" }, "request_without_call": true }
+        ]),
+    );
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&script).unwrap()).unwrap();
+    config["modes"] = json!(true);
+    let script = write_script(&dir.0, &config);
+    let extra = stub_extra(&script, &["--stop-timeout-ms", "1000"]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Look");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    assert_eq!(
+        ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }))["reply"],
+        "ok"
+    );
+    let got = read_until(&mut peer, |v| {
+        (v["event"] == "request" && v["state"] == "waiting") || (v["event"] == "stopped" && v["turn"] == turn + 1)
+    });
+    assert_eq!(got["event"], "stopped", "a request slipped past Stop: {got}");
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_subagent_the_harness_launches_under_a_held_stop_before_it_says_anything_is_stopped() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [{
+                "steps": [
+                    { "kind": "subagent_start", "id": "ses_first", "title": "First", "prompt": "First" },
+                    { "kind": "text", "text": "Handed off." }
+                ],
+                "after": [
+                    { "kind": "subagent_stall", "subagent": "ses_first" },
+                    { "kind": "subagent_start", "id": "ses_second", "title": "Second", "prompt": "Second" },
+                    { "kind": "subagent_ask", "subagent": "ses_second", "id": "call_child", "tool_kind": "read",
+                      "title": "Read /tmp/example", "raw_input": { "path": "/tmp/example" }, "output": "example" },
+                    { "kind": "subagent_stall", "subagent": "ses_second" }
+                ]
+            }]
+        }),
+    );
+    let extra = stub_extra(&script, &["--stop-timeout-ms", "1000"]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    assert_eq!(
+        ask_lever(&mut peer, json!({ "op": "stop", "thread": thread, "turn": turn }))["reply"],
+        "ok"
+    );
+    let got = read_until(&mut peer, |v| {
+        (v["event"] == "request" && v["state"] == "waiting")
+            || (v["event"] == "subagent" && v["title"] == "Second" && v["state"] == "stopped")
+    });
+    assert_eq!(got["event"], "subagent", "the retry slipped past Stop: {got}");
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_nested_subagent_of_an_older_turns_subagent_is_not_stopped_with_a_newer_turn() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [{
+                "steps": [
+                    { "kind": "subagent_start", "id": "ses_first", "title": "First", "prompt": "First" },
+                    { "kind": "subagent_start", "id": "ses_older", "title": "Older", "prompt": "Older" },
+                    { "kind": "text", "text": "Handed off." }
+                ],
+                "after": [
+                    { "kind": "subagent_end", "subagent": "ses_first", "status": "completed" },
+                    { "kind": "text", "text": "First reported." },
+                    { "kind": "pause_ms", "ms": 300 },
+                    { "kind": "subagent_start", "id": "ses_nested", "title": "Nested", "prompt": "Nested", "launched_by": "ses_older" },
+                    { "kind": "subagent_ask", "subagent": "ses_nested", "id": "call_child", "tool_kind": "read",
+                      "title": "Read /tmp/example", "raw_input": { "path": "/tmp/example" }, "output": "example" },
+                    { "kind": "subagent_stall", "subagent": "ses_nested" },
+                    { "kind": "subagent_end", "subagent": "ses_older", "status": "completed" }
+                ]
+            }]
+        }),
+    );
+    let extra = stub_extra(&script, &["--stop-timeout-ms", "1000", "--wake-quiet-ms", "5000"]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    let woke = read_until(&mut peer, |v| v["event"] == "message" && v["origin"] == "harness");
+    let newer = woke["turn"].as_u64().unwrap();
+    assert_eq!(
+        ask_lever(&mut peer, json!({ "op": "stop", "thread": thread, "turn": newer }))["reply"],
+        "ok"
+    );
+    let got = read_until(&mut peer, |v| {
+        (v["event"] == "subagent" && v["title"] == "Nested" && v["state"] == "stopped")
+            || (v["event"] == "request" && v["state"] == "waiting")
+    });
+    assert_eq!(
+        got["event"], "request",
+        "the newer Stop cancelled an older turn's nested subagent: {got}"
+    );
+    assert_eq!(got["turn"], turn);
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
