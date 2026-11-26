@@ -2051,6 +2051,16 @@ impl AcpHarness {
         if !self.register_child(&thread_id, child_sid, title) {
             return;
         }
+        // A child of another of the thread's subagents was launched by it,
+        // though the launcher has yet to name it.
+        if let Some(parent) = parent_sid
+            && parent != child_sid
+            && self.child_to_thread.get(parent) == Some(&thread_id)
+        {
+            self.child_launchers
+                .entry(child_sid.to_string())
+                .or_insert_with(|| parent.to_string());
+        }
         let effective_title = title
             .map(str::to_string)
             .or_else(|| self.child_titles.get(child_sid).cloned());

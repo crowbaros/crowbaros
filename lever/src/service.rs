@@ -587,8 +587,8 @@ impl Service {
                 else {
                     return false;
                 };
-                // What an older turn still does was not stopped with this
-                // one, and does not hold it.
+                // What an older turn still does does not hold this one: a
+                // subagent of it stopped on its own is given its own time.
                 t.stop_asked
                     .is_some_and(|asked| asked.elapsed() >= self.stop_timeout && *last_heard <= asked)
                     && open_acts.is_empty()
@@ -596,7 +596,7 @@ impl Service {
                     && !self
                         .working_subagents
                         .values()
-                        .any(|s| &s.thread_id == *tid && (s.turn == t.turn || s.stop_asked.is_some()))
+                        .any(|s| &s.thread_id == *tid && s.turn == t.turn)
             })
             .map(|(tid, t)| (tid.clone(), t.turn))
             .collect();
@@ -1859,14 +1859,13 @@ impl Service {
         // A Stop that leaves nothing of the thread working holds against
         // what the harness begins on it after, until the person's next
         // message: OpenCode answers a stopped subagent's report too.
-        let leaves_nothing = self
-            .working_subagents
-            .values()
-            .all(|s| s.thread_id != thread_id || s.stop_asked.is_some())
-            && self
-                .working_turns
-                .get(thread_id)
-                .is_none_or(|active| requested_turn.is_none_or(|t| active.turn == t));
+        let leaves_nothing =
+            self.working_subagents
+                .values()
+                .all(|s| s.thread_id != thread_id || s.stop_asked.is_some())
+                && self.working_turns.get(thread_id).is_none_or(|active| {
+                    active.stop_asked.is_some() || requested_turn.is_none_or(|t| active.turn == t)
+                });
         if leaves_nothing {
             self.held_stops.insert(thread_id.to_string());
         }
@@ -3435,10 +3434,12 @@ impl Service {
             };
             // A subagent first heard of in what it asks, after the person
             // stopped its work, was just stopped: it asks nothing of them.
-            if self
-                .working_subagents
-                .get(&sub.id)
-                .is_some_and(|s| s.stop_asked.is_some())
+            // Nor does one that has ended.
+            if sub.state != "working"
+                || self
+                    .working_subagents
+                    .get(&sub.id)
+                    .is_some_and(|s| s.stop_asked.is_some())
             {
                 if let Some(harness) = self.harness.as_mut() {
                     harness.answer_permission(handle, None);

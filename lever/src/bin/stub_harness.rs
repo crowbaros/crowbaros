@@ -302,6 +302,10 @@ enum Step {
         /// Ends the launcher call failed, after it named its child.
         #[serde(default)]
         launch_fails: bool,
+        /// For a nested launch: waits this long between telling of the child
+        /// and the launcher naming it.
+        #[serde(default)]
+        name_after_ms: u64,
     },
     /// Streams an answer text chunk from a subagent.
     SubagentText {
@@ -357,6 +361,9 @@ enum Step {
         subagent: String,
         #[serde(default = "default_subagent_protocol")]
         protocol: String,
+        /// Takes this long to stop once told to.
+        #[serde(default)]
+        linger_ms: u64,
     },
 }
 
@@ -980,6 +987,7 @@ fn run_subagent_step(
             prompt,
             protocol,
             launched_by: Some(parent),
+            name_after_ms,
             ..
         } => {
             // OpenCode 2.4.1 reports a subagent's own launcher call as an
@@ -1020,6 +1028,7 @@ fn run_subagent_step(
                 }),
             );
             send_opencode_nested_status(writer, session_id, Some(parent), id, Some(title), "created", None);
+            thread::sleep(Duration::from_millis(*name_after_ms));
             send_opencode_child_update(
                 writer,
                 session_id,
@@ -1044,6 +1053,7 @@ fn run_subagent_step(
             launched_by: None,
             hold_launcher,
             launch_fails,
+            ..
         } => {
             subagent_titles.insert(id.clone(), title.clone());
             active_cancels
@@ -1385,7 +1395,11 @@ fn run_subagent_step(
                 send_opencode_child_status(writer, session_id, subagent, title, status, error.as_deref());
             }
         }
-        Step::SubagentStall { subagent, protocol } => {
+        Step::SubagentStall {
+            subagent,
+            protocol,
+            linger_ms,
+        } => {
             let flag = active_cancels
                 .lock()
                 .unwrap()
@@ -1393,6 +1407,7 @@ fn run_subagent_step(
                 .or_insert_with(|| Arc::new(CancelFlag::new()))
                 .clone();
             flag.wait_cancelled();
+            thread::sleep(Duration::from_millis(*linger_ms));
             let title = subagent_titles.get(subagent).map(String::as_str);
             active_cancels.lock().unwrap().remove(subagent);
             if protocol == "acp" {
