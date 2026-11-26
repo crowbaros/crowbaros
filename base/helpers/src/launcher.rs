@@ -820,7 +820,9 @@ mod tests {
             let (reply, ran) = ask(request.as_bytes(), SHELL_UID, &person);
             assert_eq!(reply, json!({"ok": true, "preferences": saved}));
             assert!(ran.is_empty());
-            let (reply, _) = ask(request.as_bytes(), person.uid, &person);
+            // The test runner may itself have SHELL_UID (as on GitHub).
+            // Keep the simulated app peer distinct from the shell.
+            let (reply, _) = ask(request.as_bytes(), SHELL_UID + 1, &person);
             assert_eq!(reply["ok"], false);
             let request_with_path = format!("{}\n", json!({"op": op, "path": "/etc/shadow"}));
             let (reply, _) = ask(request_with_path.as_bytes(), SHELL_UID, &person);
