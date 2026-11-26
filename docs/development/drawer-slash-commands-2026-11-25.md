@@ -8,7 +8,7 @@ the Model picked. An answer shows as the Markdown it is, and a turn's acts fold
 into one line once it has ended. Lever carries the harness's slash commands,
 each Model's provider, and a thread's effort.
 
-The checks ran on `8f5d760f21aea19a1e60bed2b46e820fb735be7e`, on main
+The checks ran on `0f4581f52bd0511ed3eb20ccfaadf8cc053f0659`, on main
 `5644d9f7f1590563f33592745ef66bb66ec80914`, with nothing uncommitted.
 
 ## Checks
@@ -19,7 +19,7 @@ The checks ran on `8f5d760f21aea19a1e60bed2b46e820fb735be7e`, on main
 - Lever, in `lever/`: `cargo fmt --check`, `cargo clippy --locked --all-targets
   -- -D warnings`, and `cargo test --locked`: **152 tests passed**, 86 of them
   over Lever's real sockets against the stub harness.
-- Shell, in `apps/shell/`: `cargo test --locked`: **119 unit tests and 3 GPUI
+- Shell, in `apps/shell/`: `cargo test --locked`: **121 unit tests and 3 GPUI
   source tests passed**. Base's build also built and tested the shell and
   Lever in Void.
 - Python: **102 Base, 50 lab, 20 CI, and 7 GPUI packaging tests passed**.
@@ -78,7 +78,7 @@ Both are fixed, each with a test that fails without the fix.
 
 Light captures are from the full run of 215 checks (except the unchanged Light
 menu captures from the earlier `184aa090` run, with `thread-light.png` updated
-from the `8f5d760f` run to show the inline link destination). Dark captures are
+from the `0f4581f5` run to show the inline link destination). Dark captures are
 from a run of the same drawer checks alone on a fresh boot of the `184aa090`
 image, which starts in Dark: 42 checks passed. That run is not the desktop
 check, and is no substitute for it. Every image is the guest's display as
