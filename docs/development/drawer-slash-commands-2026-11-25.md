@@ -8,18 +8,18 @@ the Model picked. An answer shows as the Markdown it is, and a turn's acts fold
 into one line once it has ended. Lever carries the harness's slash commands,
 each Model's provider, and a thread's effort.
 
-The checks ran on `184aa090940091f6467fbc6115981c7ad756e556`, on main
+The checks ran on `8f5d760f21aea19a1e60bed2b46e820fb735be7e`, on main
 `5644d9f7f1590563f33592745ef66bb66ec80914`, with nothing uncommitted.
 
 ## Checks
 
-- `python3 lab/void/desktop_check.py`: **214 passed, 0 failed**.
+- `python3 lab/void/desktop_check.py`: **215 passed, 0 failed**.
   [desktop.log](assets/drawer-slash-commands-2026-11-25/desktop.log),
   [results.json](assets/drawer-slash-commands-2026-11-25/results.json).
 - Lever, in `lever/`: `cargo fmt --check`, `cargo clippy --locked --all-targets
-  -- -D warnings`, and `cargo test --locked`: **150 tests passed**, 84 of them
+  -- -D warnings`, and `cargo test --locked`: **152 tests passed**, 86 of them
   over Lever's real sockets against the stub harness.
-- Shell, in `apps/shell/`: `cargo test --locked`: **113 unit tests and 3 GPUI
+- Shell, in `apps/shell/`: `cargo test --locked`: **119 unit tests and 3 GPUI
   source tests passed**. Base's build also built and tested the shell and
   Lever in Void.
 - Python: **102 Base, 50 lab, 20 CI, and 7 GPUI packaging tests passed**.
@@ -30,6 +30,10 @@ the stub Model, it:
 
 - finds a slash command of OpenCode's by its name, takes it into the message
   box, and sends nothing;
+- submits a harness slash command (`/init`) from the drawer with desktop
+  context attached, and confirms OpenCode expands and runs it as a command
+  (with desktop context sent as ACP assistant-audience context) and shows its
+  turn in the thread;
 - lists the drawer's slash commands and then OpenCode's, narrows the list by
   typing, closes it with Escape, and keeps what was typed;
 - takes `/mode` with Down and Enter, picks Full access from the list, and sets
@@ -60,20 +64,25 @@ Both are fixed, each with a test that fails without the fix.
   way with `effort_answer_lags`, and
   `an_effort_answered_with_the_one_before_is_taken_and_the_update_after_says_so`
   holds it.
-- **A key held down sends Enter again.** Fulcrum repeats a key after 200 ms,
-  and the lab holds each key for 150 ms, so now and then Enter came twice.
-  Taking `/mode` filled the message box, and the second Enter took the first
-  mode with it. In the drawer one press of Enter now counts once, until the
-  key is released. The desktop check's arrow keys go to the row they mean to
-  reach, since a list goes round its ends.
+- **A key held down repeats Enter or Alt+digit.** Fulcrum repeats a key after
+  200 ms, and the lab holds each key for 150 ms, so now and then Enter came
+  twice; taking `/mode` filled the message box, and the second Enter took the
+  first mode with it. In the drawer, plain Enter in the message box and
+  `Alt+<digit>` permission answers now ignore held key repeats via GPUI's
+  `KeyDownEvent.is_held` (and `Alt+<digit>` is gated to the visible thread
+  view), covered by `held_enter_and_modified_enter_are_ignored_in_composer` and
+  `alt_digit_is_ignored_when_held_or_away_from_thread`. The desktop check's
+  arrow keys go to the row they mean to reach, since a list goes round its ends.
 
 ## Captures
 
-Light captures are from the full run of 214 checks. Dark captures are from a
-run of the same drawer checks alone on a fresh boot of the same image, which
-starts in Dark: 42 checks passed. That run is not the desktop check, and is no
-substitute for it. Every image is the guest's display as captured, unchanged.
-The words and marks in them are the checks' own.
+Light captures are from the full run of 215 checks (except the unchanged Light
+menu captures from the earlier `184aa090` run, with `thread-light.png` updated
+from the `8f5d760f` run to show the inline link destination). Dark captures are
+from a run of the same drawer checks alone on a fresh boot of the `184aa090`
+image, which starts in Dark: 42 checks passed. That run is not the desktop
+check, and is no substitute for it. Every image is the guest's display as
+captured, unchanged. The words and marks in them are the checks' own.
 
 The drawer before this change is in the
 [record of the thread list](agent-threads-2026-11-25.md#captures-and-visual-review).
