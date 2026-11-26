@@ -1809,6 +1809,7 @@ fn ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requ
 /// r-1 waiting, that hands each frame it reads to `serve` with the stream.
 fn lever_resumed_with_r1(
     lab: &Lab,
+    before: Vec<Value>,
     serve: impl FnOnce(&mut UnixStream) + Send + 'static,
 ) -> std::thread::JoinHandle<()> {
     use std::os::unix::net::UnixListener;
@@ -1820,6 +1821,10 @@ fn lever_resumed_with_r1(
         assert_eq!(read_framed(&mut stream), json!({ "version": 1 }));
         write_framed(&mut stream, &json!({ "version": 1 }));
         assert_eq!(read_framed(&mut stream)["op"], "resume");
+        // What came before the thread was resumed here.
+        for event in &before {
+            write_framed(&mut stream, event);
+        }
         let waiting = json!({ "request": "r-1", "kind": "command", "title": "make", "detail": "make r-1",
                               "state": "waiting", "answers": [{ "answer": "once", "name": "Allow once" }] });
         write_framed(
@@ -1846,7 +1851,7 @@ fn request_event(id: &str, turn: u64, state: &str) -> Value {
 #[test]
 fn a_request_on_its_way_when_ctrl_c_returns_to_the_prompt_is_not_asked_for_there() {
     let lab = Lab::empty();
-    let lever = lever_resumed_with_r1(&lab, |stream| {
+    let lever = lever_resumed_with_r1(&lab, Vec::new(), |stream| {
         assert_eq!(read_framed(stream), json!({ "op": "stop", "thread": "t-1", "turn": 1 }));
         // r-2 of turn 1 was sent before Lever took the Stop.
         write_framed(stream, &request_event("r-2", 1, "waiting"));
@@ -1887,12 +1892,9 @@ fn a_request_on_its_way_when_ctrl_c_returns_to_the_prompt_is_not_asked_for_there
 #[test]
 fn a_request_lever_takes_after_it_took_a_stop_is_asked_for() {
     let lab = Lab::empty();
-    let lever = lever_resumed_with_r1(&lab, |stream| {
-        // Another client's turn 3 begins before r-1 is asked for.
-        write_framed(
-            stream,
-            &json!({ "event": "message", "thread": "t-1", "turn": 3, "text": "elsewhere" }),
-        );
+    // Another client's turn 3 began before the thread was resumed here.
+    let begun = vec![json!({ "event": "message", "thread": "t-1", "turn": 3, "text": "elsewhere" })];
+    let lever = lever_resumed_with_r1(&lab, begun, |stream| {
         assert_eq!(read_framed(stream), json!({ "op": "stop", "thread": "t-1", "turn": 1 }));
         write_framed(stream, &json!({ "reply": "ok" }));
         write_framed(stream, &request_event("r-1", 1, "withdrawn"));
@@ -1919,9 +1921,7 @@ fn a_request_lever_takes_after_it_took_a_stop_is_asked_for() {
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
     screen_until(&mut keys, &mut shown, "[request] Run: make r-4\r\nAnswer [once]: ");
     keys.write_all(b"once\n").unwrap();
-    screen_until(&mut keys, &mut shown, "[request] answered: once");
-    shown.clear();
-    screen_until(&mut keys, &mut shown, "> ");
+    screen_until(&mut keys, &mut shown, "[request] answered: once\r\n> ");
     keys.write_all(&[4]).unwrap();
     assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
     lever.join().unwrap();
