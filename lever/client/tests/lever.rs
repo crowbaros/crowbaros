@@ -1635,9 +1635,9 @@ fn ctrl_c_on_a_followed_turn_with_nothing_asked_stops_it_and_waits_for_its_end()
         std::thread::sleep(Duration::from_millis(300));
         write_framed(
             &mut stream,
-            &json!({ "event": "message", "thread": "t-1", "turn": 3, "text": "elsewhere" }),
+            &json!({ "event": "message", "thread": "t-1", "turn": 2, "text": "elsewhere" }),
         );
-        // r-1 is answered; turn 3 still works.
+        // r-1 is answered; turn 2 still works.
         assert_eq!(read_framed(&mut stream)["op"], "answer");
         write_framed(&mut stream, &json!({ "reply": "ok" }));
         write_framed(
@@ -1647,16 +1647,16 @@ fn ctrl_c_on_a_followed_turn_with_nothing_asked_stops_it_and_waits_for_its_end()
                      "answers": [{ "answer": "once", "name": "Allow once" }] }),
         );
         let stop = read_framed(&mut stream);
-        // A request of turn 3 was already on its way; the Stop withdraws it.
+        // A request of turn 2 was already on its way; the Stop withdraws it.
         let late = |state: &str| {
-            json!({ "event": "request", "thread": "t-1", "turn": 3, "request": "r-3", "kind": "command",
+            json!({ "event": "request", "thread": "t-1", "turn": 2, "request": "r-2", "kind": "command",
                     "title": "make", "detail": "make", "state": state,
                     "answers": [{ "answer": "once", "name": "Allow once" }] })
         };
         write_framed(&mut stream, &late("waiting"));
         write_framed(&mut stream, &json!({ "reply": "ok" }));
         write_framed(&mut stream, &late("withdrawn"));
-        write_framed(&mut stream, &json!({ "event": "stopped", "thread": "t-1", "turn": 3 }));
+        write_framed(&mut stream, &json!({ "event": "stopped", "thread": "t-1", "turn": 2 }));
         let mut rest = Vec::new();
         let _ = stream.read_to_end(&mut rest);
         stop
@@ -1679,12 +1679,12 @@ fn ctrl_c_on_a_followed_turn_with_nothing_asked_stops_it_and_waits_for_its_end()
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
     screen_until(&mut keys, &mut shown, "Stopped.\r\n> ");
     let screen = String::from_utf8_lossy(&shown).into_owned();
-    assert!(!screen.contains("--answer r-3"), "the Stop withdraws r-3: {screen}");
+    assert!(!screen.contains("--answer r-2"), "the Stop withdraws r-2: {screen}");
     keys.write_all(&[4]).unwrap();
     assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
     assert_eq!(
         lever.join().unwrap(),
-        json!({ "op": "stop", "thread": "t-1", "turn": 3 })
+        json!({ "op": "stop", "thread": "t-1", "turn": 2 })
     );
 }
 
@@ -1757,10 +1757,10 @@ fn ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requ
                             "acts": [], "requests": [waiting], "notes": [] }]
             }),
         );
-        // Another client begins turn 3.
+        // Another client begins turn 2.
         write_framed(
             &mut stream,
-            &json!({ "event": "message", "thread": "t-1", "turn": 3, "text": "elsewhere" }),
+            &json!({ "event": "message", "thread": "t-1", "turn": 2, "text": "elsewhere" }),
         );
         // The answer comes, and Ctrl-C comes before Lever confirms it.
         assert_eq!(read_framed(&mut stream)["op"], "answer");
@@ -1774,7 +1774,7 @@ fn ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requ
                      "answers": [{ "answer": "once", "name": "Allow once" }] }),
         );
         write_framed(&mut stream, &json!({ "reply": "ok" }));
-        write_framed(&mut stream, &json!({ "event": "stopped", "thread": "t-1", "turn": 3 }));
+        write_framed(&mut stream, &json!({ "event": "stopped", "thread": "t-1", "turn": 2 }));
         let mut rest = Vec::new();
         let _ = stream.read_to_end(&mut rest);
         stop
@@ -1791,7 +1791,7 @@ fn ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requ
     let (out, _reader) = collect(child.stdout.take().unwrap());
     let mut shown = Vec::new();
     screen_until(&mut keys, &mut shown, "Answer [once]: ");
-    wait_for("turn 3 followed", || out.lock().unwrap().contains("> elsewhere"));
+    wait_for("turn 2 followed", || out.lock().unwrap().contains("> elsewhere"));
     keys.write_all(b"once\n").unwrap();
     answer_came
         .recv_timeout(Duration::from_secs(10))
@@ -1803,7 +1803,7 @@ fn ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requ
     assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
     assert_eq!(
         lever.join().unwrap(),
-        json!({ "op": "stop", "thread": "t-1", "turn": 3 })
+        json!({ "op": "stop", "thread": "t-1", "turn": 2 })
     );
 }
 
@@ -1894,37 +1894,31 @@ fn a_request_on_its_way_when_ctrl_c_returns_to_the_prompt_is_not_asked_for_there
 fn a_request_lever_takes_after_it_took_a_stop_is_asked_for() {
     let lab = Lab::empty();
     let lever = lever_resumed_with_r1(&lab, |stream| {
-        // Another client begins turn 3.
-        write_framed(
-            stream,
-            &json!({ "event": "message", "thread": "t-1", "turn": 3, "text": "elsewhere" }),
-        );
         assert_eq!(read_framed(stream), json!({ "op": "stop", "thread": "t-1", "turn": 1 }));
         write_framed(stream, &json!({ "reply": "ok" }));
         write_framed(stream, &request_event("r-1", 1, "withdrawn"));
-        // After the Stop, turn 1 asks again: this one waits.
+        // After the Stop, the harness asks again; turn 1 is still the
+        // thread's newest, so the request is turn 1's, and it waits.
         write_framed(stream, &request_event("r-4", 1, "waiting"));
         assert_eq!(read_framed(stream)["request"], "r-4");
         write_framed(stream, &json!({ "reply": "ok" }));
         let mut answered = request_event("r-4", 1, "answered");
         answered["answer"] = json!("once");
         write_framed(stream, &answered);
-        write_framed(stream, &json!({ "event": "done", "thread": "t-1", "turn": 3 }));
     });
     let (mut keys, screen) = terminal();
     let mut agent = lab.agent(&["--resume", "t-1"]);
     agent
         .stdin(screen.try_clone().unwrap())
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(screen);
     let mut child = agent.spawn().expect("crowbar-agent runs");
     drop(agent);
-    let (out, _reader) = collect(child.stdout.take().unwrap());
     let mut shown = Vec::new();
     screen_until(&mut keys, &mut shown, "[request] Run: make r-1\r\nAnswer [once]: ");
-    wait_for("turn 3 followed", || out.lock().unwrap().contains("> elsewhere"));
     // SAFETY: sending Ctrl-C's signal to our own child process.
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
+    // The prompt asks for it: the Stop sets nothing aside once Lever replied.
     screen_until(&mut keys, &mut shown, "[request] Run: make r-4\r\nAnswer [once]: ");
     keys.write_all(b"once\n").unwrap();
     screen_until(&mut keys, &mut shown, "[request] answered: once\r\n> ");
