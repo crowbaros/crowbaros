@@ -2204,12 +2204,9 @@ impl Service {
                 if let Some(harness) = self.harness.as_ref()
                     && let Some(session_id) = harness.session_for_thread(&thread_id)
                     && let Some(model) = harness.session_current_model(session_id)
+                    && let Some(selector) = harness.session_effort(session_id)
                 {
-                    let options = harness
-                        .session_effort(session_id)
-                        .map(|s| s.options.clone())
-                        .unwrap_or_default();
-                    self.efforts.insert(model.to_string(), options);
+                    self.efforts.insert(model.to_string(), selector.options.clone());
                 }
                 let mut effects = Effects::default();
                 // What the harness says the session is at is the thread's,

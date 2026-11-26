@@ -49,8 +49,6 @@ pub(crate) struct AgentSurface {
     pub(crate) input: Entity<Composer>,
     pub(crate) scroll: ScrollHandle,
     pub(crate) scroll_to_bottom: bool,
-    pub(crate) submitted_draft: Option<String>,
-    pub(crate) submitted_key: Option<String>,
     _input_sub: Subscription,
     /// The display the drawer is on, and where its left edge is on it.
     output: String,
@@ -101,6 +99,58 @@ fn should_take_composer_enter(is_held: bool, modifiers: &Modifiers, input_focuse
 /// the delete confirmation).
 fn should_answer_with_alt_digit(is_held: bool, list_view: bool, confirm_delete: bool) -> bool {
     !is_held && !list_view && !confirm_delete
+}
+
+/// Reconciles `agent_drafts` when Lever acknowledges `Sent` for
+/// `(submitted_key, submitted_text)`. Works whether the drawer is open
+/// (`open_input == Some(current)`) or was put away before `Sent` arrived
+/// (`open_input == None`). Returns `Some(next)` when an open composer should
+/// replace its text with `next`, preserving any post-send edits or typed-ahead
+/// suffix.
+pub(crate) fn reconcile_draft_on_sent(
+    drafts: &mut std::collections::HashMap<String, String>,
+    submitted_key: &str,
+    new_thread_key: &str,
+    submitted_text: &str,
+    open_input: Option<&str>,
+) -> Option<String> {
+    let store = |drafts: &mut std::collections::HashMap<String, String>, key: &str, text: &str| {
+        if text.trim().is_empty() || slash::is_drawer_command(text) {
+            drafts.remove(key);
+        } else {
+            drafts.insert(key.to_string(), text.to_string());
+        }
+    };
+    match open_input {
+        Some(current) => {
+            if let Some(next) = agent::draft_after_send(current, submitted_text) {
+                drafts.remove(submitted_key);
+                store(drafts, new_thread_key, &next);
+                Some(next)
+            } else {
+                // Person replaced the message box with unrelated edits before
+                // `Sent` arrived: keep those edits under the active thread key.
+                if submitted_key != new_thread_key {
+                    drafts.remove(submitted_key);
+                }
+                store(drafts, new_thread_key, current);
+                None
+            }
+        }
+        None => {
+            let stored = drafts.get(submitted_key).cloned();
+            if let Some(stored) = stored {
+                if let Some(next) = agent::draft_after_send(&stored, submitted_text) {
+                    drafts.remove(submitted_key);
+                    store(drafts, new_thread_key, &next);
+                } else if submitted_key != new_thread_key {
+                    drafts.remove(submitted_key);
+                    store(drafts, new_thread_key, &stored);
+                }
+            }
+            None
+        }
+    }
 }
 
 /// Identity key for the open slash menu used to reset highlight to `menu.start()`
@@ -201,8 +251,6 @@ impl AgentSurface {
             input,
             scroll: ScrollHandle::new(),
             scroll_to_bottom,
-            submitted_draft: None,
-            submitted_key: None,
             _input_sub: input_sub,
             output,
             left,
@@ -649,8 +697,10 @@ impl AgentSurface {
         }
         if let Some(tx) = tx {
             let message = trimmed.to_string();
-            self.submitted_draft = Some(query);
-            self.submitted_key = Some(thread.clone().unwrap_or_default());
+            let key = thread.clone().unwrap_or_default();
+            self.model.update(cx, |m, _| {
+                m.agent_submitted = Some((key, query));
+            });
             self.dismissed = None;
             sync_agent_view(&self.model, cx);
             tx.send_with(thread, message, mode, model, effort);
@@ -1436,8 +1486,9 @@ impl Render for AgentSurface {
                 }
             }
         }
-        // Reset cached fetch guards whenever Lever disconnects, reconnects,
-        // reports an error, or changes free hosted Models availability.
+        // Reset cached fetch guards whenever Lever connects, disconnects, or
+        // changes free hosted Models / harness availability (not on errors,
+        // which recover when a menu closes and reopens).
         if self.seen_catalog_epoch != state.catalog_epoch {
             self.seen_catalog_epoch = state.catalog_epoch;
             self.asked_offer = false;
@@ -1448,16 +1499,25 @@ impl Render for AgentSurface {
         let can_send = state.can_send() && !draft.trim().is_empty();
         let menu = self.list(cx);
         let menu_kind = menu.as_ref().map(|m| m.kind);
-        if self.last_menu_kind == Some(MenuKind::Models) && menu_kind != Some(MenuKind::Models) {
-            self.provider = None;
-            if state.models.is_empty() || state.modes_error.is_some() {
+        if self.last_menu_kind != menu_kind {
+            if self.last_menu_kind == Some(MenuKind::Models) {
+                self.provider = None;
+            }
+            if matches!(
+                self.last_menu_kind,
+                Some(MenuKind::Models | MenuKind::Modes | MenuKind::DefaultModes)
+            ) && (state.modes_error.is_some() || state.models.is_empty() || state.modes.is_empty())
+            {
                 self.asked_offer = false;
             }
+            if self.last_menu_kind == Some(MenuKind::Efforts) {
+                self.asked_efforts.retain(|m| state.efforts.contains_key(m));
+            }
+            if self.last_menu_kind == Some(MenuKind::Commands) && state.harness_commands().is_empty() {
+                self.asked_commands = None;
+            }
+            self.last_menu_kind = menu_kind;
         }
-        if self.last_menu_kind == Some(MenuKind::Efforts) && menu_kind != Some(MenuKind::Efforts) {
-            self.asked_efforts.retain(|m| state.efforts.contains_key(m));
-        }
-        self.last_menu_kind = menu_kind;
         // The list starts on the choice the thread is at each time it is a
         // list of something else, or once its choices arrive from Lever.
         let list_for = menu
@@ -1495,7 +1555,11 @@ impl Render for AgentSurface {
                 }
                 _ => {}
             }
-            if menu.kind == MenuKind::Commands && self.asked_commands.as_ref() != Some(&state.thread) {
+            if menu.kind == MenuKind::Commands
+                && state.connected
+                && !state.no_harness
+                && self.asked_commands.as_ref() != Some(&state.thread)
+            {
                 self.asked_commands = Some(state.thread.clone());
                 tx.fetch_commands(state.thread.clone());
             }
@@ -1910,13 +1974,7 @@ impl Render for AgentSurface {
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, w, cx| {
                 let key = event.keystroke.key.as_str();
-                if key == "enter"
-                    && !event.keystroke.modifiers.shift
-                    && !event.keystroke.modifiers.control
-                    && !event.keystroke.modifiers.alt
-                    && !event.keystroke.modifiers.platform
-                    && this.input.focus_handle(cx).is_focused(w)
-                {
+                if key == "enter" && should_take_composer_enter(false, &event.keystroke.modifiers, this.input.focus_handle(cx).is_focused(w)) {
                     cx.stop_propagation();
                     if should_take_composer_enter(event.is_held, &event.keystroke.modifiers, true) {
                         this.enter(w, cx);
@@ -2238,9 +2296,12 @@ impl Render for AgentSurface {
 
 #[cfg(test)]
 mod tests {
-    use super::{list_for_key, should_answer_with_alt_digit, should_take_composer_enter};
+    use super::{
+        list_for_key, reconcile_draft_on_sent, should_answer_with_alt_digit, should_take_composer_enter,
+    };
     use crate::{agent, slash};
     use gpui::Modifiers;
+    use std::collections::HashMap;
 
     #[test]
     fn held_enter_and_modified_enter_are_ignored_in_composer() {
@@ -2281,5 +2342,37 @@ mod tests {
         let loaded = slash::menu("/mode ", &state, None).unwrap();
         assert_eq!(loaded.start(), 2);
         assert_ne!(list_for_key(&loading, "/mode "), list_for_key(&loaded, "/mode "));
+    }
+
+    #[test]
+    fn reconcile_draft_on_sent_preserves_post_send_edits_whether_open_or_closed() {
+        // Exact match clears the draft (including new-thread "" key).
+        let mut drafts = HashMap::from([("".to_string(), "hello".to_string())]);
+        let next = reconcile_draft_on_sent(&mut drafts, "", "t-1", "hello", Some("hello"));
+        assert_eq!(next.as_deref(), Some(""));
+        assert!(!drafts.contains_key(""));
+        assert!(!drafts.contains_key("t-1"));
+
+        // Typed-ahead suffix is kept under the new thread ID.
+        let mut drafts = HashMap::from([("".to_string(), "hello next".to_string())]);
+        let next = reconcile_draft_on_sent(&mut drafts, "", "t-1", "hello", Some("hello next"));
+        assert_eq!(next.as_deref(), Some("next"));
+        assert_eq!(drafts.get("t-1").map(String::as_str), Some("next"));
+
+        // Unrelated replacement while open is preserved, not wiped.
+        let mut drafts = HashMap::from([("t-1".to_string(), "replacement".to_string())]);
+        let next = reconcile_draft_on_sent(&mut drafts, "t-1", "t-1", "hello", Some("replacement"));
+        assert_eq!(next, None);
+        assert_eq!(drafts.get("t-1").map(String::as_str), Some("replacement"));
+
+        // Closed drawer: exact submitted draft is cleared, but replaced edits stay.
+        let mut drafts = HashMap::from([("".to_string(), "hello".to_string())]);
+        reconcile_draft_on_sent(&mut drafts, "", "t-2", "hello", None);
+        assert!(drafts.is_empty());
+
+        let mut drafts = HashMap::from([("".to_string(), "rewritten before ack".to_string())]);
+        reconcile_draft_on_sent(&mut drafts, "", "t-2", "hello", None);
+        assert!(!drafts.contains_key(""));
+        assert_eq!(drafts.get("t-2").map(String::as_str), Some("rewritten before ack"));
     }
 }

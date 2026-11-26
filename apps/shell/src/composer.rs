@@ -471,29 +471,39 @@ impl Composer {
         self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
     }
 
-    fn replace(&mut self, range: Range<usize>, new_text: &str) -> bool {
-        let base_len = self.content.len().saturating_sub(range.len());
-        let allowed = self.max_len.saturating_sub(base_len);
-        let insert = if new_text.len() > allowed {
-            if allowed == 0 {
-                return false;
-            }
-            let mut end = allowed;
-            while end > 0 && !new_text.is_char_boundary(end) {
-                end -= 1;
-            }
-            if end == 0 {
-                return false;
-            }
-            &new_text[..end]
-        } else {
-            new_text
-        };
-        self.content = (self.content[0..range.start].to_owned() + insert + &self.content[range.end..]).into();
+    fn replace(&mut self, range: Range<usize>, new_text: &str) -> Option<usize> {
+        let (next, inserted) = replace_bounded(&self.content, range, new_text, self.max_len)?;
+        self.content = next.into();
         self.goal_x = None;
         self.manual_scroll = false;
-        true
+        Some(inserted)
     }
+}
+
+/// Replaces `range` in `content` with `new_text`, truncating `new_text` at the
+/// largest UTF-8 character boundary that fits within `max_len`. Returns the new
+/// string and the actual byte count inserted, or `None` if `new_text` is
+/// non-empty and nothing fits.
+fn replace_bounded(content: &str, range: Range<usize>, new_text: &str, max_len: usize) -> Option<(String, usize)> {
+    let base_len = content.len().saturating_sub(range.len());
+    let allowed = max_len.saturating_sub(base_len);
+    let insert = if new_text.len() > allowed {
+        if allowed == 0 {
+            return None;
+        }
+        let mut end = allowed;
+        while end > 0 && !new_text.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end == 0 {
+            return None;
+        }
+        &new_text[..end]
+    } else {
+        new_text
+    };
+    let next = content[0..range.start].to_owned() + insert + &content[range.end..];
+    Some((next, insert.len()))
 }
 
 impl EntityInputHandler for Composer {
@@ -541,10 +551,11 @@ impl EntityInputHandler for Composer {
             .map(|range_utf16| self.range_from_utf16(range_utf16))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
-        if !self.replace(range.clone(), new_text) {
+        let Some(inserted) = self.replace(range.clone(), new_text) else {
             return;
-        }
-        self.selected_range = range.start + new_text.len()..range.start + new_text.len();
+        };
+        let end = range.start + inserted;
+        self.selected_range = end..end;
         self.selection_reversed = false;
         self.marked_range.take();
         cx.notify();
@@ -563,19 +574,25 @@ impl EntityInputHandler for Composer {
             .map(|range_utf16| self.range_from_utf16(range_utf16))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
-        if !self.replace(range.clone(), new_text) {
+        let Some(inserted) = self.replace(range.clone(), new_text) else {
             return;
-        }
-        if !new_text.is_empty() {
-            self.marked_range = Some(range.start..range.start + new_text.len());
+        };
+        let end = range.start + inserted;
+        if inserted > 0 {
+            self.marked_range = Some(range.start..end);
         } else {
             self.marked_range = None;
         }
+        let max = self.content.len();
         self.selected_range = new_selected_range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .map(|new_range| new_range.start + range.start..new_range.end + range.start)
-            .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
+            .map(|new_range| {
+                let s = (new_range.start + range.start).min(max);
+                let e = (new_range.end + range.start).min(max);
+                s..e.max(s)
+            })
+            .unwrap_or(end..end);
         cx.notify();
     }
 
@@ -918,4 +935,32 @@ pub fn bind(cx: &mut App) {
         KeyBinding::new("tab", Take, Some("Composer")),
         KeyBinding::new("escape", Dismiss, Some("Composer")),
     ]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replace_bounded;
+
+    #[test]
+    fn oversized_paste_truncates_on_utf8_boundary_and_reports_inserted_bytes() {
+        // ASCII truncation at max_len.
+        let (next, inserted) = replace_bounded("ab", 2..2, "cdefgh", 5).unwrap();
+        assert_eq!(next, "abcde");
+        assert_eq!(inserted, 3);
+        assert!(2 + inserted <= next.len());
+        assert!(next.is_char_boundary(2 + inserted));
+
+        // Multi-byte UTF-8 truncation never splits a character.
+        let (next, inserted) = replace_bounded("a", 1..1, "ééé", 4).unwrap();
+        assert_eq!(next, "aé");
+        assert_eq!(inserted, "é".len());
+        assert_eq!(1 + inserted, next.len());
+        assert!(next.is_char_boundary(1 + inserted));
+
+        // Full buffer rejects further insertion while still allowing deletion.
+        assert_eq!(replace_bounded("abcde", 5..5, "x", 5), None);
+        let (next, inserted) = replace_bounded("abcde", 2..5, "", 5).unwrap();
+        assert_eq!(next, "ab");
+        assert_eq!(inserted, 0);
+    }
 }

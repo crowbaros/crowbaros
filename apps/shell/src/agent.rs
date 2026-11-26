@@ -1868,7 +1868,6 @@ impl AgentState {
                         request.sending = None;
                     }
                 }
-                self.catalog_epoch = self.catalog_epoch.wrapping_add(1);
                 if self.modes_loading
                     && !matches!(code.as_str(), "no-model" | "no-thread" | "disconnected")
                 {
@@ -6457,8 +6456,8 @@ mod tests {
         assert!(state.efforts.is_empty());
         assert_ne!(state.catalog_epoch, before);
 
-        // An error while loading the offer also bumps `catalog_epoch` and sets
-        // a neutral error note.
+        // An error while loading the offer does NOT bump `catalog_epoch`
+        // (preventing tight retry loops) and sets a neutral error note.
         let before_err = state.catalog_epoch;
         assert!(state.ask_offer());
         state.apply(
@@ -6468,7 +6467,7 @@ mod tests {
             },
             true,
         );
-        assert_ne!(state.catalog_epoch, before_err);
+        assert_eq!(state.catalog_epoch, before_err);
         assert_eq!(
             state.modes_error.as_deref(),
             Some("Models and modes are not available right now.")

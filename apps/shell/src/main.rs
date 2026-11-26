@@ -167,6 +167,10 @@ struct Model {
     /// What the person typed in each thread and did not send, by the
     /// thread's ID, and under no ID for the thread that has not begun.
     agent_drafts: std::collections::HashMap<String, String>,
+    /// The `(draft_key, text)` currently awaiting a `sent` reply from Lever,
+    /// kept on `Model` so putting the drawer away before acknowledgment still
+    /// reconciles the draft cleanly without discarding post-send edits.
+    agent_submitted: Option<(String, String)>,
     agent_tx: Option<agent::CommandSender>,
     agent_view: Arc<Mutex<agent::AgentViewSnapshot>>,
     apps: Vec<AppEntry>,
@@ -3281,6 +3285,10 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
             }
             session::Event::Agent(agent_event) => {
                 let is_sent = matches!(agent_event, agent::AgentEvent::Sent { .. });
+                let is_error_or_disconnect = matches!(
+                    agent_event,
+                    agent::AgentEvent::Error { .. } | agent::AgentEvent::Disconnected
+                );
                 let is_lifecycle = matches!(agent_event, agent::AgentEvent::Lifecycle { .. });
                 let should_scroll = matches!(
                     agent_event,
@@ -3336,17 +3344,28 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                         if view.model.read(cx).agent_state.list_view { window.focus(&view.focus); }
                     });
                 }
+                if is_error_or_disconnect {
+                    model.update(cx, |m, _| {
+                        m.agent_submitted = None;
+                    });
+                }
                 if is_sent {
+                    let submitted = model.update(cx, |m, _| m.agent_submitted.take());
                     if let Some(w) = model.read(cx).agent {
                         let _ = w.update(cx, |view, _, cx| {
-                            if let Some(key) = view.submitted_key.take() {
-                                view.model.update(cx, |m, _| {
-                                    m.agent_drafts.remove(&key);
-                                });
-                            }
-                            if let Some(submitted) = view.submitted_draft.take() {
+                            if let Some((key, submitted_text)) = submitted {
                                 let current = view.input.read(cx).text();
-                                if let Some(next) = agent::draft_after_send(&current, &submitted) {
+                                let next = view.model.update(cx, |m, _| {
+                                    let new_key = m.agent_state.thread.clone().unwrap_or_default();
+                                    drawer::reconcile_draft_on_sent(
+                                        &mut m.agent_drafts,
+                                        &key,
+                                        &new_key,
+                                        &submitted_text,
+                                        Some(&current),
+                                    )
+                                });
+                                if let Some(next) = next {
                                     view.input.update(cx, |input, cx| input.set_text(next, cx));
                                 }
                             }
@@ -3356,12 +3375,16 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                             }
                             cx.notify();
                         });
-                    } else {
+                    } else if let Some((key, submitted_text)) = submitted {
                         model.update(cx, |m, _| {
-                            m.agent_drafts.remove("");
-                            if let Some(tid) = m.agent_state.thread.clone() {
-                                m.agent_drafts.remove(&tid);
-                            }
+                            let new_key = m.agent_state.thread.clone().unwrap_or_default();
+                            drawer::reconcile_draft_on_sent(
+                                &mut m.agent_drafts,
+                                &key,
+                                &new_key,
+                                &submitted_text,
+                                None,
+                            );
                         });
                     }
                 } else if changed && should_scroll {
@@ -3562,6 +3585,7 @@ fn main() -> anyhow::Result<()> {
                 state
             },
             agent_drafts: Default::default(),
+            agent_submitted: None,
             agent_tx,
             agent_view,
             apps: catalog::discover(),
