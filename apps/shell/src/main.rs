@@ -3299,6 +3299,7 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                         | agent::AgentEvent::Failed { .. }
                         | agent::AgentEvent::Interrupted { .. }
                         | agent::AgentEvent::Resumed(_)
+                        | agent::AgentEvent::Recovered(_)
                         | agent::AgentEvent::Connected { resumed: Some(_), .. }
                 );
                 let turn_ended = matches!(

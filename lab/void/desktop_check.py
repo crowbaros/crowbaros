@@ -923,6 +923,14 @@ finally:
                     'after_tool': 'Background finished: {tool_output}',
                 },
                 {
+                    'match': 'recovery-slow',
+                    'tool_call': {'name': 'shell', 'arguments': {
+                        'command': 'sleep 15 && echo RECOVERY_DONE',
+                        'description': 'Keep working across a desktop restart',
+                    }},
+                    'after_tool': 'Recovered: {tool_output}',
+                },
+                {
                     'match': 'long-stop',
                     'tool_call': {
                         'name': 'shell',
@@ -1721,8 +1729,15 @@ finally:
                 thread_id not in self.run(f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} crowbar-agent --list'))
             self.key('meta_l', 'spc')
             self.wait('drawer closed after lifecycle checks', lambda: not self.agent_view()['drawer_up'])
+            self.agent_restart_recovery(tmp, home)
 
         finally:
+            # Retain the synthetic conversation and service diagnostics before
+            # restoring the guest's empty settings and state below.
+            for name, path in [('agent-lever.log', f'{home}/.local/state/crowbaros/lever/lever.log'),
+                               ('agent-model.jsonl', f'{tmp}/stub.jsonl')]:
+                result = self.guest.ssh(f'cat {path}', check=False)
+                (self.work / name).write_text(result.stdout)
             self.guest.ssh("pkill -f '[s]tub-model.py'; pkill -f '[c]rowbar-probe copy'; pkill -f '[s]leep 45'; true", check=False)
             self.guest.ssh(
                 f"sv stop /var/service/crowbar-lever >/dev/null 2>&1 || true; "
@@ -1731,6 +1746,197 @@ finally:
                 f"sv start /var/service/crowbar-lever >/dev/null 2>&1 || true",
                 check=False,
             )
+
+    def agent_restart_recovery(self, tmp, home):
+        """Exercise process deaths with Base's pinned OpenCode and the stub Model."""
+        def lever(request):
+            code = '''
+import json, socket, struct
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(10)
+s.connect('/run/crowbar-lever/surface')
+f = s.makefile('rb')
+def read():
+    size = struct.unpack('!I', f.read(4))[0]
+    return json.loads(f.read(size))
+def write(value):
+    body = json.dumps(value).encode()
+    s.sendall(struct.pack('!I', len(body)) + body)
+write({'version': 1})
+assert read() == {'version': 1}
+write(REQUEST)
+while True:
+    reply = read()
+    if 'reply' in reply:
+        print(json.dumps(reply))
+        break
+'''.replace('REQUEST', repr(request))
+            return json.loads(self.python(code, user='crowbar-shell'))
+
+        def pids(root=None):
+            # Compare live processes, excluding zombies. With a root, capture
+            # only that harness's tree: OpenCode started by hand is separate.
+            code = """
+import json
+from pathlib import Path
+found = {'crowbar-lever': [], 'opencode': []}
+parents = {}
+for path in Path('/proc').glob('[0-9]*/stat'):
+    try:
+        stat = path.read_text()
+        name = stat[stat.index('(') + 1:stat.rindex(')')]
+        fields = stat[stat.rindex(')') + 2:].split()
+        state = fields[0]
+        parents[int(path.parent.name)] = int(fields[1])
+        if name in found and state != 'Z':
+            found[name].append(int(path.parent.name))
+    except (OSError, ValueError):
+        pass
+root = ROOT_PID
+if root is not None:
+    family = {root}
+    while True:
+        children = {pid for pid, parent in parents.items() if parent in family} - family
+        if not children:
+            break
+        family.update(children)
+    found = {name: [pid for pid in ids if pid in family] for name, ids in found.items()}
+print(json.dumps({name: sorted(ids) for name, ids in found.items()}))
+""".replace('ROOT_PID', repr(root))
+            return json.loads(self.python(code))
+
+        def open_drawer():
+            if not self.agent_view()['drawer_up']:
+                self.key('meta_l', 'spc')
+                self.wait('recovery drawer opens', lambda: self.agent_view()['drawer_up'])
+
+        def finished(thread, count):
+            v = self.agent_view()
+            return (v['state']['thread'] == thread and len(v['state']['turns']) == count
+                    and v['state']['turns'][-1]['state']['kind'] == 'done' and v)
+
+        def send_text(text):
+            self.type(text)
+            self.key('ret')
+
+        open_drawer()
+        self.key('ctrl', 'n')
+        self.wait('new recovery composer', lambda: self.agent_view()['state']['thread'] is None)
+        send_text('please run-cmd recovery seed')
+        seeded = self.wait('recovery seed finishes', lambda: (v := self.agent_view())
+                           and len(v['state']['turns']) == 1
+                           and v['state']['turns'][0]['state']['kind'] == 'done' and v, timeout=45)
+        thread = seeded['state']['thread']
+        processes = pids()
+        self.check('recovery seed records an act and its answer',
+                   'DRAWER_CMD_OK' in seeded['state']['turns'][0]['answer'])
+        send_text('please recovery-slow shell')
+        self.wait('work starts before shell death', lambda: self.agent_view()['state']['mark'] == 'working'
+                  and 'sleep 15' in self.guest.ssh("pgrep -af '[s]leep 15'", check=False).stdout)
+        self.capture('32-recovery-working-before-shell-restart')
+        old_shell = self.run('pgrep -x crowbaros-shell').strip()
+        self.run('sv restart crowbar-shell')
+        restored = self.wait('new shell restores the working turn', lambda: (v := self.agent_view())
+                            and v['state']['connected'] and v['state']['thread'] == thread
+                            and len(v['state']['turns']) == 2
+                            and self.run('pgrep -x crowbaros-shell').strip() != old_shell and v)
+        self.check('a shell restart leaves Lever and OpenCode running and restores the same thread',
+                   pids() == processes and restored['state']['turns'][0] == seeded['state']['turns'][0])
+        completed = self.wait('work finishes after shell restart', lambda: finished(thread, 2), timeout=45)
+        self.check('the shell redraws the completed turn with no fresh-session warning',
+                   'RECOVERY_DONE' in completed['state']['turns'][-1]['answer']
+                   and not completed['state']['turns'][-1]['notes'])
+        open_drawer()
+        self.capture('33-recovery-shell-restored')
+
+        send_text('please recovery-slow compositor')
+        self.wait('work starts before Fulcrum stops', lambda: self.agent_view()['state']['mark'] == 'working'
+                  and 'sleep 15' in self.guest.ssh("pgrep -af '[s]leep 15'", check=False).stdout)
+        locks = self.shell_log().count('SHELL lock open=true')
+        old_shell = self.run('pgrep -x crowbaros-shell').strip()
+        self.run('sv down crowbar-compositor')
+        try:
+            away = lever({'op': 'send', 'text': 'message while Fulcrum is away', 'cwd': home})
+            self.check('the surface accepts a message while Fulcrum is away', away.get('reply') == 'sent', json.dumps(away))
+            record = self.wait('the away message finishes', lambda: (r := lever({'op': 'resume', 'thread': away['thread']}))
+                               and r.get('turns') and r['turns'][-1]['state'] == 'done' and r)
+            self.check('a message while Fulcrum is away has no desktop context',
+                       record['turns'][0].get('context') is None, json.dumps(record))
+            self.check('Fulcrum stopping leaves Lever and OpenCode running', pids() == processes)
+        finally:
+            self.run('sv up crowbar-compositor')
+        self.ready()
+        self.wait('restarted Fulcrum locks the desktop', lambda: self.snapshot()['locked']
+                  and self.run('pgrep -x crowbaros-shell').strip() != old_shell
+                  and self.shell_log().count('SHELL lock open=true') > locks)
+        # Let the new lock surface take keyboard focus before typing into it.
+        time.sleep(0.5)
+        self.key('esc')
+        self.unlock()
+        self.wait('desktop unlocks for recovery', lambda: not self.snapshot()['locked'])
+        # Restore the test's two-output coordinates after hotplug discovery.
+        self.displays({'op': 'configure_output', 'name': 'Virtual-2', 'x': 1280, 'y': 0})
+        self.wait('work finishes across Fulcrum restart', lambda: finished(thread, 3), timeout=45)
+        open_drawer()
+        self.capture('34-recovery-compositor-restored')
+        self.check('the same thread finishes after Fulcrum restarts',
+                   pids() == processes and 'RECOVERY_DONE' in self.agent_view()['state']['turns'][-1]['answer']
+                   and not self.agent_view()['state']['turns'][-1]['notes'])
+
+        # Kill each process while it waits for the person. The old request
+        # must not become actionable again, and reading must start no work.
+        for target in ['Lever', 'OpenCode']:
+            reply = lever({'op': 'set-mode', 'thread': thread, 'mode': 'ask-first'})
+            self.check('recovery thread can use Ask first', reply.get('reply') != 'error', json.dumps(reply))
+            self.wait('recovery thread uses Ask first', lambda: self.agent_view()['state']['mode'] == 'ask-first')
+            count = len(self.agent_view()['state']['turns'])
+            send_text(f'please run-cmd before {target} death')
+            waiting = self.wait('recovery request waits', lambda: (v := self.agent_view())
+                                and len(v['state']['turns']) == count + 1
+                                and any(r['state'] == 'waiting' for r in v['state']['turns'][-1]['requests']) and v,
+                                timeout=45)
+            request = next(r for r in waiting['state']['turns'][-1]['requests'] if r['state'] == 'waiting')
+            before = lever({'op': 'list', 'archived': True})['threads']
+            old_lever = self.run('pgrep -x crowbar-lever').strip()
+            old_harness = int(self.run(f'pgrep -P {old_lever} -x opencode').strip())
+            old_harnesses = pids(root=old_harness)['opencode']
+            self.check('the running harness is in its captured process tree', old_harness in old_harnesses)
+            self.capture(f'35-recovery-before-{target.lower()}-death')
+            if target == 'Lever':
+                # `once` leaves the current process up but prevents runit from
+                # racing the assertions with an automatic restart after SIGKILL.
+                self.run('sv once crowbar-lever')
+                self.run(f'kill -KILL {old_lever}')
+                self.wait('OpenCode dies with Lever', lambda: not set(pids()['opencode']) & set(old_harnesses))
+                self.run('sv up crowbar-lever')
+            else:
+                self.run(f'kill -KILL {old_harness}')
+            recovered = self.wait(f'{target} death is shown as interrupted', lambda: (v := self.agent_view())
+                                  and v['state']['connected'] and v['state']['thread'] == thread
+                                  and len(v['state']['turns']) == count + 1
+                                  and v['state']['turns'][-1]['state']['kind'] == 'interrupted' and v, timeout=45)
+            self.check(f'{target} death withdraws the request and never repeats the turn',
+                       all(r['state'] == 'withdrawn' for r in recovered['state']['turns'][-1]['requests'])
+                       and not lever({'op': 'status'})['harness_started'])
+            self.check(f'{target} death leaves every recorded thread readable',
+                       all((r := lever({'op': 'resume', 'thread': t['thread']})).get('reply') == 'resumed'
+                           and len(r['turns']) == t['turns'] for t in before))
+            self.check(f'an old request cannot run after {target} death',
+                       lever({'op': 'answer', 'thread': thread, 'request': request['request'], 'answer': 'once'}).get('code') == 'no-request')
+            open_drawer()
+            self.capture(f'36-recovery-after-{target.lower()}-death')
+            send_text(f'continue after {target} restart')
+            continued = self.wait(f'next message answers after {target} restart', lambda: finished(thread, count + 2), timeout=45)
+            entries = [json.loads(line) for line in self.run(f'cat {tmp}/stub.jsonl').splitlines() if line.strip()]
+            prompts = [e for e in entries if e.get('has_tools') and e.get('prompt', '').endswith(f'continue after {target} restart')]
+            self.check(f'OpenCode loads the original session after {target} death, including earlier act output',
+                       bool(prompts) and any('DRAWER_CMD_OK' in out for out in prompts[0].get('history_tool_outputs', []))
+                       and not continued['state']['turns'][-1].get('notes'), json.dumps(prompts[:1]))
+            self.check(f'{target} restarts on demand with no duplicate turns',
+                       not set(pids()['opencode']) & set(old_harnesses)
+                       and (target == 'Lever' or self.run('pgrep -x crowbar-lever').strip() == old_lever))
+        self.key('meta_l', 'spc')
+        self.wait('recovery drawer closes', lambda: not self.agent_view()['drawer_up'])
 
     def compositor_restart(self):
         """The compositor's service restarts while the person uses the desktop.

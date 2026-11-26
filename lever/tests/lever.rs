@@ -5666,3 +5666,125 @@ fn commands_refuses_with_no_harness_and_does_not_reprobe_when_harness_names_none
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn restart_during_writes_preserves_every_thread_and_loads_sessions_without_replaying_work() {
+    for kill_lever in [false, true] {
+        let dir = TempDir::new();
+        let uid = my_uid();
+        // Keep producing database writes after the first text is acknowledged.
+        let chunk = "recorded ".repeat(64);
+        let steps: Vec<_> = (0..1000)
+            .flat_map(|_| [json!({"kind":"text","text":chunk}), json!({"kind":"pause_ms","ms":2})])
+            .collect();
+        let script = write_script(
+            &dir.0,
+            &json!({
+                "modes": true,
+                "turns": [
+                    {"match":"write continuously", "steps":steps},
+                    {"match":"wait for permission", "steps":[
+                        {"kind":"ask","id":"waiting","title":"echo allowed","raw_input":{"command":"echo allowed"}},
+                        {"kind":"text","text":"Should never run"}
+                    ]},
+                    {"match":"finish", "steps":[{"kind":"text","text":"Kept answer"}]}
+                ]
+            }),
+        );
+        let rpc_log = dir.0.join("rpc.jsonl");
+        let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, Some(&rpc_log), None);
+        let mut peer = handshake(&lever.person);
+        let (finished, _) = send(&mut peer, None, "finish earlier work");
+        read_until(&mut peer, |f| f["event"] == "done");
+        let earlier = resume(&mut peer, &finished);
+        assert_eq!(
+            ask_lever(&mut peer, json!({"op":"archive", "thread":finished}))["reply"],
+            "archived"
+        );
+        let (waiting, _) = send(&mut peer, None, "wait for permission");
+        let request = read_until(&mut peer, |f| f["event"] == "request");
+        let (writing, _) = send(&mut peer, None, "write continuously");
+        read_until(&mut peer, |f| f["event"] == "text" && f["thread"] == writing);
+        let children = std::fs::read_to_string(format!("/proc/{}/task/{}/children", lever.pid(), lever.pid())).unwrap();
+        let children: Vec<u32> = children.split_whitespace().map(|p| p.parse().unwrap()).collect();
+        assert_eq!(children.len(), 1, "one harness serves the threads");
+        let harness_pid = children[0];
+        let original_sessions: Vec<Value> = std::fs::read_to_string(&rpc_log)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|rpc| rpc["method"] == "session/prompt")
+            .map(|rpc| rpc["params"]["sessionId"].clone())
+            .collect();
+        assert_eq!(original_sessions.len(), 3);
+
+        if kill_lever {
+            lever.kill_and_wait();
+        } else {
+            // SAFETY: the harness is the direct child of this test's Lever.
+            assert_eq!(unsafe { libc::kill(harness_pid as libc::pid_t, libc::SIGKILL) }, 0);
+            read_until(&mut peer, |f| f["event"] == "interrupted" && f["thread"] == writing);
+        }
+        wait_until("the old harness to die", || !alive(harness_pid));
+        if kill_lever {
+            lever = RunningLever::start_with_stub(&dir.0, uid, &script, Some(&rpc_log), None);
+        }
+        let mut peer = handshake(&lever.person);
+        assert_eq!(ask_lever(&mut peer, json!({"op":"status"}))["harness_started"], false);
+        assert_eq!(resume(&mut peer, &finished)["turns"], earlier["turns"]);
+        let record = resume(&mut peer, &waiting);
+        assert_eq!(record["turns"].as_array().unwrap().len(), 1);
+        assert_eq!(record["turns"][0]["state"], "interrupted");
+        assert_eq!(record["turns"][0]["requests"][0]["state"], "withdrawn");
+        assert_eq!(record["turns"][0]["answer"], "");
+        let rejected = ask_lever(
+            &mut peer,
+            json!({"op":"answer","thread":waiting,"request":request["request"],"answer":"once"}),
+        );
+        assert_eq!(rejected["code"], "no-request");
+        let record = resume(&mut peer, &writing);
+        assert_eq!(record["turns"].as_array().unwrap().len(), 1);
+        assert_eq!(record["turns"][0]["state"], "interrupted");
+        assert!(record["turns"][0]["answer"].as_str().unwrap().starts_with(&chunk));
+        let list = ask_lever(&mut peer, json!({"op":"list", "archived":true}));
+        assert_eq!(list["threads"].as_array().unwrap().len(), 3);
+        assert!(
+            list["threads"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|t| t["working"] == false && t["waiting"] == false)
+        );
+        assert_eq!(
+            ask_lever(&mut peer, json!({"op":"status"}))["harness_started"],
+            false,
+            "reading recovered threads must not restart or repeat their work"
+        );
+
+        for thread in [&waiting, &writing] {
+            assert_eq!(
+                send(&mut peer, Some(thread), "finish after restart"),
+                (thread.clone(), 2)
+            );
+            read_until(&mut peer, |f| f["event"] == "done" && f["thread"] == *thread);
+            let record = resume(&mut peer, thread);
+            assert_eq!(record["turns"].as_array().unwrap().len(), 2);
+            assert_eq!(record["turns"][1]["answer"], "Kept answer");
+            assert_eq!(record["turns"][1]["notes"], json!([]), "no fresh-session fallback");
+        }
+        let loaded: Vec<Value> = std::fs::read_to_string(&rpc_log)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|rpc| rpc["method"] == "session/load")
+            .map(|rpc| rpc["params"]["sessionId"].clone())
+            .collect();
+        assert_eq!(
+            loaded,
+            original_sessions[1..],
+            "each next message loads its original session"
+        );
+        lever.signal(libc::SIGTERM);
+        assert_eq!(lever.wait().code(), Some(0));
+    }
+}
