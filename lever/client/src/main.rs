@@ -70,7 +70,10 @@ enum Command {
         mode: Option<String>,
     },
     List,
-    Lifecycle { op: String, thread: String },
+    Lifecycle {
+        op: String,
+        thread: String,
+    },
     Stop {
         thread: String,
     },
@@ -90,8 +93,13 @@ enum Command {
 fn command(args: &[String]) -> Result<Command, String> {
     if let Some(flag @ ("--archive" | "--delete")) = args.first().map(String::as_str) {
         return if args.len() == 2 && !args[1].trim().is_empty() && !args[1].starts_with('-') {
-            Ok(Command::Lifecycle { op: flag.trim_start_matches('-').into(), thread: args[1].clone() })
-        } else { Err(format!("{flag} needs exactly one thread ID")) };
+            Ok(Command::Lifecycle {
+                op: flag.trim_start_matches('-').into(),
+                thread: args[1].clone(),
+            })
+        } else {
+            Err(format!("{flag} needs exactly one thread ID"))
+        };
     }
     let (mut resumed, mut model, mut stop, mut list, mut words) = (None, None, None, false, Vec::new());
     let (mut mode, mut answer): (Option<String>, Option<(String, String)>) = (None, None);
@@ -350,7 +358,13 @@ mod tests {
     fn archive_and_delete_take_exactly_one_thread() {
         for op in ["archive", "delete"] {
             let flag = format!("--{op}");
-            assert_eq!(read(&[&flag, "t-example"]), Ok(Command::Lifecycle { op: op.into(), thread: "t-example".into() }));
+            assert_eq!(
+                read(&[&flag, "t-example"]),
+                Ok(Command::Lifecycle {
+                    op: op.into(),
+                    thread: "t-example".into()
+                })
+            );
             assert!(read(&[&flag]).is_err());
             assert!(read(&[&flag, "t-example", "extra"]).is_err());
             assert!(read(&[&flag, "--list"]).is_err());

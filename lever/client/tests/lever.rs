@@ -1935,7 +1935,9 @@ fn a_request_lever_takes_after_it_took_a_stop_is_asked_for() {
 
 #[test]
 fn archive_keeps_readable_history_and_delete_requests_harness_cleanup() {
-    let lab = Lab::with_script(json!({"delete_session":true,"turns":[{"steps":[{"kind":"text","text":"Keep this answer."}]}]}));
+    let lab = Lab::with_script(
+        json!({"delete_session":true,"turns":[{"steps":[{"kind":"text","text":"Keep this answer."}]}]}),
+    );
     assert_eq!(lab.run(&["Remember this"], "").status, 0);
     let thread = only_thread(&lab);
     assert_eq!(lab.run(&["--archive", &thread], "").status, 0);
