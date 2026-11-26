@@ -2596,10 +2596,12 @@ impl Service {
                 // is in that mode now. A turn that has yet to send its prompt
                 // sets its own mode on the session still, and keeps it.
                 if let Some(mode) = current_mode {
-                    let prompt_sent = self
-                        .working_turns
-                        .get(&thread_id)
-                        .is_none_or(|a| matches!(a.dispatch, TurnDispatch::PromptInFlight { .. }));
+                    let prompt_sent = self.working_turns.get(&thread_id).is_none_or(|a| {
+                        matches!(
+                            a.dispatch,
+                            TurnDispatch::PromptInFlight { .. } | TurnDispatch::HarnessStarted { .. }
+                        )
+                    });
                     if prompt_sent {
                         if let Some(active) = self.working_turns.get_mut(&thread_id) {
                             active.mode = mode.clone();
@@ -2927,7 +2929,7 @@ impl Service {
                     && active.turn == recorded_turn
                     && let TurnDispatch::HarnessStarted { open_acts, .. } = &mut active.dispatch
                 {
-                    if act.state == "working" {
+                    if matches!(act.state.as_str(), "pending" | "working") {
                         open_acts.insert(act.id.clone());
                     } else {
                         open_acts.remove(&act.id);
@@ -3719,7 +3721,14 @@ impl Service {
             .as_ref()
             .and_then(|h| h.session_for_thread(thread_id))
             .map(str::to_string);
-        let (true, Some(session_id)) = (opens && self.subagent_threads.contains(thread_id), session_id) else {
+        // A thread being deleted, or whose last end is still to be saved,
+        // begins nothing.
+        let settled = !self.pending_deletes.iter().any(|p| p.thread == thread_id)
+            && !self.unsaved_endings.iter().any(|e| e.thread_id == thread_id);
+        let (true, Some(session_id)) = (
+            opens && settled && self.subagent_threads.contains(thread_id),
+            session_id,
+        ) else {
             return self.turn_for_update(thread_id);
         };
         let meta = match self.store.thread_meta(thread_id) {

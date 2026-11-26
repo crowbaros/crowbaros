@@ -1080,7 +1080,10 @@ fn run_subagent_step(
                 if *hold_launcher {
                     return;
                 }
-                send_opencode_child_status(writer, session_id, id, Some(title), "created", None);
+                // A launch that fails says nothing of its child before it does.
+                if !*launch_fails {
+                    send_opencode_child_status(writer, session_id, id, Some(title), "created", None);
+                }
                 let (end, said) = if *launch_fails {
                     (
                         ToolCallStatus::Failed,

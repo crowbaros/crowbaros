@@ -2358,6 +2358,8 @@ impl Render for AgentSurface {
                         }
                         turn_col = turn_col.child(ctx_box);
                     }
+                    // A turn the harness began carries no message, and so no context.
+                    None if turn.from_harness => {}
                     None => {
                         turn_col = turn_col.child(
                             div()

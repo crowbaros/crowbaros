@@ -1866,6 +1866,9 @@ impl AcpHarness {
         if call.child_session_id.is_none() {
             call.child_session_id = new_child_sid;
         }
+        // The child it names is taken out of what it says, though the thread
+        // has yet to take the child as its own.
+        let named_child = call.child_session_id.clone();
         let failed = tcu.fields.status == Some(ToolCallStatus::Failed);
         let error = failed.then(|| {
             tool_detail(
@@ -1873,7 +1876,11 @@ impl AcpHarness {
                 tcu.fields.raw_output.as_ref(),
                 tcu.fields.raw_input.as_ref(),
             )
-            .map(|d| self.redact_for_thread(Some(thread_id), &d))
+            .map(|d| {
+                let mut ids = self.known_ids(Some(thread_id));
+                ids.extend(named_child.as_deref());
+                redact_ids(&d, ids)
+            })
         });
         let child_known = self.bind_launcher(
             thread_id,

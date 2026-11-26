@@ -843,7 +843,7 @@ Pushed to every connection subscribed to `thread`:
   state (`working`, `done`, `stopped`, `failed`, or `interrupted`, with
   optional `ended` and `error`). While any subagent is `working`, the thread
   stays `working`, the harness is not stopped as idle, and the thread is not
-  deleted or archived. It still takes the person's messages and changes of
+  deleted. It still takes the person's messages and changes of
   Model, mode, and effort:
 
   ```json
