@@ -3,9 +3,10 @@
 //!
 //! Speaks Lever's version-1 framing (4-byte big-endian length + UTF-8 JSON,
 //! `{"version":1}` first) over `CROWBAR_LEVER_SOCKET`, holding the active
-//! thread's turns, acts, notes, desktop context, and the mark (`idle`,
-//! `working`, `done`). Blocking I/O on dedicated background threads wakes GPUI
-//! only when a frame arrives, so a still desktop draws nothing.
+//! thread's turns, acts, notes, requests, desktop context, and mode, and the
+//! mark (`idle`, `working`, `waiting`, `done`) across every thread, which
+//! Lever's `activity` drives. Blocking I/O on dedicated background threads
+//! wakes GPUI only when a frame arrives, so a still desktop draws nothing.
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -113,6 +114,176 @@ pub struct Note {
     pub text: String,
 }
 
+/// Where a harness's request stands, as Lever says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RequestState {
+    Waiting,
+    Answered,
+    Withdrawn,
+}
+
+/// One answer a request offers: `once`, `always`, `no`, or `never`, with the
+/// harness's own name for it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestAnswer {
+    pub answer: String,
+    pub name: String,
+}
+
+impl RequestAnswer {
+    /// The harness's name for the answer, or a plain one when it gave none.
+    pub fn label(&self) -> String {
+        if !self.name.trim().is_empty() {
+            return self.name.trim().to_string();
+        }
+        answer_label(&self.answer).to_string()
+    }
+}
+
+/// A plain name for an answer the harness did not name.
+pub fn answer_label(answer: &str) -> &'static str {
+    match answer {
+        "once" => "Allow once",
+        "always" => "Always allow",
+        "no" => "Refuse",
+        "never" => "Never allow",
+        _ => "Answer",
+    }
+}
+
+/// A harness's request to the person before an act: the exact command, or
+/// the file and the change, and the answers it offers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Request {
+    #[serde(rename = "request")]
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub act: Option<String>,
+    pub kind: String,
+    pub title: String,
+    pub detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    pub answers: Vec<RequestAnswer>,
+    pub state: RequestState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+    /// The answer the person picked in the drawer, sent and not yet taken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sending: Option<String>,
+}
+
+impl Request {
+    /// The name of the answer given, from the answers the request offered.
+    pub fn answer_name(&self, answer: &str) -> String {
+        self.answers
+            .iter()
+            .find(|a| a.answer == answer)
+            .map(RequestAnswer::label)
+            .unwrap_or_else(|| answer_label(answer).to_string())
+    }
+}
+
+/// How the drawer shows a request in its turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RequestView {
+    /// It waits for the person, with one control per answer.
+    Waiting,
+    /// The person picked this answer; Lever has yet to take it.
+    Sending(String),
+    /// Answered, with the answer's name.
+    Answered(String),
+    /// Withdrawn, or no longer waiting because its turn ended.
+    Withdrawn,
+}
+
+/// A request waits only while its turn works: one Lever still calls
+/// `waiting` in a turn that ended (as after a lost connection) is shown as
+/// withdrawn, with no answer controls.
+pub fn request_view(turn_state: &TurnState, request: &Request) -> RequestView {
+    match request.state {
+        RequestState::Answered => RequestView::Answered(
+            request
+                .answer
+                .as_deref()
+                .map(|a| request.answer_name(a))
+                .unwrap_or_else(|| "Answered".into()),
+        ),
+        RequestState::Withdrawn => RequestView::Withdrawn,
+        RequestState::Waiting if !matches!(turn_state, TurnState::Working) => {
+            RequestView::Withdrawn
+        }
+        RequestState::Waiting => match &request.sending {
+            Some(answer) => RequestView::Sending(request.answer_name(answer)),
+            None => RequestView::Waiting,
+        },
+    }
+}
+
+/// One line of a request's detail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DetailLine {
+    Plain,
+    Removed,
+    Added,
+}
+
+/// Splits a request's detail into lines for the drawer. A command is shown
+/// as it is; any other detail's lines that begin `-` or `+` are a diff's
+/// removed and added lines. Very long detail is cut, saying how much.
+pub fn request_detail_lines(kind: &str, detail: &str) -> Vec<(DetailLine, String)> {
+    const MAX_LINES: usize = 200;
+    let diff = kind != "command";
+    let lines: Vec<&str> = detail.trim_end_matches('\n').lines().collect();
+    let mut out: Vec<(DetailLine, String)> = lines
+        .iter()
+        .take(MAX_LINES)
+        .map(|line| {
+            let tone = if !diff {
+                DetailLine::Plain
+            } else if line.starts_with('-') {
+                DetailLine::Removed
+            } else if line.starts_with('+') {
+                DetailLine::Added
+            } else {
+                DetailLine::Plain
+            };
+            (tone, line.to_string())
+        })
+        .collect();
+    if lines.len() > MAX_LINES {
+        out.push((
+            DetailLine::Plain,
+            format!("… {} more lines", lines.len() - MAX_LINES),
+        ));
+    }
+    out
+}
+
+/// A mode Lever offers for the harness.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeInfo {
+    pub id: String,
+    pub name: String,
+}
+
+/// The name of a mode: the one Lever gave, or ours for the modes we know.
+pub fn mode_name(id: &str, modes: &[ModeInfo]) -> String {
+    if let Some(mode) = modes.iter().find(|m| m.id == id && !m.name.trim().is_empty()) {
+        return mode.name.clone();
+    }
+    match id {
+        "ask-first" => "Ask first".into(),
+        "full-access" => "Full access".into(),
+        "plan" => "Plan".into(),
+        other => other.to_string(),
+    }
+}
+
+/// The modes new threads may start in.
+pub const DEFAULT_MODES: [&str; 2] = ["ask-first", "full-access"];
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "message", rename_all = "lowercase")]
 pub enum TurnState {
@@ -133,6 +304,11 @@ pub struct Turn {
     pub acts: Vec<Act>,
     #[serde(default)]
     pub notes: Vec<Note>,
+    #[serde(default)]
+    pub requests: Vec<Request>,
+    /// The mode the turn began in, when Lever recorded one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
     pub answer: String,
     pub state: TurnState,
 }
@@ -143,6 +319,8 @@ pub enum Mark {
     #[default]
     Idle,
     Working,
+    /// A request of some thread waits for the person.
+    Waiting,
     Done,
 }
 
@@ -151,6 +329,7 @@ impl Mark {
         match self {
             Mark::Idle => "idle",
             Mark::Working => "working",
+            Mark::Waiting => "waiting",
             Mark::Done => "done",
         }
     }
@@ -162,6 +341,8 @@ pub struct StatusInfo {
     pub harness_started: bool,
     pub harnesses: Vec<String>,
     pub free_hosted_models: bool,
+    /// The mode new threads start in, when Lever says.
+    pub default_mode: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +357,10 @@ pub struct ThreadSummary {
     pub turns: u64,
     pub state: String,
     pub working: bool,
+    #[serde(default)]
+    pub waiting: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,6 +370,8 @@ pub struct ResumedThread {
     pub cwd: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
     pub working: bool,
     pub turns: Vec<Turn>,
 }
@@ -219,9 +406,15 @@ pub enum LeverMessage {
         turn: u64,
         note: Note,
     },
+    Request {
+        thread: String,
+        turn: u64,
+        request: Request,
+    },
     ThreadUpdated {
         thread: String,
-        title: String,
+        title: Option<String>,
+        mode: Option<String>,
     },
     Done {
         thread: String,
@@ -239,6 +432,15 @@ pub enum LeverMessage {
     Interrupted {
         thread: String,
         turn: u64,
+    },
+    /// The `models` reply; the drawer reads only its modes.
+    Models { modes: Vec<ModeInfo> },
+    ModeSet { thread: String, mode: String },
+    DefaultMode { mode: String },
+    /// The `watch` reply and each `activity` event.
+    Activity {
+        working: Vec<String>,
+        waiting: Vec<String>,
     },
 }
 
@@ -281,9 +483,15 @@ pub enum AgentEvent {
         turn: u64,
         note: Note,
     },
+    Request {
+        thread: String,
+        turn: u64,
+        request: Request,
+    },
     ThreadUpdated {
         thread: String,
-        title: String,
+        title: Option<String>,
+        mode: Option<String>,
     },
     Done {
         thread: String,
@@ -301,6 +509,16 @@ pub enum AgentEvent {
     Interrupted {
         thread: String,
         turn: u64,
+    },
+    Modes(Vec<ModeInfo>),
+    ModeSet {
+        thread: String,
+        mode: String,
+    },
+    DefaultMode(String),
+    Activity {
+        working: Vec<String>,
+        waiting: Vec<String>,
     },
     Error {
         code: String,
@@ -328,8 +546,29 @@ impl LeverMessage {
             LeverMessage::Text { thread, turn, text } => Some(AgentEvent::Text { thread, turn, text }),
             LeverMessage::Act { thread, turn, act } => Some(AgentEvent::Act { thread, turn, act }),
             LeverMessage::Note { thread, turn, note } => Some(AgentEvent::Note { thread, turn, note }),
-            LeverMessage::ThreadUpdated { thread, title } => {
-                Some(AgentEvent::ThreadUpdated { thread, title })
+            LeverMessage::Request {
+                thread,
+                turn,
+                request,
+            } => Some(AgentEvent::Request {
+                thread,
+                turn,
+                request,
+            }),
+            LeverMessage::ThreadUpdated {
+                thread,
+                title,
+                mode,
+            } => Some(AgentEvent::ThreadUpdated {
+                thread,
+                title,
+                mode,
+            }),
+            LeverMessage::Models { modes } => Some(AgentEvent::Modes(modes)),
+            LeverMessage::ModeSet { thread, mode } => Some(AgentEvent::ModeSet { thread, mode }),
+            LeverMessage::DefaultMode { mode } => Some(AgentEvent::DefaultMode(mode)),
+            LeverMessage::Activity { working, waiting } => {
+                Some(AgentEvent::Activity { working, waiting })
             }
             LeverMessage::Done { thread, turn } => Some(AgentEvent::Done { thread, turn }),
             LeverMessage::Stopped { thread, turn } => Some(AgentEvent::Stopped { thread, turn }),
@@ -357,11 +596,27 @@ pub enum AgentCommand {
     Send {
         thread: Option<String>,
         text: String,
+        mode: Option<String>,
     },
     Stop {
         thread: String,
         turn: Option<u64>,
     },
+    Answer {
+        thread: String,
+        request: String,
+        answer: String,
+    },
+    SetMode {
+        thread: String,
+        mode: String,
+    },
+    SetDefaultMode {
+        mode: String,
+    },
+    /// `models`, for the modes Lever offers. It starts the harness, so the
+    /// drawer asks only when the person opens the mode menu.
+    FetchModes,
     RefreshStatus,
 }
 
@@ -371,8 +626,29 @@ pub struct CommandSender {
 }
 
 impl CommandSender {
-    pub fn send_message(&self, thread: Option<String>, text: String) {
-        let _ = self.tx.send(AgentCommand::Send { thread, text });
+    /// Sends a message. `mode` is the mode a new thread starts in.
+    pub fn send_message(&self, thread: Option<String>, text: String, mode: Option<String>) {
+        let _ = self.tx.send(AgentCommand::Send { thread, text, mode });
+    }
+
+    pub fn answer(&self, thread: String, request: String, answer: String) {
+        let _ = self.tx.send(AgentCommand::Answer {
+            thread,
+            request,
+            answer,
+        });
+    }
+
+    pub fn set_mode(&self, thread: String, mode: String) {
+        let _ = self.tx.send(AgentCommand::SetMode { thread, mode });
+    }
+
+    pub fn set_default_mode(&self, mode: String) {
+        let _ = self.tx.send(AgentCommand::SetDefaultMode { mode });
+    }
+
+    pub fn fetch_modes(&self) {
+        let _ = self.tx.send(AgentCommand::FetchModes);
     }
 
     pub fn stop_turn(&self, thread: String, turn: Option<u64>) {
@@ -403,9 +679,43 @@ pub struct AgentState {
     pub active_turn: Option<u64>,
     pub turns: Vec<Turn>,
     pub error: Option<String>,
+    /// The mark across every thread: `waiting` while any request waits,
+    /// else `working` while any thread works, else `done` until the drawer
+    /// is summoned or put away after a turn ended, else `idle`.
     pub mark: Mark,
+    /// The thread's mode, as Lever has it.
+    pub mode: Option<String>,
+    /// The mode picked for the drawer's new thread, sent with its first message.
+    pub pending_mode: Option<String>,
+    /// The mode new threads start in, from Lever's `status`.
+    pub default_mode: Option<String>,
+    /// The modes Lever offers, fetched when the person opens the mode menu.
+    pub modes: Vec<ModeInfo>,
+    pub modes_loading: bool,
+    pub modes_error: Option<String>,
+    /// The threads working and waiting, from Lever's `activity`.
+    pub working_threads: Vec<String>,
+    pub waiting_threads: Vec<String>,
+    /// Lever has said which threads work and wait on this connection.
+    #[serde(skip)]
+    watching: bool,
+    /// The mark from the drawer's own thread alone: what the mark is before
+    /// Lever's `activity` arrives, and where `done` is held after it does.
+    #[serde(skip)]
+    thread_mark: Mark,
     #[serde(skip)]
     working_before_disconnect: Option<String>,
+}
+
+/// Where a control the drawer drew is on its display, in the display's
+/// logical pixels, so a check can click it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct ControlBounds {
+    pub id: String,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
 }
 
 /// Snapshot exposed on the shell's own `crowbar-shell`-only control socket for
@@ -413,9 +723,27 @@ pub struct AgentState {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct AgentViewSnapshot {
     pub drawer_up: bool,
+    /// The display the drawer is on.
+    pub drawer_output: Option<String>,
     pub mark_overlay: bool,
     pub mark_overlay_output: Option<String>,
+    pub mode_menu_open: bool,
+    /// The drawer's controls in view as it last drew: `mode`, `mode:<id>`,
+    /// `default-mode:<id>`, `answer:<request>:<answer>`, `send`, `stop`,
+    /// `close`.
+    pub controls: Vec<ControlBounds>,
     pub state: AgentState,
+}
+
+/// What picking a mode in the drawer does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ModePick {
+    /// Ask Lever to set the thread's mode.
+    SetThread { thread: String, mode: String },
+    /// Held for the drawer's new thread, and sent with its first message.
+    Pending,
+    /// The thread works, or the drawer cannot reach Lever; nothing changes.
+    Refused,
 }
 
 impl AgentState {
@@ -427,7 +755,7 @@ impl AgentState {
     }
 
     pub fn working(&self) -> bool {
-        self.mark == Mark::Working
+        self.thread_mark == Mark::Working
             || self
                 .turns
                 .last()
@@ -447,6 +775,104 @@ impl AgentState {
         })
     }
 
+    /// A request of the drawer's thread waits for the person.
+    pub fn waiting(&self) -> bool {
+        self.turns.iter().any(|t| {
+            t.requests.iter().any(|r| {
+                matches!(
+                    request_view(&t.state, r),
+                    RequestView::Waiting | RequestView::Sending(_)
+                )
+            })
+        })
+    }
+
+    /// The mode the drawer shows: the thread's, or for the drawer's new
+    /// thread, the one picked for it or the starting mode.
+    pub fn shown_mode(&self) -> Option<String> {
+        if self.thread.is_some() {
+            self.mode.clone()
+        } else {
+            self.pending_mode.clone().or_else(|| self.default_mode.clone())
+        }
+    }
+
+    /// The thread's mode cannot change now: it works, or Lever is out of reach.
+    pub fn mode_locked(&self) -> bool {
+        !self.connected || self.no_harness || self.sending || self.working()
+    }
+
+    /// The person opened the mode menu: ask Lever for its modes. Returns
+    /// whether to send `models`; the modes already known stay shown meanwhile.
+    pub fn open_mode_menu(&mut self) -> bool {
+        if !self.connected || self.no_harness {
+            return false;
+        }
+        self.modes_loading = true;
+        self.modes_error = None;
+        true
+    }
+
+    /// The person picked a mode for the thread.
+    pub fn pick_mode(&mut self, mode: &str) -> ModePick {
+        if self.mode_locked() {
+            return ModePick::Refused;
+        }
+        match &self.thread {
+            Some(thread) => ModePick::SetThread {
+                thread: thread.clone(),
+                mode: mode.to_string(),
+            },
+            None => {
+                self.pending_mode = Some(mode.to_string());
+                ModePick::Pending
+            }
+        }
+    }
+
+    /// The person answered a request. Returns the thread to send `answer`
+    /// on, or `None` when the request no longer waits or is already answered.
+    pub fn begin_answer(&mut self, request: &str, answer: &str) -> Option<String> {
+        if !self.connected {
+            return None;
+        }
+        let thread = self.thread.clone()?;
+        let turn = self
+            .turns
+            .iter_mut()
+            .find(|t| t.requests.iter().any(|r| r.id == request))?;
+        let state = turn.state.clone();
+        let req = turn.requests.iter_mut().find(|r| r.id == request)?;
+        if request_view(&state, req) != RequestView::Waiting
+            || !req.answers.iter().any(|a| a.answer == answer)
+        {
+            return None;
+        }
+        req.sending = Some(answer.to_string());
+        Some(thread)
+    }
+
+    /// Works the mark out from what Lever's `activity` says of every thread
+    /// (waiting over working over done), or, before it has, from the
+    /// drawer's own thread.
+    fn refresh_mark(&mut self) {
+        self.mark = if self.watching {
+            if !self.waiting_threads.is_empty() {
+                Mark::Waiting
+            } else if !self.working_threads.is_empty() {
+                Mark::Working
+            } else if self.thread_mark == Mark::Done {
+                Mark::Done
+            } else {
+                Mark::Idle
+            }
+        } else if self.connected && self.waiting() {
+            Mark::Waiting
+        } else {
+            self.thread_mark
+        };
+    }
+
     fn apply_status(&mut self, status: StatusInfo) -> bool {
         let no_harness = status.harnesses.is_empty();
         let lever_version = Some(status.lever_version);
@@ -454,7 +880,11 @@ impl AgentState {
             || self.harness_started != status.harness_started
             || self.harnesses != status.harnesses
             || self.free_hosted_models != status.free_hosted_models
-            || self.no_harness != no_harness;
+            || self.no_harness != no_harness
+            || (status.default_mode.is_some() && self.default_mode != status.default_mode);
+        if status.default_mode.is_some() {
+            self.default_mode = status.default_mode;
+        }
         self.lever_version = lever_version;
         self.harness_started = status.harness_started;
         self.harnesses = status.harnesses;
@@ -475,12 +905,14 @@ impl AgentState {
             Some(resumed.title)
         };
         self.model = resumed.model;
+        self.mode = resumed.mode;
+        self.pending_mode = None;
         self.active_turn = resumed
             .turns
             .last()
             .filter(|t| matches!(t.state, TurnState::Working))
             .map(|t| t.turn);
-        let was_working = self.mark == Mark::Working
+        let was_working = self.thread_mark == Mark::Working
             || self
                 .working_before_disconnect
                 .take()
@@ -494,14 +926,32 @@ impl AgentState {
                 Mark::Done
             }
             _ if was_working => Mark::Idle,
-            _ => self.mark,
+            _ => self.thread_mark,
         };
         self.turns = resumed.turns;
-        self.mark = next_mark;
+        self.thread_mark = next_mark;
+    }
+
+    /// Forgets the drawer's thread, as for a thread Lever no longer has.
+    fn clear_thread(&mut self) {
+        self.thread = None;
+        self.title = None;
+        self.model = None;
+        self.mode = None;
+        self.active_turn = None;
+        self.turns.clear();
+        self.thread_mark = Mark::Idle;
     }
 
     /// Applies an event from Lever. Returns true if visible state changed.
     pub fn apply(&mut self, event: AgentEvent, drawer_up: bool) -> bool {
+        let before = self.mark;
+        let changed = self.apply_event(event, drawer_up);
+        self.refresh_mark();
+        changed || self.mark != before
+    }
+
+    fn apply_event(&mut self, event: AgentEvent, drawer_up: bool) -> bool {
         match event {
             AgentEvent::Connected {
                 status,
@@ -531,16 +981,12 @@ impl AgentState {
                         self.working_before_disconnect = None;
                     }
                     if self.thread.as_deref() != Some(tid.as_str()) {
+                        self.clear_thread();
                         self.thread = Some(tid);
-                        self.title = None;
-                        self.model = None;
-                        self.active_turn = None;
-                        self.turns.clear();
-                        self.mark = Mark::Idle;
                         changed = true;
                     } else {
-                        if self.active_turn.take().is_some() || self.mark != Mark::Idle {
-                            self.mark = Mark::Idle;
+                        if self.active_turn.take().is_some() || self.thread_mark != Mark::Idle {
+                            self.thread_mark = Mark::Idle;
                             changed = true;
                         }
                         for turn in &mut self.turns {
@@ -551,12 +997,7 @@ impl AgentState {
                         }
                     }
                 } else if self.thread.is_some() {
-                    self.thread = None;
-                    self.title = None;
-                    self.model = None;
-                    self.active_turn = None;
-                    self.turns.clear();
-                    self.mark = Mark::Idle;
+                    self.clear_thread();
                     self.working_before_disconnect = None;
                     changed = true;
                 } else {
@@ -572,10 +1013,17 @@ impl AgentState {
                     || !self.harnesses.is_empty()
                     || self.no_harness
                     || self.missing_model.is_some()
-                    || self.mark != Mark::Idle;
+                    || self.modes_loading
+                    || self.thread_mark != Mark::Idle;
                 if self.working() && let Some(thread) = self.thread.clone() {
                     self.working_before_disconnect = Some(thread);
                 }
+                // Lever says again which threads work and wait once the
+                // shell connects again and sends `watch`.
+                self.watching = false;
+                self.working_threads.clear();
+                self.waiting_threads.clear();
+                self.modes_loading = false;
                 self.connected = false;
                 self.sending = false;
                 self.active_turn = None;
@@ -585,7 +1033,7 @@ impl AgentState {
                 self.free_hosted_models = false;
                 self.no_harness = false;
                 self.missing_model = None;
-                self.mark = Mark::Idle;
+                self.thread_mark = Mark::Idle;
                 changed
             }
             AgentEvent::Status(status) => self.apply_status(status),
@@ -600,12 +1048,18 @@ impl AgentState {
                     self.turns.clear();
                     self.title = None;
                     self.model = None;
+                    // A new thread starts in the mode picked for it, or in
+                    // the starting mode; Lever's `thread-updated` corrects it.
+                    self.mode = self
+                        .pending_mode
+                        .take()
+                        .or_else(|| self.default_mode.clone());
                 }
                 self.thread = Some(thread);
                 self.active_turn = Some(turn);
                 self.error = None;
                 self.missing_model = None;
-                self.mark = Mark::Working;
+                self.thread_mark = Mark::Working;
                 true
             }
             AgentEvent::Message {
@@ -633,12 +1087,14 @@ impl AgentState {
                         context,
                         acts: Vec::new(),
                         notes: Vec::new(),
+                        requests: Vec::new(),
+                        mode: self.mode.clone(),
                         answer: String::new(),
                         state: TurnState::Working,
                     });
                 }
                 self.error = None;
-                self.mark = Mark::Working;
+                self.thread_mark = Mark::Working;
                 true
             }
             AgentEvent::Text { thread, turn, text } => {
@@ -683,17 +1139,91 @@ impl AgentState {
                 }
                 false
             }
-            AgentEvent::ThreadUpdated { thread, title } => {
+            AgentEvent::Request {
+                thread,
+                turn,
+                request,
+            } => {
                 if self.thread.as_deref() != Some(thread.as_str()) {
                     return false;
                 }
-                let next = if title.is_empty() { None } else { Some(title) };
-                if self.title != next {
-                    self.title = next;
-                    true
+                let Some(existing_turn) = self.turns.iter_mut().find(|t| t.turn == turn) else {
+                    return false;
+                };
+                // Each change of state comes with the same request ID.
+                if let Some(existing) =
+                    existing_turn.requests.iter_mut().find(|r| r.id == request.id)
+                {
+                    *existing = request;
                 } else {
-                    false
+                    existing_turn.requests.push(request);
                 }
+                true
+            }
+            AgentEvent::ThreadUpdated {
+                thread,
+                title,
+                mode,
+            } => {
+                if self.thread.as_deref() != Some(thread.as_str()) {
+                    return false;
+                }
+                let mut changed = false;
+                if let Some(title) = title {
+                    let next = if title.is_empty() { None } else { Some(title) };
+                    if self.title != next {
+                        self.title = next;
+                        changed = true;
+                    }
+                }
+                if let Some(mode) = mode
+                    && self.mode.as_deref() != Some(mode.as_str())
+                {
+                    self.mode = Some(mode);
+                    changed = true;
+                }
+                changed
+            }
+            AgentEvent::ModeSet { thread, mode } => {
+                if self.thread.as_deref() != Some(thread.as_str())
+                    || self.mode.as_deref() == Some(mode.as_str())
+                {
+                    return false;
+                }
+                self.mode = Some(mode);
+                true
+            }
+            AgentEvent::DefaultMode(mode) => {
+                if self.default_mode.as_deref() == Some(mode.as_str()) {
+                    return false;
+                }
+                self.default_mode = Some(mode);
+                true
+            }
+            AgentEvent::Modes(modes) => {
+                self.modes_loading = false;
+                self.modes_error = None;
+                self.modes = modes;
+                true
+            }
+            AgentEvent::Activity { working, waiting } => {
+                let was_busy = self.watching
+                    && (!self.working_threads.is_empty() || !self.waiting_threads.is_empty());
+                let busy = !working.is_empty() || !waiting.is_empty();
+                if was_busy && !busy && !drawer_up {
+                    // The last working thread ended behind a put-away drawer.
+                    self.thread_mark = Mark::Done;
+                } else if busy && self.thread_mark != Mark::Working {
+                    // New work clears a `done` no one has seen yet.
+                    self.thread_mark = Mark::Idle;
+                }
+                let changed = !self.watching
+                    || self.working_threads != working
+                    || self.waiting_threads != waiting;
+                self.watching = true;
+                self.working_threads = working;
+                self.waiting_threads = waiting;
+                changed
             }
             AgentEvent::Done { thread, turn } => {
                 if self.thread.as_deref() != Some(thread.as_str()) {
@@ -705,7 +1235,7 @@ impl AgentState {
                 if self.active_turn == Some(turn) {
                     self.active_turn = None;
                 }
-                self.mark = Mark::Done;
+                self.thread_mark = Mark::Done;
                 true
             }
             AgentEvent::Stopped { thread, turn } => {
@@ -718,7 +1248,7 @@ impl AgentState {
                 if self.active_turn == Some(turn) {
                     self.active_turn = None;
                 }
-                self.mark = if drawer_up { Mark::Idle } else { Mark::Done };
+                self.thread_mark = if drawer_up { Mark::Idle } else { Mark::Done };
                 true
             }
             AgentEvent::Failed {
@@ -738,7 +1268,7 @@ impl AgentState {
                 }
                 // Behind a put-away drawer, leave the mark lit as Done so the
                 // person knows the turn ended and can open the drawer to read why.
-                self.mark = if drawer_up { Mark::Idle } else { Mark::Done };
+                self.thread_mark = if drawer_up { Mark::Idle } else { Mark::Done };
                 true
             }
             AgentEvent::Interrupted { thread, turn } => {
@@ -752,23 +1282,38 @@ impl AgentState {
                 if self.active_turn == Some(turn) {
                     self.active_turn = None;
                 }
-                self.mark = if drawer_up { Mark::Idle } else { Mark::Done };
+                self.thread_mark = if drawer_up { Mark::Idle } else { Mark::Done };
                 true
             }
             AgentEvent::Error { code, message } => {
                 self.sending = false;
+                // Lever's replies name no request, so an answer that was not
+                // taken lets the person answer again.
+                for turn in &mut self.turns {
+                    for request in &mut turn.requests {
+                        request.sending = None;
+                    }
+                }
+                if self.modes_loading
+                    && !matches!(code.as_str(), "no-model" | "no-thread" | "disconnected")
+                {
+                    // Asked while the mode menu opened: `models` failed.
+                    self.modes_loading = false;
+                    self.modes_error = Some("Modes are not available right now.".into());
+                    return true;
+                }
+                self.modes_loading = false;
                 if code == "no-model" {
                     self.missing_model = Some(message);
                     self.error = None;
                 } else if code == "no-thread" {
-                    self.thread = None;
-                    self.title = None;
-                    self.model = None;
-                    self.active_turn = None;
-                    self.turns.clear();
-                    self.mark = Mark::Idle;
+                    self.clear_thread();
                     self.working_before_disconnect = None;
                     self.error = None;
+                } else if code == "no-request" {
+                    self.error = Some("That request no longer waits for an answer.".into());
+                } else if code == "invalid-mode" {
+                    self.error = Some("The Agent does not offer that mode.".into());
                 } else {
                     self.error = Some(calm_turn_error(&message));
                 }
@@ -779,21 +1324,23 @@ impl AgentState {
 
     /// Summoning the drawer acknowledges a finished turn's `Done` mark.
     pub fn on_drawer_opened(&mut self) -> bool {
-        if self.mark == Mark::Done {
-            self.mark = Mark::Idle;
-            return true;
-        }
-        false
+        self.acknowledge_done()
     }
 
     /// Putting the drawer away clears `Done` (already seen in the drawer),
-    /// while leaving `Working` active so the mark tracks the turn behind it.
+    /// while leaving `Working` and `Waiting` so the mark tracks what goes on
+    /// behind it.
     pub fn on_drawer_closed(&mut self) -> bool {
-        if self.mark == Mark::Done {
-            self.mark = Mark::Idle;
-            return true;
+        self.acknowledge_done()
+    }
+
+    fn acknowledge_done(&mut self) -> bool {
+        let before = self.mark;
+        if self.thread_mark == Mark::Done {
+            self.thread_mark = Mark::Idle;
         }
-        false
+        self.refresh_mark();
+        self.mark != before
     }
 }
 
@@ -1229,8 +1776,37 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                     harness_started,
                     harnesses,
                     free_hosted_models,
+                    default_mode: opt_str(msg, "default_mode"),
                 }))
             }
+            "models" => Some(LeverMessage::Models {
+                modes: msg
+                    .get("modes")
+                    .and_then(|v| v.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| {
+                                let id = item.get("id")?.as_str()?.to_string();
+                                let name = item
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                Some(ModeInfo { id, name })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }),
+            "mode-set" => Some(LeverMessage::ModeSet {
+                thread: msg.get("thread")?.as_str()?.to_string(),
+                mode: msg.get("mode")?.as_str()?.to_string(),
+            }),
+            "default-mode" => Some(LeverMessage::DefaultMode {
+                mode: msg.get("mode")?.as_str()?.to_string(),
+            }),
+            "activity" => parse_activity(msg),
             "list" => {
                 let threads = msg
                     .get("threads")?
@@ -1256,6 +1832,7 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                     .get("model")
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
+                let mode = opt_str(msg, "mode");
                 let working = msg
                     .get("working")
                     .and_then(|v| v.as_bool())
@@ -1271,6 +1848,7 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                     title,
                     cwd,
                     model,
+                    mode,
                     working,
                     turns,
                 }))
@@ -1297,10 +1875,16 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
     }
 
     let event = msg.get("event")?.as_str()?;
+    if event == "activity" {
+        return parse_activity(msg);
+    }
     let thread = msg.get("thread")?.as_str()?.to_string();
     if event == "thread-updated" {
-        let title = msg.get("title")?.as_str()?.to_string();
-        return Some(LeverMessage::ThreadUpdated { thread, title });
+        return Some(LeverMessage::ThreadUpdated {
+            thread,
+            title: opt_str(msg, "title"),
+            mode: opt_str(msg, "mode"),
+        });
     }
     let turn = msg.get("turn")?.as_u64()?;
     match event {
@@ -1331,6 +1915,11 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
             thread,
             turn,
             note: parse_note(msg)?,
+        }),
+        "request" => Some(LeverMessage::Request {
+            thread,
+            turn,
+            request: parse_request(msg)?,
         }),
         "done" => Some(LeverMessage::Done { thread, turn }),
         "stopped" => Some(LeverMessage::Stopped { thread, turn }),
@@ -1377,6 +1966,79 @@ fn parse_thread_summary(value: &serde_json::Value) -> Option<ThreadSummary> {
             .get("working")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        waiting: value
+            .get("waiting")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        mode: opt_str(value, "mode"),
+    })
+}
+
+fn opt_str(value: &serde_json::Value, key: &str) -> Option<String> {
+    value.get(key).and_then(|v| v.as_str()).map(str::to_string)
+}
+
+fn str_list(value: &serde_json::Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_activity(msg: &serde_json::Value) -> Option<LeverMessage> {
+    Some(LeverMessage::Activity {
+        working: str_list(msg, "working"),
+        waiting: str_list(msg, "waiting"),
+    })
+}
+
+fn parse_request(value: &serde_json::Value) -> Option<Request> {
+    let id = value.get("request")?.as_str()?.to_string();
+    let answers = value
+        .get("answers")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    Some(RequestAnswer {
+                        answer: item.get("answer")?.as_str()?.to_string(),
+                        name: item
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let state = match value.get("state").and_then(|v| v.as_str()) {
+        Some("answered") => RequestState::Answered,
+        Some("withdrawn") => RequestState::Withdrawn,
+        _ => RequestState::Waiting,
+    };
+    Some(Request {
+        id,
+        act: opt_str(value, "act"),
+        kind: value
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("other")
+            .to_string(),
+        title: opt_str(value, "title").unwrap_or_default(),
+        detail: opt_str(value, "detail").unwrap_or_default(),
+        path: opt_str(value, "path"),
+        answers,
+        state,
+        answer: opt_str(value, "answer"),
+        sending: None,
     })
 }
 
@@ -1440,6 +2102,11 @@ fn parse_turn(value: &serde_json::Value) -> Option<Turn> {
         .and_then(|v| v.as_array())
         .map(|items| items.iter().filter_map(parse_note).collect())
         .unwrap_or_default();
+    let requests = value
+        .get("requests")
+        .and_then(|v| v.as_array())
+        .map(|items| items.iter().filter_map(parse_request).collect())
+        .unwrap_or_default();
     let state = match value.get("state").and_then(|v| v.as_str()) {
         Some("working") => TurnState::Working,
         Some("stopped") => TurnState::Stopped,
@@ -1458,6 +2125,8 @@ fn parse_turn(value: &serde_json::Value) -> Option<Turn> {
         context,
         acts,
         notes,
+        requests,
+        mode: opt_str(value, "mode"),
         answer,
         state,
     })
@@ -1546,15 +2215,39 @@ fn start_with_options(
             let op = match &cmd {
                 AgentCommand::Send { .. } => "send",
                 AgentCommand::Stop { .. } => "stop",
+                AgentCommand::Answer { .. } => "answer",
+                AgentCommand::SetMode { .. } => "set-mode",
+                AgentCommand::SetDefaultMode { .. } => "set-default-mode",
+                AgentCommand::FetchModes => "models",
                 AgentCommand::RefreshStatus => "status",
             };
             let request = match cmd {
-                AgentCommand::Send { thread, text } => match thread {
-                    Some(thread) => {
-                        serde_json::json!({ "op": "send", "thread": thread, "text": text })
+                AgentCommand::Send { thread, text, mode } => {
+                    let mut request = match thread {
+                        Some(thread) => {
+                            serde_json::json!({ "op": "send", "thread": thread, "text": text })
+                        }
+                        None => serde_json::json!({ "op": "send", "thread": null, "text": text }),
+                    };
+                    if let Some(mode) = mode {
+                        request["mode"] = serde_json::Value::String(mode);
                     }
-                    None => serde_json::json!({ "op": "send", "thread": null, "text": text }),
-                },
+                    request
+                }
+                AgentCommand::Answer {
+                    thread,
+                    request,
+                    answer,
+                } => serde_json::json!({
+                    "op": "answer", "thread": thread, "request": request, "answer": answer
+                }),
+                AgentCommand::SetMode { thread, mode } => {
+                    serde_json::json!({ "op": "set-mode", "thread": thread, "mode": mode })
+                }
+                AgentCommand::SetDefaultMode { mode } => {
+                    serde_json::json!({ "op": "set-default-mode", "mode": mode })
+                }
+                AgentCommand::FetchModes => serde_json::json!({ "op": "models" }),
                 AgentCommand::Stop { thread, turn } => match turn {
                     Some(turn) => {
                         serde_json::json!({ "op": "stop", "thread": thread, "turn": turn })
@@ -1599,6 +2292,12 @@ fn start_with_options(
                             code: "disconnected".into(),
                             message: "Could not send Stop — the Agent is not reachable right now."
                                 .into(),
+                        }));
+                    }
+                    "answer" | "set-mode" | "set-default-mode" | "models" => {
+                        let _ = events_for_cmds.send(session::Event::Agent(AgentEvent::Error {
+                            code: "disconnected".into(),
+                            message: "The Agent is not reachable right now.".into(),
                         }));
                     }
                     _ => {}
@@ -1879,10 +2578,11 @@ fn read_bootstrap_frame(stream: &mut UnixStream, deadline: Instant) -> Result<se
 }
 
 /// Connects to Lever's surface socket, completes the version-1 handshake,
-/// fetches initial `status`, and restores the active thread (or, on a fresh
-/// shell start with no saved thread, the working thread if any, else the newest
-/// thread) before clearing the read timeout. Fails if Lever does not answer
-/// within `init_deadline`.
+/// fetches initial `status`, restores the active thread (or, on a fresh shell
+/// start with no saved thread, a thread that waits for the person, else the
+/// working thread if any, else the newest thread), and asks to `watch` every
+/// thread's activity, before clearing the read timeout. Fails if Lever does
+/// not answer within `init_deadline`.
 fn connect_and_bootstrap(
     path: &PathBuf,
     existing_thread: Option<String>,
@@ -1968,7 +2668,8 @@ fn connect_and_bootstrap(
             Some(LeverMessage::List { threads }) => {
                 if let Some(chosen) = threads
                     .iter()
-                    .find(|t| t.working)
+                    .find(|t| t.waiting)
+                    .or_else(|| threads.iter().find(|t| t.working))
                     .or_else(|| threads.first())
                 {
                     match skip_resume {
@@ -2007,6 +2708,15 @@ fn connect_and_bootstrap(
                 )));
             }
         }
+    }
+
+    // Ask which threads work and wait, for the mark. The reply and each
+    // `activity` after it arrive on the reader loop. A write that fails
+    // here finds the connection closed, which the reader loop sees too.
+    if let Err(e) = write_frame_before(&mut stream, &serde_json::json!({ "op": "watch" }), deadline)
+    {
+        let e: anyhow::Error = e.into();
+        log::warn!("Asking Lever to watch threads: {e}");
     }
 
     // Clear read timeout so the idle reader thread blocks with zero wakeups.
@@ -2085,6 +2795,7 @@ mod tests {
             harness_started: false,
             harnesses: harnesses.into_iter().map(str::to_string).collect(),
             free_hosted_models: false,
+            default_mode: Some("ask-first".into()),
         }
     }
 
@@ -2097,13 +2808,15 @@ mod tests {
                 "version": "0.1.0",
                 "harness_started": true,
                 "harnesses": [{ "id": "harness-1", "name": "OpenCode" }],
-                "free_hosted_models": true
+                "free_hosted_models": true,
+                "default_mode": "full-access"
             })),
             Some(LeverMessage::Status(StatusInfo {
                 lever_version: "0.1.0".into(),
                 harness_started: true,
                 harnesses: vec!["OpenCode".into()],
                 free_hosted_models: true,
+                default_mode: Some("full-access".into()),
             }))
         );
 
@@ -2120,7 +2833,9 @@ mod tests {
                     "updated": 105,
                     "turns": 2,
                     "state": "done",
-                    "working": false
+                    "working": false,
+                    "waiting": true,
+                    "mode": "plan"
                 }]
             })),
             Some(LeverMessage::List {
@@ -2134,6 +2849,8 @@ mod tests {
                     turns: 2,
                     state: "done".into(),
                     working: false,
+                    waiting: true,
+                    mode: Some("plan".into()),
                 }]
             })
         );
@@ -2277,7 +2994,11 @@ mod tests {
             parse_lever_message(&serde_json::json!({
                 "event": "thread-updated", "thread": "t-1", "title": "Inspect workspace"
             })),
-            Some(LeverMessage::ThreadUpdated { thread: "t-1".into(), title: "Inspect workspace".into() })
+            Some(LeverMessage::ThreadUpdated {
+                thread: "t-1".into(),
+                title: Some("Inspect workspace".into()),
+                mode: None,
+            })
         );
         assert_eq!(
             parse_lever_message(&serde_json::json!({ "event": "done", "thread": "t-1", "turn": 1 })),
@@ -2366,7 +3087,11 @@ mod tests {
             true,
         );
         state.apply(
-            AgentEvent::ThreadUpdated { thread: "t-abc".into(), title: "Focus check".into() },
+            AgentEvent::ThreadUpdated {
+                thread: "t-abc".into(),
+                title: Some("Focus check".into()),
+                mode: None,
+            },
             true,
         );
         state.apply(
@@ -2500,6 +3225,7 @@ mod tests {
                 title: "Fresh".into(),
                 cwd: "/tmp".into(),
                 model: None,
+                mode: None,
                 working: false,
                 turns: Vec::new(),
             }),
@@ -2513,6 +3239,8 @@ mod tests {
             context: None,
             acts: Vec::new(),
             notes: Vec::new(),
+            requests: Vec::new(),
+            mode: None,
             answer: "ok".into(),
             state: TurnState::Done,
         });
@@ -2522,6 +3250,8 @@ mod tests {
             context: None,
             acts: Vec::new(),
             notes: Vec::new(),
+            requests: Vec::new(),
+            mode: None,
             answer: String::new(),
             state: TurnState::Stopped,
         });
@@ -2537,7 +3267,7 @@ mod tests {
         assert_eq!(state.mark, Mark::Done);
 
         // Lost thread clears stale state and unlocks composer.
-        state.mark = Mark::Working;
+        state.thread_mark = Mark::Working;
         state.apply(
             AgentEvent::Error {
                 code: "no-thread".into(),
@@ -2779,6 +3509,14 @@ mod tests {
             })))
             .unwrap();
 
+            // After restoring the thread, the client asks to watch every
+            // thread's activity for the mark.
+            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "op": "watch" }));
+            peer.write_all(&encode_frame(&serde_json::json!({
+                "reply": "activity", "working": [], "waiting": []
+            })))
+            .unwrap();
+
             // Client sends turn 2 and then stops it.
             let send_req = read_frame(&mut peer).unwrap();
             assert_eq!(send_req["op"], "send");
@@ -2836,7 +3574,7 @@ mod tests {
                         assert_eq!(state.turns.len(), 1);
                         assert_eq!(state.turns[0].acts[0].detail.as_deref(), Some("crowbar"));
                         sent_turn2 = true;
-                        sender.send_message(state.thread.clone(), "long command".into());
+                        sender.send_message(state.thread.clone(), "long command".into(), None);
                     }
                     if state.turns.len() == 2 && !state.turns[1].acts.is_empty() && !stopped_turn2 {
                         stopped_turn2 = true;
@@ -3446,6 +4184,7 @@ mod tests {
                     title: "bg".into(),
                     cwd: "/tmp".into(),
                     model: None,
+                    mode: None,
                     working: false,
                     turns: vec![Turn {
                         turn: 1,
@@ -3453,6 +4192,8 @@ mod tests {
                         context: None,
                         acts: Vec::new(),
                         notes: Vec::new(),
+                        requests: Vec::new(),
+                        mode: None,
                         answer: "finished".into(),
                         state: TurnState::Done,
                     }],
@@ -3577,6 +4318,7 @@ mod tests {
                     title: "slow".into(),
                     cwd: "/tmp".into(),
                     model: None,
+                    mode: None,
                     working: false,
                     turns: vec![Turn {
                         turn: 1,
@@ -3584,6 +4326,8 @@ mod tests {
                         context: None,
                         acts: Vec::new(),
                         notes: Vec::new(),
+                        requests: Vec::new(),
+                        mode: None,
                         answer: "all done".into(),
                         state: TurnState::Done,
                     }],
@@ -3674,5 +4418,701 @@ mod tests {
         assert!(state.can_send());
         assert_eq!(state.thread, None);
         assert_eq!(saved, None);
+    }
+
+    fn sample_request(id: &str, state: RequestState) -> Request {
+        Request {
+            id: id.into(),
+            act: Some("act-1".into()),
+            kind: "command".into(),
+            title: "echo hi".into(),
+            detail: "echo hi".into(),
+            path: None,
+            answers: vec![
+                RequestAnswer { answer: "once".into(), name: "Allow once".into() },
+                RequestAnswer { answer: "always".into(), name: "Always allow".into() },
+                RequestAnswer { answer: "no".into(), name: "Reject".into() },
+            ],
+            state,
+            answer: None,
+            sending: None,
+        }
+    }
+
+    fn connected_state(drawer_up: bool) -> AgentState {
+        let mut state = AgentState::new(true);
+        state.apply(
+            AgentEvent::Connected {
+                status: sample_status(vec!["OpenCode"]),
+                resumed: None,
+                preserved_thread: None,
+                resume_error: None,
+            },
+            drawer_up,
+        );
+        state
+    }
+
+    fn activity(working: &[&str], waiting: &[&str]) -> AgentEvent {
+        AgentEvent::Activity {
+            working: working.iter().map(|s| s.to_string()).collect(),
+            waiting: waiting.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn parses_requests_modes_and_activity() {
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({
+                "event": "request", "thread": "t-1", "turn": 2, "request": "r-1", "act": "act-1",
+                "kind": "edit", "title": "Edit notes.txt", "detail": "-old\n+new", "path": "/home/crowbar/notes.txt",
+                "answers": [{ "answer": "once", "name": "Allow once" }, { "answer": "no", "name": "Reject" }],
+                "state": "waiting"
+            })),
+            Some(LeverMessage::Request {
+                thread: "t-1".into(),
+                turn: 2,
+                request: Request {
+                    id: "r-1".into(),
+                    act: Some("act-1".into()),
+                    kind: "edit".into(),
+                    title: "Edit notes.txt".into(),
+                    detail: "-old\n+new".into(),
+                    path: Some("/home/crowbar/notes.txt".into()),
+                    answers: vec![
+                        RequestAnswer { answer: "once".into(), name: "Allow once".into() },
+                        RequestAnswer { answer: "no".into(), name: "Reject".into() },
+                    ],
+                    state: RequestState::Waiting,
+                    answer: None,
+                    sending: None,
+                },
+            })
+        );
+        match parse_lever_message(&serde_json::json!({
+            "event": "request", "thread": "t-1", "turn": 2, "request": "r-1", "kind": "command",
+            "title": "ls", "detail": "ls", "answers": [], "state": "answered", "answer": "always"
+        })) {
+            Some(LeverMessage::Request { request, .. }) => {
+                assert_eq!(request.state, RequestState::Answered);
+                assert_eq!(request.answer.as_deref(), Some("always"));
+            }
+            other => panic!("expected Request, got {other:?}"),
+        }
+        match parse_lever_message(&serde_json::json!({
+            "event": "request", "thread": "t-1", "turn": 2, "request": "r-1", "kind": "command",
+            "title": "ls", "detail": "ls", "answers": [], "state": "withdrawn"
+        })) {
+            Some(LeverMessage::Request { request, .. }) => {
+                assert_eq!(request.state, RequestState::Withdrawn)
+            }
+            other => panic!("expected Request, got {other:?}"),
+        }
+
+        // A resumed thread carries its mode, and each turn its mode and requests.
+        match parse_lever_message(&serde_json::json!({
+            "reply": "resumed", "thread": "t-1", "title": "", "cwd": "/tmp", "mode": "full-access",
+            "working": true,
+            "turns": [{
+                "turn": 1, "message": "hi", "answer": "", "state": "working", "mode": "ask-first",
+                "acts": [], "notes": [],
+                "requests": [{ "request": "r-9", "kind": "command", "title": "id", "detail": "id",
+                               "answers": [{ "answer": "once", "name": "Allow once" }], "state": "waiting" }]
+            }, { "turn": 2, "message": "old", "answer": "", "state": "done", "acts": [], "notes": [] }]
+        })) {
+            Some(LeverMessage::Resumed(r)) => {
+                assert_eq!(r.mode.as_deref(), Some("full-access"));
+                assert_eq!(r.turns[0].mode.as_deref(), Some("ask-first"));
+                assert_eq!(r.turns[0].requests.len(), 1);
+                assert_eq!(r.turns[0].requests[0].id, "r-9");
+                assert_eq!(r.turns[1].mode, None);
+                assert!(r.turns[1].requests.is_empty());
+            }
+            other => panic!("expected Resumed, got {other:?}"),
+        }
+
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({
+                "event": "thread-updated", "thread": "t-1", "mode": "plan"
+            })),
+            Some(LeverMessage::ThreadUpdated { thread: "t-1".into(), title: None, mode: Some("plan".into()) })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({
+                "reply": "models", "supported": true, "models": [{ "id": "stub/stub-1", "name": "Stub One" }],
+                "default": "stub/stub-1", "free_hosted_models": false,
+                "modes": [{ "id": "ask-first", "name": "Ask first" }, { "id": "full-access", "name": "Full access" },
+                          { "id": "plan", "name": "Plan" }]
+            })),
+            Some(LeverMessage::Models {
+                modes: vec![
+                    ModeInfo { id: "ask-first".into(), name: "Ask first".into() },
+                    ModeInfo { id: "full-access".into(), name: "Full access".into() },
+                    ModeInfo { id: "plan".into(), name: "Plan".into() },
+                ]
+            })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "reply": "models", "supported": false, "models": [] })),
+            Some(LeverMessage::Models { modes: Vec::new() })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "reply": "mode-set", "thread": "t-1", "mode": "full-access" })),
+            Some(LeverMessage::ModeSet { thread: "t-1".into(), mode: "full-access".into() })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "reply": "default-mode", "mode": "full-access" })),
+            Some(LeverMessage::DefaultMode { mode: "full-access".into() })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "reply": "activity", "working": ["t-1"], "waiting": [] })),
+            Some(LeverMessage::Activity { working: vec!["t-1".into()], waiting: Vec::new() })
+        );
+        // The `activity` event names no thread of its own.
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "event": "activity", "working": [], "waiting": ["t-2"] })),
+            Some(LeverMessage::Activity { working: Vec::new(), waiting: vec!["t-2".into()] })
+        );
+    }
+
+    #[test]
+    fn a_request_waits_then_is_answered_or_withdrawn() {
+        let mut state = connected_state(true);
+        state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
+        state.apply(
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "run".into(), context: None },
+            true,
+        );
+        // A request for a thread the drawer does not hold is not drawn here.
+        assert!(!state.apply(
+            AgentEvent::Request {
+                thread: "t-other".into(),
+                turn: 1,
+                request: sample_request("r-x", RequestState::Waiting),
+            },
+            true,
+        ));
+        assert!(state.apply(
+            AgentEvent::Request {
+                thread: "t-1".into(),
+                turn: 1,
+                request: sample_request("r-1", RequestState::Waiting),
+            },
+            true,
+        ));
+        assert!(state.waiting());
+        // Before Lever's `activity` arrives, the drawer's own thread shows waiting.
+        assert_eq!(state.mark, Mark::Waiting);
+        assert_eq!(request_view(&state.turns[0].state, &state.turns[0].requests[0]), RequestView::Waiting);
+
+        // An answer the request does not offer is not sent.
+        assert_eq!(state.begin_answer("r-1", "never"), None);
+        // Answering once marks it as sending, and a second click sends nothing.
+        assert_eq!(state.begin_answer("r-1", "once").as_deref(), Some("t-1"));
+        assert_eq!(
+            request_view(&state.turns[0].state, &state.turns[0].requests[0]),
+            RequestView::Sending("Allow once".into())
+        );
+        assert_eq!(state.begin_answer("r-1", "no"), None);
+        // Lever did not take it: the person can answer again.
+        state.apply(
+            AgentEvent::Error { code: "no-request".into(), message: "No such request.".into() },
+            true,
+        );
+        assert_eq!(state.turns[0].requests[0].sending, None);
+        assert_eq!(state.error.as_deref(), Some("That request no longer waits for an answer."));
+        assert_eq!(state.begin_answer("r-1", "once").as_deref(), Some("t-1"));
+
+        // The same request ID comes again, answered.
+        let mut answered = sample_request("r-1", RequestState::Answered);
+        answered.answer = Some("once".into());
+        state.apply(AgentEvent::Request { thread: "t-1".into(), turn: 1, request: answered }, true);
+        assert_eq!(state.turns[0].requests.len(), 1);
+        assert_eq!(
+            request_view(&state.turns[0].state, &state.turns[0].requests[0]),
+            RequestView::Answered("Allow once".into())
+        );
+        assert!(!state.waiting());
+        assert_eq!(state.mark, Mark::Working);
+        assert_eq!(state.begin_answer("r-1", "once"), None);
+
+        // A second request is withdrawn, as Stop withdraws a turn's requests.
+        state.apply(
+            AgentEvent::Request {
+                thread: "t-1".into(),
+                turn: 1,
+                request: sample_request("r-2", RequestState::Waiting),
+            },
+            true,
+        );
+        assert_eq!(state.mark, Mark::Waiting);
+        state.apply(
+            AgentEvent::Request {
+                thread: "t-1".into(),
+                turn: 1,
+                request: sample_request("r-2", RequestState::Withdrawn),
+            },
+            true,
+        );
+        assert_eq!(
+            request_view(&state.turns[0].state, &state.turns[0].requests[1]),
+            RequestView::Withdrawn
+        );
+        assert_eq!(state.mark, Mark::Working);
+
+        // One still called waiting in a turn that ended shows no answer controls.
+        let waiting = sample_request("r-3", RequestState::Waiting);
+        assert_eq!(request_view(&TurnState::Interrupted, &waiting), RequestView::Withdrawn);
+        assert_eq!(request_view(&TurnState::Stopped, &waiting), RequestView::Withdrawn);
+        assert_eq!(request_view(&TurnState::Working, &waiting), RequestView::Waiting);
+
+        // An unnamed answer gets a plain name.
+        assert_eq!(RequestAnswer { answer: "no".into(), name: " ".into() }.label(), "Refuse");
+    }
+
+    #[test]
+    fn a_request_comes_back_with_its_thread_after_a_restart() {
+        let mut state = AgentState::new(true);
+        state.apply(
+            AgentEvent::Connected {
+                status: sample_status(vec!["OpenCode"]),
+                resumed: Some(ResumedThread {
+                    thread: "t-1".into(),
+                    title: "Waits".into(),
+                    cwd: "/tmp".into(),
+                    model: None,
+                    mode: Some("ask-first".into()),
+                    working: true,
+                    turns: vec![Turn {
+                        turn: 1,
+                        message: "run".into(),
+                        context: None,
+                        acts: Vec::new(),
+                        notes: Vec::new(),
+                        requests: vec![sample_request("r-1", RequestState::Waiting)],
+                        mode: Some("ask-first".into()),
+                        answer: String::new(),
+                        state: TurnState::Working,
+                    }],
+                }),
+                preserved_thread: None,
+                resume_error: None,
+            },
+            false,
+        );
+        assert!(state.waiting());
+        assert_eq!(state.mark, Mark::Waiting);
+        assert_eq!(state.mode.as_deref(), Some("ask-first"));
+        // Summoning the drawer leaves it waiting.
+        assert!(!state.on_drawer_opened());
+        assert_eq!(state.mark, Mark::Waiting);
+        assert!(state.mode_locked());
+    }
+
+    #[test]
+    fn the_mark_follows_activity_waiting_over_working_over_done() {
+        let mut state = connected_state(false);
+        assert_eq!(state.mark, Mark::Idle);
+
+        // Lever's `watch` reply: nothing works.
+        state.apply(activity(&[], &[]), false);
+        assert_eq!(state.mark, Mark::Idle);
+
+        // A thread the drawer does not hold works (as one `crowbar-agent` runs):
+        // the mark shows it, and the drawer's own thread can still send.
+        assert!(state.apply(activity(&["t-term"], &[]), false));
+        assert_eq!(state.mark, Mark::Working);
+        assert!(state.can_send());
+
+        // It asks: waiting outranks working.
+        state.apply(activity(&["t-term"], &["t-term"]), false);
+        assert_eq!(state.mark, Mark::Waiting);
+        // The drawer summoned and put away leaves it waiting.
+        assert!(!state.on_drawer_opened());
+        assert_eq!(state.mark, Mark::Waiting);
+        assert!(!state.on_drawer_closed());
+        assert_eq!(state.mark, Mark::Waiting);
+
+        // Answered, it works again; then it ends behind the put-away drawer.
+        state.apply(activity(&["t-term"], &[]), false);
+        assert_eq!(state.mark, Mark::Working);
+        state.apply(activity(&[], &[]), false);
+        assert_eq!(state.mark, Mark::Done);
+        // Summoning the drawer acknowledges it.
+        assert!(state.on_drawer_opened());
+        assert_eq!(state.mark, Mark::Idle);
+
+        // Work that ends with the drawer up leaves the mark idle.
+        state.apply(activity(&["t-term"], &[]), true);
+        assert_eq!(state.mark, Mark::Working);
+        state.apply(activity(&[], &[]), true);
+        assert_eq!(state.mark, Mark::Idle);
+
+        // New work clears a done no one has seen yet.
+        state.apply(activity(&["t-a"], &[]), false);
+        state.apply(activity(&[], &[]), false);
+        assert_eq!(state.mark, Mark::Done);
+        state.apply(activity(&["t-b"], &[]), false);
+        assert_eq!(state.mark, Mark::Working);
+
+        // Once Lever watches, the drawer's own waiting request does not light the
+        // mark by itself: Lever's word for every thread does.
+        state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, false);
+        state.apply(
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "run".into(), context: None },
+            false,
+        );
+        state.apply(activity(&["t-b", "t-1"], &[]), false);
+        state.apply(
+            AgentEvent::Request {
+                thread: "t-1".into(),
+                turn: 1,
+                request: sample_request("r-1", RequestState::Waiting),
+            },
+            false,
+        );
+        assert_eq!(state.mark, Mark::Working);
+        state.apply(activity(&["t-b", "t-1"], &["t-1"]), false);
+        assert_eq!(state.mark, Mark::Waiting);
+
+        // A lost connection forgets what Lever said until it says it again.
+        state.apply(AgentEvent::Disconnected, false);
+        assert_eq!(state.mark, Mark::Idle);
+        assert!(state.working_threads.is_empty() && state.waiting_threads.is_empty());
+    }
+
+    #[test]
+    fn the_mark_overlay_shows_waiting_over_a_fullscreen_window() {
+        let snap = session::Snapshot {
+            workspace: 1,
+            connected: true,
+            locked: false,
+            clients: vec![session::Client {
+                address: "0x1".into(),
+                class: "foot".into(),
+                title: "foot".into(),
+                workspace: session::Workspace { id: 1 },
+                attention: false,
+                fullscreen: true,
+                output: "Virtual-1".into(),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            fullscreen_mark_overlay_output(Mark::Waiting, &snap, false).as_deref(),
+            Some("Virtual-1")
+        );
+        assert_eq!(fullscreen_mark_overlay_output(Mark::Waiting, &snap, true), None);
+        assert_eq!(Mark::Waiting.label(), "waiting");
+        assert_eq!(serde_json::to_value(Mark::Waiting).unwrap(), "waiting");
+    }
+
+    #[test]
+    fn a_thread_keeps_its_mode_and_the_drawer_picks_one() {
+        let mut state = connected_state(true);
+        assert_eq!(state.default_mode.as_deref(), Some("ask-first"));
+        // The drawer's new thread shows the starting mode.
+        assert_eq!(state.thread, None);
+        assert_eq!(state.shown_mode().as_deref(), Some("ask-first"));
+
+        // Opening the menu asks for the modes once connected.
+        assert!(state.open_mode_menu());
+        assert!(state.modes_loading);
+        state.apply(
+            AgentEvent::Modes(vec![
+                ModeInfo { id: "ask-first".into(), name: "Ask first".into() },
+                ModeInfo { id: "full-access".into(), name: "Full access".into() },
+                ModeInfo { id: "plan".into(), name: "Plan".into() },
+            ]),
+            true,
+        );
+        assert!(!state.modes_loading);
+        assert_eq!(state.modes.len(), 3);
+
+        // Picked for the new thread, it is held and goes with the first message.
+        assert_eq!(state.pick_mode("plan"), ModePick::Pending);
+        assert_eq!(state.shown_mode().as_deref(), Some("plan"));
+        state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
+        assert_eq!(state.mode.as_deref(), Some("plan"));
+        assert_eq!(state.pending_mode, None);
+        state.apply(
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "plan it".into(), context: None },
+            true,
+        );
+        // While the thread works, its mode does not change.
+        assert!(state.mode_locked());
+        assert_eq!(state.pick_mode("full-access"), ModePick::Refused);
+        state.apply(AgentEvent::Done { thread: "t-1".into(), turn: 1 }, true);
+        assert_eq!(
+            state.pick_mode("full-access"),
+            ModePick::SetThread { thread: "t-1".into(), mode: "full-access".into() }
+        );
+        // Lever's reply, and its `thread-updated`, set the thread's mode.
+        state.apply(AgentEvent::ModeSet { thread: "t-1".into(), mode: "full-access".into() }, true);
+        assert_eq!(state.mode.as_deref(), Some("full-access"));
+        state.apply(
+            AgentEvent::ThreadUpdated { thread: "t-1".into(), title: Some("Plan".into()), mode: None },
+            true,
+        );
+        assert_eq!(state.mode.as_deref(), Some("full-access"));
+        assert_eq!(state.title.as_deref(), Some("Plan"));
+        state.apply(
+            AgentEvent::ThreadUpdated { thread: "t-1".into(), title: None, mode: Some("plan".into()) },
+            true,
+        );
+        assert_eq!(state.mode.as_deref(), Some("plan"));
+        assert_eq!(state.title.as_deref(), Some("Plan"));
+        // Another thread's mode is not this one's.
+        state.apply(AgentEvent::ModeSet { thread: "t-2".into(), mode: "ask-first".into() }, true);
+        assert_eq!(state.mode.as_deref(), Some("plan"));
+
+        // The mode new threads start in.
+        state.apply(AgentEvent::DefaultMode("full-access".into()), true);
+        assert_eq!(state.default_mode.as_deref(), Some("full-access"));
+        // A status without one keeps it.
+        let mut status = sample_status(vec!["OpenCode"]);
+        status.default_mode = None;
+        state.apply(AgentEvent::Status(status), true);
+        assert_eq!(state.default_mode.as_deref(), Some("full-access"));
+
+        // Resuming another thread takes its mode.
+        state.apply(
+            AgentEvent::Resumed(ResumedThread {
+                thread: "t-2".into(),
+                title: String::new(),
+                cwd: "/tmp".into(),
+                model: None,
+                mode: Some("ask-first".into()),
+                working: false,
+                turns: Vec::new(),
+            }),
+            true,
+        );
+        assert_eq!(state.mode.as_deref(), Some("ask-first"));
+
+        // A new thread with no mode picked starts in the starting mode.
+        state.apply(AgentEvent::Error { code: "no-thread".into(), message: String::new() }, true);
+        assert_eq!(state.mode, None);
+        assert_eq!(state.shown_mode().as_deref(), Some("full-access"));
+        state.apply(AgentEvent::Sent { thread: "t-3".into(), turn: 1 }, true);
+        assert_eq!(state.mode.as_deref(), Some("full-access"));
+
+        // `models` failing while the menu loads says so in the menu alone.
+        assert!(state.open_mode_menu());
+        state.apply(AgentEvent::Error { code: "harness-error".into(), message: "boom".into() }, true);
+        assert!(!state.modes_loading);
+        assert_eq!(state.modes_error.as_deref(), Some("Modes are not available right now."));
+        assert_eq!(state.error, None);
+
+        assert_eq!(mode_name("full-access", &[]), "Full access");
+        assert_eq!(mode_name("plan", &state.modes), "Plan");
+    }
+
+    #[test]
+    fn request_detail_shows_a_command_as_it_is_and_an_edit_as_a_diff() {
+        assert_eq!(
+            request_detail_lines("command", "rm -rf build\n+x"),
+            vec![
+                (DetailLine::Plain, "rm -rf build".to_string()),
+                (DetailLine::Plain, "+x".to_string()),
+            ]
+        );
+        assert_eq!(
+            request_detail_lines("edit", " keep\n-old line\n+new line\n"),
+            vec![
+                (DetailLine::Plain, " keep".to_string()),
+                (DetailLine::Removed, "-old line".to_string()),
+                (DetailLine::Added, "+new line".to_string()),
+            ]
+        );
+        let long: String = (0..250).map(|i| format!("+{i}\n")).collect();
+        let lines = request_detail_lines("edit", &long);
+        assert_eq!(lines.len(), 201);
+        assert_eq!(lines[200], (DetailLine::Plain, "… 50 more lines".to_string()));
+    }
+
+    #[test]
+    fn surface_client_watches_answers_and_sets_modes() {
+        let dir = short_temp_dir("cs-lever-requests");
+        let sock = dir.join("surface");
+        let listener = UnixListener::bind(&sock).unwrap();
+
+        let server = std::thread::spawn(move || {
+            let (mut peer, _) = listener.accept().unwrap();
+            peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "version": 1 }));
+            peer.write_all(&encode_frame(&serde_json::json!({ "version": 1 }))).unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap()["op"], "status");
+            peer.write_all(&encode_frame(&serde_json::json!({
+                "reply": "status", "version": "0.1.0", "harness_started": false,
+                "harnesses": [{ "id": "h1", "name": "OpenCode" }], "free_hosted_models": false,
+                "default_mode": "ask-first"
+            })))
+            .unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap()["op"], "list");
+            peer.write_all(&encode_frame(&serde_json::json!({ "reply": "list", "threads": [] })))
+                .unwrap();
+            // The shell asks to watch at connect, and never for `models`.
+            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "op": "watch" }));
+            peer.write_all(&encode_frame(&serde_json::json!({
+                "reply": "activity", "working": [], "waiting": []
+            })))
+            .unwrap();
+
+            // The person opens the mode menu.
+            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "op": "models" }));
+            peer.write_all(&encode_frame(&serde_json::json!({
+                "reply": "models", "supported": true, "models": [], "default": null,
+                "free_hosted_models": false,
+                "modes": [{ "id": "ask-first", "name": "Ask first" }, { "id": "full-access", "name": "Full access" }]
+            })))
+            .unwrap();
+            // A new thread's first message carries the mode picked for it.
+            assert_eq!(
+                read_frame(&mut peer).unwrap(),
+                serde_json::json!({ "op": "send", "thread": null, "text": "run it", "mode": "full-access" })
+            );
+            peer.write_all(&encode_frame(&serde_json::json!({ "reply": "sent", "thread": "t-1", "turn": 1 })))
+                .unwrap();
+            for frame in [
+                serde_json::json!({ "event": "activity", "working": ["t-1"], "waiting": [] }),
+                serde_json::json!({ "event": "message", "thread": "t-1", "turn": 1, "text": "run it" }),
+                serde_json::json!({
+                    "event": "request", "thread": "t-1", "turn": 1, "request": "r-1", "kind": "command",
+                    "title": "echo hi", "detail": "echo hi",
+                    "answers": [{ "answer": "once", "name": "Allow once" }, { "answer": "no", "name": "Reject" }],
+                    "state": "waiting"
+                }),
+                serde_json::json!({ "event": "activity", "working": ["t-1"], "waiting": ["t-1"] }),
+            ] {
+                peer.write_all(&encode_frame(&frame)).unwrap();
+            }
+            assert_eq!(
+                read_frame(&mut peer).unwrap(),
+                serde_json::json!({ "op": "answer", "thread": "t-1", "request": "r-1", "answer": "once" })
+            );
+            peer.write_all(&encode_frame(&serde_json::json!({ "reply": "ok" }))).unwrap();
+            for frame in [
+                serde_json::json!({
+                    "event": "request", "thread": "t-1", "turn": 1, "request": "r-1", "kind": "command",
+                    "title": "echo hi", "detail": "echo hi",
+                    "answers": [{ "answer": "once", "name": "Allow once" }, { "answer": "no", "name": "Reject" }],
+                    "state": "answered", "answer": "once"
+                }),
+                serde_json::json!({ "event": "activity", "working": ["t-1"], "waiting": [] }),
+                serde_json::json!({ "event": "done", "thread": "t-1", "turn": 1 }),
+                serde_json::json!({ "event": "activity", "working": [], "waiting": [] }),
+            ] {
+                peer.write_all(&encode_frame(&frame)).unwrap();
+            }
+            assert_eq!(
+                read_frame(&mut peer).unwrap(),
+                serde_json::json!({ "op": "set-mode", "thread": "t-1", "mode": "ask-first" })
+            );
+            peer.write_all(&encode_frame(&serde_json::json!({
+                "reply": "mode-set", "thread": "t-1", "mode": "ask-first"
+            })))
+            .unwrap();
+            assert_eq!(
+                read_frame(&mut peer).unwrap(),
+                serde_json::json!({ "op": "set-default-mode", "mode": "full-access" })
+            );
+            peer.write_all(&encode_frame(&serde_json::json!({ "reply": "default-mode", "mode": "full-access" })))
+                .unwrap();
+        });
+
+        let (tx, mut rx) = session::channel();
+        let sender = start(sock.clone(), tx.clone());
+        let mut state = AgentState::new(true);
+        let mut step = 0;
+        let mut saw_waiting = false;
+        run_with_deadline(&mut rx, &tx, Duration::from_secs(10), |ev| {
+            // The drawer is put away throughout.
+            state.apply(ev, false);
+            if step == 0 && state.connected && state.watching {
+                step = 1;
+                assert!(state.open_mode_menu());
+                sender.fetch_modes();
+            } else if step == 1 && !state.modes.is_empty() {
+                step = 2;
+                assert_eq!(state.pick_mode("full-access"), ModePick::Pending);
+                state.sending = true;
+                sender.send_message(None, "run it".into(), state.pending_mode.clone());
+            } else if step == 2 && state.mark == Mark::Waiting {
+                step = 3;
+                saw_waiting = true;
+                let thread = state.begin_answer("r-1", "once").expect("request waits");
+                sender.answer(thread, "r-1".into(), "once".into());
+            } else if step == 3 && state.mark == Mark::Done {
+                step = 4;
+                match state.pick_mode("ask-first") {
+                    ModePick::SetThread { thread, mode } => sender.set_mode(thread, mode),
+                    other => panic!("expected SetThread, got {other:?}"),
+                }
+            } else if step == 4 && state.mode.as_deref() == Some("ask-first") {
+                step = 5;
+                sender.set_default_mode("full-access".into());
+            }
+            step == 5 && state.default_mode.as_deref() == Some("full-access")
+        });
+
+        server.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(saw_waiting);
+        assert_eq!(state.thread.as_deref(), Some("t-1"));
+        assert_eq!(state.turns[0].requests[0].state, RequestState::Answered);
+        assert_eq!(state.turns[0].requests[0].answer.as_deref(), Some("once"));
+        assert_eq!(state.mark, Mark::Done);
+    }
+
+    #[test]
+    fn a_fresh_shell_restores_the_thread_that_waits_for_the_person() {
+        let dir = short_temp_dir("cs-lever-waiting-first");
+        let sock = dir.join("surface");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut peer, _) = listener.accept().unwrap();
+            peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "version": 1 }));
+            peer.write_all(&encode_frame(&serde_json::json!({ "version": 1 }))).unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap()["op"], "status");
+            peer.write_all(&encode_frame(&serde_json::json!({
+                "reply": "status", "version": "0.1.0", "harness_started": true,
+                "harnesses": [{ "id": "h1", "name": "OpenCode" }], "free_hosted_models": false
+            })))
+            .unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap()["op"], "list");
+            peer.write_all(&encode_frame(&serde_json::json!({
+                "reply": "list",
+                "threads": [
+                    { "thread": "t-working", "title": "", "cwd": "/tmp", "started": 3, "updated": 4,
+                      "turns": 1, "state": "working", "working": true, "waiting": false, "mode": "full-access" },
+                    { "thread": "t-waiting", "title": "", "cwd": "/tmp", "started": 1, "updated": 2,
+                      "turns": 1, "state": "working", "working": true, "waiting": true, "mode": "ask-first" }
+                ]
+            })))
+            .unwrap();
+            assert_eq!(
+                read_frame(&mut peer).unwrap(),
+                serde_json::json!({ "op": "resume", "thread": "t-waiting" })
+            );
+            peer.write_all(&encode_frame(&serde_json::json!({
+                "reply": "resumed", "thread": "t-waiting", "title": "", "cwd": "/tmp", "mode": "ask-first",
+                "working": true, "turns": []
+            })))
+            .unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "op": "watch" }));
+        });
+        let (tx, mut rx) = session::channel();
+        let _sender = start(sock.clone(), tx.clone());
+        let mut state = AgentState::new(true);
+        run_with_deadline(&mut rx, &tx, Duration::from_secs(5), |ev| {
+            state.apply(ev, false);
+            state.connected
+        });
+        server.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(state.thread.as_deref(), Some("t-waiting"));
+        assert_eq!(state.mode.as_deref(), Some("ask-first"));
     }
 }
