@@ -2638,6 +2638,8 @@ impl AgentSurface {
                 window.focus(&self.focus);
             }
             ThreadAction::New | ThreadAction::Open(_) => {
+                if !self.model.read(cx).agent_state.connected { return; }
+                self.confirm_delete = false;
                 let thread = match action { ThreadAction::Open(t) => Some(t), _ => None };
                 self.model.update(cx, |m, _| {
                     if m.agent_state.select_thread(thread.clone()) && let Some(tx) = &m.agent_tx { tx.select(thread); }
@@ -3153,7 +3155,7 @@ impl Render for AgentSurface {
             }
             for (folder, threads) in groups {
                 let mut group = div().flex().flex_col().gap(px(5.)).mt(px(8.))
-                    .child(div().font_family("IBM Plex Mono").text_size(px(11.)).text_color(rgb(p.muted)).child(folder));
+                    .child(div().w_full().min_w_0().text_ellipsis().font_family("IBM Plex Mono").text_size(px(11.)).text_color(rgb(p.muted)).child(folder));
                 for thread in threads {
                     let title = if thread.title.trim().is_empty() { "Untitled thread".to_string() } else { thread.title.clone() };
                     let status = if thread.working { "Working…" } else { match thread.state.as_str() {
@@ -3220,9 +3222,11 @@ impl Render for AgentSurface {
                                 .child("Desktop context"),
                         );
                     let expanded = turn_index == 0 || self.expanded_context.contains(&turn.turn);
-                    ctx_box = ctx_box.child(self.button(("context", turn.turn as usize),
-                        if expanded { "Desktop context" } else { "Show desktop context" },
-                        ThreadAction::Context(turn.turn), turn_index != 0, p, cx));
+                    if turn_index != 0 {
+                        ctx_box = ctx_box.child(self.button(("context", turn.turn as usize),
+                            if expanded { "Hide context" } else { "Show context" },
+                            ThreadAction::Context(turn.turn), true, p, cx));
+                    }
                     for line in lines.into_iter().take(if expanded { usize::MAX } else { 0 }) {
                         ctx_box = ctx_box.child(
                             div()
@@ -3306,7 +3310,7 @@ impl Render for AgentSurface {
                     if let Some(detail) = &act.detail {
                         let expanded = self.expanded_acts.contains(&act.id);
                         let preview = agent::format_act_detail(detail);
-                        let clipped = preview != *detail;
+                        let clipped = preview != detail.trim();
                         let rendered = if expanded { detail.clone() } else { preview };
                         if clipped {
                             act_card = act_card.child(self.button(SharedString::from(format!("detail-{}", act.id)),
@@ -3731,7 +3735,7 @@ impl Render for AgentSurface {
                                         .text_color(rgb(p.text))
                                         .child("Stop")
                                         .child(tracked(&self.frame, "stop".into(), false))
-                                        .on_click(cx.listener(|this, _, _, cx| this.stop_turn(cx))),
+                                        .on_click(cx.listener(|this, _, w, cx| { this.stop_turn(cx); w.focus(&this.input.focus_handle(cx)); })),
                                 )
                             })
                             .when(!show_stop, |row| {
@@ -3753,7 +3757,7 @@ impl Render for AgentSurface {
                                             btn.child(icon("arrow", p.muted, 14.))
                                         })
                                         .child(tracked(&self.frame, "send".into(), false))
-                                        .on_click(cx.listener(|this, _, _, cx| this.send(cx))),
+                                        .on_click(cx.listener(|this, _, w, cx| { this.send(cx); w.focus(&this.input.focus_handle(cx)); })),
                                 )
                             }),
                     )

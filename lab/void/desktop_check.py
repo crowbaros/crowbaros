@@ -1389,6 +1389,28 @@ finally:
             self.wait('terminal delete removes thread from live list', lambda: not any(t['thread'] == terminal_id for t in self.agent_view()['state']['threads']))
             self.check('terminal delete removes the record and updates the drawer list',
                 terminal_id not in self.run(f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} crowbar-agent --list'))
+            self.key('meta_l', 'spc')
+            self.wait('list reopens after terminal deletion', lambda: self.agent_view()['drawer_up'] and self.agent_view()['state']['list_view'])
+            self.key('tab')
+            self.key('tab')
+            self.key('ret')
+            self.wait('remaining record opens', lambda: not self.agent_view()['state']['list_view'] and self.agent_view()['state']['thread'] == thread_id)
+            click_v1(1040, 73)
+            time.sleep(0.3)
+            self.capture('30-thread-delete-confirmation')
+            self.key('esc')
+            self.check('canceling drawer deletion retains the thread', self.agent_view()['state']['thread'] == thread_id)
+            click_v1(1040, 73)
+            self.key('tab')
+            self.key('tab')
+            self.key('ret')
+            self.wait('confirmed drawer deletion removes the record', lambda: self.agent_view()['state']['list_view']
+                and not any(t['thread'] == thread_id for t in self.agent_view()['state']['threads']), timeout=20)
+            self.capture('31-thread-list-after-delete')
+            self.check('drawer deletion asks first and removes the confirmed record',
+                thread_id not in self.run(f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} crowbar-agent --list'))
+            self.key('meta_l', 'spc')
+            self.wait('drawer closed after lifecycle checks', lambda: not self.agent_view()['drawer_up'])
 
         finally:
             self.guest.ssh("pkill -f '[s]tub-model.py'; pkill -f '[c]rowbar-probe copy'; pkill -f '[s]leep 45'; true", check=False)

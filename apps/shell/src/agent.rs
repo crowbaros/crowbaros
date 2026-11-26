@@ -1013,6 +1013,10 @@ impl AgentState {
             AgentEvent::Threads { threads, finished } => {
                 let ended = self.threads.iter().any(|old| old.working && threads.iter().any(|t| t.thread == old.thread && !t.working));
                 let working = threads.iter().any(|t| t.working);
+                if let Some(selected) = threads.iter().find(|t| Some(t.thread.as_str()) == self.thread.as_deref()) {
+                    self.title = (!selected.title.is_empty()).then(|| selected.title.clone());
+                    self.model = selected.model.clone();
+                }
                 self.threads = threads;
                 self.list_received = true;
                 self.mark = if working { Mark::Working }
@@ -1021,7 +1025,7 @@ impl AgentState {
                 true
             }
             AgentEvent::Lifecycle { thread, deleted, warning } => {
-                self.loading = false;
+                if self.thread.as_deref() == Some(thread.as_str()) { self.loading = false; }
                 if warning.is_some() { self.error = warning; }
                 if deleted { self.threads.retain(|t| t.thread != thread); }
                 else if let Some(t) = self.threads.iter_mut().find(|t| t.thread == thread) { t.archived = true; }
@@ -5295,6 +5299,17 @@ mod tests {
         assert!(!s.select_thread(Some("old".into())), "a pending history read must not land in another thread");
         s.on_drawer_closed(); s.on_drawer_opened();
         assert!(!s.list_view);
+    }
+
+    #[test]
+    fn a_background_archive_does_not_unlock_a_pending_history_read() {
+        let mut s = AgentState::new(true);
+        s.connected = true;
+        s.select_thread(Some("selected".into()));
+        s.apply(AgentEvent::Lifecycle { thread: "background".into(), deleted: false, warning: None }, true);
+        assert!(s.loading);
+        assert!(!s.select_thread(Some("another".into())));
+        assert_eq!(s.thread.as_deref(), Some("selected"));
     }
 
 }
