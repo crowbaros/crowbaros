@@ -192,6 +192,7 @@ impl Monitor {
                 values.insert("Network sent".into(), s.net_write);
                 for g in &s.gpus {
                     values.insert(format!("GPU {}", g.name), g.utilization);
+                    values.insert(format!("VRAM {}", g.name), g.used.map(|v| v as f64));
                 }
                 self.histories.retain(|key, _| values.contains_key(key));
                 for (key, value) in values {
@@ -491,6 +492,18 @@ impl Monitor {
                 format!("{} · {vram}", percent(gpu.utilization)),
                 Some(100.),
             ));
+            if let Some(total) = gpu.total {
+                body = body.child(
+                    self.chart(
+                        &format!("VRAM · {}", gpu.name),
+                        &format!("VRAM {}", gpu.name),
+                        gpu.used
+                            .map(|used| format!("{} / {}", bytes(used as f64), bytes(total as f64)))
+                            .unwrap_or_else(|| "Unavailable".into()),
+                        Some(total as f64),
+                    ),
+                );
+            }
         }
         body.into_any_element()
     }
