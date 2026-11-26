@@ -26,7 +26,7 @@ crowbar-agent --resume ID --answer R A # answer a thread's request R with A
 crowbar-agent --stop ID                # stop the working turn of a thread
 crowbar-agent models                   # list the Models the harness offers
 crowbar-agent efforts M                # list the effort levels of Model M
-crowbar-agent commands                 # list the commands the harness offers
+crowbar-agent commands                 # list the slash commands the harness offers
 crowbar-agent free-models [on|off]     # show or switch OpenCode's free hosted Models
 crowbar-agent default-mode [MODE]      # show or set the mode new threads start in
 crowbar-agent login                    # sign in to a provider with OpenCode
@@ -49,8 +49,9 @@ crowbar-agent status                   # Lever's status, what works, and what wa
   and says when it has none. `--resume ID --effort E` sets a thread's effort
   from its next turn. A new thread starts at its Model's own effort: the
   client sets one only on a thread that exists.
-- **The harness's commands.** `crowbar-agent commands` lists the commands the
-  harness offers, each as it is typed, with the harness's description. One is
+- **The harness's slash commands.** `crowbar-agent commands` lists the slash
+  commands the harness offers, each as it is typed, with the harness's
+  description. One is
   sent as a request that begins with `/` and its name, as
   `crowbar-agent "/review"`, or at the prompt. The harness takes it for a
   command or for words: the client and Lever only pass it on.

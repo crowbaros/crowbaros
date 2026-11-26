@@ -126,6 +126,14 @@ _Avoid_: Permission mode
 **Full access**:
 A mode in which the harness asks nothing for what the person's account can do.
 
+**Effort**:
+How hard a thread's Model is asked to think, where the Model has levels of it. The levels are the harness's own, as its modes are, and each thread keeps the one the person picked.
+_Avoid_: Reasoning level, thinking budget
+
+**Slash command**:
+What the person types where they type a message, beginning with `/`, to ask something of the thread by name: one of the Agent's surface's own, as `/model`, or one the thread's harness offers. It is not a command the Agent runs, which a request asks about.
+_Avoid_: Shortcut, macro
+
 **Request**:
 A harness's own question to the person before an act, by the rules of the thread's mode. The person answers it in the Agent's surface.
 _Avoid_: Approval, permission prompt

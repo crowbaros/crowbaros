@@ -133,12 +133,12 @@ ACP today:
   the harness refuses fails, and the thread goes back to the effort the
   session is at. When the harness changes a session's Model or effort itself,
   the thread takes it.
-- **Commands.** Lever keeps the commands each thread's session last named in
-  an `available_commands_update`, and those of the session it opens to read
-  the harness's Models. They are the harness's own, and the person sends one
-  as a message that begins with `/` and its name. Lever does nothing with
-  such a message but send it: the harness takes it for a command or for
-  words.
+- **Slash commands.** Lever keeps the slash commands each thread's session
+  last named in an `available_commands_update`, and those of the session it
+  opens to read the harness's Models. They are the harness's own, and the
+  person sends one as a message that begins with `/` and its name. Lever does
+  nothing with such a message but send it: the harness takes it for a slash
+  command or for words.
 - **An update that comes after its turn ended goes to the thread's newest
   turn.** ACP gives an update no turn. Lever takes what the harness has said
   before it hears a peer, so an update that is already there when the next
@@ -434,7 +434,7 @@ knows the Model's levels), `invalid-request`, `storage-error`.
 
 #### `commands`
 
-Says the commands the harness offers: those a thread's session last named,
+Says the slash commands the harness offers: those a thread's session last named,
 or, with no `thread` or for a thread whose session has named none, those of
 the session Lever opened to read the harness's Models. Lever answers at once
 with what it has. `known` is `false` when the harness has yet to name any, and
@@ -795,7 +795,7 @@ Pushed to every connection subscribed to `thread`:
   {"event":"thread-updated","thread":"t-01a2b3c4d5e6","title":"Inspect workspace"}
   ```
 
-- **`commands`** — the commands the thread's session named, each time they
+- **`commands`** — the slash commands the thread's session named, each time they
   change, as the [`commands` reply](#commands) has them. To connections that
   sent `watch`, with no `thread`, those of the session Lever opened to read
   what the harness offers:

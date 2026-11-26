@@ -31,7 +31,7 @@ usage: crowbar-agent                          talk with the Agent, a line at a t
        crowbar-agent --stop ID                stop the working turn of a thread
        crowbar-agent models                   list the Models the harness offers
        crowbar-agent efforts M                list the effort levels of Model M
-       crowbar-agent commands                 list the commands the harness offers
+       crowbar-agent commands                 list the slash commands the harness offers
        crowbar-agent free-models [on|off]     show or switch OpenCode's free hosted Models
        crowbar-agent default-mode [MODE]      show or set the mode new threads start in
        crowbar-agent login                    sign in to a provider with OpenCode

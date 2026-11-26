@@ -355,7 +355,10 @@ impl AgentSurface {
             )
             .child(div().flex_1().min_w_0().text_ellipsis().child(label))
             .child(tracked(&self.frame, control, true))
-            .on_click(cx.listener(move |this, _, w, cx| this.action(action.clone(), w, cx)))
+            .on_click(cx.listener(move |this, _, w, cx| {
+                this.action(action.clone(), w, cx);
+                w.focus(&this.input.focus_handle(cx));
+            }))
     }
 
     pub(crate) fn near_bottom(&self) -> bool {
@@ -772,8 +775,9 @@ impl AgentSurface {
                             )
                         })
                         .child(tracked(&self.frame, id, true))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.answer_request(request.clone(), answer.clone(), cx)
+                        .on_click(cx.listener(move |this, _, w, cx| {
+                            this.answer_request(request.clone(), answer.clone(), cx);
+                            w.focus(&this.input.focus_handle(cx));
                         })),
                 );
             }
@@ -807,7 +811,10 @@ impl AgentSurface {
                 .when(detail.is_some(), |r| {
                     r.cursor_pointer()
                         .child(tracked(&self.frame, id, true))
-                        .on_click(cx.listener(move |this, _, w, cx| this.action(toggle.clone(), w, cx)))
+                        .on_click(cx.listener(move |this, _, w, cx| {
+                            this.action(toggle.clone(), w, cx);
+                            w.focus(&this.input.focus_handle(cx));
+                        }))
                 })
                 .child(
                     div()
@@ -1060,7 +1067,8 @@ impl AgentSurface {
                 Some(model) => parts.push(state.model_label(model)),
                 None => parts.extend(state.harnesses.first().cloned()),
             }
-            if let Some(effort) = state.shown_effort() {
+            // The effort a harness calls its default goes without saying.
+            if let Some(effort) = state.shown_effort().filter(|effort| effort != "default") {
                 parts.push(state.effort_label(model.as_deref(), &effort));
             }
             if let Some(mode) = state.shown_mode() {
@@ -1294,6 +1302,19 @@ impl Render for AgentSurface {
         if list_for != self.list_for {
             self.highlight = menu.as_ref().map(Menu::start).unwrap_or(0);
             self.list_for = list_for;
+        }
+        // A harness that is running says what it offers without being
+        // started for it, so the thread's Model shows by its name.
+        if let Some(tx) = &tx
+            && !self.asked_offer
+            && state.connected
+            && state.harness_started
+            && !state.offer_known
+        {
+            self.asked_offer = true;
+            if self.model.update(cx, |m, _| m.agent_state.ask_offer()) {
+                tx.fetch_modes();
+            }
         }
         // What the open list needs of Lever is asked for once.
         if let (Some(menu), Some(tx)) = (&menu, &tx) {
@@ -1898,8 +1919,9 @@ impl Render for AgentSurface {
                                         .child("↓")
                                         .child("Newest")
                                         .child(tracked(&self.frame, "newest".into(), false))
-                                        .on_click(cx.listener(|this, _, _, cx| {
+                                        .on_click(cx.listener(|this, _, w, cx| {
                                             this.scroll_to_bottom = true;
+                                            w.focus(&this.input.focus_handle(cx));
                                             cx.notify();
                                         })),
                                 ),
