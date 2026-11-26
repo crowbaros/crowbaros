@@ -133,6 +133,10 @@ pub enum TurnOutcome {
 /// Events produced by the ACP harness connection for Lever's service layer.
 #[derive(Debug, Clone)]
 pub enum AcpEvent {
+    SessionDeleted {
+        thread_id: String,
+        result: Result<(), String>,
+    },
     Initialized,
     InitializeFailed {
         message: String,
@@ -229,6 +233,9 @@ pub enum AcpEvent {
 }
 
 enum PendingRpc {
+    DeleteSession {
+        thread_id: String,
+    },
     Initialize,
     ProbeModels,
     CloseProbe,
@@ -277,6 +284,7 @@ pub struct AcpHarness {
     initialized: bool,
     supports_load_session: bool,
     supports_close_session: bool,
+    supports_delete_session: bool,
     probing_models: bool,
     model_config_id: Option<String>,
     mode_config_id: Option<String>,
@@ -352,6 +360,7 @@ impl AcpHarness {
             initialized: false,
             supports_load_session: false,
             supports_close_session: false,
+            supports_delete_session: false,
             probing_models: false,
             model_config_id: None,
             mode_config_id: None,
@@ -411,6 +420,23 @@ impl AcpHarness {
             self.session_models.remove(&session_id);
             self.session_modes.remove(&session_id);
         }
+    }
+
+    pub fn delete_session(&mut self, thread_id: &str, session_id: &str) -> bool {
+        if !self.supports_delete_session {
+            return false;
+        }
+        let id = self.send_request(
+            AGENT_METHOD_NAMES.session_delete,
+            &agent_client_protocol_schema::v1::DeleteSessionRequest::new(session_id.to_string()),
+        );
+        self.pending.insert(
+            id,
+            PendingRpc::DeleteSession {
+                thread_id: thread_id.into(),
+            },
+        );
+        true
     }
 
     pub fn session_current_model(&self, session_id: &str) -> Option<&str> {
@@ -960,6 +986,14 @@ impl AcpHarness {
                 .unwrap_or_else(|| "The harness reported an error.".to_string());
             let no_models = is_no_models_error(err_val, &raw_msg);
             match pending {
+                PendingRpc::DeleteSession { thread_id } => {
+                    let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
+                    events.push(AcpEvent::SessionDeleted {
+                        thread_id,
+                        result: Err(message),
+                    });
+                }
+
                 PendingRpc::Initialize => events.push(AcpEvent::InitializeFailed {
                     message: self.redact_for_thread(None, &raw_msg),
                 }),
@@ -1036,11 +1070,18 @@ impl AcpHarness {
 
         let result = value.get("result").cloned().unwrap_or(Value::Null);
         match pending {
+            PendingRpc::DeleteSession { thread_id } => {
+                events.push(AcpEvent::SessionDeleted {
+                    thread_id,
+                    result: Ok(()),
+                });
+            }
             PendingRpc::Initialize => match serde_json::from_value::<InitializeResponse>(result) {
                 Ok(resp) if resp.protocol_version == ProtocolVersion::V1 => {
                     self.initialized = true;
                     self.supports_load_session = resp.agent_capabilities.load_session;
                     self.supports_close_session = resp.agent_capabilities.session_capabilities.close.is_some();
+                    self.supports_delete_session = resp.agent_capabilities.session_capabilities.delete.is_some();
                     events.push(AcpEvent::Initialized);
                 }
                 Ok(_) => events.push(AcpEvent::InitializeFailed {

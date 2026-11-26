@@ -12,7 +12,9 @@ status on standard error.
 ```sh
 crowbar-agent                          # talk with the Agent, a line at a time
 crowbar-agent "<request>"              # one turn, and out
-crowbar-agent --list                   # list the threads
+crowbar-agent --list                   # list unarchived threads
+crowbar-agent --archive ID             # hide a thread, retaining its record
+crowbar-agent --delete ID              # delete a stopped thread and its session
 crowbar-agent --resume ID              # go on with a thread
 crowbar-agent --resume ID "<request>"  # one more turn of it, and out
 crowbar-agent --resume ID --model M    # set a thread's Model
@@ -119,3 +121,8 @@ person socket, and verifies every message documented in `lever/README.md`.
 | `src/connection.rs` | The connection, and waiting on Lever, the terminal, and Ctrl-C at once |
 | `src/talk.rs` | Turns, threads, acts, listing, stopping, and status |
 | `src/sys.rs` | Kernel calls std does not offer, and all of the client's `unsafe` code |
+
+Archive hides a thread from `--list` while keeping its record readable with
+`--resume ID`. Delete requires the thread to finish or stop first. It removes
+Lever's record and requests harness session deletion; when the harness cannot
+delete sessions, the client prints that its copy may remain.

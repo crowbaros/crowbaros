@@ -2602,7 +2602,16 @@ fn sync_mark_overlay(model: &Entity<Model>, cx: &mut App) -> bool {
 /// window and taking no room from any. The summon gesture or its close
 /// control puts it away; Escape does not. Putting the drawer away stops
 /// nothing: a working turn finishes behind it and the mark shows `done`.
+#[derive(Clone)]
+enum ThreadAction {
+    List, New, Open(String), Archive, AskDelete, Delete, CancelDelete,
+    Act(String), Context(u64),
+}
 struct AgentSurface {
+    focus: FocusHandle,
+    confirm_delete: bool,
+    expanded_acts: std::collections::HashSet<String>,
+    expanded_context: std::collections::HashSet<u64>,
     model: Entity<Model>,
     input: Entity<input::TextInput>,
     scroll: ScrollHandle,
@@ -2617,6 +2626,84 @@ struct AgentSurface {
     frame: Rc<RefCell<ControlFrame>>,
 }
 impl AgentSurface {
+    fn action(&mut self, action: ThreadAction, window: &mut Window, cx: &mut Context<Self>) {
+        let busy = { let s = &self.model.read(cx).agent_state; s.sending || s.loading };
+        if busy { return; }
+        match action {
+            ThreadAction::List => {
+                self.scroll_to_bottom = false;
+                self.scroll.set_offset(point(px(0.), px(0.)));
+                self.model.update(cx, |m, _| m.agent_state.list_view = true);
+                self.confirm_delete = false;
+                window.focus(&self.focus);
+            }
+            ThreadAction::New | ThreadAction::Open(_) => {
+                if !self.model.read(cx).agent_state.connected { return; }
+                self.confirm_delete = false;
+                self.mode_menu_open = false;
+                let thread = match action { ThreadAction::Open(t) => Some(t), _ => None };
+                self.model.update(cx, |m, _| {
+                    if m.agent_state.select_thread(thread.clone()) && let Some(tx) = &m.agent_tx { tx.select(thread); }
+                });
+                self.input.update(cx, |input, cx| input.set_text("", cx));
+                self.expanded_acts.clear();
+                self.expanded_context.clear();
+                self.scroll.set_offset(point(px(0.), px(0.)));
+                self.scroll_to_bottom = true;
+                window.focus(&self.input.focus_handle(cx));
+            }
+            ThreadAction::AskDelete => { self.confirm_delete = true; window.focus(&self.focus); }
+            ThreadAction::CancelDelete => { self.confirm_delete = false; window.focus(&self.input.focus_handle(cx)); }
+            ThreadAction::Archive | ThreadAction::Delete => {
+                let delete = matches!(action, ThreadAction::Delete);
+                self.model.update(cx, |m, _| {
+                    if delete && m.agent_state.can_stop() { return; }
+                    if let (Some(thread), Some(tx)) = (m.agent_state.thread.clone(), &m.agent_tx) {
+                        m.agent_state.loading = true;
+                        tx.lifecycle(thread, delete);
+                    }
+                });
+                self.confirm_delete = false;
+            }
+            ThreadAction::Act(id) => { if !self.expanded_acts.remove(&id) { self.expanded_acts.insert(id); } }
+            ThreadAction::Context(turn) => { if !self.expanded_context.remove(&turn) { self.expanded_context.insert(turn); } }
+        }
+        sync_agent_view(&self.model, cx);
+        cx.notify();
+    }
+
+    fn button(&self, id: impl Into<ElementId>, label: impl Into<SharedString>, action: ThreadAction,
+        enabled: bool, p: Palette, cx: &mut Context<Self>) -> Stateful<Div> {
+        let click = action.clone();
+        let (control, in_thread) = match &action {
+            ThreadAction::New => ("new-thread".into(), true),
+            ThreadAction::List => ("threads".into(), false),
+            ThreadAction::Open(thread) => (format!("thread:{thread}"), true),
+            ThreadAction::Archive => ("archive".into(), false),
+            ThreadAction::AskDelete => ("delete".into(), false),
+            ThreadAction::Delete => ("confirm-delete".into(), true),
+            ThreadAction::CancelDelete => ("cancel-delete".into(), true),
+            ThreadAction::Act(id) => (format!("act:{id}"), true),
+            ThreadAction::Context(turn) => (format!("context:{turn}"), true),
+        };
+        div().id(id).relative().tab_index(0).px(px(10.)).py(px(7.)).rounded(px(6.))
+            .border_1().border_color(rgb(p.line)).text_size(px(11.5)).text_color(rgb(p.text))
+            .focus(move |s| s.border_color(rgb(p.focus)).bg(rgb(p.surface)))
+            .when(!enabled, |s| s.opacity(0.5))
+            .when(enabled, |s| s.cursor_pointer().hover(move |s| s.bg(rgb(p.surface))))
+            .child(label.into())
+            .child(tracked(&self.frame, control, in_thread))
+            .on_click(cx.listener(move |this, _, w, cx| { if enabled { this.action(click.clone(), w, cx); } }))
+            .on_action(cx.listener(move |this, _: &SendMessage, w, cx| {
+                cx.stop_propagation();
+                if enabled { this.action(action.clone(), w, cx); }
+            }))
+    }
+
+    fn near_bottom(&self) -> bool {
+        self.scroll.max_offset().height + self.scroll.offset().y <= px(40.)
+    }
+
     /// Puts the surface away. The keyboard goes back to the window that had
     /// it, if the surface holds it. A working turn keeps going behind it.
     fn put_away(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2639,6 +2726,7 @@ impl AgentSurface {
         cx.refresh_windows();
     }
     fn send(&mut self, cx: &mut Context<Self>) {
+        if self.model.read(cx).agent_state.list_view || self.confirm_delete { return; }
         let query = self.input.read(cx).query();
         let trimmed = query.trim();
         if trimmed.is_empty() {
@@ -2871,8 +2959,9 @@ impl AgentSurface {
                         })
                         .child(choice.label())
                         .child(tracked(&self.frame, id, true))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.answer_request(request.clone(), answer.clone(), cx)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.answer_request(request.clone(), answer.clone(), cx);
+                            window.focus(&this.input.focus_handle(cx));
                         })),
                 );
             }
@@ -2940,7 +3029,10 @@ impl AgentSurface {
                         )
                     })
                     .child(tracked(&self.frame, id, false))
-                    .on_click(cx.listener(move |this, _, _, cx| this.pick_mode(pick.clone(), cx))),
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.pick_mode(pick.clone(), cx);
+                        window.focus(&this.input.focus_handle(cx));
+                    })),
             );
         }
         let note = if state.modes.is_empty() {
@@ -2997,8 +3089,9 @@ impl AgentSurface {
                         })
                         .child(agent::mode_name(&mode.id, &state.modes))
                         .child(tracked(&self.frame, id, false))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.pick_default_mode(pick.clone(), cx)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.pick_default_mode(pick.clone(), cx);
+                            window.focus(&this.input.focus_handle(cx));
                         })),
                 );
             }
@@ -3062,8 +3155,42 @@ impl Render for AgentSurface {
             .gap(px(14.))
             .bg(rgb(p.canvas));
 
-        if !state.turns.is_empty() {
-            for turn in &state.turns {
+        if self.confirm_delete {
+            body = body.child(div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).child("Delete this thread?"))
+                .child(div().line_height(px(19.)).child("Its messages, answers, and acts will be removed. Lever also asks the harness to delete its session. This cannot be undone."))
+                .child(div().flex().gap(px(8.))
+                    .child(self.button("cancel-thread-delete", "Cancel", ThreadAction::CancelDelete, true, p, cx))
+                    .child(self.button("confirm-thread-delete", "Delete thread", ThreadAction::Delete, state.connected && !show_stop, p, cx)));
+        } else if state.list_view {
+            body = body.child(div().flex().items_center().justify_between()
+                .child(div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).child("Threads"))
+                .child(self.button("new-agent-thread", "New thread", ThreadAction::New, state.connected && !state.loading && !state.sending, p, cx)));
+            let groups = state.groups();
+            if groups.is_empty() {
+                body = body.child(div().text_color(rgb(p.muted)).line_height(px(19.))
+                    .child(if state.connected { "Your threads will appear here, grouped by folder. Start a new thread in your home folder." }
+                        else { "The Agent is not reachable. Reconnecting automatically…" }));
+            }
+            for (folder, threads) in groups {
+                let mut group = div().flex().flex_col().gap(px(5.)).mt(px(8.))
+                    .child(div().w_full().min_w_0().text_ellipsis().font_family("IBM Plex Mono").text_size(px(11.)).text_color(rgb(p.muted)).child(folder));
+                for thread in threads {
+                    let title = if thread.title.trim().is_empty() { "Untitled thread".to_string() } else { thread.title.clone() };
+                    let status = if thread.waiting { "Waiting" } else if thread.working { "Working…" } else { match thread.state.as_str() {
+                        "done" => "Done", "stopped" => "Stopped", "failed" => "Failed", "interrupted" => "Interrupted", _ => "Ready",
+                    }};
+                    group = group.child(self.button(SharedString::from(format!("thread-{}", thread.thread)), "",
+                        ThreadAction::Open(thread.thread), state.connected && !state.loading && !state.sending, p, cx)
+                        .w_full().flex().flex_col().gap(px(4.)).items_start()
+                        .child(div().w_full().text_size(px(13.)).text_ellipsis().child(title))
+                        .child(div().text_size(px(10.5)).text_color(rgb(if thread.working { p.focus } else { p.muted })).child(status)));
+                }
+                body = body.child(group);
+            }
+        } else if state.loading && state.turns.is_empty() {
+            body = body.child("Opening thread…");
+        } else if !state.turns.is_empty() {
+            for (turn_index, turn) in state.turns.iter().enumerate() {
                 let mut turn_col = div().flex().flex_col().gap(px(8.));
                 // Person's message.
                 turn_col = turn_col.child(
@@ -3112,7 +3239,13 @@ impl Render for AgentSurface {
                                 .text_color(rgb(p.muted))
                                 .child("Desktop context"),
                         );
-                    for line in lines {
+                    let expanded = turn_index == 0 || self.expanded_context.contains(&turn.turn);
+                    if turn_index != 0 {
+                        ctx_box = ctx_box.child(self.button(("context", turn.turn as usize),
+                            if expanded { "Hide context" } else { "Show context" },
+                            ThreadAction::Context(turn.turn), true, p, cx));
+                    }
+                    for line in lines.into_iter().take(if expanded { usize::MAX } else { 0 }) {
                         ctx_box = ctx_box.child(
                             div()
                                 .font_family("IBM Plex Mono")
@@ -3193,7 +3326,14 @@ impl Render for AgentSurface {
                                 ),
                         );
                     if let Some(detail) = &act.detail {
-                        let rendered = agent::format_act_detail(detail);
+                        let expanded = self.expanded_acts.contains(&act.id);
+                        let preview = agent::format_act_detail(detail);
+                        let clipped = preview != detail.trim();
+                        let rendered = if expanded { detail.clone() } else { preview };
+                        if clipped {
+                            act_card = act_card.child(self.button(SharedString::from(format!("detail-{}", act.id)),
+                                if expanded { "Show less" } else { "Show full detail" }, ThreadAction::Act(act.id.clone()), true, p, cx));
+                        }
                         if !rendered.is_empty() {
                             act_card = act_card.child(
                                 div()
@@ -3405,7 +3545,23 @@ impl Render for AgentSurface {
             .flex()
             .flex_col()
             .key_context("AgentSurface")
-            .on_action(cx.listener(|this, _: &SendMessage, _, cx| this.send(cx)))
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|_, _: &Next, w, _| w.focus_next()))
+            .on_action(cx.listener(|_, _: &Previous, w, _| w.focus_prev()))
+            .on_action(cx.listener(|this, _: &SendMessage, w, cx| {
+                if this.input.focus_handle(cx).is_focused(w) { this.send(cx); }
+            }))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, w, cx| {
+                if event.keystroke.modifiers.control {
+                    match event.keystroke.key.as_str() {
+                        "n" => { cx.stop_propagation(); this.action(ThreadAction::New, w, cx); }
+                        "l" => { cx.stop_propagation(); this.action(ThreadAction::List, w, cx); }
+                        _ => {}
+                    }
+                } else if event.keystroke.key == "escape" && this.confirm_delete {
+                    this.action(ThreadAction::CancelDelete, w, cx);
+                }
+            }))
             .font_family("Manrope")
             .text_size(px(13.))
             .text_color(rgb(p.text))
@@ -3475,7 +3631,10 @@ impl Render for AgentSurface {
                                 })
                                 .child(agent::mode_name(&mode, &state.modes))
                                 .child(tracked(&self.frame, "mode".into(), false))
-                                .on_click(cx.listener(|this, _, _, cx| this.toggle_mode_menu(cx))),
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_mode_menu(cx);
+                                    if !this.mode_menu_open { window.focus(&this.input.focus_handle(cx)); }
+                                })),
                         )
                     })
                     .child(
@@ -3494,6 +3653,15 @@ impl Render for AgentSurface {
                             .on_click(cx.listener(|this, _, w, cx| this.put_away(w, cx))),
                     ),
             )
+            .when(!state.list_view && !self.confirm_delete, |root| root.child(
+                div().flex_none().px(px(12.)).py(px(8.)).flex().flex_col().gap(px(8.)).border_b_1().border_color(rgb(p.line))
+                    .child(div().flex().gap(px(6.))
+                        .child(self.button("agent-thread-list", "Threads", ThreadAction::List, !state.sending && !state.loading, p, cx))
+                        .when(state.thread.is_some(), |row| row
+                            .child(self.button("archive-agent-thread", "Archive", ThreadAction::Archive, state.connected && !state.loading && !state.sending, p, cx))
+                            .child(self.button("delete-agent-thread", "Delete…", ThreadAction::AskDelete, state.connected && !show_stop && !state.loading && !state.sending, p, cx))))
+                    .child(div().text_size(px(12.)).text_ellipsis().child(state.title.clone().unwrap_or_else(|| "New thread · Home".into())))
+            ))
             .when(self.mode_menu_open, |d| d.child(self.mode_menu(&state, p, cx)))
             .child({
                 // The thread scrolls here; controls in it count as in view
@@ -3544,7 +3712,7 @@ impl Render for AgentSurface {
                         .child(err),
                 )
             })
-            .child(
+            .when(!state.list_view && !self.confirm_delete, |root| root.child(
                 div()
                     .flex_none()
                     .px(px(12.))
@@ -3588,7 +3756,7 @@ impl Render for AgentSurface {
                                         .text_color(rgb(p.text))
                                         .child("Stop")
                                         .child(tracked(&self.frame, "stop".into(), false))
-                                        .on_click(cx.listener(|this, _, _, cx| this.stop_turn(cx))),
+                                        .on_click(cx.listener(|this, _, w, cx| { this.stop_turn(cx); w.focus(&this.input.focus_handle(cx)); })),
                                 )
                             })
                             .when(!show_stop, |row| {
@@ -3610,7 +3778,7 @@ impl Render for AgentSurface {
                                             btn.child(icon("arrow", p.muted, 14.))
                                         })
                                         .child(tracked(&self.frame, "send".into(), false))
-                                        .on_click(cx.listener(|this, _, _, cx| this.send(cx))),
+                                        .on_click(cx.listener(|this, _, w, cx| { this.send(cx); w.focus(&this.input.focus_handle(cx)); })),
                                 )
                             }),
                     )
@@ -3627,7 +3795,7 @@ impl Render for AgentSurface {
                             .child(palette_keycap("Space", p))
                             .child("put away"),
                     ),
-            )
+            ))
             .child({
                 // Last to prepaint: hands the frame's controls to the
                 // control socket's snapshot, on the display's coordinates.
@@ -3684,7 +3852,13 @@ fn show_agent_surface(model: &Entity<Model>, summon: &session::Summon, cx: &mut 
             let scroll_to_bottom = !surface.read(cx).agent_state.turns.is_empty();
             cx.new(|cx| {
                 let input_sub = cx.observe(&input, |_, _, cx| cx.notify());
+                let focus = cx.focus_handle();
+                if surface.read(cx).agent_state.list_view { w.focus(&focus); }
                 AgentSurface {
+                    focus: focus,
+                    confirm_delete: false,
+                    expanded_acts: Default::default(),
+                    expanded_context: Default::default(),
                     model: surface,
                     input,
                     scroll,
@@ -3743,7 +3917,8 @@ fn summoned(model: &Entity<Model>, summon: session::Summon, cx: &mut App) {
             log::info!("SHELL agent-surface keyboard=true");
             if let Some(w) = agent {
                 let _ = w.update(cx, |view, w, cx| {
-                    w.focus(&view.input.focus_handle(cx));
+                    if view.model.read(cx).agent_state.list_view { w.focus(&view.focus); }
+                    else { w.focus(&view.input.focus_handle(cx)); }
                 });
             }
             if let Some(tx) = model.read(cx).agent_tx.clone() {
@@ -4347,6 +4522,7 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
             }
             session::Event::Agent(agent_event) => {
                 let is_sent = matches!(agent_event, agent::AgentEvent::Sent { .. });
+                let is_lifecycle = matches!(agent_event, agent::AgentEvent::Lifecycle { .. });
                 let should_scroll = matches!(
                     agent_event,
                     agent::AgentEvent::Message { .. }
@@ -4396,6 +4572,11 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                         let _ = w.update(cx, |_, _, cx| cx.notify());
                     }
                 }
+                if is_lifecycle && let Some(w) = model.read(cx).agent {
+                    let _ = w.update(cx, |view, window, cx| {
+                        if view.model.read(cx).agent_state.list_view { window.focus(&view.focus); }
+                    });
+                }
                 if is_sent {
                     if let Some(w) = model.read(cx).agent {
                         let _ = w.update(cx, |view, _, cx| {
@@ -4413,8 +4594,7 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 } else if changed && should_scroll {
                     if let Some(w) = model.read(cx).agent {
                         let _ = w.update(cx, |view, _, cx| {
-                            view.scroll_to_bottom = true;
-                            view.scroll.scroll_to_bottom();
+                            if view.near_bottom() { view.scroll_to_bottom = true; }
                             cx.notify();
                         });
                     }
@@ -4575,6 +4755,8 @@ fn main() -> anyhow::Result<()> {
             KeyBinding::new("right", NextMonth, Some("Calendar")),
             KeyBinding::new("enter", Unlock, Some("Lock")),
             KeyBinding::new("enter", SendMessage, Some("AgentSurface")),
+            KeyBinding::new("tab", Next, Some("AgentSurface")),
+            KeyBinding::new("shift-tab", Previous, Some("AgentSurface")),
         ]);
         let now = ClockDisplay::now();
         let model = cx.new(|_| Model {

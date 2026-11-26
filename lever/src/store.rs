@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct ThreadSummary {
+    pub archived: bool,
     pub id: String,
     pub title: String,
     pub cwd: String,
@@ -168,7 +169,7 @@ impl Store {
                  key TEXT PRIMARY KEY,\n\
                  value TEXT NOT NULL\n\
              );\n\
-             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '5');\n\
+             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '6');\n\
              CREATE TABLE IF NOT EXISTS threads (\n\
                  id TEXT PRIMARY KEY,\n\
                  title TEXT NOT NULL,\n\
@@ -234,6 +235,7 @@ impl Store {
 
         // Migrate older databases missing columns added in newer schema versions.
         ensure_column(&conn, "threads", "model", "TEXT")?;
+        ensure_column(&conn, "threads", "archived", "INTEGER NOT NULL DEFAULT 0")?;
         ensure_column(&conn, "turns", "context", "TEXT")?;
         ensure_column(&conn, "threads", "mode", "TEXT")?;
         ensure_column(&conn, "turns", "mode", "TEXT")?;
@@ -722,7 +724,7 @@ impl Store {
                         (SELECT COUNT(*) FROM turns WHERE thread_id = t.id), \
                         (SELECT state FROM turns WHERE thread_id = t.id ORDER BY turn_number DESC LIMIT 1), \
                         EXISTS (SELECT 1 FROM requests WHERE thread_id = t.id AND state = 'waiting'), \
-                        t.mode \
+                        t.mode, t.archived \
                  FROM threads t \
                  ORDER BY t.updated_at DESC, t.rowid DESC",
             )
@@ -732,6 +734,7 @@ impl Store {
                 let state: String = r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "idle".to_string());
                 let working = state == "working";
                 Ok(ThreadSummary {
+                    archived: r.get(10)?,
                     id: r.get(0)?,
                     title: r.get(1)?,
                     cwd: r.get(2)?,
@@ -753,6 +756,23 @@ impl Store {
             out.push(row.map_err(|e| format!("could not read thread row: {e}"))?);
         }
         Ok(out)
+    }
+
+    pub fn archive_thread(&self, thread: &str, archived: bool) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE threads SET archived = ?2 WHERE id = ?1",
+                params![thread, archived],
+            )
+            .map_err(|e| format!("could not archive thread: {e}"))?;
+        Ok(())
+    }
+
+    pub fn delete_thread(&self, thread: &str) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM threads WHERE id = ?1", params![thread])
+            .map_err(|e| format!("could not delete thread: {e}"))?;
+        Ok(())
     }
 
     pub fn get_thread(&self, thread_id: &str) -> Result<Option<ThreadRecord>, String> {

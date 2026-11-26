@@ -53,6 +53,10 @@ struct StubModel {
 
 #[derive(Debug, Deserialize)]
 struct Script {
+    #[serde(default)]
+    delete_session: bool,
+    #[serde(default)]
+    delete_session_error: Option<ScriptError>,
     #[serde(default = "default_true")]
     load_session: bool,
     #[serde(default = "default_session_prefix")]
@@ -1029,7 +1033,11 @@ fn run(options: Options) -> Result<(), String> {
             }
             match serde_json::from_value::<InitializeRequest>(params) {
                 Ok(_init) => {
-                    let session_caps = SessionCapabilities::new().close(SessionCloseCapabilities::new());
+                    let mut session_caps = SessionCapabilities::new().close(SessionCloseCapabilities::new());
+                    if script.delete_session {
+                        session_caps =
+                            session_caps.delete(agent_client_protocol_schema::v1::SessionDeleteCapabilities::new());
+                    }
                     let caps = AgentCapabilities::new()
                         .load_session(script.load_session)
                         .session_capabilities(session_caps);
@@ -1080,6 +1088,20 @@ fn run(options: Options) -> Result<(), String> {
                     }
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
+            }
+        } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_delete {
+            if let Some(err) = &script.delete_session_error {
+                writer.send_error(id, AcpError::new(err.code, err.message.clone()));
+            } else if script.delete_session {
+                match serde_json::from_value::<agent_client_protocol_schema::v1::DeleteSessionRequest>(params) {
+                    Ok(req) => {
+                        session_models.lock().unwrap().remove(req.session_id.0.as_ref());
+                        writer.send_result(id, json!({}));
+                    }
+                    Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
+                }
+            } else {
+                writer.send_error(id, AcpError::method_not_found());
             }
         } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_close {
             match serde_json::from_value::<CloseSessionRequest>(params) {

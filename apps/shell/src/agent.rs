@@ -351,6 +351,8 @@ pub struct StatusInfo {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadSummary {
+    #[serde(default)]
+    pub archived: bool,
     pub thread: String,
     pub title: String,
     pub cwd: String,
@@ -383,6 +385,8 @@ pub struct ResumedThread {
 /// Every reply or event Lever sends on its surface socket.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LeverMessage {
+    Threads { threads: Vec<ThreadSummary>, finished: bool },
+    Lifecycle { thread: String, deleted: bool, warning: Option<String> },
     Status(StatusInfo),
     List { threads: Vec<ThreadSummary> },
     Resumed(ResumedThread),
@@ -451,6 +455,8 @@ pub enum LeverMessage {
 /// Events sent from the surface-socket client to the shell's UI loop.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentEvent {
+    Threads { threads: Vec<ThreadSummary>, finished: bool },
+    Lifecycle { thread: String, deleted: bool, warning: Option<String> },
     /// Emitted only after Lever's initial `status` (and `list`/`resume`, if
     /// applicable) have arrived within the bootstrap deadline.
     Connected {
@@ -533,6 +539,9 @@ pub enum AgentEvent {
 impl LeverMessage {
     fn into_agent_event(self) -> Option<AgentEvent> {
         match self {
+            LeverMessage::Threads { threads, finished } => Some(AgentEvent::Threads { threads, finished }),
+            LeverMessage::List { threads } => Some(AgentEvent::Threads { threads, finished: false }),
+            LeverMessage::Lifecycle { thread, deleted, warning } => Some(AgentEvent::Lifecycle { thread, deleted, warning }),
             LeverMessage::Status(s) => Some(AgentEvent::Status(s)),
             LeverMessage::Resumed(r) => Some(AgentEvent::Resumed(r)),
             LeverMessage::Sent { thread, turn } => Some(AgentEvent::Sent { thread, turn }),
@@ -589,7 +598,7 @@ impl LeverMessage {
                 Some(AgentEvent::Interrupted { thread, turn })
             }
             LeverMessage::Error { code, message } => Some(AgentEvent::Error { code, message }),
-            LeverMessage::List { .. } | LeverMessage::Ok => None,
+            LeverMessage::Ok => None,
         }
     }
 }
@@ -597,6 +606,8 @@ impl LeverMessage {
 /// Commands sent from the shell's UI to the surface-socket background thread.
 #[derive(Clone, Debug)]
 pub enum AgentCommand {
+    Select { thread: Option<String> },
+    Lifecycle { thread: String, delete: bool },
     Send {
         thread: Option<String>,
         text: String,
@@ -630,6 +641,9 @@ pub struct CommandSender {
 }
 
 impl CommandSender {
+    pub fn select(&self, thread: Option<String>) { let _ = self.tx.send(AgentCommand::Select { thread }); }
+    pub fn lifecycle(&self, thread: String, delete: bool) { let _ = self.tx.send(AgentCommand::Lifecycle { thread, delete }); }
+
     /// Sends a message. `mode` is the mode a new thread starts in.
     pub fn send_message(&self, thread: Option<String>, text: String, mode: Option<String>) {
         let _ = self.tx.send(AgentCommand::Send { thread, text, mode });
@@ -667,6 +681,12 @@ impl CommandSender {
 /// The shell's held state for the Agent drawer and mark.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct AgentState {
+    pub list_view: bool,
+    pub loading: bool,
+    pub threads: Vec<ThreadSummary>,
+    #[serde(skip)]
+    list_received: bool,
+
     pub configured: bool,
     pub connected: bool,
     pub lever_version: Option<String>,
@@ -754,6 +774,7 @@ impl AgentState {
     pub fn new(configured: bool) -> Self {
         Self {
             configured,
+            list_view: true,
             ..Default::default()
         }
     }
@@ -773,7 +794,7 @@ impl AgentState {
     }
 
     pub fn can_send(&self) -> bool {
-        self.connected && !self.working() && !self.sending && !self.no_harness
+        self.connected && !self.working() && !self.sending && !self.loading && !self.no_harness
     }
 
     pub fn current_turn(&self) -> Option<u64> {
@@ -809,7 +830,7 @@ impl AgentState {
 
     /// The thread's mode cannot change now: it works, or Lever is out of reach.
     pub fn mode_locked(&self) -> bool {
-        !self.connected || self.no_harness || self.sending || self.working()
+        !self.connected || self.no_harness || self.sending || self.loading || self.working()
     }
 
     /// The person opened the mode menu: ask Lever for its modes. Returns
@@ -876,6 +897,10 @@ impl AgentState {
             } else {
                 Mark::Idle
             }
+        } else if self.connected && self.list_received {
+            if self.threads.iter().any(|t| t.waiting) { Mark::Waiting }
+            else if self.threads.iter().any(|t| t.working) { Mark::Working }
+            else { self.thread_mark }
         } else if self.connected && self.waiting() {
             Mark::Waiting
         } else {
@@ -908,6 +933,7 @@ impl AgentState {
 
     fn apply_resumed(&mut self, resumed: ResumedThread, drawer_up: bool) {
         self.sending = false;
+        self.loading = false;
         self.thread = Some(resumed.thread);
         self.title = if resumed.title.is_empty() {
             None
@@ -953,6 +979,31 @@ impl AgentState {
         self.thread_mark = Mark::Idle;
     }
 
+    pub fn select_thread(&mut self, thread: Option<String>) -> bool {
+        if self.sending || self.loading { return false; }
+        self.clear_thread();
+        self.thread = thread;
+        self.pending_mode = None;
+        self.working_before_disconnect = None;
+        self.refresh_mark();
+        self.error = None;
+        self.missing_model = None;
+        self.loading = self.thread.is_some();
+        self.list_view = false;
+        true
+    }
+
+    /// Folder order follows newest activity, as does each folder's thread order.
+    pub fn groups(&self) -> Vec<(String, Vec<ThreadSummary>)> {
+        let mut groups: Vec<(String, Vec<ThreadSummary>)> = Vec::new();
+        for thread in self.threads.iter().filter(|t| !t.archived) {
+            if let Some((_, threads)) = groups.iter_mut().find(|(cwd, _)| cwd == &thread.cwd) {
+                threads.push(thread.clone());
+            } else { groups.push((thread.cwd.clone(), vec![thread.clone()])); }
+        }
+        groups
+    }
+
     /// Applies an event from Lever. Returns true if visible state changed.
     pub fn apply(&mut self, event: AgentEvent, drawer_up: bool) -> bool {
         let before = self.mark;
@@ -963,6 +1014,30 @@ impl AgentState {
 
     fn apply_event(&mut self, event: AgentEvent, drawer_up: bool) -> bool {
         match event {
+            AgentEvent::Threads { threads, finished } => {
+                let ended = self.threads.iter().any(|old| old.working && threads.iter().any(|t| t.thread == old.thread && !t.working));
+                let busy = threads.iter().any(|t| t.working || t.waiting);
+                if let Some(selected) = threads.iter().find(|t| Some(t.thread.as_str()) == self.thread.as_deref()) {
+                    self.title = (!selected.title.is_empty()).then(|| selected.title.clone());
+                    self.model = selected.model.clone();
+                }
+                self.threads = threads;
+                self.list_received = true;
+                if !busy && (finished || ended) && !drawer_up { self.thread_mark = Mark::Done; }
+                true
+            }
+            AgentEvent::Lifecycle { thread, deleted, warning } => {
+                if self.thread.as_deref() == Some(thread.as_str()) { self.loading = false; }
+                if warning.is_some() { self.error = warning; }
+                if deleted { self.threads.retain(|t| t.thread != thread); }
+                else if let Some(t) = self.threads.iter_mut().find(|t| t.thread == thread) { t.archived = true; }
+                if self.thread.as_deref() == Some(&thread) {
+                    self.clear_thread();
+                    self.pending_mode = None;
+                    self.list_view = true;
+                }
+                true
+            }
             AgentEvent::Connected {
                 status,
                 resumed,
@@ -978,6 +1053,7 @@ impl AgentState {
                 self.missing_model = None;
                 changed |= self.apply_status(status);
                 if let Some(resumed) = resumed {
+                    if self.thread.is_none() { self.list_view = false; }
                     self.apply_resumed(resumed, drawer_up);
                     changed = true;
                 } else if let Some(tid) = preserved_thread {
@@ -1016,6 +1092,7 @@ impl AgentState {
                 changed
             }
             AgentEvent::Disconnected => {
+                self.loading = false;
                 let changed = self.connected
                     || self.sending
                     || self.lever_version.is_some()
@@ -1079,11 +1156,7 @@ impl AgentState {
                 context,
             } => {
                 if self.thread.as_deref() != Some(thread.as_str()) {
-                    if self.thread.is_none() {
-                        self.thread = Some(thread);
-                    } else {
-                        return false;
-                    }
+                    return false;
                 }
                 self.sending = false;
                 self.active_turn = Some(turn);
@@ -1296,6 +1369,7 @@ impl AgentState {
                 true
             }
             AgentEvent::Error { code, message } => {
+                self.loading = false;
                 self.sending = false;
                 // Lever's replies name no request, so an answer that was not
                 // taken lets the person answer again.
@@ -1867,6 +1941,10 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                 thread: msg.get("thread")?.as_str()?.to_string(),
                 turn: msg.get("turn")?.as_u64()?,
             }),
+            "archived" | "deleted" => Some(LeverMessage::Lifecycle {
+                thread: msg.get("thread")?.as_str()?.into(), deleted: reply == "deleted",
+                warning: msg.get("warning").and_then(|v| v.as_str()).map(str::to_string),
+            }),
             "ok" => Some(LeverMessage::Ok),
             "error" => Some(LeverMessage::Error {
                 code: msg
@@ -1887,6 +1965,13 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
     let event = msg.get("event")?.as_str()?;
     if event == "activity" {
         return parse_activity(msg);
+    }
+    if event == "threads" {
+        return Some(LeverMessage::Threads { threads: serde_json::from_value(msg.get("threads")?.clone()).ok()?,
+            finished: msg.get("finished").and_then(|v| v.as_bool()).unwrap_or(false) });
+    }
+    if event == "deleted" || (event == "archived" && msg["archived"] == true) {
+        return Some(LeverMessage::Lifecycle { thread: msg.get("thread")?.as_str()?.into(), deleted: event == "deleted", warning: None });
     }
     let thread = msg.get("thread")?.as_str()?.to_string();
     if event == "thread-updated" {
@@ -1949,6 +2034,7 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
 
 fn parse_thread_summary(value: &serde_json::Value) -> Option<ThreadSummary> {
     Some(ThreadSummary {
+        archived: value.get("archived").and_then(|v| v.as_bool()).unwrap_or(false),
         thread: value.get("thread")?.as_str()?.to_string(),
         title: value
             .get("title")
@@ -2220,9 +2306,18 @@ fn start_with_options(
     // Writer thread: forwards UI commands to the currently connected stream.
     let writer_for_cmds = writer.clone();
     let events_for_cmds = events.clone();
+    let active_for_cmds = active_thread.clone();
+    let path_for_cmds = state_path.clone();
     std::thread::spawn(move || {
         for cmd in cmd_rx {
+            if let AgentCommand::Select { thread } = &cmd {
+                if let Ok(mut active) = active_for_cmds.lock() { *active = thread.clone(); }
+                save_active_thread(path_for_cmds.as_deref(), thread.as_deref());
+                if thread.is_none() { continue; }
+            }
             let op = match &cmd {
+                AgentCommand::Select { .. } => "resume",
+                AgentCommand::Lifecycle { .. } => "lifecycle",
                 AgentCommand::Send { .. } => "send",
                 AgentCommand::Stop { .. } => "stop",
                 AgentCommand::Answer { .. } => "answer",
@@ -2232,6 +2327,8 @@ fn start_with_options(
                 AgentCommand::RefreshStatus => "status",
             };
             let request = match cmd {
+                AgentCommand::Select { thread } => serde_json::json!({"op":"resume","thread":thread}),
+                AgentCommand::Lifecycle { thread, delete } => serde_json::json!({"op":if delete {"delete"} else {"archive"},"thread":thread}),
                 AgentCommand::Send { thread, text, mode } => {
                     let mut request = match thread {
                         Some(thread) => {
@@ -2291,7 +2388,7 @@ fn start_with_options(
             };
             if !matches!(write_outcome, Some(Ok(()))) {
                 match op {
-                    "send" => {
+                    "send" | "resume" | "lifecycle" => {
                         let _ = events_for_cmds.send(session::Event::Agent(AgentEvent::Error {
                             code: "disconnected".into(),
                             message: "The Agent is not reachable right now.".into(),
@@ -2349,6 +2446,9 @@ fn start_with_options(
                     backoff = INITIAL_BACKOFF;
                     last_bootstrap_warn = None;
                     allow_list_fallback = false;
+                    // Subscribe before exposing the writer, preserving request/reply order.
+                    // A failed write is followed by EOF/error in the read loop below.
+                    let _ = stream.write_all(&encode_frame(&serde_json::json!({"op":"list","watch":true})));
                     // Only keep a permanent skip for oversized history frames; a
                     // timed-out resume is skipped for this reconnect so the drawer
                     // comes online, then retried on a future reconnect.
@@ -2399,25 +2499,10 @@ fn start_with_options(
                                                     Some(thread.as_str()),
                                                 );
                                             }
-                                            AgentEvent::Message { thread, .. } => {
-                                                let updated = if let Ok(mut guard) =
-                                                    active_thread.lock()
-                                                {
-                                                    if guard.is_none() {
-                                                        *guard = Some(thread.clone());
-                                                        true
-                                                    } else {
-                                                        false
-                                                    }
-                                                } else {
-                                                    false
-                                                };
-                                                if updated {
-                                                    skipped_resume = None;
-                                                    save_active_thread(
-                                                        state_path.as_deref(),
-                                                        Some(thread.as_str()),
-                                                    );
+                                            AgentEvent::Lifecycle { thread, .. } => {
+                                                if let Ok(mut active) = active_thread.lock() && active.as_deref() == Some(thread) {
+                                                    *active = None;
+                                                    save_active_thread(state_path.as_deref(), None);
                                                 }
                                             }
                                             AgentEvent::Resumed(r) => {
@@ -2850,6 +2935,7 @@ mod tests {
             })),
             Some(LeverMessage::List {
                 threads: vec![ThreadSummary {
+                    archived: false,
                     thread: "t-123".into(),
                     title: "Check disk".into(),
                     cwd: "/home/crowbar".into(),
@@ -3526,6 +3612,8 @@ mod tests {
                 "reply": "activity", "working": [], "waiting": []
             })))
             .unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({"op":"list","watch":true}));
+            peer.write_all(&encode_frame(&serde_json::json!({"reply":"list","threads":[]}))).unwrap();
 
             // Client sends turn 2 and then stops it.
             let send_req = read_frame(&mut peer).unwrap();
@@ -5012,6 +5100,8 @@ mod tests {
                 "reply": "activity", "working": [], "waiting": []
             })))
             .unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({"op":"list","watch":true}));
+            peer.write_all(&encode_frame(&serde_json::json!({"reply":"list","threads":[]}))).unwrap();
 
             // The person opens the mode menu.
             assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({ "op": "models" }));
@@ -5169,4 +5259,78 @@ mod tests {
         assert_eq!(state.thread.as_deref(), Some("t-waiting"));
         assert_eq!(state.mode.as_deref(), Some("ask-first"));
     }
+    fn summary(id: &str, cwd: &str, working: bool) -> ThreadSummary {
+        ThreadSummary { archived: false, thread: id.into(), title: id.into(), cwd: cwd.into(), model: None, mode: None, waiting: false,
+            started: 1, updated: 2, turns: 1, state: if working { "working" } else { "done" }.into(), working }
+    }
+
+    #[test]
+    fn all_threads_drive_the_mark_but_only_the_selected_thread_blocks_the_composer() {
+        let mut s = AgentState::new(true);
+        s.connected = true;
+        s.apply(AgentEvent::Threads { threads: vec![summary("terminal", "/tmp", true)], finished: false }, false);
+        assert_eq!(s.mark, Mark::Working);
+        assert!(s.can_send(), "terminal work must not prevent a second thread");
+        assert!(s.select_thread(None));
+        s.apply(AgentEvent::Message { thread: "old-subscription".into(), turn: 1, text: "late".into(), context: None }, true);
+        assert!(s.thread.is_none());
+        assert!(s.turns.is_empty());
+        s.apply(AgentEvent::Threads { threads: vec![summary("terminal", "/tmp", false)], finished: true }, false);
+        assert_eq!(s.mark, Mark::Done);
+        s.on_drawer_opened();
+        assert_eq!(s.mark, Mark::Idle);
+        s.apply(AgentEvent::Threads { threads: vec![summary("a", "/tmp", false), summary("b", "/tmp", true)], finished: true }, false);
+        assert_eq!(s.mark, Mark::Working, "one completion must not hide another working thread");
+    }
+
+    #[test]
+    fn list_groups_newest_folders_and_threads_and_hides_archived_work_without_losing_the_mark() {
+        let mut s = AgentState::new(true);
+        s.connected = true;
+        let mut archived = summary("hidden", "/archive", true); archived.archived = true;
+        s.apply(AgentEvent::Threads { threads: vec![summary("new", "/b", false), summary("middle", "/a", false), summary("old", "/b", false), archived], finished: false }, true);
+        let groups = s.groups();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].0, "/b");
+        assert_eq!(groups[0].1.iter().map(|t| t.thread.as_str()).collect::<Vec<_>>(), vec!["new", "old"]);
+        assert_eq!(s.mark, Mark::Working);
+        s.on_drawer_closed();
+        assert!(s.list_view);
+        s.select_thread(Some("new".into()));
+        assert!(!s.select_thread(Some("old".into())), "a pending history read must not land in another thread");
+        s.on_drawer_closed(); s.on_drawer_opened();
+        assert!(!s.list_view);
+    }
+
+    #[test]
+    fn a_background_archive_does_not_unlock_a_pending_history_read() {
+        let mut s = AgentState::new(true);
+        s.connected = true;
+        s.select_thread(Some("selected".into()));
+        s.apply(AgentEvent::Lifecycle { thread: "background".into(), deleted: false, warning: None }, true);
+        assert!(s.loading);
+        assert!(!s.select_thread(Some("another".into())));
+        assert_eq!(s.thread.as_deref(), Some("selected"));
+    }
+
+    #[test]
+    fn selecting_new_thread_clears_the_previous_threads_work_and_mode() {
+        let mut state = connected_state(false);
+        state.thread = Some("working".into());
+        state.thread_mark = Mark::Working;
+        state.active_turn = Some(1);
+        state.mode = Some("full-access".into());
+        state.pending_mode = Some("plan".into());
+        state.default_mode = Some("ask-first".into());
+        state.apply(activity(&["working"], &["waiting"]), false);
+        assert!(state.select_thread(None));
+        assert!(state.can_send());
+        assert!(!state.can_stop());
+        assert_eq!(state.shown_mode().as_deref(), Some("ask-first"));
+        state.apply(AgentEvent::Threads {
+            threads: vec![summary("working", "/tmp", true)], finished: false,
+        }, false);
+        assert_eq!(state.mark, Mark::Waiting, "list snapshots must not hide a permission request");
+    }
+
 }

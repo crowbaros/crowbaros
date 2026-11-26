@@ -740,6 +740,8 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let reply_models = find_reply("models");
     let reply_free_models = find_reply("free-models");
     let reply_model_set = find_reply("model-set");
+    let reply_archived = find_reply("archived");
+    let reply_deleted = find_reply("deleted");
     let reply_list = find_reply("list");
     let reply_sent = find_reply("sent");
     let reply_resumed = find_reply("resumed");
@@ -760,9 +762,9 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let reply_default_mode = find_reply("default-mode");
 
     let server_ops = doc_ops.clone();
-    // Serve 16 short connections exercising every documented op, reply (including error), and event.
+    // Serve 18 short connections exercising every documented op, reply (including error), and event.
     let server = std::thread::spawn(move || {
-        for turn_case in 0..16 {
+        for turn_case in 0..18 {
             let (mut stream, _) = listener.accept().expect("accept client");
             let ver = read_framed(&mut stream);
             assert_eq!(ver, json!({ "version": 1 }));
@@ -824,6 +826,8 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
                 (13, "answer") => write_framed(&mut stream, &reply_ok),
                 (14, "set-mode") => write_framed(&mut stream, &reply_mode_set),
                 (15, "set-default-mode") => write_framed(&mut stream, &reply_default_mode),
+                (16, "archive") => write_framed(&mut stream, &reply_archived),
+                (17, "delete") => write_framed(&mut stream, &reply_deleted),
                 other => panic!("unexpected connection {other:?}"),
             }
             // Hold the connection open until the client closes it, as Lever does.
@@ -916,6 +920,8 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
         "{defaulted:?}"
     );
 
+    assert_eq!(lab.run(&["--archive", "t-example"], "").status, 0);
+    assert_eq!(lab.run(&["--delete", "t-example"], "").status, 0);
     server.join().unwrap();
     assert_eq!(*sent_ops.lock().unwrap(), doc_ops);
 }
@@ -1925,4 +1931,19 @@ fn a_request_lever_takes_after_it_took_a_stop_is_asked_for() {
     keys.write_all(&[4]).unwrap();
     assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
     lever.join().unwrap();
+}
+
+#[test]
+fn archive_keeps_readable_history_and_delete_requests_harness_cleanup() {
+    let lab = Lab::with_script(
+        json!({"delete_session":true,"turns":[{"steps":[{"kind":"text","text":"Keep this answer."}]}]}),
+    );
+    assert_eq!(lab.run(&["Remember this"], "").status, 0);
+    let thread = only_thread(&lab);
+    assert_eq!(lab.run(&["--archive", &thread], "").status, 0);
+    assert!(lab.run(&["--list"], "").out.is_empty());
+    assert!(lab.run(&["--resume", &thread], "").out.contains("Keep this answer."));
+    assert_eq!(lab.run(&["--delete", &thread], "").status, 0);
+    assert_eq!(lab.run(&["--resume", &thread], "").status, 1);
+    assert!(lab.rpc_messages().contains("session/delete"));
 }
