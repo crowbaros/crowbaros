@@ -800,11 +800,7 @@ Pushed to every connection subscribed to `thread`:
   ```
 
   A turn the harness began itself, or one Lever ended when it went quiet and
-  that works again, has `"origin":"harness"` and no text:
-
-  ```json
-  {"event":"message","thread":"t-01a2b3c4d5e6","turn":2,"text":"","origin":"harness"}
-  ```
+  that works again, comes with `"text":""` and `"origin":"harness"`.
 
 - **`text`** — a streamed piece of the answer (also taken if it arrives after a
   turn ended):
