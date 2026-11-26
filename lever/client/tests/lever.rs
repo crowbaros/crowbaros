@@ -1853,11 +1853,21 @@ fn a_request_on_its_way_when_ctrl_c_returns_to_the_prompt_is_not_asked_for_there
     let lab = Lab::empty();
     let lever = lever_resumed_with_r1(&lab, Vec::new(), |stream| {
         assert_eq!(read_framed(stream), json!({ "op": "stop", "thread": "t-1", "turn": 1 }));
-        // r-2 of turn 1 was sent before Lever took the Stop.
+        // r-2 and r-3 of turn 1 were sent before Lever took the Stop, and r-3
+        // was answered from another terminal before it did.
         write_framed(stream, &request_event("r-2", 1, "waiting"));
+        write_framed(stream, &request_event("r-3", 1, "waiting"));
+        let mut answered = request_event("r-3", 1, "answered");
+        answered["answer"] = json!("once");
+        write_framed(stream, &answered);
         write_framed(stream, &json!({ "reply": "ok" }));
         write_framed(stream, &request_event("r-1", 1, "withdrawn"));
         write_framed(stream, &request_event("r-2", 1, "withdrawn"));
+        // Something to show after all of it, so the test knows it has it.
+        write_framed(
+            stream,
+            &json!({ "event": "note", "thread": "t-1", "turn": 1, "note": "n-1", "text": "MARK" }),
+        );
     });
     let (mut keys, screen) = terminal();
     let mut agent = lab.agent(&["--resume", "t-1"]);
@@ -1871,20 +1881,14 @@ fn a_request_on_its_way_when_ctrl_c_returns_to_the_prompt_is_not_asked_for_there
     screen_until(&mut keys, &mut shown, "Answer [once]: ");
     // SAFETY: sending Ctrl-C's signal to our own child process.
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
-    screen_until(&mut keys, &mut shown, "[request] withdrawn");
-    // Nothing of r-2 is shown, its withdrawal neither. Ctrl-D comes once
-    // crowbar-agent has had all Lever sent.
-    std::thread::sleep(Duration::from_millis(300));
-    keys.write_all(&[4]).unwrap();
-    let mut rest = [0u8; 4096];
-    let n = keys.read(&mut rest).unwrap_or(0);
-    shown.extend_from_slice(&rest[..n]);
+    screen_until(&mut keys, &mut shown, "[update] MARK");
     let screen = String::from_utf8_lossy(&shown).into_owned();
-    assert!(
-        !screen.contains("make r-2"),
-        "r-2 is withdrawn, not asked for: {screen}"
-    );
+    // Neither r-2 nor r-3 is asked for at the prompt; r-2's withdrawal is not
+    // shown, r-1's is, and the answer given elsewhere to r-3 is.
+    assert!(!screen.contains("make r-2") && !screen.contains("make r-3"), "{screen}");
     assert_eq!(screen.matches("[request] withdrawn").count(), 1, "{screen}");
+    assert_eq!(screen.matches("[request] answered: once").count(), 1, "{screen}");
+    keys.write_all(&[4]).unwrap();
     assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
     lever.join().unwrap();
 }

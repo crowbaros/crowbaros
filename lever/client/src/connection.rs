@@ -122,7 +122,7 @@ pub struct Connection {
     /// the Stop, is one the Stop withdraws, and is not given.
     stopping: Option<(String, u64, usize)>,
     /// Requests set aside so, by ID: their withdrawal, when it comes, is
-    /// set aside too, as nothing was shown of them.
+    /// set aside too, as nothing was shown of them. Any other end is shown.
     set_aside: Vec<String>,
 }
 
@@ -279,9 +279,11 @@ impl Connection {
         }
         let id = text(message, "request").into_owned();
         if text(message, "state") != "waiting" {
+            // Its end is set aside only as the Stop's withdrawal: an answer
+            // from another terminal, which came first, is shown.
             let before = self.set_aside.len();
             self.set_aside.retain(|r| *r != id);
-            return self.set_aside.len() < before;
+            return self.set_aside.len() < before && text(message, "state") == "withdrawn";
         }
         let withdrawn = self.stopping.as_ref().is_some_and(|(thread, turn, _)| {
             text(message, "thread") == thread.as_str() && message.get("turn").and_then(Value::as_u64) == Some(*turn)
