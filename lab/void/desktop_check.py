@@ -207,6 +207,63 @@ class Check:
         except (OSError, RuntimeError, ValueError) as error:
             self.log(f'Could not capture final display: {error}')
 
+    def monitor_check(self, theme):
+        """Exercise the real window as the person, using disposable child processes."""
+        person, _ = self.person()
+        sample = json.loads(self.run(f"su -s /bin/sh {person} -c 'crowbaros-monitor --sample'"))
+        self.check(f'Monitor reads live metrics without root in {theme}',
+                   sample['memory']['total'] > 0 and 'cpu' in sample['cpu']
+                   and len(sample['processes']) > 0 and bool(sample['details']['storage']))
+        self.capture(f'monitor-{theme}-before')
+        logfile = f'/tmp/monitor-{theme}.log'
+        self.as_app('env CROWBAR_MONITOR_CHECK=1 crowbaros-monitor', logfile)
+        self.wait('Monitor opens and takes focus',
+                  lambda: self.snapshot()['active'].get('class') == 'com.crowbaros.Monitor')
+        log = lambda: self.run('cat ' + logfile)
+        self.wait('Monitor receives live CPU deltas and memory',
+                  lambda: 'MONITOR sample cpu=true memory=true' in log())
+        self.capture(f'monitor-{theme}-after')
+        self.key('alt', '2')
+        self.wait('Monitor opens Processes', lambda: 'MONITOR page=processes' in log())
+        self.capture(f'monitor-{theme}-processes')
+        for force in (False, True):
+            pidfile = f'/tmp/monitor-child-{theme}-{int(force)}.pid'
+            self.as_app('sh -c ' + shlex.quote(f'echo $$ > {pidfile}; exec sleep 120'),
+                        '/tmp/monitor-child.log')
+            pid = self.wait('Monitor test child starts',
+                            lambda: self.guest.ssh('cat ' + pidfile, check=False).stdout.strip())
+            alive = lambda: self.guest.ssh('kill -0 ' + pid, check=False).returncode == 0
+            try:
+                # Wait for a subsequent sample so the newly created process is present.
+                before = log().count('MONITOR sample')
+                self.wait('Monitor refreshes its process list', lambda: log().count('MONITOR sample') > before)
+                self.key('ctrl', 'f')
+                self.key('ctrl', 'a')
+                self.type(pid)
+                self.key('esc')
+                self.key('down')
+                if force:
+                    self.key('ctrl', 'k')
+                    self.wait('Force Quit asks for confirmation', lambda: 'confirmation=true' in log())
+                    self.capture(f'monitor-{theme}-force-confirmation')
+                    self.key('esc')
+                    self.check('Cancel Force Quit leaves the child running', alive())
+                    self.key('ctrl', 'k')
+                    self.key('ctrl', 'ret')
+                else:
+                    self.key('ctrl', 'e')
+                self.wait('Monitor ends its selected owned child', lambda: not alive())
+                self.check(f'Monitor {"force quits" if force else "terminates"} an owned process in {theme}', True)
+            finally:
+                self.guest.ssh('kill ' + pid, check=False)
+        self.key('alt', '3')
+        self.wait('Monitor opens Services & Storage', lambda: 'MONITOR page=services' in log())
+        self.wait('Monitor receives read-only system details', lambda: 'details=true' in log())
+        self.capture(f'monitor-{theme}-services')
+        self.key('ctrl', 'q')
+        self.wait('Monitor closes', lambda: not any(c['class'] == 'com.crowbaros.Monitor'
+                                                  for c in self.snapshot()['clients']))
+
     def editor_check(self, theme):
         person, _ = self.person()
         handler = self.run(f"su -s /bin/sh {person} -c 'xdg-mime query default text/plain'").strip()
@@ -269,6 +326,7 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
         self.check("the person's password unlocks the session", 'SHELL unlock ok=true' in shell_log())
         self.capture('01-boot')
         self.editor_check('dark')
+        self.monitor_check('dark')
         self.check('fresh guest has no saved preferences', self.preferences() is None)
         self.click(680, 935)  # Terminal dock entry (Applications · Files · Chromium · Terminal · Settings).
         terminal = self.wait('terminal launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
@@ -517,6 +575,7 @@ for name, original in {original_files!r}.items():
                   lambda: self.shell_log().count('SHELL calendar open=false') > cal_light)
         self.still('a still desktop after Quick Settings, Calendar, and OSD auto-dismiss commits nothing and draws nothing')
         self.editor_check('light')
+        self.monitor_check('light')
         log_offset = len(self.app_log())
         self.click(720, 935)
         self.wait('Settings restored Light after reboot', lambda: 'event=opened theme=Light' in self.app_log()[log_offset:])
