@@ -215,7 +215,7 @@ fn turn(
 fn watch(
     lever: &mut Connection,
     thread: &str,
-    turn: Option<u64>,
+    mut turn: Option<u64>,
     mut answer: Answer,
     typing: Typing,
     waiting: Vec<Value>,
@@ -243,6 +243,7 @@ fn watch(
     let mut ended: Option<Ended> = None;
     loop {
         if (turn.is_none() || ended.is_some()) && open.is_empty() {
+            answer.end()?;
             return Ok(Some(ended.unwrap_or(Ended::Done)));
         }
         if asking.is_none()
@@ -270,10 +271,15 @@ fn watch(
                     eprintln!();
                 }
                 // By its number, so a stop that comes after this turn ended does not reach the one after it.
-                lever.send(json!({ "op": "stop", "thread": thread, "turn": turn }))?;
+                // With no turn watched, the turn of the request taken up here is the one stopped.
+                let stopped = turn.or_else(|| taken.as_ref().and_then(|r| r.get("turn")).and_then(Value::as_u64));
+                lever.send(json!({ "op": "stop", "thread": thread, "turn": stopped }))?;
                 continue;
             }
             Happening::EndOfInput => {
+                if asking.take().is_some() {
+                    eprintln!();
+                }
                 answer.end()?;
                 return Ok(None);
             }
@@ -342,7 +348,18 @@ fn watch(
             show_act(&mut answer, &event)?;
             continue;
         }
-        if ended.is_some() || event.get("turn").and_then(Value::as_u64) != turn {
+        // A turn that begins while only requests are watched, as one another
+        // client sends, is watched from its message on.
+        if turn.is_none() && text(&event, "event") == "message" {
+            answer.write(&format!("\n> {}\n", text(&event, "text")))?;
+            turn = event.get("turn").and_then(Value::as_u64);
+            continue;
+        }
+        if event.get("turn").and_then(Value::as_u64) != turn {
+            continue;
+        }
+        // After the turn ended, what the harness adds to it is still shown.
+        if ended.is_some() && !matches!(&*text(&event, "event"), "text" | "note") {
             continue;
         }
         let end = match &*text(&event, "event") {
@@ -454,11 +471,24 @@ fn resume(lever: &mut Connection, thread: &str) -> Result<Option<Resumed>> {
         } else {
             Ended::Done
         },
+        // Each with its turn, as Lever's events have it.
         waiting: turns
             .iter()
-            .flat_map(|turn| turn.get("requests").and_then(Value::as_array).into_iter().flatten())
+            .flat_map(|turn| {
+                let number = turn.get("turn").cloned();
+                turn.get("requests")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(move |request| {
+                        let mut request = request.clone();
+                        if let Some(number) = &number {
+                            request["turn"] = number.clone();
+                        }
+                        request
+                    })
+            })
             .filter(|request| text(request, "state") == "waiting")
-            .cloned()
             .collect(),
     }))
 }

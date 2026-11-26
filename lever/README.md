@@ -142,7 +142,8 @@ ACP today:
     (`edit`), and makes it OpenCode's `default_agent`. OpenCode puts an
     agent's own rules after every rule in the person's settings, and the last
     that matches wins, so Ask first carries the person's own rules for `bash`
-    and `edit`, and those for every action (`*`), again after its
+    and `edit`, and those for an action pattern that matches them (`*`,
+    `sh*`), again after its
     `"*": "ask"`, whether they wrote them in `permission` or in the list
     `permissions`: what they refuse stays refused,
     and what they allow by name stays allowed. A rule of theirs that allows
@@ -178,7 +179,10 @@ ACP today:
   the harness with every process under it, so no command the turn started goes
   on: each process is held still (`SIGSTOP`) and the tree read again until no
   process is new, then all are killed, those whose parent had ended too. What
-  started before this harness did is not its, and goes on. Every
+  started before this harness did is not its, and goes on. Lever tells them
+  apart by when each started, so a process that an earlier harness's left
+  running starts after this harness did, and whose own parent then ends, is
+  taken for this harness's and ended with it. Every
   other turn working on that harness is `interrupted`, or `stopped` if the
   person had asked to stop it, and its requests are withdrawn. A harness that
   ends by itself while a Stop waits on it is ended the same way, with every

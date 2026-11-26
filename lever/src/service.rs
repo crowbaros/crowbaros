@@ -340,10 +340,15 @@ impl Service {
         if unanswered && let Some(harness) = self.harness.take() {
             let pid = harness.pid();
             harness.kill_tree();
+            let name = self
+                .harness_config
+                .as_ref()
+                .map(|c| c.name.as_str())
+                .unwrap_or("harness");
             let _ = log.write(
                 Event::Harness,
                 &format!(
-                    "stopped the harness (process {pid}) and every process under it: it did not answer a change of mode"
+                    "stopped {name} (process {pid}) and every process under it: it did not answer a change of mode"
                 ),
             );
             effects.extend(self.after_harness_gone("The harness was stopped.", log));
@@ -1001,10 +1006,16 @@ impl Service {
             },
         };
 
-        match self.store.thread_meta(thread_id) {
-            Ok(None) => return error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
-            Err(err) => return error_outcome("storage-error", &err),
-            Ok(Some(_)) => {}
+        // A thread that works or waits is stopped whether or not the
+        // database can be read.
+        let live =
+            self.working_turns.contains_key(thread_id) || self.waiting.values().any(|w| w.thread_id == thread_id);
+        if !live {
+            match self.store.thread_meta(thread_id) {
+                Ok(None) => return error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
+                Err(err) => return error_outcome("storage-error", &err),
+                Ok(Some(_)) => {}
+            }
         }
 
         // Stop withdraws what the thread asks, whether or not a turn works:
@@ -1177,14 +1188,15 @@ impl Service {
         let Some(answer) = value.get("answer").and_then(Value::as_str) else {
             return error_outcome("invalid-request", "Expected a string answer field.");
         };
-        match self.store.thread_meta(thread_id) {
-            Ok(Some(_)) => {}
-            Ok(None) => return error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
-            Err(err) => return error_outcome("storage-error", &err),
-        }
+        // A request Lever holds is answered whether or not the database can
+        // be read; the record is asked only to say why one is not held.
         let no_request = || error_outcome("no-request", "That request no longer waits.");
         let Some(waiting) = self.waiting.get(request_id).filter(|w| w.thread_id == thread_id) else {
-            return no_request();
+            return match self.store.thread_meta(thread_id) {
+                Ok(Some(_)) => no_request(),
+                Ok(None) => error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
+                Err(err) => error_outcome("storage-error", &err),
+            };
         };
         let handle = waiting.handle;
         let offered = waiting.record.answers.iter().any(|(a, _)| a == answer);

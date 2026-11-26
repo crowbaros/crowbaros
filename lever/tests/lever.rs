@@ -4765,3 +4765,42 @@ fn how_a_request_ends_is_told_though_the_database_can_be_neither_read_nor_writte
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn a_request_lever_holds_is_answered_and_a_working_thread_stopped_though_its_record_cannot_be_read() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = ask_script(&dir.0);
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, _) = send(&mut peer, None, "please run it");
+    let request = read_until(&mut peer, |f| f["event"] == "request");
+
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    db.busy_timeout(Duration::from_secs(5)).unwrap();
+    db.execute_batch("ALTER TABLE threads RENAME TO threads_away").unwrap();
+    assert_eq!(
+        ask_lever(
+            &mut peer,
+            json!({ "op": "answer", "thread": thread, "request": request["request"], "answer": "once" })
+        ),
+        json!({ "reply": "ok" })
+    );
+    read_until(&mut peer, |f| f["event"] == "request" && f["state"] == "answered");
+    db.execute_batch("ALTER TABLE threads_away RENAME TO threads").unwrap();
+    read_until(&mut peer, |f| f["event"] == "done" || f["event"] == "failed");
+
+    send(&mut peer, Some(&thread), "please stall");
+    read_until(&mut peer, |f| f["event"] == "text");
+    db.execute_batch("ALTER TABLE threads RENAME TO threads_away").unwrap();
+    assert_eq!(
+        ask_lever(&mut peer, json!({ "op": "stop", "thread": thread })),
+        json!({ "reply": "ok" })
+    );
+    read_until(&mut peer, |f| f["event"] == "stopped");
+    db.execute_batch("ALTER TABLE threads_away RENAME TO threads").unwrap();
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}

@@ -59,7 +59,9 @@ pub fn person_settings(env: &[(String, String)], content: Option<&str>) -> Vec<V
 /// of action, resource, and effect). A rule of the person's that allows
 /// everything is the one Ask first takes the place of, and asks.
 fn rules_for(documents: &[Value], actions: &[&str]) -> Value {
-    let named = |name: &str| name == "*" || actions.contains(&name);
+    // An action is matched as OpenCode matches it: `*` is any run of
+    // characters and `?` any one.
+    let named = |name: &str| actions.iter().any(|action| matches_wildcard(action, name));
     let mut rules: Vec<(String, String)> = Vec::new();
     for document in documents {
         match document.get("permission") {
@@ -113,6 +115,31 @@ fn rules_for(documents: &[Value], actions: &[&str]) -> Value {
         out.insert(pattern, Value::from(effect));
     }
     Value::Object(out)
+}
+
+/// Whether `input` matches `pattern`, in which `*` stands for any run of
+/// characters and `?` for any one character, and nothing else is special.
+fn matches_wildcard(input: &str, pattern: &str) -> bool {
+    let (text, pat): (Vec<char>, Vec<char>) = (input.chars().collect(), pattern.chars().collect());
+    // The last `*` seen, and where in the input it began to match.
+    let (mut t, mut p, mut star, mut from) = (0, 0, None, 0);
+    while t < text.len() {
+        if p < pat.len() && (pat[p] == '?' || pat[p] == text[t]) {
+            t += 1;
+            p += 1;
+        } else if p < pat.len() && pat[p] == '*' {
+            star = Some(p);
+            from = t;
+            p += 1;
+        } else if let Some(at) = star {
+            p = at + 1;
+            from += 1;
+            t = from;
+        } else {
+            return false;
+        }
+    }
+    pat[p..].iter().all(|c| *c == '*')
 }
 
 /// The Ask first agent's `permission`: it asks before a command or an edit,
@@ -287,6 +314,20 @@ mod tests {
             ask_first_permission(&[listed]),
             json!({ "bash": { "*": "ask", "rm *": "deny" }, "edit": { "*": "ask", "secret/**": "deny" } })
         );
+
+        // An action is a pattern, as OpenCode has it.
+        let patterned = json!({
+            "permission": { "sh*": { "rm *": "deny" } },
+            "permissions": [{ "action": "ed?t", "resource": "secret/**", "effect": "deny" }]
+        });
+        assert_eq!(
+            ask_first_permission(&[patterned]),
+            json!({ "bash": { "*": "ask", "rm *": "deny" }, "edit": { "*": "ask", "secret/**": "deny" } })
+        );
+        assert!(matches_wildcard("shell", "*"));
+        assert!(matches_wildcard("shell", "s*l"));
+        assert!(!matches_wildcard("shell", "sh"));
+        assert!(!matches_wildcard("bash", "edit"));
 
         // Later settings come after earlier ones, a pattern given again where
         // it was given last, and `shell` is `bash` by its newer name.
