@@ -329,21 +329,49 @@ pub fn reap_orphans(keep: Option<u32>) {
     }
 }
 
-/// Ends every process under Lever at once: each is held still first, and the
-/// tree read again until no process is new, so none starts another while
-/// the others end. Lever is their subreaper, so one whose parent ended is
-/// under Lever still.
-pub fn kill_all_under_lever() {
+/// A process's state letter from `/proc`, or `None` when it is gone.
+fn process_state(pid: u32) -> Option<char> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    stat.rfind(')')
+        .and_then(|at| stat[at + 1..].trim_start().chars().next())
+}
+
+/// Every process under Lever that has not ended.
+pub fn live_under_lever() -> Vec<u32> {
     // SAFETY: `getpid` cannot fail.
     let me = unsafe { libc::getpid() } as u32;
+    descendants(me)
+        .into_iter()
+        .filter(|&pid| !matches!(process_state(pid), None | Some('Z' | 'X')))
+        .collect()
+}
+
+/// Ends every process under Lever at once: each is held still first, and the
+/// tree read again once each held process has stopped, until no process is
+/// new, so none starts another while the others end. Lever is their
+/// subreaper, so one whose parent ended is under Lever still.
+pub fn kill_all_under_lever() {
     let mut held: Vec<u32> = Vec::new();
     for _ in 0..100 {
-        let new: Vec<u32> = descendants(me).into_iter().filter(|pid| !held.contains(pid)).collect();
+        let new: Vec<u32> = live_under_lever()
+            .into_iter()
+            .filter(|pid| !held.contains(pid))
+            .collect();
         if new.is_empty() {
             break;
         }
         for &pid in &new {
             signal_pid(pid, libc::SIGSTOP);
+        }
+        // A process stops when the signal reaches it, not when it is sent:
+        // one in the middle of a fork finishes it first.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        while new
+            .iter()
+            .any(|&pid| matches!(process_state(pid), Some(state) if !matches!(state, 'T' | 't' | 'Z' | 'X')))
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
         held.extend(new);
     }

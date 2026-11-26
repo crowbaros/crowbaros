@@ -159,7 +159,9 @@ pub struct Service {
     /// Threads whose turn was stopped while the harness set the session's
     /// mode. Each stays working until the harness answers, so no turn after
     /// it runs in a mode it did not ask for.
-    modes_in_flight: Vec<String>,
+    /// When Lever stopped each turn, so a harness that never answers is
+    /// ended after `stop_timeout`, as one that ignores a Stop is.
+    modes_in_flight: Vec<(String, Instant)>,
     /// Ends the database did not take, tried again on each wake.
     unsaved_endings: Vec<Ending>,
     /// Ends of requests the database did not take, tried again on each wake.
@@ -219,7 +221,7 @@ impl Service {
     fn thread_busy(&self, thread_id: &str) -> bool {
         self.working_turns.contains_key(thread_id)
             || self.pending_set_models.iter().any(|p| p.thread_id == thread_id)
-            || self.modes_in_flight.iter().any(|t| t == thread_id)
+            || self.modes_in_flight.iter().any(|(t, _)| t == thread_id)
     }
 
     fn default_mode(&self) -> String {
@@ -290,6 +292,7 @@ impl Service {
             .working_turns
             .values()
             .filter_map(|t| t.stop_asked)
+            .chain(self.modes_in_flight.iter().map(|(_, asked)| *asked))
             .map(|asked| self.stop_timeout.saturating_sub(asked.elapsed()))
             .min();
         match [self.idle_remaining(), retry, stop].into_iter().flatten().min() {
@@ -324,6 +327,23 @@ impl Service {
             .map(|(tid, t)| (tid.clone(), t.turn));
         if let Some((thread_id, turn)) = overdue {
             effects.extend(self.force_stop(&thread_id, turn, log));
+        }
+        // A harness that has not answered a mode change of a stopped turn's
+        // in that time is ended too: until it answers, the thread is held.
+        let unanswered = self
+            .modes_in_flight
+            .iter()
+            .any(|(_, asked)| asked.elapsed() >= self.stop_timeout);
+        if unanswered && let Some(harness) = self.harness.take() {
+            let pid = harness.pid();
+            harness.kill_tree();
+            let _ = log.write(
+                Event::Harness,
+                &format!(
+                    "stopped the harness (process {pid}) and every process under it: it did not answer a change of mode"
+                ),
+            );
+            effects.extend(self.after_harness_gone("The harness was stopped.", log));
         }
         if self.harness_env_stale && !self.has_active_work() {
             self.stop_harness("after free hosted Models setting changed", log);
@@ -1027,7 +1047,7 @@ impl Service {
                 // so the next turn knows which mode the session is in.
                 let turn = active.turn;
                 self.working_turns.remove(thread_id);
-                self.modes_in_flight.push(thread_id.to_string());
+                self.modes_in_flight.push((thread_id.to_string(), Instant::now()));
                 self.end_turn(thread_id, turn, "stopped", None, log);
                 self.refresh_idle_timer();
                 vec![Broadcast {
@@ -1712,7 +1732,7 @@ impl Service {
                 {
                     self.continue_turn(&thread_id);
                 } else {
-                    self.modes_in_flight.retain(|t| *t != thread_id);
+                    self.modes_in_flight.retain(|(t, _)| *t != thread_id);
                 }
                 Effects::default()
             }
@@ -1721,7 +1741,7 @@ impl Service {
                 turn,
                 message,
             } => {
-                self.modes_in_flight.retain(|t| *t != thread_id);
+                self.modes_in_flight.retain(|(t, _)| *t != thread_id);
                 Effects {
                     broadcasts: self.fail_turn(&thread_id, turn, &message, log),
                     replies: Vec::new(),
@@ -2028,7 +2048,13 @@ impl Service {
         if let Some(harness) = self.harness.take() {
             let pid = harness.pid();
             let fault = harness.fault();
-            harness.stop();
+            // A turn the person asked to stop ends with everything it
+            // started, though the harness ended before it said so.
+            if self.working_turns.values().any(|t| t.stop_asked.is_some()) {
+                harness.kill_tree();
+            } else {
+                harness.stop();
+            }
             let name = self
                 .harness_config
                 .as_ref()

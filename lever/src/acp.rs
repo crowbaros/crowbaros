@@ -687,12 +687,16 @@ impl AcpHarness {
         sys::kill_all_under_lever();
         let _ = self.child.kill();
         let _ = self.child.wait();
-        // What it left behind ended too, and is Lever's to wait for.
+        // What it left behind ended too, and is Lever's to wait for. One
+        // that is still there is ended again.
         let deadline = Instant::now() + Duration::from_secs(1);
         loop {
             sys::reap_orphans(None);
             if sys::descendants(std::process::id()).is_empty() || Instant::now() >= deadline {
                 break;
+            }
+            if !sys::live_under_lever().is_empty() {
+                sys::kill_all_under_lever();
             }
             std::thread::sleep(Duration::from_millis(5));
         }

@@ -141,7 +141,9 @@ ACP today:
     (`edit`), and makes it OpenCode's `default_agent`. OpenCode puts an
     agent's own rules after every rule in the person's settings, and the last
     that matches wins, so Ask first carries the person's own rules for `bash`
-    and `edit` again after its `"*": "ask"`: what they refuse stays refused,
+    and `edit`, and those for every action (`*`), again after its
+    `"*": "ask"`, whether they wrote them in `permission` or in the list
+    `permissions`: what they refuse stays refused,
     and what they allow by name stays allowed. A rule of theirs that allows
     every command or edit is the one Ask first takes the place of. Lever reads
     them where OpenCode reads them for every directory, in its order:
@@ -163,7 +165,9 @@ ACP today:
   Before each turn, Lever sets the session's mode to the thread's, with
   `session/set_config_option`, and a turn whose mode the harness refuses
   fails. A turn stopped while its mode is set leaves the thread working until
-  the harness answers, so the next turn knows the session's mode. When the
+  the harness answers, so the next turn knows the session's mode. A harness
+  that has not answered by `--stop-timeout-ms` is stopped with every process
+  under it, and its other turns are interrupted. When the
   harness changes a session's mode itself while a turn's prompt runs, or
   between turns, the thread takes the new mode: OpenCode leaving Plan goes to
   `build`, so the thread is then in Full access.
@@ -174,8 +178,9 @@ ACP today:
   on: each process is held still (`SIGSTOP`) and the tree read again until no
   process is new, then all are killed, those whose parent had ended too. Every
   other turn working on that harness is `interrupted`, or `stopped` if the
-  person had asked to stop it, and its requests are withdrawn. The next
-  message starts the harness again.
+  person had asked to stop it, and its requests are withdrawn. A harness that
+  ends by itself while a Stop waits on it is ended the same way, with every
+  process under it. The next message starts the harness again.
 - **Lever reads at most 256 KiB from the harness each time it wakes**, so a
   harness that never stops writing holds back neither Lever's peers nor a stop
   signal. A harness that writes more than 16 MiB with no line end is stopped,

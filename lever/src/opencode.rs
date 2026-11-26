@@ -52,35 +52,44 @@ pub fn person_settings(env: &[(String, String)], content: Option<&str>) -> Vec<V
 }
 
 /// Ask first's rules for one of OpenCode's permissions: ask before all,
-/// then the person's own rules for it, in their order. A rule of theirs that
-/// allows everything is the one Ask first takes the place of, and asks.
-fn rules_for(documents: &[Value], keys: &[&str]) -> Value {
+/// then the person's own rules for it, in their order. `actions` are the
+/// permission's names, and a rule for every action (`*`) is one for it too.
+/// Settings give rules as `permission` (a rule for everything, or a rule or
+/// rules by pattern for each action by its name) or as `permissions` (a list
+/// of action, resource, and effect). A rule of the person's that allows
+/// everything is the one Ask first takes the place of, and asks.
+fn rules_for(documents: &[Value], actions: &[&str]) -> Value {
+    let named = |name: &str| name == "*" || actions.contains(&name);
     let mut rules: Vec<(String, String)> = Vec::new();
     for document in documents {
-        let Some(permission) = document.get("permission") else {
-            continue;
-        };
-        // `permission` is one rule for everything, or a rule or rules for
-        // each permission by its name.
-        if let Some(all) = permission.as_str() {
-            rules.push(("*".to_string(), all.to_string()));
-            continue;
-        }
-        let Some(by_name) = permission.as_object() else {
-            continue;
-        };
-        for (name, rule) in by_name {
-            if !keys.contains(&name.as_str()) {
-                continue;
+        match document.get("permission") {
+            Some(Value::String(all)) => rules.push(("*".to_string(), all.clone())),
+            Some(Value::Object(by_name)) => {
+                for (_, rule) in by_name.iter().filter(|(name, _)| named(name)) {
+                    match rule {
+                        Value::String(effect) => rules.push(("*".to_string(), effect.clone())),
+                        Value::Object(patterns) => rules.extend(
+                            patterns
+                                .iter()
+                                .filter_map(|(pattern, effect)| Some((pattern.clone(), effect.as_str()?.to_string()))),
+                        ),
+                        _ => {}
+                    }
+                }
             }
-            match rule {
-                Value::String(effect) => rules.push(("*".to_string(), effect.clone())),
-                Value::Object(patterns) => rules.extend(
-                    patterns
-                        .iter()
-                        .filter_map(|(pattern, effect)| Some((pattern.clone(), effect.as_str()?.to_string()))),
-                ),
-                _ => {}
+            _ => {}
+        }
+        for rule in document
+            .get("permissions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let field = |key: &str| rule.get(key).and_then(Value::as_str);
+            if let (Some(action), Some(effect)) = (field("action"), field("effect"))
+                && named(action)
+            {
+                rules.push((field("resource").unwrap_or("*").to_string(), effect.to_string()));
             }
         }
     }
@@ -122,16 +131,21 @@ pub fn parse_jsonc(text: &str) -> Option<Value> {
     value.is_object().then_some(value)
 }
 
-/// JSON with its comments taken out, and any comma before a closing bracket.
+/// JSON with its comments taken out, then any comma before a closing
+/// bracket: a comment may come between the two.
 fn strip_jsonc(text: &str) -> String {
+    without_trailing_commas(&without_comments(text))
+}
+
+/// Calls `outside` for each character outside a string, and passes each one
+/// inside a string, quotes and escapes too, to `out` as it is.
+fn each_outside_strings(text: &str, mut outside: impl FnMut(&[char], &mut usize, &mut String)) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
     while i < chars.len() {
-        let c = chars[i];
-        if c == '"' {
-            // A string goes through as it is, escapes and all.
-            out.push(c);
+        if chars[i] == '"' {
+            out.push('"');
             i += 1;
             while i < chars.len() {
                 out.push(chars[i]);
@@ -145,28 +159,43 @@ fn strip_jsonc(text: &str) -> String {
                     break;
                 }
             }
-        } else if c == '/' && chars.get(i + 1) == Some(&'/') {
-            while i < chars.len() && chars[i] != '\n' {
-                i += 1;
-            }
-        } else if c == '/' && chars.get(i + 1) == Some(&'*') {
-            i += 2;
-            while i < chars.len() && !(chars[i] == '*' && chars.get(i + 1) == Some(&'/')) {
-                i += 1;
-            }
-            i += 2;
-        } else if c == ',' {
-            let next = chars[i + 1..].iter().find(|c| !c.is_whitespace());
-            if !matches!(next, Some('}' | ']')) {
-                out.push(c);
-            }
-            i += 1;
         } else {
-            out.push(c);
-            i += 1;
+            outside(&chars, &mut i, &mut out);
         }
     }
     out
+}
+
+/// The text with its `//` and `/* */` comments taken out.
+fn without_comments(text: &str) -> String {
+    each_outside_strings(text, |chars, i, out| {
+        if chars[*i] == '/' && chars.get(*i + 1) == Some(&'/') {
+            while *i < chars.len() && chars[*i] != '\n' {
+                *i += 1;
+            }
+        } else if chars[*i] == '/' && chars.get(*i + 1) == Some(&'*') {
+            *i += 2;
+            while *i < chars.len() && !(chars[*i] == '*' && chars.get(*i + 1) == Some(&'/')) {
+                *i += 1;
+            }
+            *i += 2;
+            out.push(' ');
+        } else {
+            out.push(chars[*i]);
+            *i += 1;
+        }
+    })
+}
+
+/// The text with no comma just before a closing bracket.
+fn without_trailing_commas(text: &str) -> String {
+    each_outside_strings(text, |chars, i, out| {
+        let closes = chars[*i] == ',' && matches!(chars[*i + 1..].iter().find(|c| !c.is_whitespace()), Some('}' | ']'));
+        if !closes {
+            out.push(chars[*i]);
+        }
+        *i += 1;
+    })
 }
 
 #[cfg(test)]
@@ -190,6 +219,13 @@ mod tests {
                 "quote": "a \" // not a comment",
             }))
         );
+        // A comment after a trailing comma, or in place of the last entry.
+        let commented = "{ \"permission\": { \"bash\": {\n  \"rm *\": \"deny\", // keep\n  // \"ls\": \"allow\"\n} } }";
+        assert_eq!(
+            parse_jsonc(commented),
+            Some(json!({ "permission": { "bash": { "rm *": "deny" } } }))
+        );
+        assert_eq!(parse_jsonc("{\"a\": [1, /* two */],}"), Some(json!({ "a": [1] })));
         assert_eq!(parse_jsonc("[1, 2]"), None);
         assert_eq!(parse_jsonc("not json"), None);
     }
@@ -234,6 +270,23 @@ mod tests {
             ]
         );
         assert_eq!(permission["edit"], json!({ "*": "deny" }));
+
+        // A rule for every action is one for commands and edits too, where
+        // the person put it, and the newer list of rules is read as well.
+        let every = json!({ "permission": { "*": "deny", "read": "allow", "bash": { "git status": "allow" } } });
+        assert_eq!(
+            ask_first_permission(&[every]),
+            json!({ "bash": { "*": "deny", "git status": "allow" }, "edit": { "*": "deny" } })
+        );
+        let listed = json!({ "permissions": [
+            { "action": "shell", "resource": "rm *", "effect": "deny" },
+            { "action": "edit", "resource": "secret/**", "effect": "deny" },
+            { "action": "read", "resource": "*", "effect": "deny" }
+        ] });
+        assert_eq!(
+            ask_first_permission(&[listed]),
+            json!({ "bash": { "*": "ask", "rm *": "deny" }, "edit": { "*": "ask", "secret/**": "deny" } })
+        );
 
         // Later settings come after earlier ones, a pattern given again where
         // it was given last, and `shell` is `bash` by its newer name.

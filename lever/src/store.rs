@@ -885,6 +885,11 @@ impl Store {
 
     /// Keeps a request that waits for the person, and gives it Lever's ID.
     pub fn insert_request(&self, request: &NewRequest<'_>, now: i64) -> Result<RequestRecord, String> {
+        // All of it, or none: a request the record holds is one Lever holds.
+        let all = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| format!("could not keep a request: {e}"))?;
         let seq: i64 = self
             .conn
             .query_row(
@@ -914,6 +919,7 @@ impl Store {
             )
             .map_err(|e| format!("could not insert request: {e}"))?;
         self.touch_thread(request.thread_id, now)?;
+        all.commit().map_err(|e| format!("could not keep a request: {e}"))?;
         Ok(RequestRecord {
             id,
             act: request.act.map(str::to_string),
@@ -1215,6 +1221,30 @@ mod tests {
         let rec = store.get_thread("t-v4").unwrap().unwrap();
         assert_eq!(rec.turns[1].mode.as_deref(), Some("plan"));
         assert_eq!(rec.turns[1].requests[0].state, "answered");
+
+        // A request the database takes only part of is not kept at all.
+        store
+            .conn
+            .execute_batch("CREATE TRIGGER refused BEFORE UPDATE ON threads BEGIN SELECT RAISE(ABORT, 'refused'); END")
+            .unwrap();
+        let partial = NewRequest {
+            thread_id: "t-v4",
+            turn_number: turn,
+            act: None,
+            kind: "command",
+            title: "rm",
+            detail: Some("rm"),
+            path: None,
+            answers: &answers,
+        };
+        assert!(store.insert_request(&partial, 7).is_err());
+        store.conn.execute_batch("DROP TRIGGER refused").unwrap();
+        let rec = store.get_thread("t-v4").unwrap().unwrap();
+        assert_eq!(
+            rec.turns[1].requests.len(),
+            1,
+            "no request is left that nobody can answer"
+        );
         store.close().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }

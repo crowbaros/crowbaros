@@ -155,6 +155,10 @@ struct TurnScript {
     /// `stall` holds it open for ever.
     #[serde(default)]
     ignore_cancel: bool,
+    /// If true, the stub ends at once when the turn is cancelled, with
+    /// nothing answered, and leaves what it started running.
+    #[serde(default)]
+    exit_on_cancel: bool,
 }
 
 fn default_stop_reason() -> String {
@@ -475,6 +479,7 @@ impl ScriptPicker {
             after: Vec::new(),
             crash: false,
             ignore_cancel: false,
+            exit_on_cancel: false,
         }
     }
 }
@@ -1264,6 +1269,9 @@ fn run(options: Options) -> Result<(), String> {
                 if !was_cancelled && turn_script.stall {
                     heard.wait_cancelled();
                     was_cancelled = true;
+                }
+                if was_cancelled && turn_script.exit_on_cancel {
+                    std::process::exit(0);
                 }
                 active_cancels.lock().unwrap().remove(&sid_key);
 

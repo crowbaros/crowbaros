@@ -4584,3 +4584,86 @@ fn turns_the_person_asked_to_stop_end_as_stopped_when_the_harness_is_ended() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn a_harness_that_ends_when_told_to_stop_leaves_nothing_of_the_turn_running() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let detached_file = dir.0.join("detached.pid");
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [{
+                "steps": [
+                    { "kind": "spawn", "pid_file": detached_file.to_str().unwrap(), "detach": true },
+                    { "kind": "text", "text": "Working" }
+                ],
+                "stall": true,
+                "exit_on_cancel": true
+            }]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, _) = send(&mut peer, None, "hello");
+    read_until(&mut peer, |f| f["event"] == "text");
+    let detached: u32 = std::fs::read_to_string(&detached_file).unwrap().trim().parse().unwrap();
+    assert!(alive(detached), "the command it left behind runs");
+
+    // The harness ends on the Stop, before it ends the turn.
+    ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }));
+    let end = read_until(&mut peer, |f| {
+        ["stopped", "interrupted"].contains(&f["event"].as_str().unwrap_or(""))
+    });
+    assert_eq!(end["event"], "stopped");
+    wait_until("the turn's command ends", || !alive(detached));
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_harness_that_never_answers_a_stopped_turns_mode_is_ended_and_the_thread_is_free() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "set_config_delay_ms": 60000,
+            "turns": [{ "steps": [{ "kind": "text", "text": "Hello." }] }]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &["--stop-timeout-ms", "500"]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, _) = send(&mut peer, None, "hello");
+    read_until(&mut peer, |f| f["event"] == "done");
+    ask_lever(
+        &mut peer,
+        json!({ "op": "set-mode", "thread": thread, "mode": "full-access" }),
+    );
+    send(&mut peer, Some(&thread), "hello again");
+    wait_until("Lever asks for Full access", || stub_modes_set(&stub_log) == ["build"]);
+    ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }));
+    read_until(&mut peer, |f| f["event"] == "stopped");
+
+    // The harness never answers: after the Stop's deadline it is ended, and
+    // the thread takes a mode again.
+    wait_until("the thread is free", || {
+        ask_lever(
+            &mut peer,
+            json!({ "op": "set-mode", "thread": thread, "mode": "full-access" }),
+        )["reply"]
+            == "mode-set"
+    });
+    assert!(
+        lever.log_text().contains("did not answer a change of mode"),
+        "{}",
+        lever.log_text()
+    );
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
