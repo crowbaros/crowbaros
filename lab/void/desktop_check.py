@@ -975,6 +975,9 @@ finally:
                 },
                 {
                     'match': 'subagent-child-read',
+                    # The subagent asks only once its parent's turn is done,
+                    # so the check sees a subagent outlive its turn and ask.
+                    'hold_until': f'{tmp}/subagent-parent-done',
                     'tool_call': {
                         'name': 'read',
                         'arguments': {
@@ -1948,6 +1951,16 @@ finally:
                       lambda: not self.agent_view()['state']['list_view'] and self.agent_view()['state']['thread'] is None)
             self.type('please subagent-check')
             self.key('ret')
+            self.wait(
+                'subagent outlives its turn',
+                lambda: (v := self.agent_view())
+                and len(v['state']['turns']) >= 1
+                and v['state']['turns'][0]['state']['kind'] == 'done'
+                and bool(v['state']['turns'][0].get('subagents'))
+                and v['state']['turns'][0]['subagents'][0]['state']['kind'] == 'working',
+                timeout=60,
+            )
+            self.run(f'touch {tmp}/subagent-parent-done')
             sub_waiting = self.wait(
                 'subagent outlives its turn and raises a request in the thread',
                 lambda: (v := self.agent_view())

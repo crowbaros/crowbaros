@@ -33,6 +33,10 @@ const ACTIVITY: &str = "*activity";
 const STARTING_MODES: [&str; 2] = ["ask-first", "full-access"];
 
 /// How long Lever waits before it tries again to save how a turn ended.
+/// Why a subagent the harness took up again after it restarted is shown as
+/// failed, though it may go on.
+const UNFOLLOWED_MESSAGE: &str = "The Agent took up this subagent again after its harness restarted. The harness \
+     does not pass on what it does or asks now, so it cannot be followed here.";
 const UNSAVED_RETRY: Duration = Duration::from_millis(250);
 /// What a turn failed with when the harness finished it and Lever's database
 /// did not take all of it.
@@ -144,6 +148,16 @@ struct RequestEnd {
     answer: Option<String>,
 }
 
+/// A mode the person set between turns, sent to the thread's live session:
+/// it is the thread's once the session takes it, so a turn the harness begins
+/// meanwhile runs, and is recorded, in the mode the session is in.
+struct PendingSetMode {
+    /// Peer waiting for the reply, or `None` if it went away.
+    peer_id: Option<u64>,
+    thread_id: String,
+    mode: String,
+}
+
 struct PendingSetModel {
     /// Peer waiting for the reply, or `None` if that peer disconnected while
     /// `session/set_config_option` was already in flight on the harness.
@@ -218,6 +232,9 @@ pub struct Service {
     /// next message: a turn the harness begins on one is stopped as it
     /// begins, as what reports to it was.
     held_stops: HashSet<String>,
+    /// The harness session IDs of the subagents heard of since the harness
+    /// last started.
+    harness_children: HashSet<String>,
     /// Subagents currently working, keyed by Lever's `sub-...` ID.
     working_subagents: HashMap<String, WorkingSubagent>,
     /// Requests that wait, by Lever's request ID.
@@ -226,6 +243,7 @@ pub struct Service {
     activity: (Vec<String>, Vec<String>),
     pending_models: Vec<u64>,
     pending_set_models: Vec<PendingSetModel>,
+    pending_set_modes: Vec<PendingSetMode>,
     /// The effort levels of each Model, as the harness now running said them.
     /// A Model with none has an empty list.
     efforts: HashMap<String, Vec<EffortOption>>,
@@ -283,11 +301,13 @@ impl Service {
             working_turns: HashMap::new(),
             subagent_threads: HashSet::new(),
             held_stops: HashSet::new(),
+            harness_children: HashSet::new(),
             working_subagents: HashMap::new(),
             waiting: HashMap::new(),
             activity: (Vec::new(), Vec::new()),
             pending_models: Vec::new(),
             pending_set_models: Vec::new(),
+            pending_set_modes: Vec::new(),
             efforts: HashMap::new(),
             pending_efforts: Vec::new(),
             commands: None,
@@ -724,6 +744,11 @@ impl Service {
     /// An in-flight `session/set_config_option` RPC keeps its thread locked
     /// until the harness answers, with `peer_id` cleared so no reply is sent.
     pub fn on_peer_gone(&mut self, peer_id: u64) {
+        for pending in &mut self.pending_set_modes {
+            if pending.peer_id == Some(peer_id) {
+                pending.peer_id = None;
+            }
+        }
         self.pending_models.retain(|&id| id != peer_id);
         self.pending_efforts.retain(|(id, _)| *id != peer_id);
         self.pending_set_models.retain_mut(|p| {
@@ -756,7 +781,7 @@ impl Service {
 
         match op {
             "answer" => self.handle_answer(value, log),
-            "set-mode" => self.handle_set_mode(value, log),
+            "set-mode" => self.handle_set_mode(peer_id, value, log),
             "set-default-mode" => self.handle_set_default_mode(value, log),
             "watch" => {
                 let (working, waiting) = self.current_activity();
@@ -1982,7 +2007,7 @@ impl Service {
         Ok(())
     }
 
-    fn handle_set_mode(&mut self, value: &Value, log: &mut Log) -> RequestOutcome {
+    fn handle_set_mode(&mut self, peer_id: u64, value: &Value, log: &mut Log) -> RequestOutcome {
         let Some(thread_id) = value.get("thread").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
             return error_outcome("invalid-request", "Expected a non-empty string thread field.");
         };
@@ -2002,6 +2027,58 @@ impl Service {
             Ok(None) => return error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
             Err(err) => return error_outcome("storage-error", &err),
         }
+        // A thread whose session is live may have work going on in it, a
+        // subagent's or a turn the harness begins: the session takes the mode
+        // first, and the thread has it once the session does.
+        if let Some(harness) = self.harness.as_mut()
+            && harness.has_modes()
+            && let Some(session_id) = harness.session_for_thread(thread_id).map(str::to_string)
+            && harness.session_current_mode(&session_id) != Some(mode)
+        {
+            harness.set_session_mode(thread_id, None, &session_id, mode);
+            self.modes_in_flight.push((thread_id.to_string(), Instant::now()));
+            self.pending_set_modes.push(PendingSetMode {
+                peer_id: Some(peer_id),
+                thread_id: thread_id.to_string(),
+                mode: mode.to_string(),
+            });
+            return RequestOutcome {
+                reply: None,
+                subscribe: None,
+                broadcasts: Vec::new(),
+            };
+        }
+        self.save_mode(thread_id, mode, log)
+    }
+
+    /// Ends a mode change the person asked between turns, once the session
+    /// has taken it, or with `failed` when it has not.
+    fn finish_set_mode(&mut self, thread_id: &str, failed: Option<&str>, log: &mut Log) -> Effects {
+        let Some(pos) = self.pending_set_modes.iter().position(|p| p.thread_id == thread_id) else {
+            return Effects::default();
+        };
+        let item = self.pending_set_modes.remove(pos);
+        let outcome = match failed {
+            Some(message) => error_outcome("harness-error", message),
+            None => self.save_mode(thread_id, &item.mode, log),
+        };
+        Effects {
+            broadcasts: outcome.broadcasts,
+            replies: item
+                .peer_id
+                .zip(outcome.reply)
+                .map(|(peer_id, message)| PeerReply {
+                    peer_id,
+                    message,
+                    subscribe: None,
+                })
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    /// Makes `mode` the thread's in the record, and tells who watches it.
+    fn save_mode(&mut self, thread_id: &str, mode: &str, log: &mut Log) -> RequestOutcome {
         if let Err(err) = self.store.set_thread_mode(thread_id, mode, unix_now()) {
             store_failed(log, &err);
             return error_outcome("storage-error", &err);
@@ -2183,6 +2260,7 @@ impl Service {
         self.idle_since = None;
         self.subagent_threads.clear();
         self.held_stops.clear();
+        self.harness_children.clear();
     }
 
     fn dispatch_turn(&mut self, thread_id: &str) {
@@ -2246,7 +2324,7 @@ impl Service {
             return;
         }
         if harness.has_modes() && harness.session_current_mode(&session_id) != Some(active.mode.as_str()) {
-            harness.set_session_mode(thread_id, active.turn, &session_id, &active.mode);
+            harness.set_session_mode(thread_id, Some(active.turn), &session_id, &active.mode);
             active.dispatch = TurnDispatch::WaitingForMode;
         } else {
             self.pending_effort_threads.remove(thread_id);
@@ -2665,14 +2743,18 @@ impl Service {
                 effects
             }
             AcpEvent::ModeSet { thread_id, turn } => {
-                if self
-                    .working_turns
-                    .get(&thread_id)
-                    .is_some_and(|a| a.turn == turn && matches!(a.dispatch, TurnDispatch::WaitingForMode))
+                if turn.is_some()
+                    && self
+                        .working_turns
+                        .get(&thread_id)
+                        .is_some_and(|a| Some(a.turn) == turn && matches!(a.dispatch, TurnDispatch::WaitingForMode))
                 {
                     self.continue_turn(&thread_id);
-                } else {
-                    self.modes_in_flight.retain(|(t, _)| *t != thread_id);
+                    return Effects::default();
+                }
+                self.modes_in_flight.retain(|(t, _)| *t != thread_id);
+                if turn.is_none() {
+                    return self.finish_set_mode(&thread_id, None, log);
                 }
                 Effects::default()
             }
@@ -2682,9 +2764,12 @@ impl Service {
                 message,
             } => {
                 self.modes_in_flight.retain(|(t, _)| *t != thread_id);
-                Effects {
-                    broadcasts: self.fail_turn(&thread_id, turn, &message, log),
-                    replies: Vec::new(),
+                match turn {
+                    Some(turn) => Effects {
+                        broadcasts: self.fail_turn(&thread_id, turn, &message, log),
+                        replies: Vec::new(),
+                    },
+                    None => self.finish_set_mode(&thread_id, Some(&message), log),
                 }
             }
             AcpEvent::EffortSet { thread_id, turn } => {
@@ -2823,12 +2908,14 @@ impl Service {
                 title,
                 state,
                 error,
+                from_launcher,
             } => self.handle_subagent_updated(
                 &thread_id,
                 &harness_subagent_id,
                 title.as_deref(),
                 state.as_deref(),
                 error.as_deref(),
+                from_launcher,
                 log,
             ),
             AcpEvent::SubagentMessage {
@@ -3100,6 +3187,15 @@ impl Service {
                 });
             }
         }
+        for item in self.pending_set_modes.drain(..) {
+            if let Some(peer_id) = item.peer_id {
+                replies.push(PeerReply {
+                    peer_id,
+                    message: error_json("harness-error", message),
+                    subscribe: None,
+                });
+            }
+        }
         for (peer_id, _) in self.pending_efforts.drain(..) {
             replies.push(PeerReply {
                 peer_id,
@@ -3191,6 +3287,7 @@ impl Service {
             return None;
         }
         let turn = self.turn_for_subagent(thread_id, harness_subagent_id)?;
+        self.harness_children.insert(harness_subagent_id.to_string());
         let patch = SubagentPatch {
             thread_id,
             turn_number: turn,
@@ -3222,6 +3319,7 @@ impl Service {
         Some((recorded_turn, record))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_subagent_updated(
         &mut self,
         thread_id: &str,
@@ -3229,11 +3327,29 @@ impl Service {
         title: Option<&str>,
         state: Option<&str>,
         error: Option<&str>,
+        from_launcher: bool,
         log: &mut Log,
     ) -> Effects {
         if self.deleting(thread_id) {
             return Effects::default();
         }
+        // What the record said before, so an update that changes nothing,
+        // as a harness that says a subagent ended twice sends, says nothing.
+        let before = self
+            .store
+            .subagent_summary(thread_id, harness_subagent_id)
+            .ok()
+            .flatten();
+        // OpenCode follows a subagent it saw begin. One from before the
+        // harness last started, that the thread's session takes up again, is
+        // named by its launcher alone: nothing it does or asks comes to
+        // Lever, so it is not shown as working on.
+        let first_heard = self.harness_children.insert(harness_subagent_id.to_string());
+        let (state, error) = if from_launcher && first_heard && before.is_some() && state == Some("working") {
+            (Some("failed"), Some(UNFOLLOWED_MESSAGE))
+        } else {
+            (state, error)
+        };
         let Some(turn) = self.turn_for_subagent(thread_id, harness_subagent_id) else {
             return Effects::default();
         };
@@ -3261,13 +3377,6 @@ impl Service {
             state: effective_state,
             error,
         };
-        // What the record said before, so an update that changes nothing,
-        // as a harness that says a subagent ended twice sends, says nothing.
-        let before = self
-            .store
-            .subagent_summary(thread_id, harness_subagent_id)
-            .ok()
-            .flatten();
         let mut broadcasts = Vec::new();
         let (recorded_turn, mut record) = match self.store.upsert_subagent(&patch, now) {
             Ok(saved) => saved,
@@ -3573,6 +3682,7 @@ impl Service {
         self.model_catalog = None;
         self.subagent_threads.clear();
         self.held_stops.clear();
+        self.harness_children.clear();
         self.efforts.clear();
         self.commands = None;
         self.thread_commands.clear();

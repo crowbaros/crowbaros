@@ -715,7 +715,10 @@ one the request offers), `invalid-request`.
 #### `set-mode`
 
 Sets a thread's mode, which applies from its next turn. Either socket may set
-it.
+it. A thread whose session is open in the harness may have work going on
+there, a subagent's or a turn the harness began, so the session is set to the
+mode first, and the reply comes once the harness takes it. Until then the
+thread takes no message and no other mode (`working`).
 
 Request:
 
@@ -732,7 +735,8 @@ Reply:
 A `thread-updated` event with the mode follows. Errors: `no-thread`, `working`
 (a turn of the thread is working), `invalid-mode` (not `ask-first`,
 `full-access`, or `plan`, or one the harness is known not to offer),
-`invalid-request`, `storage-error`.
+`harness-error` (the harness did not take the mode, or stopped first; the
+thread keeps the mode it had), `invalid-request`, `storage-error`.
 
 #### `set-default-mode`
 

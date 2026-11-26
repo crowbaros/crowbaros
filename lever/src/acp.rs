@@ -213,13 +213,15 @@ pub enum AcpEvent {
         /// Whether the session's effort selector changed in this update.
         effort_changed: bool,
     },
+    /// A session took a thread's mode: for `turn` before its prompt, or,
+    /// with none, as the person set it between turns.
     ModeSet {
         thread_id: String,
-        turn: u64,
+        turn: Option<u64>,
     },
     ModeSetFailed {
         thread_id: String,
-        turn: u64,
+        turn: Option<u64>,
         message: String,
     },
     EffortSet {
@@ -273,6 +275,9 @@ pub enum AcpEvent {
         title: Option<String>,
         state: Option<String>,
         error: Option<String>,
+        /// Only a launcher's output named the subagent: nothing the harness
+        /// said of it yet came from the subagent itself.
+        from_launcher: bool,
     },
     /// A piece of a subagent's prompt or answer message.
     SubagentMessage {
@@ -350,7 +355,7 @@ enum PendingRpc {
     },
     SetMode {
         thread_id: String,
-        turn: u64,
+        turn: Option<u64>,
         session_id: String,
         mode: String,
     },
@@ -760,7 +765,7 @@ impl AcpHarness {
 
     /// Sets an active session's mode, one of Lever's, through
     /// `session/set_config_option`.
-    pub fn set_session_mode(&mut self, thread_id: &str, turn: u64, session_id: &str, mode: &str) {
+    pub fn set_session_mode(&mut self, thread_id: &str, turn: Option<u64>, session_id: &str, mode: &str) {
         let config_id = self.mode_config_id.clone().unwrap_or_else(|| "mode".to_string());
         let value = harness_mode(mode).unwrap_or(mode);
         let req = SetSessionConfigOptionRequest::new(
@@ -1991,6 +1996,7 @@ impl AcpHarness {
                 title: title.clone(),
                 state,
                 error,
+                from_launcher: true,
             });
         }
         if let Some(text) = prompt
@@ -2089,6 +2095,7 @@ impl AcpHarness {
                     title: effective_title.clone(),
                     state,
                     error,
+                    from_launcher: false,
                 });
             }
             Some("update") => {
@@ -2216,6 +2223,7 @@ impl AcpHarness {
                             title: Some(clean),
                             state: None,
                             error: None,
+                            from_launcher: false,
                         });
                     }
                 }
@@ -2387,6 +2395,7 @@ impl AcpHarness {
                     title,
                     state,
                     error,
+                    from_launcher: false,
                 });
             }
             Ok(SessionUpdate::SessionMessage(msg)) => {

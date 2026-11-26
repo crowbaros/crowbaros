@@ -306,6 +306,11 @@ enum Step {
         /// and the launcher naming it.
         #[serde(default)]
         name_after_ms: u64,
+        /// Resumes a child as OpenCode 2.4.1 does one from before it
+        /// restarted: only the launcher's output names it, and nothing of
+        /// what it does comes after.
+        #[serde(default)]
+        unfollowed: bool,
     },
     /// Streams an answer text chunk from a subagent.
     SubagentText {
@@ -1053,6 +1058,7 @@ fn run_subagent_step(
             launched_by: None,
             hold_launcher,
             launch_fails,
+            unfollowed,
             ..
         } => {
             subagent_titles.insert(id.clone(), title.clone());
@@ -1106,7 +1112,7 @@ fn run_subagent_step(
                     return;
                 }
                 // A launch that fails says nothing of its child before it does.
-                if !*launch_fails {
+                if !*launch_fails && !*unfollowed {
                     send_opencode_child_status(writer, session_id, id, Some(title), "created", None);
                 }
                 let (end, said) = if *launch_fails {
@@ -1130,7 +1136,7 @@ fn run_subagent_step(
                     session_id,
                     SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(ToolCallId::new(wrapper_id), completed)),
                 );
-                if !*launch_fails {
+                if !*launch_fails && !*unfollowed {
                     send_opencode_child_status(writer, session_id, id, Some(title), "running", None);
                 }
             }

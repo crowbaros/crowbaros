@@ -20,6 +20,10 @@ import threading
 import time
 
 
+# How long a call held for a file is held at most.
+HOLD_LIMIT_S = 120
+
+
 def _extract_text(content):
     """Extracts plain text from an OpenAI message `content` field."""
     if isinstance(content, str):
@@ -134,6 +138,9 @@ def decide_response(script, body):
                 "name": str(call["name"]),
                 "arguments": args_json,
                 "reasoning": matched.get("reasoning"),
+                # A file whose being there lets the call go out: a check
+                # holds the call until what it waits for has happened.
+                "hold_until": matched.get("hold_until"),
             }
         if tool_output is not None and "after_tool" in matched:
             return {
@@ -242,6 +249,12 @@ def make_handler(script, log_path=None, forbidden=None):
                 "forbidden_found": forbidden_hit_count > 0,
                 "forbidden_hit_count": forbidden_hit_count,
             })
+
+            hold = decision.get("hold_until")
+            if hold:
+                deadline = time.monotonic() + HOLD_LIMIT_S
+                while not Path(hold).exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
 
             cmpl_id = next_id()
             created = int(time.time())
