@@ -2,8 +2,9 @@
 use crowbar_ui::{ButtonVariant, FONT_MONO, FONT_UI, ThemeWatcher, UiPalette, button, load_fonts, spawn_theme_watcher};
 use crowbaros_monitor::{metrics::*, system::*};
 use gpui::{
-    App, Application, Bounds, Context, Entity, FocusHandle, Focusable, KeyBinding, PathBuilder, Subscription, Task,
-    Window, WindowBounds, WindowOptions, actions, canvas, div, point, prelude::*, px, rgb, size, uniform_list,
+    App, Application, Bounds, Context, Entity, FocusHandle, Focusable, KeyBinding, PathBuilder, ScrollStrategy,
+    Subscription, Task, UniformListScrollHandle, Window, WindowBounds, WindowOptions, actions, canvas, div, point,
+    prelude::*, px, rgb, size, uniform_list,
 };
 use gpui_component::{
     Root, Theme, ThemeMode,
@@ -43,6 +44,7 @@ struct Monitor {
     histories: BTreeMap<String, History>,
     query: Entity<InputState>,
     rows: Vec<usize>,
+    scroll: UniformListScrollHandle,
     sort: Sort,
     descending: bool,
     selected: Option<(u32, u64)>,
@@ -128,6 +130,7 @@ impl Monitor {
             histories: BTreeMap::new(),
             query,
             rows: Vec::new(),
+            scroll: UniformListScrollHandle::new(),
             sort: Sort::Cpu,
             descending: true,
             selected: None,
@@ -152,6 +155,14 @@ impl Monitor {
                 )
             })
             .unwrap_or_default();
+        if let Some(snapshot) = &self.snapshot
+            && !self
+                .rows
+                .iter()
+                .any(|i| Some((snapshot.processes[*i].pid, snapshot.processes[*i].start)) == self.selected)
+        {
+            self.selected = None;
+        }
     }
     fn receive(&mut self, result: Result<Snapshot, String>, cx: &mut Context<Self>) {
         match result {
@@ -303,6 +314,7 @@ impl Monitor {
                 .unwrap_or(0);
             let p = &s.processes[self.rows[next]];
             self.selected = Some((p.pid, p.start));
+            self.scroll.scroll_to_item(next, ScrollStrategy::Top);
             cx.notify();
         }
     }
@@ -560,6 +572,7 @@ impl Monitor {
                     .collect::<Vec<_>>()
             })
         })
+        .track_scroll(self.scroll.clone())
         .flex_1()
         .min_h_0();
         let allowed = self.error.is_none()

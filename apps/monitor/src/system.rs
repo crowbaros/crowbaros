@@ -478,6 +478,28 @@ mod tests {
         assert!(signal_process(&p, Signal::Kill).is_err());
     }
     #[test]
+    fn system_commands_have_output_and_time_limits() {
+        assert_eq!(command("/bin/echo", &["status"]).unwrap(), "status");
+        assert!(command("/bin/false", &[]).is_err());
+        assert!(command("/bin/sleep", &["10"]).unwrap_err().contains("Timed out"));
+        assert!(
+            command("/usr/bin/head", &["-c", "70000", "/dev/zero"])
+                .unwrap_err()
+                .contains("limit")
+        );
+    }
+    #[test]
+    fn force_quit_ends_only_the_owned_child() {
+        if person_uid() == 0 {
+            return;
+        }
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let p = read_process(&Path::new("/proc").join(child.id().to_string())).unwrap();
+        signal_process(&p, Signal::Kill).unwrap();
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGKILL));
+    }
+    #[test]
     fn root_and_self_are_refused() {
         let own = read_process(Path::new("/proc/self")).unwrap();
         assert!(signal_process(&own, Signal::Terminate).is_err());

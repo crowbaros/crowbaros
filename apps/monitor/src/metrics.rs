@@ -349,6 +349,33 @@ mod tests {
         assert!(h.values().is_empty());
     }
     #[test]
+    fn malformed_and_mixed_identity_processes_are_not_actionable() {
+        let stat = "42 (sample) S 1 0 0 0 0 0 0 0 0 0 10 20 0 0 0 0 1 0 999 4096 3";
+        let elevated = parse_process(stat, "Uid: 1000 0 0 0", 4096).unwrap();
+        assert!(!can_signal(&elevated, 1000, 99));
+        assert!(parse_process(stat, "Uid: 1000 nope 1000 1000", 4096).is_none());
+        assert!(parse_process(stat, "Uid: 1000 1000 1000 1000", u64::MAX).is_none());
+        assert!(parse_process("42 (short) S 1", "Uid: 1000 1000 1000 1000", 4096).is_none());
+    }
+    #[test]
+    fn missing_or_overflowing_metrics_do_not_become_zero() {
+        assert!(parse_network("eth0: invalid").is_empty());
+        assert!(parse_disks("8 0 sda 1 0 18446744073709551615 0 2 0 8").is_empty());
+        assert!(parse_memory("MemTotal: 18446744073709551615 kB").is_none());
+        assert_eq!(
+            cpu_percent(CpuTime { busy: 30, total: 100 }, CpuTime { busy: 60, total: 110 }),
+            None
+        );
+    }
+    #[test]
+    fn process_sorting_keeps_a_stable_pid_tiebreaker() {
+        let a = process();
+        let b = Process { pid: 7, ..a.clone() };
+        assert_eq!(process_rows(&[a.clone(), b.clone()], "", Sort::Cpu, true), vec![1, 0]);
+        assert_eq!(process_rows(&[a.clone(), b.clone()], "42", Sort::Name, false), vec![0]);
+        assert_eq!(process_rows(&[a, b], "NAME", Sort::Pid, true), vec![0, 1]);
+    }
+    #[test]
     fn byte_units() {
         assert_eq!(bytes(1024.), "1.0 KiB");
         assert_eq!(bytes(1024. * 1024.), "1.0 MiB");
