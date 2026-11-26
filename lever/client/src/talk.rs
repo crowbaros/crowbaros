@@ -221,6 +221,10 @@ fn watch(
     waiting: Vec<Value>,
 ) -> Result<Option<Ended>> {
     let prompted = std::io::stdin().is_terminal();
+    // Only requests are watched here, not a turn of the person's: Ctrl-C
+    // turns down the one asked for, by stopping its own turn, and the next
+    // is asked for after it.
+    let only_requests = turn.is_none();
     let mut stopping = false;
     // The request whose answer is asked for here, and the answers it offers.
     let mut asking: Option<(String, Vec<String>)> = None;
@@ -271,8 +275,9 @@ fn watch(
                     eprintln!();
                 }
                 // By its number, so a stop that comes after this turn ended does not reach the one after it.
-                // With no turn watched, the turn of the request taken up here is the one stopped.
-                let stopped = turn.or_else(|| taken.as_ref().and_then(|r| r.get("turn")).and_then(Value::as_u64));
+                // When only requests are watched, the turn of the request taken up here is the one stopped.
+                let request_turn = taken.as_ref().and_then(|r| r.get("turn")).and_then(Value::as_u64);
+                let stopped = if only_requests { request_turn.or(turn) } else { turn };
                 lever.send(json!({ "op": "stop", "thread": thread, "turn": stopped }))?;
                 continue;
             }
@@ -334,6 +339,10 @@ fn watch(
             queued.retain(|r| text(r, "request") != id);
             if taken.as_ref().is_some_and(|r| text(r, "request") == id) {
                 taken = None;
+                // The request Ctrl-C turned down has ended: the next is asked for.
+                if only_requests {
+                    stopping = false;
+                }
             }
             if asking.as_ref().is_some_and(|(r, _)| *r == id) {
                 asking = None;

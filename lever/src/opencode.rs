@@ -52,22 +52,24 @@ pub fn person_settings(env: &[(String, String)], content: Option<&str>) -> Vec<V
 }
 
 /// Ask first's rules for one of OpenCode's permissions: ask before all,
-/// then the person's own rules for it, in their order. `actions` are the
-/// permission's names, and a rule for every action (`*`) is one for it too.
-/// Settings give rules as `permission` (a rule for everything, or a rule or
-/// rules by pattern for each action by its name) or as `permissions` (a list
-/// of action, resource, and effect). A rule of the person's that allows
+/// then the person's own rules for it, in their order. `action` is its name
+/// as OpenCode has it now (`shell`, `edit`), and a rule whose action is a
+/// pattern that matches it (`*`, `sh*`) is one for it too. Settings give
+/// rules as `permission` (a rule for everything, or a rule or rules by
+/// pattern for each action by its name, older names renamed as OpenCode
+/// renames them) or as `permissions` (a list of action, resource, and
+/// effect). A rule of the person's that allows
 /// everything is the one Ask first takes the place of, and asks.
-fn rules_for(documents: &[Value], actions: &[&str]) -> Value {
+fn rules_for(documents: &[Value], action: &str) -> Value {
     // An action is matched as OpenCode matches it: `*` is any run of
     // characters and `?` any one.
-    let named = |name: &str| actions.iter().any(|action| matches_wildcard(action, name));
+    let named = |name: &str| matches_wildcard(action, name);
     let mut rules: Vec<(String, String)> = Vec::new();
     for document in documents {
         match document.get("permission") {
             Some(Value::String(all)) => rules.push(("*".to_string(), all.clone())),
             Some(Value::Object(by_name)) => {
-                for (_, rule) in by_name.iter().filter(|(name, _)| named(name)) {
+                for (_, rule) in by_name.iter().filter(|(name, _)| named(legacy_action(name))) {
                     match rule {
                         Value::String(effect) => rules.push(("*".to_string(), effect.clone())),
                         Value::Object(patterns) => rules.extend(
@@ -117,6 +119,16 @@ fn rules_for(documents: &[Value], actions: &[&str]) -> Value {
     Value::Object(out)
 }
 
+/// The action a key of `permission` names, as OpenCode 2.4.1 renames its
+/// older names before it matches: only these names, and only whole.
+fn legacy_action(key: &str) -> &str {
+    match key {
+        "bash" => "shell",
+        "write" | "patch" | "apply_patch" => "edit",
+        other => other,
+    }
+}
+
 /// Whether `input` matches `pattern`, in which `*` stands for any run of
 /// characters and `?` for any one character, and nothing else is special.
 fn matches_wildcard(input: &str, pattern: &str) -> bool {
@@ -146,8 +158,8 @@ fn matches_wildcard(input: &str, pattern: &str) -> bool {
 /// except where the person's own rules say otherwise.
 pub fn ask_first_permission(documents: &[Value]) -> Value {
     let mut permission = Map::new();
-    permission.insert("bash".to_string(), rules_for(documents, &["bash", "shell"]));
-    permission.insert("edit".to_string(), rules_for(documents, &["edit"]));
+    permission.insert("bash".to_string(), rules_for(documents, "shell"));
+    permission.insert("edit".to_string(), rules_for(documents, "edit"));
     Value::Object(permission)
 }
 
@@ -322,6 +334,15 @@ mod tests {
         });
         assert_eq!(
             ask_first_permission(&[patterned]),
+            json!({ "bash": { "*": "ask", "rm *": "deny" }, "edit": { "*": "ask", "secret/**": "deny" } })
+        );
+        // Older names are renamed whole before any pattern is matched: `ba*`
+        // names no command, and `write` is an edit.
+        let older = json!({
+            "permission": { "ba*": { "ls": "allow" }, "write": { "secret/**": "deny" }, "bash": { "rm *": "deny" } }
+        });
+        assert_eq!(
+            ask_first_permission(&[older]),
             json!({ "bash": { "*": "ask", "rm *": "deny" }, "edit": { "*": "ask", "secret/**": "deny" } })
         );
         assert!(matches_wildcard("shell", "*"));

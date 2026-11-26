@@ -143,7 +143,8 @@ ACP today:
     agent's own rules after every rule in the person's settings, and the last
     that matches wins, so Ask first carries the person's own rules for `bash`
     and `edit`, and those for an action pattern that matches them (`*`,
-    `sh*`), again after its
+    `sh*`), again after its, older names (`bash`, `write`, `patch`) renamed
+    whole first as OpenCode renames them,
     `"*": "ask"`, whether they wrote them in `permission` or in the list
     `permissions`: what they refuse stays refused,
     and what they allow by name stays allowed. A rule of theirs that allows
