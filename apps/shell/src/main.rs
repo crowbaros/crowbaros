@@ -5,6 +5,7 @@ mod catalog;
 mod input;
 mod quick_settings;
 mod session;
+mod slash;
 mod theme;
 use catalog::AppEntry;
 use gpui::{layer_shell::*, prelude::*, *};

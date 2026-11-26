@@ -288,6 +288,97 @@ pub fn mode_name(id: &str, modes: &[ModeInfo]) -> String {
 /// The modes new threads may start in.
 pub const DEFAULT_MODES: [&str; 2] = ["ask-first", "full-access"];
 
+/// A Model the harness offers, with the provider it has it from.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub id: String,
+    /// The Model's name, without its provider.
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_name: Option<String>,
+}
+
+impl ModelInfo {
+    /// The name the drawer shows: the Model's, or its ID when it has none.
+    pub fn label(&self) -> &str {
+        if self.name.trim().is_empty() { &self.id } else { &self.name }
+    }
+}
+
+/// One effort level of a Model.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffortInfo {
+    pub id: String,
+    pub name: String,
+}
+
+/// A command the harness offers, sent as a message that begins with `/` and
+/// its name.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandInfo {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+/// What Lever says the harness offers, in its `models` reply.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Offer {
+    pub models: Vec<ModelInfo>,
+    /// The Model a thread works with when none was chosen for it.
+    pub default_model: Option<String>,
+    pub modes: Vec<ModeInfo>,
+}
+
+/// A provider in the Model picker's rail: its ID, and its name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Provider {
+    pub id: String,
+    pub name: String,
+}
+
+/// The providers the Models come from, in the order the harness lists them.
+/// Models with no provider go under one with no ID, named `Other`.
+pub fn providers(models: &[ModelInfo]) -> Vec<Provider> {
+    let mut out: Vec<Provider> = Vec::new();
+    for model in models {
+        let id = model.provider.clone().unwrap_or_default();
+        if out.iter().any(|p| p.id == id) {
+            continue;
+        }
+        let name = match (&model.provider_name, id.is_empty()) {
+            (Some(name), _) if !name.trim().is_empty() => name.clone(),
+            (_, true) => "Other".to_string(),
+            (_, false) => id.clone(),
+        };
+        out.push(Provider { id, name });
+    }
+    out
+}
+
+/// How long a turn worked, as the thread shows it: `8s`, `1m 05s`, `1h 02m`.
+pub fn format_elapsed(seconds: i64) -> String {
+    let seconds = seconds.max(0);
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 3600 {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{}h {:02}m", seconds / 3600, (seconds % 3600) / 60)
+    }
+}
+
+pub fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "message", rename_all = "lowercase")]
 pub enum TurnState {
@@ -315,6 +406,24 @@ pub struct Turn {
     pub mode: Option<String>,
     pub answer: String,
     pub state: TurnState,
+    /// When the turn began and ended, in seconds: Lever's for a turn read
+    /// from its record, and the shell's clock for one it watched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended: Option<i64>,
+}
+
+impl Turn {
+    /// How long the turn has worked, or worked: to `now` while it works.
+    pub fn elapsed(&self, now: i64) -> Option<i64> {
+        let started = self.started?;
+        let end = match self.state {
+            TurnState::Working => now,
+            _ => self.ended?,
+        };
+        Some((end - started).max(0))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -377,6 +486,8 @@ pub struct ResumedThread {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
     pub working: bool,
     pub turns: Vec<Turn>,
@@ -423,6 +534,10 @@ pub enum LeverMessage {
         thread: String,
         title: Option<String>,
         mode: Option<String>,
+        model: Option<String>,
+        /// The thread's effort, when the event says it: `Some(None)` for a
+        /// thread that now has none.
+        effort: Option<Option<String>>,
     },
     Done {
         thread: String,
@@ -441,8 +556,19 @@ pub enum LeverMessage {
         thread: String,
         turn: u64,
     },
-    /// The `models` reply; the drawer reads only its modes.
-    Models { modes: Vec<ModeInfo> },
+    /// The `models` reply: the harness's Models and modes.
+    Models(Offer),
+    /// The `efforts` reply: a Model's effort levels.
+    Efforts { model: String, efforts: Vec<EffortInfo> },
+    /// The `commands` reply, and each `commands` event: a thread's, or with
+    /// no thread, the harness's.
+    Commands {
+        thread: Option<String>,
+        commands: Vec<CommandInfo>,
+        known: bool,
+    },
+    ModelSet { thread: String, model: String },
+    EffortSet { thread: String, effort: Option<String> },
     ModeSet { thread: String, mode: String },
     DefaultMode { mode: String },
     /// The `watch` reply and each `activity` event.
@@ -502,6 +628,8 @@ pub enum AgentEvent {
         thread: String,
         title: Option<String>,
         mode: Option<String>,
+        model: Option<String>,
+        effort: Option<Option<String>>,
     },
     Done {
         thread: String,
@@ -520,7 +648,25 @@ pub enum AgentEvent {
         thread: String,
         turn: u64,
     },
-    Modes(Vec<ModeInfo>),
+    /// What the harness offers: its Models and its modes.
+    Offer(Offer),
+    Efforts {
+        model: String,
+        efforts: Vec<EffortInfo>,
+    },
+    Commands {
+        thread: Option<String>,
+        commands: Vec<CommandInfo>,
+        known: bool,
+    },
+    ModelSet {
+        thread: String,
+        model: String,
+    },
+    EffortSet {
+        thread: String,
+        effort: Option<String>,
+    },
     ModeSet {
         thread: String,
         mode: String,
@@ -572,12 +718,28 @@ impl LeverMessage {
                 thread,
                 title,
                 mode,
+                model,
+                effort,
             } => Some(AgentEvent::ThreadUpdated {
                 thread,
                 title,
                 mode,
+                model,
+                effort,
             }),
-            LeverMessage::Models { modes } => Some(AgentEvent::Modes(modes)),
+            LeverMessage::Models(offer) => Some(AgentEvent::Offer(offer)),
+            LeverMessage::Efforts { model, efforts } => Some(AgentEvent::Efforts { model, efforts }),
+            LeverMessage::Commands {
+                thread,
+                commands,
+                known,
+            } => Some(AgentEvent::Commands {
+                thread,
+                commands,
+                known,
+            }),
+            LeverMessage::ModelSet { thread, model } => Some(AgentEvent::ModelSet { thread, model }),
+            LeverMessage::EffortSet { thread, effort } => Some(AgentEvent::EffortSet { thread, effort }),
             LeverMessage::ModeSet { thread, mode } => Some(AgentEvent::ModeSet { thread, mode }),
             LeverMessage::DefaultMode { mode } => Some(AgentEvent::DefaultMode(mode)),
             LeverMessage::Activity { working, waiting } => {
@@ -612,6 +774,24 @@ pub enum AgentCommand {
         thread: Option<String>,
         text: String,
         mode: Option<String>,
+        model: Option<String>,
+        effort: Option<String>,
+    },
+    SetModel {
+        thread: String,
+        model: String,
+    },
+    SetEffort {
+        thread: String,
+        effort: Option<String>,
+    },
+    /// `efforts`, for a Model's effort levels.
+    FetchEfforts {
+        model: String,
+    },
+    /// `commands`, for the harness's commands: a thread's, or the harness's.
+    FetchCommands {
+        thread: Option<String>,
     },
     Stop {
         thread: String,
@@ -629,8 +809,9 @@ pub enum AgentCommand {
     SetDefaultMode {
         mode: String,
     },
-    /// `models`, for the modes Lever offers. It starts the harness, so the
-    /// drawer asks only when the person opens the mode menu.
+    /// `models`, for the Models and modes Lever offers. It starts the
+    /// harness, so the drawer asks only when the person asks for a list of
+    /// them.
     FetchModes,
     RefreshStatus,
 }
@@ -646,7 +827,42 @@ impl CommandSender {
 
     /// Sends a message. `mode` is the mode a new thread starts in.
     pub fn send_message(&self, thread: Option<String>, text: String, mode: Option<String>) {
-        let _ = self.tx.send(AgentCommand::Send { thread, text, mode });
+        self.send_with(thread, text, mode, None, None);
+    }
+
+    /// Sends a message, with the mode, Model, and effort a new thread starts
+    /// with.
+    pub fn send_with(
+        &self,
+        thread: Option<String>,
+        text: String,
+        mode: Option<String>,
+        model: Option<String>,
+        effort: Option<String>,
+    ) {
+        let _ = self.tx.send(AgentCommand::Send {
+            thread,
+            text,
+            mode,
+            model,
+            effort,
+        });
+    }
+
+    pub fn set_model(&self, thread: String, model: String) {
+        let _ = self.tx.send(AgentCommand::SetModel { thread, model });
+    }
+
+    pub fn set_effort(&self, thread: String, effort: Option<String>) {
+        let _ = self.tx.send(AgentCommand::SetEffort { thread, effort });
+    }
+
+    pub fn fetch_efforts(&self, model: String) {
+        let _ = self.tx.send(AgentCommand::FetchEfforts { model });
+    }
+
+    pub fn fetch_commands(&self, thread: Option<String>) {
+        let _ = self.tx.send(AgentCommand::FetchCommands { thread });
     }
 
     pub fn answer(&self, thread: String, request: String, answer: String) {
@@ -713,10 +929,33 @@ pub struct AgentState {
     pub pending_mode: Option<String>,
     /// The mode new threads start in, from Lever's `status`.
     pub default_mode: Option<String>,
-    /// The modes Lever offers, fetched when the person opens the mode menu.
+    /// The modes Lever offers, fetched when the person asks for a list of
+    /// them or of the Models.
     pub modes: Vec<ModeInfo>,
     pub modes_loading: bool,
     pub modes_error: Option<String>,
+    /// The thread's effort, as Lever has it.
+    pub effort: Option<String>,
+    /// The Model and effort picked for the drawer's new thread, sent with
+    /// its first message.
+    pub pending_model: Option<String>,
+    pub pending_effort: Option<String>,
+    /// The Model the person last picked, and the effort picked for it since,
+    /// which a new thread starts with.
+    pub last_model: Option<String>,
+    pub last_effort: Option<String>,
+    /// The Models Lever offers, and the one a thread works with when none
+    /// was picked for it, fetched with the modes.
+    pub models: Vec<ModelInfo>,
+    pub default_model: Option<String>,
+    /// Lever has said what the harness offers on this connection.
+    pub offer_known: bool,
+    /// The effort levels of each Model Lever has said them for.
+    pub efforts: std::collections::BTreeMap<String, Vec<EffortInfo>>,
+    /// The harness's commands, and those of the drawer's thread once Lever
+    /// has said them.
+    pub commands: Vec<CommandInfo>,
+    pub thread_commands: Option<Vec<CommandInfo>>,
     /// The threads working and waiting, from Lever's `activity`.
     pub working_threads: Vec<String>,
     pub waiting_threads: Vec<String>,
@@ -757,6 +996,17 @@ pub struct AgentViewSnapshot {
     /// `close`.
     pub controls: Vec<ControlBounds>,
     pub state: AgentState,
+}
+
+/// What picking a Model or an effort in the drawer does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SettingPick {
+    /// Ask Lever to set it on the thread.
+    SetThread { thread: String, value: String },
+    /// Held for the drawer's new thread, and sent with its first message.
+    Pending,
+    /// The thread works, or the drawer cannot reach Lever; nothing changes.
+    Refused,
 }
 
 /// What picking a mode in the drawer does.
@@ -825,6 +1075,124 @@ impl AgentState {
             self.mode.clone()
         } else {
             self.pending_mode.clone().or_else(|| self.default_mode.clone())
+        }
+    }
+
+    /// The Model the drawer shows: the thread's, or for the drawer's new
+    /// thread, the one picked for it, else the one last picked, where the
+    /// harness is not known to have dropped it, else the harness's own.
+    pub fn shown_model(&self) -> Option<String> {
+        if self.thread.is_some() {
+            return self.model.clone().or_else(|| self.default_model.clone());
+        }
+        self.new_thread_model().or_else(|| self.default_model.clone())
+    }
+
+    /// The Model a new thread's first message asks for, if any.
+    pub fn new_thread_model(&self) -> Option<String> {
+        self.pending_model.clone().or_else(|| {
+            self.last_model
+                .clone()
+                .filter(|model| self.models.is_empty() || self.models.iter().any(|m| &m.id == model))
+        })
+    }
+
+    /// The effort the drawer shows: the thread's, or for the drawer's new
+    /// thread, the one picked for it, else the one last picked for the Model
+    /// it starts with.
+    pub fn shown_effort(&self) -> Option<String> {
+        if self.thread.is_some() {
+            return self.effort.clone();
+        }
+        self.new_thread_effort()
+    }
+
+    /// The effort a new thread's first message asks for, if any.
+    pub fn new_thread_effort(&self) -> Option<String> {
+        self.pending_effort.clone().or_else(|| {
+            let model = self.new_thread_model()?;
+            (self.last_model.as_deref() == Some(model.as_str()))
+                .then(|| self.last_effort.clone())
+                .flatten()
+        })
+    }
+
+    /// The name of a Model: the one Lever gave, or what its ID has after its
+    /// provider.
+    pub fn model_label(&self, id: &str) -> String {
+        if let Some(model) = self.models.iter().find(|m| m.id == id) {
+            return model.label().to_string();
+        }
+        id.split_once('/').map(|(_, rest)| rest).unwrap_or(id).to_string()
+    }
+
+    /// The name of an effort level of a Model: the one Lever gave, or the
+    /// level's ID with a capital.
+    pub fn effort_label(&self, model: Option<&str>, id: &str) -> String {
+        if let Some(level) = model
+            .and_then(|m| self.efforts.get(m))
+            .and_then(|levels| levels.iter().find(|l| l.id == id))
+        {
+            return level.name.clone();
+        }
+        let mut chars = id.chars();
+        match chars.next() {
+            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+            None => String::new(),
+        }
+    }
+
+    /// The harness's commands for the drawer's thread: its own, once Lever
+    /// has said them, else the harness's.
+    pub fn harness_commands(&self) -> &[CommandInfo] {
+        self.thread_commands.as_deref().unwrap_or(&self.commands)
+    }
+
+    /// The person picked a Model for the thread. It is the Model new threads
+    /// start with from now on, at its own effort.
+    pub fn pick_model(&mut self, model: &str) -> SettingPick {
+        if self.mode_locked() {
+            return SettingPick::Refused;
+        }
+        if self.last_model.as_deref() != Some(model) {
+            self.last_effort = None;
+        }
+        self.last_model = Some(model.to_string());
+        match &self.thread {
+            Some(thread) => SettingPick::SetThread {
+                thread: thread.clone(),
+                value: model.to_string(),
+            },
+            None => {
+                if self.pending_model.as_deref() != Some(model) {
+                    self.pending_effort = None;
+                }
+                self.pending_model = Some(model.to_string());
+                SettingPick::Pending
+            }
+        }
+    }
+
+    /// The person picked an effort for the thread, one of its Model's.
+    pub fn pick_effort(&mut self, effort: &str) -> SettingPick {
+        if self.mode_locked() {
+            return SettingPick::Refused;
+        }
+        if let Some(model) = self.shown_model() {
+            if self.last_model.as_deref() != Some(model.as_str()) {
+                self.last_model = Some(model);
+            }
+            self.last_effort = Some(effort.to_string());
+        }
+        match &self.thread {
+            Some(thread) => SettingPick::SetThread {
+                thread: thread.clone(),
+                value: effort.to_string(),
+            },
+            None => {
+                self.pending_effort = Some(effort.to_string());
+                SettingPick::Pending
+            }
         }
     }
 
@@ -934,15 +1302,21 @@ impl AgentState {
     fn apply_resumed(&mut self, resumed: ResumedThread, drawer_up: bool) {
         self.sending = false;
         self.loading = false;
-        self.thread = Some(resumed.thread);
         self.title = if resumed.title.is_empty() {
             None
         } else {
             Some(resumed.title)
         };
+        if self.thread.as_deref() != Some(resumed.thread.as_str()) {
+            self.thread_commands = None;
+        }
+        self.thread = Some(resumed.thread);
         self.model = resumed.model;
+        self.effort = resumed.effort;
         self.mode = resumed.mode;
         self.pending_mode = None;
+        self.pending_model = None;
+        self.pending_effort = None;
         self.active_turn = resumed
             .turns
             .last()
@@ -973,9 +1347,11 @@ impl AgentState {
         self.thread = None;
         self.title = None;
         self.model = None;
+        self.effort = None;
         self.mode = None;
         self.active_turn = None;
         self.turns.clear();
+        self.thread_commands = None;
         self.thread_mark = Mark::Idle;
     }
 
@@ -984,6 +1360,8 @@ impl AgentState {
         self.clear_thread();
         self.thread = thread;
         self.pending_mode = None;
+        self.pending_model = None;
+        self.pending_effort = None;
         self.working_before_disconnect = None;
         self.refresh_mark();
         self.error = None;
@@ -1111,6 +1489,7 @@ impl AgentState {
                 self.working_threads.clear();
                 self.waiting_threads.clear();
                 self.modes_loading = false;
+                self.offer_known = false;
                 self.connected = false;
                 self.sending = false;
                 self.active_turn = None;
@@ -1134,9 +1513,14 @@ impl AgentState {
                 if self.thread.as_deref() != Some(thread.as_str()) {
                     self.turns.clear();
                     self.title = None;
-                    self.model = None;
-                    // A new thread starts in the mode picked for it, or in
-                    // the starting mode; Lever's `thread-updated` corrects it.
+                    // A new thread starts with the Model, effort, and mode
+                    // picked for it, or with the ones new threads start
+                    // with; Lever's `thread-updated` corrects them.
+                    self.model = self.new_thread_model();
+                    self.effort = self.new_thread_effort();
+                    self.pending_model = None;
+                    self.pending_effort = None;
+                    self.thread_commands = None;
                     self.mode = self
                         .pending_mode
                         .take()
@@ -1174,6 +1558,8 @@ impl AgentState {
                         mode: self.mode.clone(),
                         answer: String::new(),
                         state: TurnState::Working,
+                        started: Some(unix_now()),
+                        ended: None,
                     });
                 }
                 self.error = None;
@@ -1247,11 +1633,25 @@ impl AgentState {
                 thread,
                 title,
                 mode,
+                model,
+                effort,
             } => {
                 if self.thread.as_deref() != Some(thread.as_str()) {
                     return false;
                 }
                 let mut changed = false;
+                if let Some(model) = model
+                    && self.model.as_deref() != Some(model.as_str())
+                {
+                    self.model = Some(model);
+                    changed = true;
+                }
+                if let Some(effort) = effort
+                    && self.effort != effort
+                {
+                    self.effort = effort;
+                    changed = true;
+                }
                 if let Some(title) = title {
                     let next = if title.is_empty() { None } else { Some(title) };
                     if self.title != next {
@@ -1283,10 +1683,55 @@ impl AgentState {
                 self.default_mode = Some(mode);
                 true
             }
-            AgentEvent::Modes(modes) => {
+            AgentEvent::Offer(offer) => {
                 self.modes_loading = false;
                 self.modes_error = None;
-                self.modes = modes;
+                self.modes = offer.modes;
+                self.models = offer.models;
+                self.default_model = offer.default_model;
+                self.offer_known = true;
+                true
+            }
+            AgentEvent::Efforts { model, efforts } => {
+                self.efforts.insert(model, efforts);
+                true
+            }
+            AgentEvent::Commands {
+                thread,
+                commands,
+                known,
+            } => {
+                if !known {
+                    return false;
+                }
+                match thread {
+                    Some(thread) if self.thread.as_deref() == Some(thread.as_str()) => {
+                        let changed = self.thread_commands.as_ref() != Some(&commands);
+                        self.thread_commands = Some(commands);
+                        changed
+                    }
+                    Some(_) => false,
+                    None => {
+                        let changed = self.commands != commands;
+                        self.commands = commands;
+                        changed
+                    }
+                }
+            }
+            AgentEvent::ModelSet { thread, model } => {
+                if self.thread.as_deref() != Some(thread.as_str())
+                    || self.model.as_deref() == Some(model.as_str())
+                {
+                    return false;
+                }
+                self.model = Some(model);
+                true
+            }
+            AgentEvent::EffortSet { thread, effort } => {
+                if self.thread.as_deref() != Some(thread.as_str()) || self.effort == effort {
+                    return false;
+                }
+                self.effort = effort;
                 true
             }
             AgentEvent::Activity { working, waiting } => {
@@ -1314,6 +1759,7 @@ impl AgentState {
                 }
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
                     existing.state = TurnState::Done;
+                    existing.ended.get_or_insert_with(unix_now);
                 }
                 if self.active_turn == Some(turn) {
                     self.active_turn = None;
@@ -1327,6 +1773,7 @@ impl AgentState {
                 }
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
                     existing.state = TurnState::Stopped;
+                    existing.ended.get_or_insert_with(unix_now);
                 }
                 if self.active_turn == Some(turn) {
                     self.active_turn = None;
@@ -1345,6 +1792,7 @@ impl AgentState {
                 self.sending = false;
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
                     existing.state = TurnState::Failed(calm_turn_error(&message));
+                    existing.ended.get_or_insert_with(unix_now);
                 }
                 if self.active_turn == Some(turn) {
                     self.active_turn = None;
@@ -1361,6 +1809,7 @@ impl AgentState {
                 self.sending = false;
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
                     existing.state = TurnState::Interrupted;
+                    existing.ended.get_or_insert_with(unix_now);
                 }
                 if self.active_turn == Some(turn) {
                     self.active_turn = None;
@@ -1398,6 +1847,12 @@ impl AgentState {
                     self.error = Some("That request no longer waits for an answer.".into());
                 } else if code == "invalid-mode" {
                     self.error = Some("The Agent does not offer that mode.".into());
+                } else if code == "invalid-model" {
+                    self.error = Some("The Agent does not offer that Model.".into());
+                } else if code == "invalid-effort" {
+                    self.error = Some("This thread's Model does not offer that effort.".into());
+                } else if code == "working" {
+                    self.error = Some("The Agent is working on this thread. /stop ends the turn.".into());
                 } else {
                     self.error = Some(calm_turn_error(&message));
                 }
@@ -1863,7 +2318,25 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                     default_mode: opt_str(msg, "default_mode"),
                 }))
             }
-            "models" => Some(LeverMessage::Models {
+            "models" => Some(LeverMessage::Models(Offer {
+                models: msg
+                    .get("models")
+                    .and_then(|v| v.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| {
+                                Some(ModelInfo {
+                                    id: item.get("id")?.as_str()?.to_string(),
+                                    name: opt_str(item, "name").unwrap_or_default(),
+                                    provider: opt_str(item, "provider"),
+                                    provider_name: opt_str(item, "provider_name"),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                default_model: opt_str(msg, "default"),
                 modes: msg
                     .get("modes")
                     .and_then(|v| v.as_array())
@@ -1882,6 +2355,39 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                             .collect()
                     })
                     .unwrap_or_default(),
+            })),
+            "efforts" => Some(LeverMessage::Efforts {
+                model: msg.get("model")?.as_str()?.to_string(),
+                efforts: msg
+                    .get("efforts")
+                    .and_then(|v| v.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| {
+                                let id = item.get("id")?.as_str()?.to_string();
+                                let name = opt_str(item, "name").filter(|n| !n.trim().is_empty());
+                                Some(EffortInfo {
+                                    name: name.unwrap_or_else(|| id.clone()),
+                                    id,
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }),
+            "commands" => Some(LeverMessage::Commands {
+                thread: opt_str(msg, "thread"),
+                commands: parse_commands(msg),
+                known: msg.get("known").and_then(|v| v.as_bool()).unwrap_or(true),
+            }),
+            "model-set" => Some(LeverMessage::ModelSet {
+                thread: msg.get("thread")?.as_str()?.to_string(),
+                model: msg.get("model")?.as_str()?.to_string(),
+            }),
+            "effort-set" => Some(LeverMessage::EffortSet {
+                thread: msg.get("thread")?.as_str()?.to_string(),
+                effort: opt_str(msg, "effort"),
             }),
             "mode-set" => Some(LeverMessage::ModeSet {
                 thread: msg.get("thread")?.as_str()?.to_string(),
@@ -1916,6 +2422,7 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                     .get("model")
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
+                let effort = opt_str(msg, "effort");
                 let mode = opt_str(msg, "mode");
                 let working = msg
                     .get("working")
@@ -1932,6 +2439,7 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                     title,
                     cwd,
                     model,
+                    effort,
                     mode,
                     working,
                     turns,
@@ -1973,12 +2481,22 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
     if event == "deleted" || (event == "archived" && msg["archived"] == true) {
         return Some(LeverMessage::Lifecycle { thread: msg.get("thread")?.as_str()?.into(), deleted: event == "deleted", warning: None });
     }
+    if event == "commands" {
+        return Some(LeverMessage::Commands {
+            thread: opt_str(msg, "thread"),
+            commands: parse_commands(msg),
+            known: true,
+        });
+    }
     let thread = msg.get("thread")?.as_str()?.to_string();
     if event == "thread-updated" {
         return Some(LeverMessage::ThreadUpdated {
             thread,
             title: opt_str(msg, "title"),
             mode: opt_str(msg, "mode"),
+            model: opt_str(msg, "model"),
+            // `"effort": null` says the thread has none now.
+            effort: msg.get("effort").map(|v| v.as_str().map(str::to_string)),
         });
     }
     let turn = msg.get("turn")?.as_u64()?;
@@ -2068,6 +2586,24 @@ fn parse_thread_summary(value: &serde_json::Value) -> Option<ThreadSummary> {
             .unwrap_or(false),
         mode: opt_str(value, "mode"),
     })
+}
+
+fn parse_commands(msg: &serde_json::Value) -> Vec<CommandInfo> {
+    msg.get("commands")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    Some(CommandInfo {
+                        name: item.get("name")?.as_str()?.to_string(),
+                        description: opt_str(item, "description").unwrap_or_default(),
+                        hint: opt_str(item, "hint"),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn opt_str(value: &serde_json::Value, key: &str) -> Option<String> {
@@ -2225,7 +2761,52 @@ fn parse_turn(value: &serde_json::Value) -> Option<Turn> {
         mode: opt_str(value, "mode"),
         answer,
         state,
+        started: value.get("started").and_then(|v| v.as_i64()),
+        ended: value.get("ended").and_then(|v| v.as_i64()),
     })
+}
+
+/// Where the Model and effort the person last picked are kept: beside the
+/// active thread, in the shell's runtime directory.
+fn picks_path() -> Option<PathBuf> {
+    default_thread_state_path().map(|path| path.with_file_name("last-picks"))
+}
+
+/// The Model and effort the person last picked, as the shell last saved them.
+pub fn load_picks() -> (Option<String>, Option<String>) {
+    read_picks(picks_path().as_deref())
+}
+
+fn read_picks(path: Option<&Path>) -> (Option<String>, Option<String>) {
+    let Some(value) = path
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+    else {
+        return (None, None);
+    };
+    let model = opt_str(&value, "model").filter(|m| !m.trim().is_empty());
+    let effort = model.as_ref().and_then(|_| opt_str(&value, "effort"));
+    (model, effort)
+}
+
+/// Keeps the Model and effort the person last picked, so a new thread starts
+/// with them after the shell restarts.
+pub fn save_picks(model: Option<&str>, effort: Option<&str>) {
+    write_picks(picks_path().as_deref(), model, effort);
+}
+
+fn write_picks(path: Option<&Path>, model: Option<&str>, effort: Option<&str>) {
+    let Some(path) = path else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
+    let body = serde_json::json!({ "model": model, "effort": effort }).to_string();
+    if std::fs::write(&tmp, body).is_ok() && std::fs::rename(&tmp, path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
 }
 
 fn default_thread_state_path() -> Option<PathBuf> {
@@ -2319,6 +2900,10 @@ fn start_with_options(
                 AgentCommand::Select { .. } => "resume",
                 AgentCommand::Lifecycle { .. } => "lifecycle",
                 AgentCommand::Send { .. } => "send",
+                AgentCommand::SetModel { .. } => "set-model",
+                AgentCommand::SetEffort { .. } => "set-effort",
+                AgentCommand::FetchEfforts { .. } => "efforts",
+                AgentCommand::FetchCommands { .. } => "commands",
                 AgentCommand::Stop { .. } => "stop",
                 AgentCommand::Answer { .. } => "answer",
                 AgentCommand::SetMode { .. } => "set-mode",
@@ -2329,18 +2914,39 @@ fn start_with_options(
             let request = match cmd {
                 AgentCommand::Select { thread } => serde_json::json!({"op":"resume","thread":thread}),
                 AgentCommand::Lifecycle { thread, delete } => serde_json::json!({"op":if delete {"delete"} else {"archive"},"thread":thread}),
-                AgentCommand::Send { thread, text, mode } => {
+                AgentCommand::Send {
+                    thread,
+                    text,
+                    mode,
+                    model,
+                    effort,
+                } => {
                     let mut request = match thread {
                         Some(thread) => {
                             serde_json::json!({ "op": "send", "thread": thread, "text": text })
                         }
                         None => serde_json::json!({ "op": "send", "thread": null, "text": text }),
                     };
-                    if let Some(mode) = mode {
-                        request["mode"] = serde_json::Value::String(mode);
+                    for (key, value) in [("mode", mode), ("model", model), ("effort", effort)] {
+                        if let Some(value) = value {
+                            request[key] = serde_json::Value::String(value);
+                        }
                     }
                     request
                 }
+                AgentCommand::SetModel { thread, model } => {
+                    serde_json::json!({ "op": "set-model", "thread": thread, "model": model })
+                }
+                AgentCommand::SetEffort { thread, effort } => {
+                    serde_json::json!({ "op": "set-effort", "thread": thread, "effort": effort })
+                }
+                AgentCommand::FetchEfforts { model } => {
+                    serde_json::json!({ "op": "efforts", "model": model })
+                }
+                AgentCommand::FetchCommands { thread } => match thread {
+                    Some(thread) => serde_json::json!({ "op": "commands", "thread": thread }),
+                    None => serde_json::json!({ "op": "commands" }),
+                },
                 AgentCommand::Answer {
                     thread,
                     request,
@@ -2401,7 +3007,8 @@ fn start_with_options(
                                 .into(),
                         }));
                     }
-                    "answer" | "set-mode" | "set-default-mode" | "models" => {
+                    "answer" | "set-mode" | "set-default-mode" | "models" | "set-model"
+                    | "set-effort" | "efforts" => {
                         let _ = events_for_cmds.send(session::Event::Agent(AgentEvent::Error {
                             code: "disconnected".into(),
                             message: "The Agent is not reachable right now.".into(),
@@ -3090,7 +3697,7 @@ mod tests {
             parse_lever_message(&serde_json::json!({
                 "event": "thread-updated", "thread": "t-1", "title": "Inspect workspace"
             })),
-            Some(LeverMessage::ThreadUpdated {
+            Some(LeverMessage::ThreadUpdated { model: None, effort: None,
                 thread: "t-1".into(),
                 title: Some("Inspect workspace".into()),
                 mode: None,
@@ -3183,7 +3790,7 @@ mod tests {
             true,
         );
         state.apply(
-            AgentEvent::ThreadUpdated {
+            AgentEvent::ThreadUpdated { model: None, effort: None,
                 thread: "t-abc".into(),
                 title: Some("Focus check".into()),
                 mode: None,
@@ -3316,7 +3923,7 @@ mod tests {
         // Resuming a thread with `model: None` clears any previously held model.
         state.model = Some("stub/stub-1".into());
         state.apply(
-            AgentEvent::Resumed(ResumedThread {
+            AgentEvent::Resumed(ResumedThread { effort: None,
                 thread: "t-2".into(),
                 title: "Fresh".into(),
                 cwd: "/tmp".into(),
@@ -3329,7 +3936,7 @@ mod tests {
         );
         assert_eq!(state.model, None);
         state.thread = Some("t-1".into());
-        state.turns.push(Turn {
+        state.turns.push(Turn { started: None, ended: None,
             turn: 1,
             message: "prev".into(),
             context: None,
@@ -3340,7 +3947,7 @@ mod tests {
             answer: "ok".into(),
             state: TurnState::Done,
         });
-        state.turns.push(Turn {
+        state.turns.push(Turn { started: None, ended: None,
             turn: 2,
             message: "stopped".into(),
             context: None,
@@ -4277,14 +4884,14 @@ mod tests {
         state.apply(
             AgentEvent::Connected {
                 status: sample_status(vec!["OpenCode"]),
-                resumed: Some(ResumedThread {
+                resumed: Some(ResumedThread { effort: None,
                     thread: "t-bg".into(),
                     title: "bg".into(),
                     cwd: "/tmp".into(),
                     model: None,
                     mode: None,
                     working: false,
-                    turns: vec![Turn {
+                    turns: vec![Turn { started: None, ended: None,
                         turn: 1,
                         message: "run".into(),
                         context: None,
@@ -4411,14 +5018,14 @@ mod tests {
         state.apply(
             AgentEvent::Connected {
                 status: sample_status(vec!["OpenCode"]),
-                resumed: Some(ResumedThread {
+                resumed: Some(ResumedThread { effort: None,
                     thread: "t-1".into(),
                     title: "slow".into(),
                     cwd: "/tmp".into(),
                     model: None,
                     mode: None,
                     working: false,
-                    turns: vec![Turn {
+                    turns: vec![Turn { started: None, ended: None,
                         turn: 1,
                         message: "slow work".into(),
                         context: None,
@@ -4633,7 +5240,7 @@ mod tests {
             parse_lever_message(&serde_json::json!({
                 "event": "thread-updated", "thread": "t-1", "mode": "plan"
             })),
-            Some(LeverMessage::ThreadUpdated { thread: "t-1".into(), title: None, mode: Some("plan".into()) })
+            Some(LeverMessage::ThreadUpdated { model: None, effort: None, thread: "t-1".into(), title: None, mode: Some("plan".into()) })
         );
         assert_eq!(
             parse_lever_message(&serde_json::json!({
@@ -4642,17 +5249,24 @@ mod tests {
                 "modes": [{ "id": "ask-first", "name": "Ask first" }, { "id": "full-access", "name": "Full access" },
                           { "id": "plan", "name": "Plan" }]
             })),
-            Some(LeverMessage::Models {
+            Some(LeverMessage::Models(Offer {
+                models: vec![ModelInfo {
+                    id: "stub/stub-1".into(),
+                    name: "Stub One".into(),
+                    provider: None,
+                    provider_name: None,
+                }],
+                default_model: Some("stub/stub-1".into()),
                 modes: vec![
                     ModeInfo { id: "ask-first".into(), name: "Ask first".into() },
                     ModeInfo { id: "full-access".into(), name: "Full access".into() },
                     ModeInfo { id: "plan".into(), name: "Plan".into() },
-                ]
-            })
+                ],
+            }))
         );
         assert_eq!(
             parse_lever_message(&serde_json::json!({ "reply": "models", "supported": false, "models": [] })),
-            Some(LeverMessage::Models { modes: Vec::new() })
+            Some(LeverMessage::Models(Offer::default()))
         );
         assert_eq!(
             parse_lever_message(&serde_json::json!({ "reply": "mode-set", "thread": "t-1", "mode": "full-access" })),
@@ -4807,14 +5421,14 @@ mod tests {
         state.apply(
             AgentEvent::Connected {
                 status: sample_status(vec!["OpenCode"]),
-                resumed: Some(ResumedThread {
+                resumed: Some(ResumedThread { effort: None,
                     thread: "t-1".into(),
                     title: "Waits".into(),
                     cwd: "/tmp".into(),
                     model: None,
                     mode: Some("ask-first".into()),
                     working: true,
-                    turns: vec![Turn {
+                    turns: vec![Turn { started: None, ended: None,
                         turn: 1,
                         message: "run".into(),
                         context: None,
@@ -4950,11 +5564,14 @@ mod tests {
         assert!(state.open_mode_menu());
         assert!(state.modes_loading);
         state.apply(
-            AgentEvent::Modes(vec![
-                ModeInfo { id: "ask-first".into(), name: "Ask first".into() },
-                ModeInfo { id: "full-access".into(), name: "Full access".into() },
-                ModeInfo { id: "plan".into(), name: "Plan".into() },
-            ]),
+            AgentEvent::Offer(Offer {
+                modes: vec![
+                    ModeInfo { id: "ask-first".into(), name: "Ask first".into() },
+                    ModeInfo { id: "full-access".into(), name: "Full access".into() },
+                    ModeInfo { id: "plan".into(), name: "Plan".into() },
+                ],
+                ..Default::default()
+            }),
             true,
         );
         assert!(!state.modes_loading);
@@ -4982,13 +5599,13 @@ mod tests {
         state.apply(AgentEvent::ModeSet { thread: "t-1".into(), mode: "full-access".into() }, true);
         assert_eq!(state.mode.as_deref(), Some("full-access"));
         state.apply(
-            AgentEvent::ThreadUpdated { thread: "t-1".into(), title: Some("Plan".into()), mode: None },
+            AgentEvent::ThreadUpdated { model: None, effort: None, thread: "t-1".into(), title: Some("Plan".into()), mode: None },
             true,
         );
         assert_eq!(state.mode.as_deref(), Some("full-access"));
         assert_eq!(state.title.as_deref(), Some("Plan"));
         state.apply(
-            AgentEvent::ThreadUpdated { thread: "t-1".into(), title: None, mode: Some("plan".into()) },
+            AgentEvent::ThreadUpdated { model: None, effort: None, thread: "t-1".into(), title: None, mode: Some("plan".into()) },
             true,
         );
         assert_eq!(state.mode.as_deref(), Some("plan"));
@@ -5008,7 +5625,7 @@ mod tests {
 
         // Resuming another thread takes its mode.
         state.apply(
-            AgentEvent::Resumed(ResumedThread {
+            AgentEvent::Resumed(ResumedThread { effort: None,
                 thread: "t-2".into(),
                 title: String::new(),
                 cwd: "/tmp".into(),
