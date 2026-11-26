@@ -232,6 +232,9 @@ fn watch(
     // prompt comes back at once.
     let only_requests = turn.is_none();
     let mut stopping = false;
+    // The turn a Stop sent from here named: Lever withdraws what it asks, so
+    // a request of it that was already on its way is not shown as waiting.
+    let mut stop_sent: Option<u64> = None;
     // The request whose answer is asked for here, and the answers it offers.
     let mut asking: Option<(String, Vec<String>)> = None;
     // The request taken up here, until Lever says how it ended: no other
@@ -287,6 +290,7 @@ fn watch(
                     let running = turn.filter(|_| ended.is_none());
                     let stopped = taken.as_ref().and_then(turn_of).or(running);
                     lever.send(json!({ "op": "stop", "thread": thread, "turn": stopped }))?;
+                    stop_sent = stopped;
                     for request in queued.drain(..).filter(|r| turn_of(r) != stopped) {
                         show_request(&mut answer, &request, thread, false)?;
                     }
@@ -306,6 +310,7 @@ fn watch(
                 stopping = true;
                 // By its number, so a stop that comes after this turn ended does not reach the one after it.
                 lever.send(json!({ "op": "stop", "thread": thread, "turn": turn }))?;
+                stop_sent = turn;
                 continue;
             }
             Happening::EndOfInput => {
@@ -350,6 +355,9 @@ fn watch(
         if text(&event, "event") == "request" {
             let id = text(&event, "request").into_owned();
             let waits = text(&event, "state") == "waiting";
+            if waits && stop_sent.is_some() && event.get("turn").and_then(Value::as_u64) == stop_sent {
+                continue;
+            }
             if waits {
                 if !open.contains(&id) {
                     open.push(id);

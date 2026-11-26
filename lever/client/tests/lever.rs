@@ -1647,7 +1647,15 @@ fn ctrl_c_on_a_followed_turn_with_nothing_asked_stops_it_and_waits_for_its_end()
                      "answers": [{ "answer": "once", "name": "Allow once" }] }),
         );
         let stop = read_framed(&mut stream);
+        // A request of turn 3 was already on its way; the Stop withdraws it.
+        let late = |state: &str| {
+            json!({ "event": "request", "thread": "t-1", "turn": 3, "request": "r-3", "kind": "command",
+                    "title": "make", "detail": "make", "state": state,
+                    "answers": [{ "answer": "once", "name": "Allow once" }] })
+        };
+        write_framed(&mut stream, &late("waiting"));
         write_framed(&mut stream, &json!({ "reply": "ok" }));
+        write_framed(&mut stream, &late("withdrawn"));
         write_framed(&mut stream, &json!({ "event": "stopped", "thread": "t-1", "turn": 3 }));
         let mut rest = Vec::new();
         let _ = stream.read_to_end(&mut rest);
@@ -1670,6 +1678,8 @@ fn ctrl_c_on_a_followed_turn_with_nothing_asked_stops_it_and_waits_for_its_end()
     // SAFETY: sending Ctrl-C's signal to our own child process.
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
     screen_until(&mut keys, &mut shown, "Stopped.\r\n> ");
+    let screen = String::from_utf8_lossy(&shown).into_owned();
+    assert!(!screen.contains("--answer r-3"), "the Stop withdraws r-3: {screen}");
     keys.write_all(&[4]).unwrap();
     assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
     assert_eq!(
