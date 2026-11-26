@@ -404,6 +404,12 @@ mod tests {
     }
 
     fn against(requests: usize, replies: &'static [&'static str]) -> (Connection, [UnixStream; 2]) {
+        against_then(requests, replies, false)
+    }
+
+    /// As `against`, and with `close`, Lever then says no more: a message
+    /// waited for that does not come is an error, not a wait for ever.
+    fn against_then(requests: usize, replies: &'static [&'static str], close: bool) -> (Connection, [UnixStream; 2]) {
         let (ours, mut theirs) = UnixStream::pair().unwrap();
         let (quiet, kept) = UnixStream::pair().unwrap();
         std::thread::spawn(move || {
@@ -417,6 +423,9 @@ mod tests {
             for reply in replies {
                 let framed = [&(reply.len() as u32).to_be_bytes(), reply.as_bytes()].concat();
                 theirs.write_all(&framed).unwrap();
+            }
+            if close {
+                let _ = theirs.shutdown(std::net::Shutdown::Write);
             }
             let _ = theirs.read(&mut length);
         });
@@ -473,7 +482,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
         );
-        let (mut lever, _quiet) = against(2, frames);
+        let (mut lever, _quiet) = against_then(2, frames, true);
         // Two Stops go before Lever replies to either.
         lever.stop("t-1", 1).unwrap();
         lever.stop("t-1", 3).unwrap();

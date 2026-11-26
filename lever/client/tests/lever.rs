@@ -1746,11 +1746,6 @@ fn ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requ
         assert_eq!(read_framed(&mut stream), json!({ "version": 1 }));
         write_framed(&mut stream, &json!({ "version": 1 }));
         assert_eq!(read_framed(&mut stream)["op"], "resume");
-        // Another client's turn 3 began before the thread was resumed here.
-        write_framed(
-            &mut stream,
-            &json!({ "event": "message", "thread": "t-1", "turn": 3, "text": "elsewhere" }),
-        );
         let waiting = json!({ "request": "r-1", "kind": "command", "title": "make", "detail": "make", "state": "waiting",
                               "answers": [{ "answer": "once", "name": "Allow once" }] });
         write_framed(
@@ -1761,6 +1756,11 @@ fn ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requ
                 "turns": [{ "turn": 1, "message": "m", "answer": "", "state": "done",
                             "acts": [], "requests": [waiting], "notes": [] }]
             }),
+        );
+        // Another client begins turn 3.
+        write_framed(
+            &mut stream,
+            &json!({ "event": "message", "thread": "t-1", "turn": 3, "text": "elsewhere" }),
         );
         // The answer comes, and Ctrl-C comes before Lever confirms it.
         assert_eq!(read_framed(&mut stream)["op"], "answer");
@@ -1784,12 +1784,14 @@ fn ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requ
     let mut agent = lab.agent(&["--resume", "t-1"]);
     agent
         .stdin(screen.try_clone().expect("the terminal again"))
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(screen);
     let mut child = agent.spawn().expect("crowbar-agent runs");
     drop(agent);
+    let (out, _reader) = collect(child.stdout.take().unwrap());
     let mut shown = Vec::new();
     screen_until(&mut keys, &mut shown, "Answer [once]: ");
+    wait_for("turn 3 followed", || out.lock().unwrap().contains("> elsewhere"));
     keys.write_all(b"once\n").unwrap();
     answer_came
         .recv_timeout(Duration::from_secs(10))
@@ -1809,7 +1811,6 @@ fn ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requ
 /// r-1 waiting, that hands each frame it reads to `serve` with the stream.
 fn lever_resumed_with_r1(
     lab: &Lab,
-    before: Vec<Value>,
     serve: impl FnOnce(&mut UnixStream) + Send + 'static,
 ) -> std::thread::JoinHandle<()> {
     use std::os::unix::net::UnixListener;
@@ -1821,10 +1822,6 @@ fn lever_resumed_with_r1(
         assert_eq!(read_framed(&mut stream), json!({ "version": 1 }));
         write_framed(&mut stream, &json!({ "version": 1 }));
         assert_eq!(read_framed(&mut stream)["op"], "resume");
-        // What came before the thread was resumed here.
-        for event in &before {
-            write_framed(&mut stream, event);
-        }
         let waiting = json!({ "request": "r-1", "kind": "command", "title": "make", "detail": "make r-1",
                               "state": "waiting", "answers": [{ "answer": "once", "name": "Allow once" }] });
         write_framed(
@@ -1851,7 +1848,7 @@ fn request_event(id: &str, turn: u64, state: &str) -> Value {
 #[test]
 fn a_request_on_its_way_when_ctrl_c_returns_to_the_prompt_is_not_asked_for_there() {
     let lab = Lab::empty();
-    let lever = lever_resumed_with_r1(&lab, Vec::new(), |stream| {
+    let lever = lever_resumed_with_r1(&lab, |stream| {
         assert_eq!(read_framed(stream), json!({ "op": "stop", "thread": "t-1", "turn": 1 }));
         // r-2 and r-3 of turn 1 were sent before Lever took the Stop, and r-3
         // was answered from another terminal before it did.
@@ -1896,9 +1893,12 @@ fn a_request_on_its_way_when_ctrl_c_returns_to_the_prompt_is_not_asked_for_there
 #[test]
 fn a_request_lever_takes_after_it_took_a_stop_is_asked_for() {
     let lab = Lab::empty();
-    // Another client's turn 3 began before the thread was resumed here.
-    let begun = vec![json!({ "event": "message", "thread": "t-1", "turn": 3, "text": "elsewhere" })];
-    let lever = lever_resumed_with_r1(&lab, begun, |stream| {
+    let lever = lever_resumed_with_r1(&lab, |stream| {
+        // Another client begins turn 3.
+        write_framed(
+            stream,
+            &json!({ "event": "message", "thread": "t-1", "turn": 3, "text": "elsewhere" }),
+        );
         assert_eq!(read_framed(stream), json!({ "op": "stop", "thread": "t-1", "turn": 1 }));
         write_framed(stream, &json!({ "reply": "ok" }));
         write_framed(stream, &request_event("r-1", 1, "withdrawn"));
@@ -1915,12 +1915,14 @@ fn a_request_lever_takes_after_it_took_a_stop_is_asked_for() {
     let mut agent = lab.agent(&["--resume", "t-1"]);
     agent
         .stdin(screen.try_clone().unwrap())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(screen);
     let mut child = agent.spawn().expect("crowbar-agent runs");
     drop(agent);
+    let (out, _reader) = collect(child.stdout.take().unwrap());
     let mut shown = Vec::new();
     screen_until(&mut keys, &mut shown, "[request] Run: make r-1\r\nAnswer [once]: ");
+    wait_for("turn 3 followed", || out.lock().unwrap().contains("> elsewhere"));
     // SAFETY: sending Ctrl-C's signal to our own child process.
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
     screen_until(&mut keys, &mut shown, "[request] Run: make r-4\r\nAnswer [once]: ");
