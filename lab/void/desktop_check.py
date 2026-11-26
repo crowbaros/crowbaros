@@ -836,8 +836,10 @@ finally:
         contents, command output in an act, streamed answer, work continuing
         behind a put-away drawer with bar and fullscreen marks, Stop ending
         the turn and its spawned commands, failed turn reason, shell restart
-        redrawing the thread from Lever, and the person's own OpenCode
-        settings left as they made them and free of Lever's additions."""
+        redrawing the thread from Lever, a command the person's own
+        OpenCode settings refuse refused in Ask first with no request, and
+        the person's own OpenCode settings left as they made them and free of
+        Lever's additions."""
         person, home = self.person()
         click_v1 = lambda x, y: (self.qmp.pointer(x / (1280 + 1024), y / 960), self.qmp.click())
         window_secret = 'WINSECRET_' + os.urandom(6).hex()
@@ -892,6 +894,17 @@ finally:
                     'after_tool': 'Should not finish',
                 },
                 {
+                    'match': 'denied-cmd',
+                    'tool_call': {
+                        'name': 'shell',
+                        'arguments': {
+                            'command': 'echo DENIED_$((40 + 2))',
+                            'description': 'A command the person\'s own settings refuse',
+                        },
+                    },
+                    'after_tool': 'Refused: {tool_output}',
+                },
+                {
                     'match': 'make-fail',
                     'error': {
                         'status': 400,
@@ -941,6 +954,8 @@ finally:
                 },
                 'model': 'stub/stub-1',
                 'enabled_providers': ['stub'],
+                # A refusal of the person's own, which Ask first must keep.
+                'permission': {'bash': {'echo DENIED_*': 'deny'}},
             }
             self.run(f"install -d -o {person} -g {person} -m 700 {home}/.config/opencode")
             self.run(f"cat > {home}/.config/opencode/opencode.json <<'EOF'\n{json.dumps(opencode_cfg, indent=2)}\nEOF")
@@ -1279,7 +1294,25 @@ finally:
             self.key('meta_l', 'spc')
             self.wait('drawer closed after restart check', lambda: not self.agent_view()['drawer_up'])
 
-            # 6. The person's own OpenCode settings are as they made them,
+            # 6. Ask first keeps the person's own refusals: a command their
+            # settings deny is refused, and no request offers to allow it.
+            denied = self.guest.ssh(
+                f"cd {home} && timeout 60 su -s /bin/sh {person} -c "
+                f"\"/usr/local/bin/crowbar-agent --mode ask-first 'please denied-cmd'\"",
+                check=False,
+                timeout=90,
+            )
+            self.log(f'denied-cmd rc={denied.returncode}\n{denied.stdout}{denied.stderr}')
+            self.check(
+                'in Ask first, a command the person\'s own settings refuse is refused, with no request to allow it',
+                denied.returncode == 0
+                and '[request]' not in denied.stderr
+                and 'DENIED_42' not in denied.stdout
+                and 'Refused:' in denied.stdout,
+                f'rc={denied.returncode} out={denied.stdout.strip()[:200]!r} err={denied.stderr.strip()[:300]!r}',
+            )
+
+            # 7. The person's own OpenCode settings are as they made them,
             # and a session they start by hand has none of Lever's additions.
             settings_after = self.run(f'sha256sum {home}/.config/opencode/opencode.json').split()[0]
             by_hand = self.run(
