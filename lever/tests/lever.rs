@@ -1454,6 +1454,8 @@ fn lever_speaks_every_message_documented_in_readme() {
         BTreeSet::from(
             [
                 "answer",
+                "archive",
+                "delete",
                 "list",
                 "models",
                 "resume",
@@ -1475,6 +1477,8 @@ fn lever_speaks_every_message_documented_in_readme() {
             [
                 "activity",
                 "default-mode",
+                "archived",
+                "deleted",
                 "error",
                 "free-models",
                 "list",
@@ -1493,6 +1497,9 @@ fn lever_speaks_every_message_documented_in_readme() {
         doc_events,
         BTreeSet::from(
             [
+                "archived",
+                "deleted",
+                "threads",
                 "act",
                 "activity",
                 "done",
@@ -1678,6 +1685,18 @@ fn lever_speaks_every_message_documented_in_readme() {
     record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
     while !seen_events.contains_key("interrupted") {
         record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    }
+
+    write_frame(&mut peer, &json!({"op":"list","watch":true})).unwrap();
+    record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    for (op, reply) in [("archive", "archived"), ("delete", "deleted")] {
+        write_frame(&mut peer, &json!({"op":op,"thread":thread_id})).unwrap();
+        loop {
+            let v = record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+            if v["event"] == "threads" && seen_replies.contains_key(reply) && seen_events.contains_key(reply) {
+                break;
+            }
+        }
     }
 
     let seen_reply_names: BTreeSet<String> = seen_replies.keys().cloned().collect();
@@ -4803,4 +4822,92 @@ fn a_request_lever_holds_is_answered_and_a_working_thread_stopped_though_its_rec
     db.execute_batch("ALTER TABLE threads_away RENAME TO threads").unwrap();
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn list_watch_tracks_terminal_work_and_archive_preserves_history_without_a_harness() {
+    let dir = TempDir::new();
+    let script = dir.0.join("script.json");
+    std::fs::write(
+        &script,
+        r#"{"turns":[{"match":"slow","stall":true,"steps":[{"kind":"text","text":"working"}]}]}"#,
+    )
+    .unwrap();
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut watcher = handshake(&lever.surface);
+    write_frame(&mut watcher, &json!({"op":"list","watch":true})).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["threads"], json!([]));
+    let mut terminal = handshake(&lever.person);
+    write_frame(&mut terminal, &json!({"op":"send","text":"slow","cwd":"/tmp"})).unwrap();
+    let sent = read_until(&mut terminal, |v| v["reply"] == "sent");
+    let tid = &sent["thread"];
+    let list = read_until(&mut watcher, |v| v["event"] == "threads");
+    assert_eq!(list["threads"][0]["thread"], *tid);
+    assert_eq!(list["threads"][0]["cwd"], "/tmp");
+    assert_eq!(list["threads"][0]["state"], "working");
+    let mut admin = handshake(&lever.person);
+    write_frame(&mut admin, &json!({"op":"delete","thread":tid})).unwrap();
+    assert_eq!(read_frame(&mut admin).unwrap()["code"], "working");
+    write_frame(&mut admin, &json!({"op":"archive","thread":tid})).unwrap();
+    assert_eq!(read_frame(&mut admin).unwrap()["reply"], "archived");
+    let hidden = read_until(&mut watcher, |v| v["event"] == "threads");
+    assert_eq!(hidden["threads"][0]["archived"], true);
+    assert_eq!(hidden["threads"][0]["working"], true);
+    write_frame(&mut admin, &json!({"op":"list"})).unwrap();
+    assert_eq!(read_frame(&mut admin).unwrap()["threads"], json!([]));
+    write_frame(&mut admin, &json!({"op":"stop","thread":tid})).unwrap();
+    assert_eq!(read_frame(&mut admin).unwrap()["reply"], "ok");
+    let ended = read_until(&mut watcher, |v| v["event"] == "threads" && v["finished"] == true);
+    assert_eq!(ended["threads"][0]["state"], "stopped");
+    // Stop/restart with no harness configured: archive persists, resume reads SQLite alone.
+    lever.signal(libc::SIGTERM);
+    assert!(lever.wait().success());
+    let mut lever = RunningLever::start(&dir.0, my_uid(), my_uid());
+    let mut peer = handshake(&lever.surface);
+    write_frame(&mut peer, &json!({"op":"list"})).unwrap();
+    assert_eq!(read_frame(&mut peer).unwrap()["threads"], json!([]));
+    write_frame(&mut peer, &json!({"op":"resume","thread":tid})).unwrap();
+    let resumed = read_frame(&mut peer).unwrap();
+    assert_eq!(resumed["turns"][0]["message"], "slow");
+    write_frame(&mut peer, &json!({"op":"status"})).unwrap();
+    assert_eq!(read_frame(&mut peer).unwrap()["harness_started"], false);
+    lever.signal(libc::SIGTERM);
+    assert!(lever.wait().success());
+}
+
+#[test]
+fn delete_removes_the_record_and_asks_the_harness_but_keeps_history_on_failure() {
+    for fails in [false, true] {
+        let dir = TempDir::new();
+        let script = dir.0.join("script.json");
+        let rpc = dir.0.join("rpc.jsonl");
+        let mut spec = json!({"delete_session":true,"turns":[{"steps":[{"kind":"text","text":"answer"}]}]});
+        if fails {
+            spec["delete_session_error"] = json!({"code":-32603,"message":"Could not delete session"});
+        }
+        std::fs::write(&script, spec.to_string()).unwrap();
+        let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, Some(&rpc), None);
+        let mut peer = handshake(&lever.person);
+        write_frame(&mut peer, &json!({"op":"send","text":"hello","cwd":"/tmp"})).unwrap();
+        let sent = read_until(&mut peer, |v| v["reply"] == "sent");
+        let tid = sent["thread"].clone();
+        read_until(&mut peer, |v| v["event"] == "done");
+        // Restart so deletion must initialize the harness again, without loading history.
+        lever.signal(libc::SIGTERM);
+        assert!(lever.wait().success());
+        let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, Some(&rpc), None);
+        let mut peer = handshake(&lever.person);
+        write_frame(&mut peer, &json!({"op":"delete","thread":tid})).unwrap();
+        let reply = read_until(&mut peer, |v| v.get("reply").is_some());
+        assert_eq!(reply["reply"], if fails { "error" } else { "deleted" });
+        write_frame(&mut peer, &json!({"op":"resume","thread":tid})).unwrap();
+        let record = read_until(&mut peer, |v| v.get("reply").is_some());
+        assert_eq!(record["reply"], if fails { "resumed" } else { "error" });
+        assert!(std::fs::read_to_string(&rpc).unwrap().contains("session/delete"));
+        let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+        let turns: i64 = db.query_row("SELECT count(*) FROM turns", [], |r| r.get(0)).unwrap();
+        assert_eq!(turns, if fails { 1 } else { 0 });
+        lever.signal(libc::SIGTERM);
+        assert!(lever.wait().success());
+    }
 }

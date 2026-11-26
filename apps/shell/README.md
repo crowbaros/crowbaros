@@ -118,6 +118,21 @@ historical behavior evidence, not a current Fedora workflow.
   `mode:<id>`, `default-mode:<id>`, `answer:<request>:<answer>`, `send`,
   `stop`, and `close`. A control of the thread scrolled out of view is left
   out.
+- The drawer has a thread list and a thread view. **Threads** (or `Ctrl+L`)
+  returns to the list, grouped by folder with newest activity first. **New
+  thread** (`Ctrl+N`) starts in the person's home; terminal threads keep their
+  terminal's working directory. Summoning returns to the view left behind.
+  Opening a record reads Lever's history without starting its harness. Tab and
+  Shift+Tab move among controls; Enter activates the focused control.
+- **Archive** hides a thread but keeps its record. **Delete…** asks for
+  confirmation; Escape cancels that confirmation. Stop active work before
+  deleting it. Lever requests harness session deletion, and explains when the
+  harness cannot remove its own copy. The Mark follows all threads, including
+  terminal and archived work, while the drawer is hidden or displaying another
+  thread. Working takes precedence when another thread finishes.
+- Streamed answers follow the bottom only while the person is already near it.
+  Long act details expand to the complete command/output; desktop context after
+  the first turn is collapsed until requested.
 - The desktop starts locked. While the compositor has it locked, the shell
   shows its lock screen, and the bar's lock button and Super+L lock it. The
   lock screen takes the person's password at once and sends it to Base's

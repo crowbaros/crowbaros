@@ -230,10 +230,27 @@ fn deliver_replies(replies: &[PeerReply], peers: &mut [Peer], keep: &[bool], log
     }
 }
 
-fn deliver_broadcasts(broadcasts: &[Broadcast], peers: &mut [Peer], keep: &[bool], log: &mut Log) {
+fn deliver_broadcasts(broadcasts: &[Broadcast], peers: &mut [Peer], keep: &[bool], log: &mut Log, service: &Service) {
     if broadcasts.is_empty() {
         return;
     }
+    let list_changed = broadcasts.iter().any(|b| {
+        matches!(
+            b.message["event"].as_str(),
+            Some("message" | "thread-updated" | "done" | "stopped" | "failed" | "interrupted" | "archived" | "deleted")
+        )
+    });
+    let snapshot = if list_changed && peers.iter().any(|p| p.is_subscribed(service::THREAD_LIST_SUBSCRIPTION)) {
+        service.thread_list_event().map(|mut snapshot| {
+            snapshot["finished"] = serde_json::json!(broadcasts.iter().any(|b| matches!(
+                b.message["event"].as_str(),
+                Some("done" | "stopped" | "failed" | "interrupted")
+            )));
+            snapshot
+        })
+    } else {
+        None
+    };
     for (idx, peer) in peers.iter_mut().enumerate() {
         if !keep[idx] {
             continue;
@@ -244,6 +261,12 @@ fn deliver_broadcasts(broadcasts: &[Broadcast], peers: &mut [Peer], keep: &[bool
                 peer.queue_event(&b.message);
                 queued = true;
             }
+        }
+        if peer.is_subscribed(service::THREAD_LIST_SUBSCRIPTION)
+            && let Some(snapshot) = &snapshot
+        {
+            peer.queue_event(snapshot);
+            queued = true;
         }
         // A peer that cannot be sent to is dropped at its next turn in the
         // loop, where what it had sent is carried out first.
@@ -466,7 +489,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
             }
         }
         deliver_replies(&effects.replies, &mut peers, &keep, log);
-        deliver_broadcasts(&effects.broadcasts, &mut peers, &keep, log);
+        deliver_broadcasts(&effects.broadcasts, &mut peers, &keep, log, &service);
         let mut broadcasts: Vec<Broadcast> = Vec::new();
 
         // Process existing peers (indices 3..3+existing_len), keeping newly
@@ -508,7 +531,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
                 peer.on_gone(log);
             }
             keep[idx] = alive;
-            deliver_broadcasts(&broadcasts, &mut peers, &keep, log);
+            deliver_broadcasts(&broadcasts, &mut peers, &keep, log, &service);
         }
 
         let mut iter = keep.into_iter();

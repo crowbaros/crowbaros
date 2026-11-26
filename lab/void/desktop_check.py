@@ -982,6 +982,8 @@ finally:
             # once it is answered once in the drawer.
             self.key('meta_l', 'spc')
             self.wait('drawer opens for thread check', lambda: self.agent_view()['drawer_up'])
+            self.key('ctrl', 'n')
+            self.wait('new thread composer opens', lambda: not self.agent_view()['state']['list_view'])
             self.type('please run-cmd')
             self.key('ret')
             asked = self.wait(
@@ -1291,6 +1293,8 @@ finally:
                 and restored['state']['turns'][5]['state']['kind'] == 'failed',
                 json.dumps(restored['state']['thread']),
             )
+            # 6. A terminal thread drives the Mark while hidden. A second thread
+            # starts in the drawer while that first thread is still working.
             self.key('meta_l', 'spc')
             self.wait('drawer closed after restart check', lambda: not self.agent_view()['drawer_up'])
 
@@ -1329,6 +1333,63 @@ finally:
                 f'before={settings_before[:12]} after={settings_after[:12]} ask-first-in-hand-config='
                 f'{"crowbar-ask-first" in by_hand}',
             )
+            self.wait('drawer hidden before terminal thread', lambda: not self.agent_view()['drawer_up'])
+            self.as_app('sh -c ' + shlex.quote('cd /tmp && crowbar-agent "please long-stop terminal"'), f'{tmp}/terminal-thread.out')
+            terminal_view = self.wait('terminal-started thread drives hidden Mark',
+                lambda: (v := self.agent_view()) and v['state']['mark'] == 'working'
+                and any(t['cwd'] == '/tmp' and t['working'] for t in v['state']['threads']) and v, timeout=30)
+            terminal_id = next(t['thread'] for t in terminal_view['state']['threads'] if t['cwd'] == '/tmp' and t['working'])
+            self.check('terminal-started work drives the Mark with the drawer hidden', not terminal_view['drawer_up'])
+            self.key('meta_l', 'spc')
+            self.wait('drawer summoned before list', lambda: self.agent_view()['drawer_up'])
+            self.key('ctrl', 'l')
+            self.wait('thread list opens', lambda: self.agent_view()['state']['list_view'])
+            self.capture('27-thread-list-working')
+            self.key('meta_l', 'spc')
+            self.wait('list put away', lambda: not self.agent_view()['drawer_up'])
+            self.key('meta_l', 'spc')
+            self.wait('summon returns to thread list', lambda: self.agent_view()['drawer_up'])
+            self.check('summon preserves the thread-list view', self.agent_view()['state']['list_view'])
+            self.key('ctrl', 'n')
+            self.wait('new composer while another thread works', lambda: not self.agent_view()['state']['list_view'] and self.agent_view()['state']['thread'] is None)
+            self.type('please run-cmd second')
+            self.key('ret')
+            second = self.wait('second drawer thread finishes alongside terminal work',
+                lambda: (v := self.agent_view()) and len(v['state']['turns']) == 1
+                and v['state']['turns'][0]['state']['kind'] == 'done' and v, timeout=30)
+            second_id = second['state']['thread']
+            self.check('new drawer thread starts at home while terminal thread keeps its cwd',
+                second_id != terminal_id and second['state']['mark'] == 'working'
+                and any(t['thread'] == second_id and t['cwd'] == home for t in second['state']['threads'])
+                and any(t['thread'] == terminal_id and t['working'] for t in second['state']['threads']))
+            self.key('ctrl', 'l')
+            self.wait('list shows both threads', lambda: self.agent_view()['state']['list_view'])
+            self.capture('28-thread-list-concurrent')
+            self.check('thread list shows both concurrent states',
+                {t['thread']: t['state'] for t in self.agent_view()['state']['threads']}.get(second_id) == 'done'
+                and {t['thread']: t['state'] for t in self.agent_view()['state']['threads']}.get(terminal_id) == 'working')
+            # Open the newest row using keyboard focus: New thread, then its row.
+            self.key('tab')
+            self.key('tab')
+            self.key('ret')
+            self.wait('keyboard opens newest thread record', lambda: not self.agent_view()['state']['list_view'] and self.agent_view()['state']['thread'] == second_id)
+            self.capture('29-thread-opened-from-list')
+            click_v1(978, 81)  # Archive in the thread toolbar.
+            self.wait('archive returns to list and hides the thread', lambda: self.agent_view()['state']['list_view']
+                and any(t['thread'] == second_id and t['archived'] for t in self.agent_view()['state']['threads']))
+            self.check('drawer archive hides the thread while keeping its record',
+                'DRAWER_CMD_OK' in self.run(f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} crowbar-agent --resume {second_id} </dev/null'))
+            self.key('meta_l', 'spc')
+            self.wait('list hidden while terminal thread stops', lambda: not self.agent_view()['drawer_up'])
+            self.run(f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} crowbar-agent --stop {terminal_id}')
+            self.wait('terminal Stop drives hidden Mark to Done', lambda: self.agent_view()['state']['mark'] == 'done', timeout=20)
+            self.check('terminal Stop updates the hidden Mark and list state',
+                any(t['thread'] == terminal_id and t['state'] == 'stopped' for t in self.agent_view()['state']['threads']))
+            self.run(f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} crowbar-agent --delete {terminal_id}')
+            self.wait('terminal delete removes thread from live list', lambda: not any(t['thread'] == terminal_id for t in self.agent_view()['state']['threads']))
+            self.check('terminal delete removes the record and updates the drawer list',
+                terminal_id not in self.run(f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} crowbar-agent --list'))
+
         finally:
             self.guest.ssh("pkill -f '[s]tub-model.py'; pkill -f '[c]rowbar-probe copy'; pkill -f '[s]leep 45'; true", check=False)
             self.guest.ssh(

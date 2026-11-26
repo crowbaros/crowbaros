@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Default time an idle harness stays running after the last working turn ends.
+pub const THREAD_LIST_SUBSCRIPTION: &str = "@thread-list";
+
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// Default time a harness has to end a turn after Lever asks it to stop.
 pub const DEFAULT_STOP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -140,7 +142,15 @@ struct Ending {
     error: Option<String>,
 }
 
+struct PendingDelete {
+    peer_id: u64,
+    thread: String,
+    session: String,
+    dispatched: bool,
+}
+
 pub struct Service {
+    pending_deletes: Vec<PendingDelete>,
     store: Store,
     harness_config: Option<HarnessConfig>,
     fulcrum_socket: Option<PathBuf>,
@@ -180,6 +190,7 @@ impl Service {
         stop_timeout: Duration,
     ) -> Self {
         Self {
+            pending_deletes: Vec::new(),
             store,
             harness_config,
             fulcrum_socket,
@@ -212,7 +223,8 @@ impl Service {
     }
 
     fn has_active_work(&self) -> bool {
-        !self.working_turns.is_empty()
+        !self.pending_deletes.is_empty()
+            || !self.working_turns.is_empty()
             || !self.waiting.is_empty()
             || !self.pending_models.is_empty()
             || !self.pending_set_models.is_empty()
@@ -222,7 +234,8 @@ impl Service {
     /// Whether a thread is busy: a turn works on it, or the harness has yet
     /// to answer a change Lever asked of its session.
     fn thread_busy(&self, thread_id: &str) -> bool {
-        self.working_turns.contains_key(thread_id)
+        self.pending_deletes.iter().any(|p| p.thread == thread_id)
+            || self.working_turns.contains_key(thread_id)
             || self.pending_set_models.iter().any(|p| p.thread_id == thread_id)
             || self.modes_in_flight.iter().any(|(t, _)| t == thread_id)
     }
@@ -439,7 +452,8 @@ impl Service {
                 }
             }
             "status" => self.handle_status(),
-            "list" => self.handle_list(),
+            "list" => self.handle_list(value),
+            "archive" | "delete" => self.handle_lifecycle(peer_id, op, value, log),
             "send" => self.handle_send(is_person, value, log),
             "resume" => self.handle_resume(value),
             "stop" => self.handle_stop(value, log),
@@ -526,7 +540,14 @@ impl Service {
         }
     }
 
-    fn handle_list(&self) -> RequestOutcome {
+    fn handle_list(&self, value: &Value) -> RequestOutcome {
+        for field in ["watch", "archived"] {
+            if value.get(field).is_some_and(|v| !v.is_boolean()) {
+                return error_outcome("invalid-request", "Expected watch and archived to be booleans.");
+            }
+        }
+        let watch = value.get("watch").and_then(Value::as_bool).unwrap_or(false);
+        let archived = value.get("archived").and_then(Value::as_bool).unwrap_or(false);
         match self.store.list_threads() {
             Ok(mut threads) => {
                 // A turn that has ended is said to have ended, though the
@@ -548,14 +569,149 @@ impl Service {
                 RequestOutcome {
                     reply: Some(json!({
                         "reply": "list",
-                        "threads": threads.iter().map(thread_summary_json).collect::<Vec<_>>(),
+                        "threads": threads.iter().filter(|t| watch || archived || !t.archived).map(thread_summary_json).collect::<Vec<_>>(),
                     })),
-                    subscribe: None,
+                    subscribe: watch.then(|| THREAD_LIST_SUBSCRIPTION.into()),
                     broadcasts: Vec::new(),
                 }
             }
             Err(err) => error_outcome("storage-error", &err),
         }
+    }
+
+    /// A list watch is a metadata-only subscription; it never starts the harness.
+    pub fn thread_list_event(&self) -> Option<Value> {
+        let mut reply = self.handle_list(&json!({"watch":true})).reply?;
+        if reply["reply"] != "list" {
+            return None;
+        }
+        reply.as_object_mut()?.remove("reply");
+        reply["event"] = json!("threads");
+        Some(reply)
+    }
+
+    fn handle_lifecycle(&mut self, peer_id: u64, op: &str, value: &Value, log: &mut Log) -> RequestOutcome {
+        let Some(thread) = value.get("thread").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
+            return error_outcome("invalid-request", "Expected a non-empty thread ID.");
+        };
+        let meta = match self.store.thread_meta(thread) {
+            Ok(Some(meta)) => meta,
+            Ok(None) => return error_outcome("no-thread", "This thread no longer exists."),
+            Err(e) => return error_outcome("storage-error", &e),
+        };
+        if self.pending_deletes.iter().any(|p| p.thread == thread) {
+            return error_outcome("working", "This thread is being deleted.");
+        }
+        if op == "archive" {
+            let archived = match value.get("archived") {
+                None => true,
+                Some(Value::Bool(b)) => *b,
+                _ => return error_outcome("invalid-request", "Expected archived to be a boolean."),
+            };
+            if let Err(e) = self.store.archive_thread(thread, archived) {
+                return error_outcome("storage-error", &e);
+            }
+            return RequestOutcome {
+                reply: Some(json!({"reply":"archived", "thread":thread, "archived":archived})),
+                subscribe: None,
+                broadcasts: vec![Broadcast {
+                    thread_id: thread.into(),
+                    message: json!({"event":"archived", "thread":thread, "archived":archived}),
+                }],
+            };
+        }
+        self.save_endings();
+        if self.working_turns.contains_key(thread)
+            || meta.working_turn.is_some()
+            || self.unsaved_endings.iter().any(|p| p.thread_id == thread)
+            || self.pending_set_models.iter().any(|p| p.thread_id == thread)
+        {
+            return error_outcome(
+                "working",
+                "Stop this thread and wait for it to finish before deleting it.",
+            );
+        }
+        if let Some(session) = meta.harness_session_id.filter(|s| !s.is_empty()) {
+            if self.harness.is_none()
+                && let Err(e) = self.start_harness(log)
+            {
+                return error_outcome("harness-error", &e);
+            }
+            self.pending_deletes.push(PendingDelete {
+                peer_id,
+                thread: thread.into(),
+                session,
+                dispatched: false,
+            });
+            let effects = self.dispatch_deletes();
+            // An unsupported deletion finishes synchronously; otherwise the peer waits.
+            return RequestOutcome {
+                reply: effects.replies.into_iter().next().map(|r| r.message),
+                subscribe: None,
+                broadcasts: effects.broadcasts,
+            };
+        }
+        self.delete_record(thread, None)
+    }
+
+    fn delete_record(&mut self, thread: &str, warning: Option<&str>) -> RequestOutcome {
+        if let Err(e) = self.store.delete_thread(thread) {
+            return error_outcome("storage-error", &e);
+        }
+        if let Some(h) = self.harness.as_mut() {
+            h.forget_session(thread);
+        }
+        RequestOutcome {
+            reply: Some(json!({"reply":"deleted", "thread":thread, "warning":warning})),
+            subscribe: None,
+            broadcasts: vec![Broadcast {
+                thread_id: thread.into(),
+                message: json!({"event":"deleted", "thread":thread}),
+            }],
+        }
+    }
+
+    fn finish_delete(&mut self, thread: &str, result: Result<(), String>, warning: Option<&str>) -> Effects {
+        let Some(i) = self.pending_deletes.iter().position(|p| p.thread == thread) else {
+            return Effects::default();
+        };
+        let pending = self.pending_deletes.remove(i);
+        let outcome = match result {
+            Ok(()) => self.delete_record(thread, warning),
+            Err(e) => error_outcome("harness-error", &e),
+        };
+        self.refresh_idle_timer();
+        Effects {
+            broadcasts: outcome.broadcasts,
+            replies: vec![PeerReply {
+                peer_id: pending.peer_id,
+                message: outcome.reply.unwrap(),
+                subscribe: None,
+            }],
+        }
+    }
+
+    fn dispatch_deletes(&mut self) -> Effects {
+        let mut unsupported = Vec::new();
+        if let Some(h) = self.harness.as_mut().filter(|h| h.is_initialized()) {
+            for pending in &mut self.pending_deletes {
+                if !pending.dispatched {
+                    pending.dispatched = true;
+                    if !h.delete_session(&pending.thread, &pending.session) {
+                        unsupported.push(pending.thread.clone());
+                    }
+                }
+            }
+        }
+        let mut effects = Effects::default();
+        for thread in unsupported {
+            effects.extend(self.finish_delete(
+                &thread,
+                Ok(()),
+                Some("The harness does not support session deletion; its copy may remain."),
+            ));
+        }
+        effects
     }
 
     fn handle_resume(&self, value: &Value) -> RequestOutcome {
@@ -1377,6 +1533,7 @@ impl Service {
 
     fn apply_acp_event(&mut self, event: AcpEvent, log: &mut Log) -> Effects {
         match event {
+            AcpEvent::SessionDeleted { thread_id, result } => self.finish_delete(&thread_id, result, None),
             AcpEvent::Initialized => {
                 let waiting: Vec<String> = self
                     .working_turns
@@ -1392,7 +1549,7 @@ impl Service {
                 if needs_probe && let Some(harness) = self.harness.as_mut() {
                     harness.probe_models(&default_cwd());
                 }
-                Effects::default()
+                self.dispatch_deletes()
             }
             AcpEvent::InitializeFailed { message } => {
                 // What the harness said goes to the turns it fails, which
@@ -1935,6 +2092,13 @@ impl Service {
 
     fn fail_pending_peer_requests(&mut self, message: &str) -> Vec<PeerReply> {
         let mut replies = Vec::new();
+        for pending in self.pending_deletes.drain(..) {
+            replies.push(PeerReply {
+                peer_id: pending.peer_id,
+                message: error_json("harness-error", message),
+                subscribe: None,
+            });
+        }
         for peer_id in self.pending_models.drain(..) {
             replies.push(PeerReply {
                 peer_id,
@@ -2296,6 +2460,7 @@ fn thread_summary_json(t: &ThreadSummary) -> Value {
         "working": t.working,
         "waiting": t.waiting,
         "mode": t.mode,
+        "archived": t.archived,
     });
     if let Some(model) = &t.model {
         obj["model"] = json!(model);

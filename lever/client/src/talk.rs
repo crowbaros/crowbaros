@@ -1051,6 +1051,15 @@ pub fn list(lever: &mut Connection) -> Result<Ended> {
     Ok(Ended::Done)
 }
 
+/// Archive preserves the record; delete asks the harness to remove its session too.
+pub fn lifecycle(lever: &mut Connection, op: &str, thread: &str) -> Result<Ended> {
+    let reply = lever.request(json!({"op":op,"thread":thread}))?;
+    if refused(&reply).is_some() { return Ok(Ended::Failed); }
+    if let Some(warning) = reply["warning"].as_str() { eprintln!("{warning}"); }
+    eprintln!("Thread {}.", if op == "archive" { "archived" } else { "deleted" });
+    Ok(Ended::Done)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

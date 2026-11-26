@@ -358,7 +358,9 @@ Errors: `no-harness`, `no-thread`, `working`, `unsupported`, `no-model`,
 
 #### `list`
 
-Lists all threads in Lever's database, newest activity first.
+Lists unarchived threads in Lever's database, newest activity first. Pass
+`archived: true` to include archived records. Archive changes visibility, not
+activity or the contents of the record.
 
 Request:
 
@@ -378,6 +380,64 @@ Reply:
 - `waiting`: `true` while a request of this thread waits for the person.
 - `mode`: the thread's mode.
 - `model`: optional Model ID last applied to this thread, omitted when unset.
+
+A `list` request with `watch: true` also subscribes this connection to metadata
+updates for **all** threads, including archived threads so their work can drive
+the Mark. The reply is the initial snapshot; later `threads` events replace it:
+
+```json
+{"event":"threads","threads":[],"finished":false}
+```
+
+Entries have an `archived` boolean. The array has the same newest-first order
+and fields as `list`. `finished` says a turn ended in this update. The service
+sends snapshots on lifecycle/title changes, not every text token. This watch
+never starts a harness and does not subscribe to thread contents. `resume`
+still reads and subscribes to one full record.
+
+#### `archive` and `delete`
+
+```json
+{"op":"archive","thread":"t-example"}
+```
+
+```json
+{"op":"delete","thread":"t-example"}
+```
+
+Replies and events:
+
+```json
+{"reply":"archived","thread":"t-example","archived":true}
+```
+
+```json
+{"reply":"deleted","thread":"t-example","warning":null}
+```
+
+```json
+{"event":"archived","thread":"t-example","archived":true}
+```
+
+```json
+{"event":"deleted","thread":"t-example"}
+```
+
+Archive hides the thread from ordinary lists and replies `archived`. It keeps
+all turns, including work still running. The record remains readable with
+`resume`; `archive` with `archived: false` restores its visibility.
+
+Delete refuses a working thread or pending Model change with `working`: stop
+it and wait first. Otherwise Lever initializes the harness if necessary and
+asks it for `session/delete` when it advertises that capability. On success,
+Lever removes the thread and its turns, acts, and notes, and replies `deleted`.
+A harness error keeps the record and reports `harness-error`. When the harness
+has no delete capability, Lever deletes its own record and returns a `warning`
+that the harness's copy may remain. No history is loaded or prompt sent during
+deletion. Threads without a harness session are deleted without starting one.
+Both operations emit matching lifecycle events to record subscribers and
+refresh list watches. Unknown IDs return `no-thread`; malformed fields return
+`invalid-request`; failed database writes return `storage-error`.
 
 #### `send`
 
