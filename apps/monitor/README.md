@@ -16,7 +16,9 @@ signalling, so a stale row cannot target a reused PID. It never elevates privile
 Services & Storage is read-only: `sv status`, root filesystem space from
 `statvfs`, Btrfs usage where readable, and the last 30 lines of
 `/var/log/socklog/everything/current`. Permission errors remain visible. Monitor
-changes no service or log permissions and does not ask for root access.
+changes no service or log permissions and does not ask for root access. Base
+adds the person to Void’s `socklog` group so existing system logs are readable
+without elevating Monitor.
 
 Samples run outside the UI thread, once a second while focused and once every
 five seconds when inactive (including a hidden workspace). Only one sample is
