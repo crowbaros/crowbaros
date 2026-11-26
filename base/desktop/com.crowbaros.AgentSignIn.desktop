@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Agent Sign In
+Comment=Sign in to a Model provider with OpenCode
+Exec=foot --app-id=com.crowbaros.AgentSignIn --title="Agent Sign In" /usr/local/bin/crowbar-agent login
+Terminal=false
+NoDisplay=true
+StartupWMClass=com.crowbaros.AgentSignIn

@@ -313,7 +313,7 @@ Request:
 Reply:
 
 ```json
-{"reply":"status","version":"0.1.0","harness_started":false,"harnesses":[{"id":"harness-1","name":"Stub"}],"free_hosted_models":false,"default_mode":"ask-first"}
+{"reply":"status","version":"0.1.0","harness_started":false,"harnesses":[{"id":"harness-1","name":"Stub"}],"free_hosted_models":false,"models_chosen":false,"default_mode":"ask-first"}
 ```
 
 - `version`: Lever's version string.
@@ -322,6 +322,9 @@ Reply:
   harness is configured).
 - `free_hosted_models`: `true` once the person has enabled OpenCode's free
   hosted Models, `false` otherwise.
+- `models_chosen`: `true` when free hosted Models are enabled or Lever has
+  observed Models from a provider, `false` when no Model source has been chosen
+  yet (or the harness offers no Models).
 - `default_mode`: the mode new threads start in, `ask-first` or `full-access`.
 
 #### `models`
@@ -362,9 +365,9 @@ Saves the person's choice for OpenCode's free hosted Models. When changed, an
 idle harness is stopped immediately (or as soon as active work finishes, while
 refusing `send`, `models`, and `set-model` requests with `working` until the
 restart completes) so the next start applies the new
-`OPENCODE_DISABLE_FREE_MODELS` and `OPENCODE_DISABLE_MODELS_FETCH` settings.
-Only the person's socket may change this setting; the surface socket is refused
-with `unsupported`.
+`OPENCODE_DISABLE_FREE_MODELS` and `OPENCODE_DISABLE_MODELS_FETCH` settings,
+and a `free-models` event is pushed to connections that sent `watch`. Either
+socket may change this setting.
 
 Request:
 
@@ -375,10 +378,10 @@ Request:
 Reply:
 
 ```json
-{"reply":"free-models","enabled":true}
+{"reply":"free-models","enabled":true,"models_chosen":true}
 ```
 
-Errors: `unsupported`, `invalid-request`, `storage-error`.
+Errors: `invalid-request`, `storage-error`.
 
 #### `set-model`
 
@@ -824,6 +827,21 @@ Pushed to every connection subscribed to `thread`:
 
   ```json
   {"event":"activity","working":[],"waiting":["t-01a2b3c4d5e6"]}
+  ```
+
+- **`models`** — to connections that sent `watch`, when the harness's offered
+  Models or modes change (for example after `models` with `refresh: true`
+  following a sign-in), with the same fields as the `models` reply:
+
+  ```json
+  {"event":"models","supported":true,"models":[{"id":"stub/stub-1","name":"Stub One","provider":"stub","provider_name":"stub"}],"default":"stub/stub-1","free_hosted_models":false,"modes":[{"id":"ask-first","name":"Ask first"}]}
+  ```
+
+- **`free-models`** — to connections that sent `watch`, when `set-free-models`
+  changes OpenCode's free hosted Models setting:
+
+  ```json
+  {"event":"free-models","enabled":true,"models_chosen":true}
   ```
 
 - **`done`** — the turn finished normally:

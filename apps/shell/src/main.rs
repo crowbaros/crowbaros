@@ -2680,7 +2680,8 @@ fn summoned(model: &Entity<Model>, summon: session::Summon, cx: &mut App) {
             log::info!("SHELL agent-surface keyboard=true");
             if let Some(w) = agent {
                 let _ = w.update(cx, |view, w, cx| {
-                    if view.model.read(cx).agent_state.list_view { w.focus(&view.focus); }
+                    let s = &view.model.read(cx).agent_state;
+                    if s.list_view || s.needs_model_choice() { w.focus(&view.focus); }
                     else { w.focus(&view.input.focus_handle(cx)); }
                 });
             }
@@ -3406,6 +3407,20 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                     let _ = w.update(cx, |v, _, cx| v.answered(result, cx));
                 }
             }
+            session::Event::AgentLaunch(result) => match result {
+                Ok(()) => log::info!("SHELL agent-sign-in launched=true"),
+                Err(error) => {
+                    log::warn!("SHELL agent-sign-in launched=false error={error}");
+                    model.update(cx, |m, _| {
+                        m.agent_state.sign_in_launched = false;
+                        m.agent_state.error = Some(error);
+                    });
+                    sync_agent_view(model, cx);
+                    if let Some(w) = model.read(cx).agent {
+                        let _ = w.update(cx, |_, _, cx| cx.notify());
+                    }
+                }
+            },
             session::Event::Launch(result) => {
                 if let Some(w) = model.read(cx).launcher {
                     match result {

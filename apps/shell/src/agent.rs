@@ -325,12 +325,14 @@ pub struct CommandInfo {
     pub hint: Option<String>,
 }
 
-/// What Lever says the harness offers, in its `models` reply.
+/// What Lever says the harness offers, in its `models` reply or event.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Offer {
+    pub supported: bool,
     pub models: Vec<ModelInfo>,
     /// The Model a thread works with when none was chosen for it.
     pub default_model: Option<String>,
+    pub free_hosted_models: bool,
     pub modes: Vec<ModeInfo>,
 }
 
@@ -454,8 +456,16 @@ pub struct StatusInfo {
     pub harness_started: bool,
     pub harnesses: Vec<String>,
     pub free_hosted_models: bool,
+    /// Whether the person has chosen a Model source (free hosted Models or a
+    /// signed-in/configured provider).
+    #[serde(default = "default_true")]
+    pub models_chosen: bool,
     /// The mode new threads start in, when Lever says.
     pub default_mode: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -556,8 +566,13 @@ pub enum LeverMessage {
         thread: String,
         turn: u64,
     },
-    /// The `models` reply: the harness's Models and modes.
+    /// The `models` reply or event: the harness's Models and modes.
     Models(Offer),
+    /// The `free-models` reply or event: OpenCode's free hosted Models setting.
+    FreeModels {
+        enabled: bool,
+        models_chosen: Option<bool>,
+    },
     /// The `efforts` reply: a Model's effort levels.
     Efforts { model: String, efforts: Vec<EffortInfo> },
     /// The `commands` reply, and each `commands` event: a thread's, or with
@@ -652,6 +667,11 @@ pub enum AgentEvent {
     },
     /// What the harness offers: its Models and its modes.
     Offer(Offer),
+    /// OpenCode's free hosted Models setting changed.
+    FreeModels {
+        enabled: bool,
+        models_chosen: Option<bool>,
+    },
     Efforts {
         model: String,
         efforts: Vec<EffortInfo>,
@@ -730,6 +750,13 @@ impl LeverMessage {
                 effort,
             }),
             LeverMessage::Models(offer) => Some(AgentEvent::Offer(offer)),
+            LeverMessage::FreeModels {
+                enabled,
+                models_chosen,
+            } => Some(AgentEvent::FreeModels {
+                enabled,
+                models_chosen,
+            }),
             LeverMessage::Efforts { model, efforts } => Some(AgentEvent::Efforts { model, efforts }),
             LeverMessage::Commands {
                 thread,
@@ -811,10 +838,15 @@ pub enum AgentCommand {
     SetDefaultMode {
         mode: String,
     },
+    SetFreeModels {
+        enabled: bool,
+    },
     /// `models`, for the Models and modes Lever offers. It starts the
     /// harness, so the drawer asks only when the person asks for a list of
-    /// them.
-    FetchModes,
+    /// them (or explicitly checks Models after signing in).
+    FetchModes {
+        refresh: bool,
+    },
     RefreshStatus,
 }
 
@@ -884,8 +916,16 @@ impl CommandSender {
         let _ = self.tx.send(AgentCommand::SetDefaultMode { mode });
     }
 
+    pub fn set_free_models(&self, enabled: bool) {
+        let _ = self.tx.send(AgentCommand::SetFreeModels { enabled });
+    }
+
     pub fn fetch_modes(&self) {
-        let _ = self.tx.send(AgentCommand::FetchModes);
+        let _ = self.tx.send(AgentCommand::FetchModes { refresh: false });
+    }
+
+    pub fn refresh_models(&self) {
+        let _ = self.tx.send(AgentCommand::FetchModes { refresh: true });
     }
 
     pub fn stop_turn(&self, thread: String, turn: Option<u64>) {
@@ -912,6 +952,9 @@ pub struct AgentState {
     pub harness_started: bool,
     pub harnesses: Vec<String>,
     pub free_hosted_models: bool,
+    /// Whether the person has chosen a Model source (free hosted Models or a
+    /// signed-in/configured provider).
+    pub models_chosen: bool,
     pub no_harness: bool,
     pub sending: bool,
     pub model: Option<String>,
@@ -953,6 +996,14 @@ pub struct AgentState {
     pub default_model: Option<String>,
     /// Lever has said what the harness offers on this connection.
     pub offer_known: bool,
+    /// Lever explicitly reported `supported: false` for Model selection, so an
+    /// empty `models` list does not mean "no Model available".
+    #[serde(skip)]
+    pub offer_unsupported: bool,
+    /// True once the person clicked Sign in from the drawer and Models have not
+    /// refreshed (or failed to launch) yet.
+    #[serde(skip)]
+    pub sign_in_launched: bool,
     /// Bumped whenever the drawer should retry catalog/effort/command lookups
     /// (on disconnect, reconnect, error, or free-models toggle).
     #[serde(skip)]
@@ -1069,8 +1120,33 @@ impl AgentState {
         self.connected && (self.working() || self.waiting())
     }
 
+    /// The drawer must ask where Models come from before sending anything:
+    /// Lever is connected with a harness, no Model source has been chosen yet,
+    /// and there are no existing threads to read.
+    pub fn needs_model_choice(&self) -> bool {
+        self.connected
+            && !self.no_harness
+            && !self.models_chosen
+            && self.turns.is_empty()
+            && self.threads.is_empty()
+    }
+
     pub fn can_send(&self) -> bool {
-        self.connected && !self.working() && !self.sending && !self.loading && !self.no_harness
+        self.connected
+            && !self.working()
+            && !self.sending
+            && !self.loading
+            && !self.no_harness
+            && !self.needs_model_choice()
+    }
+
+    /// Lever has probed Models, supports Model selection, and offers none.
+    pub fn no_models_available(&self) -> bool {
+        self.connected
+            && !self.no_harness
+            && self.offer_known
+            && !self.offer_unsupported
+            && self.models.is_empty()
     }
 
     pub fn current_turn(&self) -> Option<u64> {
@@ -1310,6 +1386,7 @@ impl AgentState {
             || self.harness_started != status.harness_started
             || self.harnesses != status.harnesses
             || self.free_hosted_models != status.free_hosted_models
+            || self.models_chosen != status.models_chosen
             || self.no_harness != no_harness
             || (status.default_mode.is_some() && self.default_mode != status.default_mode);
         let free_changed = self.free_hosted_models != status.free_hosted_models;
@@ -1321,6 +1398,7 @@ impl AgentState {
         self.harness_started = status.harness_started;
         self.harnesses = status.harnesses;
         self.free_hosted_models = status.free_hosted_models;
+        self.models_chosen = status.models_chosen;
         self.no_harness = no_harness;
         if free_changed || harness_came_up {
             self.offer_known = false;
@@ -1531,6 +1609,8 @@ impl AgentState {
                 self.modes_loading = false;
                 self.modes_error = None;
                 self.offer_known = false;
+                self.offer_unsupported = false;
+                self.sign_in_launched = false;
                 self.efforts.clear();
                 self.catalog_epoch = self.catalog_epoch.wrapping_add(1);
                 self.connected = false;
@@ -1540,6 +1620,7 @@ impl AgentState {
                 self.harness_started = false;
                 self.harnesses.clear();
                 self.free_hosted_models = false;
+                self.models_chosen = false;
                 self.no_harness = false;
                 self.missing_model = None;
                 self.thread_mark = Mark::Idle;
@@ -1729,13 +1810,60 @@ impl AgentState {
                 true
             }
             AgentEvent::Offer(offer) => {
+                let was_choosing = self.needs_model_choice();
                 self.modes_loading = false;
                 self.modes_error = None;
+                let prev_ids: Vec<String> = self.models.iter().map(|m| m.id.clone()).collect();
                 self.modes = offer.modes;
                 self.models = offer.models;
                 self.default_model = offer.default_model;
+                self.free_hosted_models = offer.free_hosted_models;
                 self.offer_known = true;
+                self.offer_unsupported = !offer.supported;
+                self.models_chosen =
+                    !offer.supported || !self.models.is_empty() || self.free_hosted_models;
+                let new_ids: Vec<String> = self.models.iter().map(|m| m.id.clone()).collect();
+                if new_ids != prev_ids {
+                    self.efforts.retain(|id, _| self.models.iter().any(|m| &m.id == id));
+                }
+                if !self.models.is_empty() {
+                    self.missing_model = None;
+                    self.error = None;
+                    self.sign_in_launched = false;
+                }
+                if was_choosing && !self.needs_model_choice() && self.threads.is_empty() && self.thread.is_none() {
+                    self.list_view = false;
+                }
                 true
+            }
+            AgentEvent::FreeModels {
+                enabled,
+                models_chosen,
+            } => {
+                let was_choosing = self.needs_model_choice();
+                let next_chosen = models_chosen.unwrap_or(enabled || self.models_chosen);
+                let changed = self.free_hosted_models != enabled || self.models_chosen != next_chosen;
+                self.free_hosted_models = enabled;
+                self.models_chosen = next_chosen;
+                if enabled {
+                    self.missing_model = None;
+                    self.error = None;
+                    self.sign_in_launched = false;
+                }
+                if changed {
+                    self.offer_known = false;
+                    self.offer_unsupported = false;
+                    self.models.clear();
+                    self.default_model = None;
+                    self.efforts.clear();
+                    self.modes_loading = false;
+                    self.modes_error = None;
+                    self.catalog_epoch = self.catalog_epoch.wrapping_add(1);
+                }
+                if was_choosing && !self.needs_model_choice() && self.threads.is_empty() && self.thread.is_none() {
+                    self.list_view = false;
+                }
+                changed || was_choosing != self.needs_model_choice()
             }
             AgentEvent::Efforts { model, efforts } => {
                 self.efforts.insert(model, efforts);
@@ -1962,6 +2090,7 @@ fn is_network_error(lower: &str) -> bool {
         || lower.contains("host unreachable")
         || lower.contains("connection refused")
         || lower.contains("could not connect")
+        || lower.contains("unable to connect")
 }
 
 fn is_auth_error(lower: &str) -> bool {
@@ -2355,52 +2484,24 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                     .get("free_hosted_models")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                let models_chosen = msg
+                    .get("models_chosen")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
                 Some(LeverMessage::Status(StatusInfo {
                     lever_version,
                     harness_started,
                     harnesses,
                     free_hosted_models,
+                    models_chosen,
                     default_mode: opt_str(msg, "default_mode"),
                 }))
             }
-            "models" => Some(LeverMessage::Models(Offer {
-                models: msg
-                    .get("models")
-                    .and_then(|v| v.as_array())
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|item| {
-                                Some(ModelInfo {
-                                    id: item.get("id")?.as_str()?.to_string(),
-                                    name: opt_str(item, "name").unwrap_or_default(),
-                                    provider: opt_str(item, "provider"),
-                                    provider_name: opt_str(item, "provider_name"),
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                default_model: opt_str(msg, "default"),
-                modes: msg
-                    .get("modes")
-                    .and_then(|v| v.as_array())
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|item| {
-                                let id = item.get("id")?.as_str()?.to_string();
-                                let name = item
-                                    .get("name")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                Some(ModeInfo { id, name })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            })),
+            "models" => Some(LeverMessage::Models(parse_offer(msg))),
+            "free-models" => Some(LeverMessage::FreeModels {
+                enabled: msg.get("enabled")?.as_bool()?,
+                models_chosen: msg.get("models_chosen").and_then(|v| v.as_bool()),
+            }),
             "efforts" => Some(LeverMessage::Efforts {
                 model: msg.get("model")?.as_str()?.to_string(),
                 efforts: msg
@@ -2519,6 +2620,15 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
     if event == "activity" {
         return parse_activity(msg);
     }
+    if event == "models" {
+        return Some(LeverMessage::Models(parse_offer(msg)));
+    }
+    if event == "free-models" {
+        return Some(LeverMessage::FreeModels {
+            enabled: msg.get("enabled")?.as_bool()?,
+            models_chosen: msg.get("models_chosen").and_then(|v| v.as_bool()),
+        });
+    }
     if event == "threads" {
         return Some(LeverMessage::Threads { threads: serde_json::from_value(msg.get("threads")?.clone()).ok()?,
             finished: msg.get("finished").and_then(|v| v.as_bool()).unwrap_or(false) });
@@ -2592,6 +2702,55 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
         }),
         "interrupted" => Some(LeverMessage::Interrupted { thread, turn }),
         _ => None,
+    }
+}
+
+fn parse_offer(msg: &serde_json::Value) -> Offer {
+    Offer {
+        supported: msg
+            .get("supported")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+        models: msg
+            .get("models")
+            .and_then(|v| v.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        Some(ModelInfo {
+                            id: item.get("id")?.as_str()?.to_string(),
+                            name: opt_str(item, "name").unwrap_or_default(),
+                            provider: opt_str(item, "provider"),
+                            provider_name: opt_str(item, "provider_name"),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        default_model: opt_str(msg, "default"),
+        free_hosted_models: msg
+            .get("free_hosted_models")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        modes: msg
+            .get("modes")
+            .and_then(|v| v.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        let id = item.get("id")?.as_str()?.to_string();
+                        let name = item
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        Some(ModeInfo { id, name })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -2963,7 +3122,8 @@ fn start_with_stream_clone(
                 AgentCommand::Answer { .. } => "answer",
                 AgentCommand::SetMode { .. } => "set-mode",
                 AgentCommand::SetDefaultMode { .. } => "set-default-mode",
-                AgentCommand::FetchModes => "models",
+                AgentCommand::SetFreeModels { .. } => "set-free-models",
+                AgentCommand::FetchModes { .. } => "models",
                 AgentCommand::RefreshStatus => "status",
             };
             let request = match cmd {
@@ -3015,7 +3175,16 @@ fn start_with_stream_clone(
                 AgentCommand::SetDefaultMode { mode } => {
                     serde_json::json!({ "op": "set-default-mode", "mode": mode })
                 }
-                AgentCommand::FetchModes => serde_json::json!({ "op": "models" }),
+                AgentCommand::SetFreeModels { enabled } => {
+                    serde_json::json!({ "op": "set-free-models", "enabled": enabled })
+                }
+                AgentCommand::FetchModes { refresh } => {
+                    if refresh {
+                        serde_json::json!({ "op": "models", "refresh": true })
+                    } else {
+                        serde_json::json!({ "op": "models" })
+                    }
+                }
                 AgentCommand::Stop { thread, turn } => match turn {
                     Some(turn) => {
                         serde_json::json!({ "op": "stop", "thread": thread, "turn": turn })
@@ -3062,8 +3231,8 @@ fn start_with_stream_clone(
                                 .into(),
                         }));
                     }
-                    "answer" | "set-mode" | "set-default-mode" | "models" | "set-model"
-                    | "set-effort" | "efforts" => {
+                    "answer" | "set-mode" | "set-default-mode" | "set-free-models" | "models"
+                    | "set-model" | "set-effort" | "efforts" => {
                         let _ = events_for_cmds.send(session::Event::Agent(AgentEvent::Error {
                             code: "disconnected".into(),
                             message: "The Agent is not reachable right now.".into(),
@@ -3585,6 +3754,7 @@ mod tests {
             harness_started: false,
             harnesses: harnesses.into_iter().map(str::to_string).collect(),
             free_hosted_models: false,
+            models_chosen: true,
             default_mode: Some("ask-first".into()),
         }
     }
@@ -3599,6 +3769,7 @@ mod tests {
                 "harness_started": true,
                 "harnesses": [{ "id": "harness-1", "name": "OpenCode" }],
                 "free_hosted_models": true,
+                "models_chosen": true,
                 "default_mode": "full-access"
             })),
             Some(LeverMessage::Status(StatusInfo {
@@ -3606,6 +3777,7 @@ mod tests {
                 harness_started: true,
                 harnesses: vec!["OpenCode".into()],
                 free_hosted_models: true,
+                models_chosen: true,
                 default_mode: Some("full-access".into()),
             }))
         );
@@ -5338,6 +5510,7 @@ mod tests {
                           { "id": "plan", "name": "Plan" }]
             })),
             Some(LeverMessage::Models(Offer {
+                supported: true,
                 models: vec![ModelInfo {
                     id: "stub/stub-1".into(),
                     name: "Stub One".into(),
@@ -5345,6 +5518,7 @@ mod tests {
                     provider_name: None,
                 }],
                 default_model: Some("stub/stub-1".into()),
+                free_hosted_models: false,
                 modes: vec![
                     ModeInfo { id: "ask-first".into(), name: "Ask first".into() },
                     ModeInfo { id: "full-access".into(), name: "Full access".into() },
@@ -6050,12 +6224,14 @@ mod tests {
             provider_name: Some(provider_name.into()),
         };
         Offer {
+            supported: true,
             models: vec![
                 model("acme/small", "Small", "acme", "Acme"),
                 model("acme/large", "Large", "acme", "Acme"),
                 model("other/tiny", "Tiny", "other", "other"),
             ],
             default_model: Some("acme/small".into()),
+            free_hosted_models: false,
             modes: Vec::new(),
         }
     }
@@ -6078,6 +6254,7 @@ mod tests {
                 ]
             })),
             Some(LeverMessage::Models(Offer {
+                supported: true,
                 models: vec![
                     ModelInfo {
                         id: "acme/small".into(),
@@ -6088,6 +6265,7 @@ mod tests {
                     ModelInfo { id: "plain".into(), name: "Plain".into(), provider: None, provider_name: None },
                 ],
                 default_model: Some("acme/small".into()),
+                free_hosted_models: false,
                 modes: Vec::new(),
             }))
         );
@@ -6495,6 +6673,7 @@ mod tests {
                 harness_started: true,
                 harnesses: vec!["OpenCode".into()],
                 free_hosted_models: true,
+                models_chosen: true,
                 default_mode: Some("ask-first".into()),
             }),
             true,
@@ -6520,6 +6699,7 @@ mod tests {
             Some("Models and modes are not available right now.")
         );
     }
+
     #[test]
     fn working_after_a_transient_resume_failure_resubscribes_without_resending() {
         transient_resume_recovery(false);
@@ -6649,4 +6829,107 @@ mod tests {
         assert!(state.can_send());
     }
 
+    #[test]
+    fn first_summon_choice_blocks_sending_until_free_models_or_sign_in_catalog_arrives() {
+        let mut state = AgentState::new(true);
+        state.apply(
+            AgentEvent::Connected {
+                status: StatusInfo {
+                    lever_version: "0.1.0".into(),
+                    harness_started: false,
+                    harnesses: vec!["OpenCode".into()],
+                    free_hosted_models: false,
+                    models_chosen: false,
+                    default_mode: Some("ask-first".into()),
+                },
+                resumed: None,
+                preserved_thread: None,
+                resume_error: None,
+            },
+            true,
+        );
+        assert!(state.needs_model_choice());
+        assert!(!state.can_send());
+
+        // Choosing free hosted Models exits the choice screen into a fresh composer.
+        state.apply(
+            AgentEvent::FreeModels {
+                enabled: true,
+                models_chosen: Some(true),
+            },
+            true,
+        );
+        assert!(!state.needs_model_choice());
+        assert!(state.free_hosted_models);
+        assert!(!state.list_view);
+        assert!(state.can_send());
+
+        // Turning free hosted Models back off with no provider returns to the choice screen.
+        state.apply(
+            AgentEvent::FreeModels {
+                enabled: false,
+                models_chosen: Some(false),
+            },
+            true,
+        );
+        assert!(state.needs_model_choice());
+        assert!(!state.can_send());
+
+        // A live `models` event from Lever after sign-in exits the choice screen
+        // with the new Models immediately, with no restart or reconnect.
+        let offer_msg = parse_lever_message(&serde_json::json!({
+            "event": "models",
+            "supported": true,
+            "models": [{ "id": "acme/small", "name": "Small", "provider": "acme", "provider_name": "Acme" }],
+            "default": "acme/small",
+            "free_hosted_models": false,
+            "modes": [{ "id": "ask-first", "name": "Ask first" }]
+        }))
+        .unwrap();
+        state.apply(offer_msg.into_agent_event().unwrap(), true);
+        assert!(!state.needs_model_choice());
+        assert!(!state.list_view);
+        assert!(state.can_send());
+        assert_eq!(state.models.len(), 1);
+        assert_eq!(state.models[0].id, "acme/small");
+
+        // A later live `models` event after signing in to a second provider
+        // replaces the non-empty catalog immediately.
+        let second_offer = parse_lever_message(&serde_json::json!({
+            "event": "models",
+            "supported": true,
+            "models": [
+                { "id": "acme/small", "name": "Small", "provider": "acme", "provider_name": "Acme" },
+                { "id": "other/tiny", "name": "Tiny", "provider": "other", "provider_name": "Other" }
+            ],
+            "default": "acme/small",
+            "free_hosted_models": false,
+            "modes": [{ "id": "ask-first", "name": "Ask first" }]
+        }))
+        .unwrap();
+        state.apply(second_offer.into_agent_event().unwrap(), true);
+        assert_eq!(state.models.len(), 2);
+        assert_eq!(state.models[1].id, "other/tiny");
+
+        // Unreachable Model error wording stays calm.
+        assert_eq!(
+            calm_turn_error("Unable to connect. Is the computer able to access the url?"),
+            "Could not reach the Model right now. Check your connection and try again."
+        );
+
+        // An empty catalog with `supported: false` does not count as no Models available.
+        let unsupported = parse_lever_message(&serde_json::json!({
+            "event": "models",
+            "supported": false,
+            "models": [],
+            "default": null,
+            "free_hosted_models": false,
+            "modes": []
+        }))
+        .unwrap();
+        state.apply(unsupported.into_agent_event().unwrap(), true);
+        assert!(state.offer_known);
+        assert!(state.offer_unsupported);
+        assert!(!state.no_models_available());
+    }
 }

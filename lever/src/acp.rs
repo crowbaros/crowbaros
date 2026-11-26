@@ -387,6 +387,10 @@ pub struct AcpHarness {
     /// Tool call IDs seen per thread, used only to redact harness error messages
     /// and unrecognized updates without altering normal model output.
     thread_tool_ids: HashMap<String, HashSet<String>>,
+    /// Transport failure recorded when Lever cancels an endless retry loop on a
+    /// session whose Model is unreachable, turned into `TurnOutcome::Failed`
+    /// when the harness answers the cancelled prompt.
+    transport_failures: HashMap<String, String>,
 }
 
 struct Permission {
@@ -459,6 +463,7 @@ impl AcpHarness {
             loading_sessions: HashSet::new(),
             fault: None,
             thread_tool_ids: HashMap::new(),
+            transport_failures: HashMap::new(),
         };
 
         let init = InitializeRequest::new(ProtocolVersion::V1)
@@ -500,6 +505,7 @@ impl AcpHarness {
 
     /// Lets go of a thread's session, which Lever will not use.
     pub fn forget_session(&mut self, thread_id: &str) {
+        self.transport_failures.remove(thread_id);
         if let Some(session_id) = self.thread_to_session.remove(thread_id) {
             self.session_to_thread.remove(&session_id);
             self.session_models.remove(&session_id);
@@ -823,6 +829,7 @@ impl AcpHarness {
     /// desktop context as assistant-audience context so harnesses still see
     /// leading slash commands in the person's text.
     pub fn send_prompt(&mut self, thread_id: &str, turn: u64, session_id: &str, context: Option<&str>, text: &str) {
+        self.transport_failures.remove(thread_id);
         let mut blocks = Vec::new();
         if let Some(ctx) = context {
             blocks.push(ContentBlock::Text(
@@ -844,6 +851,9 @@ impl AcpHarness {
 
     /// Sends a `session/cancel` notification for an active session.
     pub fn cancel_session(&mut self, session_id: &str) {
+        if let Some(thread_id) = self.session_to_thread.get(session_id).cloned() {
+            self.transport_failures.remove(&thread_id);
+        }
         let cancel = CancelNotification::new(SessionId::new(session_id.to_string()));
         self.send_notification(AGENT_METHOD_NAMES.session_cancel, &cancel);
         let _ = self.on_writable();
@@ -1270,13 +1280,18 @@ impl AcpHarness {
                 // where ACP has `StopReason::Cancelled`. Any other error is
                 // a failure, whether or not a stop was asked for.
                 PendingRpc::Prompt { thread_id, turn } if cancelled => {
+                    let outcome = match self.transport_failures.remove(&thread_id) {
+                        Some(message) => TurnOutcome::Failed(message),
+                        None => TurnOutcome::Stopped,
+                    };
                     events.push(AcpEvent::PromptFinished {
                         thread_id,
                         turn,
-                        outcome: TurnOutcome::Stopped,
+                        outcome,
                     });
                 }
                 PendingRpc::Prompt { thread_id, turn } => {
+                    self.transport_failures.remove(&thread_id);
                     let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
                     events.push(AcpEvent::PromptFinished {
                         thread_id,
@@ -1576,30 +1591,38 @@ impl AcpHarness {
                 self.close_probe(SessionId::new(session_id));
                 events.push(AcpEvent::EffortsProbed { model, result });
             }
-            PendingRpc::Prompt { thread_id, turn } => match serde_json::from_value::<PromptResponse>(result) {
-                Ok(resp) => {
-                    let outcome = match resp.stop_reason {
-                        StopReason::EndTurn => TurnOutcome::Done,
-                        StopReason::Cancelled => TurnOutcome::Stopped,
-                        StopReason::Refusal => TurnOutcome::Failed("The harness refused to continue.".to_string()),
-                        StopReason::MaxTokens => TurnOutcome::Failed("The turn reached its token limit.".to_string()),
-                        StopReason::MaxTurnRequests => {
-                            TurnOutcome::Failed("The turn reached its request limit.".to_string())
-                        }
-                        _ => TurnOutcome::Failed("The turn ended unexpectedly.".to_string()),
-                    };
-                    events.push(AcpEvent::PromptFinished {
+            PendingRpc::Prompt { thread_id, turn } => {
+                let transport_failure = self.transport_failures.remove(&thread_id);
+                match serde_json::from_value::<PromptResponse>(result) {
+                    Ok(resp) => {
+                        let outcome = match resp.stop_reason {
+                            StopReason::EndTurn => TurnOutcome::Done,
+                            StopReason::Cancelled => match transport_failure {
+                                Some(message) => TurnOutcome::Failed(message),
+                                None => TurnOutcome::Stopped,
+                            },
+                            StopReason::Refusal => TurnOutcome::Failed("The harness refused to continue.".to_string()),
+                            StopReason::MaxTokens => {
+                                TurnOutcome::Failed("The turn reached its token limit.".to_string())
+                            }
+                            StopReason::MaxTurnRequests => {
+                                TurnOutcome::Failed("The turn reached its request limit.".to_string())
+                            }
+                            _ => TurnOutcome::Failed("The turn ended unexpectedly.".to_string()),
+                        };
+                        events.push(AcpEvent::PromptFinished {
+                            thread_id,
+                            turn,
+                            outcome,
+                        });
+                    }
+                    Err(_) => events.push(AcpEvent::PromptFinished {
                         thread_id,
                         turn,
-                        outcome,
-                    });
+                        outcome: TurnOutcome::Failed("The harness returned an invalid turn response.".to_string()),
+                    }),
                 }
-                Err(_) => events.push(AcpEvent::PromptFinished {
-                    thread_id,
-                    turn,
-                    outcome: TurnOutcome::Failed("The harness returned an invalid turn response.".to_string()),
-                }),
-            },
+            }
         }
     }
 
@@ -1697,10 +1720,19 @@ impl AcpHarness {
                     let clean = title.trim().to_string();
                     if !clean.is_empty() {
                         events.push(AcpEvent::TitleUpdated {
-                            thread_id,
+                            thread_id: thread_id.clone(),
                             title: clean,
                         });
                     }
+                }
+                if let Some(raw_msg) = extract_transport_retry_failure(raw_update)
+                    && !self.transport_failures.contains_key(&thread_id)
+                {
+                    let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
+                    self.transport_failures.insert(thread_id, message);
+                    let cancel = CancelNotification::new(SessionId::new(session_id.to_string()));
+                    self.send_notification(AGENT_METHOD_NAMES.session_cancel, &cancel);
+                    let _ = self.on_writable();
                 }
             }
             Ok(SessionUpdate::AvailableCommandsUpdate(update)) => {
@@ -2306,6 +2338,31 @@ fn redact_ids(input: &str, mut ids: Vec<&str>) -> String {
     out
 }
 
+/// After this many consecutive `provider.transport` retry attempts (for
+/// example `ECONNREFUSED` or offline DNS failures), Lever cancels the retry
+/// loop and fails the turn with the transport error instead of letting the
+/// harness retry indefinitely.
+const MAX_TRANSPORT_RETRY_ATTEMPT: u64 = 3;
+
+fn extract_transport_retry_failure(raw_update: &Value) -> Option<String> {
+    let retry = raw_update.get("_meta")?.get("opencode/retry")?;
+    let attempt = retry.get("attempt")?.as_u64()?;
+    if attempt < MAX_TRANSPORT_RETRY_ATTEMPT {
+        return None;
+    }
+    let err = retry.get("error")?;
+    if err.get("type").and_then(Value::as_str) != Some("provider.transport") {
+        return None;
+    }
+    let msg = err
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("Could not reach the Model.");
+    Some(msg.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2685,6 +2742,45 @@ mod tests {
         assert_eq!(
             request_detail(Some(ToolKind::Edit), &deletion),
             (Some("-remove me".to_string()), Some("/w/old.txt".to_string()))
+        );
+    }
+
+    #[test]
+    fn transport_retry_failure_triggers_only_for_repeated_transport_errors() {
+        let early = json!({
+            "sessionUpdate": "session_info_update",
+            "_meta": {
+                "opencode/retry": {
+                    "attempt": 2,
+                    "error": { "type": "provider.transport", "message": "ECONNREFUSED: Unable to connect." }
+                }
+            }
+        });
+        assert_eq!(extract_transport_retry_failure(&early), None);
+
+        let rate_limit = json!({
+            "sessionUpdate": "session_info_update",
+            "_meta": {
+                "opencode/retry": {
+                    "attempt": 4,
+                    "error": { "type": "provider.rate_limit", "message": "429 Too Many Requests" }
+                }
+            }
+        });
+        assert_eq!(extract_transport_retry_failure(&rate_limit), None);
+
+        let unreachable = json!({
+            "sessionUpdate": "session_info_update",
+            "_meta": {
+                "opencode/retry": {
+                    "attempt": 3,
+                    "error": { "type": "provider.transport", "message": "ECONNREFUSED: Unable to connect." }
+                }
+            }
+        });
+        assert_eq!(
+            extract_transport_retry_failure(&unreachable).as_deref(),
+            Some("ECONNREFUSED: Unable to connect.")
         );
     }
 }

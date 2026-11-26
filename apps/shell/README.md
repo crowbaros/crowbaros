@@ -85,8 +85,16 @@ historical behavior evidence, not a current Fedora workflow.
   framing, waits for Lever's initial `status` (and restores the active thread,
   or after a fresh start the one waiting for the person, else the working or
   newest one, via `list` and `resume`) before reporting connected, then sends
-  `watch`. It sends messages and `stop` for the thread, streams the answer,
-  each act, notes, desktop context, and stopped/failed/interrupted states, and
+  `watch`. On first summon, when Lever reports `models_chosen` false and there
+  are no existing threads, the drawer asks where Models come from — offering
+  **Use free hosted Models** (`set-free-models`) and **Sign in** (launching
+  Base's `com.crowbaros.AgentSignIn.desktop` through the launcher service, which
+  runs `crowbar-agent login` in `foot`) — and sends nothing until a choice is
+  made. When sign-in finishes or the setting changes, Lever's `models` and
+  `free-models` events update the drawer live with no restart of Lever or the
+  shell. It sends messages and `stop` for the thread, streams the answer,
+  each act, notes, desktop context, and stopped/failed/interrupted states,
+  refuses a message with an explanation when no Model is available, and
   shows when no harness is configured. Putting the drawer away stops nothing.
   A transient history-read failure preserves the selected thread. If the next
   send finds that turn still working, the client reads its history again and
@@ -110,19 +118,22 @@ historical behavior evidence, not a current Fedora workflow.
   types: a name's start before its middle, and then what a command does. Up
   and Down move through the list, Enter or Tab takes a row, a click does too,
   and Escape closes the list and keeps what was typed. The drawer's own
-  commands come first: `/model`, `/effort`, `/mode`, `/default-mode`, `/new`,
-  `/threads`, and, where they apply, `/stop`, `/archive`, and `/delete`. One
+  commands come first: `/model`, `/effort`, `/mode`, `/default-mode`,
+  `/free-models`, `/sign-in`, `/new`, `/threads`, and, where they apply,
+  `/stop`, `/archive`, and `/delete`. One
   the thread cannot take now, as `/mode` while a turn works, is shown with
   the reason, and taking it changes nothing.
 - A command that needs a choice lists the choices in the same place: `/mode`
   the modes Lever offers, `/default-mode` the modes new threads may start in,
-  `/effort` the effort levels of the thread's Model, and `/model` the Models.
+  `/free-models` whether free hosted Models are on or off, `/effort` the effort
+  levels of the thread's Model, and `/model` the Models.
   The list starts on the choice the thread is at. A command typed whole, as
   `/mode plan`, needs no list. What a list needs is asked of Lever when the
   list opens, with `models` and `efforts`, since that starts the harness.
 - `/model` is the Model picker: the providers the harness has Models from on
   a rail, the Models of the one picked, and, once the person types, a search
-  through every provider with no rail. Left and Right move between providers.
+  through every provider with no rail, with **Sign in** and free hosted Models
+  controls in its footer. Left and Right move between providers.
   Picking a Model sends `set-model`, and where the Model has effort levels
   the drawer lists them next. A thread keeps its Model and effort, and the
   drawer shows them as soon as Lever says them. For the drawer's new thread
@@ -168,7 +179,9 @@ historical behavior evidence, not a current Fedora workflow.
   display's logical pixels, for checks to click: `answer:<request>:<answer>`,
   `acts:<turn>`, `act:<id>`, `context:<turn>`, `newest`, `send`, `stop`, and
   `close`, and, of an open list, `command:<name>`, `choice:<value>`, and
-  `provider:<id>`. Thread navigation adds `new-thread`, `threads`,
+  `provider:<id>`. Model-source controls add `choose-free-models`,
+  `disable-free-models`, `toggle-free-models`, `sign-in`, and `refresh-models`.
+  Thread navigation adds `new-thread`, `threads`,
   `thread:<id>`, `cancel-delete`, and `confirm-delete`. A control scrolled
   out of view is left out.
 - The drawer has a thread list and a thread view. **Threads**, `/threads`, or

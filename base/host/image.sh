@@ -120,6 +120,7 @@ install -m 644 "$REPO_ROOT/apps/shell/assets/wallpaper.png" "$REPO_ROOT/apps/she
 install -m 644 "$REPO_ROOT/apps/studio-settings/packaging/com.crowbaros.StudioSettings.desktop" "$R/usr/share/applications/"
 install -m 644 "$REPO_ROOT/apps/editor/packaging/com.crowbaros.Editor.desktop" "$R/usr/share/applications/"
 install -m 644 "$REPO_ROOT/apps/files/packaging/com.crowbaros.Files.desktop" "$R/usr/share/applications/"
+install -m 644 "$DESKTOP/com.crowbaros.AgentSignIn.desktop" "$R/usr/share/applications/"
 install -D -m 644 "$REPO_ROOT/apps/files/packaging/com.crowbaros.Files.svg" "$R/usr/share/icons/hicolor/scalable/apps/com.crowbaros.Files.svg"
 # The shell's fonts for foot and the apps, and the cursor theme the desktop's
 # services name, as the default for anything that names none.
