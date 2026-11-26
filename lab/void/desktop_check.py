@@ -963,6 +963,32 @@ finally:
                         'message': 'Stub model declined this turn',
                     },
                 },
+                {
+                    'match': '<background-result',
+                    'reply': 'The subagent finished its work.',
+                },
+                {
+                    'match': 'subagent-child-read',
+                    'tool_call': {
+                        'name': 'read',
+                        'arguments': {
+                            'path': f'{home}/.env',
+                        },
+                    },
+                    'after_tool': 'The env file says: {tool_output}',
+                },
+                {
+                    'match': 'subagent-check',
+                    'tool_call': {
+                        'name': 'subagent',
+                        'arguments': {
+                            'agent': 'general',
+                            'description': 'Inspect env file',
+                            'prompt': 'Please run subagent-child-read to read the env file.',
+                        },
+                    },
+                    'after_tool': 'Started a subagent to inspect the env file.',
+                },
             ],
             'default_reply': 'Stub ({model}): {prompt}',
         }
@@ -1895,6 +1921,130 @@ finally:
             self.capture('31-thread-list-after-delete')
             self.check('drawer deletion asks first and removes the confirmed record',
                 thread_id not in self.run(f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} crowbar-agent --list'))
+
+            # 8b. Subagents (#380): a real OpenCode subagent outlives its parent
+            # turn, raises a request to read a .env file, keeps the thread
+            # working and the mark waiting, is not listed as a thread, and opens
+            # in the drawer with its prompt, act, and answer.
+            active_before = len([t for t in self.agent_view()['state']['threads'] if not t.get('archived')])
+            list_before = len([
+                line for line in self.run(
+                    f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} crowbar-agent --list'
+                ).splitlines()
+                if line.strip()
+            ])
+            self.run(
+                f"printf 'SUBAGENT_ENV_CHECK=crowbar_subagent_ok\\n' > {home}/.env "
+                f"&& chown {person}:{person} {home}/.env && chmod 600 {home}/.env"
+            )
+            self.key('ctrl', 'n')
+            self.wait('new thread composer for subagent check',
+                      lambda: not self.agent_view()['state']['list_view'] and self.agent_view()['state']['thread'] is None)
+            self.type('please subagent-check')
+            self.key('ret')
+            sub_waiting = self.wait(
+                'subagent outlives its turn and raises a request in the thread',
+                lambda: (v := self.agent_view())
+                and len(v['state']['turns']) >= 1
+                and v['state']['turns'][0]['state']['kind'] == 'done'
+                and bool(v['state']['turns'][0].get('subagents'))
+                and v['state']['turns'][0]['subagents'][0]['state']['kind'] == 'working'
+                and (r := waiting_request(v)) is not None
+                and r.get('subagent') == v['state']['turns'][0]['subagents'][0]['subagent']
+                and control(v, f"answer:{r['request']}:once")
+                and control(v, f"subagent:{v['state']['turns'][0]['subagents'][0]['subagent']}")
+                and v,
+                timeout=60,
+            )
+            time.sleep(0.5)
+            self.capture('31a-subagent-request')
+            sub_thread_id = sub_waiting['state']['thread']
+            sub_before = sub_waiting['state']['turns'][0]['subagents'][0]
+            sub_id = sub_before['subagent']
+            sub_req = waiting_request(sub_waiting)
+            self.key('meta_l', 'spc')
+            self.wait('drawer put away while subagent waits', lambda: not self.agent_view()['drawer_up'])
+            sub_away = self.agent_view()
+            self.key('meta_l', 'spc')
+            self.wait('drawer returns to waiting subagent',
+                      lambda: (v := self.agent_view()) and v['drawer_up']
+                      and control(v, f"answer:{sub_req['request']}:once"))
+            sub_list_out = self.run(
+                f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} crowbar-agent --list'
+            )
+            active_threads = [t for t in sub_waiting['state']['threads'] if not t.get('archived')]
+            sub_thread_entry = next((t for t in active_threads if t['thread'] == sub_thread_id), None)
+            sub_turn_blob = json.dumps({
+                'turn': sub_waiting['state']['turns'][0],
+                'threads': active_threads,
+            })
+            self.check(
+                'a subagent outliving its turn keeps the thread working and the mark waiting, is not listed as a '
+                'thread, and exposes no harness names',
+                sub_waiting['state']['turns'][0]['state']['kind'] == 'done'
+                and sub_before['state']['kind'] == 'working'
+                and sub_req.get('subagent') == sub_id
+                and sub_away['state']['mark'] == 'waiting'
+                and len(active_threads) == active_before + 1
+                and sub_thread_entry is not None
+                and sub_thread_entry['working'] is True
+                and sub_thread_entry.get('subagents') == 1
+                and sub_thread_id in sub_list_out
+                and '1 subagent' in sub_list_out
+                and len([line for line in sub_list_out.splitlines() if line.strip()]) == list_before + 1
+                and 'ses_' not in sub_turn_blob
+                and 'childSessionId' not in sub_turn_blob
+                and 'opencode' not in sub_turn_blob.lower(),
+                json.dumps({'active_threads': active_threads, 'list': sub_list_out.strip(), 'subagent': sub_before}),
+            )
+            click_control(f"answer:{sub_req['request']}:once")
+            sub_done = self.wait(
+                'subagent finishes after its request is answered in the drawer',
+                lambda: (v := self.agent_view())
+                and len(v['state']['turns']) >= 1
+                and bool(v['state']['turns'][0].get('subagents'))
+                and v['state']['turns'][0]['subagents'][0]['state']['kind'] == 'done'
+                and not any(t['thread'] == sub_thread_id and t['working'] for t in v['state']['threads'])
+                and v,
+                timeout=60,
+            )
+            sub_after = sub_done['state']['turns'][0]['subagents'][0]
+            sub_act_id = sub_after['acts'][0]['id'] if sub_after.get('acts') else None
+            click_control(f'subagent:{sub_id}')
+            sub_opened = self.wait(
+                'opening the subagent line shows its act in the drawer',
+                lambda: (v := self.agent_view())
+                and (sub_act_id is None or control(v, f'act:{sub_act_id}'))
+                and v,
+                timeout=20,
+            )
+            time.sleep(0.5)
+            self.capture('31b-subagent-opened')
+            sub_resume_out = self.run(
+                f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} '
+                f'crowbar-agent --resume {sub_thread_id} </dev/null 2>&1'
+            )
+            sub_answers = '\n'.join(m['text'] for m in sub_after.get('messages', []) if m.get('role') != 'prompt')
+            sub_prompts = '\n'.join(m['text'] for m in sub_after.get('messages', []) if m.get('role') == 'prompt')
+            sub_done_req = next(
+                (r for r in sub_done['state']['turns'][0].get('requests', []) if r['request'] == sub_req['request']),
+                {},
+            )
+            self.check(
+                'answering a subagent request lets it finish, opening it in the drawer shows its work, and '
+                'crowbar-agent shows the subagent',
+                sub_after['title'] == 'Inspect env file'
+                and sub_after['state']['kind'] == 'done'
+                and sub_done_req.get('state') == 'answered'
+                and sub_done_req.get('answer') == 'once'
+                and 'subagent-child-read' in sub_prompts
+                and 'crowbar_subagent_ok' in sub_answers
+                and bool(sub_act_id)
+                and bool(control(sub_opened, f'act:{sub_act_id}'))
+                and 'Inspect env file' in sub_resume_out
+                and 'crowbar_subagent_ok' in sub_resume_out,
+                json.dumps({'subagent': sub_after, 'req': sub_done_req, 'resume': sub_resume_out[:300]}),
+            )
             self.key('meta_l', 'spc')
             self.wait('drawer closed after lifecycle checks', lambda: not self.agent_view()['drawer_up'])
             self.agent_restart_recovery(tmp, home)
@@ -1963,7 +2113,7 @@ finally:
             self.guest.ssh(
                 f"sv stop /var/service/crowbar-lever >/dev/null 2>&1 || true; "
                 f"pkill -x opencode 2>/dev/null || true; "
-                f"rm -rf {home}/.config/opencode {home}/.local/share/opencode {home}/.local/state/crowbaros/lever {tmp}; "
+                f"rm -rf {home}/.config/opencode {home}/.local/share/opencode {home}/.local/state/crowbaros/lever {home}/.env {tmp}; "
                 f"sv start /var/service/crowbar-lever >/dev/null 2>&1 || true",
                 check=False,
             )

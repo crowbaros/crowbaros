@@ -78,9 +78,13 @@ crowbar-agent status                   # Lever's status, what works, and what wa
   full-access` changes that. `--mode` starts a thread in another mode, or,
   with `--resume ID` alone, changes a thread's mode for its next turn.
 - **The answer is plain text on standard output**, a piece at a time, so it
-  reads the same in a terminal and down a pipe. Acts (`[act] ...`), requests (`[request] ...`), unrecognized
-  updates (`[update] ...`), prompts, and errors go to standard error. An act
-  that ends after a later turn began is still shown. On a
+  reads the same in a terminal and down a pipe. Acts (`[act] ...`), subagents
+  (`[subagent] ...`), requests (`[request] ...`), unrecognized updates
+  (`[update] ...`), prompts, and errors go to standard error. `--list` notes
+  when a thread has subagents, `--resume ID` shows them with their acts and
+  answers, and subagents that outlive their turn keep the watch open so their
+  requests can be answered right away (or with `--resume ID --answer R A`).
+  An act that ends after a later turn began is still shown. On a
   terminal, an act that comes in the middle of a line of the answer ends that
   line first. Down a pipe or into a file, nothing is put in the middle of the
   answer. Either way the answer's last line is ended, as any command's is.

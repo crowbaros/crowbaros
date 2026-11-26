@@ -1519,6 +1519,9 @@ fn lever_speaks_every_message_documented_in_readme() {
                 "note",
                 "request",
                 "stopped",
+                "subagent",
+                "subagent-act",
+                "subagent-text",
                 "text",
                 "thread-updated"
             ]
@@ -1552,6 +1555,10 @@ fn lever_speaks_every_message_documented_in_readme() {
                 {
                     "steps": [
                         { "kind": "act", "id": "c1", "tool_kind": "execute", "title": "Run ls", "status": "completed", "content": "Cargo.toml" },
+                        { "kind": "subagent_start", "id": "ses_readme_sub", "title": "Check workspace", "prompt": "Inspect files" },
+                        { "kind": "subagent_act", "subagent": "ses_readme_sub", "id": "c2", "tool_kind": "read", "title": "Read README.md", "status": "completed" },
+                        { "kind": "subagent_text", "subagent": "ses_readme_sub", "text": "Found two files." },
+                        { "kind": "subagent_end", "subagent": "ses_readme_sub", "status": "completed" },
                         { "kind": "unknown", "update": { "sessionUpdate": "extra", "summary": "Cache warm" } },
                         { "kind": "title", "title": "Inspect workspace" },
                         { "kind": "text", "text": "Here are the files." }
@@ -6046,6 +6053,429 @@ fn models_refresh_while_busy_defers_harness_restart_until_turn_finishes() {
                 .is_some_and(|arr| arr.iter().any(|m| m["id"] == "other/new"))
     });
     assert_eq!(refreshed["models"].as_array().unwrap().len(), 2);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn subagent_outlives_turn_raises_request_keeps_harness_alive_and_hides_harness_names() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "turns": [{
+                "steps": [
+                    {
+                        "kind": "subagent_start",
+                        "id": "ses_child_secret_99",
+                        "title": "Check secrets",
+                        "prompt": "Read .env and report"
+                    },
+                    { "kind": "text", "text": "Handed off to a subagent." }
+                ],
+                "after": [
+                    { "kind": "pause_ms", "ms": 550 },
+                    {
+                        "kind": "subagent_act",
+                        "subagent": "ses_child_secret_99",
+                        "id": "call_ls_1",
+                        "tool_kind": "read",
+                        "title": "List folder",
+                        "status": "completed",
+                        "content": ".env"
+                    },
+                    {
+                        "kind": "subagent_ask",
+                        "subagent": "ses_child_secret_99",
+                        "id": "call_env_1",
+                        "tool_kind": "read",
+                        "title": "Read /tmp/.env",
+                        "raw_input": { "path": "/tmp/.env" },
+                        "output": "API_MODE=ok"
+                    },
+                    {
+                        "kind": "subagent_text",
+                        "subagent": "ses_child_secret_99",
+                        "text": "Found API_MODE=ok."
+                    },
+                    {
+                        "kind": "subagent_end",
+                        "subagent": "ses_child_secret_99",
+                        "status": "completed"
+                    }
+                ]
+            }]
+        }),
+    );
+
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, Some(350));
+    let mut watcher = handshake(&lever.surface);
+    write_frame(&mut watcher, &json!({ "op": "watch" })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "activity");
+
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Check the workspace");
+    let mut seen_frames: Vec<Value> = Vec::new();
+    let mut subagent_id: Option<String> = None;
+
+    // Wait for the parent turn to end (`done`), recording every event.
+    loop {
+        let frame = read_frame(&mut peer).unwrap();
+        seen_frames.push(frame.clone());
+        if frame["event"] == "subagent" {
+            subagent_id = frame["subagent"].as_str().map(str::to_string);
+        }
+        if frame["event"] == "done" && frame["thread"] == thread && frame["turn"] == turn {
+            break;
+        }
+    }
+    let sub_id = subagent_id.expect("subagent event before turn ended");
+    assert!(sub_id.starts_with("sub-"), "expected Lever sub-... id, got {sub_id}");
+
+    // Wait past the 350ms idle timeout while the subagent is still working.
+    std::thread::sleep(Duration::from_millis(450));
+
+    let mut inspector = handshake(&lever.person);
+    write_frame(&mut inspector, &json!({ "op": "status" })).unwrap();
+    let status = read_frame(&mut inspector).unwrap();
+    assert_eq!(
+        status["harness_started"], true,
+        "harness must stay running while subagent works past idle timeout"
+    );
+
+    write_frame(&mut inspector, &json!({ "op": "list" })).unwrap();
+    let listed = read_frame(&mut inspector).unwrap();
+    seen_frames.push(listed.clone());
+    let threads = listed["threads"].as_array().unwrap();
+    assert_eq!(
+        threads.len(),
+        1,
+        "subagent session must never be listed as a thread: {listed}"
+    );
+    assert_eq!(threads[0]["thread"], thread);
+    assert_eq!(threads[0]["working"], true);
+    assert_eq!(threads[0]["state"], "working");
+    assert_eq!(threads[0]["subagents"], 1);
+
+    // Subagent raises a request after its parent turn has ended.
+    let req = loop {
+        let frame = read_frame(&mut peer).unwrap();
+        seen_frames.push(frame.clone());
+        if frame["event"] == "request" && frame["state"] == "waiting" {
+            break frame;
+        }
+    };
+    assert_eq!(req["thread"], thread);
+    assert_eq!(req["turn"], turn);
+    assert_eq!(req["subagent"], sub_id);
+    assert_eq!(
+        req["title"], "Read /tmp/.env",
+        "child title prefix must be stripped: {req}"
+    );
+    let req_id = req["request"].as_str().unwrap().to_string();
+
+    // Activity reports the thread as both working and waiting.
+    let waiting_activity = read_until(&mut watcher, |v| {
+        v["event"] == "activity" && v["waiting"].as_array().is_some_and(|w| w.iter().any(|t| t == &thread))
+    });
+    assert!(
+        waiting_activity["working"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t == &thread),
+        "{waiting_activity}"
+    );
+
+    // Answer the subagent's request and wait for the subagent to finish.
+    write_frame(
+        &mut peer,
+        &json!({ "op": "answer", "thread": thread, "request": req_id, "answer": "once" }),
+    )
+    .unwrap();
+    let ans_reply = read_until(&mut peer, |v| v.get("reply").is_some());
+    assert_eq!(ans_reply["reply"], "ok", "{ans_reply}");
+
+    let sub_done = loop {
+        let frame = read_frame(&mut peer).unwrap();
+        seen_frames.push(frame.clone());
+        if frame["event"] == "subagent" && frame["state"] == "done" {
+            break frame;
+        }
+    };
+    assert_eq!(sub_done["subagent"], sub_id);
+
+    // Activity clears working and waiting once the subagent ends.
+    let clear = read_until(&mut watcher, |v| {
+        v["event"] == "activity"
+            && v["working"].as_array().is_some_and(Vec::is_empty)
+            && v["waiting"].as_array().is_some_and(Vec::is_empty)
+    });
+    assert_eq!(clear["working"], json!([]));
+
+    // Resumed record keeps the subagent's title, messages, acts, state, and request link.
+    let rec = resume(&mut inspector, &thread);
+    seen_frames.push(rec.clone());
+    assert_eq!(rec["working"], false);
+    assert_eq!(
+        rec["turns"][0]["acts"].as_array().unwrap().len(),
+        0,
+        "OpenCode subagent wrapper must not appear as parent act: {rec}"
+    );
+    let subs = rec["turns"][0]["subagents"].as_array().unwrap();
+    assert_eq!(subs.len(), 1, "{rec}");
+    let sub = &subs[0];
+    assert_eq!(sub["subagent"], sub_id);
+    assert_eq!(sub["title"], "Check secrets");
+    assert_eq!(sub["state"], "done");
+    assert_eq!(
+        sub["messages"],
+        json!([
+            { "role": "prompt", "text": "Read .env and report" },
+            { "role": "answer", "text": "Found API_MODE=ok." }
+        ])
+    );
+    let sub_acts = sub["acts"].as_array().unwrap();
+    assert_eq!(sub_acts.len(), 2, "{sub}");
+    assert_eq!(sub_acts[0]["title"], "List folder");
+    assert_eq!(sub_acts[1]["title"], "Read /tmp/.env");
+    assert_eq!(sub_acts[1]["state"], "done");
+    assert_eq!(rec["turns"][0]["requests"][0]["subagent"], sub_id);
+    assert_eq!(rec["turns"][0]["requests"][0]["state"], "answered");
+    assert_eq!(rec["turns"][0]["requests"][0]["answer"], "once");
+
+    // No harness/OpenCode session or tool call identifier crosses Lever's sockets.
+    for frame in &seen_frames {
+        let raw = frame.to_string();
+        for forbidden in [
+            "ses_child_secret_99",
+            "opencode",
+            "childSessionId",
+            "sessionID",
+            "call_env_1",
+            "call_ls_1",
+        ] {
+            assert!(
+                !raw.contains(forbidden),
+                "harness identifier {forbidden:?} leaked onto Lever socket: {raw}"
+            );
+        }
+    }
+
+    // Once the subagent ends, the idle timeout stops the harness as usual.
+    wait_until("idle harness to stop after subagent ends", || {
+        write_frame(&mut inspector, &json!({ "op": "status" })).unwrap();
+        read_frame(&mut inspector).unwrap()["harness_started"] == false
+    });
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn acp_v1_subagent_works_and_stop_cancels_subagent_outliving_its_turn() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [{
+                "steps": [
+                    {
+                        "kind": "subagent_start",
+                        "id": "acp-child-42",
+                        "title": "Audit tree",
+                        "prompt": "Check every file",
+                        "protocol": "acp"
+                    },
+                    { "kind": "text", "text": "Running in background." }
+                ],
+                "after": [
+                    {
+                        "kind": "subagent_act",
+                        "subagent": "acp-child-42",
+                        "id": "child-act-1",
+                        "tool_kind": "search",
+                        "title": "Search repo",
+                        "status": "completed",
+                        "content": "3 matches",
+                        "protocol": "acp"
+                    },
+                    {
+                        "kind": "subagent_text",
+                        "subagent": "acp-child-42",
+                        "text": "Partial findings.",
+                        "protocol": "acp"
+                    },
+                    {
+                        "kind": "subagent_stall",
+                        "subagent": "acp-child-42",
+                        "protocol": "acp"
+                    }
+                ]
+            }]
+        }),
+    );
+
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Audit");
+
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    read_until(&mut peer, |v| v["event"] == "subagent-text");
+
+    // Thread is still working while its ACP v1 subagent runs.
+    let mut inspector = handshake(&lever.person);
+    let rec = resume(&mut inspector, &thread);
+    assert_eq!(rec["working"], true);
+    assert_eq!(rec["turns"][0]["subagents"][0]["state"], "working");
+
+    // Stop cancels the subagent and marks it stopped.
+    write_frame(&mut peer, &json!({ "op": "stop", "thread": thread })).unwrap();
+    let stopped_sub = read_until(&mut peer, |v| v["event"] == "subagent" && v["state"] == "stopped");
+    assert_eq!(stopped_sub["title"], "Audit tree");
+
+    let rec2 = resume(&mut inspector, &thread);
+    assert_eq!(rec2["working"], false);
+    assert_eq!(rec2["turns"][0]["subagents"][0]["state"], "stopped");
+    assert_eq!(
+        rec2["turns"][0]["subagents"][0]["messages"],
+        json!([
+            { "role": "prompt", "text": "Check every file" },
+            { "role": "answer", "text": "Partial findings." }
+        ])
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn lever_restart_marks_working_subagent_interrupted_and_withdraws_its_request() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [{
+                "steps": [
+                    {
+                        "kind": "subagent_start",
+                        "id": "ses_sub_restart_1",
+                        "title": "Long check"
+                    },
+                    { "kind": "text", "text": "Started." }
+                ],
+                "after": [
+                    {
+                        "kind": "subagent_ask",
+                        "subagent": "ses_sub_restart_1",
+                        "id": "call_wait_1",
+                        "tool_kind": "execute",
+                        "title": "uname -a",
+                        "raw_input": { "command": "uname -a" }
+                    },
+                    {
+                        "kind": "subagent_stall",
+                        "subagent": "ses_sub_restart_1"
+                    }
+                ]
+            }]
+        }),
+    );
+
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, _turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "request" && v["state"] == "waiting");
+    drop(peer);
+
+    // Stop Lever while the subagent is working and waiting on its request.
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+
+    // Reopen Lever: subagent is interrupted, request is withdrawn, thread is idle.
+    let mut lever2 = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut peer2 = handshake(&lever2.person);
+    let rec = resume(&mut peer2, &thread);
+    assert_eq!(rec["working"], false);
+    assert_eq!(rec["turns"][0]["subagents"][0]["state"], "interrupted");
+    assert_eq!(rec["turns"][0]["requests"][0]["state"], "withdrawn");
+
+    lever2.signal(libc::SIGTERM);
+    assert_eq!(lever2.wait().code(), Some(0));
+}
+
+#[test]
+fn subagent_ending_withdraws_waiting_request_and_maps_cancelled_to_stopped() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [{
+                "steps": [
+                    {
+                        "kind": "subagent_start",
+                        "id": "ses_sub_cancel_1",
+                        "title": "Check tree"
+                    },
+                    { "kind": "text", "text": "Dispatched." }
+                ],
+                "after": [
+                    {
+                        "kind": "subagent_ask",
+                        "subagent": "ses_sub_cancel_1",
+                        "id": "call_cancel_1",
+                        "tool_kind": "read",
+                        "title": "Check tree: Read .env",
+                        "raw_input": { "path": "/tmp/.env" },
+                        "wait_for_answer": false
+                    },
+                    {
+                        "kind": "pause_ms",
+                        "ms": 150
+                    },
+                    {
+                        "kind": "subagent_end",
+                        "subagent": "ses_sub_cancel_1",
+                        "status": "cancelled"
+                    }
+                ]
+            }]
+        }),
+    );
+
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, Some(300));
+    let mut peer = handshake(&lever.person);
+    let (thread, _turn) = send(&mut peer, None, "Go");
+
+    let req = read_until(&mut peer, |v| v["event"] == "request" && v["state"] == "waiting");
+    let req_id = req["request"].as_str().unwrap().to_string();
+
+    // Subagent ends with status "cancelled" without cancelling the request first:
+    // Lever withdraws the waiting request and maps cancelled -> stopped.
+    let withdrawn = read_until(&mut peer, |v| {
+        v["event"] == "request" && v["request"] == req_id && v["state"] == "withdrawn"
+    });
+    assert_eq!(withdrawn["state"], "withdrawn");
+    let ended = read_until(&mut peer, |v| v["event"] == "subagent" && v["state"] != "working");
+    assert_eq!(ended["state"], "stopped");
+
+    let mut inspector = handshake(&lever.person);
+    let rec = resume(&mut inspector, &thread);
+    assert_eq!(rec["working"], false);
+    assert_eq!(rec["turns"][0]["subagents"][0]["state"], "stopped");
+    assert_eq!(rec["turns"][0]["requests"][0]["state"], "withdrawn");
+
+    // Because the subagent ended and its request was withdrawn, the harness idles out.
+    wait_until("idle harness stops after cancelled subagent", || {
+        write_frame(&mut inspector, &json!({ "op": "status" })).unwrap();
+        read_frame(&mut inspector).unwrap()["harness_started"] == false
+    });
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));

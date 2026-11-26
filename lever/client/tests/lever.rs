@@ -1972,3 +1972,101 @@ fn archive_keeps_readable_history_and_delete_requests_harness_cleanup() {
     assert_eq!(lab.run(&["--resume", &thread], "").status, 1);
     assert!(lab.rpc_messages().contains("session/delete"));
 }
+
+#[test]
+fn subagents_show_in_list_resume_and_live_and_their_requests_are_answered() {
+    let lab = Lab::with_script(json!({
+        "modes": true,
+        "turns": [{
+            "steps": [
+                {
+                    "kind": "subagent_start",
+                    "id": "ses_cli_sub_1",
+                    "title": "Inspect config",
+                    "prompt": "Read .env"
+                },
+                { "kind": "text", "text": "Delegated." }
+            ],
+            "after": [
+                { "kind": "pause_ms", "ms": 150 },
+                {
+                    "kind": "subagent_ask",
+                    "subagent": "ses_cli_sub_1",
+                    "id": "call_cli_env",
+                    "tool_kind": "read",
+                    "title": "Read /tmp/.env",
+                    "raw_input": { "path": "/tmp/.env" },
+                    "output": "ENV_OK=1"
+                },
+                {
+                    "kind": "subagent_text",
+                    "subagent": "ses_cli_sub_1",
+                    "text": "Config looks good."
+                },
+                {
+                    "kind": "subagent_end",
+                    "subagent": "ses_cli_sub_1",
+                    "status": "completed"
+                }
+            ]
+        }]
+    }));
+
+    // Non-terminal run stays open while the subagent outlives its turn and prints
+    // how to answer the subagent's request from another terminal.
+    let mut running = Running::start(lab.agent(&["check config"]));
+    running.wait_for_err("[subagent] Inspect config (working)");
+    running.wait_for_err("[request (Inspect config)] Read: /tmp/.env");
+    running.wait_for_err("Answer with: crowbar-agent --resume ");
+
+    let hint = running
+        .err
+        .lock()
+        .unwrap()
+        .lines()
+        .find(|line| line.contains("Answer with:"))
+        .unwrap()
+        .to_string();
+    let words: Vec<&str> = hint.split_whitespace().collect();
+    let (thread, request) = (words[4].to_string(), words[6].to_string());
+
+    // `--list` shows the thread has 1 subagent and is waiting for the person,
+    // and never lists the subagent session as its own thread.
+    let listed = lab.run(&["--list"], "");
+    assert_eq!(listed.status, 0, "{listed:?}");
+    assert_eq!(listed.out.lines().count(), 1, "{listed:?}");
+    assert!(listed.out.contains("(1 subagent)"), "{listed:?}");
+    assert!(listed.out.contains("(waiting for you)"), "{listed:?}");
+
+    // Answer the subagent's request with `--answer`.
+    let answered = lab.run(&["--resume", &thread, "--answer", &request, "once"], "");
+    assert_eq!(
+        (answered.status, answered.err.as_str()),
+        (0, "Answered once.\n"),
+        "{answered:?}"
+    );
+
+    assert_eq!(running.ended(), 0);
+    assert_eq!(running.out.lock().unwrap().as_str(), "Delegated.\n");
+    let err_out = running.err.lock().unwrap().clone();
+    assert!(
+        err_out.contains("[subagent: Inspect config] Config looks good."),
+        "{err_out}"
+    );
+    assert!(err_out.contains("[subagent] Inspect config (done)"), "{err_out}");
+
+    // `--resume` shows the subagent, its act, and its answer.
+    let resumed = lab.run(&["--resume", &thread], "");
+    assert_eq!(resumed.status, 0, "{resumed:?}");
+    assert!(resumed.err.contains("[subagent] Inspect config (done)"), "{resumed:?}");
+    assert!(
+        resumed
+            .err
+            .contains("[subagent: Inspect config] [act] Read /tmp/.env (done)"),
+        "{resumed:?}"
+    );
+    assert!(
+        resumed.err.contains("[subagent: Inspect config] Config looks good."),
+        "{resumed:?}"
+    );
+}

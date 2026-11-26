@@ -162,7 +162,11 @@ historical behavior evidence, not a current Fedora workflow.
   mono face, read again as each piece arrives. The person's message sits to
   the right. While a turn works its acts show as lines, with how long the
   turn has worked. When it ends they fold into one line, as `Worked for 12s ·
-  3 acts`, which opens, and an act's line opens to what it gave.
+  3 acts`, which opens, and an act's line opens to what it gave. Each subagent
+  shows in its turn as a line (`subagent:<id>`) that opens to its prompt, its
+  acts, and its messages. A subagent's request shows in the thread and is
+  answered there, and while a subagent still works after its turn ended the
+  thread stays working and Stop remains available.
 - The mark covers every thread, from Lever's `activity`: `Waiting` while any
   request waits, else `Working` while any thread works, else `Done` once the
   last working thread ends with the drawer put away, until the drawer is
@@ -177,7 +181,7 @@ historical behavior evidence, not a current Fedora workflow.
   (`list`: what it is a list of, its rows in order, and the row the keys are
   on), and `controls`, the bounds of each control the drawer shows, in the
   display's logical pixels, for checks to click: `answer:<request>:<answer>`,
-  `acts:<turn>`, `act:<id>`, `context:<turn>`, `newest`, `send`, `stop`, and
+  `acts:<turn>`, `act:<id>`, `subagent:<id>`, `context:<turn>`, `newest`, `send`, `stop`, and
   `close`, and, of an open list, `command:<name>`, `choice:<value>`, and
   `provider:<id>`. Model-source controls add `choose-free-models`,
   `disable-free-models`, `toggle-free-models`, `sign-in`, and `refresh-models`.

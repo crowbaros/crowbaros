@@ -241,6 +241,7 @@ fn deliver_broadcasts(broadcasts: &[Broadcast], peers: &mut [Peer], keep: &[bool
                 "request"
                     | "message"
                     | "thread-updated"
+                    | "subagent"
                     | "done"
                     | "stopped"
                     | "failed"
@@ -252,10 +253,16 @@ fn deliver_broadcasts(broadcasts: &[Broadcast], peers: &mut [Peer], keep: &[bool
     });
     let snapshot = if list_changed && peers.iter().any(|p| p.is_subscribed(service::THREAD_LIST_SUBSCRIPTION)) {
         service.thread_list_event().map(|mut snapshot| {
-            snapshot["finished"] = serde_json::json!(broadcasts.iter().any(|b| matches!(
-                b.message["event"].as_str(),
-                Some("done" | "stopped" | "failed" | "interrupted")
-            )));
+            snapshot["finished"] = serde_json::json!(broadcasts.iter().any(|b| {
+                matches!(
+                    b.message["event"].as_str(),
+                    Some("done" | "stopped" | "failed" | "interrupted")
+                ) || (b.message["event"].as_str() == Some("subagent")
+                    && matches!(
+                        b.message["state"].as_str(),
+                        Some("done" | "stopped" | "failed" | "interrupted")
+                    ))
+            }));
             snapshot
         })
     } else {

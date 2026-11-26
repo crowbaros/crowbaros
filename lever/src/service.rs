@@ -7,8 +7,8 @@ use crate::channel::LEVER_VERSION;
 use crate::fulcrum;
 use crate::log::{Event, Log};
 use crate::store::{
-    ActPatch, ActRecord, NewRequest, NewThread, NoteRecord, RequestRecord, Store, ThreadRecord, ThreadSummary,
-    TurnRecord,
+    ActPatch, ActRecord, NewRequest, NewThread, NoteRecord, RequestRecord, Store, SubagentActPatch, SubagentPatch,
+    SubagentRecord, ThreadRecord, ThreadSummary, TurnRecord,
 };
 use crate::sys;
 use serde_json::{Value, json};
@@ -147,6 +147,28 @@ struct Ending {
     error: Option<String>,
 }
 
+/// A subagent currently working on a thread, tracked so the thread stays
+/// working and the harness stays alive even after the parent turn ends.
+struct WorkingSubagent {
+    thread_id: String,
+    turn: u64,
+    subagent_id: String,
+    harness_session_id: String,
+    title: String,
+    started: i64,
+    /// When the person asked to stop this subagent's thread and the harness
+    /// was told.
+    stop_asked: Option<Instant>,
+}
+
+/// How a subagent ended, kept until the database has it.
+struct SubagentEnding {
+    thread_id: String,
+    subagent_id: String,
+    state: &'static str,
+    error: Option<String>,
+}
+
 struct PendingDelete {
     peer_id: u64,
     thread: String,
@@ -172,6 +194,8 @@ pub struct Service {
     stop_timeout: Duration,
     idle_since: Option<Instant>,
     working_turns: HashMap<String, WorkingTurn>,
+    /// Subagents currently working, keyed by Lever's `sub-...` ID.
+    working_subagents: HashMap<String, WorkingSubagent>,
     /// Requests that wait, by Lever's request ID.
     waiting: HashMap<String, Waiting>,
     /// What `activity` last said: threads working, and threads waiting.
@@ -204,6 +228,8 @@ pub struct Service {
     modes_in_flight: Vec<(String, Instant)>,
     /// Ends the database did not take, tried again on each wake.
     unsaved_endings: Vec<Ending>,
+    /// Ends of subagents the database did not take, tried again on each wake.
+    unsaved_subagent_endings: Vec<SubagentEnding>,
     /// Ends of requests the database did not take, tried again on each wake.
     unsaved_request_ends: Vec<RequestEnd>,
 }
@@ -229,6 +255,7 @@ impl Service {
             stop_timeout,
             idle_since: None,
             working_turns: HashMap::new(),
+            working_subagents: HashMap::new(),
             waiting: HashMap::new(),
             activity: (Vec::new(), Vec::new()),
             pending_models: Vec::new(),
@@ -242,6 +269,7 @@ impl Service {
             probe_wanted: false,
             modes_in_flight: Vec::new(),
             unsaved_endings: Vec::new(),
+            unsaved_subagent_endings: Vec::new(),
             unsaved_request_ends: Vec::new(),
         }
     }
@@ -260,6 +288,7 @@ impl Service {
     fn has_active_work(&self) -> bool {
         !self.pending_deletes.is_empty()
             || !self.working_turns.is_empty()
+            || !self.working_subagents.is_empty()
             || !self.waiting.is_empty()
             || !self.pending_models.is_empty()
             || !self.pending_set_models.is_empty()
@@ -280,11 +309,12 @@ impl Service {
             || self.modes_in_flight.iter().any(|(t, _)| t == thread_id)
     }
 
-    /// Whether a thread is busy: a turn works on it, or the harness has yet
-    /// to answer a change Lever asked of its session.
+    /// Whether a thread is busy: a turn or subagent works on it, or the
+    /// harness has yet to answer a change Lever asked of its session.
     fn thread_busy(&self, thread_id: &str) -> bool {
         self.pending_deletes.iter().any(|p| p.thread == thread_id)
             || self.working_turns.contains_key(thread_id)
+            || self.working_subagents.values().any(|s| s.thread_id == thread_id)
             || self.pending_set_models.iter().any(|p| p.thread_id == thread_id)
             || self.modes_in_flight.iter().any(|(t, _)| t == thread_id)
     }
@@ -295,10 +325,17 @@ impl Service {
             .unwrap_or_else(|_| crate::store::STARTING_MODE.to_string())
     }
 
-    /// Threads working, and threads with a request that waits, each sorted.
+    /// Threads working (in their own turn or in a subagent), and threads with
+    /// a request that waits, each sorted.
     fn current_activity(&self) -> (Vec<String>, Vec<String>) {
-        let mut working: Vec<String> = self.working_turns.keys().cloned().collect();
+        let mut working: Vec<String> = self
+            .working_turns
+            .keys()
+            .chain(self.working_subagents.values().map(|s| &s.thread_id))
+            .cloned()
+            .collect();
         working.sort();
+        working.dedup();
         let mut waiting: Vec<String> = self.waiting.values().map(|w| w.thread_id.clone()).collect();
         waiting.sort();
         waiting.dedup();
@@ -398,12 +435,15 @@ impl Service {
     /// Timeout in milliseconds for `poll(2)`, or `-1` when Lever waits for
     /// nothing but its peers and its harness.
     pub fn poll_timeout_ms(&self) -> libc::c_int {
-        let retry =
-            (!self.unsaved_endings.is_empty() || !self.unsaved_request_ends.is_empty()).then_some(UNSAVED_RETRY);
+        let retry = (!self.unsaved_endings.is_empty()
+            || !self.unsaved_subagent_endings.is_empty()
+            || !self.unsaved_request_ends.is_empty())
+        .then_some(UNSAVED_RETRY);
         let stop = self
             .working_turns
             .values()
             .filter_map(|t| t.stop_asked)
+            .chain(self.working_subagents.values().filter_map(|s| s.stop_asked))
             .chain(self.modes_in_flight.iter().map(|(_, asked)| *asked))
             .map(|asked| self.stop_timeout.saturating_sub(asked.elapsed()))
             .min();
@@ -439,6 +479,28 @@ impl Service {
             .map(|(tid, t)| (tid.clone(), t.turn));
         if let Some((thread_id, turn)) = overdue {
             effects.extend(self.force_stop(&thread_id, turn, log));
+        }
+        let overdue_subagent = self
+            .working_subagents
+            .values()
+            .any(|s| s.stop_asked.is_some_and(|asked| asked.elapsed() >= self.stop_timeout));
+        if overdue_subagent {
+            if let Some(harness) = self.harness.take() {
+                let pid = harness.pid();
+                harness.kill_tree();
+                let name = self
+                    .harness_config
+                    .as_ref()
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("harness");
+                let _ = log.write(
+                    Event::Harness,
+                    &format!(
+                        "stopped {name} (process {pid}) and every process under it: it did not stop a subagent when asked"
+                    ),
+                );
+            }
+            effects.extend(self.after_harness_gone("The harness was stopped.", log));
         }
         // A harness that has not answered a mode change of a stopped turn's
         // in that time is ended too: until it answers, the thread is held.
@@ -666,6 +728,19 @@ impl Service {
                         thread.state = ending.state.to_string();
                         thread.working = false;
                     }
+                    if self.working_subagents.values().any(|s| s.thread_id == thread.id) {
+                        thread.working = true;
+                        thread.state = "working".to_string();
+                    } else if thread.working && !self.working_turns.contains_key(&thread.id) {
+                        // Every subagent of this thread has ended, though the
+                        // database may not have taken its end yet.
+                        if self.unsaved_subagent_endings.iter().any(|e| e.thread_id == thread.id) {
+                            thread.working = false;
+                            if thread.state == "working" {
+                                thread.state = "done".to_string();
+                            }
+                        }
+                    }
                     // What waits is what Lever holds: a request whose end
                     // the database has yet to take waits no longer.
                     thread.waiting = self.waiting.values().any(|w| w.thread_id == thread.id);
@@ -729,6 +804,7 @@ impl Service {
             || self.waiting.values().any(|request| request.thread_id == thread)
             || meta.working_turn.is_some()
             || self.unsaved_endings.iter().any(|p| p.thread_id == thread)
+            || self.unsaved_subagent_endings.iter().any(|p| p.thread_id == thread)
             || self.pending_set_models.iter().any(|p| p.thread_id == thread)
         {
             return error_outcome(
@@ -843,7 +919,23 @@ impl Service {
                         }
                     }
                 }
-                record.working = record.turns.last().is_some_and(|turn| turn.state == "working");
+                for end in self
+                    .unsaved_subagent_endings
+                    .iter()
+                    .filter(|e| e.thread_id == thread_id)
+                {
+                    for turn in &mut record.turns {
+                        if let Some(sub) = turn.subagents.iter_mut().find(|s| s.id == end.subagent_id) {
+                            sub.state = end.state.to_string();
+                            sub.error = end.error.clone();
+                        }
+                    }
+                }
+                record.working = record.turns.last().is_some_and(|turn| turn.state == "working")
+                    || record
+                        .turns
+                        .iter()
+                        .any(|turn| turn.subagents.iter().any(|sub| sub.state == "working"));
                 RequestOutcome {
                     reply: Some(thread_record_json(&record)),
                     subscribe: Some(thread_id.to_string()),
@@ -1362,7 +1454,11 @@ impl Service {
         // have how the turn ended before the next one begins.
         self.save_endings();
         if let Some(tid) = requested_thread
-            && self.unsaved_endings.iter().any(|ending| ending.thread_id == tid)
+            && (self.unsaved_endings.iter().any(|ending| ending.thread_id == tid)
+                || self
+                    .unsaved_subagent_endings
+                    .iter()
+                    .any(|ending| ending.thread_id == tid))
         {
             return error_outcome(
                 "storage-error",
@@ -1548,8 +1644,9 @@ impl Service {
 
         // A thread that works or waits is stopped whether or not the
         // database can be read.
-        let live =
-            self.working_turns.contains_key(thread_id) || self.waiting.values().any(|w| w.thread_id == thread_id);
+        let live = self.working_turns.contains_key(thread_id)
+            || self.working_subagents.values().any(|s| s.thread_id == thread_id)
+            || self.waiting.values().any(|w| w.thread_id == thread_id);
         if !live {
             match self.store.thread_meta(thread_id) {
                 Ok(None) => return error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
@@ -1565,6 +1662,30 @@ impl Service {
             |w| w.thread_id == thread_id && requested_turn.is_none_or(|t| w.turn == t),
             log,
         );
+
+        // Cancel any subagents still working on this thread (or requested turn).
+        let now = Instant::now();
+        let mut child_sessions_to_cancel = Vec::new();
+        for sub in self.working_subagents.values_mut() {
+            if sub.thread_id == thread_id && requested_turn.is_none_or(|t| sub.turn == t) {
+                if sub.stop_asked.is_none() {
+                    sub.stop_asked = Some(now);
+                }
+                child_sessions_to_cancel.push(sub.harness_session_id.clone());
+            }
+        }
+        if !child_sessions_to_cancel.is_empty()
+            && let Some(harness) = self.harness.as_mut()
+        {
+            for child_sid in child_sessions_to_cancel {
+                harness.cancel_session(&child_sid);
+            }
+            if !self.working_turns.contains_key(thread_id)
+                && let Some(parent_sid) = harness.session_for_thread(thread_id).map(str::to_string)
+            {
+                harness.cancel_session(&parent_sid);
+            }
+        }
 
         let Some(active) = self.working_turns.get_mut(thread_id) else {
             return RequestOutcome {
@@ -1881,9 +2002,12 @@ impl Service {
             }
         } else {
             // A harness that was started again has seen none of this
-            // thread's acts, and may still name them.
+            // thread's acts or subagents, and may still name them.
             if let Ok(ids) = self.store.harness_call_ids(thread_id) {
                 harness.remember_tool_ids(thread_id, ids);
+            }
+            if let Ok(ids) = self.store.subagent_harness_session_ids(thread_id) {
+                harness.remember_subagent_ids(thread_id, ids);
             }
             active.dispatch = TurnDispatch::WaitingForSession;
             harness.ensure_session(
@@ -2456,6 +2580,8 @@ impl Service {
             }
             AcpEvent::PermissionRequested {
                 thread_id,
+                harness_subagent_id,
+                subagent_title,
                 handle,
                 harness_call_id,
                 kind,
@@ -2465,6 +2591,8 @@ impl Service {
                 answers,
             } => self.record_request(
                 &thread_id,
+                harness_subagent_id.as_deref(),
+                subagent_title.as_deref(),
                 handle,
                 &harness_call_id,
                 kind.as_deref(),
@@ -2485,6 +2613,101 @@ impl Service {
                     effects.broadcasts = self.end_request(&id, "withdrawn", None, log);
                 }
                 effects
+            }
+            AcpEvent::SubagentUpdated {
+                thread_id,
+                harness_subagent_id,
+                title,
+                state,
+                error,
+            } => self.handle_subagent_updated(
+                &thread_id,
+                &harness_subagent_id,
+                title.as_deref(),
+                state.as_deref(),
+                error.as_deref(),
+                log,
+            ),
+            AcpEvent::SubagentMessage {
+                thread_id,
+                harness_subagent_id,
+                title,
+                role,
+                text,
+            } => {
+                let mut broadcasts = Vec::new();
+                let Some((turn, sub)) =
+                    self.ensure_subagent(&thread_id, &harness_subagent_id, title.as_deref(), &mut broadcasts, log)
+                else {
+                    return Effects::default();
+                };
+                match self
+                    .store
+                    .append_subagent_message(&thread_id, &sub.id, &role, &text, unix_now())
+                {
+                    Ok(true) => {
+                        broadcasts.push(Broadcast {
+                            thread_id: thread_id.clone(),
+                            message: json!({
+                                "event": "subagent-text",
+                                "thread": thread_id,
+                                "turn": turn,
+                                "subagent": sub.id,
+                                "role": role,
+                                "text": text,
+                            }),
+                        });
+                    }
+                    Ok(false) => {}
+                    Err(err) => self.could_not_save(&thread_id, &err, log),
+                }
+                Effects {
+                    broadcasts,
+                    replies: Vec::new(),
+                }
+            }
+            AcpEvent::SubagentAct {
+                thread_id,
+                harness_subagent_id,
+                subagent_title,
+                harness_call_id,
+                kind,
+                title,
+                state,
+                detail,
+            } => {
+                let mut broadcasts = Vec::new();
+                let Some((turn, sub)) = self.ensure_subagent(
+                    &thread_id,
+                    &harness_subagent_id,
+                    subagent_title.as_deref(),
+                    &mut broadcasts,
+                    log,
+                ) else {
+                    return Effects::default();
+                };
+                let patch = SubagentActPatch {
+                    subagent_id: &sub.id,
+                    thread_id: &thread_id,
+                    harness_call_id: &harness_call_id,
+                    kind: kind.as_deref(),
+                    title: title.as_deref(),
+                    state: state.as_deref(),
+                    detail: detail.as_deref(),
+                };
+                match self.store.upsert_subagent_act(&patch, unix_now()) {
+                    Ok(act) => {
+                        broadcasts.push(Broadcast {
+                            thread_id: thread_id.clone(),
+                            message: subagent_act_event_json(&thread_id, turn, &sub.id, &act),
+                        });
+                    }
+                    Err(err) => self.could_not_save(&thread_id, &err, log),
+                }
+                Effects {
+                    broadcasts,
+                    replies: Vec::new(),
+                }
             }
             AcpEvent::TextChunk { thread_id, text } => {
                 let Some(turn) = self.turn_for_update(&thread_id) else {
@@ -2674,6 +2897,187 @@ impl Service {
         replies
     }
 
+    fn track_working_subagent(
+        &mut self,
+        thread_id: &str,
+        recorded_turn: u64,
+        harness_subagent_id: &str,
+        record: &SubagentRecord,
+        stop_asked: Option<Instant>,
+    ) -> bool {
+        let is_new = !self.working_subagents.contains_key(&record.id);
+        let title_changed = self
+            .working_subagents
+            .get(&record.id)
+            .is_some_and(|existing| existing.title != record.title);
+        self.idle_since = None;
+        self.working_subagents.insert(
+            record.id.clone(),
+            WorkingSubagent {
+                thread_id: thread_id.to_string(),
+                turn: recorded_turn,
+                subagent_id: record.id.clone(),
+                harness_session_id: harness_subagent_id.to_string(),
+                title: record.title.clone(),
+                started: record.started,
+                stop_asked,
+            },
+        );
+        is_new || title_changed
+    }
+
+    /// Ensures a subagent row exists in the store for `(thread_id, harness_subagent_id)`.
+    /// If this creates or marks a working subagent for the first time, tracks it
+    /// in `working_subagents` and pushes a `subagent` event to `broadcasts`.
+    fn ensure_subagent(
+        &mut self,
+        thread_id: &str,
+        harness_subagent_id: &str,
+        title: Option<&str>,
+        broadcasts: &mut Vec<Broadcast>,
+        log: &mut Log,
+    ) -> Option<(u64, SubagentRecord)> {
+        let turn = self.turn_for_update(thread_id)?;
+        let patch = SubagentPatch {
+            thread_id,
+            turn_number: turn,
+            harness_session_id: harness_subagent_id,
+            title,
+            state: None,
+            error: None,
+        };
+        let (recorded_turn, record) = match self.store.upsert_subagent(&patch, unix_now()) {
+            Ok(saved) => saved,
+            Err(err) => {
+                self.could_not_save(thread_id, &err, log);
+                return None;
+            }
+        };
+        if record.state == "working" {
+            let prev_stop = self
+                .working_subagents
+                .get(&record.id)
+                .and_then(|existing| existing.stop_asked);
+            if self.track_working_subagent(thread_id, recorded_turn, harness_subagent_id, &record, prev_stop) {
+                broadcasts.push(Broadcast {
+                    thread_id: thread_id.to_string(),
+                    message: subagent_event_json(thread_id, recorded_turn, &record),
+                });
+            }
+        }
+        Some((recorded_turn, record))
+    }
+
+    fn handle_subagent_updated(
+        &mut self,
+        thread_id: &str,
+        harness_subagent_id: &str,
+        title: Option<&str>,
+        state: Option<&str>,
+        error: Option<&str>,
+        log: &mut Log,
+    ) -> Effects {
+        let Some(turn) = self.turn_for_update(thread_id) else {
+            return Effects::default();
+        };
+        let existing_id = self
+            .working_subagents
+            .values()
+            .find(|s| s.thread_id == thread_id && s.harness_session_id == harness_subagent_id)
+            .map(|s| s.subagent_id.clone());
+        let stop_asked = existing_id
+            .as_deref()
+            .and_then(|id| self.working_subagents.get(id))
+            .and_then(|s| s.stop_asked)
+            .or_else(|| self.working_turns.get(thread_id).and_then(|t| t.stop_asked));
+        let effective_state = match state {
+            Some("interrupted") if stop_asked.is_some() => Some("stopped"),
+            other => other,
+        };
+        let now = unix_now();
+        let patch = SubagentPatch {
+            thread_id,
+            turn_number: turn,
+            harness_session_id: harness_subagent_id,
+            title,
+            state: effective_state,
+            error,
+        };
+        let mut broadcasts = Vec::new();
+        let (recorded_turn, record) = match self.store.upsert_subagent(&patch, now) {
+            Ok(saved) => saved,
+            Err(err) => {
+                self.could_not_save(thread_id, &err, log);
+                // On a terminal state, still release the in-memory subagent,
+                // withdraw any requests waiting on it, and queue the ending
+                // for retry so the thread and harness do not wedge.
+                if let Some(terminal) = match effective_state {
+                    Some("done") => Some("done"),
+                    Some("stopped") => Some("stopped"),
+                    Some("interrupted") => Some("interrupted"),
+                    Some("failed") => Some("failed"),
+                    _ => None,
+                } && let Some(sub_id) = existing_id
+                    && let Some(active) = self.working_subagents.remove(&sub_id)
+                {
+                    let err_owned = error.map(str::to_string);
+                    self.unsaved_subagent_endings.push(SubagentEnding {
+                        thread_id: active.thread_id.clone(),
+                        subagent_id: active.subagent_id.clone(),
+                        state: terminal,
+                        error: err_owned.clone(),
+                    });
+                    broadcasts.extend(self.withdraw_requests(
+                        |w| {
+                            w.thread_id == thread_id
+                                && w.record.subagent.as_deref() == Some(active.subagent_id.as_str())
+                        },
+                        log,
+                    ));
+                    let synthetic = SubagentRecord {
+                        id: active.subagent_id,
+                        title: title
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or(active.title),
+                        state: terminal.to_string(),
+                        error: err_owned,
+                        started: active.started,
+                        ended: Some(now),
+                        messages: Vec::new(),
+                        acts: Vec::new(),
+                    };
+                    broadcasts.push(Broadcast {
+                        thread_id: thread_id.to_string(),
+                        message: subagent_event_json(thread_id, active.turn, &synthetic),
+                    });
+                }
+                return Effects {
+                    broadcasts,
+                    replies: Vec::new(),
+                };
+            }
+        };
+        if record.state == "working" {
+            self.track_working_subagent(thread_id, recorded_turn, harness_subagent_id, &record, stop_asked);
+        } else {
+            self.working_subagents.remove(&record.id);
+            broadcasts.extend(self.withdraw_requests(
+                |w| w.thread_id == thread_id && w.record.subagent.as_deref() == Some(record.id.as_str()),
+                log,
+            ));
+        }
+        broadcasts.push(Broadcast {
+            thread_id: thread_id.to_string(),
+            message: subagent_event_json(thread_id, recorded_turn, &record),
+        });
+        Effects {
+            broadcasts,
+            replies: Vec::new(),
+        }
+    }
+
     /// Keeps a request the harness asked, and tells who watches its thread.
     /// A request the database does not take is answered `cancelled`: what the
     /// record cannot hold, nobody could answer after a restart either.
@@ -2681,6 +3085,8 @@ impl Service {
     fn record_request(
         &mut self,
         thread_id: &str,
+        harness_subagent_id: Option<&str>,
+        subagent_title: Option<&str>,
         handle: u64,
         harness_call_id: &str,
         kind: Option<&str>,
@@ -2691,11 +3097,16 @@ impl Service {
         log: &mut Log,
     ) -> Effects {
         let mut effects = Effects::default();
-        // A turn the person asked to stop asks nothing more of them.
+        // A turn or subagent the person asked to stop asks nothing more of them.
         let stopping = self
             .working_turns
             .get(thread_id)
-            .is_some_and(|active| active.stop_asked.is_some());
+            .is_some_and(|active| active.stop_asked.is_some())
+            || harness_subagent_id.is_some_and(|cid| {
+                self.working_subagents
+                    .values()
+                    .any(|s| s.thread_id == thread_id && s.harness_session_id == cid && s.stop_asked.is_some())
+            });
         let turn = self.turn_for_update(thread_id).filter(|_| !stopping);
         let Some(turn) = turn else {
             if let Some(harness) = self.harness.as_mut() {
@@ -2703,37 +3114,73 @@ impl Service {
             }
             return effects;
         };
-        // The act it asks about, so the request and the act are one thing in
-        // the thread.
-        let patch = ActPatch {
-            thread_id,
-            turn_number: turn,
-            harness_call_id,
-            is_new: false,
-            // A request that does not say what kind of act it is leaves the
-            // kind the act has.
-            kind,
-            title: Some(title),
-            state: None,
-            detail: None,
-        };
-        let act = match self.store.upsert_act(&patch, unix_now()) {
-            Ok((act_turn, act)) => {
-                effects.broadcasts.push(Broadcast {
-                    thread_id: thread_id.to_string(),
-                    message: act_event_json(thread_id, act_turn, &act),
-                });
-                Some(act.id)
-            }
-            Err(err) => {
-                self.could_not_save(thread_id, &err, log);
-                None
-            }
+        let (recorded_turn, subagent_id, act) = if let Some(child_sid) = harness_subagent_id {
+            let Some((sub_turn, sub)) =
+                self.ensure_subagent(thread_id, child_sid, subagent_title, &mut effects.broadcasts, log)
+            else {
+                if let Some(harness) = self.harness.as_mut() {
+                    harness.answer_permission(handle, None);
+                }
+                return effects;
+            };
+            let patch = SubagentActPatch {
+                subagent_id: &sub.id,
+                thread_id,
+                harness_call_id,
+                kind,
+                title: Some(title),
+                state: None,
+                detail: None,
+            };
+            let act = match self.store.upsert_subagent_act(&patch, unix_now()) {
+                Ok(act) => {
+                    effects.broadcasts.push(Broadcast {
+                        thread_id: thread_id.to_string(),
+                        message: subagent_act_event_json(thread_id, sub_turn, &sub.id, &act),
+                    });
+                    Some(act.id)
+                }
+                Err(err) => {
+                    self.could_not_save(thread_id, &err, log);
+                    None
+                }
+            };
+            (sub_turn, Some(sub.id), act)
+        } else {
+            // The act it asks about, so the request and the act are one thing in
+            // the thread.
+            let patch = ActPatch {
+                thread_id,
+                turn_number: turn,
+                harness_call_id,
+                is_new: false,
+                // A request that does not say what kind of act it is leaves the
+                // kind the act has.
+                kind,
+                title: Some(title),
+                state: None,
+                detail: None,
+            };
+            let act = match self.store.upsert_act(&patch, unix_now()) {
+                Ok((act_turn, act)) => {
+                    effects.broadcasts.push(Broadcast {
+                        thread_id: thread_id.to_string(),
+                        message: act_event_json(thread_id, act_turn, &act),
+                    });
+                    Some(act.id)
+                }
+                Err(err) => {
+                    self.could_not_save(thread_id, &err, log);
+                    None
+                }
+            };
+            (turn, None, act)
         };
         let request = NewRequest {
             thread_id,
-            turn_number: turn,
+            turn_number: recorded_turn,
             act: act.as_deref(),
+            subagent: subagent_id.as_deref(),
             kind: kind.unwrap_or("other"),
             title,
             detail,
@@ -2747,13 +3194,13 @@ impl Service {
                     Waiting {
                         handle,
                         thread_id: thread_id.to_string(),
-                        turn,
+                        turn: recorded_turn,
                         record: record.clone(),
                     },
                 );
                 effects.broadcasts.push(Broadcast {
                     thread_id: thread_id.to_string(),
-                    message: request_event_json(thread_id, turn, &record),
+                    message: request_event_json(thread_id, recorded_turn, &record),
                 });
             }
             Err(err) => {
@@ -2770,9 +3217,11 @@ impl Service {
         if let Some(harness) = self.harness.take() {
             let pid = harness.pid();
             let fault = harness.fault();
-            // A turn the person asked to stop ends with everything it
-            // started, though the harness ended before it said so.
-            if self.working_turns.values().any(|t| t.stop_asked.is_some()) {
+            // A turn or subagent the person asked to stop ends with everything
+            // it started, though the harness ended before it said so.
+            if self.working_turns.values().any(|t| t.stop_asked.is_some())
+                || self.working_subagents.values().any(|s| s.stop_asked.is_some())
+            {
                 harness.kill_tree();
             } else {
                 harness.stop();
@@ -2792,8 +3241,8 @@ impl Service {
     }
 
     /// What follows a harness that is gone: what waited on it fails, every
-    /// request it asked is withdrawn, and every turn it was working on is
-    /// interrupted.
+    /// request it asked is withdrawn, and every turn or subagent it was
+    /// working on is interrupted.
     fn after_harness_gone(&mut self, why: &str, log: &mut Log) -> Effects {
         self.model_catalog = None;
         self.efforts.clear();
@@ -2809,6 +3258,34 @@ impl Service {
         let replies = self.fail_pending_peer_requests(why);
         self.modes_in_flight.clear();
         let mut broadcasts = self.withdraw_requests(|_| true, log);
+
+        // Every working subagent is interrupted, or stopped when the person
+        // had asked to stop it.
+        let now = unix_now();
+        let mut ended_subs: Vec<WorkingSubagent> = self.working_subagents.drain().map(|(_, s)| s).collect();
+        ended_subs.sort_by(|a, b| a.thread_id.cmp(&b.thread_id).then(a.subagent_id.cmp(&b.subagent_id)));
+        for sub in ended_subs {
+            let state = if sub.stop_asked.is_some() {
+                "stopped"
+            } else {
+                "interrupted"
+            };
+            self.end_subagent(&sub.thread_id, &sub.subagent_id, state, None, log);
+            let record = SubagentRecord {
+                id: sub.subagent_id,
+                title: sub.title,
+                state: state.to_string(),
+                error: None,
+                started: sub.started,
+                ended: Some(now),
+                messages: Vec::new(),
+                acts: Vec::new(),
+            };
+            broadcasts.push(Broadcast {
+                thread_id: sub.thread_id.clone(),
+                message: subagent_event_json(&sub.thread_id, sub.turn, &record),
+            });
+        }
 
         // Every turn that was working is interrupted, or stopped when the
         // person had asked to stop it, and each end goes the way every other
@@ -2880,12 +3357,45 @@ impl Service {
         }
     }
 
+    fn end_subagent(
+        &mut self,
+        thread_id: &str,
+        subagent_id: &str,
+        state: &'static str,
+        error: Option<&str>,
+        log: &mut Log,
+    ) {
+        if let Err(err) = self
+            .store
+            .finish_subagent(thread_id, subagent_id, state, error, unix_now())
+        {
+            store_failed(log, &err);
+            self.unsaved_subagent_endings.push(SubagentEnding {
+                thread_id: thread_id.to_string(),
+                subagent_id: subagent_id.to_string(),
+                state,
+                error: error.map(str::to_string),
+            });
+        }
+    }
+
     fn save_endings(&mut self) {
         let store = &self.store;
         let now = unix_now();
         self.unsaved_request_ends.retain(|end| {
             store
                 .end_request(&end.request_id, end.state, end.answer.as_deref(), now)
+                .is_err()
+        });
+        self.unsaved_subagent_endings.retain(|ending| {
+            store
+                .finish_subagent(
+                    &ending.thread_id,
+                    &ending.subagent_id,
+                    ending.state,
+                    ending.error.as_deref(),
+                    now,
+                )
                 .is_err()
         });
         if self.unsaved_endings.is_empty() {
@@ -3064,6 +3574,7 @@ fn thread_summary_json(t: &ThreadSummary) -> Value {
         "waiting": t.waiting,
         "mode": t.mode,
         "archived": t.archived,
+        "subagents": t.subagents,
     });
     if let Some(model) = &t.model {
         obj["model"] = json!(model);
@@ -3105,6 +3616,7 @@ fn turn_record_json(t: &TurnRecord) -> Value {
         "acts": t.acts.iter().map(act_record_json).collect::<Vec<_>>(),
         "requests": t.requests.iter().map(request_record_json).collect::<Vec<_>>(),
         "notes": t.notes.iter().map(note_record_json).collect::<Vec<_>>(),
+        "subagents": t.subagents.iter().map(subagent_record_json).collect::<Vec<_>>(),
     });
     if let Some(mode) = &t.mode {
         obj["mode"] = json!(mode);
@@ -3118,6 +3630,56 @@ fn turn_record_json(t: &TurnRecord) -> Value {
     if let Some(ended) = t.ended {
         obj["ended"] = json!(ended);
     }
+    obj
+}
+
+fn subagent_record_json(s: &SubagentRecord) -> Value {
+    let mut obj = json!({
+        "subagent": s.id,
+        "title": s.title,
+        "state": s.state,
+        "started": s.started,
+        "messages": s
+            .messages
+            .iter()
+            .map(|m| json!({ "role": m.role, "text": m.text }))
+            .collect::<Vec<_>>(),
+        "acts": s.acts.iter().map(act_record_json).collect::<Vec<_>>(),
+    });
+    if let Some(err) = &s.error {
+        obj["error"] = json!(err);
+    }
+    if let Some(ended) = s.ended {
+        obj["ended"] = json!(ended);
+    }
+    obj
+}
+
+fn subagent_event_json(thread_id: &str, turn: u64, s: &SubagentRecord) -> Value {
+    let mut obj = json!({
+        "event": "subagent",
+        "thread": thread_id,
+        "turn": turn,
+        "subagent": s.id,
+        "title": s.title,
+        "state": s.state,
+        "started": s.started,
+    });
+    if let Some(err) = &s.error {
+        obj["error"] = json!(err);
+    }
+    if let Some(ended) = s.ended {
+        obj["ended"] = json!(ended);
+    }
+    obj
+}
+
+fn subagent_act_event_json(thread_id: &str, turn: u64, subagent_id: &str, a: &ActRecord) -> Value {
+    let mut obj = act_record_json(a);
+    obj["event"] = json!("subagent-act");
+    obj["thread"] = json!(thread_id);
+    obj["turn"] = json!(turn);
+    obj["subagent"] = json!(subagent_id);
     obj
 }
 
@@ -3156,6 +3718,7 @@ fn request_record_json(r: &RequestRecord) -> Value {
     });
     for (field, value) in [
         ("act", &r.act),
+        ("subagent", &r.subagent),
         ("detail", &r.detail),
         ("path", &r.path),
         ("answer", &r.answer),

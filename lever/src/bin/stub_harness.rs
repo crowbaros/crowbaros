@@ -278,6 +278,78 @@ enum Step {
     ModeChange {
         mode: String,
     },
+    /// Starts a subagent session (`protocol`: `"opencode"` or `"acp"`).
+    SubagentStart {
+        id: String,
+        title: String,
+        #[serde(default)]
+        prompt: Option<String>,
+        #[serde(default = "default_subagent_protocol")]
+        protocol: String,
+    },
+    /// Streams an answer text chunk from a subagent.
+    SubagentText {
+        subagent: String,
+        text: String,
+        #[serde(default = "default_subagent_protocol")]
+        protocol: String,
+    },
+    /// Emits a tool call inside a subagent.
+    SubagentAct {
+        subagent: String,
+        #[serde(default)]
+        subagent_title: Option<String>,
+        id: String,
+        #[serde(default = "default_tool_kind")]
+        tool_kind: String,
+        title: String,
+        #[serde(default = "default_tool_status")]
+        status: String,
+        #[serde(default)]
+        content: Option<String>,
+        #[serde(default)]
+        raw_input: Option<Value>,
+        #[serde(default)]
+        raw_output: Option<Value>,
+        #[serde(default = "default_subagent_protocol")]
+        protocol: String,
+    },
+    /// Emits a permission request from a subagent and waits for the answer.
+    SubagentAsk {
+        subagent: String,
+        #[serde(default)]
+        subagent_title: Option<String>,
+        #[serde(default = "default_subagent_protocol")]
+        protocol: String,
+        #[serde(default = "default_true")]
+        wait_for_answer: bool,
+        #[serde(flatten)]
+        ask: AskStep,
+    },
+    /// Ends a subagent (`completed`, `failed`, `interrupted`, `cancelled`).
+    SubagentEnd {
+        subagent: String,
+        #[serde(default = "default_subagent_end")]
+        status: String,
+        #[serde(default)]
+        error: Option<String>,
+        #[serde(default = "default_subagent_protocol")]
+        protocol: String,
+    },
+    /// Holds a subagent open until `session/cancel` arrives for it.
+    SubagentStall {
+        subagent: String,
+        #[serde(default = "default_subagent_protocol")]
+        protocol: String,
+    },
+}
+
+fn default_subagent_protocol() -> String {
+    "opencode".to_string()
+}
+
+fn default_subagent_end() -> String {
+    "completed".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -797,6 +869,426 @@ fn ask(
     Asked::Went
 }
 
+fn send_opencode_child_status(
+    writer: &Writer,
+    root_sid: &SessionId,
+    child_sid: &str,
+    title: Option<&str>,
+    status: &str,
+    error: Option<&str>,
+) {
+    let mut params = json!({
+        "rootSessionId": root_sid.0.as_ref(),
+        "childSessionId": child_sid,
+        "parentSessionId": root_sid.0.as_ref(),
+        "depth": 1,
+        "type": "status",
+        "status": status,
+    });
+    if let Some(t) = title {
+        params["title"] = json!(t);
+    }
+    if let Some(err) = error {
+        params["error"] = json!({ "message": err });
+    }
+    writer.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "opencode/session/child_update",
+        "params": params,
+    }));
+}
+
+fn send_opencode_child_update(
+    writer: &Writer,
+    root_sid: &SessionId,
+    child_sid: &str,
+    title: Option<&str>,
+    update: Value,
+) {
+    let mut params = json!({
+        "rootSessionId": root_sid.0.as_ref(),
+        "childSessionId": child_sid,
+        "parentSessionId": root_sid.0.as_ref(),
+        "depth": 1,
+        "type": "update",
+        "update": update,
+    });
+    if let Some(t) = title {
+        params["title"] = json!(t);
+    }
+    writer.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "opencode/session/child_update",
+        "params": params,
+    }));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_subagent_step(
+    writer: &Writer,
+    session_id: &SessionId,
+    asking: &Asking<'_>,
+    active_cancels: &Mutex<HashMap<String, Arc<CancelFlag>>>,
+    subagent_titles: &mut HashMap<String, String>,
+    step: &Step,
+) {
+    match step {
+        Step::SubagentStart {
+            id,
+            title,
+            prompt,
+            protocol,
+        } => {
+            subagent_titles.insert(id.clone(), title.clone());
+            active_cancels
+                .lock()
+                .unwrap()
+                .entry(id.clone())
+                .or_insert_with(|| Arc::new(CancelFlag::new()));
+            if protocol == "acp" {
+                writer.send_raw_update(
+                    session_id,
+                    json!({
+                        "sessionUpdate": "subagent_update",
+                        "sessionId": id,
+                        "title": title,
+                        "state": { "state": "running" }
+                    }),
+                );
+                if let Some(p) = prompt {
+                    writer.send_raw_update(
+                        session_id,
+                        json!({
+                            "sessionUpdate": "session_message",
+                            "messageId": format!("msg-{id}"),
+                            "senderSessionId": session_id.0.as_ref(),
+                            "recipientSessionId": id,
+                            "content": [{ "type": "text", "text": p }]
+                        }),
+                    );
+                }
+            } else {
+                // Mirror real OpenCode 2.4.1: parent `subagent` wrapper tool
+                // call + `opencode/session/child_update` status notifications.
+                let wrapper_id = format!("call_subagent_{id}");
+                let mut input = json!({ "description": title, "agent": "general" });
+                if let Some(p) = prompt {
+                    input["prompt"] = json!(p);
+                }
+                let tc = ToolCall::new(ToolCallId::new(wrapper_id.clone()), "subagent".to_string())
+                    .kind(ToolKind::Think)
+                    .status(ToolCallStatus::Pending);
+                writer.send_update(session_id, SessionUpdate::ToolCall(tc));
+                let in_prog = ToolCallUpdateFields::new()
+                    .status(ToolCallStatus::InProgress)
+                    .raw_input(input);
+                writer.send_update(
+                    session_id,
+                    SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(ToolCallId::new(wrapper_id.clone()), in_prog)),
+                );
+                send_opencode_child_status(writer, session_id, id, Some(title), "created", None);
+                let completed = ToolCallUpdateFields::new()
+                    .status(ToolCallStatus::Completed)
+                    .content(vec![ToolCallContent::from(ContentBlock::from(format!(
+                        "The subagent is working in the background (sessionID: {id})."
+                    )))])
+                    .raw_output(json!({
+                        "metadata": { "sessionID": id, "status": "running", "truncated": false }
+                    }));
+                writer.send_update(
+                    session_id,
+                    SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(ToolCallId::new(wrapper_id), completed)),
+                );
+                send_opencode_child_status(writer, session_id, id, Some(title), "running", None);
+            }
+        }
+        Step::SubagentText {
+            subagent,
+            text,
+            protocol,
+        } => {
+            let title = subagent_titles.get(subagent).map(String::as_str);
+            if protocol == "acp" {
+                writer.send_update(
+                    &SessionId::new(subagent.clone()),
+                    SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(TextContent::new(
+                        text.clone(),
+                    )))),
+                );
+            } else {
+                send_opencode_child_update(
+                    writer,
+                    session_id,
+                    subagent,
+                    title,
+                    json!({
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": { "type": "text", "text": text },
+                        "_meta": {
+                            "opencode/child-session": {
+                                "id": subagent,
+                                "parentID": session_id.0.as_ref(),
+                                "depth": 1,
+                                "title": title.unwrap_or("Subagent"),
+                            }
+                        }
+                    }),
+                );
+            }
+        }
+        Step::SubagentAct {
+            subagent,
+            subagent_title,
+            id,
+            tool_kind,
+            title,
+            status,
+            content,
+            raw_input,
+            raw_output,
+            protocol,
+        } => {
+            let child_title = subagent_title
+                .as_deref()
+                .or_else(|| subagent_titles.get(subagent).map(String::as_str));
+            if protocol == "acp" {
+                let mut tc = ToolCall::new(ToolCallId::new(id.clone()), title.clone())
+                    .kind(parse_tool_kind(tool_kind))
+                    .status(parse_tool_status(status));
+                if let Some(c) = content {
+                    tc = tc.content(vec![ToolCallContent::from(ContentBlock::from(c.clone()))]);
+                }
+                if let Some(inp) = raw_input {
+                    tc = tc.raw_input(inp.clone());
+                }
+                if let Some(out) = raw_output {
+                    tc = tc.raw_output(out.clone());
+                }
+                writer.send_update(&SessionId::new(subagent.clone()), SessionUpdate::ToolCall(tc));
+            } else {
+                let prefixed_title = match child_title {
+                    Some(ct) => format!("{ct}: {title}"),
+                    None => title.clone(),
+                };
+                let mut upd = json!({
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": format!("{subagent}:{id}"),
+                    "title": prefixed_title,
+                    "kind": tool_kind,
+                    "status": status,
+                    "_meta": {
+                        "opencode/child-session": {
+                            "id": subagent,
+                            "parentID": session_id.0.as_ref(),
+                            "depth": 1,
+                            "title": child_title.unwrap_or("Subagent"),
+                        }
+                    }
+                });
+                if let Some(c) = content {
+                    upd["content"] = json!([{ "type": "content", "content": { "type": "text", "text": c } }]);
+                }
+                if let Some(inp) = raw_input {
+                    upd["rawInput"] = inp.clone();
+                }
+                if let Some(out) = raw_output {
+                    upd["rawOutput"] = out.clone();
+                }
+                send_opencode_child_update(writer, session_id, subagent, child_title, upd);
+            }
+        }
+        Step::SubagentAsk {
+            subagent,
+            subagent_title,
+            protocol,
+            wait_for_answer,
+            ask: step,
+        } => {
+            let child_title = subagent_title
+                .as_deref()
+                .or_else(|| subagent_titles.get(subagent).map(String::as_str));
+            let cancel = active_cancels.lock().unwrap().get(subagent).cloned();
+            let call_id = if protocol == "acp" {
+                step.id.clone()
+            } else {
+                format!("{subagent}:{}", step.id)
+            };
+            let req_title = if protocol == "acp" {
+                step.title.clone()
+            } else if let Some(ct) = child_title {
+                format!("{ct}: {}", step.title)
+            } else {
+                step.title.clone()
+            };
+            let n = asking.next_request.fetch_add(1, Ordering::Relaxed);
+            let (tx, rx) = std::sync::mpsc::channel();
+            asking.replies.lock().unwrap().insert(n.to_string(), tx);
+            let mut tool_call = json!({
+                "toolCallId": call_id,
+                "title": req_title,
+                "status": "pending",
+            });
+            if !step.request_without_kind {
+                tool_call["kind"] = json!(step.tool_kind);
+            }
+            if let Some(inp) = &step.raw_input {
+                tool_call["rawInput"] = inp.clone();
+            }
+            if let Some(d) = &step.diff {
+                let mut diff = json!({ "type": "diff", "path": d.path, "newText": d.new });
+                if let Some(old) = &d.old {
+                    diff["oldText"] = json!(old);
+                }
+                tool_call["content"] = json!([diff]);
+            }
+            let target_sid = if protocol == "acp" {
+                subagent.as_str()
+            } else {
+                tool_call["_meta"] = json!({
+                    "opencode/child-session": {
+                        "id": subagent,
+                        "parentID": session_id.0.as_ref(),
+                        "depth": 1,
+                        "title": child_title.unwrap_or("Subagent"),
+                    }
+                });
+                session_id.0.as_ref()
+            };
+            writer.send(&json!({
+                "jsonrpc": "2.0",
+                "id": n,
+                "method": CLIENT_METHOD_NAMES.session_request_permission,
+                "params": {
+                    "sessionId": target_sid,
+                    "toolCall": tool_call,
+                    "options": [
+                        { "optionId": "once", "name": "Allow once", "kind": "allow_once" },
+                        { "optionId": "always", "name": "Always allow", "kind": "allow_always" },
+                        { "optionId": "reject", "name": "Reject", "kind": "reject_once" }
+                    ]
+                }
+            }));
+            if !*wait_for_answer {
+                return;
+            }
+            let asked_at = std::time::Instant::now();
+            let answer = loop {
+                let given_up = step
+                    .withdraw_after_ms
+                    .is_some_and(|ms| asked_at.elapsed() >= Duration::from_millis(ms));
+                if given_up || cancel.as_deref().is_some_and(CancelFlag::is_cancelled) {
+                    asking.replies.lock().unwrap().remove(&n.to_string());
+                    writer.send(&json!({
+                        "jsonrpc": "2.0",
+                        "method": PROTOCOL_LEVEL_METHOD_NAMES.cancel_request,
+                        "params": { "requestId": n },
+                    }));
+                    break None;
+                }
+                match rx.recv_timeout(Duration::from_millis(20)) {
+                    Ok(reply) => break Some(reply),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break None,
+                }
+            };
+            let chosen = answer
+                .as_ref()
+                .and_then(|r| r.pointer("/result/outcome"))
+                .filter(|o| o.get("outcome").and_then(Value::as_str) == Some("selected"))
+                .and_then(|o| o.get("optionId").and_then(Value::as_str))
+                .map(str::to_string);
+            let (status_str, out_text) = match chosen.as_deref() {
+                Some("once" | "always") => ("completed", step.output.as_deref().unwrap_or("ran")),
+                _ => ("failed", "The user declined this tool call"),
+            };
+            if protocol == "acp" {
+                act_update(
+                    writer,
+                    &SessionId::new(subagent.clone()),
+                    &step.id,
+                    parse_tool_status(status_str),
+                    out_text,
+                );
+            } else {
+                send_opencode_child_update(
+                    writer,
+                    session_id,
+                    subagent,
+                    child_title,
+                    json!({
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": call_id,
+                        "status": status_str,
+                        "content": [{ "type": "content", "content": { "type": "text", "text": out_text } }],
+                        "_meta": {
+                            "opencode/child-session": {
+                                "id": subagent,
+                                "parentID": session_id.0.as_ref(),
+                                "depth": 1,
+                                "title": child_title.unwrap_or("Subagent"),
+                            }
+                        }
+                    }),
+                );
+            }
+        }
+        Step::SubagentEnd {
+            subagent,
+            status,
+            error,
+            protocol,
+        } => {
+            let title = subagent_titles.get(subagent).map(String::as_str);
+            active_cancels.lock().unwrap().remove(subagent);
+            if protocol == "acp" {
+                let state = match status.as_str() {
+                    "cancelled" | "interrupted" => json!({ "state": "idle", "stopReason": "cancelled" }),
+                    "failed" => json!({
+                        "state": "idle",
+                        "stopReason": "error",
+                        "error": { "code": -32000, "message": error.as_deref().unwrap_or("The subagent failed.") }
+                    }),
+                    _ => json!({ "state": "idle", "stopReason": "end_turn" }),
+                };
+                writer.send_raw_update(
+                    session_id,
+                    json!({
+                        "sessionUpdate": "subagent_update",
+                        "sessionId": subagent,
+                        "state": state,
+                    }),
+                );
+            } else {
+                send_opencode_child_status(writer, session_id, subagent, title, status, error.as_deref());
+            }
+        }
+        Step::SubagentStall { subagent, protocol } => {
+            let flag = active_cancels
+                .lock()
+                .unwrap()
+                .entry(subagent.clone())
+                .or_insert_with(|| Arc::new(CancelFlag::new()))
+                .clone();
+            flag.wait_cancelled();
+            let title = subagent_titles.get(subagent).map(String::as_str);
+            active_cancels.lock().unwrap().remove(subagent);
+            if protocol == "acp" {
+                writer.send_raw_update(
+                    session_id,
+                    json!({
+                        "sessionUpdate": "subagent_update",
+                        "sessionId": subagent,
+                        "state": { "state": "idle", "stopReason": "cancelled" }
+                    }),
+                );
+            } else {
+                send_opencode_child_status(writer, session_id, subagent, title, "interrupted", None);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn emit_step(
     writer: &Writer,
     session_id: &SessionId,
@@ -915,7 +1407,14 @@ fn emit_step(
             }
         }
         // Carried out by the turn, which has what they need.
-        Step::Ask(_) | Step::ModeChange { .. } => {}
+        Step::Ask(_)
+        | Step::ModeChange { .. }
+        | Step::SubagentStart { .. }
+        | Step::SubagentText { .. }
+        | Step::SubagentAct { .. }
+        | Step::SubagentAsk { .. }
+        | Step::SubagentEnd { .. }
+        | Step::SubagentStall { .. } => {}
     }
     false
 }
@@ -1490,6 +1989,7 @@ fn run(options: Options) -> Result<(), String> {
                         other => other.clone(),
                     })
                     .collect();
+                let mut subagent_titles: HashMap<String, String> = HashMap::new();
                 for step in &steps {
                     if heard.is_cancelled() {
                         was_cancelled = true;
@@ -1502,6 +2002,21 @@ fn run(options: Options) -> Result<(), String> {
                                 was_cancelled = true;
                                 break;
                             }
+                        }
+                        Step::SubagentStart { .. }
+                        | Step::SubagentText { .. }
+                        | Step::SubagentAct { .. }
+                        | Step::SubagentAsk { .. }
+                        | Step::SubagentEnd { .. }
+                        | Step::SubagentStall { .. } => {
+                            run_subagent_step(
+                                &writer,
+                                &session_id,
+                                &asking,
+                                &active_cancels,
+                                &mut subagent_titles,
+                                step,
+                            );
                         }
                         Step::ModeChange { mode } => {
                             let sid = session_id.0.as_ref().to_string();
@@ -1550,12 +2065,31 @@ fn run(options: Options) -> Result<(), String> {
                 }
 
                 // After the turn, as a subagent of OpenCode's goes on: an
-                // `ask` here waits for its answer as one in the turn does.
+                // `ask` or subagent step here waits for its answer or cancel as
+                // one in the turn does.
                 for step in &turn_script.after {
-                    if let Step::Ask(step) = step {
-                        let _ = ask(&writer, &session_id, &asking, None, step);
-                    } else {
-                        let _ = emit_step(&writer, &session_id, step, None, model.as_deref());
+                    match step {
+                        Step::Ask(step) => {
+                            let _ = ask(&writer, &session_id, &asking, None, step);
+                        }
+                        Step::SubagentStart { .. }
+                        | Step::SubagentText { .. }
+                        | Step::SubagentAct { .. }
+                        | Step::SubagentAsk { .. }
+                        | Step::SubagentEnd { .. }
+                        | Step::SubagentStall { .. } => {
+                            run_subagent_step(
+                                &writer,
+                                &session_id,
+                                &asking,
+                                &active_cancels,
+                                &mut subagent_titles,
+                                step,
+                            );
+                        }
+                        _ => {
+                            let _ = emit_step(&writer, &session_id, step, None, model.as_deref());
+                        }
                     }
                 }
             }));

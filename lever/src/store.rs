@@ -27,6 +27,8 @@ pub struct ThreadSummary {
     /// A request of this thread waits for the person.
     pub waiting: bool,
     pub mode: String,
+    /// How many subagents this thread has.
+    pub subagents: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +77,52 @@ pub struct TurnRecord {
     pub acts: Vec<ActRecord>,
     pub requests: Vec<RequestRecord>,
     pub notes: Vec<NoteRecord>,
+    pub subagents: Vec<SubagentRecord>,
+}
+
+/// One message in a subagent's record: either the `prompt` given to it or
+/// its `answer`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentMessageRecord {
+    pub role: String,
+    pub text: String,
+}
+
+/// A subagent started by a thread's harness, kept in Lever's record with the
+/// thread and identified only by Lever's own ID (`sub-...`).
+#[derive(Debug, Clone)]
+pub struct SubagentRecord {
+    pub id: String,
+    pub title: String,
+    pub state: String,
+    pub error: Option<String>,
+    pub started: i64,
+    pub ended: Option<i64>,
+    pub messages: Vec<SubagentMessageRecord>,
+    pub acts: Vec<ActRecord>,
+}
+
+/// Fields carried when creating or updating a subagent in Lever's record.
+#[derive(Debug, Clone)]
+pub struct SubagentPatch<'a> {
+    pub thread_id: &'a str,
+    pub turn_number: u64,
+    pub harness_session_id: &'a str,
+    pub title: Option<&'a str>,
+    pub state: Option<&'a str>,
+    pub error: Option<&'a str>,
+}
+
+/// Fields carried when creating or updating an act belonging to a subagent.
+#[derive(Debug, Clone)]
+pub struct SubagentActPatch<'a> {
+    pub subagent_id: &'a str,
+    pub thread_id: &'a str,
+    pub harness_call_id: &'a str,
+    pub kind: Option<&'a str>,
+    pub title: Option<&'a str>,
+    pub state: Option<&'a str>,
+    pub detail: Option<&'a str>,
 }
 
 /// A thread's first turn: what Lever keeps of the thread as it begins.
@@ -92,6 +140,7 @@ pub struct NewThread<'a> {
 pub struct RequestRecord {
     pub id: String,
     pub act: Option<String>,
+    pub subagent: Option<String>,
     pub kind: String,
     pub title: String,
     pub detail: Option<String>,
@@ -107,6 +156,7 @@ pub struct NewRequest<'a> {
     pub thread_id: &'a str,
     pub turn_number: u64,
     pub act: Option<&'a str>,
+    pub subagent: Option<&'a str>,
     pub kind: &'a str,
     pub title: &'a str,
     pub detail: Option<&'a str>,
@@ -176,7 +226,7 @@ impl Store {
                  key TEXT PRIMARY KEY,\n\
                  value TEXT NOT NULL\n\
              );\n\
-             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '6');\n\
+             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '7');\n\
              CREATE TABLE IF NOT EXISTS threads (\n\
                  id TEXT PRIMARY KEY,\n\
                  title TEXT NOT NULL,\n\
@@ -229,6 +279,7 @@ impl Store {
                  thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,\n\
                  turn_number INTEGER NOT NULL,\n\
                  act_id TEXT,\n\
+                 subagent_id TEXT,\n\
                  kind TEXT NOT NULL,\n\
                  title TEXT NOT NULL,\n\
                  detail TEXT,\n\
@@ -237,6 +288,38 @@ impl Store {
                  state TEXT NOT NULL,\n\
                  answer TEXT,\n\
                  seq INTEGER NOT NULL\n\
+             );\n\
+             CREATE TABLE IF NOT EXISTS subagents (\n\
+                 id TEXT PRIMARY KEY,\n\
+                 thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,\n\
+                 turn_number INTEGER NOT NULL,\n\
+                 harness_session_id TEXT NOT NULL,\n\
+                 title TEXT NOT NULL,\n\
+                 state TEXT NOT NULL,\n\
+                 error TEXT,\n\
+                 created_at INTEGER NOT NULL,\n\
+                 ended_at INTEGER,\n\
+                 seq INTEGER NOT NULL,\n\
+                 UNIQUE(thread_id, harness_session_id)\n\
+             );\n\
+             CREATE TABLE IF NOT EXISTS subagent_messages (\n\
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,\n\
+                 subagent_id TEXT NOT NULL REFERENCES subagents(id) ON DELETE CASCADE,\n\
+                 role TEXT NOT NULL,\n\
+                 text TEXT NOT NULL,\n\
+                 seq INTEGER NOT NULL\n\
+             );\n\
+             CREATE TABLE IF NOT EXISTS subagent_acts (\n\
+                 id TEXT PRIMARY KEY,\n\
+                 subagent_id TEXT NOT NULL REFERENCES subagents(id) ON DELETE CASCADE,\n\
+                 thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,\n\
+                 harness_call_id TEXT NOT NULL,\n\
+                 kind TEXT NOT NULL,\n\
+                 title TEXT NOT NULL,\n\
+                 state TEXT NOT NULL,\n\
+                 detail TEXT,\n\
+                 seq INTEGER NOT NULL,\n\
+                 UNIQUE(subagent_id, harness_call_id)\n\
              );",
         )
         .map_err(|e| format!("could not initialize database {}: {e}", path.display()))?;
@@ -248,14 +331,20 @@ impl Store {
         ensure_column(&conn, "threads", "mode", "TEXT")?;
         ensure_column(&conn, "turns", "mode", "TEXT")?;
         ensure_column(&conn, "threads", "effort", "TEXT")?;
+        ensure_column(&conn, "requests", "subagent_id", "TEXT")?;
 
-        // Any turn left working by a Lever that ended abruptly is interrupted,
-        // and a request that waited went with the harness that asked it.
+        // Any turn or subagent left working by a Lever that ended abruptly is
+        // interrupted, and a request that waited went with the harness that asked it.
         conn.execute(
             "UPDATE turns SET state = 'interrupted', ended_at = ?1 WHERE state = 'working'",
             params![now],
         )
         .map_err(|e| format!("could not mark interrupted turns: {e}"))?;
+        conn.execute(
+            "UPDATE subagents SET state = 'interrupted', ended_at = ?1 WHERE state = 'working'",
+            params![now],
+        )
+        .map_err(|e| format!("could not mark interrupted subagents: {e}"))?;
         conn.execute("UPDATE requests SET state = 'withdrawn' WHERE state = 'waiting'", [])
             .map_err(|e| format!("could not withdraw waiting requests: {e}"))?;
 
@@ -564,11 +653,16 @@ impl Store {
         Ok(())
     }
 
-    /// The harness's tool call IDs of a thread's recorded acts.
+    /// The harness's tool call IDs of a thread's recorded acts (including its
+    /// subagents' acts).
     pub fn harness_call_ids(&self, thread_id: &str) -> Result<Vec<String>, String> {
         let mut stmt = self
             .conn
-            .prepare("SELECT DISTINCT harness_call_id FROM acts WHERE thread_id = ?1")
+            .prepare(
+                "SELECT DISTINCT harness_call_id FROM acts WHERE thread_id = ?1 \
+                 UNION \
+                 SELECT DISTINCT harness_call_id FROM subagent_acts WHERE thread_id = ?1",
+            )
             .map_err(|e| format!("could not prepare tool call ID query: {e}"))?;
         let rows = stmt
             .query_map(params![thread_id], |r| r.get::<_, String>(0))
@@ -577,8 +671,22 @@ impl Store {
             .map_err(|e| format!("could not read tool call ID row: {e}"))
     }
 
-    /// Marks every currently-working turn as `interrupted` and returns the
-    /// affected `(thread_id, turn_number)` pairs.
+    /// The harness's session IDs of a thread's recorded subagents, used to
+    /// redact them after a harness restart and never list them as threads.
+    pub fn subagent_harness_session_ids(&self, thread_id: &str) -> Result<Vec<String>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT harness_session_id FROM subagents WHERE thread_id = ?1")
+            .map_err(|e| format!("could not prepare subagent session ID query: {e}"))?;
+        let rows = stmt
+            .query_map(params![thread_id], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("could not query subagent session IDs: {e}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("could not read subagent session ID row: {e}"))
+    }
+
+    /// Marks every currently-working turn and subagent as `interrupted` and
+    /// returns the affected `(thread_id, turn_number)` pairs.
     pub fn interrupt_all_working(&self, now: i64) -> Result<Vec<(String, u64)>, String> {
         let mut stmt = self
             .conn
@@ -599,6 +707,12 @@ impl Store {
                 )
                 .map_err(|e| format!("could not mark working turns interrupted: {e}"))?;
         }
+        self.conn
+            .execute(
+                "UPDATE subagents SET state = 'interrupted', ended_at = ?1 WHERE state = 'working'",
+                params![now],
+            )
+            .map_err(|e| format!("could not mark working subagents interrupted: {e}"))?;
         Ok(interrupted)
     }
 
@@ -771,15 +885,19 @@ impl Store {
                         (SELECT COUNT(*) FROM turns WHERE thread_id = t.id), \
                         (SELECT state FROM turns WHERE thread_id = t.id ORDER BY turn_number DESC LIMIT 1), \
                         EXISTS (SELECT 1 FROM requests WHERE thread_id = t.id AND state = 'waiting'), \
-                        t.mode, t.archived, t.effort \
+                        t.mode, t.archived, t.effort, \
+                        EXISTS (SELECT 1 FROM subagents WHERE thread_id = t.id AND state = 'working'), \
+                        (SELECT COUNT(*) FROM subagents WHERE thread_id = t.id) \
                  FROM threads t \
                  ORDER BY t.updated_at DESC, t.rowid DESC",
             )
             .map_err(|e| format!("could not prepare thread list query: {e}"))?;
         let rows = stmt
             .query_map([], |r| {
-                let state: String = r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "idle".to_string());
-                let working = state == "working";
+                let turn_state: String = r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "idle".to_string());
+                let subagent_working: bool = r.get(12)?;
+                let working = turn_state == "working" || subagent_working;
+                let state = if working { "working".to_string() } else { turn_state };
                 Ok(ThreadSummary {
                     archived: r.get(10)?,
                     id: r.get(0)?,
@@ -796,6 +914,7 @@ impl Store {
                     mode: r
                         .get::<_, Option<String>>(9)?
                         .unwrap_or_else(|| STARTING_MODE.to_string()),
+                    subagents: r.get::<_, i64>(13)? as u64,
                 })
             })
             .map_err(|e| format!("could not query threads: {e}"))?;
@@ -882,6 +1001,7 @@ impl Store {
                     acts: Vec::new(),
                     requests: Vec::new(),
                     notes: Vec::new(),
+                    subagents: Vec::new(),
                 })
             })
             .map_err(|e| format!("could not query turns: {e}"))?;
@@ -949,7 +1069,41 @@ impl Store {
             }
         }
 
-        let working = turns.last().is_some_and(|t| t.state == "working");
+        let mut sub_stmt = self
+            .conn
+            .prepare(
+                "SELECT turn_number, id, title, state, error, created_at, ended_at \
+                 FROM subagents WHERE thread_id = ?1 ORDER BY seq ASC",
+            )
+            .map_err(|e| format!("could not prepare subagents query: {e}"))?;
+        let sub_rows = sub_stmt
+            .query_map(params![thread_id], |r| {
+                Ok((
+                    r.get::<_, i64>(0)? as u64,
+                    SubagentRecord {
+                        id: r.get(1)?,
+                        title: r.get(2)?,
+                        state: r.get(3)?,
+                        error: r.get(4)?,
+                        started: r.get(5)?,
+                        ended: r.get(6)?,
+                        messages: Vec::new(),
+                        acts: Vec::new(),
+                    },
+                ))
+            })
+            .map_err(|e| format!("could not query subagents: {e}"))?;
+        for row in sub_rows {
+            let (turn_number, mut sub) = row.map_err(|e| format!("could not read subagent row: {e}"))?;
+            sub.messages = self.subagent_messages(&sub.id)?;
+            sub.acts = self.subagent_acts(&sub.id)?;
+            if let Some(turn) = turns.iter_mut().find(|t| t.turn == turn_number) {
+                turn.subagents.push(sub);
+            }
+        }
+
+        let working = turns.last().is_some_and(|t| t.state == "working")
+            || turns.iter().any(|t| t.subagents.iter().any(|s| s.state == "working"));
         Ok(Some(ThreadRecord {
             id,
             title,
@@ -983,13 +1137,14 @@ impl Store {
         let answers = serde_json::to_string(request.answers).map_err(|e| format!("could not encode answers: {e}"))?;
         self.conn
             .execute(
-                "INSERT INTO requests (id, thread_id, turn_number, act_id, kind, title, detail, path, answers, state, seq) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'waiting', ?10)",
+                "INSERT INTO requests (id, thread_id, turn_number, act_id, subagent_id, kind, title, detail, path, answers, state, seq) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'waiting', ?11)",
                 params![
                     id,
                     request.thread_id,
                     request.turn_number as i64,
                     request.act,
+                    request.subagent,
                     request.kind,
                     request.title,
                     request.detail,
@@ -1004,6 +1159,7 @@ impl Store {
         Ok(RequestRecord {
             id,
             act: request.act.map(str::to_string),
+            subagent: request.subagent.map(str::to_string),
             kind: request.kind.to_string(),
             title: request.title.to_string(),
             detail: request.detail.map(str::to_string),
@@ -1057,25 +1213,26 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT turn_number, id, act_id, kind, title, detail, path, answers, state, answer \
+                "SELECT turn_number, id, act_id, subagent_id, kind, title, detail, path, answers, state, answer \
                  FROM requests WHERE thread_id = ?1 AND (?2 IS NULL OR id = ?2) ORDER BY seq ASC",
             )
             .map_err(|e| format!("could not prepare requests query: {e}"))?;
         let rows = stmt
             .query_map(params![thread_id, request_id], |r| {
-                let answers: String = r.get(7)?;
+                let answers: String = r.get(8)?;
                 Ok((
                     r.get::<_, i64>(0)? as u64,
                     RequestRecord {
                         id: r.get(1)?,
                         act: r.get(2)?,
-                        kind: r.get(3)?,
-                        title: r.get(4)?,
-                        detail: r.get(5)?,
-                        path: r.get(6)?,
+                        subagent: r.get(3)?,
+                        kind: r.get(4)?,
+                        title: r.get(5)?,
+                        detail: r.get(6)?,
+                        path: r.get(7)?,
                         answers: serde_json::from_str(&answers).unwrap_or_default(),
-                        state: r.get(8)?,
-                        answer: r.get(9)?,
+                        state: r.get(9)?,
+                        answer: r.get(10)?,
                     },
                 ))
             })
@@ -1090,6 +1247,325 @@ impl Store {
             .execute("UPDATE requests SET state = 'withdrawn' WHERE state = 'waiting'", [])
             .map_err(|e| format!("could not withdraw waiting requests: {e}"))?;
         Ok(())
+    }
+
+    fn subagent_messages(&self, subagent_id: &str) -> Result<Vec<SubagentMessageRecord>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT role, text FROM subagent_messages WHERE subagent_id = ?1 ORDER BY seq ASC")
+            .map_err(|e| format!("could not prepare subagent messages query: {e}"))?;
+        let rows = stmt
+            .query_map(params![subagent_id], |r| {
+                Ok(SubagentMessageRecord {
+                    role: r.get(0)?,
+                    text: r.get(1)?,
+                })
+            })
+            .map_err(|e| format!("could not query subagent messages: {e}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("could not read subagent message row: {e}"))
+    }
+
+    fn subagent_acts(&self, subagent_id: &str) -> Result<Vec<ActRecord>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, kind, title, state, detail FROM subagent_acts WHERE subagent_id = ?1 ORDER BY seq ASC")
+            .map_err(|e| format!("could not prepare subagent acts query: {e}"))?;
+        let rows = stmt
+            .query_map(params![subagent_id], |r| {
+                Ok(ActRecord {
+                    id: r.get(0)?,
+                    kind: r.get(1)?,
+                    title: r.get(2)?,
+                    state: r.get(3)?,
+                    detail: r.get(4)?,
+                })
+            })
+            .map_err(|e| format!("could not query subagent acts: {e}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("could not read subagent act row: {e}"))
+    }
+
+    /// Inserts or updates a subagent owned by `patch.thread_id` and returns
+    /// `(recorded_turn, SubagentRecord)` with Lever's own `sub-...` ID.
+    pub fn upsert_subagent(&self, patch: &SubagentPatch<'_>, now: i64) -> Result<(u64, SubagentRecord), String> {
+        type Row = (String, u64, String, String, Option<String>, i64, Option<i64>);
+        let existing: Option<Row> = self
+            .conn
+            .query_row(
+                "SELECT id, turn_number, title, state, error, created_at, ended_at \
+                 FROM subagents WHERE thread_id = ?1 AND harness_session_id = ?2",
+                params![patch.thread_id, patch.harness_session_id],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get::<_, i64>(1)? as u64,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| format!("could not query subagent: {e}"))?;
+
+        let (turn_number, record) = if let Some((
+            id,
+            orig_turn,
+            cur_title,
+            cur_state,
+            cur_error,
+            created_at,
+            cur_ended,
+        )) = existing
+        {
+            let new_title = patch
+                .title
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .unwrap_or(cur_title);
+            let new_state = patch.state.map(str::to_string).unwrap_or(cur_state);
+            let new_error = if new_state == "working" {
+                None
+            } else {
+                patch.error.map(str::to_string).or(cur_error)
+            };
+            let new_ended = if new_state == "working" {
+                None
+            } else if patch.state.is_some() {
+                Some(cur_ended.unwrap_or(now))
+            } else {
+                cur_ended
+            };
+            self.conn
+                .execute(
+                    "UPDATE subagents SET title = ?1, state = ?2, error = ?3, ended_at = ?4 WHERE id = ?5",
+                    params![new_title, new_state, new_error, new_ended, id],
+                )
+                .map_err(|e| format!("could not update subagent: {e}"))?;
+            (
+                orig_turn,
+                SubagentRecord {
+                    id,
+                    title: new_title,
+                    state: new_state,
+                    error: new_error,
+                    started: created_at,
+                    ended: new_ended,
+                    messages: Vec::new(),
+                    acts: Vec::new(),
+                },
+            )
+        } else {
+            let seq: i64 = self
+                .conn
+                .query_row(
+                    "SELECT COALESCE(MAX(seq), 0) + 1 FROM subagents WHERE thread_id = ?1",
+                    params![patch.thread_id],
+                    |r| r.get(0),
+                )
+                .map_err(|e| format!("could not compute subagent sequence: {e}"))?;
+            let id = format!("sub-{}", sys::random_hex(6));
+            let title = patch
+                .title
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("Subagent")
+                .to_string();
+            let state = patch.state.unwrap_or("working").to_string();
+            let error = patch.error.map(str::to_string);
+            let ended = (state != "working").then_some(now);
+            self.conn
+                    .execute(
+                        "INSERT INTO subagents (id, thread_id, turn_number, harness_session_id, title, state, error, created_at, ended_at, seq) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                        params![
+                            id,
+                            patch.thread_id,
+                            patch.turn_number as i64,
+                            patch.harness_session_id,
+                            title,
+                            state,
+                            error,
+                            now,
+                            ended,
+                            seq
+                        ],
+                    )
+                    .map_err(|e| format!("could not insert subagent: {e}"))?;
+            (
+                patch.turn_number,
+                SubagentRecord {
+                    id,
+                    title,
+                    state,
+                    error,
+                    started: now,
+                    ended,
+                    messages: Vec::new(),
+                    acts: Vec::new(),
+                },
+            )
+        };
+
+        self.touch_thread(patch.thread_id, now)?;
+        Ok((turn_number, record))
+    }
+
+    /// Marks a subagent as ended with `state` and optional `error`.
+    pub fn finish_subagent(
+        &self,
+        thread_id: &str,
+        subagent_id: &str,
+        state: &str,
+        error: Option<&str>,
+        now: i64,
+    ) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE subagents SET state = ?1, error = COALESCE(?2, error), ended_at = COALESCE(ended_at, ?3) \
+                 WHERE id = ?4",
+                params![state, error, now, subagent_id],
+            )
+            .map_err(|e| format!("could not finish subagent: {e}"))?;
+        self.touch_thread(thread_id, now)?;
+        Ok(())
+    }
+
+    /// Appends text to a subagent's messages. Consecutive chunks of the same
+    /// role join into one message, except a `prompt` that repeats the newest
+    /// prompt verbatim is skipped. Returns `true` if anything was stored.
+    pub fn append_subagent_message(
+        &self,
+        thread_id: &str,
+        subagent_id: &str,
+        role: &str,
+        text: &str,
+        now: i64,
+    ) -> Result<bool, String> {
+        if text.is_empty() {
+            return Ok(false);
+        }
+        let last: Option<(i64, String, String)> = self
+            .conn
+            .query_row(
+                "SELECT id, role, text FROM subagent_messages WHERE subagent_id = ?1 ORDER BY seq DESC LIMIT 1",
+                params![subagent_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(|e| format!("could not query last subagent message: {e}"))?;
+
+        if let Some((row_id, last_role, last_text)) = &last
+            && last_role == role
+        {
+            if role == "prompt" && last_text.trim() == text.trim() {
+                return Ok(false);
+            }
+            self.conn
+                .execute(
+                    "UPDATE subagent_messages SET text = text || ?1 WHERE id = ?2",
+                    params![text, row_id],
+                )
+                .map_err(|e| format!("could not append subagent message: {e}"))?;
+            self.touch_thread(thread_id, now)?;
+            return Ok(true);
+        }
+        let seq: i64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(MAX(seq), 0) + 1 FROM subagent_messages WHERE subagent_id = ?1",
+                params![subagent_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("could not compute subagent message sequence: {e}"))?;
+        self.conn
+            .execute(
+                "INSERT INTO subagent_messages (subagent_id, role, text, seq) VALUES (?1, ?2, ?3, ?4)",
+                params![subagent_id, role, text, seq],
+            )
+            .map_err(|e| format!("could not insert subagent message: {e}"))?;
+        self.touch_thread(thread_id, now)?;
+        Ok(true)
+    }
+
+    /// Inserts or updates an act belonging to a subagent, returning Lever's
+    /// own act ID (`act-...`).
+    pub fn upsert_subagent_act(&self, patch: &SubagentActPatch<'_>, now: i64) -> Result<ActRecord, String> {
+        let existing: Option<(String, String, String, String, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT id, kind, title, state, detail FROM subagent_acts \
+                 WHERE subagent_id = ?1 AND harness_call_id = ?2",
+                params![patch.subagent_id, patch.harness_call_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()
+            .map_err(|e| format!("could not query subagent act: {e}"))?;
+
+        let record = if let Some((id, cur_kind, cur_title, cur_state, cur_detail)) = existing {
+            let new_kind = patch.kind.map(str::to_string).unwrap_or(cur_kind);
+            let new_title = patch.title.map(str::to_string).unwrap_or(cur_title);
+            let new_state = patch.state.map(str::to_string).unwrap_or(cur_state);
+            let new_detail = patch.detail.map(str::to_string).or(cur_detail);
+            self.conn
+                .execute(
+                    "UPDATE subagent_acts SET kind = ?1, title = ?2, state = ?3, detail = ?4 WHERE id = ?5",
+                    params![new_kind, new_title, new_state, new_detail, id],
+                )
+                .map_err(|e| format!("could not update subagent act: {e}"))?;
+            ActRecord {
+                id,
+                kind: new_kind,
+                title: new_title,
+                state: new_state,
+                detail: new_detail,
+            }
+        } else {
+            let seq: i64 = self
+                .conn
+                .query_row(
+                    "SELECT COALESCE(MAX(seq), 0) + 1 FROM subagent_acts WHERE subagent_id = ?1",
+                    params![patch.subagent_id],
+                    |r| r.get(0),
+                )
+                .map_err(|e| format!("could not compute subagent act sequence: {e}"))?;
+            let id = format!("act-{}", sys::random_hex(6));
+            let new_kind = patch.kind.unwrap_or("other").to_string();
+            let new_title = patch.title.unwrap_or("Act").to_string();
+            let new_state = patch.state.unwrap_or("pending").to_string();
+            let new_detail = patch.detail.map(str::to_string);
+            self.conn
+                .execute(
+                    "INSERT INTO subagent_acts (id, subagent_id, thread_id, harness_call_id, kind, title, state, detail, seq) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        id,
+                        patch.subagent_id,
+                        patch.thread_id,
+                        patch.harness_call_id,
+                        new_kind,
+                        new_title,
+                        new_state,
+                        new_detail,
+                        seq
+                    ],
+                )
+                .map_err(|e| format!("could not insert subagent act: {e}"))?;
+            ActRecord {
+                id,
+                kind: new_kind,
+                title: new_title,
+                state: new_state,
+                detail: new_detail,
+            }
+        };
+
+        self.touch_thread(patch.thread_id, now)?;
+        Ok(record)
     }
 }
 
@@ -1281,6 +1757,7 @@ mod tests {
                     thread_id: "t-v4",
                     turn_number: turn,
                     act: None,
+                    subagent: None,
                     kind: "command",
                     title: "ls",
                     detail: Some("ls"),
@@ -1317,6 +1794,7 @@ mod tests {
             thread_id: "t-v4",
             turn_number: turn,
             act: None,
+            subagent: None,
             kind: "command",
             title: "rm",
             detail: Some("rm"),

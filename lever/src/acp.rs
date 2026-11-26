@@ -7,13 +7,14 @@ use crate::opencode;
 use crate::sys;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, Annotations, AvailableCommandInput, CLIENT_METHOD_NAMES, CancelNotification,
-    CancelRequestNotification, CloseSessionRequest, ContentBlock, Error as AcpError, ErrorCode, Implementation,
-    InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
-    NewSessionResponse, Notification, PROTOCOL_LEVEL_METHOD_NAMES, PermissionOptionKind, PromptRequest, PromptResponse,
-    Request, RequestId, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, Response, Role,
-    SelectedPermissionOutcome, SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigSelectOptions, SessionId, SessionUpdate, SetSessionConfigOptionRequest,
-    SetSessionConfigOptionResponse, StopReason, TextContent, ToolCallContent, ToolCallStatus, ToolKind,
+    CancelRequestNotification, ClientCapabilities, CloseSessionRequest, ContentBlock, Error as AcpError, ErrorCode,
+    IdleStopReason, Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest,
+    LoadSessionResponse, NewSessionRequest, NewSessionResponse, Notification, PROTOCOL_LEVEL_METHOD_NAMES,
+    PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, Response, Role, SelectedPermissionOutcome, SessionConfigId,
+    SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOptions, SessionId,
+    SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StateUpdate, StopReason,
+    SubagentCapabilities, TextContent, ToolCallContent, ToolCallStatus, ToolKind,
 };
 use agent_client_protocol_schema::{MaybeUndefined, ProtocolVersion};
 use serde_json::{Value, json};
@@ -246,6 +247,10 @@ pub enum AcpEvent {
     /// The harness asks the person before it acts.
     PermissionRequested {
         thread_id: String,
+        /// The harness's session ID for the subagent that asked, when a
+        /// subagent asked rather than the parent thread.
+        harness_subagent_id: Option<String>,
+        subagent_title: Option<String>,
         /// Lever's handle for answering it, never shown to anyone.
         handle: u64,
         harness_call_id: String,
@@ -260,6 +265,34 @@ pub enum AcpEvent {
     /// The harness withdrew a request it asked.
     PermissionWithdrawn {
         handle: u64,
+    },
+    /// A subagent of a thread started, changed title, or changed state.
+    SubagentUpdated {
+        thread_id: String,
+        harness_subagent_id: String,
+        title: Option<String>,
+        state: Option<String>,
+        error: Option<String>,
+    },
+    /// A piece of a subagent's prompt or answer message.
+    SubagentMessage {
+        thread_id: String,
+        harness_subagent_id: String,
+        title: Option<String>,
+        /// `"prompt"` or `"answer"`.
+        role: String,
+        text: String,
+    },
+    /// An act carried out by a subagent.
+    SubagentAct {
+        thread_id: String,
+        harness_subagent_id: String,
+        subagent_title: Option<String>,
+        harness_call_id: String,
+        kind: Option<String>,
+        title: Option<String>,
+        state: Option<String>,
+        detail: Option<String>,
     },
     TextChunk {
         thread_id: String,
@@ -387,10 +420,30 @@ pub struct AcpHarness {
     /// Tool call IDs seen per thread, used only to redact harness error messages
     /// and unrecognized updates without altering normal model output.
     thread_tool_ids: HashMap<String, HashSet<String>>,
+    /// Subagent session IDs seen per thread, used for redaction and to keep
+    /// child sessions separate from top-level threads.
+    thread_subagent_ids: HashMap<String, HashSet<String>>,
+    /// Maps a harness's child session ID to the owning Lever thread ID.
+    child_to_thread: HashMap<String, String>,
+    /// Last known title of each harness child session, used to strip the
+    /// harness's `"<title>: "` prefix from child acts and requests.
+    child_titles: HashMap<String, String>,
+    /// Parent tool calls that launch an OpenCode subagent (`name == "subagent"`),
+    /// kept so their prompt/description attach to the spawned child session
+    /// without exposing OpenCode's wrapper tool call or session ID.
+    pending_subagent_calls: HashMap<String, PendingSubagentCall>,
     /// Transport failure recorded when Lever cancels an endless retry loop on a
     /// session whose Model is unreachable, turned into `TurnOutcome::Failed`
     /// when the harness answers the cancelled prompt.
     transport_failures: HashMap<String, String>,
+}
+
+struct PendingSubagentCall {
+    thread_id: String,
+    title: Option<String>,
+    prompt: Option<String>,
+    child_session_id: Option<String>,
+    prompt_emitted: bool,
 }
 
 struct Permission {
@@ -463,10 +516,20 @@ impl AcpHarness {
             loading_sessions: HashSet::new(),
             fault: None,
             thread_tool_ids: HashMap::new(),
+            thread_subagent_ids: HashMap::new(),
+            child_to_thread: HashMap::new(),
+            child_titles: HashMap::new(),
+            pending_subagent_calls: HashMap::new(),
             transport_failures: HashMap::new(),
         };
 
+        let mut client_meta = serde_json::Map::new();
+        client_meta.insert("opencode/child-session-updates".to_string(), json!(true));
+        let capabilities = ClientCapabilities::new()
+            .subagents(SubagentCapabilities::new())
+            .meta(client_meta);
         let init = InitializeRequest::new(ProtocolVersion::V1)
+            .client_capabilities(capabilities)
             .client_info(Implementation::new("crowbar-lever", LEVER_VERSION));
         let id = harness.send_request(AGENT_METHOD_NAMES.initialize, &init);
         harness.pending.insert(id, PendingRpc::Initialize);
@@ -512,6 +575,18 @@ impl AcpHarness {
             self.session_modes.remove(&session_id);
             self.session_efforts.remove(&session_id);
         }
+        let child_ids: Vec<String> = self
+            .child_to_thread
+            .iter()
+            .filter(|(_, owner)| owner.as_str() == thread_id)
+            .map(|(cid, _)| cid.clone())
+            .collect();
+        for cid in child_ids {
+            self.child_to_thread.remove(&cid);
+            self.child_titles.remove(&cid);
+        }
+        self.pending_subagent_calls
+            .retain(|_, call| call.thread_id != thread_id);
     }
 
     pub fn delete_session(&mut self, thread_id: &str, session_id: &str) -> bool {
@@ -1047,11 +1122,17 @@ impl AcpHarness {
         }
 
         if has_method {
-            if value.get("method").and_then(Value::as_str) == Some(PROTOCOL_LEVEL_METHOD_NAMES.cancel_request) {
-                self.handle_cancel_request(value.get("params"), events);
-                return;
+            match value.get("method").and_then(Value::as_str) {
+                Some(m) if m == PROTOCOL_LEVEL_METHOD_NAMES.cancel_request => {
+                    self.handle_cancel_request(value.get("params"), events);
+                }
+                Some("opencode/session/child_update") => {
+                    self.handle_opencode_child_update(value.get("params"), events);
+                }
+                _ => {
+                    self.handle_notification(&value, events);
+                }
             }
-            self.handle_notification(&value, events);
             return;
         }
 
@@ -1061,17 +1142,32 @@ impl AcpHarness {
     }
 
     /// Takes a `session/request_permission` to the person, as a request in
-    /// the thread whose session asks it. One for a session Lever holds for no
-    /// thread is answered `cancelled` at once: nobody would see it.
+    /// the thread whose session (or subagent session) asks it. One for a
+    /// session Lever holds for no thread is answered `cancelled` at once:
+    /// nobody would see it.
     fn handle_permission_request(&mut self, rpc_id: RequestId, params: Option<&Value>, events: &mut Vec<AcpEvent>) {
         let request = params.and_then(|p| serde_json::from_value::<RequestPermissionRequest>(p.clone()).ok());
-        let thread_id = request.as_ref().and_then(|r| {
+        let resolved = request.as_ref().and_then(|r| {
             let sid = r.session_id.0.as_ref();
-            (!self.loading_sessions.contains(sid))
-                .then(|| self.session_to_thread.get(sid).cloned())
-                .flatten()
+            if let Some(owner) = self.child_to_thread.get(sid).cloned() {
+                let title = self.child_titles.get(sid).cloned();
+                return Some((owner, Some(sid.to_string()), title));
+            }
+            if self.loading_sessions.contains(sid) {
+                return None;
+            }
+            let owner = self.session_to_thread.get(sid).cloned()?;
+            if let Some((child_sid, child_title)) = params
+                .and_then(|p| p.get("toolCall"))
+                .and_then(extract_opencode_child_meta)
+            {
+                let effective_title = child_title.or_else(|| self.child_titles.get(&child_sid).cloned());
+                Some((owner, Some(child_sid), effective_title))
+            } else {
+                Some((owner, None, None))
+            }
         });
-        let (Some(request), Some(thread_id)) = (request, thread_id) else {
+        let (Some(request), Some((thread_id, harness_subagent_id, subagent_title))) = (request, resolved) else {
             self.send_result_response(
                 rpc_id,
                 RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
@@ -1079,6 +1175,9 @@ impl AcpHarness {
             let _ = self.on_writable();
             return;
         };
+        if let Some(ref child_sid) = harness_subagent_id {
+            self.register_child(&thread_id, child_sid, subagent_title.as_deref());
+        }
         let mut options = Vec::new();
         let mut answers = Vec::new();
         for option in &request.options {
@@ -1113,7 +1212,7 @@ impl AcpHarness {
         // The command or the change is shown as the Model wrote it, as an
         // act's is: the person answers for exactly that.
         let (detail, path) = request_detail(call.fields.kind, &call.fields);
-        let title = call
+        let raw_title = call
             .fields
             .title
             .clone()
@@ -1121,11 +1220,18 @@ impl AcpHarness {
             .or_else(|| path.clone())
             .or_else(|| detail.as_ref().and_then(|d| d.lines().next().map(str::to_string)))
             .unwrap_or_else(|| "Act".to_string());
+        let title = if harness_subagent_id.is_some() {
+            strip_child_title_prefix(&raw_title, subagent_title.as_deref())
+        } else {
+            raw_title
+        };
         let handle = self.next_permission;
         self.next_permission += 1;
         self.permissions.insert(handle, Permission { rpc_id, options });
         events.push(AcpEvent::PermissionRequested {
             thread_id,
+            harness_subagent_id,
+            subagent_title,
             handle,
             harness_call_id: call_id,
             kind,
@@ -1626,6 +1732,263 @@ impl AcpHarness {
         }
     }
 
+    fn register_child(&mut self, thread_id: &str, child_sid: &str, title: Option<&str>) {
+        if child_sid.is_empty() {
+            return;
+        }
+        self.thread_subagent_ids
+            .entry(thread_id.to_string())
+            .or_default()
+            .insert(child_sid.to_string());
+        self.child_to_thread
+            .insert(child_sid.to_string(), thread_id.to_string());
+        if let Some(clean) = title.map(str::trim).filter(|s| !s.is_empty()) {
+            self.child_titles.insert(child_sid.to_string(), clean.to_string());
+        }
+    }
+
+    fn emit_pending_subagent_prompt(
+        &mut self,
+        thread_id: &str,
+        child_sid: &str,
+        known_title: Option<&str>,
+        events: &mut Vec<AcpEvent>,
+    ) {
+        let matched_key = self
+            .pending_subagent_calls
+            .iter()
+            .find(|(_, call)| {
+                call.thread_id == thread_id
+                    && !call.prompt_emitted
+                    && (call.child_session_id.as_deref() == Some(child_sid)
+                        || (call.child_session_id.is_none()
+                            && known_title
+                                .zip(call.title.as_deref())
+                                .is_some_and(|(a, b)| a.trim() == b.trim())))
+            })
+            .map(|(k, _)| k.clone())
+            .or_else(|| {
+                let unbound: Vec<String> = self
+                    .pending_subagent_calls
+                    .iter()
+                    .filter(|(_, call)| {
+                        call.thread_id == thread_id && !call.prompt_emitted && call.child_session_id.is_none()
+                    })
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                (unbound.len() == 1).then(|| unbound[0].clone())
+            });
+        let Some(key) = matched_key else {
+            return;
+        };
+        if let Some(call) = self.pending_subagent_calls.get_mut(&key) {
+            call.child_session_id = Some(child_sid.to_string());
+            if let Some(prompt) = call.prompt.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                call.prompt_emitted = true;
+                let title = call.title.clone().or_else(|| self.child_titles.get(child_sid).cloned());
+                events.push(AcpEvent::SubagentMessage {
+                    thread_id: thread_id.to_string(),
+                    harness_subagent_id: child_sid.to_string(),
+                    title,
+                    role: "prompt".to_string(),
+                    text: prompt.to_string(),
+                });
+            }
+        }
+    }
+
+    /// Translates OpenCode's `opencode/session/child_update` notifications
+    /// into Lever's subagent events so no harness-specific method or session
+    /// ID crosses Lever's sockets.
+    fn handle_opencode_child_update(&mut self, params: Option<&Value>, events: &mut Vec<AcpEvent>) {
+        let Some(obj) = params.and_then(Value::as_object) else {
+            return;
+        };
+        let Some(child_sid) = obj
+            .get("childSessionId")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        else {
+            return;
+        };
+        let root_sid = obj.get("rootSessionId").and_then(Value::as_str);
+        let parent_sid = obj.get("parentSessionId").and_then(Value::as_str);
+        let thread_id = self
+            .child_to_thread
+            .get(child_sid)
+            .cloned()
+            .or_else(|| root_sid.and_then(|s| self.session_to_thread.get(s).cloned()))
+            .or_else(|| {
+                parent_sid.and_then(|s| {
+                    self.session_to_thread
+                        .get(s)
+                        .or_else(|| self.child_to_thread.get(s))
+                        .cloned()
+                })
+            });
+        let Some(thread_id) = thread_id else {
+            return;
+        };
+        let title = obj
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        self.register_child(&thread_id, child_sid, title);
+        let effective_title = title
+            .map(str::to_string)
+            .or_else(|| self.child_titles.get(child_sid).cloned());
+
+        match obj.get("type").and_then(Value::as_str) {
+            Some("status") => {
+                let raw_status = obj.get("status").and_then(Value::as_str);
+                let state = match raw_status {
+                    Some("created" | "running") => Some("working".to_string()),
+                    Some("completed") => Some("done".to_string()),
+                    Some("cancelled" | "canceled") => Some("stopped".to_string()),
+                    Some("interrupted") => Some("interrupted".to_string()),
+                    Some("failed") => Some("failed".to_string()),
+                    _ => None,
+                };
+                let error = if state.as_deref() == Some("failed") {
+                    extract_opencode_error(obj.get("error"))
+                        .map(|raw| self.redact_for_thread(Some(&thread_id), &raw))
+                        .or_else(|| Some("The subagent failed.".to_string()))
+                } else {
+                    None
+                };
+                events.push(AcpEvent::SubagentUpdated {
+                    thread_id: thread_id.clone(),
+                    harness_subagent_id: child_sid.to_string(),
+                    title: effective_title.clone(),
+                    state,
+                    error,
+                });
+                self.emit_pending_subagent_prompt(&thread_id, child_sid, effective_title.as_deref(), events);
+            }
+            Some("update") => {
+                if let Some(raw_update) = obj.get("update") {
+                    self.handle_child_session_update(
+                        &thread_id,
+                        child_sid,
+                        effective_title.as_deref(),
+                        raw_update,
+                        events,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Translates an ACP `SessionUpdate` belonging to a child subagent session
+    /// into Lever's subagent events.
+    fn handle_child_session_update(
+        &mut self,
+        thread_id: &str,
+        child_sid: &str,
+        known_title: Option<&str>,
+        raw_update: &Value,
+        events: &mut Vec<AcpEvent>,
+    ) {
+        self.register_child(thread_id, child_sid, known_title);
+        let child_title = known_title
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| self.child_titles.get(child_sid).cloned());
+
+        match serde_json::from_value::<SessionUpdate>(raw_update.clone()) {
+            Ok(SessionUpdate::AgentMessageChunk(chunk)) => {
+                if let Some(text) = content_block_text(&chunk.content) {
+                    events.push(AcpEvent::SubagentMessage {
+                        thread_id: thread_id.to_string(),
+                        harness_subagent_id: child_sid.to_string(),
+                        title: child_title,
+                        role: "answer".to_string(),
+                        text,
+                    });
+                }
+            }
+            Ok(SessionUpdate::UserMessageChunk(chunk)) => {
+                let already_emitted = self
+                    .pending_subagent_calls
+                    .values()
+                    .any(|call| call.child_session_id.as_deref() == Some(child_sid) && call.prompt_emitted);
+                if !already_emitted && let Some(text) = content_block_text(&chunk.content) {
+                    events.push(AcpEvent::SubagentMessage {
+                        thread_id: thread_id.to_string(),
+                        harness_subagent_id: child_sid.to_string(),
+                        title: child_title,
+                        role: "prompt".to_string(),
+                        text,
+                    });
+                }
+            }
+            Ok(SessionUpdate::ToolCall(tc)) => {
+                let call_id = tc.tool_call_id.0.as_ref().to_string();
+                self.thread_tool_ids
+                    .entry(thread_id.to_string())
+                    .or_default()
+                    .insert(call_id.clone());
+                let detail = tool_detail(&tc.content, tc.raw_output.as_ref(), tc.raw_input.as_ref());
+                let clean_title = strip_child_title_prefix(&tc.title, child_title.as_deref());
+                events.push(AcpEvent::SubagentAct {
+                    thread_id: thread_id.to_string(),
+                    harness_subagent_id: child_sid.to_string(),
+                    subagent_title: child_title,
+                    harness_call_id: call_id,
+                    kind: Some(map_tool_kind(tc.kind).to_string()),
+                    title: Some(clean_title),
+                    state: Some(map_tool_status(tc.status).to_string()),
+                    detail,
+                });
+            }
+            Ok(SessionUpdate::ToolCallUpdate(tcu)) => {
+                let call_id = tcu.tool_call_id.0.as_ref().to_string();
+                self.thread_tool_ids
+                    .entry(thread_id.to_string())
+                    .or_default()
+                    .insert(call_id.clone());
+                let detail = tool_detail(
+                    tcu.fields.content.as_deref().unwrap_or(&[]),
+                    tcu.fields.raw_output.as_ref(),
+                    tcu.fields.raw_input.as_ref(),
+                );
+                let clean_title = tcu
+                    .fields
+                    .title
+                    .map(|t| strip_child_title_prefix(&t, child_title.as_deref()));
+                events.push(AcpEvent::SubagentAct {
+                    thread_id: thread_id.to_string(),
+                    harness_subagent_id: child_sid.to_string(),
+                    subagent_title: child_title,
+                    harness_call_id: call_id,
+                    kind: tcu.fields.kind.map(|k| map_tool_kind(k).to_string()),
+                    title: clean_title,
+                    state: tcu.fields.status.map(|s| map_tool_status(s).to_string()),
+                    detail,
+                });
+            }
+            Ok(SessionUpdate::SessionInfoUpdate(info)) => {
+                if let MaybeUndefined::Value(title) = info.title {
+                    let clean = title.trim().to_string();
+                    if !clean.is_empty() {
+                        self.child_titles.insert(child_sid.to_string(), clean.clone());
+                        events.push(AcpEvent::SubagentUpdated {
+                            thread_id: thread_id.to_string(),
+                            harness_subagent_id: child_sid.to_string(),
+                            title: Some(clean),
+                            state: None,
+                            error: None,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn handle_notification(&mut self, value: &Value, events: &mut Vec<AcpEvent>) {
         let Some(method) = value.get("method").and_then(Value::as_str) else {
             return;
@@ -1660,9 +2023,17 @@ impl AcpHarness {
             }
             return;
         }
+        if let Some(thread_id) = self.child_to_thread.get(session_id).cloned() {
+            self.handle_child_session_update(&thread_id, session_id, None, raw_update, events);
+            return;
+        }
         let Some(thread_id) = self.session_to_thread.get(session_id).cloned() else {
             return;
         };
+        if let Some((child_sid, child_title)) = extract_opencode_child_meta(raw_update) {
+            self.handle_child_session_update(&thread_id, &child_sid, child_title.as_deref(), raw_update, events);
+            return;
+        }
 
         match serde_json::from_value::<SessionUpdate>(raw_update.clone()) {
             Ok(SessionUpdate::AgentMessageChunk(chunk)) => {
@@ -1683,6 +2054,32 @@ impl AcpHarness {
                     .entry(thread_id.clone())
                     .or_default()
                     .insert(call_id.clone());
+                if is_opencode_subagent_tool(&tc.title, tc.kind, tc.raw_input.as_ref(), raw_update) {
+                    let (title, prompt, child_sid) =
+                        extract_subagent_call_fields(tc.raw_input.as_ref(), tc.raw_output.as_ref());
+                    let mut entry = PendingSubagentCall {
+                        thread_id: thread_id.clone(),
+                        title: title.clone(),
+                        prompt: prompt.clone(),
+                        child_session_id: child_sid.clone(),
+                        prompt_emitted: false,
+                    };
+                    if let Some(cid) = child_sid {
+                        self.register_child(&thread_id, &cid, title.as_deref());
+                        if let Some(prompt_text) = prompt.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                            entry.prompt_emitted = true;
+                            events.push(AcpEvent::SubagentMessage {
+                                thread_id: thread_id.clone(),
+                                harness_subagent_id: cid,
+                                title,
+                                role: "prompt".to_string(),
+                                text: prompt_text.to_string(),
+                            });
+                        }
+                    }
+                    self.pending_subagent_calls.insert(call_id, entry);
+                    return;
+                }
                 let detail = tool_detail(&tc.content, tc.raw_output.as_ref(), tc.raw_input.as_ref());
                 events.push(AcpEvent::Act {
                     thread_id,
@@ -1700,6 +2097,93 @@ impl AcpHarness {
                     .entry(thread_id.clone())
                     .or_default()
                     .insert(call_id.clone());
+                if self.pending_subagent_calls.contains_key(&call_id) {
+                    let (new_title, new_prompt, new_child_sid) =
+                        extract_subagent_call_fields(tcu.fields.raw_input.as_ref(), tcu.fields.raw_output.as_ref());
+                    let fallback_title = tcu
+                        .fields
+                        .title
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| {
+                            !s.is_empty() && !s.eq_ignore_ascii_case("subagent") && !s.eq_ignore_ascii_case("task")
+                        })
+                        .map(str::to_string);
+                    let mut emit_info: Option<(String, Option<String>, Option<String>, bool)> = None;
+                    let mut child_known = false;
+                    if let Some(call) = self.pending_subagent_calls.get_mut(&call_id) {
+                        if let Some(t) = new_title.or(fallback_title) {
+                            call.title = Some(t);
+                        }
+                        if let Some(p) = new_prompt {
+                            call.prompt = Some(p);
+                        }
+                        if let Some(cid) = new_child_sid {
+                            call.child_session_id = Some(cid);
+                        }
+                        if let Some(cid) = call.child_session_id.clone() {
+                            child_known = true;
+                            let emit_prompt =
+                                !call.prompt_emitted && call.prompt.as_deref().is_some_and(|p| !p.trim().is_empty());
+                            if emit_prompt {
+                                call.prompt_emitted = true;
+                            }
+                            emit_info = Some((
+                                cid,
+                                call.title.clone(),
+                                emit_prompt.then(|| call.prompt.clone()).flatten(),
+                                tcu.fields.status == Some(ToolCallStatus::Completed),
+                            ));
+                        }
+                    }
+                    if let Some((cid, title, prompt, _completed)) = emit_info {
+                        let had_child = self.child_to_thread.contains_key(&cid);
+                        self.register_child(&thread_id, &cid, title.as_deref());
+                        let state = (!had_child).then(|| "working".to_string());
+                        if state.is_some() || title.is_some() {
+                            events.push(AcpEvent::SubagentUpdated {
+                                thread_id: thread_id.clone(),
+                                harness_subagent_id: cid.clone(),
+                                title: title.clone(),
+                                state,
+                                error: None,
+                            });
+                        }
+                        if let Some(prompt_text) = prompt {
+                            events.push(AcpEvent::SubagentMessage {
+                                thread_id: thread_id.clone(),
+                                harness_subagent_id: cid,
+                                title,
+                                role: "prompt".to_string(),
+                                text: prompt_text,
+                            });
+                        }
+                    }
+                    if matches!(
+                        tcu.fields.status,
+                        Some(ToolCallStatus::Completed | ToolCallStatus::Failed)
+                    ) {
+                        self.pending_subagent_calls.remove(&call_id);
+                        if tcu.fields.status == Some(ToolCallStatus::Failed) && !child_known {
+                            let detail = tool_detail(
+                                tcu.fields.content.as_deref().unwrap_or(&[]),
+                                tcu.fields.raw_output.as_ref(),
+                                tcu.fields.raw_input.as_ref(),
+                            )
+                            .map(|d| self.redact_for_thread(Some(&thread_id), &d));
+                            events.push(AcpEvent::Act {
+                                thread_id,
+                                harness_call_id: call_id,
+                                is_new: false,
+                                kind: Some("other".to_string()),
+                                title: Some("Subagent".to_string()),
+                                state: Some("failed".to_string()),
+                                detail,
+                            });
+                        }
+                    }
+                    return;
+                }
                 let detail = tool_detail(
                     tcu.fields.content.as_deref().unwrap_or(&[]),
                     tcu.fields.raw_output.as_ref(),
@@ -1714,6 +2198,102 @@ impl AcpHarness {
                     state: tcu.fields.status.map(|s| map_tool_status(s).to_string()),
                     detail,
                 });
+            }
+            Ok(SessionUpdate::SubagentUpdate(sub)) => {
+                let child_sid = sub.session_id.0.as_ref().to_string();
+                if child_sid.is_empty() {
+                    return;
+                }
+                let title = match sub.title {
+                    MaybeUndefined::Value(t) if !t.trim().is_empty() => Some(t.trim().to_string()),
+                    _ => match sub.description {
+                        MaybeUndefined::Value(d)
+                            if !d.trim().is_empty() && !self.child_titles.contains_key(&child_sid) =>
+                        {
+                            Some(d.trim().to_string())
+                        }
+                        _ => None,
+                    },
+                };
+                self.register_child(&thread_id, &child_sid, title.as_deref());
+                let (state, error) = match sub.state {
+                    MaybeUndefined::Value(StateUpdate::Running(_) | StateUpdate::RequiresAction(_)) => {
+                        (Some("working".to_string()), None)
+                    }
+                    MaybeUndefined::Value(StateUpdate::Idle(idle)) => match idle.stop_reason {
+                        None | Some(IdleStopReason::EndTurn) => (Some("done".to_string()), None),
+                        Some(IdleStopReason::Cancelled) => (Some("stopped".to_string()), None),
+                        Some(IdleStopReason::Refusal) => (
+                            Some("failed".to_string()),
+                            Some("The subagent refused to continue.".to_string()),
+                        ),
+                        Some(IdleStopReason::MaxTokens) => (
+                            Some("failed".to_string()),
+                            Some("The subagent reached its token limit.".to_string()),
+                        ),
+                        Some(IdleStopReason::MaxTurnRequests) => (
+                            Some("failed".to_string()),
+                            Some("The subagent reached its request limit.".to_string()),
+                        ),
+                        Some(IdleStopReason::Error(err)) => {
+                            let raw = err
+                                .error
+                                .as_deref()
+                                .map(|e| e.message.as_str())
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or("The subagent failed.");
+                            let clean = self.redact_for_thread(Some(&thread_id), raw);
+                            (Some("failed".to_string()), Some(clean))
+                        }
+                        Some(_) => (Some("done".to_string()), None),
+                    },
+                    _ => (None, None),
+                };
+                events.push(AcpEvent::SubagentUpdated {
+                    thread_id,
+                    harness_subagent_id: child_sid,
+                    title,
+                    state,
+                    error,
+                });
+            }
+            Ok(SessionUpdate::SessionMessage(msg)) => {
+                let text = match msg.content {
+                    MaybeUndefined::Value(blocks) => blocks
+                        .iter()
+                        .filter_map(content_block_text)
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    _ => String::new(),
+                };
+                if text.is_empty() {
+                    return;
+                }
+                if let MaybeUndefined::Value(rec) = msg.recipient_session_id
+                    && self.child_to_thread.get(rec.0.as_ref()).map(String::as_str) == Some(thread_id.as_str())
+                {
+                    let cid = rec.0.as_ref().to_string();
+                    let title = self.child_titles.get(&cid).cloned();
+                    events.push(AcpEvent::SubagentMessage {
+                        thread_id,
+                        harness_subagent_id: cid,
+                        title,
+                        role: "prompt".to_string(),
+                        text,
+                    });
+                } else if let MaybeUndefined::Value(snd) = msg.sender_session_id
+                    && self.child_to_thread.get(snd.0.as_ref()).map(String::as_str) == Some(thread_id.as_str())
+                {
+                    let cid = snd.0.as_ref().to_string();
+                    let title = self.child_titles.get(&cid).cloned();
+                    events.push(AcpEvent::SubagentMessage {
+                        thread_id,
+                        harness_subagent_id: cid,
+                        title,
+                        role: "answer".to_string(),
+                        text,
+                    });
+                }
             }
             Ok(SessionUpdate::SessionInfoUpdate(info)) => {
                 if let MaybeUndefined::Value(title) = info.title {
@@ -1787,8 +2367,6 @@ impl AcpHarness {
                 | SessionUpdate::Notice(_)
                 | SessionUpdate::CompactionUpdate(_)
                 | SessionUpdate::CompactionSummaryChunk(_)
-                | SessionUpdate::SubagentUpdate(_)
-                | SessionUpdate::SessionMessage(_)
                 | SessionUpdate::SessionMessageChunk(_),
             ) => {}
             // Any unrecognized or future update is kept as JSON in the record
@@ -1813,8 +2391,12 @@ impl AcpHarness {
             if let Some(tools) = self.thread_tool_ids.get(tid) {
                 ids.extend(tools.iter().map(String::as_str));
             }
+            if let Some(subs) = self.thread_subagent_ids.get(tid) {
+                ids.extend(subs.iter().map(String::as_str));
+            }
         } else {
             ids.extend(self.session_to_thread.keys().map(String::as_str));
+            ids.extend(self.child_to_thread.keys().map(String::as_str));
         }
         ids
     }
@@ -1833,6 +2415,21 @@ impl AcpHarness {
             .entry(thread_id.to_string())
             .or_default()
             .extend(ids);
+    }
+
+    /// Takes the subagent session IDs of a thread's recorded subagents as
+    /// known, so a harness that was started again still has them redacted and
+    /// routed to the owning thread.
+    pub fn remember_subagent_ids(&mut self, thread_id: &str, ids: Vec<String>) {
+        for id in ids {
+            if !id.is_empty() {
+                self.child_to_thread.insert(id.clone(), thread_id.to_string());
+                self.thread_subagent_ids
+                    .entry(thread_id.to_string())
+                    .or_default()
+                    .insert(id);
+            }
+        }
     }
 
     /// Turns an unknown ACP update payload into plain text without exposing
@@ -2042,6 +2639,14 @@ fn request_detail(
     });
     match kind {
         Some(ToolKind::Execute) => (field("command").or_else(|| fields.title.clone()), None),
+        Some(ToolKind::Read) => (
+            if path.is_some() {
+                None
+            } else {
+                tool_detail(content, None, input)
+            },
+            path,
+        ),
         Some(ToolKind::Edit | ToolKind::Delete | ToolKind::Move) => {
             let change = match (text("oldString"), text("newString"), text("content")) {
                 (old, Some(new), _) => Some(line_diff(old.as_deref(), &new)),
@@ -2361,6 +2966,114 @@ fn extract_transport_retry_failure(raw_update: &Value) -> Option<String> {
         .filter(|s| !s.is_empty())
         .unwrap_or("Could not reach the Model.");
     Some(msg.to_string())
+}
+
+/// Extracts `(child_session_id, optional_title)` from OpenCode's
+/// `_meta["opencode/child-session"]` metadata when present on a tool call,
+/// permission request, or update.
+fn extract_opencode_child_meta(val: &Value) -> Option<(String, Option<String>)> {
+    let meta = val.get("_meta")?.get("opencode/child-session")?;
+    let id = meta
+        .get("id")
+        .or_else(|| meta.get("sessionId"))
+        .or_else(|| meta.get("childSessionId"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())?;
+    let title = meta
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    Some((id.to_string(), title))
+}
+
+/// Strips OpenCode's `"<childTitle>: "` prefix from child act and request
+/// titles so each subagent's acts read cleanly inside its own section.
+fn strip_child_title_prefix(title: &str, child_title: Option<&str>) -> String {
+    if let Some(prefix) = child_title.map(str::trim).filter(|s| !s.is_empty())
+        && let Some(rest) = title.strip_prefix(prefix)
+        && let Some(after_colon) = rest.strip_prefix(": ")
+        && !after_colon.trim().is_empty()
+    {
+        return after_colon.to_string();
+    }
+    title.to_string()
+}
+
+/// Extracts a human-readable error message from OpenCode's child status error
+/// payload, which may be a plain string or a structured object.
+fn extract_opencode_error(error: Option<&Value>) -> Option<String> {
+    let val = error?;
+    match val {
+        Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        Value::Object(map) => ["message", "error", "detail"]
+            .iter()
+            .find_map(|k| map.get(*k).and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        _ => None,
+    }
+}
+
+/// Whether a parent session's tool call is OpenCode's subagent launcher tool
+/// (`subagent` or legacy `task` with subagent parameters). Lever keeps the
+/// subagent itself in the thread record instead of exposing OpenCode's wrapper
+/// call and raw `sessionID`.
+fn is_opencode_subagent_tool(title: &str, kind: ToolKind, raw_input: Option<&Value>, raw_update: &Value) -> bool {
+    let meta_name = raw_update
+        .pointer("/_meta/opencode/toolName")
+        .or_else(|| raw_update.pointer("/_meta/toolName"))
+        .and_then(Value::as_str);
+    if matches!(meta_name, Some("subagent" | "task")) {
+        return true;
+    }
+    let clean = title.trim();
+    if clean.eq_ignore_ascii_case("subagent") {
+        return true;
+    }
+    if clean.eq_ignore_ascii_case("task")
+        && (kind == ToolKind::Think
+            || raw_input.is_some_and(|v| {
+                v.get("prompt").is_some() && (v.get("agent").is_some() || v.get("subagent_type").is_some())
+            }))
+    {
+        return true;
+    }
+    false
+}
+
+/// Extracts `(title, prompt, child_session_id)` from an OpenCode subagent tool
+/// call's `rawInput` and `rawOutput`.
+fn extract_subagent_call_fields(
+    raw_input: Option<&Value>,
+    raw_output: Option<&Value>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let non_empty = |v: Option<&Value>| {
+        v.and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let title = raw_input.and_then(|v| non_empty(v.get("description")));
+    let prompt = raw_input.and_then(|v| non_empty(v.get("prompt")));
+    let child_sid = raw_output
+        .and_then(|v| {
+            non_empty(v.pointer("/metadata/sessionID"))
+                .or_else(|| non_empty(v.pointer("/metadata/sessionId")))
+                .or_else(|| non_empty(v.get("sessionID")))
+                .or_else(|| non_empty(v.get("sessionId")))
+        })
+        .or_else(|| {
+            raw_input.and_then(|v| {
+                non_empty(v.get("sessionID"))
+                    .or_else(|| non_empty(v.get("sessionId")))
+                    .or_else(|| non_empty(v.get("session_id")))
+                    .or_else(|| non_empty(v.get("task_id")))
+            })
+        });
+    (title, prompt, child_sid)
 }
 
 #[cfg(test)]
@@ -2781,6 +3494,67 @@ mod tests {
         assert_eq!(
             extract_transport_retry_failure(&unreachable).as_deref(),
             Some("ECONNREFUSED: Unable to connect.")
+        );
+    }
+
+    #[test]
+    fn child_title_prefix_and_opencode_subagent_metadata_are_normalized() {
+        assert_eq!(
+            strip_child_title_prefix("Inspect files: Read .env", Some("Inspect files")),
+            "Read .env"
+        );
+        assert_eq!(
+            strip_child_title_prefix("Read .env", Some("Inspect files")),
+            "Read .env"
+        );
+        assert_eq!(
+            strip_child_title_prefix("Inspect files: ", Some("Inspect files")),
+            "Inspect files: "
+        );
+
+        let meta_val = json!({
+            "_meta": {
+                "opencode/child-session": {
+                    "id": "ses_child_1",
+                    "parentID": "ses_root_1",
+                    "depth": 1,
+                    "title": "Inspect files"
+                }
+            }
+        });
+        assert_eq!(
+            extract_opencode_child_meta(&meta_val),
+            Some(("ses_child_1".to_string(), Some("Inspect files".to_string())))
+        );
+
+        let input = json!({
+            "description": "Inspect files",
+            "prompt": "Read .env and report",
+            "agent": "general"
+        });
+        let output = json!({
+            "metadata": {
+                "sessionID": "ses_child_1",
+                "status": "running"
+            }
+        });
+        assert!(is_opencode_subagent_tool(
+            "subagent",
+            ToolKind::Think,
+            Some(&input),
+            &json!({})
+        ));
+        assert_eq!(
+            extract_subagent_call_fields(Some(&input), Some(&output)),
+            (
+                Some("Inspect files".to_string()),
+                Some("Read .env and report".to_string()),
+                Some("ses_child_1".to_string()),
+            )
+        );
+        assert_eq!(
+            extract_opencode_error(Some(&json!({ "message": "boom" }))).as_deref(),
+            Some("boom")
         );
     }
 }

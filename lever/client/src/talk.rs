@@ -7,6 +7,7 @@
 
 use crate::connection::{Connection, Happening, Typing, refused, text};
 use serde_json::{Value, json};
+use std::collections::{HashMap, HashSet};
 use std::io::{ErrorKind, IsTerminal, Result, Write, stderr};
 use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, ExitCode};
@@ -98,11 +99,73 @@ fn answers_of(request: &Value) -> Vec<String> {
         .collect()
 }
 
+/// Prints a subagent's status line to standard error.
+fn show_subagent(answer: &mut Answer, subagent: &Value) -> Result<()> {
+    answer.make_way()?;
+    let title = text(subagent, "title");
+    let state = text(subagent, "state");
+    let error = text(subagent, "error");
+    if error.is_empty() {
+        eprintln!("[subagent] {title} ({state})");
+    } else {
+        eprintln!("[subagent] {title} ({state}): {error}");
+    }
+    Ok(())
+}
+
+/// Prints one subagent act to standard error.
+fn show_subagent_act(answer: &mut Answer, subagent_title: Option<&str>, act: &Value) -> Result<()> {
+    answer.make_way()?;
+    let who = subagent_title.filter(|s| !s.is_empty()).unwrap_or("subagent");
+    let title = text(act, "title");
+    let state = text(act, "state");
+    let detail = text(act, "detail");
+    if detail.is_empty() {
+        eprintln!("[subagent: {who}] [act] {title} ({state})");
+    } else {
+        eprintln!("[subagent: {who}] [act] {title} ({state}): {detail}");
+    }
+    Ok(())
+}
+
+/// Prints a subagent's answer text to standard error.
+fn show_subagent_answer(answer: &mut Answer, subagent_title: Option<&str>, text_body: &str) -> Result<()> {
+    let trimmed = text_body.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    answer.make_way()?;
+    let who = subagent_title.filter(|s| !s.is_empty()).unwrap_or("subagent");
+    let mut lines = trimmed.lines();
+    eprintln!("[subagent: {who}] {}", lines.next().unwrap_or_default());
+    for line in lines {
+        eprintln!("  {line}");
+    }
+    Ok(())
+}
+
 /// Prints a request to standard error: what it asks to do, the exact command
 /// or the file and the change, and, when it waits, how to answer it. With
 /// `asking`, the answer is asked for here.
-fn show_request(answer: &mut Answer, request: &Value, thread: &str, asking: bool) -> Result<()> {
+fn show_request(
+    answer: &mut Answer,
+    request: &Value,
+    thread: &str,
+    asking: bool,
+    subagent_title: Option<&str>,
+) -> Result<()> {
     answer.make_way()?;
+    let tag = match (
+        request
+            .get("subagent")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty()),
+        subagent_title.filter(|s| !s.is_empty()),
+    ) {
+        (Some(_), Some(title)) => format!("[request ({title})]"),
+        (Some(_), None) => "[request (subagent)]".to_string(),
+        (None, _) => "[request]".to_string(),
+    };
     let detail = text(request, "detail");
     match &*text(request, "state") {
         "waiting" => {
@@ -113,7 +176,7 @@ fn show_request(answer: &mut Answer, request: &Value, thread: &str, asking: bool
                     detail.clone()
                 };
                 let mut lines = command.lines();
-                eprintln!("[request] Run: {}", lines.next().unwrap_or_default());
+                eprintln!("{tag} Run: {}", lines.next().unwrap_or_default());
                 for line in lines {
                     eprintln!("  {line}");
                 }
@@ -122,11 +185,12 @@ fn show_request(answer: &mut Answer, request: &Value, thread: &str, asking: bool
                     "edit" => "Edit",
                     "delete" => "Delete",
                     "move" => "Move",
+                    "read" => "Read",
                     _ => "Act",
                 };
                 let path = text(request, "path");
                 let named = if path.is_empty() { text(request, "title") } else { path };
-                eprintln!("[request] {what}: {named}");
+                eprintln!("{tag} {what}: {named}");
                 for line in detail.lines() {
                     eprintln!("  {line}");
                 }
@@ -143,8 +207,8 @@ fn show_request(answer: &mut Answer, request: &Value, thread: &str, asking: bool
                 );
             }
         }
-        "answered" => eprintln!("[request] answered: {}", text(request, "answer")),
-        _ => eprintln!("[request] withdrawn"),
+        "answered" => eprintln!("{tag} answered: {}", text(request, "answer")),
+        _ => eprintln!("{tag} withdrawn"),
     }
     Ok(())
 }
@@ -196,42 +260,69 @@ fn turn(
     let begun = text(&reply, "thread").to_string();
     // How the turn ended, though the person leaves while a request of its waits.
     let mut last = Ended::Done;
+    let mut subagent_titles = HashMap::new();
     let ended = watch(
         lever,
         &begun,
-        reply.get("turn").and_then(Value::as_u64),
-        Answer::new(),
-        Typing::Waits,
-        Vec::new(),
+        WatchStart {
+            turn: reply.get("turn").and_then(Value::as_u64),
+            answer: Answer::new(),
+            typing: Typing::Waits,
+            waiting: Vec::new(),
+            working_subagents: HashSet::new(),
+        },
+        &mut subagent_titles,
         &mut last,
     );
     *thread = Some(begun);
     ended.map(|ended| ended.unwrap_or(last))
 }
 
-/// Writes a turn's answer and acts as they come, until the turn ends. Ctrl-C
-/// stops the turn: Lever is asked to, and the turn's own end is waited for. A
-/// second Ctrl-C does not wait. A request of the thread is shown as it comes,
-/// and on a terminal its answer is asked for, one request at a time:
-/// `waiting` are those that already wait. With no turn, what is watched is
-/// what waits, until nothing does. `last` is how the thread last ended, and
-/// a turn followed here that ends changes it, though the person leaves
-/// after.
+fn subagent_title_for_request<'a>(request: &Value, subagent_titles: &'a HashMap<String, String>) -> Option<&'a str> {
+    request
+        .get("subagent")
+        .and_then(Value::as_str)
+        .and_then(|id| subagent_titles.get(id))
+        .map(String::as_str)
+}
+
+struct WatchStart {
+    turn: Option<u64>,
+    answer: Answer,
+    typing: Typing,
+    waiting: Vec<Value>,
+    working_subagents: HashSet<String>,
+}
+
+/// Writes a turn's answer and acts as they come, until the turn and any of
+/// its subagents end. Ctrl-C stops the turn (and any working subagents):
+/// Lever is asked to, and their end is waited for. A second Ctrl-C does not
+/// wait. A request of the thread (or a subagent) is shown as it comes, and
+/// on a terminal its answer is asked for, one request at a time: `waiting`
+/// are those that already wait. With no turn and no working subagent, what
+/// is watched is what waits, until nothing does. `last` is how the thread
+/// last ended, and a turn followed here that ends changes it, though the
+/// person leaves after.
 fn watch(
     lever: &mut Connection,
     thread: &str,
-    mut turn: Option<u64>,
-    mut answer: Answer,
-    typing: Typing,
-    waiting: Vec<Value>,
+    start: WatchStart,
+    subagent_titles: &mut HashMap<String, String>,
     last: &mut Ended,
 ) -> Result<Option<Ended>> {
+    let WatchStart {
+        mut turn,
+        mut answer,
+        typing,
+        waiting,
+        mut working_subagents,
+    } = start;
     let prompted = std::io::stdin().is_terminal();
-    // Only requests are watched here, not a turn of the person's: Ctrl-C
-    // turns down the one asked for, by stopping its own turn, and the
+    // Only requests are watched here, not a turn or subagent of the person's:
+    // Ctrl-C turns down the one asked for, by stopping its own turn, and the
     // prompt comes back at once, unless a turn followed goes on, which is
     // followed to its end.
-    let only_requests = turn.is_none();
+    let only_requests = turn.is_none() && working_subagents.is_empty();
     let mut stopping = false;
     // The request whose answer is asked for here, and the answers it offers.
     let mut asking: Option<(String, Vec<String>)> = None;
@@ -241,19 +332,21 @@ fn watch(
     // Requests that wait, by ID, and those still to be asked here, in order.
     let mut open: Vec<String> = Vec::new();
     let mut queued: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
+    let mut subagent_answers: HashMap<String, String> = HashMap::new();
     for request in waiting {
         open.push(text(&request, "request").into_owned());
         if prompted {
             queued.push_back(request);
         } else {
-            show_request(&mut answer, &request, thread, false)?;
+            let sub_title = subagent_title_for_request(&request, subagent_titles);
+            show_request(&mut answer, &request, thread, false, sub_title)?;
         }
     }
-    // How the turn ended, once it has while a request asked for here still
-    // waits: the request is answered here before the prompt comes back.
+    // How the turn ended, once it has while a request asked for here or a
+    // subagent still works: those finish before the prompt comes back.
     let mut ended: Option<Ended> = None;
     loop {
-        if (turn.is_none() || ended.is_some()) && open.is_empty() {
+        if (turn.is_none() || ended.is_some()) && (!prompted || open.is_empty()) && working_subagents.is_empty() {
             answer.end()?;
             return Ok(Some(ended.unwrap_or(*last)));
         }
@@ -262,7 +355,8 @@ fn watch(
             && !stopping
             && let Some(request) = queued.pop_front()
         {
-            show_request(&mut answer, &request, thread, true)?;
+            let sub_title = subagent_title_for_request(&request, subagent_titles);
+            show_request(&mut answer, &request, thread, true, sub_title)?;
             asking = Some((text(&request, "request").into_owned(), answers_of(&request)));
             taken = Some(request);
         }
@@ -296,7 +390,8 @@ fn watch(
                         lever.stop(thread, stopped)?;
                     }
                     for request in queued.drain(..).filter(|r| turn_of(r) != stopped) {
-                        show_request(&mut answer, &request, thread, false)?;
+                        let sub_title = subagent_title_for_request(&request, subagent_titles);
+                        show_request(&mut answer, &request, thread, false, sub_title)?;
                     }
                     open.clear();
                     taken = None;
@@ -357,9 +452,49 @@ fn watch(
         if event.get("thread").and_then(Value::as_str) != Some(thread) {
             continue;
         }
-        // A request is its thread's, whichever turn asked it.
+        // A subagent's lifecycle, acts, and text are its thread's and may
+        // outlive its turn.
+        match &*text(&event, "event") {
+            "subagent" => {
+                let id = text(&event, "subagent").into_owned();
+                let title = text(&event, "title").into_owned();
+                if !title.is_empty() {
+                    subagent_titles.insert(id.clone(), title.clone());
+                }
+                let state = text(&event, "state");
+                if state == "working" {
+                    let is_new = working_subagents.insert(id);
+                    if is_new {
+                        show_subagent(&mut answer, &event)?;
+                    }
+                } else {
+                    working_subagents.remove(&id);
+                    if let Some(body) = subagent_answers.remove(&id) {
+                        show_subagent_answer(&mut answer, Some(title.as_str()), &body)?;
+                    }
+                    show_subagent(&mut answer, &event)?;
+                }
+                continue;
+            }
+            "subagent-text" => {
+                if text(&event, "role") == "answer" {
+                    let id = text(&event, "subagent").into_owned();
+                    subagent_answers.entry(id).or_default().push_str(&text(&event, "text"));
+                }
+                continue;
+            }
+            "subagent-act" => {
+                let id = text(&event, "subagent");
+                let sub_title = subagent_titles.get(id.as_ref()).map(String::as_str);
+                show_subagent_act(&mut answer, sub_title, &event)?;
+                continue;
+            }
+            _ => {}
+        }
+        // A request is its thread's, whichever turn or subagent asked it.
         if text(&event, "event") == "request" {
             let id = text(&event, "request").into_owned();
+            let sub_title = subagent_title_for_request(&event, subagent_titles);
             let waits = text(&event, "state") == "waiting";
             if waits {
                 if !open.contains(&id) {
@@ -369,7 +504,7 @@ fn watch(
                 if prompted && !stopping {
                     queued.push_back(event);
                 } else {
-                    show_request(&mut answer, &event, thread, false)?;
+                    show_request(&mut answer, &event, thread, false, sub_title)?;
                 }
                 continue;
             }
@@ -382,7 +517,7 @@ fn watch(
                 asking = None;
                 eprintln!();
             }
-            show_request(&mut answer, &event, thread, false)?;
+            show_request(&mut answer, &event, thread, false, sub_title)?;
             continue;
         }
         // An act is its own turn's, and may end after a later turn began:
@@ -438,9 +573,9 @@ fn watch(
             _ => continue,
         };
         *last = end;
-        // On a terminal, a request that still waits is asked for first,
-        // unless the person is stopping.
-        if !prompted || stopping || open.is_empty() {
+        // On a terminal, a request that still waits is asked for first, and
+        // any working subagent keeps the watch open until it finishes.
+        if (stopping || !prompted || open.is_empty()) && working_subagents.is_empty() {
             return Ok(Some(end));
         }
         ended = Some(end);
@@ -451,6 +586,10 @@ fn watch(
 struct Resumed {
     /// The turn that is still working, if one is.
     working: Option<u64>,
+    /// Subagents of this thread that are still working, by Lever ID.
+    working_subagents: HashSet<String>,
+    /// Known titles of this thread's subagents, by Lever ID.
+    subagent_titles: HashMap<String, String>,
     /// The answer as far as it was written.
     answer: Answer,
     /// How its newest turn ended, if it has.
@@ -472,15 +611,42 @@ fn resume(lever: &mut Connection, thread: &str) -> Result<Option<Resumed>> {
         .cloned()
         .unwrap_or_default();
     let mut answer = Answer::new();
+    let mut working_subagents = HashSet::new();
+    let mut subagent_titles = HashMap::new();
+    for turn in &turns {
+        for sub in turn.get("subagents").and_then(Value::as_array).into_iter().flatten() {
+            let sid = text(sub, "subagent").into_owned();
+            let title = text(sub, "title").into_owned();
+            if !sid.is_empty() && !title.is_empty() {
+                subagent_titles.insert(sid.clone(), title);
+            }
+            if !sid.is_empty() && text(sub, "state") == "working" {
+                working_subagents.insert(sid);
+            }
+        }
+    }
     for turn in &turns {
         answer.write(&format!("> {}\n", text(turn, "message")))?;
         for act in turn.get("acts").and_then(Value::as_array).into_iter().flatten() {
             show_act(&mut answer, act)?;
         }
+        for sub in turn.get("subagents").and_then(Value::as_array).into_iter().flatten() {
+            let sub_title = text(sub, "title");
+            show_subagent(&mut answer, sub)?;
+            for act in sub.get("acts").and_then(Value::as_array).into_iter().flatten() {
+                show_subagent_act(&mut answer, Some(sub_title.as_ref()), act)?;
+            }
+            for msg in sub.get("messages").and_then(Value::as_array).into_iter().flatten() {
+                if text(msg, "role") == "answer" {
+                    show_subagent_answer(&mut answer, Some(sub_title.as_ref()), &text(msg, "text"))?;
+                }
+            }
+        }
         for request in turn.get("requests").and_then(Value::as_array).into_iter().flatten() {
             // One that waits is shown as the thread is watched, and answered there.
             if text(request, "state") != "waiting" {
-                show_request(&mut answer, request, thread, false)?;
+                let sub_title = subagent_title_for_request(request, &subagent_titles);
+                show_request(&mut answer, request, thread, false, sub_title)?;
             }
         }
         for note in turn.get("notes").and_then(Value::as_array).into_iter().flatten() {
@@ -511,6 +677,8 @@ fn resume(lever: &mut Connection, thread: &str) -> Result<Option<Resumed>> {
             .last()
             .filter(|_| newest == "working")
             .and_then(|turn| turn.get("turn").and_then(Value::as_u64)),
+        working_subagents,
+        subagent_titles,
         answer,
         last: if matches!(&*newest, "failed" | "interrupted") {
             Ended::Failed
@@ -694,21 +862,28 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
     let mut pending_model = model.map(str::to_string);
     let mut pending_mode = mode.map(str::to_string);
     let mut last = Ended::Done;
+    let mut subagent_titles = HashMap::new();
+    let mut subagent_answers: HashMap<String, String> = HashMap::new();
     if let Some(resumed) = resumed {
         let Some(stood) = resume(lever, resumed)? else {
             return Ok(Ended::Failed);
         };
         last = stood.last;
-        if stood.working.is_some() || !stood.waiting.is_empty() {
-            // Ctrl-D leaves a turn that was working when the thread was
-            // resumed, as it leaves one that begins after.
+        subagent_titles = stood.subagent_titles;
+        if stood.working.is_some() || !stood.waiting.is_empty() || !stood.working_subagents.is_empty() {
+            // Ctrl-D leaves a turn or subagent that was working when the
+            // thread was resumed, as it leaves one that begins after.
             let Some(ended) = watch(
                 lever,
                 resumed,
-                stood.working,
-                stood.answer,
-                Typing::UntilItEnds,
-                stood.waiting,
+                WatchStart {
+                    turn: stood.working,
+                    answer: stood.answer,
+                    typing: Typing::UntilItEnds,
+                    waiting: stood.waiting,
+                    working_subagents: stood.working_subagents,
+                },
+                &mut subagent_titles,
                 &mut last,
             )?
             else {
@@ -740,10 +915,14 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
                     let watched = watch(
                         lever,
                         &text(&event, "thread"),
-                        turn,
-                        answer,
-                        Typing::UntilItEnds,
-                        Vec::new(),
+                        WatchStart {
+                            turn,
+                            answer,
+                            typing: Typing::UntilItEnds,
+                            waiting: Vec::new(),
+                            working_subagents: HashSet::new(),
+                        },
+                        &mut subagent_titles,
                         &mut last,
                     )?;
                     let Some(ended) = watched else {
@@ -767,6 +946,34 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
                     let mut answer = Answer::new();
                     show_act(&mut answer, &event)?;
                 }
+                Happening::Event(event) if text(&event, "event") == "subagent" => {
+                    let id = text(&event, "subagent").into_owned();
+                    let title = text(&event, "title").into_owned();
+                    let state = text(&event, "state").into_owned();
+                    if !title.is_empty() {
+                        subagent_titles.insert(id.clone(), title);
+                    }
+                    let mut answer = Answer::new();
+                    if state != "working"
+                        && let Some(buf) = subagent_answers.remove(&id)
+                    {
+                        let sub_title = subagent_titles.get(&id).map(String::as_str);
+                        show_subagent_answer(&mut answer, sub_title, &buf)?;
+                    }
+                    show_subagent(&mut answer, &event)?;
+                }
+                Happening::Event(event) if text(&event, "event") == "subagent-text" => {
+                    if text(&event, "role") != "prompt" {
+                        let id = text(&event, "subagent").into_owned();
+                        subagent_answers.entry(id).or_default().push_str(&text(&event, "text"));
+                    }
+                }
+                Happening::Event(event) if text(&event, "event") == "subagent-act" => {
+                    let id = text(&event, "subagent");
+                    let sub_title = subagent_titles.get(id.as_ref()).map(String::as_str);
+                    let mut answer = Answer::new();
+                    show_subagent_act(&mut answer, sub_title, &event)?;
+                }
                 // A request that comes while the prompt waits, as one after
                 // its turn does, is asked for here on a terminal, as one in a
                 // turn is, and the prompt comes back when nothing waits.
@@ -778,10 +985,14 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
                     let watched = watch(
                         lever,
                         &asked,
-                        None,
-                        Answer::new(),
-                        Typing::UntilItEnds,
-                        vec![event],
+                        WatchStart {
+                            turn: None,
+                            answer: Answer::new(),
+                            typing: Typing::UntilItEnds,
+                            waiting: vec![event],
+                            working_subagents: HashSet::new(),
+                        },
+                        &mut subagent_titles,
                         &mut last,
                     )?;
                     // A turn followed meanwhile ends as the thread's newest.
@@ -792,8 +1003,9 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
                     eprint!("> ");
                 }
                 Happening::Event(event) if text(&event, "event") == "request" => {
+                    let sub_title = subagent_title_for_request(&event, &subagent_titles);
                     let mut answer = Answer::new();
-                    show_request(&mut answer, &event, &text(&event, "thread"), false)?;
+                    show_request(&mut answer, &event, &text(&event, "thread"), false, sub_title)?;
                 }
                 Happening::Event(_) => {}
             }
@@ -1103,9 +1315,16 @@ pub fn list(lever: &mut Connection) -> Result<Ended> {
             .and_then(Value::as_u64)
             .unwrap_or(now);
         let turns = thread.get("turns").and_then(Value::as_u64).unwrap_or(0);
+        let subagents = thread.get("subagents").and_then(Value::as_u64).unwrap_or(0);
+        let sub_note = match subagents {
+            0 => String::new(),
+            1 => "  (1 subagent)".to_string(),
+            n => format!("  ({n} subagents)"),
+        };
         let state = text(thread, "state");
         let badge = match &*state {
             _ if thread.get("waiting") == Some(&Value::Bool(true)) => "  (waiting for you)",
+            _ if thread.get("working") == Some(&Value::Bool(true)) => "  (working)",
             "working" => "  (working)",
             "failed" => "  (failed)",
             "stopped" => "  (stopped)",
@@ -1113,7 +1332,7 @@ pub fn list(lever: &mut Connection) -> Result<Ended> {
             _ => "",
         };
         println!(
-            "{}  {:<14}  {turns} turn{}  {}{badge}",
+            "{}  {:<14}  {turns} turn{}  {}{sub_note}{badge}",
             text(thread, "thread"),
             ago(now.saturating_sub(updated)),
             if turns == 1 { " " } else { "s" },
