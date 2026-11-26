@@ -144,8 +144,9 @@ ACP today:
     that matches wins, so Ask first carries the person's own rules for `bash`
     and `edit`, and those for an action pattern that matches them (`*`,
     `sh*`), again after its `"*": "ask"`, whether they wrote them in
-    `permission` or in the list `permissions`. Older names (`bash`, `write`,
-    `patch`) are renamed whole first, as OpenCode renames them. What they
+    `permission` or in the list `permissions`. Older names in `permission`
+    (`bash`, `write`, `patch`, `apply_patch`) are renamed whole first, as
+    OpenCode renames them. What they
     refuse stays refused,
     and what they allow by name stays allowed. A rule of theirs that allows
     every command or edit is the one Ask first takes the place of. Lever reads

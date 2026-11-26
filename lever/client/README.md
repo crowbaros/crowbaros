@@ -54,8 +54,9 @@ crowbar-agent status                   # Lever's status, what works, and what wa
   that comes while the prompt waits, as after its turn, is asked for there.
   A turn that ends while a request waits leaves it to be answered first, and
   a turn another client begins meanwhile is shown. Ctrl-C there turns down
-  the request asked for by stopping its own turn, and the next is asked for
-  after it. The prompt comes back once nothing waits.
+  the request asked for by stopping its own turn, says how to answer any
+  other that waits, and brings the prompt back. Otherwise the prompt comes
+  back once nothing waits.
 - **Modes.** A thread is in `ask-first`, `full-access`, or `plan`, and keeps
   it. New threads start in `ask-first` until `crowbar-agent default-mode
   full-access` changes that. `--mode` starts a thread in another mode, or,

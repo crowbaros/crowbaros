@@ -201,7 +201,7 @@ fn turn(
         Answer::new(),
         Typing::Waits,
         Vec::new(),
-        Ended::Done,
+        &mut Ended::Done,
     );
     *thread = Some(begun);
     ended.map(|ended| ended.unwrap_or(Ended::Done))
@@ -212,8 +212,9 @@ fn turn(
 /// second Ctrl-C does not wait. A request of the thread is shown as it comes,
 /// and on a terminal its answer is asked for, one request at a time:
 /// `waiting` are those that already wait. With no turn, what is watched is
-/// what waits, until nothing does, and what ends it is `before`, how the
-/// thread last ended, unless a turn was followed meanwhile.
+/// what waits, until nothing does. `last` is how the thread last ended, and
+/// a turn followed here that ends changes it, though the person leaves
+/// after.
 fn watch(
     lever: &mut Connection,
     thread: &str,
@@ -221,12 +222,12 @@ fn watch(
     mut answer: Answer,
     typing: Typing,
     waiting: Vec<Value>,
-    before: Ended,
+    last: &mut Ended,
 ) -> Result<Option<Ended>> {
     let prompted = std::io::stdin().is_terminal();
     // Only requests are watched here, not a turn of the person's: Ctrl-C
-    // turns down the one asked for, by stopping its own turn, and the next
-    // is asked for after it.
+    // turns down the one asked for, by stopping its own turn, and the
+    // prompt comes back at once.
     let only_requests = turn.is_none();
     let mut stopping = false;
     // The request whose answer is asked for here, and the answers it offers.
@@ -251,7 +252,7 @@ fn watch(
     loop {
         if (turn.is_none() || ended.is_some()) && open.is_empty() {
             answer.end()?;
-            return Ok(Some(ended.unwrap_or(before)));
+            return Ok(Some(ended.unwrap_or(*last)));
         }
         if asking.is_none()
             && taken.is_none()
@@ -273,15 +274,25 @@ fn watch(
             Happening::Event(event) => event,
             Happening::Interrupt if stopping => return Ok(Some(Ended::Stopped)),
             Happening::Interrupt => {
-                stopping = true;
                 if asking.take().is_some() {
                     eprintln!();
                 }
+                if only_requests {
+                    // The request asked for is turned down, by stopping its own turn, or
+                    // else the turn followed is stopped. What else waits says how to
+                    // answer it, and the prompt comes back: it takes what comes next.
+                    let request_turn = taken.as_ref().and_then(|r| r.get("turn")).and_then(Value::as_u64);
+                    let stopped = request_turn.or(turn.filter(|_| ended.is_none()));
+                    lever.send(json!({ "op": "stop", "thread": thread, "turn": stopped }))?;
+                    for request in queued.drain(..) {
+                        show_request(&mut answer, &request, thread, false)?;
+                    }
+                    answer.end()?;
+                    return Ok(Some(ended.unwrap_or(*last)));
+                }
+                stopping = true;
                 // By its number, so a stop that comes after this turn ended does not reach the one after it.
-                // When only requests are watched, the turn of the request taken up here is the one stopped.
-                let request_turn = taken.as_ref().and_then(|r| r.get("turn")).and_then(Value::as_u64);
-                let stopped = if only_requests { request_turn.or(turn) } else { turn };
-                lever.send(json!({ "op": "stop", "thread": thread, "turn": stopped }))?;
+                lever.send(json!({ "op": "stop", "thread": thread, "turn": turn }))?;
                 continue;
             }
             Happening::EndOfInput => {
@@ -342,10 +353,6 @@ fn watch(
             queued.retain(|r| text(r, "request") != id);
             if taken.as_ref().is_some_and(|r| text(r, "request") == id) {
                 taken = None;
-                // The request Ctrl-C turned down has ended: the next is asked for.
-                if only_requests {
-                    stopping = false;
-                }
             }
             if asking.as_ref().is_some_and(|(r, _)| *r == id) {
                 asking = None;
@@ -362,7 +369,7 @@ fn watch(
         }
         // A turn that begins while only requests are watched, as one another
         // client sends, is watched from its message on.
-        if only_requests && !stopping && (turn.is_none() || ended.is_some()) && text(&event, "event") == "message" {
+        if only_requests && (turn.is_none() || ended.is_some()) && text(&event, "event") == "message" {
             answer.end()?;
             answer.write(&format!("\n> {}\n", text(&event, "text")))?;
             turn = event.get("turn").and_then(Value::as_u64);
@@ -406,6 +413,7 @@ fn watch(
             }
             _ => continue,
         };
+        *last = end;
         // On a terminal, a request that still waits is asked for first,
         // unless the person is stopping.
         if !prompted || stopping || open.is_empty() {
@@ -677,7 +685,7 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
                 stood.answer,
                 Typing::UntilItEnds,
                 stood.waiting,
-                last,
+                &mut last,
             )?
             else {
                 return Ok(left(last));
@@ -712,7 +720,7 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
                         answer,
                         Typing::UntilItEnds,
                         Vec::new(),
-                        last,
+                        &mut last,
                     )?;
                     let Some(ended) = watched else {
                         return Ok(left(last));
@@ -750,7 +758,7 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
                         Answer::new(),
                         Typing::UntilItEnds,
                         vec![event],
-                        last,
+                        &mut last,
                     )?;
                     // A turn followed meanwhile ends as the thread's newest.
                     let Some(ended) = watched else {
