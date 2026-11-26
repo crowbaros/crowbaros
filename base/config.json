@@ -57,6 +57,7 @@
     "libspa-bluetooth",
     "bluez",
     "mpv",
+    "poppler",
     "xdg-utils",
     "perl-File-MimeInfo",
     "ripgrep",
@@ -80,7 +81,9 @@
     "fontconfig-devel",
     "freetype-devel",
     "patch",
-    "libxcrypt-devel"
+    "libxcrypt-devel",
+    "poppler",
+    "dejavu-fonts-ttf"
   ],
   "kernel_args": ["nvidia-drm.modeset=1", "nvidia-drm.fbdev=1"],
   "nvidia_options": ["NVreg_PreserveVideoMemoryAllocations=1", "NVreg_TemporaryFilePath=/var/tmp"],

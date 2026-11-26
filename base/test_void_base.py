@@ -531,6 +531,20 @@ class Desktop(BuildFixture):
         self.assertIn('apps/files', dict(void_base.PROJECTS))
         self.assertEqual(void_base.PROGRAMS['crowbaros-files'], 'apps/files')
 
+    def test_viewer_is_built_with_pdf_tools_and_installed_mime_handlers(self):
+        self.assertIn('apps/viewer', dict(void_base.PROJECTS))
+        self.assertEqual(void_base.PROGRAMS['crowbaros-viewer'], 'apps/viewer')
+        self.assertIn('poppler', void_base.CFG['packages'])
+        self.assertIn('poppler', void_base.CFG['build_packages'])
+        entry = (void_base.HERE.parent / 'apps/viewer/packaging/com.crowbaros.Viewer.desktop').read_text()
+        defaults = (void_base.HERE / 'desktop/mimeapps.list').read_text()
+        for mime in ('image/png', 'image/jpeg', 'image/webp', 'image/bmp', 'image/tiff',
+                     'image/svg+xml', 'application/pdf'):
+            self.assertIn(mime + ';', entry)
+            self.assertIn(mime + '=com.crowbaros.Viewer.desktop', defaults)
+        self.assertIn('apps/viewer/packaging/com.crowbaros.Viewer.desktop',
+                      (void_base.HERE / 'host/image.sh').read_text())
+
     def test_the_desktops_helpers_are_one_program_built_with_the_desktop(self):
         self.assertIn('base/helpers', dict(void_base.PROJECTS))
         self.assertEqual(void_base.binaries()['crowbar-helpers'].name, 'crowbar-helpers')

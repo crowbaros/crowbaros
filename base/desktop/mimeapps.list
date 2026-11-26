@@ -2,6 +2,13 @@
 text/plain=com.crowbaros.Editor.desktop
 text/markdown=com.crowbaros.Editor.desktop
 application/json=com.crowbaros.Editor.desktop
+image/png=com.crowbaros.Viewer.desktop
+image/jpeg=com.crowbaros.Viewer.desktop
+image/webp=com.crowbaros.Viewer.desktop
+image/bmp=com.crowbaros.Viewer.desktop
+image/tiff=com.crowbaros.Viewer.desktop
+image/svg+xml=com.crowbaros.Viewer.desktop
+application/pdf=com.crowbaros.Viewer.desktop
 inode/directory=com.crowbaros.Files.desktop
 x-scheme-handler/http=chromium.desktop
 x-scheme-handler/https=chromium.desktop

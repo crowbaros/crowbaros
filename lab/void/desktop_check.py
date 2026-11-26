@@ -12,16 +12,62 @@ touches Base's own disk. Failure leaves logs, screenshots, and the disk in
 place.
 """
 import argparse
+import base64
 import json
 import os
 import re
 import shlex
 import subprocess
+import struct
 import time
+import zlib
 
 import guest
 
 void_base = guest.void_base
+
+
+def viewer_fixtures():
+    """Small, real image and two-page PDF fixtures; no extra guest packages."""
+    width, height = 320, 200
+    rows = bytearray()
+    for y in range(height):
+        rows.append(0)
+        for x in range(width):
+            rows.extend((42 + x // 2, 68 + y // 2, 130) if x < 210 else (221, 163, 74))
+
+    def chunk(kind, body):
+        return struct.pack('!I', len(body)) + kind + body + struct.pack('!I', zlib.crc32(kind + body))
+
+    png = (b'\x89PNG\r\n\x1a\n'
+           + chunk(b'IHDR', struct.pack('!2I5B', width, height, 8, 2, 0, 0, 0))
+           + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
+    objects = [
+        b'<< /Type /Catalog /Pages 2 0 R >>',
+        b'<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 560] '
+        b'/Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 560] '
+        b'/Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R >>',
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ]
+    for number, title in enumerate(('A quiet place to read', 'The next page'), 1):
+        stream = (f'0.15 0.25 0.38 rg 36 380 348 100 re f\n'
+                  f'0.95 0.97 0.98 rg BT /F1 20 Tf 52 430 Td ({title}) Tj ET\n'
+                  f'0.1 0.1 0.1 rg BT /F1 14 Tf 36 340 Td '
+                  f'(CrowbarOS Viewer - page {number}) Tj ET\n').encode('ascii')
+        objects.append(f'<< /Length {len(stream)} >>\nstream\n'.encode() + stream + b'endstream')
+    pdf = bytearray(b'%PDF-1.4\n')
+    offsets = [0]
+    for number, obj in enumerate(objects, 1):
+        offsets.append(len(pdf))
+        pdf.extend(f'{number} 0 obj\n'.encode() + obj + b'\nendobj\n')
+    xref = len(pdf)
+    pdf.extend(f'xref\n0 {len(offsets)}\n0000000000 65535 f \n'.encode())
+    for offset in offsets[1:]:
+        pdf.extend(f'{offset:010} 00000 n \n'.encode())
+    pdf.extend(f'trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode())
+    return {'sample.png': png, 'sample.pdf': bytes(pdf)}
 
 
 class Check:
@@ -329,6 +375,60 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
                   lambda: not any(c['class'] == 'com.crowbaros.Editor' for c in self.snapshot()['clients']))
         self.check(f'Editor opens, edits, saves and closes a file in {theme}', True)
 
+    def viewer_check(self, theme):
+        person, _ = self.person()
+        directory = self.python('import tempfile; print(tempfile.mkdtemp(prefix="viewer-check-"))', person).strip()
+        for name, contents in viewer_fixtures().items():
+            path = directory + '/' + name
+            encoded = base64.b64encode(contents).decode('ascii')
+            self.python(f'import base64; from pathlib import Path; '
+                        f'Path({path!r}).write_bytes(base64.b64decode({encoded!r}))', person)
+        for mime in ('image/png', 'application/pdf'):
+            handler = self.run(f'su -s /bin/sh {person} -c '
+                               + shlex.quote('xdg-mime query default ' + mime)).strip()
+            self.check(f'Viewer handles {mime} in {theme}', handler == 'com.crowbaros.Viewer.desktop', handler)
+        for tool in ('pdfinfo', 'pdftoppm', 'pdftotext'):
+            linked = self.run('ldd /usr/bin/' + tool)
+            self.check(tool + ' linked libraries resolve', '=> /' in linked and 'not found' not in linked)
+        for kind, filename in (('image', 'sample.png'), ('pdf', 'sample.pdf')):
+            path = directory + '/' + filename
+            info = json.loads(self.run(f'su -s /bin/sh {person} -c '
+                                      + shlex.quote('crowbaros-viewer --inspect ' + shlex.quote(path))))
+            self.check(f'Viewer reads the {kind} fixture as the person',
+                       info.get('kind') == kind and
+                       ((info.get('width'), info.get('height')) == (320, 200)
+                        if kind == 'image' else info.get('pages') == 2), info)
+            self.capture(f'viewer-{kind}-{theme}-before')
+            logfile = f'/tmp/viewer-{kind}-{theme}.log'
+            self.as_app('xdg-open ' + shlex.quote(path), logfile)
+            self.wait(f'Viewer opens the {kind} and takes focus',
+                      lambda: self.snapshot()['active'].get('class') == 'com.crowbaros.Viewer')
+            self.wait(f'Viewer renders the {kind}',
+                      lambda: f'VIEWER loaded kind={kind}' in self.run('cat ' + logfile))
+            self.key('ctrl', 'equal')
+            self.key('ctrl', '0')
+            if kind == 'image':
+                self.key('ctrl', 'r')
+                self.key('ctrl', 'i')
+            else:
+                self.key('ctrl', 'g')
+                self.type('2')
+                self.key('ret')
+                self.wait('Viewer renders the requested PDF page',
+                          lambda: 'VIEWER page=2' in self.run('cat ' + logfile))
+                self.key('ctrl', 'f')
+                self.type('CrowbarOS')
+                self.key('ret')
+                self.wait('Viewer finds text in the PDF',
+                          lambda: re.search(r'VIEWER search matches=[1-9]', self.run('cat ' + logfile)))
+                self.key('esc')
+            time.sleep(0.3)
+            self.capture(f'viewer-{kind}-{theme}-after')
+            self.key('ctrl', 'q')
+            self.wait(f'Viewer closes the {kind}',
+                      lambda: not any(c['class'] == 'com.crowbaros.Viewer' for c in self.snapshot()['clients']))
+            self.check(f'Viewer opens and navigates the {kind} in {theme}', True)
+
     def checks(self, built):
         self.qmp = self.guest.qmp()
         self.ready()
@@ -368,6 +468,7 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
         self.capture('01-boot')
         self.editor_check('dark')
         self.monitor_check('dark')
+        self.viewer_check('dark')
         self.check('fresh guest has no saved preferences', self.preferences() is None)
         self.click(680, 935)  # Terminal dock entry (Applications · Files · Chromium · Terminal · Settings).
         terminal = self.wait('terminal launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
@@ -617,6 +718,7 @@ for name, original in {original_files!r}.items():
         self.still('a still desktop after Quick Settings, Calendar, and OSD auto-dismiss commits nothing and draws nothing')
         self.editor_check('light')
         self.monitor_check('light')
+        self.viewer_check('light')
         log_offset = len(self.app_log())
         self.click(720, 935)
         self.wait('Settings restored Light after reboot', lambda: 'event=opened theme=Light' in self.app_log()[log_offset:])

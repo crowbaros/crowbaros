@@ -1,0 +1,28 @@
+[package]
+name = "crowbaros-viewer"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+libc = "=0.2.189"
+tempfile = "3"
+serde_json = "1"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tiff"] }
+resvg = "=0.45.1"
+kamadak-exif = "=0.6.1"
+gpui = { version = "=0.2.2", default-features = false, features = ["wayland"] }
+gpui-component = "=0.5.1"
+gpui-component-assets = "=0.5.1"
+crowbar-ui = { path = "../../libs/crowbar-ui" }
+crowbar-theme = { path = "../../libs/crowbar-theme" }
+
+[patch.crates-io]
+gpui = { path = "../shell/gpui-source" }
+
+[profile.release]
+opt-level = 2
+debug = 0
+lto = false
+codegen-units = 16
