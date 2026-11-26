@@ -126,7 +126,7 @@ impl Viewer {
             viewport: w.viewport_size(),
             _bounds: cx.observe_window_bounds(w, |s, w, cx| {
                 s.viewport = w.viewport_size();
-                s.fetch_pages(cx);
+                s.refresh_pdf_layout(cx);
                 cx.notify();
             }),
             scroll: UniformListScrollHandle::new(),
@@ -176,7 +176,7 @@ impl Viewer {
             if is_pdf(&path) {
                 let doc = Arc::new(PdfDocument::open(&path)?);
                 let page = doc.render_page(0, 1000)?;
-                let text = doc.page_text(0)?;
+                let text = readable_pdf_text(doc.page_text(0));
                 Ok::<_, String>((
                     Document::Pdf(doc),
                     Raster::new(page.width, page.height, page.rgba),
@@ -244,7 +244,7 @@ impl Viewer {
                 let r = doc.render_page(i, 1000)?;
                 pages.push((i, Raster::new(r.width, r.height, r.rgba)));
             }
-            Ok::<_, String>((pages, doc.page_text(page)?))
+            Ok::<_, String>((pages, readable_pdf_text(doc.page_text(page))))
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -461,9 +461,15 @@ impl Viewer {
             * self.view.zoom;
         (width, width * 1.414 + 32.)
     }
+    fn refresh_pdf_layout(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.document, Some(Document::Pdf(_))) {
+            self.scroll.scroll_to_item_strict(self.page, ScrollStrategy::Top);
+            self.fetch_pages(cx);
+        }
+    }
     fn zoom(&mut self, factor: f32, cx: &mut Context<Self>) {
         self.view.zoom_by(factor);
-        self.fetch_pages(cx);
+        self.refresh_pdf_layout(cx);
         cx.notify();
     }
     fn fit(&mut self, w: &Window, cx: &mut Context<Self>) {
@@ -760,6 +766,7 @@ impl Render for Viewer {
             .on_action(cx.listener(|s, _: &Fit, w, cx| {
                 if matches!(s.document, Some(Document::Pdf(_))) {
                     s.view.actual_size();
+                    s.refresh_pdf_layout(cx);
                     cx.notify();
                 } else {
                     s.fit(w, cx);
@@ -767,6 +774,7 @@ impl Render for Viewer {
             }))
             .on_action(cx.listener(|s, _: &Actual, _, cx| {
                 s.view.actual_size();
+                s.refresh_pdf_layout(cx);
                 cx.notify();
             }))
             .on_action(cx.listener(|s, _: &Rotate, _, cx| s.rotate(cx)))
@@ -776,7 +784,7 @@ impl Render for Viewer {
             }))
             .on_action(cx.listener(|s, _: &Thumbnails, _, cx| {
                 s.thumbnails = !s.thumbnails;
-                s.fetch_pages(cx);
+                s.refresh_pdf_layout(cx);
                 cx.notify();
             }))
             .on_action(cx.listener(|s, _: &Previous, _, cx| s.step(false, cx)))
@@ -786,7 +794,7 @@ impl Render for Viewer {
             .on_action(cx.listener(|s, _: &CopyImage, _, cx| s.copy(cx)))
             .on_action(cx.listener(|s, _: &Text, w, cx| {
                 s.text = !s.text;
-                s.fetch_pages(cx);
+                s.refresh_pdf_layout(cx);
                 s.focus.focus(w);
                 cx.notify();
             }))
@@ -900,6 +908,9 @@ fn rotated_pixels(loaded: &LoadedImage, turns: u8) -> image::RgbaImage {
         3 => image::imageops::rotate270(&data),
         _ => data,
     }
+}
+fn readable_pdf_text(result: Result<String, String>) -> String {
+    result.unwrap_or_else(|error| format!("Text is unavailable for this page. {error}"))
 }
 fn text_html(text: &str) -> String {
     // gpui-component 0.5.1 compacts a single HTML block into a Paragraph,
@@ -1028,6 +1039,11 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn optional_pdf_text_failure_leaves_a_readable_notice() {
+        assert!(readable_pdf_text(Err("Copying is restricted.".into())).contains("Text is unavailable"));
+        assert_eq!(readable_pdf_text(Ok("Page content".into())), "Page content");
+    }
     #[test]
     fn copying_and_displaying_use_the_same_rotation() {
         let loaded = LoadedImage {
