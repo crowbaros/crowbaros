@@ -984,7 +984,8 @@ finally:
                 and request['kind'] == 'command'
                 and request['detail'] == 'echo DRAWER_CMD_OK && id -un'
                 and [a['answer'] for a in request['answers']] == ['once', 'always', 'no']
-                and not any('DRAWER_CMD_OK' in (a.get('detail') or '') for a in asked['state']['turns'][0].get('acts', []))
+                # An act's detail is its command until it has run: none has finished.
+                and not any(a.get('state') == 'done' for a in asked['state']['turns'][0].get('acts', []))
                 and bool(control(asked, f"answer:{request['request']}:once")),
                 json.dumps(request),
             )
@@ -1085,8 +1086,8 @@ finally:
                 'no refuses the command: it does not run, and the thread says so',
                 (turn2.get('requests') or [{}])[0].get('answer') == 'no'
                 and turn2['state']['kind'] in ('stopped', 'done')
-                and not any('NO_CMD_RAN' in (a.get('detail') or '') for a in turn2.get('acts', []))
-                and 'NO_CMD_RAN' not in turn2.get('answer', ''),
+                and not any(a.get('state') == 'done' for a in turn2.get('acts', []))
+                and 'Should not run' not in turn2.get('answer', ''),
                 json.dumps(turn2),
             )
 
