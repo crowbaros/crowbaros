@@ -8346,13 +8346,11 @@ fn a_mode_the_record_does_not_take_is_taken_back_from_the_session() {
     drop(db);
 
     // What the harness goes on with runs in Ask first.
-    wait_until("the thread takes an answer", || {
-        let answered = ask_lever(
-            &mut peer,
-            json!({ "op": "answer", "thread": thread, "request": asked["request"], "answer": "once" }),
-        );
-        answered["code"] != "working"
-    });
+    let answered = ask_lever(
+        &mut peer,
+        json!({ "op": "answer", "thread": thread, "request": asked["request"], "answer": "once" }),
+    );
+    assert_eq!(answered["reply"], "ok", "{answered}");
     let make = read_until(&mut peer, |v| {
         assert!(
             !(v["event"] == "act" && v["title"] == "make" && v["state"] == "done"),
