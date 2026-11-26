@@ -88,6 +88,11 @@ historical behavior evidence, not a current Fedora workflow.
   `watch`. It sends messages and `stop` for the thread, streams the answer,
   each act, notes, desktop context, and stopped/failed/interrupted states, and
   shows when no harness is configured. Putting the drawer away stops nothing.
+  A transient history-read failure preserves the selected thread. If the next
+  send finds that turn still working, the client reads its history again and
+  rejoins its events; it never sends the message a second time. A delayed
+  recovery reply cannot replace a later selection. A failed socket clone also
+  keeps the first connection's thread discovery available for the retry.
 - A request from the harness shows in its turn: the exact command, or the file
   and the change, with removed (`-`) and added (`+`) lines told apart in the
   mono face, and one control per answer it offers, named as the harness names

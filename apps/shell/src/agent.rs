@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    io::{ErrorKind, Read, Write},
+    io::{self, ErrorKind, Read, Write},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc},
@@ -594,6 +594,8 @@ pub enum AgentEvent {
     Disconnected,
     Status(StatusInfo),
     Resumed(ResumedThread),
+    /// Automatic re-subscription, valid only while this thread stays selected.
+    Recovered(ResumedThread),
     Sent {
         thread: String,
         turn: u64,
@@ -1544,7 +1546,9 @@ impl AgentState {
                 changed
             }
             AgentEvent::Status(status) => self.apply_status(status),
-            AgentEvent::Resumed(resumed) => {
+            AgentEvent::Recovered(ref resumed) if self.thread.as_deref() != Some(resumed.thread.as_str()) => false,
+            AgentEvent::Resumed(resumed) | AgentEvent::Recovered(resumed) => {
+                self.error = None;
                 self.apply_resumed(resumed, drawer_up);
                 true
             }
@@ -2920,6 +2924,16 @@ fn start_with_options(
     init_deadline: Duration,
     state_path: Option<PathBuf>,
 ) -> CommandSender {
+    start_with_stream_clone(path, events, init_deadline, state_path, UnixStream::try_clone)
+}
+
+fn start_with_stream_clone(
+    path: PathBuf,
+    events: session::Sender,
+    init_deadline: Duration,
+    state_path: Option<PathBuf>,
+    mut clone_stream: impl FnMut(&UnixStream) -> io::Result<UnixStream> + Send + 'static,
+) -> CommandSender {
     let (cmd_tx, cmd_rx) = mpsc::channel::<AgentCommand>();
     let writer: Arc<Mutex<Option<UnixStream>>> = Arc::new(Mutex::new(None));
     let initial_thread = load_saved_thread(state_path.as_deref());
@@ -3093,7 +3107,6 @@ fn start_with_options(
                 }) => {
                     backoff = INITIAL_BACKOFF;
                     last_bootstrap_warn = None;
-                    allow_list_fallback = false;
                     // Subscribe before exposing the writer, preserving request/reply order.
                     // A failed write is followed by EOF/error in the read loop below.
                     let _ = stream.write_all(&encode_frame(&serde_json::json!({"op":"list","watch":true})));
@@ -3103,10 +3116,13 @@ fn start_with_options(
                     if matches!(skipped_resume, Some((_, SkipResumeReason::TimedOut))) {
                         skipped_resume = None;
                     }
-                    let Ok(write_half) = stream.try_clone() else {
+                    let Ok(write_half) = clone_stream(&stream) else {
                         std::thread::sleep(backoff);
                         continue;
                     };
+                    allow_list_fallback = false;
+                    let mut retry_resume = preserved_thread.clone();
+                    let mut resubscribing = None;
                     let _ = write_half.set_write_timeout(Some(Duration::from_secs(5)));
                     let current_tid = resumed
                         .as_ref()
@@ -3135,7 +3151,13 @@ fn start_with_options(
                         match read_frame(&mut stream) {
                             Ok(message) => {
                                 if let Some(parsed) = parse_lever_message(&message) {
-                                    if let Some(event) = parsed.into_agent_event() {
+                                    if let Some(mut event) = parsed.into_agent_event() {
+                                        if let AgentEvent::Resumed(r) = &event
+                                            && resubscribing.as_deref() == Some(r.thread.as_str())
+                                        {
+                                            resubscribing = None;
+                                            event = AgentEvent::Recovered(r.clone());
+                                        }
                                         match &event {
                                             AgentEvent::Sent { thread, .. } => {
                                                 skipped_resume = None;
@@ -3153,6 +3175,13 @@ fn start_with_options(
                                                     save_active_thread(state_path.as_deref(), None);
                                                 }
                                             }
+                                            AgentEvent::Recovered(r) => {
+                                                // The writer may have processed a later selection.
+                                                // Keep that selection, including its persisted ID.
+                                                let Ok(active) = active_thread.lock() else { continue; };
+                                                if active.as_deref() != Some(r.thread.as_str()) { continue; }
+                                                skipped_resume = None;
+                                            }
                                             AgentEvent::Resumed(r) => {
                                                 skipped_resume = None;
                                                 if let Ok(mut guard) = active_thread.lock() {
@@ -3162,6 +3191,24 @@ fn start_with_options(
                                                     state_path.as_deref(),
                                                     Some(r.thread.as_str()),
                                                 );
+                                            }
+                                            AgentEvent::Error { code, .. } if code == "working" => {
+                                                // A failed history read does not subscribe this surface.
+                                                // Rejoin the existing turn; never repeat the person's send.
+                                                if let Some(thread) = retry_resume.take()
+                                                    && let Ok(active) = active_thread.lock()
+                                                    && active.as_deref() == Some(thread.as_str())
+                                                    && let Ok(mut guard) = writer.lock()
+                                                    && let Some(stream) = guard.as_mut()
+                                                {
+                                                    if stream.write_all(&encode_frame(&serde_json::json!({
+                                                        "op": "resume", "thread": thread,
+                                                    }))).is_ok() {
+                                                        resubscribing = Some(thread);
+                                                    } else {
+                                                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                                                    }
+                                                }
                                             }
                                             AgentEvent::Error { code, .. }
                                                 if code == "no-thread" =>
@@ -6473,4 +6520,130 @@ mod tests {
             Some("Models and modes are not available right now.")
         );
     }
+    #[test]
+    fn working_after_a_transient_resume_failure_resubscribes_without_resending() {
+        transient_resume_recovery(false);
+    }
+
+    #[test]
+    fn a_recovery_reply_does_not_reopen_a_thread_the_person_left() {
+        transient_resume_recovery(true);
+    }
+
+    fn transient_resume_recovery(leave_thread: bool) {
+        let dir = short_temp_dir("cs-recover-busy");
+        let sock = dir.join("surface");
+        let state_path = dir.join("active-thread");
+        save_active_thread(Some(&state_path), Some("t-drawer"));
+        let listener = UnixListener::bind(&sock).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut peer, _) = listener.accept().unwrap();
+            peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({"version":1}));
+            peer.write_all(&encode_frame(&serde_json::json!({"version":1}))).unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap()["op"], "status");
+            peer.write_all(&encode_frame(&serde_json::json!({"reply":"status","version":"0.1.0",
+                "harness_started":true,"harnesses":[{"name":"OpenCode"}],"free_hosted_models":false}))).unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap()["op"], "resume");
+            peer.write_all(&encode_frame(&serde_json::json!({"reply":"error","code":"storage-error","message":"busy"}))).unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap()["op"], "watch");
+            peer.write_all(&encode_frame(&serde_json::json!({"reply":"activity","working":["t-drawer"],"waiting":[]}))).unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap()["op"], "list");
+            peer.write_all(&encode_frame(&serde_json::json!({"reply":"list","threads":[]}))).unwrap();
+            let request = read_frame(&mut peer).unwrap();
+            assert_eq!(request, serde_json::json!({"op":"send","thread":"t-drawer","text":"continue"}));
+            peer.write_all(&encode_frame(&serde_json::json!({"reply":"error","code":"working","message":"already working"}))).unwrap();
+            assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({"op":"resume","thread":"t-drawer"}));
+            if leave_thread {
+                // Status follows Select(None) on the writer queue, so the
+                // selection has changed before this delayed reply is sent.
+                assert_eq!(read_frame(&mut peer).unwrap()["op"], "status");
+            }
+            peer.write_all(&encode_frame(&serde_json::json!({"reply":"resumed","thread":"t-drawer","title":"kept","cwd":"/tmp","working":true,
+                "turns":[{"turn":1,"message":"first","answer":"still ","state":"working","acts":[],"notes":[]}]}))).unwrap();
+            peer.write_all(&encode_frame(&serde_json::json!({"event":"text","thread":"t-drawer","turn":1,"text":"here"}))).unwrap();
+            peer.write_all(&encode_frame(&serde_json::json!({"event":"done","thread":"t-drawer","turn":1}))).unwrap();
+            if leave_thread {
+                peer.write_all(&encode_frame(&serde_json::json!({"reply":"status","version":"recovery-finished",
+                    "harness_started":true,"harnesses":[],"free_hosted_models":false}))).unwrap();
+            }
+        });
+        let (tx, mut rx) = session::channel();
+        let sender = start_with_options(sock, tx.clone(), INIT_DEADLINE, Some(state_path));
+        let mut state = AgentState::new(true);
+        run_with_deadline(&mut rx, &tx, Duration::from_secs(5), |event| {
+            let connected = matches!(event, AgentEvent::Connected { .. });
+            let busy = matches!(&event, AgentEvent::Error { code, .. } if code == "working");
+            state.apply(event, true);
+            if connected { sender.send_message(state.thread.clone(), "continue".into(), None); }
+            if busy && leave_thread {
+                assert!(state.select_thread(None));
+                sender.select(None);
+                sender.refresh_status();
+            }
+            if leave_thread { state.lever_version.as_deref() == Some("recovery-finished") }
+            else { state.turns.last().is_some_and(|t| t.answer == "still here" && t.state == TurnState::Done) }
+        });
+        server.join().unwrap();
+        if leave_thread {
+            assert_eq!(state.thread, None);
+            assert!(state.turns.is_empty());
+        } else {
+            assert_eq!(state.turns.len(), 1, "a refused message is never resent automatically");
+            assert_eq!(state.error, None);
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_failed_writer_clone_keeps_first_connection_thread_discovery() {
+        let dir = short_temp_dir("cs-clone-retry");
+        let sock = dir.join("surface");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut peer, _) = listener.accept().unwrap();
+                peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({"version":1}));
+                peer.write_all(&encode_frame(&serde_json::json!({"version":1}))).unwrap();
+                assert_eq!(read_frame(&mut peer).unwrap()["op"], "status");
+                peer.write_all(&encode_frame(&serde_json::json!({"reply":"status","version":"0.1.0",
+                    "harness_started":false,"harnesses":[],"free_hosted_models":false}))).unwrap();
+                assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({"op":"list"}));
+                peer.write_all(&encode_frame(&serde_json::json!({"reply":"list","threads":[{
+                    "thread":"kept","title":"Kept","cwd":"/tmp","started":1,"updated":2,
+                    "turns":1,"state":"done","working":false}]}))).unwrap();
+                assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({"op":"resume","thread":"kept"}));
+                peer.write_all(&encode_frame(&serde_json::json!({"reply":"resumed","thread":"kept",
+                    "cwd":"/tmp","working":false,"turns":[]}))).unwrap();
+                assert_eq!(read_frame(&mut peer).unwrap()["op"], "watch");
+                assert_eq!(read_frame(&mut peer).unwrap(), serde_json::json!({"op":"list","watch":true}));
+            }
+        });
+        let (tx, mut rx) = session::channel();
+        let mut fail_once = true;
+        let _sender = start_with_stream_clone(sock, tx.clone(), INIT_DEADLINE, None, move |stream| {
+            if std::mem::take(&mut fail_once) { Err(io::Error::from_raw_os_error(24)) }
+            else { stream.try_clone() }
+        });
+        run_with_deadline(&mut rx, &tx, Duration::from_secs(5), |event| {
+            matches!(event, AgentEvent::Connected { resumed: Some(r), .. } if r.thread == "kept")
+        });
+        server.join().unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn queued_recovery_keeps_the_new_composer_selected() {
+        let mut state = connected_state(false);
+        state.thread = Some("old".into());
+        assert!(state.select_thread(None));
+        assert!(!state.apply(AgentEvent::Recovered(ResumedThread {
+            thread: "old".into(), title: "Old".into(), cwd: "/tmp".into(),
+            model: None, mode: None, working: true, turns: vec![],
+        }), true));
+        assert_eq!(state.thread, None);
+        assert!(state.can_send());
+    }
+
 }
