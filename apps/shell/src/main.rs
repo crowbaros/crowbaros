@@ -2959,8 +2959,9 @@ impl AgentSurface {
                         })
                         .child(choice.label())
                         .child(tracked(&self.frame, id, true))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.answer_request(request.clone(), answer.clone(), cx)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.answer_request(request.clone(), answer.clone(), cx);
+                            window.focus(&this.input.focus_handle(cx));
                         })),
                 );
             }
@@ -3028,7 +3029,10 @@ impl AgentSurface {
                         )
                     })
                     .child(tracked(&self.frame, id, false))
-                    .on_click(cx.listener(move |this, _, _, cx| this.pick_mode(pick.clone(), cx))),
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.pick_mode(pick.clone(), cx);
+                        window.focus(&this.input.focus_handle(cx));
+                    })),
             );
         }
         let note = if state.modes.is_empty() {
@@ -3085,8 +3089,9 @@ impl AgentSurface {
                         })
                         .child(agent::mode_name(&mode.id, &state.modes))
                         .child(tracked(&self.frame, id, false))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.pick_default_mode(pick.clone(), cx)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.pick_default_mode(pick.clone(), cx);
+                            window.focus(&this.input.focus_handle(cx));
                         })),
                 );
             }
@@ -3626,7 +3631,10 @@ impl Render for AgentSurface {
                                 })
                                 .child(agent::mode_name(&mode, &state.modes))
                                 .child(tracked(&self.frame, "mode".into(), false))
-                                .on_click(cx.listener(|this, _, _, cx| this.toggle_mode_menu(cx))),
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_mode_menu(cx);
+                                    if !this.mode_menu_open { window.focus(&this.input.focus_handle(cx)); }
+                                })),
                         )
                     })
                     .child(

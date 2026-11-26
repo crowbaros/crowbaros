@@ -1083,6 +1083,8 @@ finally:
                 json.dumps(turn1.get('requests')),
             )
 
+            # Typing here without clicking the composer also verifies that
+            # answering a permission request restores the composer's focus.
             # 1b. No: the command is refused, the harness ends the turn as it
             # has it, and the Model is told on the next turn.
             self.type('please no-cmd')
