@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: MIT
 mod bluetooth;
+mod default_apps;
 mod displays;
+mod input_config;
 mod network;
+mod power_config;
 mod session;
 mod settings;
 mod sound;
+mod system_info;
 mod theme;
 
 use bluetooth::{BluetoothAdapter, BluetoothDevice, BluetoothError, BluetoothState};
@@ -15,6 +19,7 @@ use crowbar_ui::{
     button as ui_button, card, divider, load_fonts, section_header, sidebar, spawn_theme_watcher,
     status_footer, titlebar,
 };
+use default_apps::{AppCategory, CategoryState};
 use displays::{
     DisplayError, DisplayMode, OutputDraft, OutputInfo, RelativeSide, SCALES, arrange_relative,
     dedup_sorted_modes, format_refresh, format_scale, logical_size, project_diagram,
@@ -24,11 +29,14 @@ use gpui::{
     ObjectFit, Stateful, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, img,
     prelude::*, px, rgb, size,
 };
+use input_config::{InputSettings, LAYOUTS, POINTER_SPEEDS, REPEAT_DELAYS, REPEAT_RATES};
 use network::{NetworkError, NetworkSnapshot, WifiNetwork, WifiState, WifiStation};
+use power_config::{LOCK_TIMEOUTS, PowerSettings, SUSPEND_TIMEOUTS, format_timeout};
 use settings::{Preferences, Store, Theme, Wallpaper};
 use sound::{AudioEndpoint, SoundError, SoundSnapshot};
 use std::path::PathBuf;
 use std::sync::mpsc;
+use system_info::SystemSummary;
 use theme::Palette;
 
 actions!(
@@ -61,7 +69,15 @@ const CONTROL_BLUETOOTH_REFRESH: usize = 25;
 const CONTROL_BLUETOOTH_POWER: usize = 26;
 const CONTROL_BLUETOOTH_SCAN: usize = 27;
 const CONTROL_FOOTER_REFRESH: usize = 28;
-const CONTROL_COUNT: usize = 29;
+const CONTROL_INPUT: usize = 29;
+const CONTROL_POWER: usize = 30;
+const CONTROL_DEFAULT_APPS: usize = 31;
+const CONTROL_INPUT_REFRESH: usize = 32;
+const CONTROL_POWER_REFRESH: usize = 33;
+const CONTROL_DEFAULTS_REFRESH: usize = 34;
+const CONTROL_SYSTEM_REFRESH: usize = 35;
+const CONTROL_NATURAL_SCROLL: usize = 36;
+const CONTROL_COUNT: usize = 37;
 
 const MAX_WIFI_PASSPHRASE: usize = 63;
 
@@ -72,6 +88,9 @@ enum Page {
     Network,
     Sound,
     Bluetooth,
+    Input,
+    Power,
+    DefaultApps,
     About,
 }
 
@@ -153,6 +172,29 @@ struct Settings {
     bluetooth_busy: bool,
     bluetooth_error: Option<String>,
     bluetooth_status: String,
+    input: InputSettings,
+    input_live: bool,
+    input_loaded: bool,
+    input_loading: bool,
+    input_busy: bool,
+    input_error: Option<String>,
+    input_status: String,
+    power: PowerSettings,
+    power_live: bool,
+    power_loaded: bool,
+    power_loading: bool,
+    power_busy: bool,
+    power_error: Option<String>,
+    power_status: String,
+    default_apps: Vec<CategoryState>,
+    defaults_loaded: bool,
+    defaults_loading: bool,
+    defaults_busy: bool,
+    defaults_error: Option<String>,
+    defaults_status: String,
+    system_info: Option<SystemSummary>,
+    system_loaded: bool,
+    system_loading: bool,
 }
 
 impl Settings {
@@ -236,6 +278,29 @@ impl Settings {
             bluetooth_busy: false,
             bluetooth_error: None,
             bluetooth_status: "".into(),
+            input: InputSettings::default(),
+            input_live: false,
+            input_loaded: false,
+            input_loading: false,
+            input_busy: false,
+            input_error: None,
+            input_status: "".into(),
+            power: PowerSettings::default(),
+            power_live: false,
+            power_loaded: false,
+            power_loading: false,
+            power_busy: false,
+            power_error: None,
+            power_status: "".into(),
+            default_apps: Vec::new(),
+            defaults_loaded: false,
+            defaults_loading: false,
+            defaults_busy: false,
+            defaults_error: None,
+            defaults_status: "".into(),
+            system_info: None,
+            system_loaded: false,
+            system_loading: false,
         }
     }
     fn active_palette(&self) -> Palette {
@@ -805,6 +870,251 @@ impl Settings {
         .detach();
     }
 
+    fn refresh_input(&mut self, cx: &mut Context<Self>) {
+        if self.input_loading || self.input_busy {
+            return;
+        }
+        self.input_loading = true;
+        self.input_error = None;
+        cx.notify();
+        let task = cx
+            .background_executor()
+            .spawn(async move { input_config::load_live_or_saved() });
+        cx.spawn(async move |this, cx| {
+            let (settings, live) = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.input_loading = false;
+                this.input_loaded = true;
+                this.input_live = live;
+                log::info!(
+                    "STUDIO event=input-loaded live={} layout={} rate={} delay={} speed={} natural={}",
+                    live,
+                    settings.layout,
+                    settings.repeat_rate,
+                    settings.repeat_delay,
+                    settings.pointer_speed,
+                    settings.natural_scroll
+                );
+                this.input = settings;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn apply_input_settings(&mut self, next: InputSettings, cx: &mut Context<Self>) {
+        if self.input_busy {
+            return;
+        }
+        let clean = next.clamped();
+        self.input = clean.clone();
+        self.input_busy = true;
+        self.input_error = None;
+        self.input_status = "Applying input settings…".into();
+        cx.notify();
+        let task = cx
+            .background_executor()
+            .spawn(async move { input_config::apply_and_save(&clean).map(|live| (clean, live)) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.input_busy = false;
+                match result {
+                    Ok((applied, live)) => {
+                        this.input = applied.clone();
+                        this.input_live = live;
+                        this.input_error = None;
+                        this.input_status = if live {
+                            "Input settings applied live.".into()
+                        } else {
+                            "Input settings saved.".into()
+                        };
+                        log::info!(
+                            "STUDIO event=input-applied live={} layout={} rate={} delay={} speed={} natural={}",
+                            live,
+                            applied.layout,
+                            applied.repeat_rate,
+                            applied.repeat_delay,
+                            applied.pointer_speed,
+                            applied.natural_scroll
+                        );
+                    }
+                    Err(err) => {
+                        log::warn!("STUDIO event=input-apply-failed {err}");
+                        this.input_error = Some(err);
+                        this.input_status = "Input change failed.".into();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn refresh_power(&mut self, cx: &mut Context<Self>) {
+        if self.power_loading || self.power_busy {
+            return;
+        }
+        self.power_loading = true;
+        self.power_error = None;
+        cx.notify();
+        let task = cx
+            .background_executor()
+            .spawn(async move { power_config::load_live_or_saved() });
+        cx.spawn(async move |this, cx| {
+            let (settings, live) = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.power_loading = false;
+                this.power_loaded = true;
+                this.power_live = live;
+                log::info!(
+                    "STUDIO event=power-loaded live={} lock={} suspend={}",
+                    live,
+                    settings.lock_after_secs,
+                    settings.suspend_after_secs
+                );
+                this.power = settings;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn apply_power_settings(&mut self, next: PowerSettings, cx: &mut Context<Self>) {
+        if self.power_busy {
+            return;
+        }
+        let clean = next.clamped();
+        self.power = clean.clone();
+        self.power_busy = true;
+        self.power_error = None;
+        self.power_status = "Updating power timers…".into();
+        cx.notify();
+        let task = cx
+            .background_executor()
+            .spawn(async move { power_config::apply_and_save(&clean).map(|live| (clean, live)) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.power_busy = false;
+                match result {
+                    Ok((applied, live)) => {
+                        this.power = applied.clone();
+                        this.power_live = live;
+                        this.power_error = None;
+                        this.power_status = if live {
+                            "Power & lock timers updated live.".into()
+                        } else {
+                            "Power & lock timers saved.".into()
+                        };
+                        log::info!(
+                            "STUDIO event=power-applied live={} lock={} suspend={}",
+                            live,
+                            applied.lock_after_secs,
+                            applied.suspend_after_secs
+                        );
+                    }
+                    Err(err) => {
+                        log::warn!("STUDIO event=power-apply-failed {err}");
+                        this.power_error = Some(err);
+                        this.power_status = "Power update failed.".into();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn refresh_default_apps(&mut self, cx: &mut Context<Self>) {
+        if self.defaults_loading || self.defaults_busy {
+            return;
+        }
+        self.defaults_loading = true;
+        self.defaults_error = None;
+        cx.notify();
+        let task = cx
+            .background_executor()
+            .spawn(async move { default_apps::load_default_apps() });
+        cx.spawn(async move |this, cx| {
+            let categories = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.defaults_loading = false;
+                this.defaults_loaded = true;
+                log::info!("STUDIO event=defaults-loaded count={}", categories.len());
+                this.default_apps = categories;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn update_default_app(
+        &mut self,
+        category: AppCategory,
+        desktop_id: String,
+        app_name: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.defaults_busy {
+            return;
+        }
+        self.defaults_busy = true;
+        self.defaults_error = None;
+        self.defaults_status = format!("Setting {} to {app_name}…", category.label());
+        cx.notify();
+        let id_clone = desktop_id.clone();
+        let task = cx.background_executor().spawn(async move {
+            default_apps::set_category_default(category, &id_clone)?;
+            Ok::<_, String>(default_apps::load_default_apps())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.defaults_busy = false;
+                match result {
+                    Ok(categories) => {
+                        this.default_apps = categories;
+                        this.defaults_error = None;
+                        this.defaults_status = format!("Default {} set to {app_name}.", category.label());
+                        log::info!(
+                            "STUDIO event=default-app-saved category={category:?} desktop={desktop_id}"
+                        );
+                    }
+                    Err(err) => {
+                        log::warn!("STUDIO event=default-app-failed category={category:?} {err}");
+                        this.defaults_error = Some(err);
+                        this.defaults_status = "Could not update default app.".into();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn refresh_system_info(&mut self, cx: &mut Context<Self>) {
+        if self.system_loading {
+            return;
+        }
+        self.system_loading = true;
+        cx.notify();
+        let task = cx
+            .background_executor()
+            .spawn(async move { system_info::collect() });
+        cx.spawn(async move |this, cx| {
+            let summary = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.system_loading = false;
+                this.system_loaded = true;
+                log::info!("STUDIO event=system-loaded hostname={}", summary.hostname);
+                this.system_info = Some(summary);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn save(&mut self, _: &Save, _: &mut Window, cx: &mut Context<Self>) {
         if self.page == Page::Displays {
             self.apply_displays(cx);
@@ -913,7 +1223,23 @@ impl Settings {
                 self.refresh_bluetooth(cx);
                 return;
             }
-            Page::Appearance | Page::About => {}
+            Page::Input => {
+                self.refresh_input(cx);
+                return;
+            }
+            Page::Power => {
+                self.refresh_power(cx);
+                return;
+            }
+            Page::DefaultApps => {
+                self.refresh_default_apps(cx);
+                return;
+            }
+            Page::About => {
+                self.refresh_system_info(cx);
+                return;
+            }
+            Page::Appearance => {}
         }
         match self.store.load() {
             Ok(saved) => {
@@ -2912,17 +3238,795 @@ impl Settings {
         dev_card
     }
 
-    fn about(&self, p: Palette) -> Div {
-        div().flex().flex_col().gap_5()
-            .child(div().text_size(px(TEXT_TITLE)).font_weight(FontWeight::BOLD).child("Studio Settings"))
-            .child(div().text_size(px(TEXT_SECTION)).child("Your workspace, with room to make it your own."))
-            .child(div().flex().flex_col().gap_3().text_size(px(TEXT_BODY)).text_color(rgb(p.muted))
-                .child("Preview your appearance, then save it for your next session. Configure displays through Fulcrum, manage Ethernet and Wi-Fi through iwd, adjust PipeWire audio devices, and pair Bluetooth accessories through BlueZ.")
-                .child("Saved appearance and wallpaper apply to the shell and native CrowbarOS apps. Hardware changes on Network, Sound, and Bluetooth apply immediately.")
-                .child("Keyboard: Tab and Shift+Tab move focus. Enter or Space activates a control. Ctrl+S saves or applies; Ctrl+Z undoes; Ctrl+Q closes."))
-            .child(div().border_t_1().border_color(rgb(p.line)).pt_5().flex().flex_col().gap_2()
-                .child(div().text_size(px(TEXT_LABEL)).child("CrowbarOS · Studio Settings 0.1.3"))
-                .child(div().font_family(FONT_MONO).text_size(px(TEXT_TECHNICAL)).text_color(rgb(p.muted)).child("Rust / GPUI 0.2.2 / Wayland")))
+    fn input_page(&self, p: Palette, window: &Window, cx: &Context<Self>) -> Div {
+        let mut page = div().flex().flex_col().gap_4().child(
+            div()
+                .flex()
+                .items_start()
+                .justify_between()
+                .gap_4()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_size(px(TEXT_TITLE))
+                                .font_weight(FontWeight::BOLD)
+                                .child("Input"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(TEXT_BODY))
+                                .text_color(rgb(p.muted))
+                                .child("Keyboard layout, key repeat, and pointer feel."),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(badge(
+                            if self.input_live {
+                                "Live via Fulcrum"
+                            } else {
+                                "Saved locally"
+                            },
+                            p,
+                            self.input_live,
+                        ))
+                        .child(
+                            self.button(
+                                CONTROL_INPUT_REFRESH,
+                                if self.input_loading {
+                                    "Refreshing…"
+                                } else {
+                                    "Refresh"
+                                },
+                                p,
+                                window,
+                                false,
+                                !self.input_loading && !self.input_busy,
+                            )
+                            .h(px(34.))
+                            .px_3()
+                            .on_click(cx.listener(|this, _, w, cx| {
+                                w.focus(&this.controls[CONTROL_INPUT_REFRESH]);
+                                this.refresh_input(cx);
+                            })),
+                        ),
+                ),
+        );
+
+        if self.input_loading && !self.input_loaded {
+            return page.child(
+                card(p)
+                    .p_5()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("Reading keyboard and pointer settings…"),
+            );
+        }
+
+        let current = self.input.clone();
+
+        // Keyboard card
+        let keyboard_card = card(p)
+            .p_4()
+            .gap_3()
+            .child(section_header(
+                "Keyboard",
+                Some("Applied immediately to active Wayland apps through Fulcrum."),
+                p,
+            ))
+            .child(divider(p))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(TEXT_LABEL))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Keyboard layout"),
+                            )
+                            .child(
+                                div()
+                                    .font_family(FONT_MONO)
+                                    .text_size(px(TEXT_TECHNICAL))
+                                    .text_color(rgb(p.muted))
+                                    .child(format!("xkb: {}", current.layout)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .children(LAYOUTS.into_iter().enumerate().map(|(i, (code, label))| {
+                                let selected = current.layout == code;
+                                let next_cfg = InputSettings {
+                                    layout: code.to_string(),
+                                    ..current.clone()
+                                };
+                                action_chip(("input-layout", i), label, p, selected).on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.apply_input_settings(next_cfg.clone(), cx);
+                                    }),
+                                )
+                            })),
+                    ),
+            )
+            .child(divider(p))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_size(px(TEXT_LABEL))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Repeat rate"),
+                            )
+                            .child(
+                                div()
+                                    .font_family(FONT_MONO)
+                                    .text_size(px(TEXT_TECHNICAL))
+                                    .text_color(rgb(p.muted))
+                                    .child(format!("{} keys / sec", current.repeat_rate)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .children(REPEAT_RATES.into_iter().enumerate().map(|(i, rate)| {
+                                let selected = current.repeat_rate == rate;
+                                let next_cfg = InputSettings {
+                                    repeat_rate: rate,
+                                    ..current.clone()
+                                };
+                                action_chip(("input-rate", i), format!("{rate}/s"), p, selected)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.apply_input_settings(next_cfg.clone(), cx);
+                                    }))
+                            })),
+                    ),
+            )
+            .child(divider(p))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_size(px(TEXT_LABEL))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Repeat delay"),
+                            )
+                            .child(
+                                div()
+                                    .font_family(FONT_MONO)
+                                    .text_size(px(TEXT_TECHNICAL))
+                                    .text_color(rgb(p.muted))
+                                    .child(format!("{} ms before repeating", current.repeat_delay)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .children(REPEAT_DELAYS.into_iter().enumerate().map(|(i, delay)| {
+                                let selected = current.repeat_delay == delay;
+                                let next_cfg = InputSettings {
+                                    repeat_delay: delay,
+                                    ..current.clone()
+                                };
+                                action_chip(("input-delay", i), format!("{delay} ms"), p, selected)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.apply_input_settings(next_cfg.clone(), cx);
+                                    }))
+                            })),
+                    ),
+            );
+
+        // Pointer & Scroll card
+        let nat = current.natural_scroll;
+        let next_nat = InputSettings {
+            natural_scroll: !nat,
+            ..current.clone()
+        };
+        let nat_focus = self.controls[CONTROL_NATURAL_SCROLL].is_focused(window);
+        let pointer_card = card(p)
+            .p_4()
+            .gap_3()
+            .child(section_header(
+                "Pointer & Scrolling",
+                Some("Mouse and touchpad sensitivity and scroll direction."),
+                p,
+            ))
+            .child(divider(p))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_size(px(TEXT_LABEL))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Pointer speed"),
+                            )
+                            .child(
+                                div()
+                                    .font_family(FONT_MONO)
+                                    .text_size(px(TEXT_TECHNICAL))
+                                    .text_color(rgb(p.muted))
+                                    .child(format!("Offset {:+}", current.pointer_speed)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .children(POINTER_SPEEDS.into_iter().enumerate().map(
+                                |(i, (speed, label))| {
+                                    let selected = current.pointer_speed == speed;
+                                    let next_cfg = InputSettings {
+                                        pointer_speed: speed,
+                                        ..current.clone()
+                                    };
+                                    action_chip(("input-speed", i), label, p, selected).on_click(
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.apply_input_settings(next_cfg.clone(), cx);
+                                        }),
+                                    )
+                                },
+                            )),
+                    ),
+            )
+            .child(divider(p))
+            .child(
+                div()
+                    .id("input-natural-scroll")
+                    .track_focus(&self.controls[CONTROL_NATURAL_SCROLL])
+                    .flex()
+                    .items_center()
+                    .gap_4()
+                    .py_2()
+                    .px_2()
+                    .rounded(px(8.))
+                    .border_2()
+                    .border_color(rgb(if nat_focus { p.focus } else { p.surface }))
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.9))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_size(px(TEXT_LABEL))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Natural scrolling"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(TEXT_SUPPORTING))
+                                    .text_color(rgb(p.muted))
+                                    .child("Content tracks finger movement instead of scrollbar direction."),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(TEXT_SUPPORTING))
+                            .text_color(rgb(p.muted))
+                            .child(if nat { "On" } else { "Off" }),
+                    )
+                    .child(
+                        div()
+                            .w(px(44.))
+                            .h(px(26.))
+                            .px(px(3.))
+                            .flex()
+                            .items_center()
+                            .rounded_full()
+                            .bg(rgb(if nat { p.accent } else { p.line }))
+                            .when(nat, |d| d.justify_end())
+                            .child(div().size(px(20.)).rounded_full().bg(rgb(if nat {
+                                p.on_accent
+                            } else {
+                                p.text
+                            }))),
+                    )
+                    .on_click(cx.listener(move |this, _, w, cx| {
+                        w.focus(&this.controls[CONTROL_NATURAL_SCROLL]);
+                        this.apply_input_settings(next_nat.clone(), cx);
+                    })),
+            );
+
+        page = page.child(keyboard_card).child(pointer_card);
+        page
+    }
+
+    fn power_page(&self, p: Palette, window: &Window, cx: &Context<Self>) -> Div {
+        let mut page = div().flex().flex_col().gap_4().child(
+            div()
+                .flex()
+                .items_start()
+                .justify_between()
+                .gap_4()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_size(px(TEXT_TITLE))
+                                .font_weight(FontWeight::BOLD)
+                                .child("Power & Lock"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(TEXT_BODY))
+                                .text_color(rgb(p.muted))
+                                .child("Automatic screen lock and sleep timers."),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(badge(
+                            if self.power_live {
+                                "Live via Fulcrum"
+                            } else {
+                                "Saved locally"
+                            },
+                            p,
+                            self.power_live,
+                        ))
+                        .child(
+                            self.button(
+                                CONTROL_POWER_REFRESH,
+                                if self.power_loading {
+                                    "Refreshing…"
+                                } else {
+                                    "Refresh"
+                                },
+                                p,
+                                window,
+                                false,
+                                !self.power_loading && !self.power_busy,
+                            )
+                            .h(px(34.))
+                            .px_3()
+                            .on_click(cx.listener(|this, _, w, cx| {
+                                w.focus(&this.controls[CONTROL_POWER_REFRESH]);
+                                this.refresh_power(cx);
+                            })),
+                        ),
+                ),
+        );
+
+        if self.power_loading && !self.power_loaded {
+            return page.child(
+                card(p)
+                    .p_5()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("Reading power and idle lock timers…"),
+            );
+        }
+
+        let current = self.power.clone();
+
+        let lock_card = card(p)
+            .p_4()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(section_header(
+                        "Automatic screen lock",
+                        Some("Locks the session through Fulcrum when idle. Media playback can inhibit automatic locking."),
+                        p,
+                    ))
+                    .child(badge(
+                        format_timeout(current.lock_after_secs),
+                        p,
+                        current.lock_after_secs > 0,
+                    )),
+            )
+            .child(divider(p))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .children(LOCK_TIMEOUTS.into_iter().enumerate().map(|(i, (secs, label))| {
+                        let selected = current.lock_after_secs == secs;
+                        let next_cfg = PowerSettings {
+                            lock_after_secs: secs,
+                            ..current.clone()
+                        };
+                        action_chip(("power-lock", i), label, p, selected).on_click(cx.listener(
+                            move |this, _, _, cx| {
+                                this.apply_power_settings(next_cfg.clone(), cx);
+                            },
+                        ))
+                    })),
+            );
+
+        let suspend_card = card(p)
+            .p_4()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(section_header(
+                        "Automatic suspend",
+                        Some("Preferred inactivity timeout before suspending the machine."),
+                        p,
+                    ))
+                    .child(badge(
+                        format_timeout(current.suspend_after_secs),
+                        p,
+                        current.suspend_after_secs > 0,
+                    )),
+            )
+            .child(divider(p))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .children(SUSPEND_TIMEOUTS.into_iter().enumerate().map(
+                        |(i, (secs, label))| {
+                            let selected = current.suspend_after_secs == secs;
+                            let next_cfg = PowerSettings {
+                                suspend_after_secs: secs,
+                                ..current.clone()
+                            };
+                            action_chip(("power-suspend", i), label, p, selected).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.apply_power_settings(next_cfg.clone(), cx);
+                                }),
+                            )
+                        },
+                    )),
+            );
+
+        page = page.child(lock_card).child(suspend_card);
+        page
+    }
+
+    fn default_apps_page(&self, p: Palette, window: &Window, cx: &Context<Self>) -> Div {
+        let mut page = div().flex().flex_col().gap_4().child(
+            div()
+                .flex()
+                .items_start()
+                .justify_between()
+                .gap_4()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_size(px(TEXT_TITLE))
+                                .font_weight(FontWeight::BOLD)
+                                .child("Default Apps"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(TEXT_BODY))
+                                .text_color(rgb(p.muted))
+                                .child("Choose which applications open links, files, and media."),
+                        ),
+                )
+                .child(
+                    self.button(
+                        CONTROL_DEFAULTS_REFRESH,
+                        if self.defaults_loading {
+                            "Refreshing…"
+                        } else {
+                            "Refresh"
+                        },
+                        p,
+                        window,
+                        false,
+                        !self.defaults_loading && !self.defaults_busy,
+                    )
+                    .h(px(34.))
+                    .px_3()
+                    .on_click(cx.listener(|this, _, w, cx| {
+                        w.focus(&this.controls[CONTROL_DEFAULTS_REFRESH]);
+                        this.refresh_default_apps(cx);
+                    })),
+                ),
+        );
+
+        if self.defaults_loading && !self.defaults_loaded {
+            return page.child(
+                card(p)
+                    .p_5()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("Scanning installed applications and MIME associations…"),
+            );
+        }
+
+        let mut list_card = card(p).p_4().gap_3().child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .child(section_header(
+                    "Application handlers",
+                    Some("Changes write atomically to your user mimeapps.list for xdg-open."),
+                    p,
+                ))
+                .child(
+                    div()
+                        .font_family(FONT_MONO)
+                        .text_size(px(TEXT_TECHNICAL))
+                        .text_color(rgb(p.muted))
+                        .child("mimeapps.list"),
+                ),
+        );
+
+        for (ci, cat) in self.default_apps.iter().enumerate() {
+            let current_badge = cat
+                .current
+                .clone()
+                .unwrap_or_else(|| "Not set".to_string());
+            let mut chips = div().flex().flex_wrap().gap_2();
+            if cat.candidates.is_empty() {
+                chips = chips.child(
+                    div()
+                        .text_size(px(TEXT_SUPPORTING))
+                        .text_color(rgb(p.muted))
+                        .child("No registered applications found."),
+                );
+            } else {
+                for (ai, candidate) in cat.candidates.iter().enumerate() {
+                    let selected = cat.current.as_deref() == Some(candidate.desktop_id.as_str());
+                    let category = cat.category;
+                    let id = candidate.desktop_id.clone();
+                    let name = candidate.name.clone();
+                    chips = chips.child(
+                        action_chip(
+                            ("default-app", ci * 100 + ai),
+                            candidate.name.clone(),
+                            p,
+                            selected,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.update_default_app(category, id.clone(), name.clone(), cx);
+                        })),
+                    );
+                }
+            }
+
+            list_card = list_card.child(divider(p)).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .py_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(2.))
+                                    .child(
+                                        div()
+                                            .text_size(px(TEXT_LABEL))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(cat.category.label()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(TEXT_SUPPORTING))
+                                            .text_color(rgb(p.muted))
+                                            .child(cat.category.description()),
+                                    ),
+                            )
+                            .child(badge(current_badge, p, cat.current.is_some())),
+                    )
+                    .child(chips),
+            );
+        }
+
+        page = page.child(list_card);
+        page
+    }
+
+    fn about(&self, p: Palette, window: &Window, cx: &Context<Self>) -> Div {
+        let mut page = div().flex().flex_col().gap_4().child(
+            div()
+                .flex()
+                .items_start()
+                .justify_between()
+                .gap_4()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_size(px(TEXT_TITLE))
+                                .font_weight(FontWeight::BOLD)
+                                .child("About CrowbarOS"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(TEXT_BODY))
+                                .text_color(rgb(p.muted))
+                                .child("System summary and Studio Settings details."),
+                        ),
+                )
+                .child(
+                    self.button(
+                        CONTROL_SYSTEM_REFRESH,
+                        if self.system_loading {
+                            "Refreshing…"
+                        } else {
+                            "Refresh"
+                        },
+                        p,
+                        window,
+                        false,
+                        !self.system_loading,
+                    )
+                    .h(px(34.))
+                    .px_3()
+                    .on_click(cx.listener(|this, _, w, cx| {
+                        w.focus(&this.controls[CONTROL_SYSTEM_REFRESH]);
+                        this.refresh_system_info(cx);
+                    })),
+                ),
+        );
+
+        let sys_card = if let Some(info) = &self.system_info {
+            let rows: [(&str, String); 7] = [
+                ("Hostname", info.hostname.clone()),
+                ("Operating System", info.os_name.clone()),
+                ("Kernel", info.kernel.clone()),
+                ("Processor", info.cpu.clone()),
+                ("Memory", info.memory.clone()),
+                ("Graphics", info.gpu.clone()),
+                ("Root Storage", info.disk.clone()),
+            ];
+            let mut c = card(p)
+                .p_4()
+                .gap_2()
+                .child(section_header("This Machine", None, p));
+            for (label, value) in rows {
+                c = c.child(divider(p)).child(
+                    div()
+                        .py_1()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_4()
+                        .child(
+                            div()
+                                .text_size(px(TEXT_LABEL))
+                                .text_color(rgb(p.muted))
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .font_family(FONT_MONO)
+                                .text_size(px(TEXT_TECHNICAL))
+                                .text_color(rgb(p.text))
+                                .child(value),
+                        ),
+                );
+            }
+            c
+        } else {
+            card(p)
+                .p_5()
+                .text_size(px(TEXT_BODY))
+                .text_color(rgb(p.muted))
+                .child("Reading hardware and OS summary…")
+        };
+
+        let app_card = card(p)
+            .p_4()
+            .gap_3()
+            .child(section_header(
+                "Studio Settings",
+                Some("Your workspace, with room to make it your own."),
+                p,
+            ))
+            .child(divider(p))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(rgb(p.muted))
+                    .child("Configure Appearance, Displays, Network, Sound, Bluetooth, Input, Power, and Default Apps in one native Wayland surface.")
+                    .child("Keyboard: Tab and Shift+Tab move focus. Enter or Space activates a control. Ctrl+S saves or applies; Ctrl+Z undoes; Ctrl+Q closes."),
+            )
+            .child(divider(p))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(TEXT_LABEL))
+                            .child(format!("CrowbarOS · Studio Settings {}", env!("CARGO_PKG_VERSION"))),
+                    )
+                    .child(
+                        div()
+                            .font_family(FONT_MONO)
+                            .text_size(px(TEXT_TECHNICAL))
+                            .text_color(rgb(p.muted))
+                            .child("Rust / GPUI 0.2.2 / Wayland"),
+                    ),
+            );
+
+        page = page.child(sys_card).child(app_card);
+        page
     }
 }
 
@@ -2932,7 +4036,13 @@ impl Render for Settings {
         let on_displays = self.page == Page::Displays;
         let is_live_hardware = matches!(
             self.page,
-            Page::Network | Page::Sound | Page::Bluetooth
+            Page::Network
+                | Page::Sound
+                | Page::Bluetooth
+                | Page::Input
+                | Page::Power
+                | Page::DefaultApps
+                | Page::About
         );
         let active_dirty = if on_displays {
             self.displays_dirty()
@@ -2953,6 +4063,9 @@ impl Render for Settings {
             Page::Network => self.network_error.clone(),
             Page::Sound => self.sound_error.clone(),
             Page::Bluetooth => self.bluetooth_error.clone(),
+            Page::Input => self.input_error.clone(),
+            Page::Power => self.power_error.clone(),
+            Page::DefaultApps => self.defaults_error.clone(),
             Page::Appearance | Page::About => self.error.clone(),
         };
         let status = match self.page {
@@ -3043,7 +4156,52 @@ impl Render for Settings {
                     "Bluetooth ready".into()
                 }
             }
-            Page::Appearance | Page::About => {
+            Page::Input => {
+                if !self.input_status.is_empty() {
+                    self.input_status.clone()
+                } else if self.input_loading {
+                    "Reading input configuration…".into()
+                } else {
+                    format!(
+                        "Layout {} · {} keys/s · Natural scroll {}",
+                        self.input.layout,
+                        self.input.repeat_rate,
+                        if self.input.natural_scroll { "on" } else { "off" }
+                    )
+                }
+            }
+            Page::Power => {
+                if !self.power_status.is_empty() {
+                    self.power_status.clone()
+                } else if self.power_loading {
+                    "Reading power timers…".into()
+                } else {
+                    format!(
+                        "Lock: {} · Suspend: {}",
+                        format_timeout(self.power.lock_after_secs),
+                        format_timeout(self.power.suspend_after_secs)
+                    )
+                }
+            }
+            Page::DefaultApps => {
+                if !self.defaults_status.is_empty() {
+                    self.defaults_status.clone()
+                } else if self.defaults_loading {
+                    "Scanning default applications…".into()
+                } else {
+                    format!("{} default app categories", self.default_apps.len())
+                }
+            }
+            Page::About => {
+                if self.system_loading {
+                    "Reading system summary…".into()
+                } else if let Some(info) = &self.system_info {
+                    format!("{} · Linux {}", info.hostname, info.kernel)
+                } else {
+                    "CrowbarOS system summary".into()
+                }
+            }
+            Page::Appearance => {
                 if !self.status.is_empty() {
                     self.status.clone()
                 } else if self.appearance_dirty() {
@@ -3206,6 +4364,63 @@ impl Render for Settings {
                             )
                             .child(
                                 self.button(
+                                    CONTROL_INPUT,
+                                    "Input",
+                                    p,
+                                    window,
+                                    self.page == Page::Input,
+                                    true,
+                                )
+                                .on_click(cx.listener(|this, _, w, cx| {
+                                    this.clear_wifi_prompt();
+                                    this.page = Page::Input;
+                                    w.focus(&this.controls[CONTROL_INPUT]);
+                                    if !this.input_loaded && !this.input_loading {
+                                        this.refresh_input(cx);
+                                    }
+                                    cx.notify();
+                                })),
+                            )
+                            .child(
+                                self.button(
+                                    CONTROL_POWER,
+                                    "Power",
+                                    p,
+                                    window,
+                                    self.page == Page::Power,
+                                    true,
+                                )
+                                .on_click(cx.listener(|this, _, w, cx| {
+                                    this.clear_wifi_prompt();
+                                    this.page = Page::Power;
+                                    w.focus(&this.controls[CONTROL_POWER]);
+                                    if !this.power_loaded && !this.power_loading {
+                                        this.refresh_power(cx);
+                                    }
+                                    cx.notify();
+                                })),
+                            )
+                            .child(
+                                self.button(
+                                    CONTROL_DEFAULT_APPS,
+                                    "Default Apps",
+                                    p,
+                                    window,
+                                    self.page == Page::DefaultApps,
+                                    true,
+                                )
+                                .on_click(cx.listener(|this, _, w, cx| {
+                                    this.clear_wifi_prompt();
+                                    this.page = Page::DefaultApps;
+                                    w.focus(&this.controls[CONTROL_DEFAULT_APPS]);
+                                    if !this.defaults_loaded && !this.defaults_loading {
+                                        this.refresh_default_apps(cx);
+                                    }
+                                    cx.notify();
+                                })),
+                            )
+                            .child(
+                                self.button(
                                     CONTROL_ABOUT,
                                     "About",
                                     p,
@@ -3217,6 +4432,9 @@ impl Render for Settings {
                                     this.clear_wifi_prompt();
                                     this.page = Page::About;
                                     w.focus(&this.controls[CONTROL_ABOUT]);
+                                    if !this.system_loaded && !this.system_loading {
+                                        this.refresh_system_info(cx);
+                                    }
                                     cx.notify();
                                 })),
                             )
@@ -3247,7 +4465,10 @@ impl Render for Settings {
                                         Page::Network => self.network_page(p, window, cx),
                                         Page::Sound => self.sound_page(p, window, cx),
                                         Page::Bluetooth => self.bluetooth_page(p, window, cx),
-                                        Page::About => self.about(p),
+                                        Page::Input => self.input_page(p, window, cx),
+                                        Page::Power => self.power_page(p, window, cx),
+                                        Page::DefaultApps => self.default_apps_page(p, window, cx),
+                                        Page::About => self.about(p, window, cx),
                                     }),
                             )
                             .when(active_error.is_some(), |d| {
@@ -3342,9 +4563,16 @@ impl Render for Settings {
                                             !self.network_loading
                                                 && !self.sound_loading
                                                 && !self.bluetooth_loading
+                                                && !self.input_loading
+                                                && !self.power_loading
+                                                && !self.defaults_loading
+                                                && !self.system_loading
                                                 && !self.network_busy
                                                 && !self.sound_busy
-                                                && !self.bluetooth_busy,
+                                                && !self.bluetooth_busy
+                                                && !self.input_busy
+                                                && !self.power_busy
+                                                && !self.defaults_busy,
                                         )
                                         .on_click(cx.listener(|this, _, w, cx| {
                                             this.reload(&Reload, w, cx)
@@ -3516,7 +4744,10 @@ mod tests {
         assert_eq!(CONTROL_NETWORK, 18);
         assert_eq!(CONTROL_SOUND, 19);
         assert_eq!(CONTROL_BLUETOOTH, 20);
-        assert_eq!(CONTROL_COUNT, 29);
+        assert_eq!(CONTROL_INPUT, 29);
+        assert_eq!(CONTROL_POWER, 30);
+        assert_eq!(CONTROL_DEFAULT_APPS, 31);
+        assert_eq!(CONTROL_COUNT, 37);
     }
 
     #[test]

@@ -154,6 +154,22 @@ pub trait Adapter: Send + Sync {
     fn configure_output(&self, _request: serde_json::Value) -> Result<()> {
         bail!("This compositor does not configure display outputs")
     }
+    /// Reads live input settings from the compositor.
+    fn input_config(&self) -> Result<serde_json::Value> {
+        bail!("This compositor does not report input settings")
+    }
+    /// Applies keyboard/pointer input settings live to the compositor.
+    fn configure_input(&self, _request: serde_json::Value) -> Result<()> {
+        bail!("This compositor does not configure input settings")
+    }
+    /// Reads live idle lock/suspend timeouts from the compositor.
+    fn power_config(&self) -> Result<serde_json::Value> {
+        bail!("This compositor does not report power settings")
+    }
+    /// Applies idle lock/suspend timeouts live to the compositor.
+    fn configure_power(&self, _request: serde_json::Value) -> Result<()> {
+        bail!("This compositor does not configure power settings")
+    }
 }
 
 /// Where the compositor's events go: the shell's own event channel.
@@ -616,6 +632,22 @@ impl Adapter for Compositor {
         self.request(request).map(drop)
     }
 
+    fn input_config(&self) -> Result<serde_json::Value> {
+        self.request(serde_json::json!({ "op": "input_config" }))
+    }
+
+    fn configure_input(&self, request: serde_json::Value) -> Result<()> {
+        self.request(request).map(drop)
+    }
+
+    fn power_config(&self) -> Result<serde_json::Value> {
+        self.request(serde_json::json!({ "op": "power_config" }))
+    }
+
+    fn configure_power(&self, request: serde_json::Value) -> Result<()> {
+        self.request(request).map(drop)
+    }
+
     fn pump(&self) {
         let Ok(mut guard) = self.channel.lock() else {
             return;
@@ -1049,8 +1081,8 @@ fn same_user(stream: &UnixStream) -> bool {
     peer_uid(stream) == Some(uid)
 }
 
-/// Validates and handles one JSON request on the display-settings bridge.
-/// Only `outputs` and `configure_output` cross this boundary; window,
+/// Validates and handles one JSON request on the settings bridge.
+/// Only display, input, and power configuration cross this boundary; window,
 /// workspace, launcher, and lock operations are always refused.
 fn handle_display_request(line: &str, adapter: &dyn Adapter) -> serde_json::Value {
     let err = |msg: &str| serde_json::json!({ "reply": "error", "message": msg });
@@ -1095,12 +1127,143 @@ fn handle_display_request(line: &str, adapter: &dyn Adapter) -> serde_json::Valu
                 Err(e) => err(&e.to_string()),
             }
         }
-        _ => err("Only outputs and configure_output are allowed"),
+        "input_config" => {
+            if map.len() != 1 {
+                return err("input_config takes no additional fields");
+            }
+            match adapter.input_config() {
+                Ok(reply) => reply,
+                Err(e) => err(&e.to_string()),
+            }
+        }
+        "configure_input" => {
+            const ALLOWED: &[&str] = &[
+                "op",
+                "layout",
+                "repeat_rate",
+                "repeat_delay",
+                "pointer_speed",
+                "natural_scroll",
+            ];
+            if let Some(extra) = map.keys().find(|k| !ALLOWED.contains(&k.as_str())) {
+                return err(&format!("configure_input takes no field {extra:?}"));
+            }
+            let mut clean = serde_json::Map::new();
+            clean.insert("op".into(), serde_json::Value::String("configure_input".into()));
+            if let Some(val) = map.get("layout") {
+                let Some(s) = val.as_str().filter(|s| !s.is_empty() && s.len() <= 32) else {
+                    return err("layout must be a non-empty layout name");
+                };
+                clean.insert("layout".into(), serde_json::Value::String(s.into()));
+            }
+            for field in ["repeat_rate", "repeat_delay", "pointer_speed"] {
+                if let Some(val) = map.get(field) {
+                    let Some(n) = val.as_i64() else {
+                        return err(&format!("{field} must be a whole number"));
+                    };
+                    clean.insert(field.into(), serde_json::Value::Number(n.into()));
+                }
+            }
+            if let Some(val) = map.get("natural_scroll") {
+                let Some(b) = val.as_bool() else {
+                    return err("natural_scroll must be a boolean");
+                };
+                clean.insert("natural_scroll".into(), serde_json::Value::Bool(b));
+            }
+            match adapter.configure_input(serde_json::Value::Object(clean)) {
+                Ok(()) => serde_json::json!({ "reply": "ok" }),
+                Err(e) => err(&e.to_string()),
+            }
+        }
+        "power_config" => {
+            if map.len() != 1 {
+                return err("power_config takes no additional fields");
+            }
+            match adapter.power_config() {
+                Ok(reply) => reply,
+                Err(e) => err(&e.to_string()),
+            }
+        }
+        "configure_power" => {
+            const ALLOWED: &[&str] = &["op", "lock_after_secs", "suspend_after_secs"];
+            if let Some(extra) = map.keys().find(|k| !ALLOWED.contains(&k.as_str())) {
+                return err(&format!("configure_power takes no field {extra:?}"));
+            }
+            let mut clean = serde_json::Map::new();
+            clean.insert("op".into(), serde_json::Value::String("configure_power".into()));
+            for field in ["lock_after_secs", "suspend_after_secs"] {
+                if let Some(val) = map.get(field) {
+                    let Some(n) = val.as_u64() else {
+                        return err(&format!("{field} must be a non-negative integer"));
+                    };
+                    clean.insert(field.into(), serde_json::Value::Number(n.into()));
+                }
+            }
+            match adapter.configure_power(serde_json::Value::Object(clean)) {
+                Ok(()) => serde_json::json!({ "reply": "ok" }),
+                Err(e) => err(&e.to_string()),
+            }
+        }
+        _ => err("Only display, input, and power configuration ops are allowed"),
+    }
+}
+
+/// Restores a schema-1 preference through the same validation as a live
+/// settings request. The file cannot choose an operation or omit fields.
+fn restore_preference(kind: &str, saved: serde_json::Value, adapter: &dyn Adapter) -> Result<()> {
+    if saved.is_null() {
+        return Ok(());
+    }
+    let (op, fields): (&str, &[&str]) = match kind {
+        "input" => ("configure_input", &["layout", "repeat_rate", "repeat_delay", "pointer_speed", "natural_scroll"]),
+        "power" => ("configure_power", &["lock_after_secs", "suspend_after_secs"]),
+        _ => bail!("Unknown preference kind"),
+    };
+    let mut request = saved.as_object().context("Preferences must be an object")?.clone();
+    if request.remove("schema_version") != Some(serde_json::json!(1))
+        || request.len() != fields.len()
+        || fields.iter().any(|field| !request.contains_key(*field))
+    {
+        bail!("Invalid or unsupported saved {kind} preferences");
+    }
+    request.insert("op".into(), serde_json::json!(op));
+    let reply = handle_display_request(&serde_json::to_string(&request)?, adapter);
+    if reply["reply"] != "ok" {
+        bail!("Saved {kind} preferences were rejected");
+    }
+    Ok(())
+}
+
+/// The launcher reads the person's private files; the shell alone applies
+/// them to Fulcrum. This runs before accepting live settings changes, each
+/// time the shell starts (including after the compositor restarts).
+fn restore_saved_preferences() {
+    if std::env::var_os("CROWBAR_LAUNCH_SOCKET").is_none() {
+        return;
+    }
+    for kind in ["input", "power"] {
+        // runit starts the launcher and shell independently. Allow the
+        // launcher time to bind, without blocking the shell's interface.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let reply = loop {
+            match launcher_request(serde_json::json!({"op": format!("{kind}_preferences")})) {
+                Ok(reply) => break Ok(reply),
+                Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
+                Err(error) => break Err(error),
+            }
+        };
+        let result = reply.and_then(|reply| {
+            restore_preference(kind, reply["preferences"].clone(), connection()?)
+        });
+        match result {
+            Ok(()) => log::info!("SHELL preferences restored kind={kind}"),
+            Err(error) => log::warn!("Could not restore {kind} preferences: {error}"),
+        }
     }
 }
 
 /// Exposes a strictly bounded Unix socket (`CROWBAR_DISPLAY_SOCKET`) that lets
-/// Studio Settings inspect and configure displays via Fulcrum without giving
+/// Studio Settings inspect and configure settings via Fulcrum without giving
 /// any app access to the shell's control channel.
 pub fn start_display_bridge() {
     let Some(path) = std::env::var_os("CROWBAR_DISPLAY_SOCKET").map(PathBuf::from) else {
@@ -1124,6 +1287,7 @@ pub fn start_display_bridge() {
     }
     log::info!("SHELL display-bridge listening={}", path.display());
     std::thread::spawn(move || {
+        restore_saved_preferences();
         for stream in listener.incoming().flatten() {
             let Some(uid) = peer_uid(&stream) else {
                 continue;
@@ -1246,6 +1410,39 @@ mod tests {
             }
         });
         (Compositor::new(ours).unwrap(), peer)
+    }
+
+    #[test]
+    fn saved_input_and_power_are_restored_through_the_bounded_bridge() {
+        let (adapter, peer) = scripted(vec![
+            (r#"{"op":"configure_input","layout":"gb","repeat_rate":40,"repeat_delay":300,"pointer_speed":4,"natural_scroll":true}"#,
+             &[r#"{"reply":"ok"}"#]),
+            (r#"{"op":"configure_power","lock_after_secs":600,"suspend_after_secs":1800}"#,
+             &[r#"{"reply":"ok"}"#]),
+        ]);
+        restore_preference("input", serde_json::json!({
+            "schema_version": 1, "layout": "gb", "repeat_rate": 40,
+            "repeat_delay": 300, "pointer_speed": 4, "natural_scroll": true,
+        }), &adapter).unwrap();
+        restore_preference("power", serde_json::json!({
+            "schema_version": 1, "lock_after_secs": 600, "suspend_after_secs": 1800,
+        }), &adapter).unwrap();
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn saved_preferences_cannot_choose_ops_or_skip_validation() {
+        let (adapter, peer) = scripted(vec![]);
+        restore_preference("input", serde_json::Value::Null, &adapter).unwrap();
+        for saved in [
+            serde_json::json!({"schema_version": 2, "lock_after_secs": 600, "suspend_after_secs": 1800}),
+            serde_json::json!({"schema_version": 1, "lock_after_secs": 600}),
+            serde_json::json!({"schema_version": 1, "lock_after_secs": 600, "suspend_after_secs": 1800, "op": "unlock"}),
+            serde_json::json!({"schema_version": 1, "lock_after_secs": "600", "suspend_after_secs": 1800}),
+        ] {
+            assert!(restore_preference("power", saved, &adapter).is_err());
+        }
+        peer.join().unwrap();
     }
 
     /// The first thing the shell sends is the version, and each message
@@ -1834,10 +2031,26 @@ mod tests {
             r#""width":1280,"height":960,"refresh":60000,"x":0,"y":0,"scale":120,"#,
             r#""modes":[{"width":1280,"height":960,"refresh":60000}]}]}"#,
         )];
+        const INPUT_CFG: &[&str] = &[
+            r#"{"reply":"input_config","layout":"us","repeat_rate":25,"repeat_delay":200,"pointer_speed":0,"natural_scroll":false}"#,
+        ];
+        const POWER_CFG: &[&str] = &[
+            r#"{"reply":"power_config","lock_after_secs":300,"suspend_after_secs":0}"#,
+        ];
         let (compositor, peer) = scripted(vec![
             (r#"{"op":"outputs"}"#, OUTPUTS),
             (
                 r#"{"name":"Virtual-1","op":"configure_output","scale":150}"#,
+                &[r#"{"reply":"ok"}"#],
+            ),
+            (r#"{"op":"input_config"}"#, INPUT_CFG),
+            (
+                r#"{"layout":"gb","natural_scroll":true,"op":"configure_input","pointer_speed":4,"repeat_delay":300,"repeat_rate":35}"#,
+                &[r#"{"reply":"ok"}"#],
+            ),
+            (r#"{"op":"power_config"}"#, POWER_CFG),
+            (
+                r#"{"lock_after_secs":600,"op":"configure_power","suspend_after_secs":1800}"#,
                 &[r#"{"reply":"ok"}"#],
             ),
         ]);
@@ -1852,6 +2065,26 @@ mod tests {
         );
         assert_eq!(configured["reply"], "ok");
 
+        let input = handle_display_request(r#"{"op":"input_config"}"#, &compositor);
+        assert_eq!(input["reply"], "input_config");
+        assert_eq!(input["layout"], "us");
+
+        let set_input = handle_display_request(
+            r#"{"op":"configure_input","layout":"gb","repeat_rate":35,"repeat_delay":300,"pointer_speed":4,"natural_scroll":true}"#,
+            &compositor,
+        );
+        assert_eq!(set_input["reply"], "ok");
+
+        let power = handle_display_request(r#"{"op":"power_config"}"#, &compositor);
+        assert_eq!(power["reply"], "power_config");
+        assert_eq!(power["lock_after_secs"], 300);
+
+        let set_power = handle_display_request(
+            r#"{"op":"configure_power","lock_after_secs":600,"suspend_after_secs":1800}"#,
+            &compositor,
+        );
+        assert_eq!(set_power["reply"], "ok");
+
         for disallowed in [
             r#"{"op":"snapshot"}"#,
             r#"{"op":"lock"}"#,
@@ -1859,9 +2092,16 @@ mod tests {
             r#"{"op":"focus_workspace","id":2}"#,
             r#"{"op":"focus_window","id":"0x1"}"#,
             r#"{"op":"outputs","extra":1}"#,
+            r#"{"op":"input_config","extra":1}"#,
+            r#"{"op":"power_config","extra":1}"#,
             r#"{"op":"configure_output","name":"Virtual-1","evil":true}"#,
             r#"{"op":"configure_output","name":"","scale":120}"#,
             r#"{"op":"configure_output","name":"Virtual-1","scale":"120"}"#,
+            r#"{"op":"configure_input","evil":true}"#,
+            r#"{"op":"configure_input","layout":""}"#,
+            r#"{"op":"configure_input","natural_scroll":"yes"}"#,
+            r#"{"op":"configure_power","evil":true}"#,
+            r#"{"op":"configure_power","lock_after_secs":-5}"#,
         ] {
             let reply = handle_display_request(disallowed, &compositor);
             assert_eq!(reply["reply"], "error", "expected refusal for {disallowed}");

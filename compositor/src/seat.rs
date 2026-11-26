@@ -63,8 +63,40 @@ const KEY_MICMUTE: u32 = 248;
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 
+/// Runtime-configurable input preferences applied without restarting Fulcrum.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InputConfig {
+    pub layout: String,
+    pub repeat_rate: i32,
+    pub repeat_delay: i32,
+    pub pointer_speed: i32,
+    pub natural_scroll: bool,
+}
+
+impl Default for InputConfig {
+    fn default() -> Self {
+        Self {
+            layout: "us".into(),
+            repeat_rate: REPEAT.0,
+            repeat_delay: REPEAT.1,
+            pointer_speed: 0,
+            natural_scroll: false,
+        }
+    }
+}
+
+pub(crate) fn pointer_speed_multiplier(speed: i32) -> f64 {
+    let clamped = speed.clamp(-10, 10) as f64;
+    if clamped >= 0.0 {
+        1.0 + clamped * 0.1
+    } else {
+        1.0 + clamped * 0.06
+    }
+}
+
 pub(crate) struct Seat {
     keyboard: Option<Keyboard>,
+    pub input: InputConfig,
     pub keyboard_focus: Option<SurfaceId>,
     /// The desktop's focus underneath a lock screen or an exclusive layer.
     pub desktop_keyboard_focus: Option<SurfaceId>,
@@ -97,6 +129,7 @@ impl Seat {
         };
         Seat {
             keyboard,
+            input: InputConfig::default(),
             keyboard_focus: None,
             desktop_keyboard_focus: None,
             pointer_focus: None,
@@ -179,8 +212,8 @@ impl State {
                     client.send(
                         id.0,
                         wl_keyboard::Event::RepeatInfo {
-                            rate: REPEAT.0,
-                            delay: REPEAT.1,
+                            rate: self.seat.input.repeat_rate,
+                            delay: self.seat.input.repeat_delay,
                         },
                     );
                 }
@@ -626,7 +659,65 @@ impl State {
 
     /// Moves the pointer by a distance, as a mouse does.
     pub fn pointer_moved_by(&mut self, dx: f64, dy: f64, time: u32) {
-        self.pointer_moved_at(self.pointer.0 + dx, self.pointer.1 + dy, time);
+        let scale = pointer_speed_multiplier(self.seat.input.pointer_speed);
+        self.pointer_moved_at(self.pointer.0 + dx * scale, self.pointer.1 + dy * scale, time);
+    }
+
+    /// Applies updated keyboard/pointer input settings live to all clients.
+    pub(crate) fn apply_input_config(&mut self, next: InputConfig) -> Result<(), String> {
+        let layout_changed = next.layout != self.seat.input.layout;
+        let repeat_changed =
+            next.repeat_rate != self.seat.input.repeat_rate || next.repeat_delay != self.seat.input.repeat_delay;
+        if layout_changed {
+            let names = KeymapNames {
+                layout: next.layout.clone(),
+                ..Default::default()
+            };
+            let keyboard =
+                Keyboard::new(&names).map_err(|e| format!("invalid keyboard layout {:?}: {e}", next.layout))?;
+            self.seat.keyboard = Some(keyboard);
+        }
+        self.seat.input = next;
+
+        if layout_changed || repeat_changed {
+            let client_ids: Vec<ClientId> = self.clients.keys().copied().collect();
+            for client_id in client_ids {
+                let keyboards = self.objects_of(client_id, true);
+                for kbd in keyboards {
+                    let version = self
+                        .clients
+                        .get(&client_id)
+                        .and_then(|c| c.objects.get(&kbd))
+                        .map_or(1, |o| o.version);
+                    if layout_changed
+                        && let Some((file, size)) = self.seat.keyboard.as_ref().and_then(|k| k.keymap().ok())
+                        && let Some(client) = self.clients.get_mut(&client_id)
+                    {
+                        client.send(
+                            kbd,
+                            wl_keyboard::Event::Keymap {
+                                format: wl_keyboard::keymap_format::XKB_V1,
+                                fd: file,
+                                size,
+                            },
+                        );
+                    }
+                    if repeat_changed
+                        && version >= 4
+                        && let Some(client) = self.clients.get_mut(&client_id)
+                    {
+                        client.send(
+                            kbd,
+                            wl_keyboard::Event::RepeatInfo {
+                                rate: self.seat.input.repeat_rate,
+                                delay: self.seat.input.repeat_delay,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn clamp_to_outputs(&self, x: f64, y: f64) -> (f64, f64) {
@@ -797,9 +888,10 @@ impl State {
         let Some((surface, _)) = self.seat.pointer_focus else {
             return;
         };
+        let sign = if self.seat.input.natural_scroll { -1.0 } else { 1.0 };
         for (axis, value) in [
-            (wl_pointer::axis::HORIZONTAL_SCROLL, horizontal),
-            (wl_pointer::axis::VERTICAL_SCROLL, vertical),
+            (wl_pointer::axis::HORIZONTAL_SCROLL, horizontal * sign),
+            (wl_pointer::axis::VERTICAL_SCROLL, vertical * sign),
         ] {
             if value != 0.0 {
                 self.send_pointer(surface, |_, _| wl_pointer::Event::Axis {
@@ -975,5 +1067,21 @@ mod media_key_tests {
         assert_eq!(media_key_event(KEY_BRIGHTNESSUP), Some("brightness_up"));
         assert_eq!(media_key_event(KEY_BRIGHTNESSDOWN), Some("brightness_down"));
         assert_eq!(media_key_event(KEY_SPACE), None);
+    }
+
+    #[test]
+    fn input_config_defaults_and_pointer_speed_multiplier_stay_bounded() {
+        let cfg = InputConfig::default();
+        assert_eq!(cfg.layout, "us");
+        assert_eq!(cfg.repeat_rate, 25);
+        assert_eq!(cfg.repeat_delay, 200);
+        assert_eq!(cfg.pointer_speed, 0);
+        assert!(!cfg.natural_scroll);
+        assert!((pointer_speed_multiplier(0) - 1.0).abs() < f64::EPSILON);
+        assert!(pointer_speed_multiplier(-10) >= 0.4);
+        assert!(pointer_speed_multiplier(-100) >= 0.4);
+        assert!(pointer_speed_multiplier(10) <= 2.2);
+        assert!(pointer_speed_multiplier(100) <= 2.2);
+        assert!(pointer_speed_multiplier(5) > pointer_speed_multiplier(-5));
     }
 }
