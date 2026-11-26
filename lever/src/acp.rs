@@ -1200,8 +1200,17 @@ impl AcpHarness {
             let _ = self.on_writable();
             return;
         };
-        if let Some(ref child_sid) = harness_subagent_id {
-            self.register_child(&thread_id, child_sid, subagent_title.as_deref());
+        // A request in the name of a session that is not this thread's
+        // subagent is nobody's to answer here.
+        if let Some(ref child_sid) = harness_subagent_id
+            && !self.register_child(&thread_id, child_sid, subagent_title.as_deref())
+        {
+            self.send_result_response(
+                rpc_id,
+                RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
+            );
+            let _ = self.on_writable();
+            return;
         }
         let mut options = Vec::new();
         let mut answers = Vec::new();
@@ -1757,9 +1766,11 @@ impl AcpHarness {
         }
     }
 
-    fn register_child(&mut self, thread_id: &str, child_sid: &str, title: Option<&str>) {
-        // A thread's own session is never a subagent, nor is another
-        // thread's subagent this thread's.
+    /// Makes `child_sid` a subagent of `thread_id`. Says no, and makes it
+    /// nothing, when it is a thread's own session or another thread's
+    /// subagent: what it says is then not this thread's.
+    #[must_use]
+    fn register_child(&mut self, thread_id: &str, child_sid: &str, title: Option<&str>) -> bool {
         if child_sid.is_empty()
             || self.session_to_thread.contains_key(child_sid)
             || self
@@ -1767,7 +1778,7 @@ impl AcpHarness {
                 .get(child_sid)
                 .is_some_and(|owner| owner != thread_id)
         {
-            return;
+            return false;
         }
         self.thread_subagent_ids
             .entry(thread_id.to_string())
@@ -1778,6 +1789,7 @@ impl AcpHarness {
         if let Some(clean) = title.map(str::trim).filter(|s| !s.is_empty()) {
             self.child_titles.insert(child_sid.to_string(), clean.to_string());
         }
+        true
     }
 
     /// Takes a tool call that may be OpenCode's subagent launcher, made by
@@ -1939,7 +1951,9 @@ impl AcpHarness {
             .map(str::to_string);
         let had_child = self.child_to_thread.contains_key(&cid);
         let title_changed = title.is_some() && self.child_titles.get(&cid) != title.as_ref();
-        self.register_child(thread_id, &cid, title.as_deref());
+        if !self.register_child(thread_id, &cid, title.as_deref()) {
+            return false;
+        }
         let state = end
             .map(str::to_string)
             .or_else(|| (!had_child).then(|| "working".to_string()));
@@ -2007,7 +2021,9 @@ impl AcpHarness {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty());
-        self.register_child(&thread_id, child_sid, title);
+        if !self.register_child(&thread_id, child_sid, title) {
+            return;
+        }
         let effective_title = title
             .map(str::to_string)
             .or_else(|| self.child_titles.get(child_sid).cloned());
@@ -2063,7 +2079,9 @@ impl AcpHarness {
         raw_update: &Value,
         events: &mut Vec<AcpEvent>,
     ) {
-        self.register_child(thread_id, child_sid, known_title);
+        if !self.register_child(thread_id, child_sid, known_title) {
+            return;
+        }
         let child_title = known_title
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -2290,7 +2308,9 @@ impl AcpHarness {
                         _ => None,
                     },
                 };
-                self.register_child(&thread_id, &child_sid, title.as_deref());
+                if !self.register_child(&thread_id, &child_sid, title.as_deref()) {
+                    return;
+                }
                 let (state, error) = match sub.state {
                     MaybeUndefined::Value(StateUpdate::Running(_) | StateUpdate::RequiresAction(_)) => {
                         (Some("working".to_string()), None)

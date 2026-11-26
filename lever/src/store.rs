@@ -643,6 +643,12 @@ impl Store {
     /// harness went quiet, work again, when it is the thread's newest. Says
     /// whether it did.
     pub fn reopen_harness_turn(&self, thread_id: &str, turn_number: u64, now: i64) -> Result<bool, String> {
+        self.all_or_none("reopen the turn", || {
+            self.reopen_harness_turn_unguarded(thread_id, turn_number, now)
+        })
+    }
+
+    fn reopen_harness_turn_unguarded(&self, thread_id: &str, turn_number: u64, now: i64) -> Result<bool, String> {
         let changed = self
             .conn
             .execute(

@@ -360,10 +360,41 @@ impl Service {
             .map(|active| active.turn)
     }
 
+    /// The turn the harness began on a thread, when a message may take it
+    /// over: not one the person asked to stop, whose Stop must go through.
+    fn harness_turn_to_take_over(&self, thread_id: &str) -> Option<u64> {
+        self.harness_turn(thread_id).filter(|_| {
+            self.working_turns
+                .get(thread_id)
+                .is_some_and(|t| t.stop_asked.is_none())
+        })
+    }
+
+    /// Something that held a turn the harness began has let it go: a
+    /// subagent or a request of its thread ended. The quiet it waits for
+    /// counts from now, so the harness has time to answer.
+    fn heard_from(&mut self, thread_id: &str) {
+        if let Some(active) = self.working_turns.get_mut(thread_id)
+            && let TurnDispatch::HarnessStarted { last_heard, .. } = &mut active.dispatch
+        {
+            *last_heard = Instant::now();
+        }
+    }
+
     /// Ends a turn the harness began as done: it went quiet, or the person's
     /// message takes it over.
     fn end_harness_turn(&mut self, thread_id: &str, turn: u64, log: &mut Log) -> Broadcast {
-        self.working_turns.remove(thread_id);
+        let unsaved = self
+            .working_turns
+            .remove(thread_id)
+            .is_some_and(|active| active.unsaved);
+        if unsaved {
+            self.end_turn(thread_id, turn, "failed", Some(UNSAVED_MESSAGE), log);
+            return Broadcast {
+                thread_id: thread_id.to_string(),
+                message: json!({ "event": "failed", "thread": thread_id, "turn": turn, "message": UNSAVED_MESSAGE }),
+            };
+        }
         self.end_turn(thread_id, turn, "done", None, log);
         Broadcast {
             thread_id: thread_id.to_string(),
@@ -529,6 +560,36 @@ impl Service {
         sys::reap_orphans(self.harness.as_ref().map(AcpHarness::pid));
         self.save_endings();
         let mut effects = Effects::default();
+        // A turn the harness began that it has said nothing in since the
+        // person stopped it, with nothing of it still working, has stopped:
+        // the harness need not be.
+        let mut stopped_quiet: Vec<(String, u64)> = self
+            .working_turns
+            .iter()
+            .filter(|(tid, t)| {
+                let TurnDispatch::HarnessStarted {
+                    last_heard, open_acts, ..
+                } = &t.dispatch
+                else {
+                    return false;
+                };
+                t.stop_asked
+                    .is_some_and(|asked| asked.elapsed() >= self.stop_timeout && *last_heard <= asked)
+                    && open_acts.is_empty()
+                    && !self.waiting.values().any(|w| &w.thread_id == *tid)
+                    && !self.working_subagents.values().any(|s| &s.thread_id == *tid)
+            })
+            .map(|(tid, t)| (tid.clone(), t.turn))
+            .collect();
+        stopped_quiet.sort();
+        for (thread_id, turn) in stopped_quiet {
+            self.working_turns.remove(&thread_id);
+            self.end_turn(&thread_id, turn, "stopped", None, log);
+            effects.broadcasts.push(Broadcast {
+                thread_id: thread_id.clone(),
+                message: json!({ "event": "stopped", "thread": thread_id, "turn": turn }),
+            });
+        }
         let overdue = self
             .working_turns
             .iter()
@@ -1544,7 +1605,7 @@ impl Service {
         let title = initial_title(text);
         // A turn the harness began itself is taken over by the person's
         // message: the harness takes the message into the work it is doing.
-        let woken = requested_thread.and_then(|tid| self.harness_turn(tid));
+        let woken = requested_thread.and_then(|tid| self.harness_turn_to_take_over(tid));
         let mut mode_changed = false;
         let mut effort_changed = requested_effort.is_some();
         let (thread_id, cwd, existing_session_id, desired_model, desired_effort, mode, new_thread) =
@@ -1988,6 +2049,7 @@ impl Service {
         let Some(waiting) = self.waiting.remove(request_id) else {
             return Vec::new();
         };
+        self.heard_from(&waiting.thread_id);
         let (thread_id, turn, record) = match self.store.end_request(request_id, state, answer, unix_now()) {
             Ok(Some(ended)) => ended,
             Ok(None) => return Vec::new(),
@@ -2073,6 +2135,7 @@ impl Service {
         self.harness_env_stale = false;
         self.models_refresh_pending = false;
         self.idle_since = None;
+        self.subagent_threads.clear();
     }
 
     fn dispatch_turn(&mut self, thread_id: &str) {
@@ -3209,6 +3272,9 @@ impl Service {
             self.track_working_subagent(thread_id, recorded_turn, harness_subagent_id, &record, stop_asked)
         } else {
             let was_working = self.working_subagents.remove(&record.id).is_some();
+            if was_working {
+                self.heard_from(thread_id);
+            }
             broadcasts.extend(self.withdraw_requests(
                 |w| w.thread_id == thread_id && w.record.subagent.as_deref() == Some(record.id.as_str()),
                 log,
@@ -3282,6 +3348,18 @@ impl Service {
                 }
                 return effects;
             };
+            // A subagent first heard of in what it asks, after the person
+            // stopped its work, was just stopped: it asks nothing of them.
+            if self
+                .working_subagents
+                .get(&sub.id)
+                .is_some_and(|s| s.stop_asked.is_some())
+            {
+                if let Some(harness) = self.harness.as_mut() {
+                    harness.answer_permission(handle, None);
+                }
+                return effects;
+            }
             let patch = SubagentActPatch {
                 subagent_id: &sub.id,
                 thread_id,

@@ -1481,10 +1481,15 @@ impl AgentState {
         }
     }
 
-    /// The thread's mode cannot change now: a turn of the person's works, or
-    /// Lever is out of reach.
+    /// The thread's mode, Model, and effort cannot change now: a turn works,
+    /// the person's or one the harness began, or Lever is out of reach. A
+    /// subagent that works on does not hold them, as Lever does not.
     pub fn mode_locked(&self) -> bool {
-        !self.connected || self.no_harness || self.sending || self.loading || self.turn_working()
+        let turn_works = match self.turns.last() {
+            Some(turn) => matches!(turn.state, TurnState::Working),
+            None => self.thread_mark == Mark::Working,
+        };
+        !self.connected || self.no_harness || self.sending || self.loading || turn_works
     }
 
     /// A list needs what the harness offers: ask Lever for its Models and
@@ -7497,7 +7502,7 @@ mod tests {
         assert_eq!(state.turns[1].state, TurnState::Working);
         assert!(state.working(), "the thread shows working");
         assert!(state.can_send(), "the person's message takes the turn over");
-        assert!(!state.mode_locked());
+        assert!(state.mode_locked(), "Lever changes no setting while the harness's turn works");
 
         // Lever ends it when quiet, and the harness going on reopens it.
         state.apply(AgentEvent::Done { thread: "t-1".into(), turn: 2 }, true);

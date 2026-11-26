@@ -229,6 +229,7 @@ fn turn(
     model: Option<&str>,
     mode: Option<&str>,
     message: &str,
+    subagents: &mut Subagents,
 ) -> Result<Ended> {
     let mut req = json!({ "op": "send", "thread": thread, "text": message });
     if thread.is_none()
@@ -260,7 +261,6 @@ fn turn(
     let begun = text(&reply, "thread").to_string();
     // How the turn ended, though the person leaves while a request of its waits.
     let mut last = Ended::Done;
-    let mut subagents = Subagents::default();
     let ended = watch(
         lever,
         &begun,
@@ -270,7 +270,7 @@ fn turn(
             typing: Typing::Waits,
             waiting: Vec::new(),
         },
-        &mut subagents,
+        subagents,
         &mut last,
     );
     *thread = Some(begun);
@@ -446,7 +446,9 @@ fn watch(
                 }
                 stopping = true;
                 // By its number, so a stop that comes after this turn ended does not reach the one after it.
-                match turn {
+                // Once it has, what holds the watch is the thread's subagents, of
+                // whichever turn: the thread is stopped.
+                match turn.filter(|_| ended.is_none()) {
                     Some(turn) => lever.stop(thread, turn)?,
                     None => lever.send(json!({ "op": "stop", "thread": thread }))?,
                 }
@@ -760,7 +762,7 @@ pub fn once(
     // Lever says so itself when there is no such thread, so the thread's
     // record is not asked for only to be dropped.
     let mut thread = resumed.map(str::to_string);
-    turn(lever, &mut thread, model, mode, message)
+    turn(lever, &mut thread, model, mode, message, &mut Subagents::default())
 }
 
 /// Runs OpenCode's own sign-in directly in this terminal. Lever holds no
@@ -1063,7 +1065,14 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
         }
         let chosen = pending_model.take();
         let mode = pending_mode.take();
-        last = turn(lever, &mut thread, chosen.as_deref(), mode.as_deref(), &line)?;
+        last = turn(
+            lever,
+            &mut thread,
+            chosen.as_deref(),
+            mode.as_deref(),
+            &line,
+            &mut subagents,
+        )?;
     }
 }
 
