@@ -194,6 +194,8 @@ fn turn(
         });
     }
     let begun = text(&reply, "thread").to_string();
+    // How the turn ended, though the person leaves while a request of its waits.
+    let mut last = Ended::Done;
     let ended = watch(
         lever,
         &begun,
@@ -201,10 +203,10 @@ fn turn(
         Answer::new(),
         Typing::Waits,
         Vec::new(),
-        &mut Ended::Done,
+        &mut last,
     );
     *thread = Some(begun);
-    ended.map(|ended| ended.unwrap_or(Ended::Done))
+    ended.map(|ended| ended.unwrap_or(last))
 }
 
 /// Writes a turn's answer and acts as they come, until the turn ends. Ctrl-C
