@@ -116,6 +116,11 @@ pub struct Connection {
     /// for. Lever answers in the order it was asked, so they come before the
     /// reply to any request made since.
     owed: usize,
+    /// A Stop sent, until Lever replies to it: its thread and turn, and how
+    /// many replies are still to come up to and including its own. A
+    /// request of that turn that waits, and that Lever sent before it took
+    /// the Stop, is one the Stop withdraws, and is not given.
+    stopping: Option<(String, u64, usize)>,
 }
 
 /// Why there is no connection to Lever.
@@ -185,6 +190,7 @@ impl Connection {
             typing_ended: false,
             typed_ahead: false,
             owed: 0,
+            stopping: None,
         }
     }
 
@@ -230,13 +236,45 @@ impl Connection {
         loop {
             let message = self.message()?;
             if message.get("reply").is_none() {
-                self.events.push_back(message);
+                if !self.withdrawn_by_stop(&message) {
+                    self.events.push_back(message);
+                }
             } else if self.owed > 0 {
                 self.owed -= 1;
+                self.replied();
             } else {
                 return Ok(message);
             }
         }
+    }
+
+    /// Sends Stop for one turn of a thread. Until Lever replies to it, a
+    /// request of that turn that waits is one it withdraws, and is not
+    /// given: Lever sent it before it took the Stop.
+    pub fn stop(&mut self, thread: &str, turn: u64) -> Result<()> {
+        self.send(serde_json::json!({ "op": "stop", "thread": thread, "turn": turn }))?;
+        self.stopping = Some((thread.to_string(), turn, self.owed));
+        Ok(())
+    }
+
+    /// Takes note of a reply: one fewer is still to come before the Stop's.
+    fn replied(&mut self) {
+        if let Some((_, _, left)) = self.stopping.as_mut() {
+            *left -= 1;
+            if *left == 0 {
+                self.stopping = None;
+            }
+        }
+    }
+
+    /// Whether a message is a request the Stop under way withdraws.
+    fn withdrawn_by_stop(&self, message: &Value) -> bool {
+        self.stopping.as_ref().is_some_and(|(thread, turn, _)| {
+            text(message, "event") == "request"
+                && text(message, "state") == "waiting"
+                && text(message, "thread") == thread.as_str()
+                && message.get("turn").and_then(Value::as_u64) == Some(*turn)
+        })
     }
 
     /// Sends a request whose reply is not waited for here: `next` gives it
@@ -263,6 +301,9 @@ impl Connection {
             if let Some(message) = framed(&mut self.received)? {
                 if message.get("reply").is_some() {
                     self.owed = self.owed.saturating_sub(1);
+                    self.replied();
+                } else if self.withdrawn_by_stop(&message) {
+                    continue;
                 }
                 return Ok(Happening::Event(message));
             }

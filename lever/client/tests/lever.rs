@@ -1739,11 +1739,18 @@ fn ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requ
     let sock_dir = lab.directory.join("runtime/crowbar-lever");
     fs::create_dir_all(&sock_dir).unwrap();
     let listener = UnixListener::bind(sock_dir.join("person")).expect("bind a Lever of the test's");
+    // The test is told when Lever has the answer, and presses Ctrl-C then.
+    let (has_answer, answer_came) = std::sync::mpsc::channel();
     let lever = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("crowbar-agent connects");
         assert_eq!(read_framed(&mut stream), json!({ "version": 1 }));
         write_framed(&mut stream, &json!({ "version": 1 }));
         assert_eq!(read_framed(&mut stream)["op"], "resume");
+        // Another client's turn 3 began before the thread was resumed here.
+        write_framed(
+            &mut stream,
+            &json!({ "event": "message", "thread": "t-1", "turn": 3, "text": "elsewhere" }),
+        );
         let waiting = json!({ "request": "r-1", "kind": "command", "title": "make", "detail": "make", "state": "waiting",
                               "answers": [{ "answer": "once", "name": "Allow once" }] });
         write_framed(
@@ -1755,13 +1762,9 @@ fn ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requ
                             "acts": [], "requests": [waiting], "notes": [] }]
             }),
         );
-        std::thread::sleep(Duration::from_millis(300));
-        write_framed(
-            &mut stream,
-            &json!({ "event": "message", "thread": "t-1", "turn": 3, "text": "elsewhere" }),
-        );
         // The answer comes, and Ctrl-C comes before Lever confirms it.
         assert_eq!(read_framed(&mut stream)["op"], "answer");
+        has_answer.send(()).unwrap();
         let stop = read_framed(&mut stream);
         write_framed(&mut stream, &json!({ "reply": "ok" }));
         write_framed(
@@ -1787,9 +1790,10 @@ fn ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requ
     drop(agent);
     let mut shown = Vec::new();
     screen_until(&mut keys, &mut shown, "Answer [once]: ");
-    std::thread::sleep(Duration::from_millis(600));
     keys.write_all(b"once\n").unwrap();
-    std::thread::sleep(Duration::from_millis(200));
+    answer_came
+        .recv_timeout(Duration::from_secs(10))
+        .expect("Lever has the answer");
     // SAFETY: sending Ctrl-C's signal to our own child process.
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
     screen_until(&mut keys, &mut shown, "Stopped.\r\n> ");
@@ -1799,4 +1803,120 @@ fn ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requ
         lever.join().unwrap(),
         json!({ "op": "stop", "thread": "t-1", "turn": 3 })
     );
+}
+
+/// A Lever of the test's, for a thread whose turn 1 is done with request
+/// r-1 waiting, that hands each frame it reads to `serve` with the stream.
+fn lever_resumed_with_r1(
+    lab: &Lab,
+    serve: impl FnOnce(&mut UnixStream) + Send + 'static,
+) -> std::thread::JoinHandle<()> {
+    use std::os::unix::net::UnixListener;
+    let sock_dir = lab.directory.join("runtime/crowbar-lever");
+    fs::create_dir_all(&sock_dir).unwrap();
+    let listener = UnixListener::bind(sock_dir.join("person")).expect("bind a Lever of the test's");
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("crowbar-agent connects");
+        assert_eq!(read_framed(&mut stream), json!({ "version": 1 }));
+        write_framed(&mut stream, &json!({ "version": 1 }));
+        assert_eq!(read_framed(&mut stream)["op"], "resume");
+        let waiting = json!({ "request": "r-1", "kind": "command", "title": "make", "detail": "make r-1",
+                              "state": "waiting", "answers": [{ "answer": "once", "name": "Allow once" }] });
+        write_framed(
+            &mut stream,
+            &json!({
+                "reply": "resumed", "thread": "t-1", "title": "Build", "cwd": "/tmp",
+                "started": 1, "updated": 2, "working": false, "mode": "ask-first",
+                "turns": [{ "turn": 1, "message": "m", "answer": "", "state": "done",
+                            "acts": [], "requests": [waiting], "notes": [] }]
+            }),
+        );
+        serve(&mut stream);
+        let mut rest = Vec::new();
+        let _ = stream.read_to_end(&mut rest);
+    })
+}
+
+fn request_event(id: &str, turn: u64, state: &str) -> Value {
+    json!({ "event": "request", "thread": "t-1", "turn": turn, "request": id, "kind": "command",
+            "title": id, "detail": format!("make {id}"), "state": state,
+            "answers": [{ "answer": "once", "name": "Allow once" }] })
+}
+
+#[test]
+fn a_request_on_its_way_when_ctrl_c_returns_to_the_prompt_is_not_asked_for_there() {
+    let lab = Lab::empty();
+    let lever = lever_resumed_with_r1(&lab, |stream| {
+        assert_eq!(read_framed(stream), json!({ "op": "stop", "thread": "t-1", "turn": 1 }));
+        // r-2 of turn 1 was sent before Lever took the Stop.
+        write_framed(stream, &request_event("r-2", 1, "waiting"));
+        write_framed(stream, &json!({ "reply": "ok" }));
+        write_framed(stream, &request_event("r-1", 1, "withdrawn"));
+        write_framed(stream, &request_event("r-2", 1, "withdrawn"));
+    });
+    let (mut keys, screen) = terminal();
+    let mut agent = lab.agent(&["--resume", "t-1"]);
+    agent
+        .stdin(screen.try_clone().unwrap())
+        .stdout(Stdio::null())
+        .stderr(screen);
+    let mut child = agent.spawn().expect("crowbar-agent runs");
+    drop(agent);
+    let mut shown = Vec::new();
+    screen_until(&mut keys, &mut shown, "Answer [once]: ");
+    // SAFETY: sending Ctrl-C's signal to our own child process.
+    unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
+    screen_until(&mut keys, &mut shown, "[request] withdrawn");
+    screen_until(&mut keys, &mut shown, "[request] withdrawn\r\n[request] withdrawn");
+    let screen = String::from_utf8_lossy(&shown).into_owned();
+    assert!(
+        !screen.contains("make r-2"),
+        "r-2 is withdrawn, not asked for: {screen}"
+    );
+    keys.write_all(&[4]).unwrap();
+    assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
+    lever.join().unwrap();
+}
+
+#[test]
+fn a_request_lever_takes_after_it_took_a_stop_is_asked_for() {
+    let lab = Lab::empty();
+    let lever = lever_resumed_with_r1(&lab, |stream| {
+        // Another client's turn 3 begins before r-1 is asked for.
+        write_framed(
+            stream,
+            &json!({ "event": "message", "thread": "t-1", "turn": 3, "text": "elsewhere" }),
+        );
+        assert_eq!(read_framed(stream), json!({ "op": "stop", "thread": "t-1", "turn": 1 }));
+        write_framed(stream, &json!({ "reply": "ok" }));
+        write_framed(stream, &request_event("r-1", 1, "withdrawn"));
+        // After the Stop, turn 1 asks again: this one waits.
+        write_framed(stream, &request_event("r-4", 1, "waiting"));
+        assert_eq!(read_framed(stream)["request"], "r-4");
+        write_framed(stream, &json!({ "reply": "ok" }));
+        let mut answered = request_event("r-4", 1, "answered");
+        answered["answer"] = json!("once");
+        write_framed(stream, &answered);
+        write_framed(stream, &json!({ "event": "done", "thread": "t-1", "turn": 3 }));
+    });
+    let (mut keys, screen) = terminal();
+    let mut agent = lab.agent(&["--resume", "t-1"]);
+    agent
+        .stdin(screen.try_clone().unwrap())
+        .stdout(Stdio::null())
+        .stderr(screen);
+    let mut child = agent.spawn().expect("crowbar-agent runs");
+    drop(agent);
+    let mut shown = Vec::new();
+    screen_until(&mut keys, &mut shown, "[request] Run: make r-1\r\nAnswer [once]: ");
+    // SAFETY: sending Ctrl-C's signal to our own child process.
+    unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
+    screen_until(&mut keys, &mut shown, "[request] Run: make r-4\r\nAnswer [once]: ");
+    keys.write_all(b"once\n").unwrap();
+    screen_until(&mut keys, &mut shown, "[request] answered: once");
+    shown.clear();
+    screen_until(&mut keys, &mut shown, "> ");
+    keys.write_all(&[4]).unwrap();
+    assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
+    lever.join().unwrap();
 }
