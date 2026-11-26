@@ -279,13 +279,21 @@ fn watch(
                 }
                 if only_requests {
                     // The request asked for is turned down, by stopping its own turn, or
-                    // else the turn followed is stopped. What else waits says how to
-                    // answer it, and the prompt comes back: it takes what comes next.
-                    let request_turn = taken.as_ref().and_then(|r| r.get("turn")).and_then(Value::as_u64);
-                    let stopped = request_turn.or(turn.filter(|_| ended.is_none()));
+                    // else the turn followed is stopped. What else waits, and is not of
+                    // the turn stopped, says how to answer it, and is asked for no more.
+                    let turn_of = |r: &Value| r.get("turn").and_then(Value::as_u64);
+                    let running = turn.filter(|_| ended.is_none());
+                    let stopped = taken.as_ref().and_then(turn_of).or(running);
                     lever.send(json!({ "op": "stop", "thread": thread, "turn": stopped }))?;
-                    for request in queued.drain(..) {
+                    for request in queued.drain(..).filter(|r| turn_of(r) != stopped) {
                         show_request(&mut answer, &request, thread, false)?;
+                    }
+                    open.clear();
+                    taken = None;
+                    // A turn followed that goes on is followed to its end, which
+                    // brings the prompt back; otherwise the prompt comes back now.
+                    if running.is_some() && running != stopped {
+                        continue;
                     }
                     answer.end()?;
                     return Ok(Some(ended.unwrap_or(*last)));

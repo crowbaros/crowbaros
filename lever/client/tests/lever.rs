@@ -1489,6 +1489,8 @@ fn ctrl_c_turns_down_the_request_asked_by_stopping_its_turn_and_says_how_to_answ
                 "turns": [turn(1, "r-1"), turn(2, "r-2")]
             }),
         );
+        // Turn 1 asked twice; r-1b waits behind r-2.
+        write_framed(&mut stream, &request("r-1b", 1, "waiting"));
         // Another client begins turn 3 while r-1 is asked for.
         std::thread::sleep(Duration::from_millis(300));
         write_framed(
@@ -1498,6 +1500,16 @@ fn ctrl_c_turns_down_the_request_asked_by_stopping_its_turn_and_says_how_to_answ
         let stop = read_framed(&mut stream);
         write_framed(&mut stream, &json!({ "reply": "ok" }));
         write_framed(&mut stream, &request("r-1", 1, "withdrawn"));
+        write_framed(&mut stream, &request("r-1b", 1, "withdrawn"));
+        // Turn 3 goes on after the Ctrl-C, and fails.
+        write_framed(
+            &mut stream,
+            &json!({ "event": "text", "thread": "t-1", "turn": 3, "text": "Three." }),
+        );
+        write_framed(
+            &mut stream,
+            &json!({ "event": "failed", "thread": "t-1", "turn": 3, "message": "No more." }),
+        );
         let mut rest = Vec::new();
         let _ = stream.read_to_end(&mut rest);
         stop
@@ -1507,7 +1519,7 @@ fn ctrl_c_turns_down_the_request_asked_by_stopping_its_turn_and_says_how_to_answ
     let mut agent = lab.agent(&["--resume", "t-1"]);
     agent
         .stdin(screen.try_clone().expect("the terminal again"))
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(screen);
     let mut child = agent.spawn().expect("crowbar-agent runs");
     drop(agent);
@@ -1516,15 +1528,28 @@ fn ctrl_c_turns_down_the_request_asked_by_stopping_its_turn_and_says_how_to_answ
     std::thread::sleep(Duration::from_millis(600));
     // SAFETY: sending Ctrl-C's signal to our own child process.
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
-    // The other request says how to answer it, and the prompt comes back.
+    // The other turn's request says how to answer it; turn 3 is followed
+    // to its end, and then the prompt comes back.
     screen_until(
         &mut keys,
         &mut shown,
-        "Answer with: crowbar-agent --resume t-1 --answer r-2 <once|no>\r\n> ",
+        "Answer with: crowbar-agent --resume t-1 --answer r-2 <once|no>",
     );
-    screen_until(&mut keys, &mut shown, "[request] withdrawn");
+    screen_until(&mut keys, &mut shown, "The Agent gave no answer: No more.\r\n> ");
+    let screen = String::from_utf8_lossy(&shown).into_owned();
+    assert!(
+        !screen.contains("--answer r-1b"),
+        "the Stop withdraws r-1b too: {screen}"
+    );
     keys.write_all(&[4]).unwrap();
-    assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
+    let mut out = String::new();
+    child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
+    assert_eq!(
+        child.wait().expect("crowbar-agent ends").code(),
+        Some(1),
+        "turn 3 failed"
+    );
+    assert!(out.contains("Three."), "{out:?}");
     assert_eq!(
         lever.join().unwrap(),
         json!({ "op": "stop", "thread": "t-1", "turn": 1 })
