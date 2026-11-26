@@ -6560,7 +6560,7 @@ mod tests {
                 assert_eq!(read_frame(&mut peer).unwrap()["op"], "status");
             }
             peer.write_all(&encode_frame(&serde_json::json!({"reply":"resumed","thread":"t-drawer","title":"kept","cwd":"/tmp","working":true,
-                "turns":[{"turn":1,"message":"first","answer":"still ","state":"working","acts":[],"notes":[]}]}))).unwrap();
+                "model":"stub/kept","effort":"high","mode":"ask-first","turns":[{"turn":1,"message":"first","answer":"still ","state":"working","acts":[],"notes":[]}]}))).unwrap();
             peer.write_all(&encode_frame(&serde_json::json!({"event":"text","thread":"t-drawer","turn":1,"text":"here"}))).unwrap();
             peer.write_all(&encode_frame(&serde_json::json!({"event":"done","thread":"t-drawer","turn":1}))).unwrap();
             if leave_thread {
@@ -6590,6 +6590,9 @@ mod tests {
             assert!(state.turns.is_empty());
         } else {
             assert_eq!(state.turns.len(), 1, "a refused message is never resent automatically");
+            assert_eq!(state.model.as_deref(), Some("stub/kept"));
+            assert_eq!(state.effort.as_deref(), Some("high"));
+            assert_eq!(state.mode.as_deref(), Some("ask-first"));
             assert_eq!(state.error, None);
         }
         let _ = std::fs::remove_dir_all(dir);
@@ -6640,7 +6643,7 @@ mod tests {
         assert!(state.select_thread(None));
         assert!(!state.apply(AgentEvent::Recovered(ResumedThread {
             thread: "old".into(), title: "Old".into(), cwd: "/tmp".into(),
-            model: None, mode: None, working: true, turns: vec![],
+            model: None, effort: None, mode: None, working: true, turns: vec![],
         }), true));
         assert_eq!(state.thread, None);
         assert!(state.can_send());
