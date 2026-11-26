@@ -1,0 +1,123 @@
+2026-11-26T16:40:25.409Z start: process 1739, Lever 0.1.0
+2026-11-26T16:40:25.412Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 2 ms after the process started
+2026-11-26T16:40:25.412Z listening: /run/crowbar-lever/surface, for user ID 1001, 2 ms after the process started
+2026-11-26T16:40:25.576Z connection: the shell connected
+2026-11-26T16:40:25.576Z connection: the shell stated version 1
+2026-11-26T16:40:25.834Z connection: the person connected
+2026-11-26T16:40:25.834Z connection: the person stated version 1
+2026-11-26T16:40:25.835Z connection: the person left
+2026-11-26T16:41:16.219Z connection: the shell left
+2026-11-26T16:41:16.825Z connection: the shell connected
+2026-11-26T16:41:16.825Z connection: the shell stated version 1
+2026-11-26T16:41:52.748Z connection: the shell left
+2026-11-26T16:41:52.757Z connection: the shell connected
+2026-11-26T16:41:52.757Z connection: the shell stated version 1
+2026-11-26T16:42:20.874Z connection: the shell left
+2026-11-26T16:42:20.878Z connection: the shell connected
+2026-11-26T16:42:20.878Z connection: the shell stated version 1
+2026-11-26T16:42:35.742Z stop: SIGTERM
+2026-11-26T16:42:42.829Z start: process 636, Lever 0.1.0
+2026-11-26T16:42:42.832Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 2 ms after the process started
+2026-11-26T16:42:42.832Z listening: /run/crowbar-lever/surface, for user ID 1001, 2 ms after the process started
+2026-11-26T16:42:43.035Z connection: the shell connected
+2026-11-26T16:42:43.035Z connection: the shell stated version 1
+2026-11-26T16:45:19.765Z stop: SIGTERM
+2026-11-26T16:45:19.771Z start: process 7557, Lever 0.1.0
+2026-11-26T16:45:19.772Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-26T16:45:19.772Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-26T16:45:19.963Z connection: the shell connected
+2026-11-26T16:45:19.963Z connection: the shell stated version 1
+2026-11-26T16:45:26.010Z harness: started OpenCode (process 7868)
+2026-11-26T16:47:11.714Z connection: the shell left
+2026-11-26T16:47:11.722Z connection: the shell connected
+2026-11-26T16:47:11.722Z connection: the shell stated version 1
+2026-11-26T16:47:14.504Z connection: the person connected
+2026-11-26T16:47:14.504Z connection: the person stated version 1
+2026-11-26T16:47:14.643Z connection: the person left
+2026-11-26T16:47:15.351Z connection: the person connected
+2026-11-26T16:47:15.351Z connection: the person stated version 1
+2026-11-26T16:47:41.830Z connection: the person connected
+2026-11-26T16:47:41.830Z connection: the person stated version 1
+2026-11-26T16:47:41.830Z connection: the person left
+2026-11-26T16:47:42.678Z connection: the person connected
+2026-11-26T16:47:42.678Z connection: the person stated version 1
+2026-11-26T16:47:42.678Z connection: the person left
+2026-11-26T16:47:42.688Z connection: the person left
+2026-11-26T16:47:43.047Z connection: the person connected
+2026-11-26T16:47:43.047Z connection: the person stated version 1
+2026-11-26T16:47:43.054Z connection: the person left
+2026-11-26T16:47:43.303Z connection: the person connected
+2026-11-26T16:47:43.303Z connection: the person stated version 1
+2026-11-26T16:47:43.304Z connection: the person left
+2026-11-26T16:47:52.394Z connection: the person connected
+2026-11-26T16:47:52.394Z connection: the person stated version 1
+2026-11-26T16:47:52.394Z connection: the person left
+2026-11-26T16:48:12.428Z connection: the shell left
+2026-11-26T16:48:12.436Z connection: the shell connected
+2026-11-26T16:48:12.436Z connection: the shell stated version 1
+2026-11-26T16:48:38.412Z connection: the shell left
+2026-11-26T16:48:38.527Z connection: the shell connected
+2026-11-26T16:48:38.527Z connection: the shell stated version 1
+2026-11-26T16:48:38.528Z connection: the shell left
+2026-11-26T16:48:38.665Z connection: the shell connected
+2026-11-26T16:48:38.665Z connection: the shell stated version 1
+2026-11-26T16:48:38.667Z connection: the shell left
+2026-11-26T16:48:39.019Z connection: the shell connected
+2026-11-26T16:48:39.019Z connection: the shell stated version 1
+2026-11-26T16:48:54.689Z connection: the shell connected
+2026-11-26T16:48:54.689Z connection: the shell stated version 1
+2026-11-26T16:48:54.690Z connection: the shell left
+2026-11-26T16:49:05.866Z connection: the shell connected
+2026-11-26T16:49:05.866Z connection: the shell stated version 1
+2026-11-26T16:49:05.868Z connection: the shell left
+2026-11-26T16:49:07.116Z start: process 17745, Lever 0.1.0
+2026-11-26T16:49:07.116Z restart: the Lever before this one, process 7557, ended without stopping
+2026-11-26T16:49:07.117Z listening: /run/user/1003/crowbar-lever/person, for user ID 1003, 0 ms after the process started
+2026-11-26T16:49:07.117Z listening: /run/crowbar-lever/surface, for user ID 1001, 0 ms after the process started
+2026-11-26T16:49:07.454Z connection: the shell connected
+2026-11-26T16:49:07.454Z connection: the shell stated version 1
+2026-11-26T16:49:07.996Z connection: the shell connected
+2026-11-26T16:49:07.996Z connection: the shell stated version 1
+2026-11-26T16:49:07.997Z connection: the shell left
+2026-11-26T16:49:08.132Z connection: the shell connected
+2026-11-26T16:49:08.132Z connection: the shell stated version 1
+2026-11-26T16:49:08.133Z connection: the shell left
+2026-11-26T16:49:08.269Z connection: the shell connected
+2026-11-26T16:49:08.269Z connection: the shell stated version 1
+2026-11-26T16:49:08.271Z connection: the shell left
+2026-11-26T16:49:08.400Z connection: the shell connected
+2026-11-26T16:49:08.400Z connection: the shell stated version 1
+2026-11-26T16:49:08.401Z connection: the shell left
+2026-11-26T16:49:08.536Z connection: the shell connected
+2026-11-26T16:49:08.536Z connection: the shell stated version 1
+2026-11-26T16:49:08.537Z connection: the shell left
+2026-11-26T16:49:08.666Z connection: the shell connected
+2026-11-26T16:49:08.666Z connection: the shell stated version 1
+2026-11-26T16:49:08.667Z connection: the shell left
+2026-11-26T16:49:17.758Z harness: started OpenCode (process 17802)
+2026-11-26T16:49:19.203Z connection: the shell connected
+2026-11-26T16:49:19.203Z connection: the shell stated version 1
+2026-11-26T16:49:19.204Z connection: the shell left
+2026-11-26T16:49:31.481Z connection: the shell connected
+2026-11-26T16:49:31.481Z connection: the shell stated version 1
+2026-11-26T16:49:31.482Z connection: the shell left
+2026-11-26T16:49:32.234Z harness: OpenCode (process 17802) exited unexpectedly
+2026-11-26T16:49:32.493Z connection: the shell connected
+2026-11-26T16:49:32.493Z connection: the shell stated version 1
+2026-11-26T16:49:32.494Z connection: the shell left
+2026-11-26T16:49:32.626Z connection: the shell connected
+2026-11-26T16:49:32.627Z connection: the shell stated version 1
+2026-11-26T16:49:32.628Z connection: the shell left
+2026-11-26T16:49:32.756Z connection: the shell connected
+2026-11-26T16:49:32.757Z connection: the shell stated version 1
+2026-11-26T16:49:32.758Z connection: the shell left
+2026-11-26T16:49:32.885Z connection: the shell connected
+2026-11-26T16:49:32.885Z connection: the shell stated version 1
+2026-11-26T16:49:32.887Z connection: the shell left
+2026-11-26T16:49:33.020Z connection: the shell connected
+2026-11-26T16:49:33.020Z connection: the shell stated version 1
+2026-11-26T16:49:33.022Z connection: the shell left
+2026-11-26T16:49:33.150Z connection: the shell connected
+2026-11-26T16:49:33.150Z connection: the shell stated version 1
+2026-11-26T16:49:33.151Z connection: the shell left
+2026-11-26T16:49:43.459Z harness: started OpenCode (process 17921)
