@@ -290,9 +290,11 @@ fn watch(
             }
         };
         // What Lever said of an answer sent from here. One it refused
-        // leaves the request to be asked for again.
-        if refused(&event).is_some() {
-            if asking.is_none()
+        // leaves the request to be asked for again, unless it waits no more:
+        // Lever says so of it next.
+        if let Some(code) = refused(&event) {
+            if code != "no-request"
+                && asking.is_none()
                 && let Some(request) = taken.take()
                 && open.iter().any(|r| *r == text(&request, "request"))
             {
@@ -671,6 +673,20 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
                 Happening::Event(event) if text(&event, "event") == "act" => {
                     let mut answer = Answer::new();
                     show_act(&mut answer, &event)?;
+                }
+                // A request that comes while the prompt waits, as one after
+                // its turn does, is asked for here on a terminal, as one in a
+                // turn is, and the prompt comes back when nothing waits.
+                Happening::Event(event)
+                    if text(&event, "event") == "request" && text(&event, "state") == "waiting" && prompted =>
+                {
+                    eprintln!();
+                    let asked = text(&event, "thread").into_owned();
+                    let watched = watch(lever, &asked, None, Answer::new(), Typing::UntilItEnds, vec![event])?;
+                    if watched.is_none() {
+                        return Ok(left(last));
+                    }
+                    eprint!("> ");
                 }
                 Happening::Event(event) if text(&event, "event") == "request" => {
                     let mut answer = Answer::new();

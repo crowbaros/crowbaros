@@ -1252,3 +1252,39 @@ fn requests_that_wait_after_their_turn_are_each_asked_for_and_then_the_thread_ta
         ]
     );
 }
+
+#[test]
+fn a_request_that_comes_while_the_prompt_waits_is_asked_for_there() {
+    let lab = Lab::with_script(json!({
+        "modes": true,
+        "turns": [{
+            "steps": [{ "kind": "text", "text": "Done here." }],
+            "after": [
+                { "kind": "pause_ms", "ms": 400 },
+                { "kind": "ask", "id": "c7", "title": "make", "raw_input": { "command": "make" } }
+            ]
+        }]
+    }));
+    let (mut keys, screen) = terminal();
+    let mut agent = lab.agent(&[]);
+    agent
+        .stdin(screen.try_clone().expect("the terminal again"))
+        .stdout(Stdio::null())
+        .stderr(screen);
+    let mut child = agent.spawn().expect("crowbar-agent runs");
+    drop(agent);
+    let mut shown = Vec::new();
+    screen_until(&mut keys, &mut shown, "> ");
+    keys.write_all(b"hello\n").unwrap();
+    // The turn ends, the prompt comes back, and then the harness asks.
+    screen_until(
+        &mut keys,
+        &mut shown,
+        "[request] Run: make\r\nAnswer [once/always/no]: ",
+    );
+    keys.write_all(b"once\n").unwrap();
+    screen_until(&mut keys, &mut shown, "[request] answered: once\r\n> ");
+    keys.write_all(&[4]).unwrap();
+    assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
+    assert!(lab.rpc_messages().contains(r#""optionId":"once""#));
+}

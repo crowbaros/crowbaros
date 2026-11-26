@@ -50,9 +50,9 @@ crowbar-agent status                   # Lever's status, what works, and what wa
   waits with no time limit, Ctrl-C stops the turn and withdraws it, and
   `--list` shows its thread as `(waiting for you)`. Requests that wait at once
   are asked for one at a time, each when Lever has the answer to the one
-  before. Those that wait when a thread is resumed are asked again, and a
-  thread whose requests came after its turn takes a message once they are
-  answered.
+  before. Those that wait when a thread is resumed are asked again, and one
+  that comes while the prompt waits, as after its turn, is asked for there.
+  The prompt comes back once nothing waits.
 - **Modes.** A thread is in `ask-first`, `full-access`, or `plan`, and keeps
   it. New threads start in `ask-first` until `crowbar-agent default-mode
   full-access` changes that. `--mode` starts a thread in another mode, or,
