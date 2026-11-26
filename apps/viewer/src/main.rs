@@ -902,10 +902,41 @@ fn rotated_pixels(loaded: &LoadedImage, turns: u8) -> image::RgbaImage {
     }
 }
 fn text_html(text: &str) -> String {
+    // gpui-component 0.5.1 compacts a single HTML block into a Paragraph,
+    // but its virtual scroller renders only Root nodes. Two real blocks keep
+    // the root intact, including for a PDF page with just one line of text.
+    let body = if text.trim().is_empty() {
+        "No selectable text on this page."
+    } else {
+        text
+    };
     format!(
-        "<pre>{}</pre>",
-        text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+        "<h3>Page text</h3><pre>{}</pre>",
+        body.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
     )
+}
+
+#[cfg(test)]
+mod pdf_text_tests {
+    use super::text_html;
+
+    #[test]
+    fn pdf_text_has_context_and_content_blocks_for_the_pinned_virtual_scroller() {
+        // The pinned HTML parser compacts one block to a Paragraph, which
+        // render_root(scrollable=true) does not draw. A one-line page must
+        // therefore retain both the heading and its selectable text block.
+        let html = text_html("A quiet place to read");
+        assert_eq!(html, "<h3>Page text</h3><pre>A quiet place to read</pre>");
+        let blank = text_html("\n \t");
+        assert!(blank.contains("<pre>No selectable text on this page.</pre>"));
+    }
+
+    #[test]
+    fn pdf_text_is_literal_and_cannot_insert_html_resources() {
+        let html = text_html("<img src='file:///example.png'> & notes\nSecond line");
+        assert!(html.contains("&lt;img src='file:///example.png'&gt; &amp; notes\nSecond line"));
+        assert!(!html.contains("<img"));
+    }
 }
 fn is_pdf(path: &Path) -> bool {
     path.extension().is_some_and(|s| s.eq_ignore_ascii_case("pdf"))
@@ -1015,7 +1046,7 @@ mod tests {
     fn pdf_text_remains_text_in_selection_panel() {
         assert_eq!(
             text_html("<img src='file:///secret'>&"),
-            "<pre>&lt;img src='file:///secret'&gt;&amp;</pre>"
+            "<h3>Page text</h3><pre>&lt;img src='file:///secret'&gt;&amp;</pre>"
         );
     }
 }

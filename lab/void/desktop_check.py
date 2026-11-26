@@ -422,6 +422,22 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
                 self.wait('Viewer finds text in the PDF',
                           lambda: re.search(r'VIEWER search matches=[1-9]', self.run('cat ' + logfile)))
                 self.key('esc')
+                # A successful text search must also draw the selectable text.
+                # Fullscreen gives the fixed-width inspector a known position.
+                self.key('meta_l', 'f')
+                def text_panel_drawn():
+                    name = f'viewer-pdf-{theme}-selection'
+                    self.capture(name)
+                    width, height, rows = guest.png_pixels(self.work / f'{name}.png')
+                    ink = (216, 229, 236) if theme == 'dark' else (8, 13, 18)
+                    count = sum(all(abs(pixel[c] - ink[c]) < 30 for c in range(3))
+                                for y in range(120, min(400, height))
+                                for x in range(width - 300, width - 32)
+                                for pixel in [rows[y][x * 3:x * 3 + 3]])
+                    return count > 50
+                self.wait('Viewer draws selectable PDF text', text_panel_drawn)
+                self.check(f'Viewer draws selectable PDF text in {theme}', True)
+                self.key('meta_l', 'f')
             time.sleep(0.3)
             self.capture(f'viewer-{kind}-{theme}-after')
             self.key('ctrl', 'q')
