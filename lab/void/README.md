@@ -137,11 +137,19 @@ plugged in, the drawer on whichever display the pointer is on. A still
 desktop with the drawer up must commit and draw nothing, too. It checks that
 the drawer connects to Lever's surface socket with OpenCode configured and no
 OpenCode process started while idle, then drives a thread in the drawer against
-the local stub Model: desktop context reaching the Model without window or
+the local stub Model: a new thread in Ask first asking before the Model's
+command runs, with the exact command, the request waiting with the drawer put
+away and the desktop locked while the mark shows `waiting`, answered once in
+the drawer; a second command answered no, which does not run and which the
+Model is told of; Full access and the starting mode chosen from the drawer's
+mode menu, where the same command runs with no request;
+desktop context reaching the Model without window or
 clipboard contents, a command's output and streamed answer in the drawer, work
 continuing behind a put-away drawer with the `working` and `done` mark in the
 bar and over a fullscreen window, Stop ending a turn and its spawned commands,
-a failed turn showing why, and a shell restart redrawing the thread from Lever.
+a failed turn showing why, a shell restart redrawing the thread from Lever, and
+the person's own OpenCode settings left unchanged and free of Lever's
+additions in a session they start by hand.
 It checks that apps run as the person at the ordinary socket for apps, that
 copy and paste, the primary selection, and drag and drop work between two apps,
 that Fulcrum's Harness socket serves the person alone, and that the shell's
