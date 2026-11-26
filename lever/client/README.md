@@ -17,11 +17,15 @@ crowbar-agent --resume ID              # go on with a thread
 crowbar-agent --resume ID "<request>"  # one more turn of it, and out
 crowbar-agent --resume ID --model M    # set a thread's Model
 crowbar-agent --model M "<request>"    # start a thread with Model M
+crowbar-agent --resume ID --mode MODE  # set a thread's mode
+crowbar-agent --mode MODE "<request>"  # start a thread in a mode
+crowbar-agent --resume ID --answer R A # answer a thread's request R with A
 crowbar-agent --stop ID                # stop the working turn of a thread
 crowbar-agent models                   # list the Models the harness offers
 crowbar-agent free-models [on|off]     # show or switch OpenCode's free hosted Models
+crowbar-agent default-mode [MODE]      # show or set the mode new threads start in
 crowbar-agent login                    # sign in to a provider with OpenCode
-crowbar-agent status                   # Lever's status and available harnesses
+crowbar-agent status                   # Lever's status, what works, and what waits
 ```
 
 - **Choosing Models before the first turn.** Until the person chooses, Lever
@@ -37,8 +41,21 @@ crowbar-agent status                   # Lever's status and available harnesses
   harness offers, marking the default. `--model M` sets a thread's Model (alone
   with `--resume ID`, or alongside a message).
 
+- **A request waits for the person.** In Ask first, a thread asks before it
+  runs a command or edits a file. The request goes to standard error with the
+  exact command, or the file and the change as lines that begin `-` and `+`.
+  On a terminal, the client asks for the answer there, from those the request
+  offers (`once`, `always`, `no`). Down a pipe, it says how to answer from
+  another terminal: `crowbar-agent --resume ID --answer R once`. The request
+  waits with no time limit, Ctrl-C stops the turn and withdraws it, and
+  `--list` shows its thread as `(waiting for you)`. A request that waits when
+  a thread is resumed is asked again.
+- **Modes.** A thread is in `ask-first`, `full-access`, or `plan`, and keeps
+  it. New threads start in `ask-first` until `crowbar-agent default-mode
+  full-access` changes that. `--mode` starts a thread in another mode, or,
+  with `--resume ID` alone, changes a thread's mode for its next turn.
 - **The answer is plain text on standard output**, a piece at a time, so it
-  reads the same in a terminal and down a pipe. Acts (`[act] ...`), unrecognized
+  reads the same in a terminal and down a pipe. Acts (`[act] ...`), requests (`[request] ...`), unrecognized
   updates (`[update] ...`), prompts, and errors go to standard error. An act
   that ends after a later turn began is still shown. On a
   terminal, an act that comes in the middle of a line of the answer ends that
@@ -59,8 +76,8 @@ crowbar-agent status                   # Lever's status and available harnesses
 - **A client that goes away stops nothing.** When its terminal closes or its
   SSH connection drops, the turn goes on in Lever. `--list` shows it as
   `(working)`, `--resume ID` picks it up, and `--stop ID` or Ctrl-C stops it.
-- **`status`, `models`, `free-models`, and `login` are commands only as the
-  first word.** A request that starts with one goes in quotes with the rest of
+- **`status`, `models`, `free-models`, `default-mode`, and `login` are
+  commands only as the first word.** A request that starts with one goes in quotes with the rest of
   it, or after `--`: `crowbar-agent -- status of my disk`.
 
 | Exit status | When |

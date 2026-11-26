@@ -86,6 +86,69 @@ fn show_act(answer: &mut Answer, act: &Value) -> Result<()> {
     Ok(())
 }
 
+/// The answers a request offers, as Lever names them.
+fn answers_of(request: &Value) -> Vec<String> {
+    request
+        .get("answers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|a| text(a, "answer").into_owned())
+        .filter(|a| !a.is_empty())
+        .collect()
+}
+
+/// Prints a request to standard error: what it asks to do, the exact command
+/// or the file and the change, and, when it waits, how to answer it. With
+/// `asking`, the answer is asked for here.
+fn show_request(answer: &mut Answer, request: &Value, thread: &str, asking: bool) -> Result<()> {
+    answer.make_way()?;
+    let detail = text(request, "detail");
+    match &*text(request, "state") {
+        "waiting" => {
+            if text(request, "kind") == "command" {
+                let command = if detail.is_empty() {
+                    text(request, "title")
+                } else {
+                    detail.clone()
+                };
+                let mut lines = command.lines();
+                eprintln!("[request] Run: {}", lines.next().unwrap_or_default());
+                for line in lines {
+                    eprintln!("  {line}");
+                }
+            } else {
+                let what = match &*text(request, "kind") {
+                    "edit" => "Edit",
+                    "delete" => "Delete",
+                    "move" => "Move",
+                    _ => "Act",
+                };
+                let path = text(request, "path");
+                let named = if path.is_empty() { text(request, "title") } else { path };
+                eprintln!("[request] {what}: {named}");
+                for line in detail.lines().filter(|line| *line != named) {
+                    eprintln!("  {line}");
+                }
+            }
+            let answers = answers_of(request);
+            if asking {
+                eprint!("Answer [{}]: ", answers.join("/"));
+                let _ = stderr().flush();
+            } else {
+                eprintln!(
+                    "  Answer with: crowbar-agent --resume {thread} --answer {} <{}>",
+                    text(request, "request"),
+                    answers.join("|")
+                );
+            }
+        }
+        "answered" => eprintln!("[request] answered: {}", text(request, "answer")),
+        _ => eprintln!("[request] withdrawn"),
+    }
+    Ok(())
+}
+
 /// Prints one unrecognized update plainly to standard error.
 fn show_note(answer: &mut Answer, note: &Value) -> Result<()> {
     answer.make_way()?;
@@ -96,7 +159,13 @@ fn show_note(answer: &mut Answer, note: &Value) -> Result<()> {
 /// Sends one message of the person's, and writes the answer as it comes, until
 /// the turn ends. With no thread yet, the message starts one, and `thread` is
 /// then its ID.
-fn turn(lever: &mut Connection, thread: &mut Option<String>, model: Option<&str>, message: &str) -> Result<Ended> {
+fn turn(
+    lever: &mut Connection,
+    thread: &mut Option<String>,
+    model: Option<&str>,
+    mode: Option<&str>,
+    message: &str,
+) -> Result<Ended> {
     let mut req = json!({ "op": "send", "thread": thread, "text": message });
     if thread.is_none()
         && let Some(cwd) = current_cwd()
@@ -105,6 +174,9 @@ fn turn(lever: &mut Connection, thread: &mut Option<String>, model: Option<&str>
     }
     if let Some(model) = model {
         req["model"] = json!(model);
+    }
+    if let Some(mode) = mode {
+        req["mode"] = json!(mode);
     }
     let reply = lever.request(req).inspect_err(|error| {
         // Ctrl-C before Lever said the turn began. Leaving stops no turn, and this one may yet begin.
@@ -128,6 +200,7 @@ fn turn(lever: &mut Connection, thread: &mut Option<String>, model: Option<&str>
         reply.get("turn").and_then(Value::as_u64),
         Answer::new(),
         Typing::Waits,
+        None,
     );
     *thread = Some(begun);
     ended.map(|ended| ended.unwrap_or(Ended::Done))
@@ -135,21 +208,43 @@ fn turn(lever: &mut Connection, thread: &mut Option<String>, model: Option<&str>
 
 /// Writes a turn's answer and acts as they come, until the turn ends. Ctrl-C
 /// stops the turn: Lever is asked to, and the turn's own end is waited for. A
-/// second Ctrl-C does not wait.
+/// second Ctrl-C does not wait. A request of the thread is shown as it comes,
+/// and on a terminal its answer is asked for: `waiting` is one that already
+/// waits.
 fn watch(
     lever: &mut Connection,
     thread: &str,
     turn: Option<u64>,
     mut answer: Answer,
     typing: Typing,
+    waiting: Option<Value>,
 ) -> Result<Option<Ended>> {
+    let prompted = std::io::stdin().is_terminal();
     let mut stopping = false;
+    // The request whose answer is asked for here, and the answers it offers.
+    let mut asking: Option<(String, Vec<String>)> = None;
+    if let Some(request) = waiting {
+        show_request(&mut answer, &request, thread, prompted)?;
+        if prompted {
+            asking = Some((text(&request, "request").into_owned(), answers_of(&request)));
+        }
+    }
     loop {
-        let event = match lever.next(if stopping { Typing::Waits } else { typing })? {
+        let now = if stopping {
+            Typing::Waits
+        } else if asking.is_some() {
+            Typing::Wanted
+        } else {
+            typing
+        };
+        let event = match lever.next(now)? {
             Happening::Event(event) => event,
             Happening::Interrupt if stopping => return Ok(Some(Ended::Stopped)),
             Happening::Interrupt => {
                 stopping = true;
+                if asking.take().is_some() {
+                    eprintln!();
+                }
                 // By its number, so a stop that comes after this turn ended does not reach the one after it.
                 lever.send(json!({ "op": "stop", "thread": thread, "turn": turn }))?;
                 continue;
@@ -158,9 +253,42 @@ fn watch(
                 answer.end()?;
                 return Ok(None);
             }
-            Happening::Line(_) => continue,
+            Happening::Line(line) => {
+                if let Some((request, answers)) = &asking {
+                    let chosen = line.trim();
+                    if answers.iter().any(|a| a == chosen) {
+                        lever
+                            .send(json!({ "op": "answer", "thread": thread, "request": request, "answer": chosen }))?;
+                        asking = None;
+                    } else {
+                        eprint!("Answer [{}]: ", answers.join("/"));
+                        let _ = stderr().flush();
+                    }
+                }
+                continue;
+            }
         };
+        // What Lever said of an answer sent from here.
+        if refused(&event).is_some() {
+            continue;
+        }
         if event.get("thread").and_then(Value::as_str) != Some(thread) {
+            continue;
+        }
+        // A request is its thread's, whichever turn asked it.
+        if text(&event, "event") == "request" {
+            let id = text(&event, "request").into_owned();
+            let waits = text(&event, "state") == "waiting";
+            let mine = asking.as_ref().is_some_and(|(r, _)| *r == id);
+            if !waits && mine {
+                asking = None;
+                eprintln!();
+            }
+            let ask_here = waits && prompted && !stopping && asking.is_none();
+            show_request(&mut answer, &event, thread, ask_here)?;
+            if ask_here {
+                asking = Some((id, answers_of(&event)));
+            }
             continue;
         }
         // An act is its own turn's, and may end after a later turn began:
@@ -207,6 +335,8 @@ struct Resumed {
     answer: Answer,
     /// How its newest turn ended, if it has.
     last: Ended,
+    /// A request of the turn still working that waits for the person.
+    waiting: Option<Value>,
 }
 
 /// Follows a thread that is already there, and shows it as it stands.
@@ -226,6 +356,12 @@ fn resume(lever: &mut Connection, thread: &str) -> Result<Option<Resumed>> {
         answer.write(&format!("> {}\n", text(turn, "message")))?;
         for act in turn.get("acts").and_then(Value::as_array).into_iter().flatten() {
             show_act(&mut answer, act)?;
+        }
+        for request in turn.get("requests").and_then(Value::as_array).into_iter().flatten() {
+            // One that waits is shown as the thread is watched, and answered there.
+            if text(request, "state") != "waiting" {
+                show_request(&mut answer, request, thread, false)?;
+            }
         }
         for note in turn.get("notes").and_then(Value::as_array).into_iter().flatten() {
             show_note(&mut answer, note)?;
@@ -261,15 +397,26 @@ fn resume(lever: &mut Connection, thread: &str) -> Result<Option<Resumed>> {
         } else {
             Ended::Done
         },
+        waiting: turns
+            .iter()
+            .flat_map(|turn| turn.get("requests").and_then(Value::as_array).into_iter().flatten())
+            .find(|request| text(request, "state") == "waiting")
+            .cloned(),
     }))
 }
 
 /// `crowbar-agent [--resume ID] [--model M] "<request>"`: one turn, and out.
-pub fn once(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, message: &str) -> Result<Ended> {
+pub fn once(
+    lever: &mut Connection,
+    resumed: Option<&str>,
+    model: Option<&str>,
+    mode: Option<&str>,
+    message: &str,
+) -> Result<Ended> {
     // Lever says so itself when there is no such thread, so the thread's
     // record is not asked for only to be dropped.
     let mut thread = resumed.map(str::to_string);
-    turn(lever, &mut thread, model, message)
+    turn(lever, &mut thread, model, mode, message)
 }
 
 /// Runs OpenCode's own sign-in directly in this terminal. Lever holds no
@@ -407,20 +554,29 @@ fn left(last: Ended) -> Ended {
 /// `crowbar-agent [--resume ID] [--model M]`: a thread, a line at a time. A
 /// thread starts with its first message, so leaving at once leaves none behind.
 /// Ctrl-D leaves, and so does Ctrl-C between turns.
-pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>) -> Result<Ended> {
+pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, mode: Option<&str>) -> Result<Ended> {
     let prompted = std::io::stdin().is_terminal();
     let mut thread = None;
     let mut pending_model = model.map(str::to_string);
+    let mut pending_mode = mode.map(str::to_string);
     let mut last = Ended::Done;
     if let Some(resumed) = resumed {
         let Some(stood) = resume(lever, resumed)? else {
             return Ok(Ended::Failed);
         };
         last = stood.last;
-        if stood.working.is_some() {
+        if stood.working.is_some() || stood.waiting.is_some() {
             // Ctrl-D leaves a turn that was working when the thread was
             // resumed, as it leaves one that begins after.
-            let Some(ended) = watch(lever, resumed, stood.working, stood.answer, Typing::UntilItEnds)? else {
+            let Some(ended) = watch(
+                lever,
+                resumed,
+                stood.working,
+                stood.answer,
+                Typing::UntilItEnds,
+                stood.waiting,
+            )?
+            else {
                 return Ok(left(last));
             };
             last = ended;
@@ -446,7 +602,7 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>) 
                     let mut answer = Answer::new();
                     answer.write(&format!("\n> {}\n", text(&event, "text")))?;
                     let turn = event.get("turn").and_then(Value::as_u64);
-                    let watched = watch(lever, &text(&event, "thread"), turn, answer, Typing::UntilItEnds)?;
+                    let watched = watch(lever, &text(&event, "thread"), turn, answer, Typing::UntilItEnds, None)?;
                     let Some(ended) = watched else {
                         return Ok(left(last));
                     };
@@ -468,6 +624,10 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>) 
                     let mut answer = Answer::new();
                     show_act(&mut answer, &event)?;
                 }
+                Happening::Event(event) if text(&event, "event") == "request" => {
+                    let mut answer = Answer::new();
+                    show_request(&mut answer, &event, &text(&event, "thread"), false)?;
+                }
                 Happening::Event(_) => {}
             }
         };
@@ -475,7 +635,8 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>) 
             continue;
         }
         let chosen = pending_model.take();
-        last = turn(lever, &mut thread, chosen.as_deref(), &line)?;
+        let mode = pending_mode.take();
+        last = turn(lever, &mut thread, chosen.as_deref(), mode.as_deref(), &line)?;
     }
 }
 
@@ -487,6 +648,59 @@ pub fn set_model(lever: &mut Connection, thread: &str, model: &str) -> Result<En
     }
     eprintln!("Model for {} set to {}.", text(&reply, "thread"), text(&reply, "model"));
     Ok(Ended::Done)
+}
+
+/// `crowbar-agent --resume ID --mode M`: set a thread's mode.
+pub fn set_mode(lever: &mut Connection, thread: &str, mode: &str) -> Result<Ended> {
+    let reply = lever.request(json!({ "op": "set-mode", "thread": thread, "mode": mode }))?;
+    if refused(&reply).is_some() {
+        return Ok(Ended::Failed);
+    }
+    eprintln!(
+        "{} is now in {}.",
+        text(&reply, "thread"),
+        mode_name(&text(&reply, "mode"))
+    );
+    Ok(Ended::Done)
+}
+
+/// `crowbar-agent --resume ID --answer REQUEST ANSWER`: answer a request.
+pub fn answer(lever: &mut Connection, thread: &str, request: &str, answer: &str) -> Result<Ended> {
+    let reply = lever.request(json!({ "op": "answer", "thread": thread, "request": request, "answer": answer }))?;
+    if refused(&reply).is_some() {
+        return Ok(Ended::Failed);
+    }
+    eprintln!("Answered {answer}.");
+    Ok(Ended::Done)
+}
+
+/// `crowbar-agent default-mode [ask-first|full-access]`: show or set the mode
+/// new threads start in.
+pub fn default_mode(lever: &mut Connection, mode: Option<&str>) -> Result<Ended> {
+    let Some(mode) = mode else {
+        let reply = lever.request(json!({ "op": "status" }))?;
+        if refused(&reply).is_some() {
+            return Ok(Ended::Failed);
+        }
+        println!("New threads start in {}.", mode_name(&text(&reply, "default_mode")));
+        return Ok(Ended::Done);
+    };
+    let reply = lever.request(json!({ "op": "set-default-mode", "mode": mode }))?;
+    if refused(&reply).is_some() {
+        return Ok(Ended::Failed);
+    }
+    eprintln!("New threads start in {}.", mode_name(&text(&reply, "mode")));
+    Ok(Ended::Done)
+}
+
+/// The person's name for a mode.
+fn mode_name(mode: &str) -> String {
+    match mode {
+        "ask-first" => "Ask first".to_string(),
+        "full-access" => "Full access".to_string(),
+        "plan" => "Plan".to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// `crowbar-agent models`: list the Models the harness offers.
@@ -590,6 +804,27 @@ pub fn status(lever: &mut Connection) -> Result<Ended> {
         "idle"
     };
     println!("Lever {version}: {} ({running}).", names.join(", "));
+    println!("New threads start in {}.", mode_name(&text(&reply, "default_mode")));
+    let activity = lever.request(json!({ "op": "watch" }))?;
+    if refused(&activity).is_some() {
+        return Ok(Ended::Failed);
+    }
+    let ids = |field: &str| -> Vec<String> {
+        activity
+            .get(field)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| id.as_str().map(|id| crate::connection::plain(id).into_owned()))
+            .collect()
+    };
+    let (working, waiting) = (ids("working"), ids("waiting"));
+    if !working.is_empty() {
+        println!("Working: {}.", working.join(", "));
+    }
+    if !waiting.is_empty() {
+        println!("Waiting for you: {}.", waiting.join(", "));
+    }
     Ok(Ended::Done)
 }
 
@@ -631,6 +866,7 @@ pub fn list(lever: &mut Connection) -> Result<Ended> {
         let turns = thread.get("turns").and_then(Value::as_u64).unwrap_or(0);
         let state = text(thread, "state");
         let badge = match &*state {
+            _ if thread.get("waiting") == Some(&Value::Bool(true)) => "  (waiting for you)",
             "working" => "  (working)",
             "failed" => "  (failed)",
             "stopped" => "  (stopped)",

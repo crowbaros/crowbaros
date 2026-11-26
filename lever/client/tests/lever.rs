@@ -748,11 +748,15 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let ev_stopped = find_event("stopped");
     let ev_failed = find_event("failed");
     let ev_interrupted = find_event("interrupted");
+    let ev_request = find_event("request");
+    let reply_activity = find_reply("activity");
+    let reply_mode_set = find_reply("mode-set");
+    let reply_default_mode = find_reply("default-mode");
 
     let server_ops = doc_ops.clone();
-    // Serve 13 short connections exercising every documented op, reply (including error), and event.
+    // Serve 16 short connections exercising every documented op, reply (including error), and event.
     let server = std::thread::spawn(move || {
-        for turn_case in 0..13 {
+        for turn_case in 0..16 {
             let (mut stream, _) = listener.accept().expect("accept client");
             let ver = read_framed(&mut stream);
             assert_eq!(ver, json!({ "version": 1 }));
@@ -764,13 +768,27 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
             ops_ref.lock().unwrap().insert(op.clone());
 
             match (turn_case, op.as_str()) {
-                (0, "status") => write_framed(&mut stream, &reply_status),
+                (0, "status") => {
+                    write_framed(&mut stream, &reply_status);
+                    let watch = read_framed(&mut stream);
+                    assert_eq!(watch, json!({ "op": "watch" }));
+                    ops_ref.lock().unwrap().insert("watch".to_string());
+                    write_framed(&mut stream, &reply_activity);
+                }
                 (1, "list") => write_framed(&mut stream, &reply_list),
                 (2, "resume") => write_framed(&mut stream, &reply_resumed),
                 (3, "stop") => write_framed(&mut stream, &reply_ok),
                 (4, "send") => {
                     write_framed(&mut stream, &reply_sent);
-                    for ev in [&ev_message, &ev_act, &ev_note, &ev_updated, &ev_text, &ev_done] {
+                    for ev in [
+                        &ev_message,
+                        &ev_act,
+                        &ev_request,
+                        &ev_note,
+                        &ev_updated,
+                        &ev_text,
+                        &ev_done,
+                    ] {
                         write_framed(&mut stream, ev);
                     }
                 }
@@ -797,6 +815,9 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
                 (10, "models") => write_framed(&mut stream, &reply_models),
                 (11, "set-free-models") => write_framed(&mut stream, &reply_free_models),
                 (12, "set-model") => write_framed(&mut stream, &reply_model_set),
+                (13, "answer") => write_framed(&mut stream, &reply_ok),
+                (14, "set-mode") => write_framed(&mut stream, &reply_mode_set),
+                (15, "set-default-mode") => write_framed(&mut stream, &reply_default_mode),
                 other => panic!("unexpected connection {other:?}"),
             }
             // Hold the connection open until the client closes it, as Lever does.
@@ -805,12 +826,16 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
         }
     });
 
-    assert_eq!(lab.run(&["status"], "").status, 0);
+    let status = lab.run(&["status"], "");
+    assert_eq!(status.status, 0, "{status:?}");
+    assert!(status.out.contains("New threads start in Ask first."), "{status:?}");
+    assert!(status.out.contains("Working: t-01a2b3c4d5e6."), "{status:?}");
     assert_eq!(lab.run(&["--list"], "").status, 0);
     let resumed = lab.run(&["--resume", "t-01a2b3c4d5e6"], "");
     assert_eq!(resumed.status, 0, "{resumed:?}");
     assert!(resumed.out.contains("Here are the files."), "{resumed:?}");
     assert!(resumed.err.contains("[act] Run ls (done): Cargo.toml"), "{resumed:?}");
+    assert!(resumed.err.contains("[request] answered: once"), "{resumed:?}");
     assert!(resumed.err.contains("[update] Cache warm"), "{resumed:?}");
 
     assert_eq!(lab.run(&["--stop", "t-01a2b3c4d5e6"], "").status, 0);
@@ -819,6 +844,12 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     assert_eq!(done.status, 0, "{done:?}");
     assert_eq!(done.out, "Here are the files.\n");
     assert!(done.err.contains("[act] Run ls (done): Cargo.toml"), "{done:?}");
+    assert!(done.err.contains("[request] Run: echo hi"), "{done:?}");
+    assert!(
+        done.err
+            .contains("Answer with: crowbar-agent --resume t-01a2b3c4d5e6 --answer r-01a2b3c4d5e6 <once|always|no>"),
+        "{done:?}"
+    );
     assert!(done.err.contains("[update] Cache warm"), "{done:?}");
 
     let stopped = lab.run(&["Stop me"], "");
@@ -856,6 +887,28 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let set_m = lab.run(&["--resume", "t-01a2b3c4d5e6", "--model", "stub/stub-1"], "");
     assert_eq!(set_m.status, 0, "{set_m:?}");
     assert!(set_m.err.contains("stub/stub-1"), "{set_m:?}");
+
+    let answered = lab.run(
+        &["--resume", "t-01a2b3c4d5e6", "--answer", "r-01a2b3c4d5e6", "once"],
+        "",
+    );
+    assert_eq!(
+        (answered.status, answered.err.as_str()),
+        (0, "Answered once.\n"),
+        "{answered:?}"
+    );
+    let moded = lab.run(&["--resume", "t-01a2b3c4d5e6", "--mode", "full-access"], "");
+    assert_eq!(
+        (moded.status, moded.err.as_str()),
+        (0, "t-01a2b3c4d5e6 is now in Full access.\n"),
+        "{moded:?}"
+    );
+    let defaulted = lab.run(&["default-mode", "full-access"], "");
+    assert_eq!(
+        (defaulted.status, defaulted.err.as_str()),
+        (0, "New threads start in Full access.\n"),
+        "{defaulted:?}"
+    );
 
     server.join().unwrap();
     assert_eq!(*sent_ops.lock().unwrap(), doc_ops);
@@ -958,4 +1011,128 @@ fn choice_of_free_models_model_selection_and_login_work_from_the_terminal() {
     let ran = Ran::of(run(cmd, ""));
     assert_eq!(ran.status, 0, "{ran:?}");
     assert_eq!(fs::read_to_string(&login_log).unwrap(), "auth\nlogin\n");
+}
+
+fn asking_script() -> Value {
+    json!({
+        "modes": true,
+        "turns": [
+            {
+                "match": "please run",
+                "steps": [
+                    { "kind": "ask", "id": "c1", "title": "echo hi", "raw_input": { "command": "echo hi && id -un" }, "output": "hi" },
+                    { "kind": "text", "text": "Ran." }
+                ]
+            }
+        ]
+    })
+}
+
+#[test]
+fn a_request_shows_its_command_and_is_answered_from_another_terminal() {
+    let lab = Lab::with_script(asking_script());
+    let mut waiting = Running::start(lab.agent(&["please run it"]));
+    waiting.wait_for_err("[request] Run: echo hi && id -un");
+    waiting.wait_for_err("Answer with: crowbar-agent --resume ");
+    let hint = waiting
+        .err
+        .lock()
+        .unwrap()
+        .lines()
+        .find(|line| line.contains("Answer with:"))
+        .unwrap()
+        .to_string();
+    let words: Vec<&str> = hint.split_whitespace().collect();
+    let (thread, request) = (words[4].to_string(), words[6].to_string());
+    assert!(thread.starts_with("t-") && request.starts_with("r-"), "{hint}");
+
+    let listed = lab.run(&["--list"], "");
+    assert!(listed.out.contains("(waiting for you)"), "{listed:?}");
+    let status = lab.run(&["status"], "");
+    assert!(
+        status.out.contains(&format!("Waiting for you: {thread}.")),
+        "{status:?}"
+    );
+
+    let wrong = lab.run(&["--resume", &thread, "--answer", &request, "maybe"], "");
+    assert_eq!(wrong.status, 1, "{wrong:?}");
+    assert!(wrong.err.contains("does not offer maybe"), "{wrong:?}");
+    let answered = lab.run(&["--resume", &thread, "--answer", &request, "once"], "");
+    assert_eq!(
+        (answered.status, answered.err.as_str()),
+        (0, "Answered once.\n"),
+        "{answered:?}"
+    );
+
+    assert_eq!(waiting.ended(), 0);
+    assert_eq!(waiting.out.lock().unwrap().as_str(), "Ran.\n");
+    assert!(waiting.err.lock().unwrap().contains("[request] answered: once"));
+    assert!(lab.rpc_messages().contains(r#""optionId":"once""#));
+}
+
+#[test]
+fn a_request_is_answered_at_the_prompt_on_a_terminal() {
+    let lab = Lab::with_script(asking_script());
+    let (mut keys, screen) = terminal();
+    let mut agent = lab.agent(&["please run it"]);
+    agent
+        .stdin(screen.try_clone().expect("the terminal again"))
+        .stdout(Stdio::piped())
+        .stderr(screen);
+    let mut child = agent.spawn().expect("crowbar-agent runs");
+    drop(agent);
+    let mut shown = Vec::new();
+    let mut bytes = [0u8; 4096];
+    let read_until = |keys: &mut fs::File, shown: &mut Vec<u8>, bytes: &mut [u8], text: &str| {
+        while !String::from_utf8_lossy(shown).contains(text) {
+            let count = keys.read(bytes).expect("the terminal shows more");
+            assert!(count > 0, "the terminal closed before {text:?}");
+            shown.extend_from_slice(&bytes[..count]);
+        }
+    };
+    read_until(&mut keys, &mut shown, &mut bytes, "Answer [once/always/no]: ");
+    // Something it does not offer is asked again; then always.
+    keys.write_all(b"maybe\n").unwrap();
+    read_until(&mut keys, &mut shown, &mut bytes, "maybe\r\nAnswer [once/always/no]: ");
+    keys.write_all(b"always\n").unwrap();
+    read_until(&mut keys, &mut shown, &mut bytes, "[request] answered: always");
+    let mut out = String::new();
+    child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
+    assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
+    assert_eq!(out, "Ran.\n");
+}
+
+#[test]
+fn a_thread_s_mode_and_the_starting_mode_are_set_from_the_terminal() {
+    let lab = Lab::with_script(asking_script());
+    let shown = lab.run(&["default-mode"], "");
+    assert_eq!(
+        (shown.status, shown.out.as_str()),
+        (0, "New threads start in Ask first.\n")
+    );
+
+    // A thread started in Full access asks nothing.
+    let full = lab.run(&["--mode", "full-access", "please run it"], "");
+    assert_eq!((full.status, full.out.as_str()), (0, "Ran.\n"), "{full:?}");
+    assert!(!full.err.contains("[request]"), "{full:?}");
+    let thread = only_thread(&lab);
+
+    let set = lab.run(&["--resume", &thread, "--mode", "plan"], "");
+    assert_eq!(
+        (set.status, set.err.clone()),
+        (0, format!("{thread} is now in Plan.\n"))
+    );
+    let bad = lab.run(&["--resume", &thread, "--mode", "yolo"], "");
+    assert_eq!(bad.status, 1, "{bad:?}");
+    assert!(bad.err.contains("There is no mode yolo."), "{bad:?}");
+
+    let set = lab.run(&["default-mode", "full-access"], "");
+    assert_eq!(
+        (set.status, set.err.as_str()),
+        (0, "New threads start in Full access.\n")
+    );
+    let next = lab.run(&["please run it again"], "");
+    assert_eq!((next.status, next.out.as_str()), (0, "Ran.\n"), "{next:?}");
+    let bad = lab.run(&["default-mode", "plan"], "");
+    assert_eq!(bad.status, 1, "{bad:?}");
 }
