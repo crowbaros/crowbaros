@@ -103,10 +103,19 @@ struct WorkingTurn {
 }
 
 /// A request that waits for the person, as Lever holds it: the harness's
-/// handle for answering it, and its thread.
+/// handle for answering it, and its thread and turn.
 struct Waiting {
     handle: u64,
     thread_id: String,
+    turn: u64,
+}
+
+/// How a request ended, kept until the database has it.
+struct RequestEnd {
+    request_id: String,
+    thread_id: String,
+    state: &'static str,
+    answer: Option<String>,
 }
 
 struct PendingSetModel {
@@ -147,8 +156,14 @@ pub struct Service {
     activity: (Vec<String>, Vec<String>),
     pending_models: Vec<u64>,
     pending_set_models: Vec<PendingSetModel>,
+    /// Threads whose turn was stopped while the harness set the session's
+    /// mode. Each stays working until the harness answers, so no turn after
+    /// it runs in a mode it did not ask for.
+    modes_in_flight: Vec<String>,
     /// Ends the database did not take, tried again on each wake.
     unsaved_endings: Vec<Ending>,
+    /// Ends of requests the database did not take, tried again on each wake.
+    unsaved_request_ends: Vec<RequestEnd>,
 }
 
 impl Service {
@@ -174,7 +189,9 @@ impl Service {
             activity: (Vec::new(), Vec::new()),
             pending_models: Vec::new(),
             pending_set_models: Vec::new(),
+            modes_in_flight: Vec::new(),
             unsaved_endings: Vec::new(),
+            unsaved_request_ends: Vec::new(),
         }
     }
 
@@ -194,6 +211,15 @@ impl Service {
             || !self.waiting.is_empty()
             || !self.pending_models.is_empty()
             || !self.pending_set_models.is_empty()
+            || !self.modes_in_flight.is_empty()
+    }
+
+    /// Whether a thread is busy: a turn works on it, or the harness has yet
+    /// to answer a change Lever asked of its session.
+    fn thread_busy(&self, thread_id: &str) -> bool {
+        self.working_turns.contains_key(thread_id)
+            || self.pending_set_models.iter().any(|p| p.thread_id == thread_id)
+            || self.modes_in_flight.iter().any(|t| t == thread_id)
     }
 
     fn default_mode(&self) -> String {
@@ -244,13 +270,22 @@ impl Service {
         {
             cat.default_model = existing.default_model.clone();
         }
+        // A harness that says only what changed, the Model, still offers the
+        // modes it offered.
+        if cat.modes.is_empty()
+            && self.harness.as_ref().is_some_and(AcpHarness::has_modes)
+            && let Some(existing) = &self.model_catalog
+        {
+            cat.modes = existing.modes.clone();
+        }
         self.model_catalog = Some(cat);
     }
 
     /// Timeout in milliseconds for `poll(2)`, or `-1` when Lever waits for
     /// nothing but its peers and its harness.
     pub fn poll_timeout_ms(&self) -> libc::c_int {
-        let retry = (!self.unsaved_endings.is_empty()).then_some(UNSAVED_RETRY);
+        let retry =
+            (!self.unsaved_endings.is_empty() || !self.unsaved_request_ends.is_empty()).then_some(UNSAVED_RETRY);
         let stop = self
             .working_turns
             .values()
@@ -279,6 +314,7 @@ impl Service {
     /// stops a harness whose environment changed once it is idle, and stops
     /// the harness if no thread has worked for `idle_timeout`.
     pub fn on_wake(&mut self, log: &mut Log) -> Effects {
+        sys::reap_orphans(self.harness.as_ref().map(AcpHarness::pid));
         self.save_endings();
         let mut effects = Effects::default();
         let overdue = self
@@ -428,8 +464,10 @@ impl Service {
         if self.harness.is_some() {
             self.stop_harness("on Lever stop", log);
         }
-        // What was working ends here, and the record says so now, not at the
-        // next start.
+        // How requests and turns ended goes in first, if the database takes
+        // it now. What was working ends here, and the record says so now,
+        // not at the next start.
+        self.save_endings();
         if let Err(err) = self.store.interrupt_all_working(unix_now()) {
             store_failed(log, &err);
         }
@@ -475,6 +513,9 @@ impl Service {
                         thread.state = ending.state.to_string();
                         thread.working = false;
                     }
+                    // What waits is what Lever holds: a request whose end
+                    // the database has yet to take waits no longer.
+                    thread.waiting = self.waiting.values().any(|w| w.thread_id == thread.id);
                 }
                 RequestOutcome {
                     reply: Some(json!({
@@ -502,6 +543,14 @@ impl Service {
                     if let Some(turn) = record.turns.iter_mut().find(|turn| turn.turn == ending.turn) {
                         turn.state = ending.state.to_string();
                         turn.error = ending.error.clone();
+                    }
+                }
+                for end in self.unsaved_request_ends.iter().filter(|e| e.thread_id == thread_id) {
+                    for turn in &mut record.turns {
+                        if let Some(request) = turn.requests.iter_mut().find(|r| r.id == end.request_id) {
+                            request.state = end.state.to_string();
+                            request.answer = end.answer.clone();
+                        }
                     }
                 }
                 record.working = record.turns.last().is_some_and(|turn| turn.state == "working");
@@ -621,10 +670,7 @@ impl Service {
         }
         match self.store.thread_meta(thread_id) {
             Ok(Some(meta)) => {
-                if meta.working_turn.is_some()
-                    || self.working_turns.contains_key(thread_id)
-                    || self.pending_set_models.iter().any(|p| p.thread_id == thread_id)
-                {
+                if meta.working_turn.is_some() || self.thread_busy(thread_id) {
                     return error_outcome("working", "This thread is already working on a turn.");
                 }
             }
@@ -789,16 +835,15 @@ impl Service {
 
         let now = unix_now();
         let title = initial_title(text);
+        let mut mode_changed = false;
         let (thread_id, cwd, existing_session_id, desired_model, mode, new_thread) = if let Some(tid) = requested_thread
         {
             match self.store.thread_meta(tid) {
                 Ok(Some(meta)) => {
-                    if meta.working_turn.is_some()
-                        || self.working_turns.contains_key(tid)
-                        || self.pending_set_models.iter().any(|p| p.thread_id == tid)
-                    {
+                    if meta.working_turn.is_some() || self.thread_busy(tid) {
                         return error_outcome("working", "This thread is already working on a turn.");
                     }
+                    mode_changed = requested_mode.is_some_and(|m| m != meta.mode);
                     let model = requested_model
                         .map(str::to_string)
                         .or(meta.model)
@@ -865,10 +910,17 @@ impl Service {
         if let Some(ctx) = context_value {
             msg_event["context"] = ctx;
         }
-        let mut broadcasts = vec![Broadcast {
+        let mut broadcasts = Vec::new();
+        if mode_changed {
+            broadcasts.push(Broadcast {
+                thread_id: thread_id.clone(),
+                message: json!({ "event": "thread-updated", "thread": thread_id, "mode": mode }),
+            });
+        }
+        broadcasts.push(Broadcast {
             thread_id: thread_id.clone(),
             message: msg_event,
-        }];
+        });
 
         self.idle_since = None;
         self.working_turns.insert(
@@ -933,8 +985,12 @@ impl Service {
         }
 
         // Stop withdraws what the thread asks, whether or not a turn works:
-        // a harness may ask after its turn ended.
-        let mut broadcasts = self.withdraw_requests(|w| w.thread_id == thread_id, log);
+        // a harness may ask after its turn ended. A Stop for one turn
+        // withdraws only what that turn asks.
+        let mut broadcasts = self.withdraw_requests(
+            |w| w.thread_id == thread_id && requested_turn.is_none_or(|t| w.turn == t),
+            log,
+        );
 
         let Some(active) = self.working_turns.get_mut(thread_id) else {
             return RequestOutcome {
@@ -967,9 +1023,11 @@ impl Service {
             TurnDispatch::WaitingForMode => {
                 // The mode is being set on the session, and the prompt is
                 // not sent: the turn ends now. Its session is the thread's
-                // still.
+                // still, and the thread stays busy until the harness answers,
+                // so the next turn knows which mode the session is in.
                 let turn = active.turn;
                 self.working_turns.remove(thread_id);
+                self.modes_in_flight.push(thread_id.to_string());
                 self.end_turn(thread_id, turn, "stopped", None, log);
                 self.refresh_idle_timer();
                 vec![Broadcast {
@@ -1041,9 +1099,10 @@ impl Service {
         if let Err(outcome) = self.check_mode(mode) {
             return outcome;
         }
+        self.save_endings();
         match self.store.thread_meta(thread_id) {
             Ok(Some(meta)) => {
-                if meta.working_turn.is_some() || self.working_turns.contains_key(thread_id) {
+                if meta.working_turn.is_some() || self.thread_busy(thread_id) {
                     return error_outcome("working", "This thread is already working on a turn.");
                 }
             }
@@ -1070,6 +1129,9 @@ impl Service {
         };
         if !STARTING_MODES.contains(&mode) {
             return error_outcome("invalid-mode", "New threads start in ask-first or full-access.");
+        }
+        if let Err(outcome) = self.check_mode(mode) {
+            return outcome;
         }
         if let Err(err) = self.store.set_default_mode(mode) {
             store_failed(log, &err);
@@ -1102,24 +1164,29 @@ impl Service {
             return no_request();
         };
         let handle = waiting.handle;
-        let offered = self
-            .store
-            .requests_of(thread_id, Some(request_id))
-            .ok()
-            .and_then(|found| found.into_iter().next())
-            .is_some_and(|(_, record)| record.answers.iter().any(|(a, _)| a == answer));
+        let offered = match self.store.requests_of(thread_id, Some(request_id)) {
+            Ok(found) => found
+                .into_iter()
+                .next()
+                .is_some_and(|(_, record)| record.answers.iter().any(|(a, _)| a == answer)),
+            Err(err) => return error_outcome("storage-error", &err),
+        };
         if !offered {
             return error_outcome("invalid-answer", &format!("This request does not offer {answer}."));
         }
-        if !self
+        let answered = self
             .harness
             .as_mut()
-            .is_some_and(|h| h.answer_permission(handle, Some(answer)))
-        {
-            self.waiting.remove(request_id);
-            return no_request();
+            .is_some_and(|h| h.answer_permission(handle, Some(answer)));
+        if !answered {
+            // The harness has it no longer: it is withdrawn, in the record too.
+            let broadcasts = self.end_request(request_id, "withdrawn", None, log);
+            return RequestOutcome {
+                reply: Some(error_json("no-request", "That request no longer waits.")),
+                subscribe: None,
+                broadcasts,
+            };
         }
-        self.waiting.remove(request_id);
         RequestOutcome {
             reply: Some(json!({ "reply": "ok" })),
             subscribe: None,
@@ -1127,19 +1194,48 @@ impl Service {
         }
     }
 
-    /// Ends a request in the record and tells who watches its thread.
-    fn end_request(&mut self, request_id: &str, state: &str, answer: Option<&str>, log: &mut Log) -> Vec<Broadcast> {
-        match self.store.end_request(request_id, state, answer, unix_now()) {
-            Ok(Some((thread_id, turn, record))) => vec![Broadcast {
-                thread_id: thread_id.clone(),
-                message: request_event_json(&thread_id, turn, &record),
-            }],
-            Ok(None) => Vec::new(),
+    /// Ends a request Lever holds, in the record, and tells who watches its
+    /// thread. An end the database does not take is kept, said to whoever
+    /// asks, and tried again on each wake.
+    fn end_request(
+        &mut self,
+        request_id: &str,
+        state: &'static str,
+        answer: Option<&str>,
+        log: &mut Log,
+    ) -> Vec<Broadcast> {
+        let Some(waiting) = self.waiting.remove(request_id) else {
+            return Vec::new();
+        };
+        let (thread_id, turn, record) = match self.store.end_request(request_id, state, answer, unix_now()) {
+            Ok(Some(ended)) => ended,
+            Ok(None) => return Vec::new(),
             Err(err) => {
                 store_failed(log, &err);
-                Vec::new()
+                self.unsaved_request_ends.push(RequestEnd {
+                    request_id: request_id.to_string(),
+                    thread_id: waiting.thread_id.clone(),
+                    state,
+                    answer: answer.map(str::to_string),
+                });
+                let Some(mut record) = self
+                    .store
+                    .requests_of(&waiting.thread_id, Some(request_id))
+                    .ok()
+                    .and_then(|found| found.into_iter().next())
+                    .map(|(_, record)| record)
+                else {
+                    return Vec::new();
+                };
+                record.state = state.to_string();
+                record.answer = answer.map(str::to_string);
+                (waiting.thread_id, waiting.turn, record)
             }
-        }
+        };
+        vec![Broadcast {
+            thread_id: thread_id.clone(),
+            message: request_event_json(&thread_id, turn, &record),
+        }]
     }
 
     /// Withdraws the requests that wait and match, answering each
@@ -1154,7 +1250,7 @@ impl Service {
         ids.sort();
         let mut broadcasts = Vec::new();
         for id in ids {
-            if let Some(w) = self.waiting.remove(&id)
+            if let Some(w) = self.waiting.get(&id)
                 && let Some(harness) = self.harness.as_mut()
             {
                 harness.answer_permission(w.handle, None);
@@ -1586,14 +1682,14 @@ impl Service {
                 }
                 let mut effects = Effects::default();
                 // The harness changed the session's mode itself: the thread
-                // is in that mode now, and a turn that waits to set its mode
-                // sets it again.
+                // is in that mode now. A turn that has yet to send its prompt
+                // sets its own mode on the session still, and keeps it.
                 if let Some(mode) = current_mode {
-                    let waiting_for_mode = self
+                    let prompt_sent = self
                         .working_turns
                         .get(&thread_id)
-                        .is_some_and(|a| matches!(a.dispatch, TurnDispatch::WaitingForMode));
-                    if !waiting_for_mode {
+                        .is_none_or(|a| matches!(a.dispatch, TurnDispatch::PromptInFlight { .. }));
+                    if prompt_sent {
                         if let Some(active) = self.working_turns.get_mut(&thread_id) {
                             active.mode = mode.clone();
                         }
@@ -1615,6 +1711,8 @@ impl Service {
                     .is_some_and(|a| a.turn == turn && matches!(a.dispatch, TurnDispatch::WaitingForMode))
                 {
                     self.continue_turn(&thread_id);
+                } else {
+                    self.modes_in_flight.retain(|t| *t != thread_id);
                 }
                 Effects::default()
             }
@@ -1622,10 +1720,13 @@ impl Service {
                 thread_id,
                 turn,
                 message,
-            } => Effects {
-                broadcasts: self.fail_turn(&thread_id, turn, &message, log),
-                replies: Vec::new(),
-            },
+            } => {
+                self.modes_in_flight.retain(|t| *t != thread_id);
+                Effects {
+                    broadcasts: self.fail_turn(&thread_id, turn, &message, log),
+                    replies: Vec::new(),
+                }
+            }
             AcpEvent::PermissionRequested {
                 thread_id,
                 handle,
@@ -1639,7 +1740,7 @@ impl Service {
                 &thread_id,
                 handle,
                 &harness_call_id,
-                &kind,
+                kind.as_deref(),
                 &title,
                 detail.as_deref(),
                 path.as_deref(),
@@ -1654,7 +1755,6 @@ impl Service {
                     .map(|(id, _)| id.clone());
                 let mut effects = Effects::default();
                 if let Some(id) = id {
-                    self.waiting.remove(&id);
                     effects.broadcasts = self.end_request(&id, "withdrawn", None, log);
                 }
                 effects
@@ -1842,7 +1942,7 @@ impl Service {
         thread_id: &str,
         handle: u64,
         harness_call_id: &str,
-        kind: &str,
+        kind: Option<&str>,
         title: &str,
         detail: Option<&str>,
         path: Option<&str>,
@@ -1850,7 +1950,13 @@ impl Service {
         log: &mut Log,
     ) -> Effects {
         let mut effects = Effects::default();
-        let Some(turn) = self.turn_for_update(thread_id) else {
+        // A turn the person asked to stop asks nothing more of them.
+        let stopping = self
+            .working_turns
+            .get(thread_id)
+            .is_some_and(|active| active.stop_asked.is_some());
+        let turn = self.turn_for_update(thread_id).filter(|_| !stopping);
+        let Some(turn) = turn else {
             if let Some(harness) = self.harness.as_mut() {
                 harness.answer_permission(handle, None);
             }
@@ -1863,7 +1969,9 @@ impl Service {
             turn_number: turn,
             harness_call_id,
             is_new: false,
-            kind: Some(kind),
+            // A request that does not say what kind of act it is leaves the
+            // kind the act has.
+            kind,
             title: Some(title),
             state: None,
             detail: None,
@@ -1885,7 +1993,7 @@ impl Service {
             thread_id,
             turn_number: turn,
             act: act.as_deref(),
-            kind,
+            kind: kind.unwrap_or("other"),
             title,
             detail,
             path,
@@ -1898,6 +2006,7 @@ impl Service {
                     Waiting {
                         handle,
                         thread_id: thread_id.to_string(),
+                        turn,
                     },
                 );
                 effects.broadcasts.push(Broadcast {
@@ -1943,23 +2052,31 @@ impl Service {
         self.idle_since = None;
 
         let replies = self.fail_pending_peer_requests(why);
+        self.modes_in_flight.clear();
         let mut broadcasts = self.withdraw_requests(|_| true, log);
 
-        // Every turn that was working is interrupted, and each end goes the
-        // way every other end does, so one the database does not take now is
-        // tried again.
-        let mut interrupted: Vec<(String, u64)> = self
+        // Every turn that was working is interrupted, or stopped when the
+        // person had asked to stop it, and each end goes the way every other
+        // end does, so one the database does not take now is tried again.
+        let mut ended: Vec<(String, u64, &'static str)> = self
             .working_turns
             .drain()
-            .map(|(thread_id, active)| (thread_id, active.turn))
+            .map(|(thread_id, active)| {
+                let state = if active.stop_asked.is_some() {
+                    "stopped"
+                } else {
+                    "interrupted"
+                };
+                (thread_id, active.turn, state)
+            })
             .collect();
-        interrupted.sort();
-        for (thread_id, turn) in interrupted {
-            self.end_turn(&thread_id, turn, "interrupted", None, log);
+        ended.sort();
+        for (thread_id, turn, state) in ended {
+            self.end_turn(&thread_id, turn, state, None, log);
             broadcasts.push(Broadcast {
                 thread_id: thread_id.clone(),
                 message: json!({
-                    "event": "interrupted",
+                    "event": state,
                     "thread": thread_id,
                     "turn": turn,
                 }),
@@ -2009,11 +2126,16 @@ impl Service {
     }
 
     fn save_endings(&mut self) {
+        let store = &self.store;
+        let now = unix_now();
+        self.unsaved_request_ends.retain(|end| {
+            store
+                .end_request(&end.request_id, end.state, end.answer.as_deref(), now)
+                .is_err()
+        });
         if self.unsaved_endings.is_empty() {
             return;
         }
-        let now = unix_now();
-        let store = &self.store;
         self.unsaved_endings.retain(|ending| {
             store
                 .finish_turn(

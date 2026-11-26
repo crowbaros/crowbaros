@@ -288,6 +288,70 @@ pub fn descendants(pid: u32) -> Vec<u32> {
     found
 }
 
+/// Makes Lever the parent of every process its harness leaves behind: one
+/// whose parent ends before it comes to Lever, and not to the system, so a
+/// Stop the harness ignores still finds it.
+pub fn become_subreaper() -> io::Result<()> {
+    // SAFETY: `prctl(PR_SET_CHILD_SUBREAPER)` only sets a flag on Lever.
+    if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Lever's own children, read from `/proc`.
+fn own_children() -> Vec<u32> {
+    let Ok(tasks) = std::fs::read_dir("/proc/self/task") else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for task in tasks.flatten() {
+        if let Ok(children) = std::fs::read_to_string(task.path().join("children")) {
+            found.extend(children.split_whitespace().filter_map(|p| p.parse::<u32>().ok()));
+        }
+    }
+    found
+}
+
+/// Waits for each child of Lever's that has ended, other than `keep`, whose
+/// end is its own to wait for. What a harness left behind comes to Lever,
+/// and is taken when it ends.
+pub fn reap_orphans(keep: Option<u32>) {
+    for pid in own_children() {
+        if Some(pid) == keep {
+            continue;
+        }
+        let mut status = 0;
+        // SAFETY: waiting, without blocking, for a child of Lever's.
+        unsafe {
+            libc::waitpid(pid as libc::pid_t, &mut status, libc::WNOHANG);
+        }
+    }
+}
+
+/// Ends every process under Lever at once: each is held still first, and the
+/// tree read again until no process is new, so none starts another while
+/// the others end. Lever is their subreaper, so one whose parent ended is
+/// under Lever still.
+pub fn kill_all_under_lever() {
+    // SAFETY: `getpid` cannot fail.
+    let me = unsafe { libc::getpid() } as u32;
+    let mut held: Vec<u32> = Vec::new();
+    for _ in 0..100 {
+        let new: Vec<u32> = descendants(me).into_iter().filter(|pid| !held.contains(pid)).collect();
+        if new.is_empty() {
+            break;
+        }
+        for &pid in &new {
+            signal_pid(pid, libc::SIGSTOP);
+        }
+        held.extend(new);
+    }
+    for &pid in &held {
+        signal_pid(pid, libc::SIGKILL);
+    }
+}
+
 /// Sends a signal to a child process.
 pub fn signal_pid(pid: u32, sig: libc::c_int) {
     // SAFETY: sending a signal to Lever's own child process.

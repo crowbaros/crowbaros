@@ -98,6 +98,13 @@ impl RunningLever {
             &person_uid.to_string(),
         ]);
         cmd.args(extra);
+        // Lever reads the person's OpenCode settings: in a test, the person
+        // has none, unless the test gives them some.
+        let home = dir.join("lever-home");
+        cmd.env("HOME", &home).env("XDG_CONFIG_HOME", home.join(".config"));
+        for key in ["OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT"] {
+            cmd.env_remove(key);
+        }
         cmd.envs(env.iter().copied());
         let child = cmd
             .stdout(Stdio::piped())
@@ -3940,8 +3947,8 @@ fn lever_adds_ask_first_for_its_own_harness_and_leaves_the_persons_opencode_file
     let home = dir.0.join("home");
     let config = home.join(".config/opencode");
     std::fs::create_dir_all(&config).unwrap();
-    let mine = br#"{"permission":{"bash":"allow"},"agent":{"mine":{"mode":"primary"}}}"#;
-    std::fs::write(config.join("opencode.json"), mine).unwrap();
+    let mine = b"{\n  // the person's own\n  \"permission\": {\"bash\": {\"*\": \"allow\", \"rm *\": \"deny\"}},\n  \"agent\": {\"mine\": {\"mode\": \"primary\"}},\n}\n";
+    std::fs::write(config.join("opencode.jsonc"), mine).unwrap();
     let script = ask_script(&dir.0);
     let stub_log = dir.0.join("stub.log");
     let env_out = dir.0.join("env.json");
@@ -3967,21 +3974,26 @@ fn lever_adds_ask_first_for_its_own_harness_and_leaves_the_persons_opencode_file
     let seen: Value = serde_json::from_str(&std::fs::read_to_string(&env_out).unwrap()).unwrap();
     let content: Value = serde_json::from_str(seen["OPENCODE_CONFIG_CONTENT"].as_str().unwrap()).unwrap();
     assert_eq!(content["default_agent"], "crowbar-ask-first");
+    // Ask first asks before every command and edit, except where the
+    // person's own rules say otherwise: what they refuse stays refused.
+    let permission = &content["agent"]["crowbar-ask-first"]["permission"];
     assert_eq!(
-        content["agent"]["crowbar-ask-first"]["permission"],
-        json!({ "bash": "ask", "edit": "ask" })
+        permission,
+        &json!({ "bash": { "*": "ask", "rm *": "deny" }, "edit": { "*": "ask" } })
     );
+    let order: Vec<&String> = permission["bash"].as_object().unwrap().keys().collect();
+    assert_eq!(order, ["*", "rm *"], "the person's rule comes after Ask first's");
     assert_eq!(content["agent"]["from-env"], json!({ "mode": "primary" }), "{content}");
     assert_eq!(content["update"], "disable");
 
     // The person's own file is as they made it, and Lever made no other.
-    assert_eq!(std::fs::read(config.join("opencode.json")).unwrap(), mine);
+    assert_eq!(std::fs::read(config.join("opencode.jsonc")).unwrap(), mine);
     let files: Vec<_> = std::fs::read_dir(&config)
         .unwrap()
         .flatten()
         .map(|e| e.file_name())
         .collect();
-    assert_eq!(files, vec![std::ffi::OsString::from("opencode.json")]);
+    assert_eq!(files, vec![std::ffi::OsString::from("opencode.jsonc")]);
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
@@ -4000,6 +4012,7 @@ fn a_stop_the_harness_ignores_ends_the_turn_and_every_command_it_started() {
     let dir = TempDir::new();
     let uid = my_uid();
     let pid_file = dir.0.join("sleep.pid");
+    let detached_file = dir.0.join("detached.pid");
     let script = write_script(
         &dir.0,
         &json!({
@@ -4008,6 +4021,7 @@ fn a_stop_the_harness_ignores_ends_the_turn_and_every_command_it_started() {
                     "match": "ignore",
                     "steps": [
                         { "kind": "spawn", "pid_file": pid_file.to_str().unwrap() },
+                        { "kind": "spawn", "pid_file": detached_file.to_str().unwrap(), "detach": true },
                         { "kind": "text", "text": "Working" }
                     ],
                     "stall": true,
@@ -4029,6 +4043,9 @@ fn a_stop_the_harness_ignores_ends_the_turn_and_every_command_it_started() {
     read_until(&mut peer, |f| f["event"] == "text" && f["thread"] == stuck.as_str());
     let pid: u32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
     assert!(alive(pid), "the turn's command runs");
+    // A command run in the background, whose shell has ended.
+    let detached: u32 = std::fs::read_to_string(&detached_file).unwrap().trim().parse().unwrap();
+    assert!(alive(detached), "the command it left behind runs");
 
     let asked = Instant::now();
     assert_eq!(
@@ -4057,8 +4074,8 @@ fn a_stop_the_harness_ignores_ends_the_turn_and_every_command_it_started() {
     assert_eq!(ended[&stuck], "stopped");
     assert_eq!(ended[&other], "interrupted", "a turn of the same harness cannot go on");
     let deadline = Instant::now() + Duration::from_secs(2);
-    while alive(pid) {
-        assert!(Instant::now() < deadline, "the turn's command still runs");
+    while alive(pid) || alive(detached) {
+        assert!(Instant::now() < deadline, "the turn's commands still run");
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(
@@ -4176,6 +4193,394 @@ fn a_request_after_its_turn_keeps_the_harness_until_stop_withdraws_it() {
         std::thread::sleep(Duration::from_millis(50));
     }
     assert_eq!(stub_heard(&stub_log), ["cancelled"]);
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_stop_for_a_turn_that_ended_withdraws_nothing_of_the_turn_after_it() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = ask_script(&dir.0);
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, first) = send(&mut peer, None, "hello");
+    read_until(&mut peer, |f| f["event"] == "done");
+    send(&mut peer, Some(&thread), "please run it");
+    let request = read_until(&mut peer, |f| f["event"] == "request");
+
+    // A Stop that comes late, for the turn before, leaves this one's request.
+    assert_eq!(
+        ask_lever(&mut peer, json!({ "op": "stop", "thread": thread, "turn": first })),
+        json!({ "reply": "ok" })
+    );
+    let list = ask_lever(&mut peer, json!({ "op": "list" }));
+    assert_eq!(list["threads"][0]["waiting"], true, "{list}");
+    assert_eq!(
+        ask_lever(
+            &mut peer,
+            json!({ "op": "answer", "thread": thread, "request": request["request"], "answer": "once" })
+        ),
+        json!({ "reply": "ok" })
+    );
+    read_until(&mut peer, |f| f["event"] == "done");
+    assert_eq!(stub_heard(&stub_log), ["once"]);
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_turn_the_person_asked_to_stop_asks_them_nothing_more() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "turns": [{
+                "steps": [
+                    { "kind": "text", "text": "Working" },
+                    { "kind": "pause_ms", "ms": 400 },
+                    { "kind": "ask", "id": "c1", "title": "make", "raw_input": { "command": "make" } }
+                ],
+                "stall": true,
+                "ignore_cancel": true
+            }]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &["--stop-timeout-ms", "5000"]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, _) = send(&mut peer, None, "hello");
+    read_until(&mut peer, |f| f["event"] == "text");
+    ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }));
+
+    // What the harness asks after the Stop is answered for the person: no.
+    let end = read_until(&mut peer, |f| f["event"] == "request" || f["event"] == "stopped");
+    assert_eq!(end["event"], "stopped", "{end}");
+    assert_eq!(stub_heard(&stub_log), ["cancelled"]);
+    let resumed = ask_lever(&mut peer, json!({ "op": "resume", "thread": thread }));
+    assert_eq!(resumed["turns"][0]["requests"], json!([]));
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_turn_stopped_while_its_mode_is_set_holds_the_thread_until_the_harness_answers() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "set_config_delay_ms": 600,
+            "turns": [
+                {
+                    "match": "please run",
+                    "steps": [{ "kind": "ask", "id": "c1", "title": "make", "raw_input": { "command": "make" } }]
+                },
+                { "steps": [{ "kind": "text", "text": "Hello." }] }
+            ]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, _) = send(&mut peer, None, "hello");
+    read_until(&mut peer, |f| f["event"] == "done");
+    ask_lever(
+        &mut peer,
+        json!({ "op": "set-mode", "thread": thread, "mode": "full-access" }),
+    );
+
+    // The harness takes Full access at once, and answers late; the turn is
+    // stopped before it answers.
+    send(&mut peer, Some(&thread), "hello again");
+    wait_until("Lever asks for Full access", || stub_modes_set(&stub_log) == ["build"]);
+    ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }));
+    read_until(&mut peer, |f| f["event"] == "stopped");
+
+    // Until it answers, the thread takes no other mode and no message.
+    let busy = ask_lever(
+        &mut peer,
+        json!({ "op": "set-mode", "thread": thread, "mode": "ask-first" }),
+    );
+    assert_eq!(busy["code"], "working", "{busy}");
+    let busy = ask_lever(
+        &mut peer,
+        json!({ "op": "send", "thread": thread, "text": "please run it" }),
+    );
+    assert_eq!(busy["code"], "working", "{busy}");
+
+    // Then Ask first is set again, and the next turn asks.
+    wait_until("the thread is free", || {
+        ask_lever(
+            &mut peer,
+            json!({ "op": "set-mode", "thread": thread, "mode": "ask-first" }),
+        )["reply"]
+            == "mode-set"
+    });
+    send(&mut peer, Some(&thread), "please run it");
+    let asked = read_until(&mut peer, |f| f["event"] == "request" || f["event"] == "done");
+    assert_eq!(asked["event"], "request", "{asked}");
+    assert_eq!(stub_modes_set(&stub_log), ["build", "crowbar-ask-first"]);
+    ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }));
+    read_until(&mut peer, |f| f["event"] == "stopped");
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_harness_that_says_only_what_changed_still_offers_its_modes() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "partial_config_replies": true,
+            "models": [{ "id": "m1", "name": "One" }, { "id": "m2", "name": "Two" }],
+            "turns": [{ "steps": [{ "kind": "text", "text": "Hello." }] }]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, _) = send(&mut peer, None, "hello");
+    read_until(&mut peer, |f| f["event"] == "done");
+    assert_eq!(
+        ask_lever(&mut peer, json!({ "op": "set-model", "thread": thread, "model": "m2" }))["reply"],
+        "model-set"
+    );
+    let models = ask_lever(&mut peer, json!({ "op": "models" }));
+    assert_eq!(models["modes"].as_array().map(Vec::len), Some(3), "{models}");
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_harness_whose_modes_are_not_levers_runs_turns_and_new_threads_start_only_in_one_it_offers() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    // Modes of its own: Lever sets none, and the turn runs.
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "mode_values": ["default", "yolo"],
+            "turns": [{ "steps": [{ "kind": "text", "text": "Hello." }] }]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    send(&mut peer, None, "hello");
+    let end = read_until(&mut peer, |f| {
+        ["done", "failed"].contains(&f["event"].as_str().unwrap_or(""))
+    });
+    assert_eq!(end["event"], "done", "{end}");
+    assert!(stub_modes_set(&stub_log).is_empty());
+    assert_eq!(ask_lever(&mut peer, json!({ "op": "models" }))["modes"], json!([]));
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+
+    // No Full access: new threads cannot start in it.
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "mode_values": ["crowbar-ask-first", "plan"],
+            "turns": [{ "steps": [{ "kind": "text", "text": "Hello." }] }]
+        }),
+    );
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    ask_lever(&mut peer, json!({ "op": "models" }));
+    let refused = ask_lever(&mut peer, json!({ "op": "set-default-mode", "mode": "full-access" }));
+    assert_eq!(refused["code"], "invalid-mode", "{refused}");
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn an_answer_the_database_does_not_take_is_kept_and_saved_when_it_does() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = ask_script(&dir.0);
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, _) = send(&mut peer, None, "please run it");
+    let request = read_until(&mut peer, |f| f["event"] == "request");
+
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    refuse_writes(&db, "UPDATE ON requests");
+    assert_eq!(
+        ask_lever(
+            &mut peer,
+            json!({ "op": "answer", "thread": thread, "request": request["request"], "answer": "once" })
+        ),
+        json!({ "reply": "ok" })
+    );
+    // Who watches is told, and whoever asks hears it answered.
+    let answered = read_until(&mut peer, |f| f["event"] == "request");
+    assert_eq!(
+        (answered["state"].as_str(), answered["answer"].as_str()),
+        (Some("answered"), Some("once"))
+    );
+    read_until(&mut peer, |f| f["event"] == "done");
+    let list = ask_lever(&mut peer, json!({ "op": "list" }));
+    assert_eq!(list["threads"][0]["waiting"], false, "{list}");
+    let resumed = ask_lever(&mut peer, json!({ "op": "resume", "thread": thread }));
+    assert_eq!(resumed["turns"][0]["requests"][0]["state"], "answered");
+
+    // The record gets it when the database takes writes again.
+    db.execute_batch("DROP TRIGGER refused").unwrap();
+    wait_until("the answer is saved", || {
+        db.query_row("SELECT state FROM requests", [], |r| r.get::<_, String>(0))
+            .is_ok_and(|state| state == "answered")
+    });
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_request_the_harness_withdraws_is_answered_cancelled_and_withdrawn_for_the_person() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "turns": [{
+                "steps": [
+                    { "kind": "ask", "id": "c1", "title": "make", "raw_input": { "command": "make" },
+                      "withdraw_after_ms": 300 },
+                    { "kind": "text", "text": "Done." }
+                ]
+            }]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    send(&mut peer, None, "hello");
+    read_until(&mut peer, |f| f["event"] == "request" && f["state"] == "waiting");
+    let withdrawn = read_until(&mut peer, |f| f["event"] == "request");
+    assert_eq!(withdrawn["state"], "withdrawn");
+    read_until(&mut peer, |f| f["event"] == "stopped");
+    wait_until("the harness has its answer", || stub_heard(&stub_log) == ["cancelled"]);
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_message_in_another_mode_tells_who_watches_the_threads_mode() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = ask_script(&dir.0);
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, _) = send(&mut peer, None, "hello");
+    read_until(&mut peer, |f| f["event"] == "done");
+    let mut shell = handshake(&lever.surface);
+    ask_lever(&mut shell, json!({ "op": "resume", "thread": thread }));
+
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": thread, "text": "hello", "mode": "full-access" }),
+    )
+    .unwrap();
+    let updated = read_until(&mut shell, |f| {
+        f["event"] == "thread-updated" || f["event"] == "message"
+    });
+    assert_eq!(
+        updated,
+        json!({ "event": "thread-updated", "thread": thread, "mode": "full-access" })
+    );
+    read_until(&mut shell, |f| f["event"] == "done");
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_request_that_does_not_say_its_kind_leaves_its_acts_kind() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "turns": [{
+                "steps": [{ "kind": "ask", "id": "c1", "title": "make", "raw_input": { "command": "make" },
+                            "request_without_kind": true }]
+            }]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &[]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, _) = send(&mut peer, None, "hello");
+    let act = read_until(&mut peer, |f| f["event"] == "act");
+    let request = read_until(&mut peer, |f| f["event"] == "request");
+    let resumed = ask_lever(&mut peer, json!({ "op": "resume", "thread": thread }));
+    assert_eq!(resumed["turns"][0]["acts"][0]["kind"], act["kind"], "{resumed}");
+    assert_eq!(request["kind"], "other");
+    ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }));
+    read_until(&mut peer, |f| f["event"] == "stopped");
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn turns_the_person_asked_to_stop_end_as_stopped_when_the_harness_is_ended() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                { "match": "one", "steps": [{ "kind": "text", "text": "One" }], "stall": true, "ignore_cancel": true },
+                { "match": "two", "steps": [{ "kind": "text", "text": "Two" }], "stall": true, "ignore_cancel": true }
+            ]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &["--stop-timeout-ms", "600"]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (one, _) = send(&mut peer, None, "one");
+    read_until(&mut peer, |f| f["event"] == "text" && f["thread"] == one.as_str());
+    let (two, _) = send(&mut peer, None, "two");
+    read_until(&mut peer, |f| f["event"] == "text" && f["thread"] == two.as_str());
+    ask_lever(&mut peer, json!({ "op": "stop", "thread": one }));
+    std::thread::sleep(Duration::from_millis(200));
+    ask_lever(&mut peer, json!({ "op": "stop", "thread": two }));
+    let mut ended = std::collections::BTreeMap::new();
+    while ended.len() < 2 {
+        let frame = read_until(&mut peer, |f| {
+            ["stopped", "interrupted"].contains(&f["event"].as_str().unwrap_or(""))
+        });
+        ended.insert(
+            frame["thread"].as_str().unwrap().to_string(),
+            frame["event"].as_str().unwrap().to_string(),
+        );
+    }
+    assert_eq!(ended[&one], "stopped");
+    assert_eq!(ended[&two], "stopped", "the person asked to stop it too");
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }

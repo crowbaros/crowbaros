@@ -3,6 +3,7 @@
 //! the pinned `agent-client-protocol-schema` v1 types.
 
 use crate::channel::LEVER_VERSION;
+use crate::opencode;
 use crate::sys;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, CLIENT_METHOD_NAMES, CancelNotification, CancelRequestNotification, CloseSessionRequest,
@@ -185,7 +186,8 @@ pub enum AcpEvent {
         /// Lever's handle for answering it, never shown to anyone.
         handle: u64,
         harness_call_id: String,
-        kind: String,
+        /// The act's kind, when the harness said it.
+        kind: Option<String>,
         title: String,
         detail: Option<String>,
         path: Option<String>,
@@ -310,7 +312,9 @@ impl AcpHarness {
             .find(|(k, _)| k == "OPENCODE_CONFIG_CONTENT")
             .map(|(_, v)| v.clone())
             .or_else(|| std::env::var("OPENCODE_CONFIG_CONTENT").ok());
-        let (env_set, env_remove) = build_harness_env(&config.env, existing_config.as_deref(), free_hosted_models);
+        let person = opencode::person_settings(&config.env, existing_config.as_deref());
+        let (env_set, env_remove) =
+            build_harness_env(&config.env, existing_config.as_deref(), &person, free_hosted_models);
         let mut child = sys::spawn_harness(&config.program, &config.args, &env_set, &env_remove)
             .map_err(|e| format!("could not start harness {}: {e}", config.name))?;
         let stdin = child
@@ -680,13 +684,18 @@ impl AcpHarness {
     /// on.
     pub fn kill_tree(mut self) {
         self.stdin.take();
-        let mut pids = sys::descendants(self.child.id());
-        pids.push(self.child.id());
-        for pid in pids {
-            sys::signal_pid(pid, libc::SIGKILL);
-        }
+        sys::kill_all_under_lever();
         let _ = self.child.kill();
         let _ = self.child.wait();
+        // What it left behind ended too, and is Lever's to wait for.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            sys::reap_orphans(None);
+            if sys::descendants(std::process::id()).is_empty() || Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     /// Stops and reaps the harness child process.
@@ -859,14 +868,16 @@ impl AcpHarness {
             .entry(thread_id.clone())
             .or_default()
             .insert(call_id.clone());
-        let kind = call.fields.kind.map(map_tool_kind).unwrap_or("other").to_string();
+        let kind = call.fields.kind.map(|k| map_tool_kind(k).to_string());
+        // The command or the change is shown as the Model wrote it, as an
+        // act's is: the person answers for exactly that.
         let (detail, path) = request_detail(call.fields.kind, &call.fields);
-        let detail = detail.map(|d| self.redact_for_thread(Some(&thread_id), &d));
         let title = call
             .fields
             .title
             .clone()
             .filter(|t| !t.trim().is_empty())
+            .or_else(|| path.clone())
             .or_else(|| detail.as_ref().and_then(|d| d.lines().next().map(str::to_string)))
             .unwrap_or_else(|| "Act".to_string());
         let handle = self.next_permission;
@@ -895,8 +906,15 @@ impl AcpHarness {
             .iter()
             .find(|(_, permission)| permission.rpc_id == cancel.request_id)
             .map(|(handle, _)| *handle);
-        if let Some(handle) = handle {
-            self.permissions.remove(&handle);
+        if let Some(handle) = handle
+            && let Some(permission) = self.permissions.remove(&handle)
+        {
+            // The request still gets its answer, as ACP has it: cancelled.
+            self.send_result_response(
+                permission.rpc_id,
+                RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
+            );
+            let _ = self.on_writable();
             events.push(AcpEvent::PermissionWithdrawn { handle });
         }
     }
@@ -1470,6 +1488,7 @@ impl AcpHarness {
 fn build_harness_env(
     extra: &[(String, String)],
     existing_config_content: Option<&str>,
+    person: &[Value],
     free_hosted_models: bool,
 ) -> (Vec<(String, String)>, Vec<&'static str>) {
     let mut env_set: Vec<(String, String)> = extra
@@ -1483,7 +1502,7 @@ fn build_harness_env(
         .collect();
     env_set.push((
         "OPENCODE_CONFIG_CONTENT".to_string(),
-        opencode_config_content(existing_config_content),
+        opencode_config_content(existing_config_content, person),
     ));
     let mut env_remove = Vec::new();
     if free_hosted_models {
@@ -1498,11 +1517,13 @@ fn build_harness_env(
 /// Produces the `OPENCODE_CONFIG_CONTENT` JSON string: OpenCode's
 /// self-update switched off, and the Ask first agent, built from OpenCode's
 /// own permission settings, added and made the agent a session starts with.
-/// It merges into any existing JSON object from the environment, keeping the
-/// other agents there, and touches no file in the person's home.
-fn opencode_config_content(existing: Option<&str>) -> String {
+/// Ask first keeps the person's own rules for commands and edits (`person`,
+/// their settings documents). It merges into any existing JSON object from
+/// the environment, keeping the other agents there, and touches no file in
+/// the person's home.
+fn opencode_config_content(existing: Option<&str>, person: &[Value]) -> String {
     let mut map = existing
-        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .and_then(opencode::parse_jsonc)
         .and_then(|val| val.as_object().cloned())
         .unwrap_or_default();
     map.insert("update".to_string(), json!("disable"));
@@ -1513,7 +1534,7 @@ fn opencode_config_content(existing: Option<&str>) -> String {
         json!({
             "mode": "primary",
             "description": "Asks before it runs a command or edits a file.",
-            "permission": { "bash": "ask", "edit": "ask" },
+            "permission": opencode::ask_first_permission(person),
         }),
     );
     map.insert("agent".to_string(), Value::Object(agents));
@@ -1542,11 +1563,15 @@ fn extract_modes(options: &[SessionConfigOption]) -> Option<ModeSelector> {
         }
         _ => {}
     }
-    let modes = MODES
+    let modes: Vec<String> = MODES
         .iter()
         .filter(|(_, value, _)| values.iter().any(|v| v == value))
         .map(|(id, _, _)| (*id).to_string())
         .collect();
+    // A selector that offers none of Lever's modes is one Lever leaves alone.
+    if modes.is_empty() {
+        return None;
+    }
     let current_value = select.current_value.0.as_ref().to_string();
     Some(ModeSelector {
         config_id: opt.id.0.as_ref().to_string(),
@@ -1586,13 +1611,15 @@ fn request_detail(
         return (Some(parts.join("\n")), Some(path));
     }
     let input = fields.raw_input.as_ref();
-    let field = |name: &str| {
+    let text = |name: &str| {
         input
             .and_then(|v| v.get(name))
             .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
             .map(str::to_string)
     };
+    // A path or a command is something only when it says something. A text
+    // a change takes out or puts in may be empty, as when lines are deleted.
+    let field = |name: &str| text(name).filter(|s| !s.is_empty());
     let path = field("path").or_else(|| field("filePath")).or_else(|| {
         fields
             .locations
@@ -1603,17 +1630,12 @@ fn request_detail(
     match kind {
         Some(ToolKind::Execute) => (field("command").or_else(|| fields.title.clone()), None),
         Some(ToolKind::Edit | ToolKind::Delete | ToolKind::Move) => {
-            let change = match (field("oldString"), field("newString"), field("content")) {
+            let change = match (text("oldString"), text("newString"), text("content")) {
                 (old, Some(new), _) => Some(line_diff(old.as_deref(), &new)),
                 (None, None, Some(content)) => Some(line_diff(None, &content)),
                 _ => None,
             };
-            let detail = match (&path, change) {
-                (Some(p), Some(c)) => Some(format!("{p}\n{c}")),
-                (Some(p), None) => Some(p.clone()),
-                (None, c) => c,
-            };
-            (detail, path)
+            (change, path)
         }
         _ => (tool_detail(content, None, input), None),
     }
@@ -1621,8 +1643,9 @@ fn request_detail(
 
 /// The change from `old` to `new` as lines that begin `-` and `+`, with a few
 /// unchanged lines around it that begin with a space. Only the part between
-/// the lines both share at their start and their end is shown as changed,
-/// and a long change is cut short with a line that says how much was left.
+/// the lines both share at their start and their end is shown as changed. A
+/// long change is cut short in what it takes out and in what it puts in
+/// alike, so both show, each with a line that says how much was left.
 fn line_diff(old: Option<&str>, new: &str) -> String {
     let old_lines: Vec<&str> = old.map(|o| o.lines().collect()).unwrap_or_default();
     let new_lines: Vec<&str> = new.lines().collect();
@@ -1633,30 +1656,30 @@ fn line_diff(old: Option<&str>, new: &str) -> String {
         .zip(new_lines[prefix..].iter().rev())
         .take_while(|(a, b)| a == b)
         .count();
+    let before = &old_lines[prefix.saturating_sub(DIFF_CONTEXT)..prefix];
+    let removed = &old_lines[prefix..old_lines.len() - suffix];
+    let added = &new_lines[prefix..new_lines.len() - suffix];
+    let after = &new_lines[new_lines.len() - suffix..(new_lines.len() - suffix + DIFF_CONTEXT).min(new_lines.len())];
+
+    let budget = MAX_DETAIL_LINES.saturating_sub(before.len() + after.len());
+    let (keep_removed, keep_added) = if removed.len() + added.len() <= budget {
+        (removed.len(), added.len())
+    } else {
+        let half = budget / 2;
+        let keep_removed = removed.len().min(half.max(budget.saturating_sub(added.len())));
+        (keep_removed, added.len().min(budget - keep_removed))
+    };
     let mut out: Vec<String> = Vec::new();
-    let before = prefix.saturating_sub(DIFF_CONTEXT);
-    out.extend(old_lines[before..prefix].iter().map(|l| format!(" {l}")));
-    out.extend(
-        old_lines[prefix..old_lines.len() - suffix]
-            .iter()
-            .map(|l| format!("-{l}")),
-    );
-    out.extend(
-        new_lines[prefix..new_lines.len() - suffix]
-            .iter()
-            .map(|l| format!("+{l}")),
-    );
-    let after = (new_lines.len() - suffix + DIFF_CONTEXT).min(new_lines.len());
-    out.extend(
-        new_lines[new_lines.len() - suffix..after]
-            .iter()
-            .map(|l| format!(" {l}")),
-    );
-    if out.len() > MAX_DETAIL_LINES {
-        let left = out.len() - MAX_DETAIL_LINES;
-        out.truncate(MAX_DETAIL_LINES);
-        out.push(format!("… {left} more lines"));
+    out.extend(before.iter().map(|l| format!(" {l}")));
+    out.extend(removed[..keep_removed].iter().map(|l| format!("-{l}")));
+    if keep_removed < removed.len() {
+        out.push(format!("… {} more lines taken out", removed.len() - keep_removed));
     }
+    out.extend(added[..keep_added].iter().map(|l| format!("+{l}")));
+    if keep_added < added.len() {
+        out.push(format!("… {} more lines put in", added.len() - keep_added));
+    }
+    out.extend(after.iter().map(|l| format!(" {l}")));
     out.join("\n")
 }
 
@@ -1878,16 +1901,17 @@ mod tests {
         let ask_first = json!({
             "mode": "primary",
             "description": "Asks before it runs a command or edits a file.",
-            "permission": { "bash": "ask", "edit": "ask" },
+            "permission": { "bash": { "*": "ask" }, "edit": { "*": "ask" } },
         });
         assert_eq!(
-            serde_json::from_str::<Value>(&opencode_config_content(None)).unwrap(),
+            serde_json::from_str::<Value>(&opencode_config_content(None, &[])).unwrap(),
             json!({ "update": "disable", "default_agent": ASK_FIRST_AGENT, "agent": { ASK_FIRST_AGENT: ask_first } })
         );
         assert_eq!(
-            serde_json::from_str::<Value>(&opencode_config_content(Some(
-                r#"{"model":"stub/stub-1","update":"auto","agent":{"mine":{"mode":"primary"}}}"#
-            )))
+            serde_json::from_str::<Value>(&opencode_config_content(
+                Some(r#"{"model":"stub/stub-1","update":"auto","agent":{"mine":{"mode":"primary"}}}"#),
+                &[]
+            ))
             .unwrap(),
             json!({
                 "model": "stub/stub-1",
@@ -1897,7 +1921,7 @@ mod tests {
             })
         );
         assert_eq!(
-            serde_json::from_str::<Value>(&opencode_config_content(Some("not-json"))).unwrap()["update"],
+            serde_json::from_str::<Value>(&opencode_config_content(Some("not-json"), &[])).unwrap()["update"],
             json!("disable")
         );
     }
@@ -1905,24 +1929,24 @@ mod tests {
     #[test]
     fn harness_env_toggles_free_hosted_models_without_losing_extra_env() {
         // Without extra env, free_hosted_models=false also disables models.opencode.ai fetch.
-        let (default_off, _) = build_harness_env(&[], None, false);
+        let (default_off, _) = build_harness_env(&[], None, &[], false);
         assert!(default_off.contains(&("OPENCODE_DISABLE_FREE_MODELS".into(), "1".into())));
         assert!(default_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "1".into())));
 
-        let (default_on, rm_default_on) = build_harness_env(&[], None, true);
+        let (default_on, rm_default_on) = build_harness_env(&[], None, &[], true);
         assert!(!default_on.iter().any(|(k, _)| k == "OPENCODE_DISABLE_FREE_MODELS"));
         assert!(!default_on.iter().any(|(k, _)| k == "OPENCODE_DISABLE_MODELS_FETCH"));
         assert_eq!(rm_default_on, vec!["OPENCODE_DISABLE_FREE_MODELS"]);
 
         // Even an explicit `=0` cannot re-enable models.opencode.ai fetch while free Models are off.
         let override_zero = vec![("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "0".to_string())];
-        let (forced_off, _) = build_harness_env(&override_zero, None, false);
+        let (forced_off, _) = build_harness_env(&override_zero, None, &[], false);
         assert!(forced_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "1".into())));
         assert!(!forced_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "0".into())));
 
         // Explicit --harness-env OPENCODE_DISABLE_MODELS_FETCH=1 is preserved in both states.
         let extra = vec![("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "1".to_string())];
-        let (set_off, rm_off) = build_harness_env(&extra, None, false);
+        let (set_off, rm_off) = build_harness_env(&extra, None, &[], false);
         assert_eq!(
             set_off
                 .iter()
@@ -1938,7 +1962,7 @@ mod tests {
         );
         assert!(rm_off.is_empty());
 
-        let (set_on, rm_on) = build_harness_env(&extra, None, true);
+        let (set_on, rm_on) = build_harness_env(&extra, None, &[], true);
         assert!(set_on.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "1".into())));
         assert!(!set_on.iter().any(|(k, _)| k == "OPENCODE_DISABLE_FREE_MODELS"));
         assert_eq!(rm_on, vec!["OPENCODE_DISABLE_FREE_MODELS"]);
@@ -1973,7 +1997,18 @@ mod tests {
         let long: String = (0..1000).map(|n| format!("{n}\n")).collect();
         let shown = line_diff(None, &long);
         assert_eq!(shown.lines().count(), MAX_DETAIL_LINES + 1);
-        assert!(shown.ends_with("… 600 more lines"));
+        assert!(shown.ends_with("… 600 more lines put in"));
+
+        // A long replacement shows what it takes out and what it puts in.
+        let old: String = (0..450).map(|n| format!("old {n}\n")).collect();
+        let new: String = (0..450).map(|n| format!("new {n}\n")).collect();
+        let shown = line_diff(Some(&old), &new);
+        let lines: Vec<&str> = shown.lines().collect();
+        assert_eq!(lines.len(), MAX_DETAIL_LINES + 2);
+        assert_eq!(lines[0], "-old 0");
+        assert!(lines.contains(&"… 250 more lines taken out"), "{shown}");
+        assert!(lines.contains(&"+new 0"), "{shown}");
+        assert_eq!(lines.last(), Some(&"… 250 more lines put in"));
     }
 
     #[test]
@@ -2004,6 +2039,14 @@ mod tests {
         let selector = extract_modes(&build_only).unwrap();
         assert_eq!(selector.modes, vec!["full-access"]);
         assert_eq!(selector.current, None);
+
+        // A harness whose modes are none of Lever's has none Lever sets.
+        let others: Vec<SessionConfigOption> = serde_json::from_value(json!([
+            { "id": "mode", "name": "Mode", "category": "mode", "type": "select", "currentValue": "default",
+              "options": [{ "value": "default", "name": "Default" }, { "value": "yolo", "name": "Yolo" }] }
+        ]))
+        .unwrap();
+        assert_eq!(extract_modes(&others), None);
     }
 
     #[test]
@@ -2036,7 +2079,16 @@ mod tests {
         .unwrap();
         assert_eq!(
             request_detail(Some(ToolKind::Edit), &raw_edit),
-            (Some("/w/new.txt\n+hello".to_string()), Some("/w/new.txt".to_string()))
+            (Some("+hello".to_string()), Some("/w/new.txt".to_string()))
+        );
+        // Lines taken out, with nothing put in their place, are the change.
+        let deletion: agent_client_protocol_schema::v1::ToolCallUpdateFields = serde_json::from_value(json!({
+            "kind": "edit", "rawInput": { "filePath": "/w/old.txt", "oldString": "remove me\n", "newString": "" }
+        }))
+        .unwrap();
+        assert_eq!(
+            request_detail(Some(ToolKind::Edit), &deletion),
+            (Some("-remove me".to_string()), Some("/w/old.txt".to_string()))
         );
     }
 }

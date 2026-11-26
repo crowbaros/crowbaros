@@ -99,6 +99,14 @@ struct Script {
     /// If true, offers modes as OpenCode does (see the module's doc).
     #[serde(default)]
     modes: bool,
+    /// If set, the modes offered in place of OpenCode's, none of which asks,
+    /// starting in the first.
+    #[serde(default)]
+    mode_values: Option<Vec<String>>,
+    /// If true, `session/set_config_option` is answered with only the option
+    /// it set, as a harness that says only what changed.
+    #[serde(default)]
+    partial_config_replies: bool,
     #[serde(default)]
     turns: Vec<TurnScript>,
 }
@@ -205,30 +213,44 @@ enum Step {
     },
     /// An act that asks first when the session's agent asks for its
     /// permission, and is carried out at once otherwise.
-    Ask {
-        id: String,
-        #[serde(default = "default_tool_kind")]
-        tool_kind: String,
-        title: String,
-        #[serde(default)]
-        raw_input: Option<Value>,
-        /// For an edit: the file, what it held, and what it is to hold.
-        #[serde(default)]
-        diff: Option<StubDiff>,
-        /// What it prints when it runs.
-        #[serde(default)]
-        output: Option<String>,
-    },
+    Ask(AskStep),
     /// Starts `sleep 600` as a child of the stub and writes its process ID
-    /// to `pid_file`.
+    /// to `pid_file`. With `detach`, a shell starts it and ends at once, so
+    /// it is a child of no process of the stub's, as a command run in the
+    /// background is.
     Spawn {
         pid_file: String,
+        #[serde(default)]
+        detach: bool,
     },
     /// The session's mode changes to `mode` (a harness value), as when the
     /// harness changes it itself.
     ModeChange {
         mode: String,
     },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AskStep {
+    id: String,
+    #[serde(default = "default_tool_kind")]
+    tool_kind: String,
+    title: String,
+    #[serde(default)]
+    raw_input: Option<Value>,
+    /// For an edit: the file, what it held, and what it is to hold.
+    #[serde(default)]
+    diff: Option<StubDiff>,
+    /// What it prints when it runs.
+    #[serde(default)]
+    output: Option<String>,
+    /// Withdraws the request with `$/cancel_request` if it is not answered
+    /// in this long, as a harness does that no longer needs it.
+    #[serde(default)]
+    withdraw_after_ms: Option<u64>,
+    /// The request does not say what kind of act it asks about.
+    #[serde(default)]
+    request_without_kind: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -489,7 +511,14 @@ struct Modes {
 }
 
 impl Modes {
-    fn read(offered: bool) -> Modes {
+    fn read(offered: bool, values: Option<&[String]>) -> Modes {
+        if let Some(values) = values {
+            return Modes {
+                offered,
+                agents: values.iter().map(|v| (v.clone(), HashMap::new())).collect(),
+                default: values.first().cloned().unwrap_or_default(),
+            };
+        }
         let config: Value = std::env::var("OPENCODE_CONFIG_CONTENT")
             .ok()
             .and_then(|raw| serde_json::from_str(&raw).ok())
@@ -500,12 +529,17 @@ impl Modes {
                 if agent.get("mode").and_then(Value::as_str) != Some("primary") {
                     continue;
                 }
+                // A rule for a permission, or rules by pattern, of which
+                // the stub takes the one for every pattern.
                 let permission = agent
                     .get("permission")
                     .and_then(Value::as_object)
                     .map(|p| {
                         p.iter()
-                            .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                            .filter_map(|(k, v)| {
+                                let rule = v.as_str().or_else(|| v.get("*").and_then(Value::as_str))?;
+                                Some((k.clone(), rule.to_string()))
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
@@ -560,16 +594,31 @@ fn ask(
     session_id: &SessionId,
     asking: &Asking<'_>,
     cancel: Option<&CancelFlag>,
-    id: &str,
-    tool_kind: &str,
-    title: &str,
-    raw_input: Option<&Value>,
-    diff: Option<&StubDiff>,
-    output: Option<&str>,
+    step: &AskStep,
 ) -> Asked {
+    let AskStep {
+        id,
+        tool_kind,
+        title,
+        raw_input,
+        diff,
+        output,
+        withdraw_after_ms,
+        request_without_kind,
+    } = step;
+    let (id, title, raw_input, diff, output) = (
+        id.as_str(),
+        title.as_str(),
+        raw_input.as_ref(),
+        diff.as_ref(),
+        output.as_deref(),
+    );
     let kind = parse_tool_kind(tool_kind);
     let permission = if kind == ToolKind::Execute { "bash" } else { "edit" };
-    let mut fields = ToolCallUpdateFields::new().kind(kind).title(title.to_string());
+    let mut fields = ToolCallUpdateFields::new().title(title.to_string());
+    if !request_without_kind {
+        fields = fields.kind(kind);
+    }
     if let Some(input) = raw_input {
         fields = fields.raw_input(input.clone());
     }
@@ -640,8 +689,10 @@ fn ask(
             }))
             .expect("serialize permission request"),
         );
+        let asked_at = std::time::Instant::now();
         let answer = loop {
-            if cancel.is_some_and(CancelFlag::is_cancelled) {
+            let given_up = withdraw_after_ms.is_some_and(|ms| asked_at.elapsed() >= Duration::from_millis(ms));
+            if given_up || cancel.is_some_and(CancelFlag::is_cancelled) {
                 asking.replies.lock().unwrap().remove(&n.to_string());
                 writer.send(&json!({
                     "jsonrpc": "2.0",
@@ -794,7 +845,18 @@ fn emit_step(
             writer.send_raw_update(session_id, update.clone());
         }
         Step::Flood { bytes } => writer.send_unfinished(&vec![b'x'; *bytes]),
-        Step::Spawn { pid_file } => {
+        Step::Spawn { pid_file, detach: true } => {
+            let _ = std::process::Command::new("sh")
+                .arg("-c")
+                .arg("sleep 600 >/dev/null 2>&1 & echo $! > \"$1\"")
+                .arg("sh")
+                .arg(pid_file)
+                .status();
+        }
+        Step::Spawn {
+            pid_file,
+            detach: false,
+        } => {
             if let Ok(child) = std::process::Command::new("sleep").arg("600").spawn() {
                 let _ = std::fs::write(pid_file, child.id().to_string());
                 // Left running: the stub's own end must take it, or Lever.
@@ -802,7 +864,7 @@ fn emit_step(
             }
         }
         // Carried out by the turn, which has what they need.
-        Step::Ask { .. } | Step::ModeChange { .. } => {}
+        Step::Ask(_) | Step::ModeChange { .. } => {}
     }
     false
 }
@@ -894,7 +956,7 @@ fn run(options: Options) -> Result<(), String> {
     let always: Arc<Mutex<HashMap<String, Vec<String>>>> = Arc::new(Mutex::new(HashMap::new()));
     let replies: Arc<Replies> = Arc::new(Mutex::new(HashMap::new()));
     let next_request = Arc::new(AtomicU64::new(0));
-    let modes = Arc::new(Modes::read(script.modes));
+    let modes = Arc::new(Modes::read(script.modes, script.mode_values.as_deref()));
     let next_session = AtomicU64::new(1);
     let free_disabled = std::env::var("OPENCODE_DISABLE_FREE_MODELS").ok().as_deref() == Some("1");
     let default_model = script
@@ -1036,11 +1098,26 @@ fn run(options: Options) -> Result<(), String> {
                             writer.send_error(id, AcpError::invalid_params().data(json!("unknown mode")));
                             continue;
                         }
+                        // The mode takes at once; the answer may come later.
                         session_modes.lock().unwrap().insert(sid.clone(), val.clone());
                         let model = session_models.lock().unwrap().get(&sid).cloned();
-                        let opts = build_config_options(script.models.as_deref(), model.as_deref(), &modes, Some(&val))
-                            .unwrap_or_default();
-                        writer.send_result(id, SetSessionConfigOptionResponse::new(opts));
+                        let mut opts =
+                            build_config_options(script.models.as_deref(), model.as_deref(), &modes, Some(&val))
+                                .unwrap_or_default();
+                        if script.partial_config_replies {
+                            opts.retain(|o| o.id.0.as_ref() == "mode");
+                        }
+                        let delay = Duration::from_millis(script.set_config_delay_ms);
+                        let writer = writer.clone();
+                        let respond = move || {
+                            thread::sleep(delay);
+                            writer.send_result(id, SetSessionConfigOptionResponse::new(opts));
+                        };
+                        if delay.is_zero() {
+                            respond();
+                        } else {
+                            workers.push(thread::spawn(respond));
+                        }
                         continue;
                     }
                     let valid = script
@@ -1056,13 +1133,17 @@ fn run(options: Options) -> Result<(), String> {
                         let session_models = Arc::clone(&session_models);
                         let mode = session_modes.lock().unwrap().get(&sid).cloned();
                         let modes = Arc::clone(&modes);
+                        let partial = script.partial_config_replies;
                         let respond = move || {
                             if !delay.is_zero() {
                                 thread::sleep(delay);
                             }
                             session_models.lock().unwrap().insert(sid, val.clone());
-                            let opts = build_config_options(models.as_deref(), Some(&val), &modes, mode.as_deref())
+                            let mut opts = build_config_options(models.as_deref(), Some(&val), &modes, mode.as_deref())
                                 .unwrap_or_default();
+                            if partial {
+                                opts.retain(|o| o.id.0.as_ref() == "model");
+                            }
                             writer.send_result(id, SetSessionConfigOptionResponse::new(opts));
                         };
                         if delay.is_zero() {
@@ -1151,26 +1232,8 @@ fn run(options: Options) -> Result<(), String> {
                         break;
                     }
                     match step {
-                        Step::Ask {
-                            id,
-                            tool_kind,
-                            title,
-                            raw_input,
-                            diff,
-                            output,
-                        } => {
-                            let asked = ask(
-                                &writer,
-                                &session_id,
-                                &asking,
-                                Some(heard),
-                                id,
-                                tool_kind,
-                                title,
-                                raw_input.as_ref(),
-                                diff.as_ref(),
-                                output.as_deref(),
-                            );
+                        Step::Ask(step) => {
+                            let asked = ask(&writer, &session_id, &asking, Some(heard), step);
                             if asked == Asked::Ended {
                                 was_cancelled = true;
                                 break;
@@ -1217,27 +1280,8 @@ fn run(options: Options) -> Result<(), String> {
                 // After the turn, as a subagent of OpenCode's goes on: an
                 // `ask` here waits for its answer as one in the turn does.
                 for step in &turn_script.after {
-                    if let Step::Ask {
-                        id,
-                        tool_kind,
-                        title,
-                        raw_input,
-                        diff,
-                        output,
-                    } = step
-                    {
-                        let _ = ask(
-                            &writer,
-                            &session_id,
-                            &asking,
-                            None,
-                            id,
-                            tool_kind,
-                            title,
-                            raw_input.as_ref(),
-                            diff.as_ref(),
-                            output.as_deref(),
-                        );
+                    if let Step::Ask(step) = step {
+                        let _ = ask(&writer, &session_id, &asking, None, step);
                     } else {
                         let _ = emit_step(&writer, &session_id, step, None, model.as_deref());
                     }

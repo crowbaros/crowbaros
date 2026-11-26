@@ -8,6 +8,7 @@ mod channel;
 mod frames;
 mod fulcrum;
 mod log;
+mod opencode;
 mod service;
 mod store;
 mod sys;
@@ -295,6 +296,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
     }
 
     let signals = SignalPipe::install().map_err(|e| format!("could not install signal pipe: {e}"))?;
+    sys::become_subreaper().map_err(|e| format!("could not become the parent of what a harness leaves: {e}"))?;
     write_marker(&marker, pid)?;
 
     let store = Store::open(&options.state.join("lever.sqlite"), unix_now())?;
