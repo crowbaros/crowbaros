@@ -143,10 +143,10 @@ ACP today:
     agent's own rules after every rule in the person's settings, and the last
     that matches wins, so Ask first carries the person's own rules for `bash`
     and `edit`, and those for an action pattern that matches them (`*`,
-    `sh*`), again after its, older names (`bash`, `write`, `patch`) renamed
-    whole first as OpenCode renames them,
-    `"*": "ask"`, whether they wrote them in `permission` or in the list
-    `permissions`: what they refuse stays refused,
+    `sh*`), again after its `"*": "ask"`, whether they wrote them in
+    `permission` or in the list `permissions`. Older names (`bash`, `write`,
+    `patch`) are renamed whole first, as OpenCode renames them. What they
+    refuse stays refused,
     and what they allow by name stays allowed. A rule of theirs that allows
     every command or edit is the one Ask first takes the place of. Lever reads
     them where OpenCode reads them for every directory, in its order:
