@@ -201,6 +201,7 @@ fn turn(
         Answer::new(),
         Typing::Waits,
         Vec::new(),
+        Ended::Done,
     );
     *thread = Some(begun);
     ended.map(|ended| ended.unwrap_or(Ended::Done))
@@ -211,7 +212,8 @@ fn turn(
 /// second Ctrl-C does not wait. A request of the thread is shown as it comes,
 /// and on a terminal its answer is asked for, one request at a time:
 /// `waiting` are those that already wait. With no turn, what is watched is
-/// what waits, until nothing does.
+/// what waits, until nothing does, and what ends it is `before`, how the
+/// thread last ended, unless a turn was followed meanwhile.
 fn watch(
     lever: &mut Connection,
     thread: &str,
@@ -219,6 +221,7 @@ fn watch(
     mut answer: Answer,
     typing: Typing,
     waiting: Vec<Value>,
+    before: Ended,
 ) -> Result<Option<Ended>> {
     let prompted = std::io::stdin().is_terminal();
     // Only requests are watched here, not a turn of the person's: Ctrl-C
@@ -248,7 +251,7 @@ fn watch(
     loop {
         if (turn.is_none() || ended.is_some()) && open.is_empty() {
             answer.end()?;
-            return Ok(Some(ended.unwrap_or(Ended::Done)));
+            return Ok(Some(ended.unwrap_or(before)));
         }
         if asking.is_none()
             && taken.is_none()
@@ -359,9 +362,11 @@ fn watch(
         }
         // A turn that begins while only requests are watched, as one another
         // client sends, is watched from its message on.
-        if turn.is_none() && text(&event, "event") == "message" {
+        if only_requests && !stopping && (turn.is_none() || ended.is_some()) && text(&event, "event") == "message" {
+            answer.end()?;
             answer.write(&format!("\n> {}\n", text(&event, "text")))?;
             turn = event.get("turn").and_then(Value::as_u64);
+            ended = None;
             continue;
         }
         if event.get("turn").and_then(Value::as_u64) != turn {
@@ -672,6 +677,7 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
                 stood.answer,
                 Typing::UntilItEnds,
                 stood.waiting,
+                last,
             )?
             else {
                 return Ok(left(last));
@@ -706,6 +712,7 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
                         answer,
                         Typing::UntilItEnds,
                         Vec::new(),
+                        last,
                     )?;
                     let Some(ended) = watched else {
                         return Ok(left(last));
@@ -736,10 +743,20 @@ pub fn repl(lever: &mut Connection, resumed: Option<&str>, model: Option<&str>, 
                 {
                     eprintln!();
                     let asked = text(&event, "thread").into_owned();
-                    let watched = watch(lever, &asked, None, Answer::new(), Typing::UntilItEnds, vec![event])?;
-                    if watched.is_none() {
+                    let watched = watch(
+                        lever,
+                        &asked,
+                        None,
+                        Answer::new(),
+                        Typing::UntilItEnds,
+                        vec![event],
+                        last,
+                    )?;
+                    // A turn followed meanwhile ends as the thread's newest.
+                    let Some(ended) = watched else {
                         return Ok(left(last));
-                    }
+                    };
+                    last = ended;
                     eprint!("> ");
                 }
                 Happening::Event(event) if text(&event, "event") == "request" => {

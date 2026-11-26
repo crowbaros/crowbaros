@@ -1402,6 +1402,16 @@ fn a_turn_another_client_begins_while_a_request_is_asked_shows_and_ctrl_c_stops_
         // At the prompt, a request of turn 2 comes, and Ctrl-C stops only that turn.
         std::thread::sleep(Duration::from_millis(300));
         write_framed(&mut stream, &request("r-2", 2, "waiting"));
+        // And turn 3 begins elsewhere and fails while it is asked for.
+        std::thread::sleep(Duration::from_millis(200));
+        write_framed(
+            &mut stream,
+            &json!({ "event": "message", "thread": "t-1", "turn": 3, "text": "third" }),
+        );
+        write_framed(
+            &mut stream,
+            &json!({ "event": "failed", "thread": "t-1", "turn": 3, "message": "No more." }),
+        );
         let stop = read_framed(&mut stream);
         write_framed(&mut stream, &json!({ "reply": "ok" }));
         write_framed(&mut stream, &request("r-2", 2, "withdrawn"));
@@ -1425,13 +1435,15 @@ fn a_turn_another_client_begins_while_a_request_is_asked_shows_and_ctrl_c_stops_
     screen_until(&mut keys, &mut shown, "[request] answered: once\r\n> ");
     shown.clear();
     screen_until(&mut keys, &mut shown, "Answer [once/no]: ");
+    screen_until(&mut keys, &mut shown, "The Agent gave no answer: No more.");
     // SAFETY: sending Ctrl-C's signal to our own child process.
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
     screen_until(&mut keys, &mut shown, "[request] withdrawn\r\n> ");
     keys.write_all(&[4]).unwrap();
     let mut out = String::new();
     child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
-    assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(0));
+    // The newest turn, followed while the request was asked for, failed.
+    assert_eq!(child.wait().expect("crowbar-agent ends").code(), Some(1));
     let (answer, stop) = lever.join().unwrap();
     assert_eq!(answer["answer"], "once");
     assert_eq!(stop, json!({ "op": "stop", "thread": "t-1", "turn": 2 }));
