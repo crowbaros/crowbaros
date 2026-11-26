@@ -73,6 +73,18 @@ any running harness child, marks any turn still working `interrupted`, removes
 its sockets and `running` marker, closes its database cleanly, logs the stop,
 and exits with status `0`.
 
+After a crash, opening the database marks unfinished turns interrupted and
+withdraws their waiting requests. Reading those threads starts no harness and
+repeats no work. The next message starts the harness on demand and loads the
+thread's saved session. The socket tests kill both Lever and its harness while
+text is being recorded, reopen all threads, and verify the next messages load
+the original sessions. The desktop check exercises the pinned OpenCode build,
+including earlier act output reaching the Model after each restart.
+
+Restarting the shell or Fulcrum leaves Lever and the harness running. The shell
+redraws the record on reconnect. With Fulcrum unavailable, a new surface message
+has no desktop context; it does not reuse an old snapshot.
+
 ## The harness
 
 Lever is the client in ACP and the harness is the agent. What Lever does with

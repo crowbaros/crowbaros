@@ -151,6 +151,12 @@ a failed turn showing why, a shell restart redrawing the thread from Lever, a
 command the person's own OpenCode settings refuse refused in Ask first with no
 request to allow it, and the person's own OpenCode settings left unchanged and
 free of Lever's additions in a session they start by hand.
+The recovery checks restart the shell and Fulcrum during real OpenCode work,
+send a surface message while Fulcrum is unavailable and verify it has no desktop
+context, and kill Lever and OpenCode separately while a request waits. They
+verify interrupted turns, withdrawn requests, readable records, no automatic
+retry, and the next message receiving earlier act output from the loaded
+OpenCode session. Before and after captures show each recovery in the drawer.
 It checks that apps run as the person at the ordinary socket for apps, that
 copy and paste, the primary selection, and drag and drop work between two apps,
 that Fulcrum's Harness socket serves the person alone, and that the shell's
