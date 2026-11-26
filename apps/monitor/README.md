@@ -60,7 +60,9 @@ in Base's Void build root, installs its desktop entry, and exercises the actual
 window on Fulcrum in Dark and Light. It verifies live CPU/memory samples and
 process listing, searches for disposable owned children, ends them with SIGTERM
 and confirmed SIGKILL, checks cancellation, and opens Services & Storage. It
-saves before/after, process, confirmation, and services captures in its run folder.
+saves before/after, process, confirmation, and services captures plus a six-second
+recording of live chart updates in each theme. The desktop check needs `ffmpeg`
+on the development machine to encode those recordings.
 
 For quick parser and process-control tests without GPUI:
 

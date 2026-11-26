@@ -210,10 +210,15 @@ class Check:
     def monitor_check(self, theme):
         """Exercise the real window as the person, using disposable child processes."""
         person, _ = self.person()
+        self.run("logger -t monitor-check 'Monitor log visibility check'")
+        self.wait('socklog records the Monitor fixture',
+                  lambda: 'Monitor log visibility check' in self.run('tail -30 /var/log/socklog/everything/current'))
         sample = json.loads(self.run(f"su -s /bin/sh {person} -c 'crowbaros-monitor --sample'"))
         self.check(f'Monitor reads live metrics without root in {theme}',
                    sample['memory']['total'] > 0 and 'cpu' in sample['cpu']
                    and len(sample['processes']) > 0 and bool(sample['details']['storage']))
+        self.check('Monitor reads recent socklog lines as the person',
+                   'Monitor log visibility check' in sample['details']['logs'])
         self.capture(f'monitor-{theme}-before')
         logfile = f'/tmp/monitor-{theme}.log'
         self.as_app('env CROWBAR_MONITOR_CHECK=1 crowbaros-monitor', logfile)
@@ -223,6 +228,19 @@ class Check:
         self.wait('Monitor receives live CPU deltas and memory',
                   lambda: 'MONITOR sample cpu=true memory=true' in log())
         self.capture(f'monitor-{theme}-after')
+        # A short recording of real metric updates, kept with the run's captures.
+        frames = []
+        for frame in range(18):
+            name = f'monitor-{theme}-motion-{frame:02d}'
+            self.capture(name)
+            frames.append(self.work / f'{name}.png')
+            time.sleep(1 / 3)
+        subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-framerate', '3',
+                        '-i', str(self.work / f'monitor-{theme}-motion-%02d.png'),
+                        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+                        str(self.work / f'monitor-{theme}-motion.mp4')], check=True)
+        for frame in frames:
+            frame.unlink()
         self.key('alt', '2')
         self.wait('Monitor opens Processes', lambda: 'MONITOR page=processes' in log())
         self.capture(f'monitor-{theme}-processes')
@@ -256,6 +274,12 @@ class Check:
                 self.check(f'Monitor {"force quits" if force else "terminates"} an owned process in {theme}', True)
             finally:
                 self.guest.ssh('kill ' + pid, check=False)
+        self.key('ctrl', 'f')
+        self.key('ctrl', 'a')
+        self.type('1')
+        self.key('esc')
+        self.key('down')
+        self.capture(f'monitor-{theme}-system-process')
         self.key('alt', '3')
         self.wait('Monitor opens Services & Storage', lambda: 'MONITOR page=services' in log())
         self.wait('Monitor receives read-only system details', lambda: 'details=true' in log())
