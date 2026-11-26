@@ -827,11 +827,17 @@ finally:
 
     def agent_drawer_thread(self):
         """End-to-end drawer thread on Lever + OpenCode against the local stub
-        Model (#376): desktop context without window or clipboard contents,
-        command output in an act, streamed answer, work continuing behind a
-        put-away drawer with bar and fullscreen marks, Stop ending the turn
-        and its spawned commands, failed turn reason, and shell restart
-        redrawing the thread from Lever."""
+        Model (#376, #378): a new thread in Ask first raising a request with
+        the exact command, which waits with the drawer put away and the
+        desktop locked while the mark shows waiting, and is answered once in
+        the drawer; a no refused with the Model told; Full access and the
+        starting mode from the drawer's mode menu, where the same command
+        runs with no request; desktop context without window or clipboard
+        contents, command output in an act, streamed answer, work continuing
+        behind a put-away drawer with bar and fullscreen marks, Stop ending
+        the turn and its spawned commands, failed turn reason, shell restart
+        redrawing the thread from Lever, and the person's own OpenCode
+        settings left as they made them and free of Lever's additions."""
         person, home = self.person()
         click_v1 = lambda x, y: (self.qmp.pointer(x / (1280 + 1024), y / 960), self.qmp.click())
         window_secret = 'WINSECRET_' + os.urandom(6).hex()
@@ -851,6 +857,17 @@ finally:
                         },
                     },
                     'after_tool': 'Command finished on {model}: {tool_output}',
+                },
+                {
+                    'match': 'no-cmd',
+                    'tool_call': {
+                        'name': 'shell',
+                        'arguments': {
+                            'command': 'echo NO_CMD_RAN',
+                            'description': 'A command the person refuses',
+                        },
+                    },
+                    'after_tool': 'Should not run: {tool_output}',
                 },
                 {
                     'match': 'slow-bg',
@@ -928,15 +945,80 @@ finally:
             self.run(f"install -d -o {person} -g {person} -m 700 {home}/.config/opencode")
             self.run(f"cat > {home}/.config/opencode/opencode.json <<'EOF'\n{json.dumps(opencode_cfg, indent=2)}\nEOF")
             self.run(f"chown {person}:{person} {home}/.config/opencode/opencode.json")
+            settings_before = self.run(f'sha256sum {home}/.config/opencode/opencode.json').split()[0]
             self.run('sv restart crowbar-lever')
             self.wait('shell reconnected to Lever after stub setup',
                       lambda: (v := self.agent_view()) and v['state'].get('connected') and not v['state'].get('no_harness'))
 
-            # 1. Send a message from the drawer: desktop context, command act + output, answer.
+            def control(view, cid):
+                return next((c for c in view.get('controls', []) if c['id'] == cid), None)
+
+            def click_control(cid, timeout=20):
+                c = self.wait(f'the drawer shows {cid}', lambda: control(self.agent_view(), cid), timeout=timeout)
+                click_v1(c['x'] + c['w'] / 2, c['y'] + c['h'] / 2)
+
+            def waiting_request(view):
+                return next((r for t in view['state']['turns'] for r in t.get('requests', [])
+                             if r['state'] == 'waiting'), None)
+
+            # 1. A new thread starts in Ask first: the command waits on a
+            # request with the exact command, through the drawer put away
+            # and the desktop locked, with the mark showing waiting, and runs
+            # once it is answered once in the drawer.
             self.key('meta_l', 'spc')
             self.wait('drawer opens for thread check', lambda: self.agent_view()['drawer_up'])
             self.type('please run-cmd')
             self.key('ret')
+            asked = self.wait(
+                'the command raises a request in the thread',
+                lambda: (v := self.agent_view()) and waiting_request(v) and v,
+                timeout=45,
+            )
+            time.sleep(0.5)
+            self.capture('19a-drawer-request-command')
+            request = waiting_request(asked)
+            self.check(
+                'a new thread starts in Ask first, and its command waits on a request with the exact command and '
+                'the answers once, always, and no',
+                asked['state'].get('mode') == 'ask-first'
+                and request['kind'] == 'command'
+                and request['detail'] == 'echo DRAWER_CMD_OK && id -un'
+                and [a['answer'] for a in request['answers']] == ['once', 'always', 'no']
+                and not any('DRAWER_CMD_OK' in (a.get('detail') or '') for a in asked['state']['turns'][0].get('acts', []))
+                and bool(control(asked, f"answer:{request['request']}:once")),
+                json.dumps(request),
+            )
+            self.key('meta_l', 'spc')
+            self.wait('drawer put away while the request waits', lambda: not self.agent_view()['drawer_up'])
+            time.sleep(0.5)
+            self.capture('19b-bar-mark-waiting')
+            away = self.agent_view()
+            self.check('with the drawer put away, the mark shows waiting',
+                       away['state']['mark'] == 'waiting' and not away['drawer_up'], away['state']['mark'])
+            self.key('meta_l', 'l')
+            self.wait('Super+L locks with a request waiting', lambda: self.snapshot().get('locked'))
+            time.sleep(1.5)
+            locked = self.agent_view()
+            self.unlock()
+            self.wait('the password unlocks', lambda: not self.snapshot().get('locked'))
+            time.sleep(1)
+            unlocked = self.agent_view()
+            self.check(
+                'a request waits through the drawer put away and the desktop locked, and the drawer does not come '
+                'up on its own',
+                waiting_request(locked) and waiting_request(unlocked)
+                and waiting_request(unlocked)['request'] == request['request']
+                and not locked['drawer_up'] and not unlocked['drawer_up']
+                and unlocked['state']['mark'] == 'waiting',
+                json.dumps(unlocked['state']['mark']),
+            )
+            self.key('meta_l', 'spc')
+            self.wait('drawer opens on the waiting request',
+                      lambda: (v := self.agent_view()) and v['drawer_up']
+                      and control(v, f"answer:{request['request']}:once"))
+            time.sleep(0.5)
+            self.capture('19c-drawer-request-after-lock')
+            click_control(f"answer:{request['request']}:once")
             view1 = self.wait(
                 'turn 1 finishes with command output and answer',
                 lambda: (v := self.agent_view())
@@ -976,14 +1058,89 @@ finally:
                 json.dumps(turn1),
             )
 
+            self.check(
+                'answering once runs the command, and the thread records the request answered',
+                (turn1.get('requests') or [{}])[0].get('state') == 'answered'
+                and (turn1.get('requests') or [{}])[0].get('answer') == 'once',
+                json.dumps(turn1.get('requests')),
+            )
+
+            # 1b. No: the command is refused, the harness ends the turn as it
+            # has it, and the Model is told on the next turn.
+            self.type('please no-cmd')
+            self.key('ret')
+            refusal = self.wait('the second command raises a request',
+                                lambda: (v := self.agent_view()) and len(v['state']['turns']) >= 2
+                                and waiting_request(v) and v, timeout=45)
+            click_control(f"answer:{waiting_request(refusal)['request']}:no")
+            refused = self.wait(
+                'turn 2 ends after the person said no',
+                lambda: (v := self.agent_view()) and v['state']['turns'][1]['state']['kind'] != 'working' and v,
+                timeout=30,
+            )
+            time.sleep(0.4)
+            self.capture('19d-drawer-request-refused')
+            turn2 = refused['state']['turns'][1]
+            self.check(
+                'no refuses the command: it does not run, and the thread says so',
+                (turn2.get('requests') or [{}])[0].get('answer') == 'no'
+                and turn2['state']['kind'] in ('stopped', 'done')
+                and not any('NO_CMD_RAN' in (a.get('detail') or '') for a in turn2.get('acts', []))
+                and 'NO_CMD_RAN' not in turn2.get('answer', ''),
+                json.dumps(turn2),
+            )
+
+            # 1c. Full access from the drawer's mode menu: the same command
+            # runs with no request. Full access becomes the starting mode too.
+            click_control('mode')
+            menu = self.wait('the mode menu offers the harness\'s modes',
+                             lambda: (v := self.agent_view()) and v.get('mode_menu_open')
+                             and control(v, 'mode:full-access') and v, timeout=60)
+            time.sleep(0.4)
+            self.capture('20a-drawer-mode-menu')
+            self.check('the mode menu offers Ask first, Full access, and Plan, and no others',
+                       [m['id'] for m in menu['state'].get('modes', [])] == ['ask-first', 'full-access', 'plan'],
+                       json.dumps(menu['state'].get('modes')))
+            click_control('mode:full-access')
+            self.wait('the thread is in Full access', lambda: self.agent_view()['state'].get('mode') == 'full-access')
+            click_control('mode')
+            click_control('default-mode:full-access')
+            self.wait('new threads start in Full access',
+                      lambda: self.agent_view()['state'].get('default_mode') == 'full-access')
+            time.sleep(0.4)
+            self.capture('20b-drawer-default-mode')
+            click_control('mode')
+            self.wait('the mode menu closes', lambda: not self.agent_view().get('mode_menu_open'))
+            self.type('please run-cmd again')
+            self.key('ret')
+            full = self.wait(
+                'turn 3 runs the command in Full access',
+                lambda: (v := self.agent_view()) and len(v['state']['turns']) >= 3
+                and v['state']['turns'][2]['state']['kind'] == 'done' and v,
+                timeout=45,
+            )
+            turn3 = full['state']['turns'][2]
+            stub_after = [json.loads(line) for line in self.run(f'cat {tmp}/stub.jsonl').splitlines() if line.strip()]
+            told = [e for e in stub_after if e.get('has_tools') and 'please run-cmd again' in e.get('prompt', '')]
+            self.check(
+                'in Full access the same command runs with no request, and the Model was told the person said no',
+                not turn3.get('requests')
+                and any('DRAWER_CMD_OK' in (a.get('detail') or '') for a in turn3.get('acts', []))
+                and bool(told)
+                and any('declined' in out for out in told[0].get('history_tool_outputs', [])),
+                json.dumps({'turn': turn3, 'told': told[:1]}),
+            )
+            self.check('the drawer\'s choices stick: the thread is in Full access and so is the starting mode',
+                       full['state'].get('mode') == 'full-access' and full['state'].get('default_mode') == 'full-access')
+
             # 2. Put the drawer away while a turn works; verify work keeps going
             # and the mark shows working and done in the bar and over fullscreen.
             self.type('please slow-bg')
             self.key('ret')
-            self.wait('turn 2 starts working',
-                      lambda: (v := self.agent_view()) and v['state']['mark'] == 'working' and len(v['state']['turns']) >= 2)
+            self.wait('turn 4 starts working',
+                      lambda: (v := self.agent_view()) and v['state']['mark'] == 'working' and len(v['state']['turns']) >= 4)
             self.key('meta_l', 'spc')
-            self.wait('drawer put away while turn 2 works',
+            self.wait('drawer put away while turn 4 works',
                       lambda: not self.agent_view()['drawer_up'])
             bg_bar = self.agent_view()
             self.capture('20-bar-mark-working')
@@ -1005,12 +1162,12 @@ finally:
             time.sleep(0.3)
             working_overlay_px = overlay_region('21-fullscreen-mark-working')
             fs_done = self.wait(
-                'turn 2 finishes behind the put-away drawer over fullscreen',
+                'turn 4 finishes behind the put-away drawer over fullscreen',
                 lambda: (v := self.agent_view())
                 and v['mark_overlay']
                 and v['state']['mark'] == 'done'
-                and len(v['state']['turns']) >= 2
-                and v['state']['turns'][1]['state']['kind'] == 'done'
+                and len(v['state']['turns']) >= 4
+                and v['state']['turns'][3]['state']['kind'] == 'done'
                 and v,
                 timeout=45,
             )
@@ -1023,8 +1180,8 @@ finally:
                 'the mark shows working and done over a fullscreen window while the drawer is put away',
                 bool(fs_working) and fs_done['mark_overlay'] and fs_done['state']['mark'] == 'done'
                 and bool(done_overlay_repainted)
-                and 'BG_DONE_OK' in fs_done['state']['turns'][1].get('answer', ''),
-                json.dumps(fs_done['state']['turns'][1]),
+                and 'BG_DONE_OK' in fs_done['state']['turns'][3].get('answer', ''),
+                json.dumps(fs_done['state']['turns'][3]),
             )
             self.key('meta_l', 'f')
             self.wait('mark overlay hides after leaving fullscreen',
@@ -1050,10 +1207,10 @@ finally:
             # Click the Stop button at the right end of the drawer's composer bar.
             click_v1(1240, 904)
             stopped_view = self.wait(
-                'turn 3 ends as stopped after clicking Stop',
+                'turn 5 ends as stopped after clicking Stop',
                 lambda: (v := self.agent_view())
-                and len(v['state']['turns']) >= 3
-                and v['state']['turns'][2]['state']['kind'] == 'stopped'
+                and len(v['state']['turns']) >= 5
+                and v['state']['turns'][4]['state']['kind'] == 'stopped'
                 and v['state']['mark'] == 'idle'
                 and v,
                 timeout=20,
@@ -1063,7 +1220,7 @@ finally:
             leftover = self.guest.ssh("pgrep -af '[s]leep 45'", check=False).stdout.strip()
             self.check(
                 'Stop ends the turn as stopped and kills every command it started',
-                stopped_view['state']['turns'][2]['state']['kind'] == 'stopped' and not leftover,
+                stopped_view['state']['turns'][4]['state']['kind'] == 'stopped' and not leftover,
                 f'leftover={leftover!r}',
             )
 
@@ -1071,16 +1228,16 @@ finally:
             self.type('please make-fail')
             self.key('ret')
             failed_view = self.wait(
-                'turn 4 ends as failed with reason',
+                'turn 6 ends as failed with reason',
                 lambda: (v := self.agent_view())
-                and len(v['state']['turns']) >= 4
-                and v['state']['turns'][3]['state']['kind'] == 'failed'
+                and len(v['state']['turns']) >= 6
+                and v['state']['turns'][5]['state']['kind'] == 'failed'
                 and v,
                 timeout=30,
             )
             time.sleep(0.4)
             self.capture('25-drawer-failed')
-            fail_reason = failed_view['state']['turns'][3]['state'].get('message', '')
+            fail_reason = failed_view['state']['turns'][5]['state'].get('message', '')
             self.check('a failed turn shows why it failed in the drawer',
                        'Stub model declined this turn' in fail_reason,
                        fail_reason)
@@ -1096,7 +1253,7 @@ finally:
                 and (v := self.agent_view())
                 and v['state'].get('connected')
                 and v['state'].get('thread') == thread_id
-                and len(v['state'].get('turns', [])) == 4
+                and len(v['state'].get('turns', [])) == 6
                 and v,
                 timeout=30,
             )
@@ -1108,15 +1265,36 @@ finally:
             self.check(
                 'after the shell restarts, the drawer reconnects and redraws the thread from Lever',
                 restored['state']['thread'] == thread_id
-                and len(restored['state']['turns']) == 4
+                and len(restored['state']['turns']) == 6
                 and 'DRAWER_CMD_OK' in restored['state']['turns'][0].get('answer', '')
                 and (restored['state']['turns'][0].get('context') or {}).get('active', {}).get('app_id') == 'foot'
-                and restored['state']['turns'][2]['state']['kind'] == 'stopped'
-                and restored['state']['turns'][3]['state']['kind'] == 'failed',
+                and (restored['state']['turns'][0].get('requests') or [{}])[0].get('answer') == 'once'
+                and (restored['state']['turns'][1].get('requests') or [{}])[0].get('answer') == 'no'
+                and restored['state'].get('mode') == 'full-access'
+                and restored['state']['turns'][4]['state']['kind'] == 'stopped'
+                and restored['state']['turns'][5]['state']['kind'] == 'failed',
                 json.dumps(restored['state']['thread']),
             )
             self.key('meta_l', 'spc')
             self.wait('drawer closed after restart check', lambda: not self.agent_view()['drawer_up'])
+
+            # 6. The person's own OpenCode settings are as they made them,
+            # and a session they start by hand has none of Lever's additions.
+            settings_after = self.run(f'sha256sum {home}/.config/opencode/opencode.json').split()[0]
+            by_hand = self.run(
+                f'cd {home} && chpst -u {person}:{person} env -i HOME={home} PATH=/usr/local/bin:/usr/bin:/bin '
+                f'OPENCODE_DISABLE_MODELS_FETCH=1 opencode debug config',
+                timeout=60,
+            )
+            self.check(
+                'the person\'s own OpenCode settings are unchanged, and a session started by hand gets none of '
+                'Lever\'s additions',
+                settings_after == settings_before
+                and '"stub"' in by_hand
+                and 'crowbar-ask-first' not in by_hand,
+                f'before={settings_before[:12]} after={settings_after[:12]} ask-first-in-hand-config='
+                f'{"crowbar-ask-first" in by_hand}',
+            )
         finally:
             self.guest.ssh("pkill -f '[s]tub-model.py'; pkill -f '[c]rowbar-probe copy'; pkill -f '[s]leep 45'; true", check=False)
             self.guest.ssh(

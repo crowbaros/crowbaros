@@ -61,6 +61,16 @@ def _latest_turn(messages):
     return "\n".join(system_parts), prompt_text, tool_output
 
 
+def _tool_outputs(messages):
+    """Every tool output in the conversation so far, in order: what the
+    harness told the Model of each act, a refused one included."""
+    return [
+        _extract_text(msg.get("content", ""))
+        for msg in messages
+        if isinstance(msg, dict) and msg.get("role") == "tool"
+    ]
+
+
 def _is_title_request(system_text, has_tools):
     """Detects OpenCode's background title-generation chat requests."""
     if has_tools:
@@ -221,6 +231,7 @@ def make_handler(script, log_path=None, forbidden=None):
                 "has_tools": bool(body.get("tools")),
                 "prompt": prompt,
                 "tool_output": tool_output,
+                "history_tool_outputs": _tool_outputs(messages),
                 "decision": decision["kind"],
                 "forbidden_found": forbidden_hit_count > 0,
                 "forbidden_hit_count": forbidden_hit_count,
