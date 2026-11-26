@@ -4123,3 +4123,59 @@ fn a_stop_the_harness_carries_out_leaves_the_other_threads_working() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn a_request_after_its_turn_keeps_the_harness_until_stop_withdraws_it() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    // The turn ends, and a request comes after it, as a subagent's would.
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "turns": [{
+                "steps": [{ "kind": "text", "text": "Done here." }],
+                "after": [{ "kind": "ask", "id": "c7", "title": "make", "raw_input": { "command": "make" } }]
+            }]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &["--idle-timeout-ms", "300"]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, _) = send(&mut peer, None, "hello");
+    read_until(&mut peer, |f| f["event"] == "done");
+    let request = read_until(&mut peer, |f| f["event"] == "request");
+    assert_eq!(
+        (request["turn"].as_u64(), request["detail"].as_str()),
+        (Some(1), Some("make"))
+    );
+
+    // Past the idle timeout, the harness still runs: a request waits on it.
+    std::thread::sleep(Duration::from_millis(700));
+    assert_eq!(ask_lever(&mut peer, json!({ "op": "status" }))["harness_started"], true);
+    let list = ask_lever(&mut peer, json!({ "op": "list" }));
+    assert_eq!(
+        (
+            list["threads"][0]["working"].clone(),
+            list["threads"][0]["waiting"].clone()
+        ),
+        (json!(false), json!(true))
+    );
+
+    // Stop withdraws it though no turn works, and the harness is then idle.
+    assert_eq!(
+        ask_lever(&mut peer, json!({ "op": "stop", "thread": thread })),
+        json!({ "reply": "ok" })
+    );
+    let withdrawn = read_until(&mut peer, |f| f["event"] == "request");
+    assert_eq!(withdrawn["state"], "withdrawn");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while ask_lever(&mut peer, json!({ "op": "status" }))["harness_started"] == true {
+        assert!(Instant::now() < deadline, "an idle harness is stopped");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(stub_heard(&stub_log), ["cancelled"]);
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}

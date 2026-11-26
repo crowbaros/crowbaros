@@ -12,7 +12,7 @@ harness's standard input and output using its own JSON-RPC 2.0 loop and the
 pinned `agent-client-protocol-schema` crate (`=1.22.0`), keeps every thread in
 its private SQLite database, and runs many threads at once on one harness
 process. Lever starts the harness on demand when a thread needs it and stops it
-after 10 minutes with no thread working.
+after 10 minutes with no thread working and no request waiting.
 
 This workspace also holds:
 
@@ -56,7 +56,7 @@ When `--harness` is omitted, Lever runs
 with no harness configured and refuses `send` with `no-harness`. When
 `--harness` is given, Lever starts the harness child only when a thread or a
 Model query needs it and stops it after `--idle-timeout-ms` (default `600000`,
-10 minutes) with no working thread or pending Model query. The harness child
+10 minutes) with no working thread, waiting request, or pending Model query. The harness child
 runs in Lever's environment (on Base, the launcher's environment for apps) with
 OpenCode's self-update turned off and the Ask first agent added through
 `OPENCODE_CONFIG_CONTENT` (`"update":"disable"`, `"default_agent"`, and

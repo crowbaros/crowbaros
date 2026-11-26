@@ -351,6 +351,8 @@ impl Service {
 
     pub fn handle_request(&mut self, peer_id: u64, is_person: bool, value: &Value, log: &mut Log) -> RequestOutcome {
         let mut outcome = self.handle_op(peer_id, is_person, value, log);
+        // An answer or a Stop can leave the harness with nothing to do.
+        self.refresh_idle_timer();
         outcome.broadcasts.extend(self.activity_changed());
         outcome
     }

@@ -1214,8 +1214,33 @@ fn run(options: Options) -> Result<(), String> {
                     writer.send_result(id, PromptResponse::new(parse_stop_reason(&turn_script.stop_reason)));
                 }
 
+                // After the turn, as a subagent of OpenCode's goes on: an
+                // `ask` here waits for its answer as one in the turn does.
                 for step in &turn_script.after {
-                    let _ = emit_step(&writer, &session_id, step, None, model.as_deref());
+                    if let Step::Ask {
+                        id,
+                        tool_kind,
+                        title,
+                        raw_input,
+                        diff,
+                        output,
+                    } = step
+                    {
+                        let _ = ask(
+                            &writer,
+                            &session_id,
+                            &asking,
+                            None,
+                            id,
+                            tool_kind,
+                            title,
+                            raw_input.as_ref(),
+                            diff.as_ref(),
+                            output.as_deref(),
+                        );
+                    } else {
+                        let _ = emit_step(&writer, &session_id, step, None, model.as_deref());
+                    }
                 }
             }));
         } else {
