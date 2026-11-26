@@ -24,6 +24,7 @@ fn read(path: impl AsRef<Path>) -> io::Result<String> {
 
 /// Fixed system commands only; bounded output, deadline, and child reaping.
 fn command(program: &str, args: &[&str]) -> Result<String, String> {
+    let deadline = Instant::now() + Duration::from_secs(2);
     let mut child = Command::new(program)
         .args(args)
         .env("LC_ALL", "C")
@@ -39,22 +40,46 @@ fn command(program: &str, args: &[&str]) -> Result<String, String> {
         let result = stdout.take(65537).read_to_end(&mut data).map(|_| data);
         let _ = tx.send(result);
     });
-    let result = rx.recv_timeout(Duration::from_secs(2));
-    // Kill even on an output-limit result: the producer may be blocked writing.
-    let _ = child.kill();
-    let status = child.wait();
+    let result = rx.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+    let data = match result {
+        Ok(Ok(data)) if data.len() <= 65536 => data,
+        other => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            return Err(match other {
+                Ok(Ok(_)) => "System status output exceeded the limit".into(),
+                Ok(Err(error)) => error.to_string(),
+                Err(_) => "Timed out reading system status".into(),
+            });
+        }
+    };
     let _ = reader.join();
-    let data = result
-        .map_err(|_| "Timed out reading system status".to_string())?
-        .map_err(|e| e.to_string())?;
-    if data.len() > 65536 {
-        return Err("System status output exceeded the limit".into());
-    }
-    // sv reports nonzero for services it cannot inspect; keep that explanation.
-    if data.is_empty() && !status.map_err(|e| e.to_string())?.success() {
+    // EOF is not proof of exit. Reap a normal command without killing it, but
+    // keep the original deadline if it closes stdout and then gets stuck.
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            result => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(match result {
+                    Err(error) => error.to_string(),
+                    _ => "Timed out reading system status".into(),
+                });
+            }
+        }
+    };
+    if data.is_empty() && !status.success() {
         return Err("System command unavailable or permission denied".into());
     }
-    Ok(String::from_utf8_lossy(&data).trim().to_string())
+    let mut text = String::from_utf8_lossy(&data).trim().to_string();
+    // sv may report several services successfully and fail to inspect others.
+    if !status.success() {
+        text.push_str("\nSome status could not be read.");
+    }
+    Ok(text)
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -512,6 +537,11 @@ mod tests {
     #[test]
     fn system_commands_have_output_and_time_limits() {
         assert_eq!(command("/bin/echo", &["status"]).unwrap(), "status");
+        assert!(
+            command("/bin/sh", &["-c", "printf partial; exit 1"])
+                .unwrap()
+                .contains("Some status could not be read")
+        );
         assert!(command("/bin/false", &[]).is_err());
         assert!(command("/bin/sleep", &["10"]).unwrap_err().contains("Timed out"));
         assert!(
