@@ -1231,7 +1231,7 @@ echo "set-model-rc $?";
 timeout 90 su -s /bin/sh "$u" -c "/usr/local/bin/crowbar-agent --resume '$tid' 'please run-whoami'" >"$tmp/cmd.out" 2>"$tmp/cmd.err" &
 cmd_pid=$!;
 t=$(($(date +%s) + 45)); until grep -q 'Answer with:' "$tmp/cmd.err"; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done;
-echo "request-asked $(grep '^\[request\] Run:' "$tmp/cmd.err" | head -1)";
+echo "request-asked $(grep '^\\[request\\] Run:' "$tmp/cmd.err" | head -1)";
 rid=$(grep 'Answer with:' "$tmp/cmd.err" | head -1 | awk '{for (i = 1; i < NF; i++) if ($i == "--answer") print $(i + 1)}');
 su -s /bin/sh "$u" -c "/usr/local/bin/crowbar-agent --resume '$tid' --answer '$rid' once" >/dev/null 2>&1;
 echo "answer-rc $?";
