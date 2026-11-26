@@ -63,7 +63,7 @@
     "ripgrep",
     "git"
   ],
-  "lab_packages": ["python3"],
+  "lab_packages": ["python3", "wl-clipboard"],
   "build_packages": [
     "base-minimal",
     "gcc",

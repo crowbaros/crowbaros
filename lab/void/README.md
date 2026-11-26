@@ -120,6 +120,10 @@ person wrote in their home, after a clean reboot, service identities, linked
 libraries, binary hashes, render activity, and shell restart. It checks that a
 PNG and a PDF open through their MIME defaults in Viewer, with Dark and Light
 captures, and exercises zoom, rotation, metadata, PDF page navigation, and search.
+Viewer checks also browse independently loaded thumbnails, copy image pixels
+and selected PDF text through the compositor, and set a custom wallpaper that
+survives a shell restart. Short panning recordings use `ffmpeg` on the host;
+the lab-only `wl-clipboard` package reads clipboard contents as another app.
 It checks that a
 still desktop, locked at boot and unlocked with apps open, commits nothing and
 draws nothing once it settles, and that the bar draws a workspace that

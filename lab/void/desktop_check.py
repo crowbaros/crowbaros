@@ -28,7 +28,7 @@ void_base = guest.void_base
 
 
 def viewer_fixtures():
-    """Small, real image and two-page PDF fixtures; no extra guest packages."""
+    """Real images and a PDF longer than the visible thumbnail rail."""
     width, height = 320, 200
     rows = bytearray()
     for y in range(height):
@@ -42,20 +42,25 @@ def viewer_fixtures():
     png = (b'\x89PNG\r\n\x1a\n'
            + chunk(b'IHDR', struct.pack('!2I5B', width, height, 8, 2, 0, 0, 0))
            + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
+    pages = 12
+    font = 3 + pages
     objects = [
         b'<< /Type /Catalog /Pages 2 0 R >>',
-        b'<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
-        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 560] '
-        b'/Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>',
-        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 560] '
-        b'/Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R >>',
-        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        (f'<< /Type /Pages /Kids [{" ".join(f"{n} 0 R" for n in range(3, font))}] '
+         f'/Count {pages} >>').encode(),
     ]
-    for number, title in enumerate(('A quiet place to read', 'The next page'), 1):
+    for index in range(pages):
+        objects.append((f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 560] '
+                        f'/Resources << /Font << /F1 {font} 0 R >> >> '
+                        f'/Contents {font + 1 + index} 0 R >>').encode())
+    objects.append(b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
+    for number in range(1, pages + 1):
+        title = 'A quiet place to read' if number == 1 else f'The next page - {number}'
         stream = (f'0.15 0.25 0.38 rg 36 380 348 100 re f\n'
                   f'0.95 0.97 0.98 rg BT /F1 20 Tf 52 430 Td ({title}) Tj ET\n'
                   f'0.1 0.1 0.1 rg BT /F1 14 Tf 36 340 Td '
-                  f'(CrowbarOS Viewer - page {number}) Tj ET\n').encode('ascii')
+                  f'(CrowbarOS Viewer - page {number}) Tj ET\n'
+                  f'BT /F1 14 Tf 36 300 Td (CrowbarOS makes room to read.) Tj ET\n').encode('ascii')
         objects.append(f'<< /Length {len(stream)} >>\nstream\n'.encode() + stream + b'endstream')
     pdf = bytearray(b'%PDF-1.4\n')
     offsets = [0]
@@ -67,7 +72,48 @@ def viewer_fixtures():
     for offset in offsets[1:]:
         pdf.extend(f'{offset:010} 00000 n \n'.encode())
     pdf.extend(f'trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode())
-    return {'sample.png': png, 'sample.pdf': bytes(pdf)}
+    # The second image has different dimensions, so sibling navigation cannot
+    # pass merely by keeping the first image on screen.
+    sibling = (b'\x89PNG\r\n\x1a\n'
+               + chunk(b'IHDR', struct.pack('!2I5B', 200, 320, 8, 2, 0, 0, 0))
+               + chunk(b'IDAT', zlib.compress((b'\0' + bytes((74, 163, 221)) * 200) * 320))
+               + chunk(b'IEND', b''))
+    return {'sample.png': png, 'sibling.png': sibling, 'sample.pdf': bytes(pdf)}
+
+
+def viewer_state_code(home, directory, restore=False):
+    """Keep the person's exact preferences while exercising wallpaper writes."""
+    return f'''
+from pathlib import Path
+import json, shutil
+folder = Path({home!r}) / '.config/crowbaros'
+backup = Path({directory!r}) / 'original-state'
+if {restore!r}:
+    for name, existed in json.loads((backup / 'manifest.json').read_text()).items():
+        target = folder / name
+        if existed:
+            folder.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(backup / name, target)
+        else:
+            target.unlink(missing_ok=True)
+else:
+    backup.mkdir()
+    manifest = {{}}
+    for name in ('appearance.json', 'wallpaper.rgba'):
+        source = folder / name
+        manifest[name] = source.exists()
+        if source.exists():
+            shutil.copy2(source, backup / name)
+    (backup / 'manifest.json').write_text(json.dumps(manifest))
+'''
+
+
+def encode_recording(frames, destination):
+    """Turn ordered QMP captures into a short, portable motion recording."""
+    subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y',
+                    '-framerate', '3', '-i', str(frames / 'frame-%03d.png'),
+                    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+                    str(destination)], check=True, timeout=60)
 
 
 class Check:
@@ -376,8 +422,56 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
         self.check(f'Editor opens, edits, saves and closes a file in {theme}', True)
 
     def viewer_check(self, theme):
-        person, _ = self.person()
+        person, home = self.person()
         directory = self.python('import tempfile; print(tempfile.mkdtemp(prefix="viewer-check-"))', person).strip()
+        self.python(viewer_state_code(home, directory), person)
+        try:
+            self.viewer_documents(theme, directory)
+        finally:
+            self.python(viewer_state_code(home, directory, restore=True), person)
+            self.python(f'import shutil; shutil.rmtree({directory!r})', person)
+
+    def clipboard(self, mime):
+        """Read the compositor's actual selection as another ordinary client."""
+        person, home = self.person()
+        encoded = self.python(f'''
+import base64, os, subprocess
+env = dict(os.environ, HOME={home!r}, XDG_RUNTIME_DIR='/run/user/{void_base.PERSON_UID}',
+           WAYLAND_DISPLAY='wayland-0')
+result = subprocess.run(['wl-paste', '--no-newline', '--type', {mime!r}],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('ascii'))
+''', person)
+        self.wait('Viewer regains focus after the clipboard reader',
+                  lambda: self.snapshot()['active'].get('class') == 'com.crowbaros.Viewer')
+        return base64.b64decode(encoded.strip())
+
+    def viewer_pan(self, theme):
+        self.key('meta_l', 'f')
+        self.key('ctrl', '0')
+        self.key('ctrl', 'equal')
+        self.key('ctrl', 'equal')
+        frames = self.work / f'viewer-image-{theme}-motion'
+        frames.mkdir()
+        self.qmp.pointer(640 / 1280, 480 / 960)
+        self.button(True)
+        try:
+            for frame in range(18):
+                step = max(0, min(frame - 2, 12))
+                self.qmp.pointer((640 - step * 24) / 1280, (480 - step * 12) / 960)
+                self.qmp.screendump(frames / f'frame-{frame:03d}.png', 0)
+        finally:
+            self.button(False)
+        _, _, before = guest.png_pixels(frames / 'frame-000.png')
+        _, _, after = guest.png_pixels(frames / 'frame-017.png')
+        self.check(f'Viewer pans the zoomed image in {theme}',
+                   before[480][640 * 3:641 * 3] != after[480][640 * 3:641 * 3])
+        encode_recording(frames, self.work / f'viewer-image-{theme}-motion.mp4')
+        self.key('ctrl', '0')
+        self.key('meta_l', 'f')
+
+    def viewer_documents(self, theme, directory):
+        person, home = self.person()
         for name, contents in viewer_fixtures().items():
             path = directory + '/' + name
             encoded = base64.b64encode(contents).decode('ascii')
@@ -397,7 +491,7 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
             self.check(f'Viewer reads the {kind} fixture as the person',
                        info.get('kind') == kind and
                        ((info.get('width'), info.get('height')) == (320, 200)
-                        if kind == 'image' else info.get('pages') == 2), info)
+                        if kind == 'image' else info.get('pages') == 12), info)
             self.capture(f'viewer-{kind}-{theme}-before')
             logfile = f'/tmp/viewer-{kind}-{theme}.log'
             self.as_app('xdg-open ' + shlex.quote(path), logfile)
@@ -408,6 +502,28 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
             self.key('ctrl', 'equal')
             self.key('ctrl', '0')
             if kind == 'image':
+                loaded = self.count('VIEWER loaded kind=image', logfile)
+                self.key('right')
+                self.wait('Viewer opens the next sibling image',
+                          lambda: self.snapshot()['active'].get('title') == 'sibling.png — Viewer'
+                          and self.count('VIEWER loaded kind=image', logfile) > loaded)
+                self.key('ctrl', 'c')
+                copied = self.wait('Viewer puts the sibling image on the clipboard',
+                                   lambda: self.clipboard('image/png'))
+                self.check(f'Viewer copies the sibling image pixels in {theme}',
+                           copied.startswith(b'\x89PNG\r\n\x1a\n')
+                           and struct.unpack('!2I', copied[16:24]) == (200, 320))
+                loaded = self.count('VIEWER loaded kind=image', logfile)
+                self.key('left')
+                self.wait('Viewer returns to the previous sibling image',
+                          lambda: self.snapshot()['active'].get('title') == 'sample.png — Viewer'
+                          and self.count('VIEWER loaded kind=image', logfile) > loaded)
+                self.key('ctrl', 'shift', 'w')
+                self.wait('Viewer saves the image as wallpaper',
+                          lambda: 'VIEWER wallpaper=saved' in self.run('cat ' + logfile))
+                self.wait('the shell displays Viewer wallpaper',
+                          lambda: 'SHELL wallpaper=custom' in self.shell_log())
+                self.viewer_pan(theme)
                 self.key('ctrl', 'r')
                 self.key('ctrl', 'i')
             else:
@@ -420,8 +536,15 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
                 self.type('CrowbarOS')
                 self.key('ret')
                 self.wait('Viewer finds text in the PDF',
-                          lambda: re.search(r'VIEWER search matches=[1-9]', self.run('cat ' + logfile)))
+                          lambda: 'VIEWER search matches=24' in self.run('cat ' + logfile))
                 self.key('esc')
+                self.key('f3')
+                self.wait('Viewer advances to the next occurrence on the same page',
+                          lambda: 'VIEWER search match=2 page=1 ' in self.run('cat ' + logfile))
+                before_previous = self.count('VIEWER search match=1 page=1 ', logfile)
+                self.key('shift', 'f3')
+                self.wait('Viewer returns to the preceding occurrence',
+                          lambda: self.count('VIEWER search match=1 page=1 ', logfile) > before_previous)
                 # A successful text search must also draw the selectable text.
                 # Fullscreen gives the fixed-width inspector a known position.
                 self.key('meta_l', 'f')
@@ -431,12 +554,39 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
                     width, height, rows = guest.png_pixels(self.work / f'{name}.png')
                     ink = (216, 229, 236) if theme == 'dark' else (8, 13, 18)
                     count = sum(all(abs(pixel[c] - ink[c]) < 30 for c in range(3))
-                                for y in range(120, min(400, height))
+                                # Below the heading and keyboard hint: those
+                                # alone must not hide an empty text field.
+                                for y in range(220, min(400, height))
                                 for x in range(width - 300, width - 32)
                                 for pixel in [rows[y][x * 3:x * 3 + 3]])
                     return count > 50
                 self.wait('Viewer draws selectable PDF text', text_panel_drawn)
                 self.check(f'Viewer draws selectable PDF text in {theme}', True)
+                # Search opens the panel. Close and reopen it with Ctrl+T to
+                # focus its read-only field, then exercise keyboard selection.
+                self.key('ctrl', 't')
+                self.key('ctrl', 't')
+                self.key('ctrl', 'a')
+                self.key('ctrl', 'c')
+                copied = self.wait('Viewer puts selected PDF text on the clipboard',
+                                   lambda: self.clipboard('text/plain;charset=utf-8'))
+                self.check(f'Viewer copies selected PDF text in {theme}',
+                           b'CrowbarOS Viewer - page 1' in copied
+                           and b'CrowbarOS makes room to read.' in copied)
+                self.key('esc')
+                self.qmp.pointer(70 / 1280, 460 / 960)
+                for _ in range(45):
+                    for down in (True, False):
+                        self.qmp.command('input-send-event', events=[
+                            {'type': 'btn', 'data': {'down': down, 'button': 'wheel-down'}}])
+                    time.sleep(0.04)
+                self.wait('Viewer renders a distant thumbnail without visiting its page',
+                          lambda: 'VIEWER thumbnail page=12' in self.run('cat ' + logfile))
+                self.capture(f'viewer-pdf-{theme}-thumbnails')
+                self.click(70, 860)
+                self.wait('the last thumbnail navigates to the last PDF page',
+                          lambda: 'VIEWER page=12' in self.run('cat ' + logfile))
+                self.check(f'Viewer browses and opens distant PDF thumbnails in {theme}', True)
                 self.key('meta_l', 'f')
             time.sleep(0.3)
             self.capture(f'viewer-{kind}-{theme}-after')
@@ -444,6 +594,33 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
             self.wait(f'Viewer closes the {kind}',
                       lambda: not any(c['class'] == 'com.crowbaros.Viewer' for c in self.snapshot()['clients']))
             self.check(f'Viewer opens and navigates the {kind} in {theme}', True)
+            if kind == 'image':
+                expected = (221, 163, 74)
+                self.wait('Viewer wallpaper reaches the desktop',
+                          lambda: like(self.pixel(f'viewer-wallpaper-{theme}', 1250, 480), expected))
+                self.run('sv restart crowbar-shell')
+                self.ready()
+                self.wait('Viewer wallpaper survives a shell restart',
+                          lambda: like(self.pixel(f'viewer-wallpaper-{theme}-restarted', 1250, 480), expected))
+                self.check(f'Viewer wallpaper persists after the app and shell close in {theme}', True)
+                self.as_app('xdg-open ' + shlex.quote(path), logfile + '-restore')
+                self.wait('Viewer opens to restore the built-in wallpaper',
+                          lambda: self.snapshot()['active'].get('class') == 'com.crowbaros.Viewer')
+                self.wait('Viewer finishes reopening the image',
+                          lambda: 'VIEWER loaded kind=image' in self.run('cat ' + logfile + '-restore'))
+                builtin = self.shell_log().count('SHELL wallpaper=builtin')
+                self.key('ctrl', 'alt', 'w')
+                self.wait('Viewer restores the built-in wallpaper',
+                          lambda: 'VIEWER wallpaper=restored' in self.run('cat ' + logfile + '-restore'))
+                self.wait('the shell restores its built-in wallpaper',
+                          lambda: self.shell_log().count('SHELL wallpaper=builtin') > builtin)
+                self.check(f'Viewer removes the wallpaper override in {theme}',
+                           self.python(f'from pathlib import Path; '
+                                       f'print((Path({home!r}) / ".config/crowbaros/wallpaper.rgba").exists())',
+                                       person).strip() == 'False')
+                self.key('ctrl', 'q')
+                self.wait('Viewer closes after restoring wallpaper',
+                          lambda: not any(c['class'] == 'com.crowbaros.Viewer' for c in self.snapshot()['clients']))
 
     def checks(self, built):
         self.qmp = self.guest.qmp()

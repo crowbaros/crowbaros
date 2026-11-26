@@ -67,6 +67,7 @@ pub enum MediaKey {
 
 #[derive(Clone, Debug)]
 pub enum Event {
+    Wallpaper(Option<crate::wallpaper::Wallpaper>),
     Toggle,
     /// The person made the summon gesture.
     Summon(Summon),
@@ -935,6 +936,10 @@ fn launcher_command(path: &std::path::Path) -> Command {
 /// and takes requests from the shell's UID alone. It starts apps as the person,
 /// from an empty environment and descriptor set, and reads saved appearance.
 pub fn launcher_request(request: serde_json::Value) -> Result<serde_json::Value> {
+    launcher_request_bounded(request, 65537)
+}
+
+pub(crate) fn launcher_request_bounded(request: serde_json::Value, max_bytes: usize) -> Result<serde_json::Value> {
     let path = std::env::var_os("CROWBAR_LAUNCH_SOCKET").context("No launcher service")?;
     let mut stream = UnixStream::connect(path)?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
@@ -944,9 +949,9 @@ pub fn launcher_request(request: serde_json::Value) -> Result<serde_json::Value>
     stream.write_all(&body)?;
     let mut response = String::new();
     BufReader::new(stream)
-        .take(65538)
+        .take(max_bytes as u64 + 1)
         .read_line(&mut response)?;
-    if response.len() > 65537 || !response.ends_with('\n') {
+    if response.len() > max_bytes || !response.ends_with('\n') {
         bail!("Invalid launcher service response")
     }
     let reply: serde_json::Value = serde_json::from_str(&response)?;

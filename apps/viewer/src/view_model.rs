@@ -1,10 +1,155 @@
 // SPDX-License-Identifier: MIT
 //! Small state transitions shared by Viewer input and asynchronous page work.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::ops::Range;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::PathBuf;
+
+/// One bounded batch belongs to a document generation, never to whichever
+/// document happens to be visible when a worker finishes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageRequest {
+    generation: u64,
+    serial: u64,
+    pub pages: Vec<usize>,
+}
+
+#[derive(Default)]
+pub struct PageCache<T> {
+    generation: u64,
+    serial: u64,
+    pending: Option<PageRequest>,
+    wanted: Range<usize>,
+    retained: Range<usize>,
+    entries: BTreeMap<usize, T>,
+    failed: BTreeSet<usize>,
+}
+
+impl<T> PageCache<T> {
+    pub fn new() -> Self {
+        Self {
+            generation: 0,
+            serial: 0,
+            pending: None,
+            wanted: 0..0,
+            retained: 0..0,
+            entries: BTreeMap::new(),
+            failed: BTreeSet::new(),
+        }
+    }
+
+    pub fn reset(&mut self) -> Vec<T> {
+        self.generation = self.generation.wrapping_add(1);
+        self.wanted = 0..0;
+        self.retained = 0..0;
+        self.failed.clear();
+        // Keep the old worker occupying its slot until it returns. Repeated
+        // document changes must not create an unbounded set of Poppler jobs.
+        std::mem::take(&mut self.entries).into_values().collect()
+    }
+
+    pub fn set_window(&mut self, wanted: Range<usize>, retained: Range<usize>) -> Vec<T> {
+        self.wanted = wanted;
+        self.retained = retained;
+        self.failed.retain(|page| self.retained.contains(page));
+        let removed: Vec<_> = self
+            .entries
+            .keys()
+            .copied()
+            .filter(|page| !self.retained.contains(page))
+            .collect();
+        removed
+            .into_iter()
+            .filter_map(|page| self.entries.remove(&page))
+            .collect()
+    }
+
+    pub fn request(&mut self, batch_size: usize) -> Option<PageRequest> {
+        if self.pending.is_some() {
+            return None;
+        }
+        let pages: Vec<_> = self
+            .wanted
+            .clone()
+            .filter(|page| !self.entries.contains_key(page) && !self.failed.contains(page))
+            .take(batch_size)
+            .collect();
+        if pages.is_empty() {
+            return None;
+        }
+        self.serial = self.serial.wrapping_add(1);
+        let request = PageRequest {
+            generation: self.generation,
+            serial: self.serial,
+            pages,
+        };
+        self.pending = Some(request.clone());
+        Some(request)
+    }
+
+    /// Release only this worker's slot. An old or duplicate completion cannot
+    /// clear a newer request, and a previous document cannot populate this one.
+    pub fn finish(&mut self, request: &PageRequest) -> bool {
+        if self.pending.as_ref() != Some(request) {
+            return false;
+        }
+        self.pending = None;
+        request.generation == self.generation
+    }
+
+    /// Return the displaced or unwanted raster so its GPU allocation can be
+    /// released as well as its CPU pixels.
+    pub fn insert(&mut self, page: usize, value: T) -> Option<T> {
+        if self.retained.contains(&page) {
+            self.entries.insert(page, value)
+        } else {
+            Some(value)
+        }
+    }
+    pub fn fail(&mut self, page: usize) {
+        if self.retained.contains(&page) {
+            self.failed.insert(page);
+        }
+    }
+    pub fn failed(&self, page: usize) -> bool {
+        self.failed.contains(&page)
+    }
+    pub fn entries(&self) -> &BTreeMap<usize, T> {
+        &self.entries
+    }
+}
+
+/// Thumbnail work follows the rail's viewport independently of the document
+/// page. At most fourteen small rasters survive, even for a huge window.
+pub fn thumbnail_windows(top: usize, count: usize, viewport_height: f32) -> (Range<usize>, Range<usize>) {
+    if count == 0 {
+        return (0..0, 0..0);
+    }
+    let top = top.min(count - 1);
+    let visible = (viewport_height.max(0.0) / 160.0).ceil() as usize;
+    let end = top.saturating_add(visible.saturating_add(1).clamp(3, 11)).min(count);
+    (
+        top.saturating_sub(1)..end,
+        top.saturating_sub(2)..end.saturating_add(1).min(count),
+    )
+}
+
+/// The logical page is the anchor across a changed row height. Convert back
+/// from the list's pixel offset only for a real scroll, not for a zoom/layout.
+pub fn page_from_scroll(offset_y: f32, row_height: f32, count: usize) -> usize {
+    if !offset_y.is_finite() || !row_height.is_finite() || row_height <= 0.0 {
+        return 0;
+    }
+    ((-offset_y / row_height).floor().max(0.0) as usize).min(count.saturating_sub(1))
+}
+
+pub fn pdf_layout(viewport_width: f32, zoom: f32, thumbnails: bool, text: bool) -> (f32, f32) {
+    let width =
+        (viewport_width - if thumbnails { 192.0 } else { 40.0 } - if text { 320.0 } else { 0.0 }).max(200.0) * zoom;
+    (width, width * 1.414 + 32.0)
+}
 
 /// Pages worth requesting around the page in view. This always contains at
 /// most four entries, even for an invalid index or a document with no pages.
@@ -154,6 +299,105 @@ fn hex_digit(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thumbnail_requests_follow_the_rail_without_loading_document_pages() {
+        let mut cache = PageCache::new();
+        let (wanted, retained) = thumbnail_windows(30, 2000, 720.0);
+        cache.set_window(wanted, retained);
+        let first = cache.request(2).unwrap();
+        assert_eq!(first.pages, vec![29, 30]);
+        assert!(cache.request(2).is_none(), "only one worker may render thumbnails");
+        assert!(cache.finish(&first));
+        for page in first.pages {
+            cache.insert(page, page);
+        }
+        assert_eq!(cache.request(2).unwrap().pages, vec![31, 32]);
+    }
+
+    #[test]
+    fn switching_documents_rejects_late_thumbnails_without_releasing_a_new_worker() {
+        let mut cache = PageCache::new();
+        cache.set_window(0..3, 0..4);
+        let old = cache.request(2).unwrap();
+        cache.reset();
+        cache.set_window(40..43, 39..44);
+        assert!(cache.request(2).is_none(), "old worker still owns the concurrency slot");
+        assert!(
+            !cache.finish(&old),
+            "pixels from the previous document must be rejected"
+        );
+        let new = cache.request(2).unwrap();
+        assert_eq!(new.pages, vec![40, 41]);
+        assert!(
+            !cache.finish(&old),
+            "duplicate completion must not release the new worker"
+        );
+        assert!(cache.request(2).is_none());
+        assert!(cache.finish(&new));
+        cache.insert(40, "new document");
+        assert_eq!(cache.entries().get(&40), Some(&"new document"));
+    }
+
+    #[test]
+    fn scrolling_while_a_batch_runs_discards_unwanted_pixels_and_bounds_memory() {
+        let mut cache = PageCache::new();
+        cache.set_window(0..5, 0..6);
+        let old = cache.request(2).unwrap();
+        let (wanted, retained) = thumbnail_windows(1500, 2000, 10000.0);
+        cache.set_window(wanted, retained);
+        assert!(cache.finish(&old));
+        for page in old.pages {
+            assert_eq!(cache.insert(page, page), Some(page));
+        }
+        assert!(cache.entries().is_empty());
+        for top in [1500, 1499, 30, 0, 1999] {
+            let (wanted, retained) = thumbnail_windows(top, 2000, 10000.0);
+            assert!(retained.len() <= 14);
+            cache.set_window(wanted, retained);
+            while let Some(request) = cache.request(2) {
+                assert!(cache.finish(&request));
+                for page in request.pages {
+                    cache.insert(page, page);
+                }
+            }
+            assert!(cache.entries().len() <= 14);
+            assert!(cache.entries().contains_key(&top));
+        }
+    }
+
+    #[test]
+    fn failed_thumbnails_do_not_retry_forever_or_block_other_pages() {
+        let mut cache = PageCache::<usize>::new();
+        cache.set_window(0..3, 0..4);
+        let request = cache.request(2).unwrap();
+        assert!(cache.finish(&request));
+        cache.fail(0);
+        cache.insert(1, 1);
+        assert_eq!(cache.request(2).unwrap().pages, vec![2]);
+        assert!(cache.failed(0));
+        cache.reset();
+        assert!(!cache.failed(0));
+    }
+
+    #[test]
+    fn page_anchor_survives_zoom_and_sidebar_layouts() {
+        let page = 17;
+        for zoom in [0.1, 0.5, 1.0, 3.0] {
+            for thumbnails in [false, true] {
+                for text in [false, true] {
+                    let (_, height) = pdf_layout(1000.0, zoom, thumbnails, text);
+                    // GPUI's strict item scroll resolves this logical page in
+                    // the new layout, rather than retaining the old pixels.
+                    let anchored_offset = -(page as f32 * height);
+                    assert_eq!(page_from_scroll(anchored_offset, height, 100), page);
+                }
+            }
+        }
+        assert_eq!(page_from_scroll(-100000.0, 160.0, 12), 11);
+        assert_eq!(page_from_scroll(f32::NAN, 160.0, 12), 0);
+        assert_eq!(page_from_scroll(-100.0, 0.0, 12), 0);
+    }
 
     #[test]
     fn zoomed_out_pages_are_loaded_for_the_whole_viewport() {

@@ -43,6 +43,22 @@ pub struct SearchHit {
     pub excerpt: String,
 }
 
+/// MIME launchers may pass a PDF with no suffix. Sniff only a bounded header
+/// from a regular descriptor; a named pipe must never make opening a file wait.
+pub fn has_pdf_header(path: &Path) -> bool {
+    let Ok(mut file) = OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(path) else {
+        return false;
+    };
+    if !file.metadata().is_ok_and(|m| m.is_file()) {
+        return false;
+    }
+    let mut header = [0; 1024];
+    let Ok(length) = file.read(&mut header) else {
+        return false;
+    };
+    header[..length].windows(5).any(|bytes| bytes == b"%PDF-")
+}
+
 impl PdfDocument {
     pub fn open(path: &Path) -> Result<Self, String> {
         // Check before open for ordinary special files, and again on the open
@@ -167,6 +183,15 @@ impl PdfDocument {
             MAX_TEXT_BYTES,
         )?;
         String::from_utf8(bytes).map_err(|_| "The PDF text is not valid UTF-8.".into())
+    }
+
+    /// A malformed neighboring page must not discard readable pages in a
+    /// viewport batch. Keep each failure attached to its own page.
+    pub fn render_pages(&self, pages: &[usize], width: u32) -> Vec<(usize, Result<RenderedPage, String>)> {
+        pages
+            .iter()
+            .map(|&page| (page, self.render_page(page, width)))
+            .collect()
     }
 
     /// Case-insensitive search, returning at most 1000 matches in page order.
@@ -413,30 +438,43 @@ mod tests {
     #[test]
     fn rejects_nonregular_oversized_and_non_pdf_inputs() {
         let dir = tempfile::tempdir().unwrap();
+        assert!(!has_pdf_header(dir.path()));
         assert!(PdfDocument::open(dir.path()).is_err());
         let fifo = dir.path().join("fifo.pdf");
         let name = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
         // SAFETY: name is a valid, terminated local pathname; no borrowed
         // memory is retained by mkfifo.
         assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        assert!(!has_pdf_header(&fifo));
         assert!(PdfDocument::open(&fifo).is_err());
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(b"This is not PDF").unwrap();
+        assert!(!has_pdf_header(file.path()));
         assert!(PdfDocument::open(file.path()).is_err());
         file.as_file().set_len(MAX_PDF_BYTES + 1).unwrap();
         assert!(PdfDocument::open(file.path()).is_err());
     }
 
     fn fixture() -> NamedTempFile {
+        fixture_with_sizes(&[300])
+    }
+
+    fn fixture_with_sizes(sizes: &[u32]) -> NamedTempFile {
         let mut file = NamedTempFile::new().unwrap();
         let stream = "BT /F1 20 Tf 40 240 Td (Hello Viewer) Tj ET";
-        let objects = [
+        let kids = (0..sizes.len())
+            .map(|i| format!("{} 0 R", i + 5))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut objects = vec![
             "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
-            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".into(),
+            format!("<< /Type /Pages /Kids [{kids}] /Count {} >>", sizes.len()),
             "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
             format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()),
         ];
+        objects.extend(sizes.iter().map(|edge| format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {edge} {edge}] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>"
+        )));
         let mut bytes = b"%PDF-1.4\n".to_vec();
         let mut offsets = Vec::new();
         for (index, object) in objects.iter().enumerate() {
@@ -444,11 +482,16 @@ mod tests {
             write!(bytes, "{} 0 obj\n{object}\nendobj\n", index + 1).unwrap();
         }
         let xref = bytes.len();
-        write!(bytes, "xref\n0 6\n0000000000 65535 f \n").unwrap();
+        write!(bytes, "xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).unwrap();
         for offset in offsets {
             writeln!(bytes, "{offset:010} 00000 n ").unwrap();
         }
-        write!(bytes, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").unwrap();
+        write!(
+            bytes,
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .unwrap();
         file.write_all(&bytes).unwrap();
         file
     }
@@ -456,6 +499,8 @@ mod tests {
     #[test]
     fn poppler_opens_renders_extracts_and_searches_an_immutable_snapshot() {
         let file = fixture();
+        assert_ne!(file.path().extension(), Some(std::ffi::OsStr::new("pdf")));
+        assert!(has_pdf_header(file.path()));
         let document = PdfDocument::open(file.path()).unwrap();
         assert_eq!(document.page_count(), 1);
         assert_eq!(document.page_size(0).unwrap(), (300.0, 300.0));
@@ -475,5 +520,17 @@ mod tests {
     fn subprocess_output_is_bounded() {
         let result = run_poppler("printf", &["0123456789".into()], 5);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_bad_neighbor_does_not_block_other_pages_or_their_text() {
+        let file = fixture_with_sizes(&[300, 999_999_999, 300]);
+        let doc = PdfDocument::open(file.path()).unwrap();
+        let pages = doc.render_pages(&[0, 1, 2], 120);
+        assert_eq!(pages.len(), 3);
+        assert!(pages[0].1.is_ok());
+        assert!(pages[1].1.is_err());
+        assert!(pages[2].1.is_ok());
+        assert!(doc.page_text(2).unwrap().contains("Hello Viewer"));
     }
 }

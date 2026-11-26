@@ -10,6 +10,7 @@ mod quick_settings;
 mod session;
 mod slash;
 mod theme;
+mod wallpaper;
 use catalog::AppEntry;
 use drawer::AgentSurface;
 use gpui::{layer_shell::*, prelude::*, *};
@@ -150,6 +151,7 @@ impl ClockDisplay {
 struct Model {
     snapshot: session::Snapshot,
     preferences: Preferences,
+    wallpaper: Option<Arc<RenderImage>>,
     launcher: Option<WindowHandle<Launcher>>,
     quick_settings: Option<WindowHandle<QuickSettingsPopover>>,
     calendar: Option<WindowHandle<CalendarPopover>>,
@@ -328,6 +330,10 @@ impl Render for Background {
         let Some(file) = background_asset(&m.preferences) else {
             return div().size_full().bg(rgb(p.canvas));
         };
+        if let Some(image) = &m.wallpaper {
+            return div().size_full().bg(rgb(LOCK_VOID))
+                .child(img(image.clone()).size_full().object_fit(ObjectFit::Cover));
+        }
         match m.preferences.wallpaper {
             theme::Wallpaper::Nightwatch => {
                 let vp = window.viewport_size();
@@ -3250,6 +3256,18 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
     let mut refresh = false;
     for e in events {
         match e {
+            session::Event::Wallpaper(wallpaper) => {
+                let image = wallpaper.map(|mut wallpaper| {
+                    for pixel in wallpaper.rgba.chunks_exact_mut(4) { pixel.swap(0, 2); }
+                    let pixels = image::RgbaImage::from_raw(wallpaper.info.width, wallpaper.info.height, wallpaper.rgba)
+                        .expect("validated wallpaper dimensions");
+                    Arc::new(RenderImage::new([image::Frame::new(pixels)]))
+                });
+                log::info!("SHELL wallpaper={}", if image.is_some() { "custom" } else { "builtin" });
+                let old = model.update(cx, |m, _| std::mem::replace(&mut m.wallpaper, image));
+                if let Some(old) = old { cx.drop_image(old, None); }
+                refresh = true;
+            }
             session::Event::Toggle => toggle_launcher(model.clone(), cx),
             session::Event::Summon(summon) => summoned(model, summon, cx),
             session::Event::MediaKey(key) => handle_media_key(model, key, cx),
@@ -3517,6 +3535,7 @@ fn main() -> anyhow::Result<()> {
     }
     session::connect();
     let (tx, rx) = session::channel();
+    wallpaper::watch(tx.clone());
     session::deliver_events_to(tx.clone());
     let agent_tx = agent::start_from_env(tx.clone());
     let agent_configured = agent_tx.is_some();
@@ -3586,6 +3605,7 @@ fn main() -> anyhow::Result<()> {
         let now = ClockDisplay::now();
         let model = cx.new(|_| Model {
             snapshot: Default::default(),
+            wallpaper: None,
             preferences: {
                 let preferences = Preferences::load().unwrap_or_default();
                 log::info!(

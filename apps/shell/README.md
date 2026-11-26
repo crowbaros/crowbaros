@@ -65,6 +65,11 @@ historical behavior evidence, not a current Fedora workflow.
   and workspaces as it happens, so the bar shows it at once.
 - A still desktop draws nothing: the bar, dock, lock screen, and wallpaper
   commit only when what they show changes.
+- Viewer can save a custom wallpaper in the person's appearance directory.
+  The shell polls its revision through the launcher and fetches bounded,
+  already-decoded pixels only when it changes. Studio Mode keeps its neutral
+  background. Choosing and saving a built-in wallpaper in Studio Settings
+  restores that wallpaper; changing only the theme preserves the custom image.
 - Super tapped alone toggles the launcher, an app the shell launches takes the
   keyboard with its first window, and the bar and dock mark a window that
   wants attention.

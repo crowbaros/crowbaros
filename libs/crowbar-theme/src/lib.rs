@@ -8,6 +8,7 @@ pub mod builtin;
 pub mod color;
 pub mod generators;
 pub mod store;
+pub mod wallpaper;
 
 pub use builtin::{BUILTIN_THEME_IDS, builtin_theme, builtin_themes, is_builtin_id};
 pub use color::{

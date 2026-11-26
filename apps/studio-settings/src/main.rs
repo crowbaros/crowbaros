@@ -32,7 +32,7 @@ use gpui::{
 use input_config::{InputSettings, LAYOUTS, POINTER_SPEEDS, REPEAT_DELAYS, REPEAT_RATES};
 use network::{NetworkError, NetworkSnapshot, WifiNetwork, WifiState, WifiStation};
 use power_config::{LOCK_TIMEOUTS, PowerSettings, SUSPEND_TIMEOUTS, format_timeout};
-use settings::{Preferences, Store, Theme, Wallpaper};
+use settings::{Preferences, SaveOutcome, Store, Theme, Wallpaper};
 use sound::{AudioEndpoint, SoundError, SoundSnapshot};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -133,6 +133,7 @@ struct Settings {
     store: Store,
     saved: Option<Preferences>,
     draft: Preferences,
+    builtin_wallpaper_selected: bool,
     live_theme: ActiveTheme,
     previewing_appearance: bool,
     load_error: bool,
@@ -239,6 +240,7 @@ impl Settings {
             store,
             saved,
             draft,
+            builtin_wallpaper_selected: false,
             live_theme,
             previewing_appearance: false,
             load_error: error.is_some(),
@@ -307,7 +309,7 @@ impl Settings {
         theme::resolve_palette(&self.live_theme, &self.draft, self.previewing_appearance)
     }
     fn appearance_dirty(&self) -> bool {
-        self.saved.as_ref() != Some(&self.draft)
+        self.builtin_wallpaper_selected || self.saved.as_ref() != Some(&self.draft)
     }
     fn displays_dirty(&self) -> bool {
         self.outputs.len() == self.display_drafts.len()
@@ -318,7 +320,8 @@ impl Settings {
                 .any(|(live, draft)| !draft.matches_output(live))
     }
     fn has_unsaved_edits(&self) -> bool {
-        (self.appearance_dirty() && self.draft != self.saved.clone().unwrap_or_default())
+        self.builtin_wallpaper_selected
+            || (self.appearance_dirty() && self.draft != self.saved.clone().unwrap_or_default())
             || self.displays_dirty()
     }
     fn changed(&mut self, cx: &mut Context<Self>) {
@@ -1130,9 +1133,13 @@ impl Settings {
         let store = self.store.clone();
         let expected = self.saved.clone();
         let draft = self.draft.clone();
+        let builtin_wallpaper_selected = self.builtin_wallpaper_selected;
         let task = cx.background_executor().spawn(async move {
-            let result = session::Session::connect()
-                .and_then(|motion| store.save(&draft, &expected, &motion));
+            let result = session::Session::connect().and_then(|motion| {
+                store.save_with_wallpaper_choice(
+                    &draft, &expected, &motion, builtin_wallpaper_selected,
+                )
+            });
             let synced_theme = if result.is_ok() {
                 match ThemeStore::for_user()
                     .and_then(|theme_store| theme::sync_theme_store(&theme_store, &draft))
@@ -1153,7 +1160,7 @@ impl Settings {
             let _ = this.update(cx, |this, cx| {
                 this.busy = false;
                 match result {
-                    Ok(()) => {
+                    Ok(outcome) => {
                         log::info!(
                             "STUDIO event=saved theme={:?} studio={} reduced_motion={} wallpaper={:?}",
                             draft.theme,
@@ -1165,7 +1172,16 @@ impl Settings {
                             .unwrap_or_else(|| theme::fallback_active_theme(&draft));
                         this.previewing_appearance = false;
                         this.saved = Some(draft);
-                        this.status = "Saved.".into();
+                        match outcome {
+                            SaveOutcome::Complete => {
+                                this.builtin_wallpaper_selected = false;
+                                this.status = "Saved.".into();
+                            }
+                            SaveOutcome::CustomWallpaperKept(error) => {
+                                this.error = Some(error);
+                                this.status = "Appearance saved; wallpaper unchanged.".into();
+                            }
+                        }
                         this.confirming_close = false;
                     }
                     Err(error) => {
@@ -1193,6 +1209,7 @@ impl Settings {
             return;
         }
         self.draft = self.saved.clone().unwrap_or_default();
+        self.builtin_wallpaper_selected = false;
         self.previewing_appearance = false;
         self.status = "Preview reset.".into();
         self.confirming_close = false;
@@ -1245,6 +1262,7 @@ impl Settings {
             Ok(saved) => {
                 self.saved = saved;
                 self.draft = self.saved.clone().unwrap_or_default();
+                self.builtin_wallpaper_selected = false;
                 self.live_theme = ThemeStore::for_user()
                     .map(|theme_store| theme_store.load_active())
                     .unwrap_or_else(|_| theme::fallback_active_theme(&self.draft));
@@ -1476,6 +1494,7 @@ impl Settings {
                 }
                 window.focus(&this.controls[control]);
                 this.draft.wallpaper = wallpaper;
+                this.builtin_wallpaper_selected = true;
                 this.changed(cx);
             }))
     }

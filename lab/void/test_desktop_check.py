@@ -1,6 +1,7 @@
 """The desktop check runs every Base boot check and reports each."""
 import json
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -98,6 +99,68 @@ class BaseBootChecks(unittest.TestCase):
         self.assertIn('FAIL: second fails on output', log)
         self.assertIn('FAIL: third fails on exit', log)
         self.assertIn('PASS: fourth still runs', log)
+
+
+class ViewerAcceptanceFixtures(unittest.TestCase):
+    def test_images_are_distinct_and_the_pdf_reaches_beyond_visible_thumbnails(self):
+        fixtures = desktop_check.viewer_fixtures()
+        with tempfile.TemporaryDirectory() as directory:
+            for name, size in [('sample.png', (320, 200)), ('sibling.png', (200, 320))]:
+                path = Path(directory) / name
+                path.write_bytes(fixtures[name])
+                width, height, rows = guest.png_pixels(path)
+                self.assertEqual((width, height), size)
+                self.assertEqual(len(rows), height)
+            self.assertNotEqual(fixtures['sample.png'], fixtures['sibling.png'])
+        pdf = fixtures['sample.pdf']
+        self.assertIn(b'/Count 12', pdf)
+        self.assertEqual(len(re.findall(rb'/Type /Page\b', pdf)), 12)
+        self.assertEqual(pdf.count(b'CrowbarOS'), 24)
+        # Every xref offset must identify the object it indexes. Broken PDF
+        # fixtures should fail here rather than look like a rendering regression.
+        xref = int(re.search(rb'startxref\n(\d+)', pdf)[1])
+        lines = pdf[xref:].splitlines()
+        self.assertEqual(lines[0], b'xref')
+        count = int(lines[1].split()[1])
+        for number, line in enumerate(lines[3:count + 2], 1):
+            offset = int(line.split()[0])
+            self.assertTrue(pdf[offset:].startswith(f'{number} 0 obj\n'.encode()))
+        for length, stream in re.findall(rb'/Length (\d+) >>\nstream\n(.*?)endstream', pdf, re.S):
+            self.assertEqual(int(length), len(stream))
+
+    def test_wallpaper_check_restores_existing_files_and_removes_new_preferences(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / 'home'
+            folder = home / '.config/crowbaros'
+            folder.mkdir(parents=True)
+            appearance = folder / 'appearance.json'
+            appearance.write_bytes(b'{ "theme": "light" }\n')
+            appearance.chmod(0o600)
+            unrelated = folder / 'input.json'
+            unrelated.write_bytes(b'keep this')
+            exec(desktop_check.viewer_state_code(str(home), directory), {})
+            appearance.write_bytes(b'changed')
+            appearance.chmod(0o644)
+            (folder / 'wallpaper.rgba').write_bytes(b'fixture wallpaper')
+            exec(desktop_check.viewer_state_code(str(home), directory, restore=True), {})
+            self.assertEqual(appearance.read_bytes(), b'{ "theme": "light" }\n')
+            self.assertEqual(appearance.stat().st_mode & 0o777, 0o600)
+            self.assertFalse((folder / 'wallpaper.rgba').exists())
+            self.assertEqual(unrelated.read_bytes(), b'keep this')
+
+    def test_wallpaper_check_preserves_custom_wallpaper_with_no_appearance_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / 'home'
+            folder = home / '.config/crowbaros'
+            folder.mkdir(parents=True)
+            wallpaper = folder / 'wallpaper.rgba'
+            wallpaper.write_bytes(b'original\x00\xff pixels')
+            exec(desktop_check.viewer_state_code(str(home), directory), {})
+            wallpaper.unlink()
+            (folder / 'appearance.json').write_text('{}')
+            exec(desktop_check.viewer_state_code(str(home), directory, restore=True), {})
+            self.assertEqual(wallpaper.read_bytes(), b'original\x00\xff pixels')
+            self.assertFalse((folder / 'appearance.json').exists())
 
 
 

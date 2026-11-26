@@ -79,6 +79,9 @@ across the file and compositor. `--print-settings` reads preferences headlessly.
 Studio Mode is neutral styling, not display calibration. IME, screen-reader
 semantics, third-party themes, and the production Settings API require separate
 qualification. The shell follows saved preferences, including Studio Mode.
+Viewer can set a custom wallpaper. Choosing a built-in wallpaper here and
+saving removes that override, including when choosing the same built-in
+wallpaper again. A save that changes only theme or motion preserves it.
 
 Owned source is MIT; GPUI/probe notices and Manrope/IBM Plex Mono OFL licenses
 remain with the app. See [font provenance](fonts/README.md).

@@ -6,10 +6,13 @@ native GPUI window. It follows CrowbarOS's theme and uses the shared
 PNG, JPEG, WebP, BMP, TIFF, SVG, and PDF files.
 
 Images support zoom, fit, actual size, rotation, sibling-image navigation,
-metadata inspection, and copying. PDF pages use Poppler's `pdfinfo`,
-`pdftoppm`, and `pdftotext` utilities, supplied by Void's `poppler` package.
+metadata inspection, copying, and setting the desktop wallpaper. PDF pages
+use Poppler's `pdfinfo`, `pdftoppm`, and `pdftotext` utilities, supplied by
+Void's `poppler` package.
 Rendering and file reads run away from the UI thread. PDFs offer page
-navigation, thumbnails, text search, and a selectable text panel.
+navigation, independently rendered thumbnails, text search, and a selectable
+text panel. Search moves through individual occurrences, including several
+on the same page, and shows the current result with surrounding text.
 
 | Keys | Action |
 | --- | --- |
@@ -20,11 +23,15 @@ navigation, thumbnails, text search, and a selectable text panel.
 | Left / Right | Previous / next sibling image |
 | Ctrl+I | Toggle image metadata |
 | Ctrl+C | Copy the image or selected text |
+| Ctrl+Shift+W | Set the image as wallpaper |
+| Ctrl+Alt+W | Restore the built-in wallpaper |
 | Page Up / Page Down | Previous / next PDF page |
 | Ctrl+G | Go to a PDF page |
-| Ctrl+F, F3 | Find text in a PDF, move to the next match |
+| Ctrl+F | Find text in a PDF |
+| F3 / Shift+F3 | Next / previous text match |
 | Ctrl+B | Toggle PDF thumbnails |
-| Ctrl+T | Toggle selectable PDF text |
+| Ctrl+T | Toggle PDF text; opening it focuses keyboard selection |
+| Ctrl+Shift+C | Copy the current PDF page's text |
 | Escape | Dismiss a prompt |
 | Ctrl+Q | Quit |
 
@@ -49,9 +56,14 @@ whose dimensions exceed the decoder's budget are refused.
 
 From the repository root, `lab/void/desktop_check.py` builds and tests Viewer
 in Base's Void build root, verifies its binary hash and libraries, then opens
-a real PNG and a two-page PDF through their MIME defaults on Fulcrum. It
-exercises zoom, rotation, metadata, page navigation, and PDF search, and
-retains Dark and Light captures with `desktop.log` and `results.json`.
+real PNGs and a twelve-page PDF through their MIME defaults on Fulcrum. It
+exercises zoom, panning, rotation, metadata, sibling navigation, image and
+selected-text copying, individual search matches, and distant thumbnails.
+It also sets wallpaper, restarts the shell to check persistence, and restores
+the built-in background. The person's original preferences are restored even
+when a check fails. The run retains Dark and Light captures and short image
+panning recordings beside `desktop.log` and `results.json`. Recording needs
+`ffmpeg` on the host; the lab image supplies `wl-paste` for clipboard checks.
 
 ## Image limits
 
@@ -66,16 +78,19 @@ those rendering paths can allocate intermediate images outside the canvas
 budget. An unsupported SVG produces an inline error instead of a partial
 rendering.
 
-## Issue status
+## Wallpaper and PDF text
 
-This is the first local implementation for #362. **Set as wallpaper remains
-outstanding**: the shell runs as a separate account and currently accepts
-only installed backgrounds. Custom images need the bounded transfer through
-the launcher also planned in #368, rather than access to arbitrary paths in
-the person's home. The issue stays open until that action and the remaining
-interface acceptance work are verified.
+**Set as wallpaper** saves the image with its current rotation. Viewer reduces
+it to at most 4,194,304 pixels and 4,096 pixels on either side, then atomically
+replaces `~/.config/crowbaros/wallpaper.rgba`. The launcher validates and sends
+those normalized pixels to the shell, which follows changes and restores the
+saved background when it starts. The shell never opens the source image or
+runs its image decoder. **Restore wallpaper** removes that override and returns
+to the background selected in Studio Settings.
 
 PDF text selection is in the **Select text** panel; it does not overlay text
-on the page image. The thumbnail rail currently reuses nearby rendered pages;
-other pages show their number until visited. These are explicit limitations
-of this checkpoint, not a completed Preview-equivalent interface.
+on the page image. Click or open that panel to select with the mouse, Shift
+and the arrow keys, or Ctrl+A; Ctrl+C copies the selection. **Copy page** copies
+all available text from that page. Scanned pages without text say so. The
+thumbnail rail renders its own visible pages and neighbors, without requiring
+the document to visit those pages first.

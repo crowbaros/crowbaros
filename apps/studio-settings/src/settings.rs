@@ -90,6 +90,13 @@ pub struct Store {
     pub path: PathBuf,
 }
 
+pub enum SaveOutcome {
+    Complete,
+    /// The appearance committed, but removing the custom wallpaper failed.
+    /// Keep the explicit wallpaper choice pending so the person can retry.
+    CustomWallpaperKept(String),
+}
+
 impl Store {
     pub fn for_user() -> Result<Self, String> {
         let base = std::env::var_os("XDG_CONFIG_HOME")
@@ -137,6 +144,37 @@ impl Store {
                 "Cannot save settings in {folder}: {error}. Check available space and write access, then try Save changes again."
             )
         }
+    }
+
+    /// An ordinary appearance save preserves the custom wallpaper. Only an
+    /// explicit built-in choice clears it, after preferences have committed.
+    pub fn save_with_wallpaper_choice(
+        &self,
+        draft: &Preferences,
+        expected: &Option<Preferences>,
+        motion: &impl Motion,
+        builtin_selected: bool,
+    ) -> Result<SaveOutcome, String> {
+        self.save(draft, expected, motion)?;
+        if builtin_selected {
+            let path = self.path.with_file_name(crowbar_theme::wallpaper::FILE_NAME);
+            match fs::remove_file(path) {
+                Ok(()) => {
+                    if let Some(parent) = self.path.parent()
+                        && let Err(error) = File::open(parent).and_then(|file| file.sync_all())
+                    {
+                        log::warn!("Wallpaper choice committed, but directory sync failed: {error}");
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Ok(SaveOutcome::CustomWallpaperKept(format!(
+                        "Appearance saved, but the custom wallpaper could not be cleared: {error}. Choose Save changes again to retry."
+                    )));
+                }
+            }
+        }
+        Ok(SaveOutcome::Complete)
     }
 
     pub fn save(
@@ -320,6 +358,75 @@ mod tests {
                 .extension()
                 .is_some_and(|s| s == "tmp"))
         );
+    }
+    #[test]
+    fn theme_saves_preserve_custom_wallpaper_until_a_builtin_is_explicitly_chosen() {
+        let fixture = Fixture::new();
+        let store = &fixture.0;
+        fs::create_dir_all(store.path.parent().unwrap()).unwrap();
+        let wallpaper = store.path.with_file_name(crowbar_theme::wallpaper::FILE_NAME);
+        fs::write(&wallpaper, b"custom wallpaper").unwrap();
+        let draft = Preferences::default();
+        let motion = Fake {
+            reduced: Cell::new(true),
+            fail: false,
+        };
+        assert!(matches!(
+            store.save_with_wallpaper_choice(&draft, &None, &motion, false),
+            Ok(SaveOutcome::Complete)
+        ));
+        assert_eq!(fs::read(&wallpaper).unwrap(), b"custom wallpaper");
+        // Even choosing the saved built-in again clears a later Viewer override.
+        assert!(matches!(
+            store.save_with_wallpaper_choice(&draft, &Some(draft.clone()), &motion, true),
+            Ok(SaveOutcome::Complete)
+        ));
+        assert!(!wallpaper.exists());
+    }
+
+    #[test]
+    fn failed_preferences_preserve_the_custom_wallpaper() {
+        let fixture = Fixture::new();
+        let store = &fixture.0;
+        fs::create_dir_all(store.path.parent().unwrap()).unwrap();
+        let wallpaper = store.path.with_file_name(crowbar_theme::wallpaper::FILE_NAME);
+        fs::write(&wallpaper, b"custom wallpaper").unwrap();
+        let motion = Fake {
+            reduced: Cell::new(true),
+            fail: true,
+        };
+        assert!(
+            store
+                .save_with_wallpaper_choice(&Preferences::default(), &None, &motion, true)
+                .is_err()
+        );
+        assert_eq!(fs::read(&wallpaper).unwrap(), b"custom wallpaper");
+    }
+
+    #[test]
+    fn failed_wallpaper_removal_reports_committed_preferences_and_can_be_retried() {
+        let fixture = Fixture::new();
+        let store = &fixture.0;
+        let wallpaper = store.path.with_file_name(crowbar_theme::wallpaper::FILE_NAME);
+        // remove_file cannot remove a directory, even if tests run as root.
+        fs::create_dir_all(&wallpaper).unwrap();
+        let draft = Preferences::default();
+        let motion = Fake {
+            reduced: Cell::new(true),
+            fail: false,
+        };
+        assert!(matches!(
+            store.save_with_wallpaper_choice(&draft, &None, &motion, true),
+            Ok(SaveOutcome::CustomWallpaperKept(_))
+        ));
+        assert_eq!(store.load().unwrap(), Some(draft.clone()));
+        fs::remove_dir(&wallpaper).unwrap();
+        fs::write(&wallpaper, b"custom wallpaper").unwrap();
+        assert!(matches!(
+            store.save_with_wallpaper_choice(&draft, &Some(draft.clone()), &motion, true),
+            Ok(SaveOutcome::Complete)
+        ));
+        assert!(!wallpaper.exists());
     }
     #[test]
     fn refuses_unknown_schema_and_corruption() {
