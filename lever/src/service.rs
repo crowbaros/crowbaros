@@ -268,11 +268,12 @@ pub struct Service {
     pending_effort_threads: HashSet<String>,
     /// What the harness offers is to be read once it is initialized.
     probe_wanted: bool,
-    /// Threads whose turn was stopped while the harness set the session's
-    /// mode or effort. Each stays working until the harness answers, so no
-    /// turn after it runs in a mode it did not ask for.
-    /// When Lever stopped each turn, so a harness that never answers is
-    /// ended after `stop_timeout`, as one that ignores a Stop is.
+    /// Threads whose session the harness is setting to a mode or effort with
+    /// no turn waiting on it: a turn stopped while it was set, or a mode the
+    /// person set between turns. Each stays busy until the harness answers,
+    /// so no turn after it runs in a mode it did not ask for. With when Lever
+    /// asked, so a harness that never answers is ended after `stop_timeout`,
+    /// as one that ignores a Stop is.
     modes_in_flight: Vec<(String, Instant)>,
     /// Ends the database did not take, tried again on each wake.
     unsaved_endings: Vec<Ending>,
@@ -3404,6 +3405,8 @@ impl Service {
         // Lever, so it is not shown as working on.
         let first_heard = self.harness_children.insert(harness_subagent_id.to_string());
         let (state, error) = if from_launcher && first_heard && before.is_some() && state == Some("working") {
+            // It may go on, and report to the thread's session as any does.
+            self.subagent_threads.insert(thread_id.to_string());
             (Some("failed"), Some(UNFOLLOWED_MESSAGE))
         } else {
             (state, error)

@@ -119,6 +119,10 @@ struct Script {
     /// Model offers it.
     #[serde(default)]
     refuse_effort: Option<String>,
+    /// A mode (a harness value) `session/set_config_option` refuses with an
+    /// error, though the harness offers it.
+    #[serde(default)]
+    refuse_mode: Option<String>,
     /// If true, `session/set_config_option` for an effort is answered with
     /// the effort the session was at, and the new one comes in a
     /// `config_option_update` that follows, as OpenCode does while another
@@ -1910,7 +1914,7 @@ fn run(options: Options) -> Result<(), String> {
                         .map(|v| v.0.as_ref().to_string())
                         .unwrap_or_default();
                     if set_req.config_id.0.as_ref() == "mode" {
-                        if !modes.offered || !modes.has(&val) {
+                        if !modes.offered || !modes.has(&val) || script.refuse_mode.as_deref() == Some(val.as_str()) {
                             writer.send_error(id, AcpError::invalid_params().data(json!("unknown mode")));
                             continue;
                         }

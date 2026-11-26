@@ -8137,12 +8137,28 @@ fn a_subagent_taken_up_again_after_its_harness_restarted_is_not_shown_working_on
                         // launcher names the child it takes up again.
                         { "kind": "subagent_start", "id": "ses_again", "title": "Again", "prompt": "Look again", "unfollowed": true },
                         { "kind": "text", "text": "Took it up again." }
+                    ],
+                    // It goes on, and reports after the person stopped the
+                    // thread, within the harness's idle timeout.
+                    "after": [
+                        { "kind": "pause_ms", "ms": 200 },
+                        { "kind": "text", "text": "Late report." }
                     ]
                 }
             ]
         }),
     );
-    let extra = stub_extra(&script, &["--idle-timeout-ms", "300", "--wake-quiet-ms", "60000"]);
+    let extra = stub_extra(
+        &script,
+        &[
+            "--idle-timeout-ms",
+            "300",
+            "--wake-quiet-ms",
+            "60000",
+            "--stop-timeout-ms",
+            "400",
+        ],
+    );
     let uid = my_uid();
     let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
     let mut peer = handshake(&lever.person);
@@ -8172,6 +8188,17 @@ fn a_subagent_taken_up_again_after_its_harness_restarted_is_not_shown_working_on
         "{shown}"
     );
     read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == again);
+    assert_eq!(
+        ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }))["reply"],
+        "ok"
+    );
+
+    // Its report is a turn the harness began, which the Stop stops.
+    let woke = read_until(&mut peer, |v| v["event"] == "message" && v["origin"] == "harness");
+    assert_eq!(woke["turn"], again + 1, "{woke}");
+    read_until(&mut peer, |v| v["event"] == "stopped" && v["turn"] == again + 1);
+    let record = resume(&mut peer, &thread);
+    assert_eq!(record["turns"][1]["answer"], "Took it up again.", "{record}");
     let listed = ask_lever(&mut peer, json!({ "op": "list" }));
     assert_eq!(listed["threads"][0]["working"], false, "{listed}");
 
@@ -8334,6 +8361,37 @@ fn a_mode_the_record_does_not_take_is_taken_back_from_the_session() {
         v["event"] == "request" && v["state"] == "waiting" && v["title"] == "make"
     });
     assert_eq!(make["turn"], turn + 1, "{make}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_mode_the_live_session_refuses_between_turns_leaves_the_thread_as_it_was() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "refuse_mode": "build",
+            "turns": [{ "steps": [{ "kind": "text", "text": "Done." }] }]
+        }),
+    );
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    let refused = ask_lever(
+        &mut peer,
+        json!({ "op": "set-mode", "thread": thread, "mode": "full-access" }),
+    );
+    assert_eq!(refused["code"], "harness-error", "{refused}");
+    let record = resume(&mut peer, &thread);
+    assert_eq!(record["mode"], "ask-first", "{record}");
+    // The thread is free again.
+    let (_, next) = send(&mut peer, Some(&thread), "Again");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == next);
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
