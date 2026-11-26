@@ -1227,6 +1227,7 @@ printf '%s\\n' "$hello_out" | sed 's/^/hello-out /';
 tid=$(su -s /bin/sh "$u" -c '/usr/local/bin/crowbar-agent --list' | awk 'NR==1{print $1}');
 su -s /bin/sh "$u" -c "/usr/local/bin/crowbar-agent --resume '$tid' --model stub/stub-2" >/dev/null 2>&1;
 echo "set-model-rc $?";
+: >"$tmp/cmd.err";
 timeout 90 su -s /bin/sh "$u" -c "/usr/local/bin/crowbar-agent --resume '$tid' 'please run-whoami'" >"$tmp/cmd.out" 2>"$tmp/cmd.err" &
 cmd_pid=$!;
 t=$(($(date +%s) + 45)); until grep -q 'Answer with:' "$tmp/cmd.err"; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done;

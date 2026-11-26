@@ -92,8 +92,11 @@ historical behavior evidence, not a current Fedora workflow.
   and the change, with removed (`-`) and added (`+`) lines told apart in the
   mono face, and one control per answer it offers, named as the harness names
   them. A click sends `answer`; the card then says what was answered, or that
-  the request was withdrawn. A request waits with no time limit: the drawer
-  redraws it when summoned again and after the shell restarts, from `resume`.
+  the request was withdrawn. A request waits with no time limit, as long as
+  Lever says it does, after its turn ended too: the drawer redraws it when
+  summoned again and after the shell restarts, from `resume`. Stop shows
+  while the thread works or a request of its waits, and withdraws it. A long
+  change shows as Lever cut it, what it takes out and what it puts in.
 - The drawer's header shows the thread's mode. Its control opens a menu of the
   modes Lever offers, asked for with `models` only when the menu opens, since
   that starts the harness. Picking one sends `set-mode`, or, for the drawer's

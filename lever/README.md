@@ -63,7 +63,9 @@ OpenCode's self-update turned off and the Ask first agent added through
 `"agent":{"crowbar-ask-first":{...}}`, merged with any existing keys) and
 `OPENCODE_DISABLE_FREE_MODELS=1` plus `OPENCODE_DISABLE_MODELS_FETCH=1` until
 the person enables OpenCode's free hosted Models. Lever writes nothing in the
-person's own OpenCode files. The harness child dies with Lever.
+person's own OpenCode files. The harness child dies with Lever. Lever is the
+subreaper of what the harness starts: a process whose parent ends before it
+comes to Lever, which waits for it when it ends.
 
 Told to stop (`SIGTERM` or `SIGINT`), Lever closes its peer connections, stops
 any running harness child, marks any turn still working `interrupted`, removes
@@ -116,36 +118,64 @@ ACP today:
   files and runs no terminals for it, and answers those requests with
   JSON-RPC's "method not found". A `session/request_permission` becomes a
   request in its thread, with the exact command, or the file and the change,
-  and the answers the harness offers. It waits with no time limit until the
-  person answers it, the harness withdraws it (`$/cancel_request`), Stop
-  withdraws it, or the harness ends. A withdrawn request is answered
-  `cancelled`, as ACP asks. While a request waits, the harness is not stopped
-  for being idle. A request the harness sends for a session Lever holds for no
-  thread is answered `cancelled` at once.
+  and the answers the harness offers. The command and the change are shown as
+  the harness sends them, and a change longer than 400 lines is cut in what it
+  takes out and what it puts in alike, so both show. It waits with no time
+  limit until the person answers it, the harness withdraws it
+  (`$/cancel_request`), Stop withdraws it, or the harness ends. A withdrawn
+  request is answered `cancelled`, as ACP asks, the one the harness withdrew
+  too. While a request waits, the harness is not stopped for being idle. A
+  request the harness sends for a session Lever holds for no thread, or for a
+  turn the person asked to stop, is answered `cancelled` at once. An answer
+  the database does not take is kept, said to whoever asks, and saved when
+  the database takes writes again.
+
+  A request is the harness asking the person, not a guard on the person's
+  account: any program the person runs can answer it over the person's
+  socket, as any can run commands as the person already.
 - **Modes.** Lever offers the modes the harness reports in its session
   configuration option of category `mode`, and only those it knows:
   - **Ask first** (`ask-first`) is Lever's own. Lever adds to
     `OPENCODE_CONFIG_CONTENT` a primary OpenCode agent, `crowbar-ask-first`,
     whose permission settings ask before a command (`bash`) or an edit
-    (`edit`), and makes it OpenCode's `default_agent`. Lever writes nothing in
-    the person's own OpenCode files, so their settings, agents, and tool
-    servers apply as they made them, and a session they start by hand has none
-    of this.
+    (`edit`), and makes it OpenCode's `default_agent`. OpenCode puts an
+    agent's own rules after every rule in the person's settings, and the last
+    that matches wins, so Ask first carries the person's own rules for `bash`
+    and `edit` again after its `"*": "ask"`: what they refuse stays refused,
+    and what they allow by name stays allowed. A rule of theirs that allows
+    every command or edit is the one Ask first takes the place of. Lever reads
+    them where OpenCode reads them for every directory, in its order:
+    `opencode.json` and `opencode.jsonc` in `OPENCODE_CONFIG_DIR`, or else
+    `$XDG_CONFIG_HOME/opencode` or `~/.config/opencode`, then the file
+    `OPENCODE_CONFIG` names, then `OPENCODE_CONFIG_CONTENT`. A project's own
+    `opencode.json`, which OpenCode reads only for a session in that project,
+    is not read, and its refusals do not outrank Ask first. Lever writes
+    nothing in the person's own OpenCode files, so their settings, agents, and
+    tool servers apply as they made them, and a session they start by hand
+    has none of this.
   - **Full access** (`full-access`) is OpenCode's own `build` agent, which runs
     tools as the person's own settings allow.
   - **Plan** (`plan`) is OpenCode's own `plan` agent, as it is.
 
+  A harness whose mode selector offers none of these has no modes Lever sets.
   A thread keeps its mode. A new thread starts in the starting mode, Ask first
-  unless the person chose Full access. Before each turn, Lever sets the
-  session's mode to the thread's, with `session/set_config_option`, and a turn
-  whose mode the harness refuses fails. When the harness changes a session's
-  mode itself, the thread takes the new mode.
+  unless the person chose Full access, and only in one the harness offers.
+  Before each turn, Lever sets the session's mode to the thread's, with
+  `session/set_config_option`, and a turn whose mode the harness refuses
+  fails. A turn stopped while its mode is set leaves the thread working until
+  the harness answers, so the next turn knows the session's mode. When the
+  harness changes a session's mode itself while a turn's prompt runs, or
+  between turns, the thread takes the new mode: OpenCode leaving Plan goes to
+  `build`, so the thread is then in Full access.
 - **A Stop the harness does not carry out is carried out by Lever.** Lever
   sends `session/cancel` and waits up to `--stop-timeout-ms` (5 seconds) for
   the turn to end. When it has not, Lever ends the turn as `stopped`, and stops
   the harness with every process under it, so no command the turn started goes
-  on. Every other turn working on that harness is `interrupted`, and its
-  requests are withdrawn. The next message starts the harness again.
+  on: each process is held still (`SIGSTOP`) and the tree read again until no
+  process is new, then all are killed, those whose parent had ended too. Every
+  other turn working on that harness is `interrupted`, or `stopped` if the
+  person had asked to stop it, and its requests are withdrawn. The next
+  message starts the harness again.
 - **Lever reads at most 256 KiB from the harness each time it wakes**, so a
   harness that never stops writing holds back neither Lever's peers nor a stop
   signal. A harness that writes more than 16 MiB with no line end is stopped,
@@ -354,7 +384,8 @@ Request:
 - `model`: optional Model ID to select for the thread before sending the turn.
 - `mode`: optional mode for the thread from this turn on (`ask-first`,
   `full-access`, or `plan`). A new thread without one starts in the starting
-  mode.
+  mode. One that changes an existing thread's mode comes with a
+  `thread-updated` event before the turn's `message`.
 
 Reply:
 
@@ -406,8 +437,8 @@ is `stopped` at once, and one it was working on ends when the harness answers,
 as `stopped`, or as `failed` if the harness failed instead. A harness that has
 not ended the turn after `--stop-timeout-ms` is stopped, as
 [the harness](#the-harness) says. Stop withdraws every request of the thread
-that waits, whether or not a turn is working. A thread with no turn working is
-answered `ok` too.
+that waits, whether or not a turn is working, and with `turn`, only that
+turn's. A thread with no turn working is answered `ok` too.
 
 Request:
 
@@ -482,8 +513,8 @@ Reply:
 {"reply":"default-mode","mode":"full-access"}
 ```
 
-Errors: `invalid-mode` (not `ask-first` or `full-access`), `invalid-request`,
-`storage-error`.
+Errors: `invalid-mode` (not `ask-first` or `full-access`, or one the harness
+does not offer), `invalid-request`, `storage-error`.
 
 #### `watch`
 
@@ -565,8 +596,7 @@ Pushed to every connection subscribed to `thread`:
 - **`request`** — a request that waits for the person, and each change to
   it. `kind` is the kind of the act it asks about, `act` that act's ID,
   `title` what the harness calls it, and `detail` the exact command, or the
-  file and the change as lines that begin `-` and `+`. `path` is the file, for
-  an edit. `answers` are those the harness offers, as `once`, `always`, `no`,
+  change as lines that begin `-` and `+`. `path` is the file, for an edit. `answers` are those the harness offers, as `once`, `always`, `no`,
   and `never`, each with the harness's `name` for it. `state` is `waiting`,
   `answered` (with `answer`), or `withdrawn`:
 
