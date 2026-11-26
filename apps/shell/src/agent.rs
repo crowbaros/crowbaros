@@ -476,6 +476,10 @@ pub struct Turn {
     pub started: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended: Option<i64>,
+    /// The harness began this turn itself, with no message from the person,
+    /// as OpenCode does when a subagent reports back.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub from_harness: bool,
 }
 
 impl Turn {
@@ -583,6 +587,8 @@ pub enum LeverMessage {
         turn: u64,
         text: String,
         context: Option<DesktopContext>,
+        /// The harness began the turn itself.
+        from_harness: bool,
     },
     Text {
         thread: String,
@@ -702,6 +708,8 @@ pub enum AgentEvent {
         turn: u64,
         text: String,
         context: Option<DesktopContext>,
+        /// The harness began the turn itself.
+        from_harness: bool,
     },
     Text {
         thread: String,
@@ -818,11 +826,13 @@ impl LeverMessage {
                 turn,
                 text,
                 context,
+                from_harness,
             } => Some(AgentEvent::Message {
                 thread,
                 turn,
                 text,
                 context,
+                from_harness,
             }),
             LeverMessage::Text { thread, turn, text } => Some(AgentEvent::Text { thread, turn, text }),
             LeverMessage::Act { thread, turn, act } => Some(AgentEvent::Act { thread, turn, act }),
@@ -1294,9 +1304,19 @@ impl AgentState {
             && self.threads.is_empty()
     }
 
+    /// Whether a turn of the person's works, which a message waits for. A
+    /// subagent that works on does not hold one back, nor does a turn the
+    /// harness began itself: Lever sends it, and the harness takes it in.
+    pub fn turn_working(&self) -> bool {
+        match self.turns.last() {
+            Some(turn) => matches!(turn.state, TurnState::Working) && !turn.from_harness,
+            None => self.thread_mark == Mark::Working,
+        }
+    }
+
     pub fn can_send(&self) -> bool {
         self.connected
-            && !self.working()
+            && !self.turn_working()
             && !self.sending
             && !self.loading
             && !self.no_harness
@@ -1461,9 +1481,10 @@ impl AgentState {
         }
     }
 
-    /// The thread's mode cannot change now: it works, or Lever is out of reach.
+    /// The thread's mode cannot change now: a turn of the person's works, or
+    /// Lever is out of reach.
     pub fn mode_locked(&self) -> bool {
-        !self.connected || self.no_harness || self.sending || self.loading || self.working()
+        !self.connected || self.no_harness || self.sending || self.loading || self.turn_working()
     }
 
     /// A list needs what the harness offers: ask Lever for its Models and
@@ -1747,6 +1768,23 @@ impl AgentState {
                                 turn.state = TurnState::Interrupted;
                                 changed = true;
                             }
+                            // Nor a cached working subagent, whose requests
+                            // are answered from no thread this socket follows.
+                            let mut gone = Vec::new();
+                            for sub in &mut turn.subagents {
+                                if sub.state.is_working() {
+                                    sub.state = SubagentState::Interrupted;
+                                    gone.push(sub.id.clone());
+                                    changed = true;
+                                }
+                            }
+                            for req in &mut turn.requests {
+                                if req.state == RequestState::Waiting
+                                    && req.subagent.as_ref().is_some_and(|s| gone.contains(s))
+                                {
+                                    req.state = RequestState::Withdrawn;
+                                }
+                            }
                         }
                     }
                 } else if self.thread.is_some() {
@@ -1835,15 +1873,27 @@ impl AgentState {
                 turn,
                 text,
                 context,
+                from_harness,
             } => {
                 if self.thread.as_deref() != Some(thread.as_str()) {
                     return false;
                 }
-                self.sending = false;
+                // A message the harness began a turn with does not answer
+                // one the person is sending.
+                if !from_harness {
+                    self.sending = false;
+                }
                 self.active_turn = Some(turn);
                 if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
                     existing.message = text;
                     existing.context = context;
+                    // A turn the harness began, which Lever ended when it went
+                    // quiet, works again when the harness goes on.
+                    if from_harness {
+                        existing.from_harness = true;
+                        existing.state = TurnState::Working;
+                        existing.ended = None;
+                    }
                 } else {
                     self.turns.push(Turn {
                         turn,
@@ -1858,6 +1908,7 @@ impl AgentState {
                         state: TurnState::Working,
                         started: Some(unix_now()),
                         ended: None,
+                        from_harness,
                     });
                 }
                 self.error = None;
@@ -2923,6 +2974,7 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                 turn,
                 text,
                 context,
+                from_harness: msg.get("origin").and_then(|v| v.as_str()) == Some("harness"),
             })
         }
         "text" => Some(LeverMessage::Text {
@@ -3303,6 +3355,7 @@ fn parse_turn(value: &serde_json::Value) -> Option<Turn> {
         state,
         started: value.get("started").and_then(|v| v.as_i64()),
         ended: value.get("ended").and_then(|v| v.as_i64()),
+        from_harness: value.get("origin").and_then(|v| v.as_str()) == Some("harness"),
     })
 }
 
@@ -4231,6 +4284,7 @@ mod tests {
                 turn: 1,
                 text: "hello".into(),
                 context: None,
+                from_harness: false,
             })
         );
         assert_eq!(
@@ -4255,6 +4309,7 @@ mod tests {
                 turn: 2,
                 text: "what is focused?".into(),
                 context: Some(sample_context()),
+                from_harness: false,
             })
         );
         assert_eq!(
@@ -4346,6 +4401,7 @@ mod tests {
                 turn: 1,
                 text: "What is focused?".into(),
                 context: Some(sample_context()),
+                from_harness: false,
             },
             true,
         );
@@ -4487,7 +4543,7 @@ mod tests {
 
         // Failure while drawer is put away leaves Mark::Done so the person notices.
         state.apply(
-            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "hi".into(), context: None },
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "hi".into(), context: None, from_harness: false },
             false,
         );
         state.apply(
@@ -4509,7 +4565,7 @@ mod tests {
         state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 2 }, true);
         assert_eq!(state.current_turn(), Some(2));
         state.apply(
-            AgentEvent::Message { thread: "t-1".into(), turn: 2, text: "wait".into(), context: None },
+            AgentEvent::Message { thread: "t-1".into(), turn: 2, text: "wait".into(), context: None, from_harness: false },
             true,
         );
         state.apply(AgentEvent::Stopped { thread: "t-1".into(), turn: 2 }, true);
@@ -4533,7 +4589,7 @@ mod tests {
         );
         assert_eq!(state.model, None);
         state.thread = Some("t-1".into());
-        state.turns.push(Turn { started: None, ended: None,
+        state.turns.push(Turn { started: None, ended: None, from_harness: false,
             turn: 1,
             message: "prev".into(),
             context: None,
@@ -4545,7 +4601,7 @@ mod tests {
             answer: "ok".into(),
             state: TurnState::Done,
         });
-        state.turns.push(Turn { started: None, ended: None,
+        state.turns.push(Turn { started: None, ended: None, from_harness: false,
             turn: 2,
             message: "stopped".into(),
             context: None,
@@ -4561,7 +4617,7 @@ mod tests {
         // Interrupted turn behind drawer shows Done.
         state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 3 }, false);
         state.apply(
-            AgentEvent::Message { thread: "t-1".into(), turn: 3, text: "mid".into(), context: None },
+            AgentEvent::Message { thread: "t-1".into(), turn: 3, text: "mid".into(), context: None, from_harness: false },
             false,
         );
         state.apply(AgentEvent::Interrupted { thread: "t-1".into(), turn: 3 }, false);
@@ -4612,7 +4668,7 @@ mod tests {
         // both Mark and stale missing_model.
         state.apply(AgentEvent::Sent { thread: "t-9".into(), turn: 1 }, false);
         state.apply(
-            AgentEvent::Message { thread: "t-9".into(), turn: 1, text: "bg".into(), context: None },
+            AgentEvent::Message { thread: "t-9".into(), turn: 1, text: "bg".into(), context: None, from_harness: false },
             false,
         );
         state.apply(AgentEvent::Stopped { thread: "t-9".into(), turn: 1 }, false);
@@ -5470,6 +5526,7 @@ mod tests {
                 turn: 1,
                 text: "run".into(),
                 context: None,
+                from_harness: false,
             },
             false,
         );
@@ -5490,7 +5547,7 @@ mod tests {
                     model: None,
                     mode: None,
                     working: false,
-                    turns: vec![Turn { started: None, ended: None,
+                    turns: vec![Turn { started: None, ended: None, from_harness: false,
                         turn: 1,
                         message: "run".into(),
                         context: None,
@@ -5587,6 +5644,7 @@ mod tests {
                 turn: 1,
                 text: "slow work".into(),
                 context: None,
+                from_harness: false,
             },
             false,
         );
@@ -5625,7 +5683,7 @@ mod tests {
                     model: None,
                     mode: None,
                     working: false,
-                    turns: vec![Turn { started: None, ended: None,
+                    turns: vec![Turn { started: None, ended: None, from_harness: false,
                         turn: 1,
                         message: "slow work".into(),
                         context: None,
@@ -5897,7 +5955,7 @@ mod tests {
         let mut state = connected_state(true);
         state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
         state.apply(
-            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "run".into(), context: None },
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "run".into(), context: None, from_harness: false },
             true,
         );
         state.apply(AgentEvent::Done { thread: "t-1".into(), turn: 1 }, true);
@@ -5927,7 +5985,7 @@ mod tests {
         let mut state = connected_state(true);
         state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
         state.apply(
-            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "run".into(), context: None },
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "run".into(), context: None, from_harness: false },
             true,
         );
         // A request for a thread the drawer does not hold is not drawn here.
@@ -6033,7 +6091,7 @@ mod tests {
                     model: None,
                     mode: Some("ask-first".into()),
                     working: true,
-                    turns: vec![Turn { started: None, ended: None,
+                    turns: vec![Turn { started: None, ended: None, from_harness: false,
                         turn: 1,
                         message: "run".into(),
                         context: None,
@@ -6110,7 +6168,7 @@ mod tests {
         // mark by itself: Lever's word for every thread does.
         state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, false);
         state.apply(
-            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "run".into(), context: None },
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "run".into(), context: None, from_harness: false },
             false,
         );
         state.apply(activity(&["t-b", "t-1"], &[]), false);
@@ -6190,7 +6248,7 @@ mod tests {
         assert_eq!(state.mode.as_deref(), Some("plan"));
         assert_eq!(state.pending_mode, None);
         state.apply(
-            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "plan it".into(), context: None },
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "plan it".into(), context: None, from_harness: false },
             true,
         );
         // While the thread works, its mode does not change.
@@ -6498,7 +6556,7 @@ mod tests {
         assert_eq!(s.mark, Mark::Working);
         assert!(s.can_send(), "terminal work must not prevent a second thread");
         assert!(s.select_thread(None));
-        s.apply(AgentEvent::Message { thread: "old-subscription".into(), turn: 1, text: "late".into(), context: None }, true);
+        s.apply(AgentEvent::Message { thread: "old-subscription".into(), turn: 1, text: "late".into(), context: None, from_harness: false }, true);
         assert!(s.thread.is_none());
         assert!(s.turns.is_empty());
         s.apply(AgentEvent::Threads { threads: vec![summary("terminal", "/tmp", false)], finished: true }, false);
@@ -6708,6 +6766,7 @@ mod tests {
             state: TurnState::Working,
             started: Some(100),
             ended: None,
+            from_harness: false,
         };
         // A working turn has worked until now, and an ended one until it ended.
         assert_eq!(turn.elapsed(130), Some(30));
@@ -6768,7 +6827,7 @@ mod tests {
 
         // The next new thread starts with what was last picked.
         state.apply(
-            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "hi".into(), context: None },
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "hi".into(), context: None, from_harness: false },
             true,
         );
         state.apply(AgentEvent::Done { thread: "t-1".into(), turn: 1 }, true);
@@ -6794,7 +6853,7 @@ mod tests {
         state.apply(AgentEvent::Offer(offer()), true);
         state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
         state.apply(
-            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "hi".into(), context: None },
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "hi".into(), context: None, from_harness: false },
             true,
         );
         let told = |model: Option<&str>, effort: Option<Option<&str>>| AgentEvent::ThreadUpdated {
@@ -6870,7 +6929,7 @@ mod tests {
         assert_eq!(state.harness_commands(), [named("deploy")]);
         // A thread left takes its commands with it.
         state.apply(
-            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "hi".into(), context: None },
+            AgentEvent::Message { thread: "t-1".into(), turn: 1, text: "hi".into(), context: None, from_harness: false },
             true,
         );
         state.apply(AgentEvent::Done { thread: "t-1".into(), turn: 1 }, true);
@@ -7289,6 +7348,7 @@ mod tests {
                 turn: 1,
                 text: "Check workspace".into(),
                 context: None,
+                from_harness: false,
             },
             false,
         );
@@ -7309,7 +7369,8 @@ mod tests {
         assert!(state.working(), "thread stays working while subagent works");
         assert!(state.subagent_working());
         assert!(state.can_stop());
-        assert!(!state.can_send());
+        assert!(state.can_send(), "a message is sent while a subagent works");
+        assert!(!state.mode_locked(), "and the mode may change");
         assert_eq!(state.mark, Mark::Working);
 
         // Subagent streams prompt, act, and raises a request after parent turn ended.
@@ -7414,5 +7475,87 @@ mod tests {
         assert_eq!(sub.messages[0].text, "Read .env");
         assert_eq!(sub.messages[1].text, "All clear.");
         assert_eq!(sub.acts.len(), 1);
+    }
+
+    fn lever_event(value: serde_json::Value) -> AgentEvent {
+        parse_lever_message(&value).unwrap().into_agent_event().unwrap()
+    }
+
+    #[test]
+    fn a_turn_the_harness_begins_shows_as_its_own_reopens_and_takes_a_message() {
+        let mut state = connected_state(true);
+        state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
+        state.apply(lever_event(serde_json::json!({ "event": "message", "thread": "t-1", "turn": 1, "text": "Look" })), true);
+        state.apply(AgentEvent::Done { thread: "t-1".into(), turn: 1 }, true);
+
+        // The harness goes on by itself after a subagent reports.
+        state.apply(
+            lever_event(serde_json::json!({ "event": "message", "thread": "t-1", "turn": 2, "text": "", "origin": "harness" })),
+            true,
+        );
+        assert!(state.turns[1].from_harness);
+        assert_eq!(state.turns[1].state, TurnState::Working);
+        assert!(state.working(), "the thread shows working");
+        assert!(state.can_send(), "the person's message takes the turn over");
+        assert!(!state.mode_locked());
+
+        // Lever ends it when quiet, and the harness going on reopens it.
+        state.apply(AgentEvent::Done { thread: "t-1".into(), turn: 2 }, true);
+        state.apply(
+            lever_event(serde_json::json!({ "event": "message", "thread": "t-1", "turn": 2, "text": "", "origin": "harness" })),
+            true,
+        );
+        assert_eq!(state.turns.len(), 2);
+        assert_eq!(state.turns[1].state, TurnState::Working);
+
+        // A turn read from Lever's record keeps where it came from.
+        let rec = parse_turn(&serde_json::json!({
+            "turn": 2, "message": "", "answer": "Reported.", "state": "done", "origin": "harness"
+        }))
+        .unwrap();
+        assert!(rec.from_harness);
+    }
+
+    #[test]
+    fn a_reconnect_that_cannot_resume_leaves_no_cached_subagent_working_or_its_request_waiting() {
+        let mut state = connected_state(true);
+        state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, false);
+        state.apply(lever_event(serde_json::json!({ "event": "message", "thread": "t-1", "turn": 1, "text": "Go" })), false);
+        state.apply(
+            lever_event(serde_json::json!({
+                "event": "subagent", "thread": "t-1", "turn": 1, "subagent": "sub-1",
+                "title": "Dig", "state": "working", "started": 100
+            })),
+            false,
+        );
+        state.apply(AgentEvent::Done { thread: "t-1".into(), turn: 1 }, false);
+        state.apply(
+            lever_event(serde_json::json!({
+                "event": "request", "thread": "t-1", "turn": 1, "request": "r-1", "subagent": "sub-1",
+                "kind": "read", "title": "Read .env", "path": "/tmp/.env",
+                "answers": [{ "answer": "once", "name": "Allow once" }], "state": "waiting"
+            })),
+            false,
+        );
+        assert!(state.subagent_working());
+
+        state.apply(AgentEvent::Disconnected, false);
+        state.apply(
+            AgentEvent::Connected {
+                status: sample_status(vec!["OpenCode"]),
+                resumed: None,
+                preserved_thread: Some("t-1".into()),
+                resume_error: Some("Could not load the previous thread right now.".into()),
+            },
+            false,
+        );
+        assert!(!state.subagent_working());
+        assert!(!state.working());
+        assert_eq!(state.turns[0].subagents[0].state, SubagentState::Interrupted);
+        assert_eq!(
+            request_view(&state.turns[0].state, &state.turns[0].requests[0]),
+            RequestView::Withdrawn,
+            "no answer controls for a request nobody here follows"
+        );
     }
 }

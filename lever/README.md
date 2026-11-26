@@ -40,7 +40,7 @@ crowbar-lever \
   --person-socket <path> --person-uid <uid> \
   [--fulcrum-socket <path>] \
   [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>]] \
-  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>]
+  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>] [--wake-quiet-ms <ms>]
 ```
 
 On Base:
@@ -127,6 +127,21 @@ ACP today:
   threads are not flooded with per-token or boilerplate notes. Any genuinely
   unrecognized or future update is kept as JSON in the record and shown
   plainly as a `note`.
+- **A turn the harness begins.** When a subagent goes idle, OpenCode reports
+  it to the parent session and the parent's Model answers there, with no
+  prompt from Lever. What a thread's own session says after its turn ended,
+  when its subagents ran in this harness, is a turn of its own, with
+  `"origin":"harness"` and no message. ACP gives such a turn no end, so Lever
+  ends it as `done` once the harness has said nothing for `--wake-quiet-ms`
+  (default `10000`), while none of its acts works, no request of the thread
+  waits, and no subagent of the thread works. When the harness goes on after
+  that, the turn works again while it is the thread's newest. A message the
+  person sends takes it over: Lever ends it as `done` and begins the person's
+  turn, and OpenCode takes the message into the work it is doing.
+- **Stop and OpenCode's background work.** OpenCode's `session/cancel` stops
+  only a prompt in flight. A subagent that outlives its turn, and a turn the
+  harness began, go on when told to stop, so Lever stops the harness after
+  `--stop-timeout-ms`, as for any Stop the harness does not carry out.
 - **Models and their providers.** The Models are the values of the session
   configuration option of category `model`. A Model's provider is the group
   the harness lists it under. A harness that lists its Models with no groups,
@@ -597,6 +612,11 @@ Reply:
 {"reply":"sent","thread":"t-01a2b3c4d5e6","turn":1}
 ```
 
+A subagent that still works does not hold a message back, and a turn the
+harness began itself is taken over by it, as [the harness](#the-harness)
+says. `working` is for a turn of the person's that works, or a change Lever
+asked of the session that the harness has yet to answer.
+
 Errors: `no-harness`, `no-model`, `no-thread`, `working`, `invalid-mode`, `invalid-effort`,
 `invalid-request`, and `storage-error` when Lever's database does not take the turn, or has yet to
 take how the thread's last turn ended.
@@ -633,8 +653,9 @@ recorded before modes), its requests (`"requests":[...]`, each as the
 [`request` event](#events) has it, without `event`, `thread`, and `turn`), and
 its subagents (`"subagents":[...]`, each with Lever's `subagent` ID, `title`,
 `state`, `started`, optional `ended` and `error`, `messages` with `role` and
-`text`, and `acts`). A thread's `"working"` is `true` while any of its turns or
-subagents still works.
+`text`, and `acts`). A turn the harness began itself carries
+`"origin":"harness"` and an empty `"message"`. A thread's `"working"` is `true`
+while any of its turns or subagents still works.
 
 Errors: `no-thread`, `invalid-request`.
 
@@ -778,6 +799,13 @@ Pushed to every connection subscribed to `thread`:
   {"event":"message","thread":"t-01a2b3c4d5e6","turn":1,"text":"List the files"}
   ```
 
+  A turn the harness began itself, or one Lever ended when it went quiet and
+  that works again, has `"origin":"harness"` and no text:
+
+  ```json
+  {"event":"message","thread":"t-01a2b3c4d5e6","turn":2,"text":"","origin":"harness"}
+  ```
+
 - **`text`** — a streamed piece of the answer (also taken if it arrives after a
   turn ended):
 
@@ -818,7 +846,9 @@ Pushed to every connection subscribed to `thread`:
 - **`subagent`** — a subagent of the thread started, changed title, or changed
   state (`working`, `done`, `stopped`, `failed`, or `interrupted`, with
   optional `ended` and `error`). While any subagent is `working`, the thread
-  stays `working` and the harness is not stopped as idle:
+  stays `working`, the harness is not stopped as idle, and the thread is not
+  deleted or archived. It still takes the person's messages and changes of
+  Model, mode, and effort:
 
   ```json
   {"event":"subagent","thread":"t-01a2b3c4d5e6","turn":1,"subagent":"sub-01a2b3c4d5e6","title":"Check workspace","state":"working","started":1764000001}

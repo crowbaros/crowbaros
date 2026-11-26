@@ -84,6 +84,10 @@ crowbar-agent status                   # Lever's status, what works, and what wa
   when a thread has subagents, `--resume ID` shows them with their acts and
   answers, and subagents that outlive their turn keep the watch open so their
   requests can be answered right away (or with `--resume ID --answer R A`).
+  Ctrl-C then stops them, with exit status 130. A turn the harness began
+  itself after a subagent reported begins with `[the Agent went on after a
+  subagent reported]` in place of a message: the line-at-a-time mode follows
+  it, and `--resume ID` shows it.
   An act that ends after a later turn began is still shown. On a
   terminal, an act that comes in the middle of a line of the answer ends that
   line first. Down a pipe or into a file, nothing is put in the middle of the

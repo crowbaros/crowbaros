@@ -2284,23 +2284,35 @@ impl Render for AgentSurface {
             for (turn_index, turn) in state.turns.iter().enumerate() {
                 let working = matches!(turn.state, agent::TurnState::Working);
                 let mut turn_col = div().flex().flex_col().gap(px(8.));
-                // The person's message, set to the right.
-                turn_col = turn_col.child(
-                    div().w_full().flex().justify_end().child(
+                if turn.from_harness {
+                    // A turn the harness began itself has no message: a quiet
+                    // line says why it goes on.
+                    turn_col = turn_col.child(
                         div()
-                            .max_w(relative(0.88))
-                            .px(px(12.))
-                            .py(px(8.))
-                            .rounded(px(10.))
-                            .bg(rgb(p.surface))
-                            .border_1()
-                            .border_color(rgb(p.line))
-                            .text_size(px(13.))
-                            .line_height(px(19.))
-                            .text_color(rgb(p.text))
-                            .child(turn.message.clone()),
-                    ),
-                );
+                            .w_full()
+                            .text_size(px(11.5))
+                            .text_color(rgb(p.muted))
+                            .child("The Agent went on after a subagent reported"),
+                    );
+                } else {
+                    // The person's message, set to the right.
+                    turn_col = turn_col.child(
+                        div().w_full().flex().justify_end().child(
+                            div()
+                                .max_w(relative(0.88))
+                                .px(px(12.))
+                                .py(px(8.))
+                                .rounded(px(10.))
+                                .bg(rgb(p.surface))
+                                .border_1()
+                                .border_color(rgb(p.line))
+                                .text_size(px(13.))
+                                .line_height(px(19.))
+                                .text_color(rgb(p.text))
+                                .child(turn.message.clone()),
+                        ),
+                    );
+                }
                 // The desktop context carried with the message.
                 match &turn.context {
                     Some(ctx) => {

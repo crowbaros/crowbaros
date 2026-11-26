@@ -2045,6 +2045,29 @@ finally:
                 and 'crowbar_subagent_ok' in sub_resume_out,
                 json.dumps({'subagent': sub_after, 'req': sub_done_req, 'resume': sub_resume_out[:300]}),
             )
+            # OpenCode wakes the parent session with the subagent's report, and
+            # the Model's answer there is a turn the harness began, apart from
+            # the person's, which Lever ends once the harness is quiet.
+            woke = self.wait(
+                "the harness's own turn after the subagent reported ends on its own",
+                lambda: (v := self.agent_view())
+                and len(v['state']['turns']) >= 2
+                and v['state']['turns'][1].get('from_harness')
+                and v['state']['turns'][1]['state']['kind'] == 'done'
+                and not any(t['thread'] == sub_thread_id and t['working'] for t in v['state']['threads'])
+                and v,
+                timeout=60,
+            )
+            time.sleep(0.5)
+            self.capture('31c-harness-turn')
+            woke_turns = woke['state']['turns']
+            self.check(
+                "the harness's answer after a subagent reported is a turn of its own, apart from the person's",
+                woke_turns[0]['answer'] == 'Started a subagent to inspect the env file.'
+                and 'The subagent finished its work.' in woke_turns[1]['answer']
+                and woke_turns[1]['message'] == '',
+                json.dumps([{k: t.get(k) for k in ('turn', 'message', 'answer', 'from_harness')} for t in woke_turns]),
+            )
             self.key('meta_l', 'spc')
             self.wait('drawer closed after lifecycle checks', lambda: not self.agent_view()['drawer_up'])
             self.agent_restart_recovery(tmp, home)

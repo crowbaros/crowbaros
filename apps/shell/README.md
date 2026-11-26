@@ -166,7 +166,11 @@ historical behavior evidence, not a current Fedora workflow.
   shows in its turn as a line (`subagent:<id>`) that opens to its prompt, its
   acts, and its messages. A subagent's request shows in the thread and is
   answered there, and while a subagent still works after its turn ended the
-  thread stays working and Stop remains available.
+  thread stays working and Stop remains available. A message can still be
+  sent then, and the mode, Model, and effort changed. When the harness goes on
+  by itself after a subagent reported, its turn shows a quiet line, `The Agent
+  went on after a subagent reported`, in place of a message, and a message
+  sent meanwhile takes that turn over.
 - The mark covers every thread, from Lever's `activity`: `Waiting` while any
   request waits, else `Working` while any thread works, else `Done` once the
   last working thread ends with the drawer put away, until the drawer is

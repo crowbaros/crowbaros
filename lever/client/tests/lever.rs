@@ -95,7 +95,9 @@ impl Lab {
             .args(["--shell-uid", &uid().to_string()])
             .arg("--person-socket")
             .arg(self.directory.join("runtime/crowbar-lever/person"))
-            .args(["--person-uid", &person_uid.to_string()]);
+            .args(["--person-uid", &person_uid.to_string()])
+            // A turn the harness began ends once it has been quiet this long.
+            .args(["--wake-quiet-ms", "300"]);
 
         if let Some(script) = script {
             let script_path = self.directory.join("script.json");
@@ -2069,4 +2071,56 @@ fn subagents_show_in_list_resume_and_live_and_their_requests_are_answered() {
         resumed.err.contains("[subagent: Inspect config] Config looks good."),
         "{resumed:?}"
     );
+}
+
+#[test]
+fn a_turn_the_harness_begins_after_a_subagent_reports_is_shown_as_its_own() {
+    let lab = Lab::with_script(json!({
+        "turns": [{
+            "steps": [
+                { "kind": "subagent_start", "id": "ses_cli_wake", "title": "Look", "prompt": "Look" },
+                { "kind": "text", "text": "Delegated." }
+            ],
+            "after": [
+                { "kind": "pause_ms", "ms": 100 },
+                { "kind": "subagent_end", "subagent": "ses_cli_wake", "status": "completed" },
+                { "kind": "text", "text": "Reported." }
+            ]
+        }]
+    }));
+
+    // The run follows the person's turn and its subagent; the turn the
+    // harness begins after is the thread's next.
+    let ran = lab.run(&["go"], "");
+    assert_eq!((ran.status, ran.out.as_str()), (0, "Delegated.\n"), "{ran:?}");
+
+    let thread = only_thread(&lab);
+    wait_for("the harness's turn to end", || {
+        let listed = lab.run(&["--list"], "").out;
+        listed.contains("2 turns") && !listed.contains("(working)")
+    });
+    let resumed = lab.run(&["--resume", &thread], "");
+    assert_eq!(
+        resumed.out, "> go\nDelegated.\n[the Agent went on after a subagent reported]\nReported.\n",
+        "{resumed:?}"
+    );
+}
+
+#[test]
+fn ctrl_c_while_only_a_subagent_works_stops_it_with_exit_status_130() {
+    let lab = Lab::with_script(json!({
+        "turns": [{
+            "steps": [
+                { "kind": "subagent_start", "id": "ses_cli_stall", "title": "Linger", "prompt": "Wait" },
+                { "kind": "text", "text": "Delegated." }
+            ],
+            "after": [{ "kind": "subagent_stall", "subagent": "ses_cli_stall" }]
+        }]
+    }));
+    let mut running = Running::start(lab.agent(&["go"]));
+    running.wait_for_out("Delegated.");
+    running.wait_for_err("[subagent] Linger (working)");
+    running.signal(libc::SIGINT);
+    assert_eq!(running.ended(), 130);
+    assert!(running.err.lock().unwrap().contains("[subagent] Linger (stopped)"));
 }
