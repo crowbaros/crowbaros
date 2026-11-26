@@ -229,7 +229,8 @@ fn watch(
     let prompted = std::io::stdin().is_terminal();
     // Only requests are watched here, not a turn of the person's: Ctrl-C
     // turns down the one asked for, by stopping its own turn, and the
-    // prompt comes back at once.
+    // prompt comes back at once, unless a turn followed goes on, which is
+    // followed to its end.
     let only_requests = turn.is_none();
     let mut stopping = false;
     // The turn a Stop sent from here named: Lever withdraws what it asks, so
@@ -279,7 +280,8 @@ fn watch(
             Happening::Event(event) => event,
             Happening::Interrupt if stopping => return Ok(Some(Ended::Stopped)),
             Happening::Interrupt => {
-                if asking.take().is_some() {
+                let was_asking = asking.take().is_some();
+                if was_asking {
                     eprintln!();
                 }
                 if only_requests {
@@ -288,9 +290,15 @@ fn watch(
                     // the turn stopped, says how to answer it, and is asked for no more.
                     let turn_of = |r: &Value| r.get("turn").and_then(Value::as_u64);
                     let running = turn.filter(|_| ended.is_none());
-                    let stopped = taken.as_ref().and_then(turn_of).or(running);
-                    lever.send(json!({ "op": "stop", "thread": thread, "turn": stopped }))?;
-                    stop_sent = stopped;
+                    // A request answered here, whose answer Lever has yet to confirm,
+                    // is not the one Ctrl-C is for.
+                    let asked = taken.as_ref().filter(|_| was_asking);
+                    let stopped = asked.and_then(turn_of).or(running);
+                    // With neither, there is nothing to stop.
+                    if stopped.is_some() {
+                        lever.send(json!({ "op": "stop", "thread": thread, "turn": stopped }))?;
+                        stop_sent = stopped;
+                    }
                     for request in queued.drain(..).filter(|r| turn_of(r) != stopped) {
                         show_request(&mut answer, &request, thread, false)?;
                     }
