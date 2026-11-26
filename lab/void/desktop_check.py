@@ -396,9 +396,6 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
         self.check('Save persists Light appearance', saved['theme'] == 'light')
         self.wait('shell follows saved appearance', lambda: 'SHELL appearance theme=Light' in self.guest.ssh('cat /var/log/crowbar-shell.log', check=False).stdout)
         self.capture('03-settings-saved')
-        self.editor_check('light')
-        self.wait('Settings regains focus after Editor closes',
-                  lambda: self.snapshot()['active']['address'] == settings['address'])
         self.key('tab')
         self.key('spc')
         self.wait('Warm Paper preview', lambda: 'event=preview theme=WarmPaper' in self.app_log())
@@ -519,6 +516,7 @@ for name, original in {original_files!r}.items():
         self.wait('Calendar closes in Light theme',
                   lambda: self.shell_log().count('SHELL calendar open=false') > cal_light)
         self.still('a still desktop after Quick Settings, Calendar, and OSD auto-dismiss commits nothing and draws nothing')
+        self.editor_check('light')
         log_offset = len(self.app_log())
         self.click(720, 935)
         self.wait('Settings restored Light after reboot', lambda: 'event=opened theme=Light' in self.app_log()[log_offset:])

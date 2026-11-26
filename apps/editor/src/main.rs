@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 mod appearance;
-use crowbar_ui::{FONT_UI, ThemeWatcher, UiPalette, load_fonts, spawn_theme_watcher};
+use crowbar_ui::{FONT_MONO, FONT_UI, ThemeWatcher, UiPalette, load_fonts, spawn_theme_watcher};
 use crowbaros_editor::document;
 use gpui::{
     Action, App, Application, Bounds, Context, Entity, EntityInputHandler, FocusHandle, Focusable, KeyBinding,
@@ -473,7 +473,11 @@ impl Render for Editor {
                 .scrollable(true)
                 .into_any_element()
         } else {
-            Input::new(&t.buffer).h_full().appearance(false).into_any_element()
+            Input::new(&t.buffer)
+                .h_full()
+                .font_family(FONT_MONO)
+                .appearance(false)
+                .into_any_element()
         };
         let status = if !self.message.is_empty() {
             self.message.clone()
