@@ -85,6 +85,8 @@ pub enum Event {
     Quit,
     Snapshot(Snapshot),
     Launch(Result<(), String>),
+    /// Launching the Agent's sign-in desktop entry through Base's launcher service.
+    AgentLaunch(Result<(), String>),
     /// The unlock helper's answer to the person's password: `Ok` once the
     /// compositor unlocked, or why not.
     Unlock(Result<(), String>),
@@ -954,7 +956,10 @@ pub fn launcher_request(request: serde_json::Value) -> Result<serde_json::Value>
     Ok(reply)
 }
 
-pub fn launch(path: PathBuf, tx: Sender) {
+/// Base's desktop entry that opens OpenCode's sign-in in foot.
+pub const AGENT_SIGN_IN_DESKTOP: &str = "/usr/share/applications/com.crowbaros.AgentSignIn.desktop";
+
+fn launch_desktop(path: PathBuf, tx: Sender, wrap: fn(Result<(), String>) -> Event) {
     std::thread::spawn(move || {
         // The app's first window takes the keyboard, as the person started it.
         if let Err(e) = connection().and_then(|c| c.launching()) {
@@ -990,8 +995,17 @@ pub fn launch(path: PathBuf, tx: Sender) {
                 std::thread::sleep(Duration::from_millis(50));
             }
         })();
-        let _ = tx.send(Event::Launch(result.map_err(|e| e.to_string())));
+        let _ = tx.send(wrap(result.map_err(|e| e.to_string())));
     });
+}
+
+pub fn launch(path: PathBuf, tx: Sender) {
+    launch_desktop(path, tx, Event::Launch);
+}
+
+/// Opens Base's sign-in desktop entry through the launcher service, as any app.
+pub fn launch_agent_sign_in(tx: Sender) {
+    launch_desktop(PathBuf::from(AGENT_SIGN_IN_DESKTOP), tx, Event::AgentLaunch);
 }
 fn runtime() -> Result<PathBuf> {
     let dir =

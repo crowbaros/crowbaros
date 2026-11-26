@@ -310,6 +310,32 @@ impl Store {
         Ok(())
     }
 
+    /// Whether Lever has observed Models offered while free hosted Models were
+    /// off (for example, after the person signed in to a provider).
+    pub fn provider_models_seen(&self) -> Result<bool, String> {
+        let value: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key = 'provider_models_seen'", [], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(|e| format!("could not read provider_models_seen setting: {e}"))?;
+        Ok(value.as_deref() == Some("true"))
+    }
+
+    /// Saves whether Lever has observed Models offered while free hosted Models
+    /// were off.
+    pub fn set_provider_models_seen(&self, seen: bool) -> Result<(), String> {
+        let value = if seen { "true" } else { "false" };
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('provider_models_seen', ?1)",
+                params![value],
+            )
+            .map_err(|e| format!("could not save provider_models_seen setting: {e}"))?;
+        Ok(())
+    }
+
     /// The mode new threads start in: `ask-first` until the person chooses
     /// another.
     pub fn default_mode(&self) -> Result<String, String> {
@@ -1141,6 +1167,11 @@ mod tests {
         let updated = store.thread_meta("t-old").unwrap().expect("updated thread");
         assert_eq!(updated.model.as_deref(), Some("stub/stub-1"));
         assert!(!store.free_hosted_models().unwrap());
+        assert!(!store.provider_models_seen().unwrap());
+        store.set_provider_models_seen(true).unwrap();
+        assert!(store.provider_models_seen().unwrap());
+        store.set_provider_models_seen(false).unwrap();
+        assert!(!store.provider_models_seen().unwrap());
         store.close().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -1203,6 +1203,17 @@ class AudioBluetoothAndMpv(unittest.TestCase):
                 continue
             self.assertNotIn('=#', stripped, f'unquoted # in mpv.conf: {line}')
 
+    def test_agent_sign_in_desktop_entry_runs_login_in_foot_and_is_installed(self):
+        entry = (Path(void_base.HERE) / 'desktop/com.crowbaros.AgentSignIn.desktop').read_text()
+        self.assertIn('[Desktop Entry]', entry)
+        self.assertIn('Type=Application', entry)
+        self.assertIn('NoDisplay=true', entry)
+        self.assertIn('Terminal=false', entry)
+        self.assertIn('Exec=foot ', entry)
+        self.assertIn('/usr/local/bin/crowbar-agent login', entry)
+        image_sh = (Path(void_base.HERE) / 'host/image.sh').read_text()
+        self.assertIn('com.crowbaros.AgentSignIn.desktop', image_sh)
+
 
 if __name__ == '__main__':
     unittest.main()

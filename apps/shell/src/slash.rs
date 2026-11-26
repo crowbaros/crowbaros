@@ -17,6 +17,8 @@ pub enum Own {
     Effort,
     Mode,
     DefaultMode,
+    FreeModels,
+    SignIn,
     New,
     Threads,
     Stop,
@@ -26,11 +28,13 @@ pub enum Own {
 
 impl Own {
     /// Every command of the drawer's, in the order the list has them.
-    pub const ALL: [Own; 9] = [
+    pub const ALL: [Own; 11] = [
         Own::Model,
         Own::Effort,
         Own::Mode,
         Own::DefaultMode,
+        Own::FreeModels,
+        Own::SignIn,
         Own::New,
         Own::Threads,
         Own::Stop,
@@ -44,6 +48,8 @@ impl Own {
             Own::Effort => "effort",
             Own::Mode => "mode",
             Own::DefaultMode => "default-mode",
+            Own::FreeModels => "free-models",
+            Own::SignIn => "sign-in",
             Own::New => "new",
             Own::Threads => "threads",
             Own::Stop => "stop",
@@ -58,6 +64,8 @@ impl Own {
             Own::Effort => "Pick how hard the Model thinks",
             Own::Mode => "Pick how much the Agent asks before it acts",
             Own::DefaultMode => "Pick the mode new threads start in",
+            Own::FreeModels => "Switch OpenCode's free hosted Models on or off",
+            Own::SignIn => "Sign in to a Model provider in a terminal",
             Own::New => "Start a new thread",
             Own::Threads => "Go to the list of threads",
             Own::Stop => "Stop the turn the Agent is working on",
@@ -68,7 +76,10 @@ impl Own {
 
     /// Whether the command is finished by a choice from a list.
     pub fn takes_choice(self) -> bool {
-        matches!(self, Own::Model | Own::Effort | Own::Mode | Own::DefaultMode)
+        matches!(
+            self,
+            Own::Model | Own::Effort | Own::Mode | Own::DefaultMode | Own::FreeModels
+        )
     }
 
     fn named(name: &str) -> Option<Own> {
@@ -91,7 +102,7 @@ impl Own {
             return Some("The Agent is not reachable right now.".into());
         }
         match self {
-            Own::Model | Own::Effort | Own::Mode if state.no_harness => {
+            Own::Model | Own::Effort | Own::Mode | Own::FreeModels | Own::SignIn if state.no_harness => {
                 Some("No harness is available.".into())
             }
             Own::Model | Own::Effort | Own::Mode if state.mode_locked() => Some(WORKING.into()),
@@ -159,6 +170,7 @@ pub enum MenuKind {
     Efforts,
     Modes,
     DefaultModes,
+    FreeModels,
 }
 
 /// What taking an item does.
@@ -179,6 +191,8 @@ pub enum Run {
     PickEffort(String),
     PickMode(String),
     PickDefaultMode(String),
+    SetFreeModels(bool),
+    SignIn,
     New,
     Threads,
     Stop,
@@ -322,6 +336,7 @@ pub fn menu(text: &str, state: &AgentState, provider: Option<&str>) -> Option<Me
             Own::Effort => Some(efforts(arg, state)),
             Own::Mode => Some(modes(arg, state, false)),
             Own::DefaultMode => Some(modes(arg, state, true)),
+            Own::FreeModels => Some(free_models(arg, state)),
             _ => None,
         },
     }
@@ -335,6 +350,7 @@ fn commands(query: &str, state: &AgentState) -> Menu {
             Some(why) => Take::Refuse(why.clone()),
             None if own.takes_choice() => Take::Fill(format!("/{} ", own.name())),
             None => Take::Run(match own {
+                Own::SignIn => Run::SignIn,
                 Own::New => Run::New,
                 Own::Threads => Run::Threads,
                 Own::Stop => Run::Stop,
@@ -412,8 +428,10 @@ fn models(query: &str, state: &AgentState, provider: Option<&str>) -> Menu {
         menu.note = Some(why);
         return menu;
     }
+    // Always ask Lever once when `/model` opens so reopening picks up any
+    // Models added out-of-band (for example after `crowbar-agent login`).
+    menu.wants = Some(Wants::Offer);
     if !state.offer_known {
-        menu.wants = Some(Wants::Offer);
         if state.models.is_empty() {
             menu.note = Some(
                 state
@@ -425,9 +443,6 @@ fn models(query: &str, state: &AgentState, provider: Option<&str>) -> Menu {
         }
     }
     if state.models.is_empty() {
-        // Reopening the picker with an empty catalog asks Lever to refresh in
-        // case the person signed in or enabled free hosted Models since.
-        menu.wants = Some(Wants::Offer);
         menu.note = Some(
             state
                 .missing_model
@@ -576,6 +591,35 @@ fn modes(query: &str, state: &AgentState, starting: bool) -> Menu {
     menu
 }
 
+fn free_models(query: &str, state: &AgentState) -> Menu {
+    let mut menu = Menu::of(MenuKind::FreeModels, "OpenCode free hosted Models");
+    if let Some(why) = Own::FreeModels.refusal(state) {
+        menu.note = Some(why);
+        return menu;
+    }
+    let items = vec![
+        choice(
+            "on",
+            "On".into(),
+            "Use OpenCode's free hosted Models (requests go to OpenCode's makers)".into(),
+            state.free_hosted_models,
+            Run::SetFreeModels(true),
+        ),
+        choice(
+            "off",
+            "Off".into(),
+            "Use only providers you signed in to".into(),
+            !state.free_hosted_models,
+            Run::SetFreeModels(false),
+        ),
+    ];
+    menu.items = narrowed(items, query, false);
+    if menu.items.is_empty() {
+        menu.note = Some("Choose `on` or `off`.".into());
+    }
+    menu
+}
+
 /// What a mode does, in a few words, for the modes the drawer knows.
 fn mode_says(id: &str) -> &'static str {
     match id {
@@ -615,6 +659,7 @@ pub fn resolve(text: &str, state: &AgentState) -> Resolve {
             return Resolve::Refuse(format!("/{} takes nothing after it.", own.name()));
         }
         return Resolve::Run(match own {
+            Own::SignIn => Run::SignIn,
             Own::New => Run::New,
             Own::Threads => Run::Threads,
             Own::Stop => Run::Stop,
@@ -714,14 +759,27 @@ mod tests {
         // A new thread has nothing to stop, archive, or delete.
         assert_eq!(
             labels(&menu),
-            ["/model", "/effort", "/mode", "/default-mode", "/new", "/threads", "/review", "/compact"]
+            [
+                "/model",
+                "/effort",
+                "/mode",
+                "/default-mode",
+                "/free-models",
+                "/sign-in",
+                "/new",
+                "/threads",
+                "/review",
+                "/compact"
+            ]
         );
-        let review = &menu.items[6];
+        let review = &menu.items[8];
         assert_eq!((review.tag.as_deref(), review.detail.as_str()), (Some("OpenCode"), "review changes"));
         assert_eq!(review.take, Take::Fill("/review ".into()));
         assert_eq!(review.id, "command:review");
         assert_eq!(menu.items[0].take, Take::Fill("/model ".into()));
-        assert_eq!(menu.items[4].take, Take::Run(Run::New));
+        assert_eq!(menu.items[4].take, Take::Fill("/free-models ".into()));
+        assert_eq!(menu.items[5].take, Take::Run(Run::SignIn));
+        assert_eq!(menu.items[6].take, Take::Run(Run::New));
         assert_eq!(menu.start(), 0);
     }
 
@@ -732,10 +790,10 @@ mod tests {
             menu(text, &state, None).unwrap().items.into_iter().map(|i| i.label).collect()
         };
         // The start of a name comes before its middle.
-        // `/effort` is found last, by what it does: it says Model.
-        assert_eq!(found("/mo"), ["/model", "/mode", "/default-mode", "/effort"]);
-        assert_eq!(found("/mode"), ["/mode", "/model", "/default-mode", "/effort"]);
-        assert_eq!(found("/MODEL"), ["/model", "/effort"]);
+        // `/effort` and `/sign-in` are found last, by what they do: they say Model.
+        assert_eq!(found("/mo"), ["/model", "/mode", "/default-mode", "/free-models", "/effort", "/sign-in"]);
+        assert_eq!(found("/mode"), ["/mode", "/model", "/default-mode", "/free-models", "/effort", "/sign-in"]);
+        assert_eq!(found("/MODEL"), ["/model", "/free-models", "/effort", "/sign-in"]);
         // A word after a dash counts as a start, and letters in order find
         // a name with others between.
         assert_eq!(found("/dfm"), ["/default-mode"]);
@@ -922,5 +980,26 @@ mod tests {
         let picker = menu("/model ", &state, None).unwrap();
         assert_eq!(picker.wants, Some(Wants::Offer));
         assert_eq!(picker.note.as_deref(), Some("The harness offers no Model right now."));
+    }
+
+    #[test]
+    fn free_models_and_sign_in_commands_list_and_resolve() {
+        let mut state = ready();
+        let list = menu("/free-models ", &state, None).unwrap();
+        assert_eq!(list.kind, MenuKind::FreeModels);
+        assert_eq!(labels(&list), ["On", "Off"]);
+        assert_eq!(list.start(), 1);
+        assert_eq!(resolve("/free-models on", &state), Resolve::Run(Run::SetFreeModels(true)));
+        assert_eq!(resolve("/free-models off", &state), Resolve::Run(Run::SetFreeModels(false)));
+        assert_eq!(resolve("/sign-in", &state), Resolve::Run(Run::SignIn));
+        assert!(is_drawer_command("/free-models on"));
+        assert!(is_drawer_command("/sign-in"));
+
+        state.free_hosted_models = true;
+        assert_eq!(menu("/free-models ", &state, None).unwrap().start(), 0);
+
+        state.no_harness = true;
+        assert!(matches!(resolve("/sign-in", &state), Resolve::Refuse(_)));
+        assert!(matches!(resolve("/free-models on", &state), Resolve::Refuse(_)));
     }
 }

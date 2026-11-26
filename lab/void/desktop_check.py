@@ -843,8 +843,12 @@ finally:
                          lambda: (v := self.agent_view()) and drawer_reached_lever_idle(v) and v)
         time.sleep(0.5)
         self.capture('18-drawer-lever-idle')
-        self.check('the drawer shows the Agent is reachable and Lever is idle with OpenCode configured',
+        self.check('the drawer shows the Agent is reachable, Lever is idle with OpenCode configured, and first summon asks where Models come from',
                    drawer_reached_lever_idle(view)
+                   and view['state'].get('models_chosen') is False
+                   and any(c['id'] == 'choose-free-models' for c in view.get('controls', []))
+                   and any(c['id'] == 'sign-in' for c in view.get('controls', []))
+                   and not any(c['id'] == 'send' for c in view.get('controls', []))
                    and 'SHELL agent-socket connected=true' in self.shell_log(),
                    json.dumps(view))
         self.key('meta_l', 'spc')
@@ -981,7 +985,8 @@ finally:
                 self.wait('foot refocused before summoning drawer',
                           lambda: self.snapshot()['active']['address'] == foot['address'])
 
-            # Start stub Model and point OpenCode at it (Lever disables catalogue fetch by default).
+            # Start stub Model before the first-summon choice is answered so we
+            # can hold that no request reaches it until the person chooses.
             self.run(f"cat > {tmp}/script.json <<'EOF'\n{json.dumps(stub_script, indent=2)}\nEOF")
             self.run(
                 f"setsid -f python3 /usr/local/lib/crowbar-lab/stub-model.py "
@@ -991,34 +996,6 @@ finally:
             )
             port = self.wait('stub Model port ready',
                              lambda: self.guest.ssh(f'cat {tmp}/port', check=False).stdout.strip())
-            opencode_cfg = {
-                'provider': {
-                    'stub': {
-                        'npm': '@ai-sdk/openai-compatible',
-                        'name': 'Stub',
-                        'options': {'baseURL': f'http://127.0.0.1:{port}/v1', 'apiKey': 'stub-key'},
-                        'models': {'stub-1': {'name': 'Stub One'}},
-                    },
-                    # A second provider, so the Model picker has a rail.
-                    'spare': {
-                        'npm': '@ai-sdk/openai-compatible',
-                        'name': 'Spare',
-                        'options': {'baseURL': f'http://127.0.0.1:{port}/v1', 'apiKey': 'stub-key'},
-                        'models': {'spare-1': {'name': 'Spare One'}},
-                    },
-                },
-                'model': 'stub/stub-1',
-                'enabled_providers': ['stub', 'spare'],
-                # A refusal of the person's own, which Ask first must keep.
-                'permission': {'bash': {'echo DENIED_*': 'deny'}},
-            }
-            self.run(f"install -d -o {person} -g {person} -m 700 {home}/.config/opencode")
-            self.run(f"cat > {home}/.config/opencode/opencode.json <<'EOF'\n{json.dumps(opencode_cfg, indent=2)}\nEOF")
-            self.run(f"chown {person}:{person} {home}/.config/opencode/opencode.json")
-            settings_before = self.run(f'sha256sum {home}/.config/opencode/opencode.json').split()[0]
-            self.run('sv restart crowbar-lever')
-            self.wait('shell reconnected to Lever after stub setup',
-                      lambda: (v := self.agent_view()) and v['state'].get('connected') and not v['state'].get('no_harness'))
 
             def control(view, cid):
                 return next((c for c in view.get('controls', []) if c['id'] == cid), None)
@@ -1051,6 +1028,196 @@ finally:
                 for _ in self.agent_view().get('draft', ''):
                     self.key('backspace')
                 self.wait('the message box is empty', lambda: self.agent_view().get('draft') == '')
+
+            def stub_requests():
+                raw = self.guest.ssh(f'cat {tmp}/stub.jsonl 2>/dev/null || true', check=False).stdout
+                return [json.loads(line) for line in raw.splitlines() if line.strip()]
+
+            def refresh_lever_models():
+                """Runs the exact `models` refresh `crowbar-agent login` sends on
+                Lever's person socket when sign-in ends."""
+                script = (
+                    "import json, socket, struct\n"
+                    f"s = socket.socket(socket.AF_UNIX); s.settimeout(60)\n"
+                    f"s.connect('/run/user/{void_base.PERSON_UID}/crowbar-lever/person')\n"
+                    "def tx(obj):\n"
+                    "    b = json.dumps(obj).encode()\n"
+                    "    s.sendall(struct.pack('>I', len(b)) + b)\n"
+                    "def rx():\n"
+                    "    h = b''\n"
+                    "    while len(h) < 4: h += s.recv(4 - len(h))\n"
+                    "    n = struct.unpack('>I', h)[0]\n"
+                    "    b = b''\n"
+                    "    while len(b) < n: b += s.recv(n - len(b))\n"
+                    "    return json.loads(b)\n"
+                    "tx({'version': 1}); rx()\n"
+                    "tx({'op': 'models', 'refresh': True}); print(json.dumps(rx()))\n"
+                )
+                return json.loads(self.run(f"chpst -u {person} python3 -c {shlex.quote(script)}"))
+
+            def write_opencode_cfg(include_spare):
+                providers = {
+                    'stub': {
+                        'npm': '@ai-sdk/openai-compatible',
+                        'name': 'Stub',
+                        'options': {'baseURL': f'http://127.0.0.1:{port}/v1', 'apiKey': 'stub-key'},
+                        'models': {'stub-1': {'name': 'Stub One'}},
+                    },
+                }
+                enabled = ['stub']
+                if include_spare:
+                    # A second provider, so the Model picker has a rail.
+                    providers['spare'] = {
+                        'npm': '@ai-sdk/openai-compatible',
+                        'name': 'Spare',
+                        'options': {'baseURL': f'http://127.0.0.1:{port}/v1', 'apiKey': 'stub-key'},
+                        'models': {'spare-1': {'name': 'Spare One'}},
+                    }
+                    enabled.append('spare')
+                cfg = {
+                    'provider': providers,
+                    'model': 'stub/stub-1',
+                    'enabled_providers': enabled,
+                    # A refusal of the person's own, which Ask first must keep.
+                    'permission': {'bash': {'echo DENIED_*': 'deny'}},
+                }
+                self.run(f"install -d -o {person} -g {person} -m 700 {home}/.config/opencode")
+                self.run(f"cat > {home}/.config/opencode/opencode.json <<'EOF'\n{json.dumps(cfg, indent=2)}\nEOF")
+                self.run(f"chown {person}:{person} {home}/.config/opencode/opencode.json")
+
+            # 0. First summon (#379): with no Model chosen, the drawer shows the
+            # choice, sends nothing, and no request reaches the stub Model.
+            self.key('meta_l', 'spc')
+            first = self.wait(
+                'first summon shows the Model source choice',
+                lambda: (v := self.agent_view()) and v['drawer_up']
+                and control(v, 'choose-free-models') and control(v, 'sign-in') and v,
+            )
+            time.sleep(0.4)
+            self.capture('18a-drawer-first-summon')
+            self.type('hello before choice')
+            self.key('ret')
+            time.sleep(0.5)
+            after_type = self.agent_view()
+            self.check(
+                'with no Model chosen, the drawer shows the choice, sends nothing, and no request reaches the stub Model',
+                first['state'].get('models_chosen') is False
+                and not control(first, 'send')
+                and after_type['state'].get('turns') == []
+                and not after_type['state'].get('sending')
+                and after_type['state'].get('harness_started') is False
+                and stub_requests() == [],
+                json.dumps({'state': after_type['state'], 'stub_requests': len(stub_requests())}),
+            )
+
+            # Choosing free hosted Models persists in Lever's settings and can be
+            # changed back from the drawer.
+            click_control('choose-free-models')
+            free_on = self.wait(
+                'choosing free hosted Models enables the setting and opens the composer',
+                lambda: (v := self.agent_view()) and v['state'].get('free_hosted_models') is True
+                and v['state'].get('models_chosen') is True and control(v, 'send') and v,
+            )
+            cli_free_on = self.run(
+                f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} '
+                f'crowbar-agent free-models'
+            ).strip()
+            self.type('/free-models off')
+            self.key('ret')
+            free_off = self.wait(
+                'changing free hosted Models off from the drawer updates Lever and returns to the choice',
+                lambda: (v := self.agent_view()) and v['state'].get('free_hosted_models') is False
+                and v['state'].get('models_chosen') is False and control(v, 'sign-in') and v,
+            )
+            cli_free_off = self.run(
+                f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} '
+                f'crowbar-agent free-models'
+            ).strip()
+            self.check(
+                "choosing free hosted Models is kept in Lever's settings and can be changed later from the drawer",
+                free_on['state'].get('free_hosted_models') is True
+                and 'on' in cli_free_on
+                and free_off['state'].get('free_hosted_models') is False
+                and 'off' in cli_free_off
+                and stub_requests() == [],
+                f'on={cli_free_on!r} off={cli_free_off!r}',
+            )
+
+            # Sign in opens Base's desktop entry in foot via crowbar-launcher,
+            # and when sign-in ends the drawer shows the new Models with no
+            # restart of Lever or the shell (including adding a second provider
+            # when the catalog is already non-empty).
+            lever_pid_before = self.run('pgrep -x crowbar-lever').strip()
+            shell_pid_before = self.run('pgrep -x crowbaros-shell').strip()
+            click_control('sign-in')
+            sign_in_win = self.wait(
+                "Sign in opens Base's sign-in desktop entry in foot",
+                lambda: next((c for c in self.snapshot()['clients']
+                              if c.get('class') == 'com.crowbaros.AgentSignIn'), None),
+                timeout=20,
+            )
+            sign_in_proc = self.wait(
+                'OpenCode sign-in is running in foot',
+                lambda: self.guest.ssh("pgrep -af 'crowbar-agent login|opencode auth login'", check=False).stdout.strip(),
+                timeout=15,
+            )
+            time.sleep(0.5)
+            self.capture('18b-drawer-sign-in-terminal')
+            self.check(
+                "the drawer's Sign in control opens Base's desktop entry in foot on OpenCode's sign-in",
+                bool(sign_in_win) and bool(sign_in_proc) and stub_requests() == [],
+                f'win={sign_in_win!r} proc={sign_in_proc[:120]!r}',
+            )
+            # Complete sign-in for the lab stub: first with one provider, then
+            # adding a second provider, refreshing Lever without restarting
+            # Lever or the shell.
+            write_opencode_cfg(include_spare=False)
+            self.guest.ssh("pkill -f 'opencode auth login'; pkill -f 'crowbar-agent login'; true", check=False)
+            self.wait(
+                'sign-in terminal closes after sign-in ends',
+                lambda: not any(c.get('class') == 'com.crowbaros.AgentSignIn'
+                                for c in self.snapshot()['clients']),
+                timeout=15,
+            )
+            refresh_lever_models()
+            after_first_signin = self.wait(
+                'drawer shows the new Model live with no restart of Lever or the shell',
+                lambda: (v := self.agent_view()) and v['state'].get('models_chosen') is True
+                and [m['id'] for m in v['state'].get('models', [])] == ['stub/stub-1']
+                and control(v, 'send') and v,
+                timeout=45,
+            )
+            # Adding a second provider refreshes an already non-empty catalog live.
+            write_opencode_cfg(include_spare=True)
+            refresh_lever_models()
+            after_second_signin = self.wait(
+                'drawer shows the added provider live in its non-empty catalog',
+                lambda: (v := self.agent_view())
+                and {m['id'] for m in v['state'].get('models', [])} == {'stub/stub-1', 'spare/spare-1'} and v,
+                timeout=45,
+            )
+            time.sleep(0.3)
+            self.capture('18c-drawer-after-sign-in')
+            lever_pid_after = self.run('pgrep -x crowbar-lever').strip()
+            shell_pid_after = self.run('pgrep -x crowbaros-shell').strip()
+            self.check(
+                'when sign-in ends, the drawer shows the new Models with no restart of Lever or the shell',
+                lever_pid_after == lever_pid_before
+                and shell_pid_after == shell_pid_before
+                and [m['id'] for m in after_first_signin['state'].get('models', [])] == ['stub/stub-1']
+                and {m['id'] for m in after_second_signin['state'].get('models', [])} == {'stub/stub-1', 'spare/spare-1'}
+                and stub_requests() == [],
+                f'lever={lever_pid_before}->{lever_pid_after} shell={shell_pid_before}->{shell_pid_after}',
+            )
+            settings_before = self.run(f'sha256sum {home}/.config/opencode/opencode.json').split()[0]
+            # Close the drawer and refocus foot before starting the thread checks
+            # so turn 1's desktop context captures foot as the active window.
+            click_control('close')
+            self.wait('drawer closes before thread check', lambda: not self.agent_view()['drawer_up'])
+            if foot is not None:
+                click_v1(680, 935)
+                self.wait('foot refocused before thread check',
+                          lambda: self.snapshot()['active']['address'] == foot['address'])
 
             # 1. A new thread starts in Ask first: the command waits on a
             # request with the exact command, through the drawer put away
@@ -1246,7 +1413,8 @@ finally:
             time.sleep(0.4)
             self.capture('20a-drawer-commands')
             items = listed(commands)['items']
-            own = ['command:model', 'command:effort', 'command:mode', 'command:default-mode', 'command:new',
+            own = ['command:model', 'command:effort', 'command:mode', 'command:default-mode',
+                   'command:free-models', 'command:sign-in', 'command:new',
                    'command:threads', 'command:archive', 'command:delete']
             self.check(
                 "a slash lists the drawer's commands, then the commands the harness offers, and the keys start "
@@ -1730,6 +1898,59 @@ finally:
             self.key('meta_l', 'spc')
             self.wait('drawer closed after lifecycle checks', lambda: not self.agent_view()['drawer_up'])
             self.agent_restart_recovery(tmp, home)
+
+            # 9. With no Model reachable, a message is refused and the drawer says why.
+            self.guest.ssh("pkill -f '[s]tub-model.py'; true", check=False)
+            self.wait('stub Model stopped for unreachable check',
+                      lambda: not self.guest.ssh("pgrep -f '[s]tub-model.py'", check=False).stdout.strip())
+            self.key('meta_l', 'spc')
+            self.wait('drawer opens for unreachable Model check', lambda: self.agent_view()['drawer_up'])
+            self.key('ctrl', 'n')
+            self.wait('new thread opens for unreachable Model check', lambda: not self.agent_view()['state']['list_view'])
+            self.type('hello unreachable')
+            self.key('ret')
+            unreachable = self.wait(
+                'unreachable Model reports failure reason in the drawer',
+                lambda: (v := self.agent_view()) and v['state'].get('turns')
+                and v['state']['turns'][0]['state']['kind'] == 'failed' and v,
+                timeout=45,
+            )
+            time.sleep(0.3)
+            self.capture('37-drawer-model-unreachable')
+            unreachable_msg = unreachable['state']['turns'][0]['state'].get('message', '')
+            self.check(
+                'with no Model reachable, the drawer reports why the message could not be answered',
+                'Could not reach the Model right now' in unreachable_msg,
+                unreachable_msg,
+            )
+            # And with no provider configured at all (and free Models off), sending
+            # is refused before a turn starts and the drawer says why.
+            self.run(f'rm -f {home}/.config/opencode/opencode.json')
+            refresh_lever_models()
+            self.wait(
+                'drawer receives empty Model catalog',
+                lambda: (v := self.agent_view()) and v['state'].get('offer_known')
+                and v['state'].get('models') == [],
+                timeout=45,
+            )
+            turns_before = len(self.agent_view()['state']['turns'])
+            self.type('hello with no model')
+            self.key('ret')
+            refused_view = self.wait(
+                'message with no Model available is refused in the drawer',
+                lambda: (v := self.agent_view()) and v['state'].get('missing_model') and v,
+                timeout=15,
+            )
+            time.sleep(0.3)
+            self.capture('37b-drawer-no-model-refused')
+            self.check(
+                'with no Model available, a message is refused and the drawer says why',
+                len(refused_view['state']['turns']) == turns_before
+                and 'No Model is available' in (refused_view['state'].get('missing_model') or ''),
+                json.dumps({'turns': len(refused_view['state']['turns']), 'missing': refused_view['state'].get('missing_model')}),
+            )
+            self.key('meta_l', 'spc')
+            self.wait('drawer closed after unreachable Model checks', lambda: not self.agent_view()['drawer_up'])
 
         finally:
             # Retain the synthetic conversation and service diagnostics before

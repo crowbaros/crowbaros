@@ -275,6 +275,7 @@ fn both_sockets_speak_version_one_and_answer_status() {
                 "harness_started": false,
                 "harnesses": [],
                 "free_hosted_models": false,
+                "models_chosen": false,
                 "default_mode": "ask-first"
             })
         );
@@ -1511,8 +1512,10 @@ fn lever_speaks_every_message_documented_in_readme() {
                 "commands",
                 "done",
                 "failed",
+                "free-models",
                 "interrupted",
                 "message",
+                "models",
                 "note",
                 "request",
                 "stopped",
@@ -1611,6 +1614,14 @@ fn lever_speaks_every_message_documented_in_readme() {
     record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
     write_frame(&mut peer, &json!({ "op": "watch" })).unwrap();
     record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    write_frame(&mut peer, &json!({ "op": "set-free-models", "enabled": false })).unwrap();
+    while !seen_events.contains_key("free-models") {
+        record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    }
+    write_frame(&mut peer, &json!({ "op": "models", "refresh": true })).unwrap();
+    while !seen_events.contains_key("models") {
+        record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    }
 
     // Turn 1: send -> message, commands, act, note, thread-updated, text, done
     write_frame(
@@ -1618,7 +1629,12 @@ fn lever_speaks_every_message_documented_in_readme() {
         &json!({ "op": "send", "thread": null, "text": "List the files", "cwd": dir.0.to_str().unwrap() }),
     )
     .unwrap();
-    let sent = record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    let sent = loop {
+        let frame = record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+        if frame["reply"] == "sent" {
+            break frame;
+        }
+    };
     let thread_id = sent["thread"].as_str().unwrap().to_string();
     loop {
         let ev = record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
@@ -3074,7 +3090,10 @@ fn harness_env_disables_autoupdate_and_free_models_until_chosen_and_selects_mode
     // Enabling free hosted Models stops the idle harness and restarts without OPENCODE_DISABLE_FREE_MODELS.
     write_frame(&mut peer, &json!({ "op": "set-free-models", "enabled": true })).unwrap();
     let toggled = read_frame(&mut peer).unwrap();
-    assert_eq!(toggled, json!({ "reply": "free-models", "enabled": true }));
+    assert_eq!(
+        toggled,
+        json!({ "reply": "free-models", "enabled": true, "models_chosen": true })
+    );
 
     write_frame(&mut peer, &json!({ "op": "models" })).unwrap();
     let models = read_frame(&mut peer).unwrap();
@@ -3183,7 +3202,7 @@ fn known_acp_updates_like_thoughts_and_available_commands_do_not_become_notes() 
 }
 
 #[test]
-fn surface_socket_cannot_toggle_free_models_and_model_switch_preserves_default() {
+fn surface_socket_can_toggle_free_models_and_model_switch_preserves_default() {
     let dir = TempDir::new();
     let uid = my_uid();
     let script = write_script(
@@ -3203,12 +3222,28 @@ fn surface_socket_cannot_toggle_free_models_and_model_switch_preserves_default()
 
     let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
 
-    // Surface socket is refused `set-free-models`.
+    // Surface socket can change free hosted Models and broadcasts to watchers.
     let mut surface = handshake(&lever.surface);
+    write_frame(&mut surface, &json!({ "op": "watch" })).unwrap();
+    assert_eq!(read_frame(&mut surface).unwrap()["reply"], "activity");
     write_frame(&mut surface, &json!({ "op": "set-free-models", "enabled": true })).unwrap();
-    let refused = read_frame(&mut surface).unwrap();
-    assert_eq!(refused["reply"], "error");
-    assert_eq!(refused["code"], "unsupported");
+    assert_eq!(
+        read_frame(&mut surface).unwrap(),
+        json!({ "reply": "free-models", "enabled": true, "models_chosen": true })
+    );
+    assert_eq!(
+        read_frame(&mut surface).unwrap(),
+        json!({ "event": "free-models", "enabled": true, "models_chosen": true })
+    );
+    write_frame(&mut surface, &json!({ "op": "set-free-models", "enabled": false })).unwrap();
+    assert_eq!(
+        read_frame(&mut surface).unwrap(),
+        json!({ "reply": "free-models", "enabled": false, "models_chosen": false })
+    );
+    assert_eq!(
+        read_frame(&mut surface).unwrap(),
+        json!({ "event": "free-models", "enabled": false, "models_chosen": false })
+    );
 
     // Person socket can read models, switch one thread's Model, and `models` still reports stub/stub-1 as default.
     let mut person = handshake(&lever.person);
@@ -3286,7 +3321,7 @@ fn free_models_off_while_working_refuses_new_sends_until_harness_restarts() {
     write_frame(&mut p2, &json!({ "op": "set-free-models", "enabled": false })).unwrap();
     assert_eq!(
         read_frame(&mut p2).unwrap(),
-        json!({ "reply": "free-models", "enabled": false })
+        json!({ "reply": "free-models", "enabled": false, "models_chosen": false })
     );
 
     // A new send and models query must be refused while the stale harness is still winding down.
@@ -5787,4 +5822,231 @@ fn restart_during_writes_preserves_every_thread_and_loads_sessions_without_repla
         lever.signal(libc::SIGTERM);
         assert_eq!(lever.wait().code(), Some(0));
     }
+}
+
+#[test]
+fn models_refresh_broadcasts_catalog_live_and_persists_signed_in_choice() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = dir.0.join("script.json");
+
+    // Start with no Models available when free hosted Models are off.
+    std::fs::write(
+        &script,
+        serde_json::to_string(&json!({
+            "no_models_when_free_disabled": true,
+            "models": [{ "id": "stub/stub-1", "name": "Stub One" }],
+            "default_model": "stub/stub-1",
+            "modes": true,
+            "turns": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut surface = handshake(&lever.surface);
+    write_frame(&mut surface, &json!({ "op": "status" })).unwrap();
+    let status = read_frame(&mut surface).unwrap();
+    assert_eq!(status["harness_started"], false);
+    assert_eq!(status["free_hosted_models"], false);
+    assert_eq!(status["models_chosen"], false);
+
+    // Subscribe surface to watch events (as the shell does).
+    write_frame(&mut surface, &json!({ "op": "watch" })).unwrap();
+    assert_eq!(read_frame(&mut surface).unwrap()["reply"], "activity");
+
+    // Person signs in to a first provider; `crowbar-agent login` sends `models` with `refresh: true`.
+    std::fs::write(
+        &script,
+        serde_json::to_string(&json!({
+            "models": [{ "id": "acme/small", "name": "Small" }],
+            "default_model": "acme/small",
+            "modes": true,
+            "turns": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut person = handshake(&lever.person);
+    write_frame(&mut person, &json!({ "op": "models", "refresh": true })).unwrap();
+    let reply1 = read_frame(&mut person).unwrap();
+    assert_eq!(reply1["reply"], "models");
+    assert_eq!(reply1["models"].as_array().unwrap().len(), 1);
+
+    let event1 = read_until(&mut surface, |v| v["event"] == "models");
+    assert_eq!(event1["models"][0]["id"], "acme/small");
+    assert_eq!(event1["free_hosted_models"], false);
+
+    // Person signs in to a second provider while the catalog is already non-empty.
+    std::fs::write(
+        &script,
+        serde_json::to_string(&json!({
+            "models": [
+                { "id": "acme/small", "name": "Small" },
+                { "id": "other/large", "name": "Large" }
+            ],
+            "default_model": "acme/small",
+            "modes": true,
+            "turns": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    write_frame(&mut person, &json!({ "op": "models", "refresh": true })).unwrap();
+    let reply2 = read_frame(&mut person).unwrap();
+    assert_eq!(reply2["models"].as_array().unwrap().len(), 2);
+
+    let event2 = read_until(&mut surface, |v| v["event"] == "models");
+    let ids: Vec<&str> = event2["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["acme/small", "other/large"]);
+
+    // Restart Lever: idle status remembers `models_chosen: true` without starting the harness.
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+
+    let mut restarted = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut surface2 = handshake(&restarted.surface);
+    write_frame(&mut surface2, &json!({ "op": "status" })).unwrap();
+    let status2 = read_frame(&mut surface2).unwrap();
+    assert_eq!(status2["harness_started"], false);
+    assert_eq!(status2["free_hosted_models"], false);
+    assert_eq!(status2["models_chosen"], true);
+
+    restarted.signal(libc::SIGTERM);
+    assert_eq!(restarted.wait().code(), Some(0));
+}
+
+#[test]
+fn unreachable_model_transport_retry_loop_fails_the_turn_with_reason() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [{
+                "steps": [
+                    {
+                        "kind": "unknown",
+                        "update": {
+                            "sessionUpdate": "session_info_update",
+                            "_meta": {
+                                "opencode/retry": {
+                                    "attempt": 2,
+                                    "error": {
+                                        "type": "provider.transport",
+                                        "message": "ECONNREFUSED: Unable to connect."
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "kind": "unknown",
+                        "update": {
+                            "sessionUpdate": "session_info_update",
+                            "_meta": {
+                                "opencode/retry": {
+                                    "attempt": 3,
+                                    "error": {
+                                        "type": "provider.transport",
+                                        "message": "ECONNREFUSED: Unable to connect."
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ],
+                "stall": true
+            }]
+        }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "hello unreachable");
+    let failed = read_until(&mut peer, |v| v["event"] == "failed");
+    assert_eq!(failed["thread"], thread);
+    assert_eq!(failed["turn"], turn);
+    assert!(
+        failed["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("ECONNREFUSED: Unable to connect."),
+        "{failed}"
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn models_refresh_while_busy_defers_harness_restart_until_turn_finishes() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = dir.0.join("script.json");
+
+    std::fs::write(
+        &script,
+        serde_json::to_string(&json!({
+            "models": [{ "id": "acme/small", "name": "Small" }],
+            "default_model": "acme/small",
+            "modes": true,
+            "turns": [{
+                "steps": [{ "kind": "text", "text": "working..." }],
+                "stall": true
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut surface = handshake(&lever.surface);
+    write_frame(&mut surface, &json!({ "op": "watch" })).unwrap();
+    assert_eq!(read_frame(&mut surface).unwrap()["reply"], "activity");
+
+    let mut person = handshake(&lever.person);
+    let (thread, _) = send(&mut person, None, "keep busy");
+    read_until(&mut person, |v| v["event"] == "text");
+
+    // Sign-in finishes while the thread is still working; credentials update on
+    // disk and `crowbar-agent login` sends `models` with `refresh: true`.
+    std::fs::write(
+        &script,
+        serde_json::to_string(&json!({
+            "models": [
+                { "id": "acme/small", "name": "Small" },
+                { "id": "other/new", "name": "New" }
+            ],
+            "default_model": "acme/small",
+            "modes": true,
+            "turns": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    write_frame(&mut person, &json!({ "op": "models", "refresh": true })).unwrap();
+    let busy_reply = read_frame(&mut person).unwrap();
+    assert_eq!(busy_reply["reply"], "models");
+
+    // Stop the active turn: Lever restarts the harness and broadcasts the new catalog.
+    write_frame(&mut person, &json!({ "op": "stop", "thread": thread })).unwrap();
+    read_until(&mut person, |v| v["event"] == "stopped");
+
+    let refreshed = read_until(&mut surface, |v| {
+        v["event"] == "models"
+            && v["models"]
+                .as_array()
+                .is_some_and(|arr| arr.iter().any(|m| m["id"] == "other/new"))
+    });
+    assert_eq!(refreshed["models"].as_array().unwrap().len(), 2);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
 }

@@ -28,6 +28,9 @@ pub(crate) enum ThreadAction {
     AskDelete,
     Delete,
     CancelDelete,
+    ChooseFreeModels(bool),
+    SignIn,
+    RefreshModels,
     Act(String),
     /// Show all of what an act gave, or its first lines again.
     ActWhole(String),
@@ -79,6 +82,9 @@ pub(crate) struct AgentSurface {
     asked_offer: bool,
     asked_efforts: HashSet<String>,
     asked_commands: Option<Option<String>>,
+    /// Tracks whether the previous frame showed the first-summon choice so
+    /// focus moves to the composer as soon as a Model source is chosen.
+    was_choosing: bool,
     /// Wakes the drawer each second while a turn works, for how long it has.
     _tick: Task<()>,
 }
@@ -154,11 +160,15 @@ pub(crate) fn reconcile_draft_on_sent(
 }
 
 /// Whether closing `closed` should reset `asked_offer` so reopening retries
-/// a failed or empty catalog lookup (including `/effort` when no Model is known).
+/// a failed or empty catalog lookup, or refreshes `/model` against Lever's
+/// cached catalog after an out-of-band sign-in.
 fn should_reset_offer_on_menu_close(closed: Option<MenuKind>, state: &agent::AgentState) -> bool {
+    if closed == Some(MenuKind::Models) {
+        return true;
+    }
     matches!(
         closed,
-        Some(MenuKind::Models | MenuKind::Modes | MenuKind::DefaultModes | MenuKind::Efforts)
+        Some(MenuKind::Modes | MenuKind::DefaultModes | MenuKind::Efforts)
     ) && (state.modes_error.is_some() || state.models.is_empty() || state.modes.is_empty())
 }
 
@@ -200,7 +210,8 @@ impl AgentSurface {
         // What the person typed in this thread and did not send.
         let draft = model.read(cx).agent_drafts.get(&draft_key(state)).cloned();
         let last_text = draft.clone().unwrap_or_default();
-        if state.list_view {
+        let was_choosing = state.needs_model_choice();
+        if state.list_view || was_choosing {
             window.focus(&focus);
         } else {
             window.focus(&input.focus_handle(cx));
@@ -276,6 +287,7 @@ impl AgentSurface {
             asked_offer: false,
             asked_efforts: Default::default(),
             asked_commands: None,
+            was_choosing,
             _tick: tick,
         }
     }
@@ -285,16 +297,23 @@ impl AgentSurface {
     }
 
     pub(crate) fn action(&mut self, action: ThreadAction, window: &mut Window, cx: &mut Context<Self>) {
-        // Opening and folding change nothing of the thread.
-        let local = matches!(
+        // Folding/expanding thread details and Model-source controls remain
+        // usable even while a history read or send is in flight.
+        let allowed_while_busy = matches!(
             action,
-            ThreadAction::Act(_) | ThreadAction::ActWhole(_) | ThreadAction::Context(_) | ThreadAction::Acts(_)
+            ThreadAction::Act(_)
+                | ThreadAction::ActWhole(_)
+                | ThreadAction::Context(_)
+                | ThreadAction::Acts(_)
+                | ThreadAction::SignIn
+                | ThreadAction::ChooseFreeModels(_)
+                | ThreadAction::RefreshModels
         );
         let busy = {
             let s = &self.model.read(cx).agent_state;
             s.sending || s.loading
         };
-        if busy && !local {
+        if busy && !allowed_while_busy {
             return;
         }
         match action {
@@ -379,6 +398,49 @@ impl AgentSurface {
                     self.opened_turns.insert(turn);
                 }
             }
+            ThreadAction::ChooseFreeModels(enabled) => {
+                let tx = self.model.update(cx, |m, _| {
+                    if !m.agent_state.connected || m.agent_state.no_harness {
+                        return None;
+                    }
+                    m.agent_state.error = None;
+                    if enabled {
+                        m.agent_state.sign_in_launched = false;
+                    }
+                    m.agent_tx.clone()
+                });
+                if let Some(tx) = tx {
+                    tx.set_free_models(enabled);
+                }
+            }
+            ThreadAction::SignIn => {
+                let tx = self.model.update(cx, |m, _| {
+                    if !m.agent_state.connected || m.agent_state.no_harness {
+                        return None;
+                    }
+                    m.agent_state.error = None;
+                    m.agent_state.sign_in_launched = true;
+                    Some(m.tx.clone())
+                });
+                if let Some(tx) = tx {
+                    session::agent_keyboard(false);
+                    session::launch_agent_sign_in(tx);
+                }
+            }
+            ThreadAction::RefreshModels => {
+                let tx = self.model.update(cx, |m, _| {
+                    if !m.agent_state.connected || m.agent_state.no_harness {
+                        return None;
+                    }
+                    m.agent_state.error = None;
+                    m.agent_state.modes_loading = true;
+                    m.agent_state.modes_error = None;
+                    m.agent_tx.clone()
+                });
+                if let Some(tx) = tx {
+                    tx.refresh_models();
+                }
+            }
         }
         sync_agent_view(&self.model, cx);
         cx.notify();
@@ -404,6 +466,10 @@ impl AgentSurface {
             ThreadAction::AskDelete => "delete".into(),
             ThreadAction::Delete => "confirm-delete".into(),
             ThreadAction::CancelDelete => "cancel-delete".into(),
+            ThreadAction::ChooseFreeModels(true) => "choose-free-models".into(),
+            ThreadAction::ChooseFreeModels(false) => "disable-free-models".into(),
+            ThreadAction::SignIn => "sign-in".into(),
+            ThreadAction::RefreshModels => "refresh-models".into(),
             ThreadAction::Act(id) => format!("act:{id}"),
             ThreadAction::ActWhole(id) => format!("act-whole:{id}"),
             ThreadAction::Context(turn) => format!("context:{turn}"),
@@ -511,7 +577,7 @@ impl AgentSurface {
     /// The list the message box calls for, unless Escape closed it.
     fn list(&self, cx: &App) -> Option<Menu> {
         let m = self.model.read(cx);
-        if m.agent_state.list_view || self.confirm_delete {
+        if m.agent_state.needs_model_choice() || m.agent_state.list_view || self.confirm_delete {
             return None;
         }
         let text = self.input.read(cx).text();
@@ -620,6 +686,16 @@ impl AgentSurface {
                     tx.set_default_mode(mode);
                 }
             }
+            Run::SetFreeModels(enabled) => {
+                self.set_text("", cx);
+                self.action(ThreadAction::ChooseFreeModels(enabled), window, cx);
+                return;
+            }
+            Run::SignIn => {
+                self.set_text("", cx);
+                self.action(ThreadAction::SignIn, window, cx);
+                return;
+            }
             Run::New => {
                 self.set_text("", cx);
                 self.model.update(cx, |m, _| m.agent_state.error = None);
@@ -653,7 +729,8 @@ impl AgentSurface {
     /// Enter in the message box: the row of an open list is taken, a
     /// command typed whole is carried out, and anything else is sent.
     pub(crate) fn enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.model.read(cx).agent_state.list_view || self.confirm_delete {
+        let state = &self.model.read(cx).agent_state;
+        if state.needs_model_choice() || state.list_view || self.confirm_delete {
             return;
         }
         if let Some(menu) = self.list(cx)
@@ -672,18 +749,44 @@ impl AgentSurface {
     }
 
     fn send(&mut self, cx: &mut Context<Self>) {
+        enum SendPlan {
+            Ignore,
+            Working,
+            NoModel,
+            Ready {
+                tx: agent::CommandSender,
+                thread: Option<String>,
+                mode: Option<String>,
+                model: Option<String>,
+                effort: Option<String>,
+            },
+        }
         let query = self.input.read(cx).text();
         let trimmed = query.trim();
         if trimmed.is_empty() {
             return;
         }
-        let (tx, thread, mode, model, effort, working) = self.model.update(cx, |m, _| {
+        let plan = self.model.update(cx, |m, _| {
             let state = &mut m.agent_state;
+            if state.needs_model_choice() {
+                return SendPlan::Ignore;
+            }
+            if state.no_models_available() {
+                state.missing_model = Some(
+                    "No Model is available. Turn on OpenCode's free hosted Models or sign in to a provider."
+                        .into(),
+                );
+                return SendPlan::NoModel;
+            }
             if !state.can_send() {
-                return (None, None, None, None, None, state.connected && state.working());
+                return if state.connected && state.working() {
+                    SendPlan::Working
+                } else {
+                    SendPlan::Ignore
+                };
             }
             let Some(tx) = m.agent_tx.clone() else {
-                return (None, None, None, None, None, false);
+                return SendPlan::Ignore;
             };
             state.sending = true;
             state.error = None;
@@ -699,21 +802,40 @@ impl AgentSurface {
             } else {
                 (None, None, None)
             };
-            (Some(tx), thread, mode, model, effort, false)
+            SendPlan::Ready {
+                tx,
+                thread,
+                mode,
+                model,
+                effort,
+            }
         });
-        if working {
-            return self.refuse("The Agent is working on this thread. /stop ends the turn.".into(), cx);
-        }
-        if let Some(tx) = tx {
-            let message = trimmed.to_string();
-            let key = thread.clone().unwrap_or_default();
-            self.model.update(cx, |m, _| {
-                m.agent_submitted = Some((key, query));
-            });
-            self.dismissed = None;
-            sync_agent_view(&self.model, cx);
-            tx.send_with(thread, message, mode, model, effort);
-            cx.notify();
+        match plan {
+            SendPlan::Ignore => {}
+            SendPlan::NoModel => {
+                sync_agent_view(&self.model, cx);
+                cx.notify();
+            }
+            SendPlan::Working => {
+                self.refuse("The Agent is working on this thread. /stop ends the turn.".into(), cx);
+            }
+            SendPlan::Ready {
+                tx,
+                thread,
+                mode,
+                model,
+                effort,
+            } => {
+                let message = trimmed.to_string();
+                let key = thread.clone().unwrap_or_default();
+                self.model.update(cx, |m, _| {
+                    m.agent_submitted = Some((key, query));
+                });
+                self.dismissed = None;
+                sync_agent_view(&self.model, cx);
+                tx.send_with(thread, message, mode, model, effort);
+                cx.notify();
+            }
         }
     }
 
@@ -1192,6 +1314,7 @@ impl AgentSurface {
             (_, false) => "↑↓ move   ←→ provider   Enter pick   Esc close",
             _ => "↑↓ move   Enter pick   Esc close",
         };
+        let free_on = self.model.read(cx).agent_state.free_hosted_models;
         div()
             .w_full()
             .p(px(6.))
@@ -1214,6 +1337,67 @@ impl AgentSurface {
                 )
             })
             .child(body)
+            .when(menu.kind == MenuKind::Models, |d| {
+                let next_free = !free_on;
+                d.child(
+                    div()
+                        .w_full()
+                        .px(px(8.))
+                        .pt(px(4.))
+                        .border_t_1()
+                        .border_color(rgb(p.line))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .id("model-picker-sign-in")
+                                .relative()
+                                .px(px(8.))
+                                .py(px(4.))
+                                .rounded(px(6.))
+                                .border_1()
+                                .border_color(rgb(p.line))
+                                .bg(rgb(p.canvas))
+                                .cursor_pointer()
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(p.text))
+                                .child("Sign in")
+                                .child(tracked(&self.frame, "sign-in".into(), false))
+                                .on_click(cx.listener(|this, _, w, cx| {
+                                    this.set_text("", cx);
+                                    this.action(ThreadAction::SignIn, w, cx);
+                                })),
+                        )
+                        .child(
+                            div()
+                                .id("model-picker-free-models")
+                                .relative()
+                                .px(px(8.))
+                                .py(px(4.))
+                                .rounded(px(6.))
+                                .border_1()
+                                .border_color(rgb(p.line))
+                                .bg(rgb(p.canvas))
+                                .cursor_pointer()
+                                .text_size(px(11.))
+                                .text_color(rgb(p.muted))
+                                .hover(move |s| s.text_color(rgb(p.text)))
+                                .child(if free_on {
+                                    "Free hosted Models: On"
+                                } else {
+                                    "Free hosted Models: Off"
+                                })
+                                .child(tracked(&self.frame, "toggle-free-models".into(), false))
+                                .on_click(cx.listener(move |this, _, w, cx| {
+                                    this.set_text("", cx);
+                                    this.action(ThreadAction::ChooseFreeModels(next_free), w, cx);
+                                })),
+                        ),
+                )
+            })
             .child(
                 div()
                     .px(px(8.))
@@ -1478,6 +1662,16 @@ impl Render for AgentSurface {
         let agent_view = m.agent_view.clone();
         let tx = m.agent_tx.clone();
         let show_stop = state.can_stop();
+        let needs_choice = state.needs_model_choice();
+        if self.was_choosing && !needs_choice {
+            self.was_choosing = false;
+            if !state.list_view {
+                window.focus(&self.input.focus_handle(cx));
+            }
+        } else if !self.was_choosing && needs_choice {
+            self.was_choosing = true;
+            window.focus(&self.focus);
+        }
         let draft = self.input.read(cx).text();
         let now = agent::unix_now();
 
@@ -1625,6 +1819,148 @@ impl Render for AgentSurface {
                             p,
                             cx,
                         )),
+                );
+        } else if needs_choice {
+            let ready = state.connected && !state.no_harness;
+            body = body
+                .child(
+                    div()
+                        .pt(px(8.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .text_size(px(16.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(p.text))
+                                .child("Choose where Models come from"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .line_height(px(18.))
+                                .text_color(rgb(p.muted))
+                                .child(
+                                    "Nothing leaves your machine until you choose. You can change this later from the drawer.",
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .p(px(14.))
+                        .rounded(px(10.))
+                        .bg(rgb(p.surface))
+                        .border_1()
+                        .border_color(rgb(p.line))
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(p.text))
+                                .child("OpenCode free hosted Models"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .line_height(px(17.))
+                                .text_color(rgb(p.muted))
+                                .child(
+                                    "Start right away with no account. Requests go to OpenCode's makers.",
+                                ),
+                        )
+                        .child(
+                            div().pt(px(2.)).flex().child(
+                                self.button(
+                                    "agent-choose-free-models",
+                                    "Use free hosted Models",
+                                    ThreadAction::ChooseFreeModels(true),
+                                    ready,
+                                    p,
+                                    cx,
+                                )
+                                .bg(rgb(p.accent))
+                                .border_color(rgb(p.accent))
+                                .text_color(rgb(p.on_accent))
+                                .font_weight(FontWeight::SEMIBOLD),
+                            ),
+                        ),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .p(px(14.))
+                        .rounded(px(10.))
+                        .bg(rgb(p.surface))
+                        .border_1()
+                        .border_color(rgb(p.line))
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(p.text))
+                                .child("Sign in to a provider"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .line_height(px(17.))
+                                .text_color(rgb(p.muted))
+                                .child(
+                                    "Opens OpenCode's sign-in in a terminal. CrowbarOS keeps no credentials.",
+                                ),
+                        )
+                        .child(
+                            div().pt(px(2.)).flex().child(self.button(
+                                "agent-sign-in",
+                                "Sign in",
+                                ThreadAction::SignIn,
+                                ready,
+                                p,
+                                cx,
+                            )),
+                        ),
+                )
+                .when(state.sign_in_launched, |b| {
+                    b.child(
+                        div()
+                            .text_size(px(11.5))
+                            .line_height(px(17.))
+                            .text_color(rgb(p.focus))
+                            .child(
+                                "Sign-in opened in a terminal. New Models will appear here as soon as it ends.",
+                            ),
+                    )
+                })
+                .when_some(state.modes_error.clone(), |b, err| {
+                    b.child(
+                        div()
+                            .text_size(px(11.5))
+                            .line_height(px(17.))
+                            .text_color(rgb(p.muted))
+                            .child(err),
+                    )
+                })
+                .child(
+                    div().flex().items_center().gap(px(8.)).child(self.button(
+                        "agent-refresh-models",
+                        if state.modes_loading {
+                            "Checking Models…"
+                        } else {
+                            "Already signed in? Check Models"
+                        },
+                        ThreadAction::RefreshModels,
+                        ready && !state.modes_loading,
+                        p,
+                        cx,
+                    )),
                 );
         } else if state.list_view {
             let free = state.connected && !state.loading && !state.sending;
@@ -1918,6 +2254,9 @@ impl Render for AgentSurface {
                     "Each message carries your current desktop context: active window, open windows by workspace, and displays — never window contents. Type / for commands: /model picks the Model, and /mode how much the Agent asks before it acts.".into(),
                 )
             };
+            let show_model_actions = state.connected
+                && !state.no_harness
+                && (state.missing_model.is_some() || state.no_models_available());
             body = body.child(
                 div()
                     .pt(px(12.))
@@ -1931,11 +2270,36 @@ impl Render for AgentSurface {
                             .line_height(px(18.))
                             .text_color(rgb(p.muted))
                             .child(says),
-                    ),
+                    )
+                    .when(show_model_actions, |d| {
+                        d.child(
+                            div()
+                                .pt(px(4.))
+                                .flex()
+                                .flex_wrap()
+                                .gap(px(8.))
+                                .child(self.button(
+                                    "empty-choose-free-models",
+                                    "Use free hosted Models",
+                                    ThreadAction::ChooseFreeModels(true),
+                                    !state.free_hosted_models,
+                                    p,
+                                    cx,
+                                ))
+                                .child(self.button(
+                                    "empty-sign-in",
+                                    "Sign in",
+                                    ThreadAction::SignIn,
+                                    true,
+                                    p,
+                                    cx,
+                                )),
+                        )
+                    }),
             );
         }
 
-        let in_thread = !state.list_view && !self.confirm_delete;
+        let in_thread = !needs_choice && !state.list_view && !self.confirm_delete;
         // Scrolled up from a thread's newest line: a way back to it.
         let show_newest = in_thread && !state.turns.is_empty() && !self.near_bottom();
         let error = state.error.clone().or_else(|| {
@@ -1979,6 +2343,10 @@ impl Render for AgentSurface {
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, w, cx| {
                 let key = event.keystroke.key.as_str();
+                let needs_choice = this.model.read(cx).agent_state.needs_model_choice();
+                if needs_choice {
+                    return;
+                }
                 if key == "enter" && should_take_composer_enter(false, &event.keystroke.modifiers, this.input.focus_handle(cx).is_focused(w)) {
                     cx.stop_propagation();
                     if should_take_composer_enter(event.is_held, &event.keystroke.modifiers, true) {
@@ -2403,5 +2771,8 @@ mod tests {
             name: "Ask first".into(),
         });
         assert!(!should_reset_offer_on_menu_close(Some(MenuKind::Efforts), &state));
+        // Closing `/model` always resets `asked_offer` so reopening picks up
+        // out-of-band provider sign-ins even when the catalog was non-empty.
+        assert!(should_reset_offer_on_menu_close(Some(MenuKind::Models), &state));
     }
 }

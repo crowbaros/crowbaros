@@ -164,6 +164,10 @@ pub struct Service {
     /// True when `free_hosted_models` changed while the harness was busy, so
     /// it should be stopped as soon as all active work finishes.
     harness_env_stale: bool,
+    /// True when `models` with `refresh: true` arrived while the harness was
+    /// busy, so Lever restarts and re-probes Models as soon as active work
+    /// finishes.
+    models_refresh_pending: bool,
     idle_timeout: Duration,
     stop_timeout: Duration,
     idle_since: Option<Instant>,
@@ -220,6 +224,7 @@ impl Service {
             harness: None,
             model_catalog: None,
             harness_env_stale: false,
+            models_refresh_pending: false,
             idle_timeout,
             stop_timeout,
             idle_since: None,
@@ -322,9 +327,42 @@ impl Service {
         self.store.free_hosted_models().unwrap_or(false)
     }
 
-    fn update_model_catalog(&mut self, mut cat: ModelCatalog, update_default: bool) {
-        if self.harness_env_stale {
+    fn provider_models_seen(&self) -> bool {
+        self.store.provider_models_seen().unwrap_or(false)
+    }
+
+    /// Whether the person has a Model source ready (free hosted Models enabled,
+    /// or a harness/provider known to offer Models), without starting an idle
+    /// harness.
+    fn models_chosen(&self) -> bool {
+        if self.harness_config.is_none() {
+            return false;
+        }
+        if let Some(catalog) = &self.model_catalog {
+            return !catalog.supported || !catalog.models.is_empty();
+        }
+        self.free_hosted_models() || self.provider_models_seen()
+    }
+
+    fn note_provider_models_seen(&mut self, seen: bool, log: &mut Log) {
+        if self.free_hosted_models() || self.provider_models_seen() == seen {
             return;
+        }
+        if let Err(err) = self.store.set_provider_models_seen(seen) {
+            store_failed(log, &err);
+        }
+    }
+
+    fn record_catalog_choice(&mut self, catalog: &ModelCatalog, log: &mut Log) {
+        if !catalog.supported {
+            return;
+        }
+        self.note_provider_models_seen(!catalog.models.is_empty(), log);
+    }
+
+    fn update_model_catalog(&mut self, mut cat: ModelCatalog, update_default: bool) -> bool {
+        if self.harness_env_stale {
+            return false;
         }
         if !update_default
             && let Some(existing) = &self.model_catalog
@@ -340,7 +378,21 @@ impl Service {
         {
             cat.modes = existing.modes.clone();
         }
+        let changed = self.model_catalog.as_ref() != Some(&cat);
         self.model_catalog = Some(cat);
+        changed
+    }
+
+    fn apply_model_catalog(&mut self, cat: ModelCatalog, update_default: bool, log: &mut Log, effects: &mut Effects) {
+        self.record_catalog_choice(&cat, log);
+        if self.update_model_catalog(cat, update_default)
+            && let Some(current) = &self.model_catalog
+        {
+            effects.broadcasts.push(Broadcast {
+                thread_id: ACTIVITY.to_string(),
+                message: models_event_json(current, self.free_hosted_models()),
+            });
+        }
     }
 
     /// Timeout in milliseconds for `poll(2)`, or `-1` when Lever waits for
@@ -412,6 +464,10 @@ impl Service {
         }
         if self.harness_env_stale && !self.has_active_work() {
             self.stop_harness("after free hosted Models setting changed", log);
+        } else if self.models_refresh_pending && !self.has_active_work() {
+            self.models_refresh_pending = false;
+            self.stop_harness("to refresh Models after sign-in", log);
+            self.read_what_the_harness_offers(log);
         } else if self.idle_remaining().is_some_and(|left| left.is_zero()) {
             self.stop_harness("after idle timeout", log);
         }
@@ -503,12 +559,7 @@ impl Service {
             "resume" => self.handle_resume(value),
             "stop" => self.handle_stop(value, log),
             "models" => self.handle_models(peer_id, value, log),
-            "set-free-models" => {
-                if !is_person {
-                    return error_outcome("unsupported", "Only the person's socket can change free hosted Models.");
-                }
-                self.handle_set_free_models(value, log)
-            }
+            "set-free-models" => self.handle_set_free_models(value, log),
             "set-model" => self.handle_set_model(peer_id, value, log),
             "commands" => self.handle_commands(value, log),
             "efforts" => self.handle_efforts(peer_id, value, log),
@@ -544,6 +595,10 @@ impl Service {
         }
         if self.harness_env_stale && !self.has_active_work() {
             self.stop_harness("after free hosted Models setting changed", log);
+        } else if self.models_refresh_pending && !self.has_active_work() {
+            self.models_refresh_pending = false;
+            self.stop_harness("to refresh Models after sign-in", log);
+            self.read_what_the_harness_offers(log);
         }
         self.refresh_idle_timer();
         effects.broadcasts.extend(self.activity_changed());
@@ -581,6 +636,7 @@ impl Service {
                 "harness_started": self.harness.is_some(),
                 "harnesses": harnesses,
                 "free_hosted_models": self.free_hosted_models(),
+                "models_chosen": self.models_chosen(),
                 "default_mode": self.default_mode(),
             })),
             subscribe: None,
@@ -823,6 +879,8 @@ impl Service {
                 self.stop_harness("to refresh Models", log);
             }
             self.model_catalog = None;
+        } else if refresh && self.harness.is_some() {
+            self.models_refresh_pending = true;
         }
         if !refresh
             && !empty_cached
@@ -1083,6 +1141,7 @@ impl Service {
         }
         if enabled != was_enabled {
             self.model_catalog = None;
+            self.efforts.clear();
             if self.harness.is_some() {
                 if !self.has_active_work() {
                     self.stop_harness("after free hosted Models setting changed", log);
@@ -1091,13 +1150,27 @@ impl Service {
                 }
             }
         }
+        let models_chosen = self.models_chosen();
+        let broadcasts = if enabled != was_enabled {
+            vec![Broadcast {
+                thread_id: ACTIVITY.to_string(),
+                message: json!({
+                    "event": "free-models",
+                    "enabled": enabled,
+                    "models_chosen": models_chosen,
+                }),
+            }]
+        } else {
+            Vec::new()
+        };
         RequestOutcome {
             reply: Some(json!({
                 "reply": "free-models",
                 "enabled": enabled,
+                "models_chosen": models_chosen,
             })),
             subscribe: None,
-            broadcasts: Vec::new(),
+            broadcasts,
         }
     }
 
@@ -1786,6 +1859,7 @@ impl Service {
         self.pending_effort_threads.clear();
         self.probe_wanted = false;
         self.harness_env_stale = false;
+        self.models_refresh_pending = false;
         self.idle_since = None;
     }
 
@@ -1933,6 +2007,7 @@ impl Service {
                 }
                 match result {
                     Ok(catalog) => {
+                        self.record_catalog_choice(&catalog, log);
                         let free = self.free_hosted_models();
                         for peer_id in self.pending_models.drain(..) {
                             effects.replies.push(PeerReply {
@@ -1961,7 +2036,7 @@ impl Service {
                         }
                         self.pending_set_models = remaining;
                         self.commands_probed = true;
-                        self.update_model_catalog(catalog, true);
+                        self.apply_model_catalog(catalog, true, log, &mut effects);
                     }
                     Err(msg) => {
                         for peer_id in self.pending_models.drain(..) {
@@ -1997,7 +2072,7 @@ impl Service {
             } => {
                 let mut effects = Effects::default();
                 if let Some(cat) = catalog {
-                    self.update_model_catalog(cat, false);
+                    self.apply_model_catalog(cat, false, log, &mut effects);
                 }
                 // The record must say the session is this thread's before
                 // Lever uses it. Otherwise the record could still give its ID
@@ -2048,6 +2123,7 @@ impl Service {
                         active.dispatch = TurnDispatch::WaitingForModel;
                     } else {
                         if let Some(ref model) = current_model {
+                            self.note_provider_models_seen(true, log);
                             let changes = self.model_changes(&thread_id, model);
                             match self.store.set_thread_model(&thread_id, model, unix_now()) {
                                 Ok(()) => effects.broadcasts.extend(changes),
@@ -2066,16 +2142,24 @@ impl Service {
                 message,
                 no_models,
             } => {
+                let mut effects = Effects::default();
                 let display = if no_models {
-                    self.model_catalog = None;
+                    let empty = ModelCatalog {
+                        supported: true,
+                        models: Vec::new(),
+                        default_model: None,
+                        config_id: None,
+                        modes: Vec::new(),
+                    };
+                    self.apply_model_catalog(empty, true, log, &mut effects);
                     NO_MODEL_MESSAGE.to_string()
                 } else {
                     message
                 };
-                Effects {
-                    broadcasts: self.fail_turn(&thread_id, turn, &display, log),
-                    replies: Vec::new(),
-                }
+                effects
+                    .broadcasts
+                    .extend(self.fail_turn(&thread_id, turn, &display, log));
+                effects
             }
             AcpEvent::ModelSet {
                 thread_id,
@@ -2085,7 +2169,7 @@ impl Service {
             } => {
                 let mut effects = Effects::default();
                 if let Some(cat) = catalog {
-                    self.update_model_catalog(cat, false);
+                    self.apply_model_catalog(cat, false, log, &mut effects);
                 }
                 if let Some(t) = turn {
                     let still_waiting = self.working_turns.get(&thread_id).is_some_and(|active| {
@@ -2198,8 +2282,9 @@ impl Service {
                 current_mode,
                 effort_changed,
             } => {
+                let mut effects = Effects::default();
                 if let Some(catalog) = catalog {
-                    self.update_model_catalog(catalog, false);
+                    self.apply_model_catalog(catalog, false, log, &mut effects);
                 }
                 if let Some(harness) = self.harness.as_ref()
                     && let Some(session_id) = harness.session_for_thread(&thread_id)
@@ -2208,7 +2293,6 @@ impl Service {
                 {
                     self.efforts.insert(model.to_string(), selector.options.clone());
                 }
-                let mut effects = Effects::default();
                 // What the harness says the session is at is the thread's,
                 // once Lever has set the session to what the thread asks.
                 // A `set-effort` saved while idle stays pending until the next
@@ -2719,6 +2803,7 @@ impl Service {
         self.pending_effort_threads.clear();
         self.probe_wanted = false;
         self.harness_env_stale = false;
+        self.models_refresh_pending = false;
         self.idle_since = None;
 
         let replies = self.fail_pending_peer_requests(why);
@@ -2906,7 +2991,7 @@ fn error_outcome(code: &str, message: &str) -> RequestOutcome {
     }
 }
 
-fn models_reply_json(catalog: &ModelCatalog, free_hosted_models: bool) -> Value {
+fn models_payload_json(kind_key: &str, catalog: &ModelCatalog, free_hosted_models: bool) -> Value {
     let models: Vec<Value> = catalog
         .models
         .iter()
@@ -2919,8 +3004,7 @@ fn models_reply_json(catalog: &ModelCatalog, free_hosted_models: bool) -> Value 
             model
         })
         .collect();
-    json!({
-        "reply": "models",
+    let mut obj = json!({
         "supported": catalog.supported,
         "models": models,
         "default": catalog.default_model,
@@ -2930,7 +3014,17 @@ fn models_reply_json(catalog: &ModelCatalog, free_hosted_models: bool) -> Value 
             .iter()
             .map(|m| json!({ "id": m, "name": acp::mode_name(m).unwrap_or(m) }))
             .collect::<Vec<_>>(),
-    })
+    });
+    obj[kind_key] = json!("models");
+    obj
+}
+
+fn models_reply_json(catalog: &ModelCatalog, free_hosted_models: bool) -> Value {
+    models_payload_json("reply", catalog, free_hosted_models)
+}
+
+fn models_event_json(catalog: &ModelCatalog, free_hosted_models: bool) -> Value {
+    models_payload_json("event", catalog, free_hosted_models)
 }
 
 fn efforts_reply_json(model: &str, levels: &[EffortOption]) -> Value {
