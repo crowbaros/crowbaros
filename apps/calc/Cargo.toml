@@ -1,0 +1,31 @@
+[package]
+name = "crowbaros-calc"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[features]
+default = ["ui"]
+ui = ["dep:gpui", "dep:gpui-component", "dep:gpui-component-assets", "dep:crowbar-ui"]
+
+[dependencies]
+crowbar-calc = { path = "../../libs/crowbar-calc" }
+gpui = { version = "=0.2.2", default-features = false, features = ["wayland"], optional = true }
+gpui-component = { version = "=0.5.1", optional = true }
+gpui-component-assets = { version = "=0.5.1", optional = true }
+crowbar-ui = { path = "../../libs/crowbar-ui", optional = true }
+
+[patch.crates-io]
+gpui = { path = "../shell/gpui-source" }
+
+[[bin]]
+name = "crowbaros-calc"
+path = "src/main.rs"
+required-features = ["ui"]
+
+[profile.release]
+opt-level = 2
+debug = 0
+lto = false
+codegen-units = 16

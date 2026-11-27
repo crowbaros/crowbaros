@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Calculator
+Comment=Standard, scientific, and programmer calculations
+Exec=crowbaros-calc
+Icon=accessories-calculator
+Terminal=false
+Categories=Utility;Calculator;
+Keywords=math;arithmetic;scientific;programmer;
+StartupWMClass=com.crowbaros.Calc
