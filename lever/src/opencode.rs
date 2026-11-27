@@ -242,8 +242,12 @@ pub fn database_path(env: &[(String, String)]) -> Option<PathBuf> {
     } else {
         data_dir(env)?.join(path)
     };
-    // As OpenCode resolves it: `.` and `..` are taken out by the path alone,
-    // whether or not what they name is there.
+    Some(lexical(&path))
+}
+
+/// A path with `.` and `..` taken out by the path alone, whether or not
+/// what they name is there, as OpenCode resolves its database's.
+fn lexical(path: &Path) -> PathBuf {
     let mut resolved = PathBuf::new();
     for part in path.components() {
         match part {
@@ -254,7 +258,30 @@ pub fn database_path(env: &[(String, String)]) -> Option<PathBuf> {
             other => resolved.push(other),
         }
     }
-    Some(resolved)
+    resolved
+}
+
+/// Where a database that is a link leads, though the file it leads to is
+/// not there yet: SQLite makes it there, and its sidecars beside it.
+fn link_target(db: &Path) -> Option<PathBuf> {
+    if let Ok(target) = std::fs::canonicalize(db) {
+        return Some(target);
+    }
+    let link = std::fs::read_link(db).ok()?;
+    let target = if link.is_absolute() {
+        link
+    } else {
+        db.parent()?.join(link)
+    };
+    let target = lexical(&target);
+    // The folder it is in may itself be reached through a link.
+    match (
+        target.parent().and_then(|dir| std::fs::canonicalize(dir).ok()),
+        target.file_name(),
+    ) {
+        (Some(dir), Some(name)) => Some(dir.join(name)),
+        _ => Some(target),
+    }
 }
 
 /// Watches a SQLite database and the files beside it its writes change.
@@ -312,7 +339,7 @@ impl OpenCodeSessionDiscoverer {
             watch_specs.extend(database_watch(&db));
             // A database that is a link is written where it leads, and its
             // sidecars are kept there.
-            if let Ok(target) = std::fs::canonicalize(&db)
+            if let Some(target) = link_target(&db)
                 && target != db
             {
                 watch_specs.extend(database_watch(&target));
@@ -798,26 +825,41 @@ mod tests {
         let moved = root.join("moved");
         std::fs::create_dir_all(&data).unwrap();
         std::fs::create_dir_all(&moved).unwrap();
-        std::fs::write(moved.join("opencode.db"), "").unwrap();
-        std::os::unix::fs::symlink(moved.join("opencode.db"), data.join("opencode.db")).unwrap();
-        let config = HarnessConfig {
-            id: "opencode".into(),
-            name: "OpenCode".into(),
-            program: "opencode".into(),
-            args: vec!["acp".into()],
-            env: vec![
-                ("XDG_DATA_HOME".into(), root.join("data").to_string_lossy().into_owned()),
-                ("OPENCODE_DB".into(), String::new()),
-            ],
-            watch_paths: Vec::new(),
+        let watched = |target_exists: bool| {
+            let _ = std::fs::remove_file(data.join("opencode.db"));
+            let _ = std::fs::remove_file(moved.join("real.db"));
+            if target_exists {
+                std::fs::write(moved.join("real.db"), "").unwrap();
+            }
+            std::os::unix::fs::symlink(moved.join("real.db"), data.join("opencode.db")).unwrap();
+            let config = HarnessConfig {
+                id: "opencode".into(),
+                name: "OpenCode".into(),
+                program: "opencode".into(),
+                args: vec!["acp".into()],
+                env: vec![
+                    ("XDG_DATA_HOME".into(), root.join("data").to_string_lossy().into_owned()),
+                    ("OPENCODE_DB".into(), String::new()),
+                ],
+                watch_paths: Vec::new(),
+            };
+            OpenCodeSessionDiscoverer::new(config).watch_specs()
         };
-        let dirs: Vec<PathBuf> = OpenCodeSessionDiscoverer::new(config)
-            .watch_specs()
-            .into_iter()
-            .map(|spec| spec.dir)
-            .collect();
-        assert!(dirs.contains(&data));
-        assert!(dirs.contains(&std::fs::canonicalize(&moved).unwrap()), "{dirs:?}");
+        let target_dir = std::fs::canonicalize(&moved).unwrap();
+        // The file it leads to is there, and when it is not yet: SQLite
+        // makes it, and its sidecars, where the link leads.
+        for target_exists in [true, false] {
+            let specs = watched(target_exists);
+            assert!(specs.iter().any(|spec| spec.dir == data), "{specs:?}");
+            let target = specs
+                .iter()
+                .find(|spec| spec.dir == target_dir)
+                .unwrap_or_else(|| panic!("the target is not watched: {specs:?}"));
+            assert_eq!(
+                target.filenames,
+                ["real.db", "real.db-wal", "real.db-journal", "real.db-shm"]
+            );
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 
