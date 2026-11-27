@@ -168,7 +168,7 @@ historical behavior evidence, not a current Fedora workflow.
   answered there, and while a subagent still works after its turn ended the
   thread stays working and Stop remains available. A message can still be
   sent then, and the mode, Model, and effort changed, though a message waits
-  while a subagent's request does: Lever says to answer or stop it first. When the harness goes on
+  while a subagent's request does: Lever says to answer it, or stop the thread, first. When the harness goes on
   by itself after a subagent reported, its turn shows a quiet line, `The Agent
   went on after a subagent reported`, in place of a message, and a message
   sent meanwhile takes that turn over.

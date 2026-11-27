@@ -8729,3 +8729,62 @@ fn a_message_waits_while_a_subagent_of_its_thread_asks() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn a_prompt_that_waited_on_a_mode_waits_too_while_a_subagent_asks() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            // The mode takes long enough for the subagent to ask meanwhile.
+            "set_config_delay_ms": 600,
+            "turns": [
+                {
+                    "match": "Go",
+                    "steps": [
+                        { "kind": "subagent_start", "id": "ses_mid", "title": "Mid", "prompt": "Ask" },
+                        { "kind": "text", "text": "Handed off." }
+                    ],
+                    "after": [
+                        { "kind": "pause_ms", "ms": 250 },
+                        { "kind": "subagent_ask", "subagent": "ses_mid", "id": "call_mid", "tool_kind": "read",
+                          "title": "Read /tmp/mid", "raw_input": { "path": "/tmp/mid" }, "output": "mid" },
+                        { "kind": "subagent_end", "subagent": "ses_mid", "status": "completed" }
+                    ]
+                },
+                { "match": "Next", "steps": [{ "kind": "text", "text": "Next." }] }
+            ]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &["--wake-quiet-ms", "300"]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    let sent = ask_lever(
+        &mut peer,
+        json!({ "op": "send", "thread": thread, "text": "Next", "cwd": "/tmp", "mode": "full-access" }),
+    );
+    assert_eq!(sent["reply"], "sent", "{sent}");
+    let next = sent["turn"].as_u64().unwrap();
+    let asked = read_until(&mut peer, |v| v["event"] == "request" && v["state"] == "waiting");
+
+    // The mode is set, and the prompt waits while the subagent asks.
+    wait_until("the mode is set", || stub_modes_set(&stub_log) == ["build"]);
+    std::thread::sleep(Duration::from_millis(900));
+    assert_eq!(stub_prompts(&stub_log).len(), 1, "a prompt went while a subagent asked");
+
+    let answered = ask_lever(
+        &mut peer,
+        json!({ "op": "answer", "thread": thread, "request": asked["request"], "answer": "once" }),
+    );
+    assert_eq!(answered["reply"], "ok", "{answered}");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == next);
+    assert_eq!(stub_prompts(&stub_log).len(), 2);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}

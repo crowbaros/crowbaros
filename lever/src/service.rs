@@ -94,6 +94,9 @@ enum TurnDispatch {
     WaitingForModel,
     WaitingForEffort,
     WaitingForMode,
+    /// The prompt is ready, and waits while a subagent of the thread asks:
+    /// OpenCode 2.4.1 strands a subagent's request on a new prompt.
+    WaitingForSubagentAnswer,
     PromptInFlight {
         session_id: String,
     },
@@ -603,6 +606,7 @@ impl Service {
     pub fn on_wake(&mut self, log: &mut Log) -> Effects {
         sys::reap_orphans(self.harness.as_ref().map(AcpHarness::pid));
         self.save_endings();
+        self.send_held_prompts();
         let mut effects = Effects::default();
         // A turn the harness began that it has said nothing in since the
         // person stopped it, with nothing of it still working, has stopped:
@@ -755,6 +759,8 @@ impl Service {
 
     pub fn handle_request(&mut self, peer_id: u64, is_person: bool, value: &Value, log: &mut Log) -> RequestOutcome {
         let mut outcome = self.handle_op(peer_id, is_person, value, log);
+        // An answer can free a prompt that waited on it.
+        self.send_held_prompts();
         // An answer or a Stop can leave the harness with nothing to do.
         self.refresh_idle_timer();
         outcome.broadcasts.extend(self.activity_changed());
@@ -828,6 +834,9 @@ impl Service {
                 break;
             }
         }
+        // A request the harness withdrew, or a subagent's end, can free a
+        // prompt that waited on it.
+        self.send_held_prompts();
         if self.harness_env_stale && !self.has_active_work() {
             self.stop_harness("after free hosted Models setting changed", log);
         } else if self.models_refresh_pending && !self.has_active_work() {
@@ -1649,68 +1658,69 @@ impl Service {
         let woken = requested_thread.and_then(|tid| self.harness_turn_to_take_over(tid));
         let mut mode_changed = false;
         let mut effort_changed = requested_effort.is_some();
-        let (thread_id, cwd, existing_session_id, desired_model, desired_effort, mode, new_thread) =
-            if let Some(tid) = requested_thread {
-                match self.store.thread_meta(tid) {
-                    Ok(Some(meta)) => {
-                        let busy = if woken.is_some() {
-                            self.session_change_pending(tid)
-                        } else {
-                            meta.working_turn.is_some() || self.thread_busy(tid)
-                        };
-                        if busy {
-                            return error_outcome("working", "This thread is already working on a turn.");
-                        }
-                        // OpenCode 2.4.1 withdraws a subagent's request when
-                        // a new prompt comes, without answering it for the
-                        // subagent, which then waits on it for good.
-                        if self
-                            .waiting
-                            .values()
-                            .any(|w| w.thread_id == tid && w.record.subagent.is_some())
-                        {
-                            return error_outcome(
-                                "subagent-asks",
-                                "A subagent of this thread waits for your answer. Answer or stop its request first.",
-                            );
-                        }
-                        mode_changed = requested_mode.is_some_and(|m| m != meta.mode);
-                        effort_changed = requested_effort.is_some_and(|e| meta.effort.as_deref() != Some(e));
-                        let model = requested_model
-                            .map(str::to_string)
-                            .or(meta.model)
-                            .or_else(|| self.model_catalog.as_ref().and_then(|c| c.default_model.clone()));
-                        let effort = requested_effort.map(str::to_string).or(meta.effort);
-                        let mode = requested_mode.map(str::to_string).unwrap_or(meta.mode);
-                        (
-                            tid.to_string(),
-                            meta.cwd,
-                            meta.harness_session_id,
-                            model,
-                            effort,
-                            mode,
-                            false,
-                        )
+        let (thread_id, cwd, existing_session_id, desired_model, desired_effort, mode, new_thread) = if let Some(tid) =
+            requested_thread
+        {
+            match self.store.thread_meta(tid) {
+                Ok(Some(meta)) => {
+                    let busy = if woken.is_some() {
+                        self.session_change_pending(tid)
+                    } else {
+                        meta.working_turn.is_some() || self.thread_busy(tid)
+                    };
+                    if busy {
+                        return error_outcome("working", "This thread is already working on a turn.");
                     }
-                    Ok(None) => return error_outcome("no-thread", &format!("There is no thread {tid}.")),
-                    Err(err) => return error_outcome("storage-error", &err),
+                    // OpenCode 2.4.1 withdraws a subagent's request when
+                    // a new prompt comes, without answering it for the
+                    // subagent, which then waits on it for good.
+                    if self
+                        .waiting
+                        .values()
+                        .any(|w| w.thread_id == tid && w.record.subagent.is_some())
+                    {
+                        return error_outcome(
+                            "subagent-asks",
+                            "A subagent of this thread waits for your answer. Answer its request, or stop the thread, first.",
+                        );
+                    }
+                    mode_changed = requested_mode.is_some_and(|m| m != meta.mode);
+                    effort_changed = requested_effort.is_some_and(|e| meta.effort.as_deref() != Some(e));
+                    let model = requested_model
+                        .map(str::to_string)
+                        .or(meta.model)
+                        .or_else(|| self.model_catalog.as_ref().and_then(|c| c.default_model.clone()));
+                    let effort = requested_effort.map(str::to_string).or(meta.effort);
+                    let mode = requested_mode.map(str::to_string).unwrap_or(meta.mode);
+                    (
+                        tid.to_string(),
+                        meta.cwd,
+                        meta.harness_session_id,
+                        model,
+                        effort,
+                        mode,
+                        false,
+                    )
                 }
-            } else {
-                let tid = format!("t-{}", sys::random_hex(6));
-                let cwd = requested_cwd.map(str::to_string).unwrap_or_else(default_cwd);
-                let mode = requested_mode
-                    .map(str::to_string)
-                    .unwrap_or_else(|| self.default_mode());
-                (
-                    tid,
-                    cwd,
-                    None,
-                    requested_model.map(str::to_string),
-                    requested_effort.map(str::to_string),
-                    mode,
-                    true,
-                )
-            };
+                Ok(None) => return error_outcome("no-thread", &format!("There is no thread {tid}.")),
+                Err(err) => return error_outcome("storage-error", &err),
+            }
+        } else {
+            let tid = format!("t-{}", sys::random_hex(6));
+            let cwd = requested_cwd.map(str::to_string).unwrap_or_else(default_cwd);
+            let mode = requested_mode
+                .map(str::to_string)
+                .unwrap_or_else(|| self.default_mode());
+            (
+                tid,
+                cwd,
+                None,
+                requested_model.map(str::to_string),
+                requested_effort.map(str::to_string),
+                mode,
+                true,
+            )
+        };
         if let Some(effort) = requested_effort
             && let Err(outcome) = self.check_effort(desired_model.as_deref(), effort)
         {
@@ -1962,7 +1972,10 @@ impl Service {
                     message: json!({ "event": "stopped", "thread": thread_id, "turn": turn }),
                 }]
             }
-            TurnDispatch::WaitingForInit | TurnDispatch::WaitingForSession | TurnDispatch::WaitingForModel => {
+            TurnDispatch::WaitingForInit
+            | TurnDispatch::WaitingForSession
+            | TurnDispatch::WaitingForModel
+            | TurnDispatch::WaitingForSubagentAnswer => {
                 let waiting_for_model = matches!(active.dispatch, TurnDispatch::WaitingForModel);
                 let desired_model = active.desired_model.clone().unwrap_or_default();
                 let turn = active.turn;
@@ -2368,6 +2381,12 @@ impl Service {
         if harness.has_modes() && harness.session_current_mode(&session_id) != Some(active.mode.as_str()) {
             harness.set_session_mode(thread_id, Some(active.turn), &session_id, &active.mode);
             active.dispatch = TurnDispatch::WaitingForMode;
+        } else if self
+            .waiting
+            .values()
+            .any(|w| w.thread_id == thread_id && w.record.subagent.is_some())
+        {
+            active.dispatch = TurnDispatch::WaitingForSubagentAnswer;
         } else {
             self.pending_effort_threads.remove(thread_id);
             harness.send_prompt(
@@ -3866,6 +3885,26 @@ impl Service {
                 .is_some()
         {
             self.kill_wanted = Some("a subagent went on under a Stop, and Lever could not record it");
+        }
+    }
+
+    /// Sends the prompts that waited on a subagent's request, once no
+    /// subagent of their thread asks.
+    fn send_held_prompts(&mut self) {
+        let ready: Vec<String> = self
+            .working_turns
+            .iter()
+            .filter(|(tid, active)| {
+                matches!(active.dispatch, TurnDispatch::WaitingForSubagentAnswer)
+                    && !self
+                        .waiting
+                        .values()
+                        .any(|w| &w.thread_id == *tid && w.record.subagent.is_some())
+            })
+            .map(|(tid, _)| tid.clone())
+            .collect();
+        for thread_id in ready {
+            self.continue_turn(&thread_id);
         }
     }
 
