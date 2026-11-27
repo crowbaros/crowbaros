@@ -326,6 +326,12 @@ pub enum AcpEvent {
         turn: u64,
         outcome: TurnOutcome,
     },
+    /// The harness answered a message Lever steered into a thread's running
+    /// turn: it took it, or it did not, and why, in words for the person.
+    SteerAnswered {
+        steer: u64,
+        taken: Result<(), String>,
+    },
     Exited,
 }
 
@@ -378,7 +384,21 @@ enum PendingRpc {
         thread_id: String,
         turn: u64,
     },
+    Steer {
+        thread_id: String,
+        steer: u64,
+    },
 }
+
+/// OpenCode's own request that steers a message into a session's running
+/// prompt. ACP's first version has none, and OpenCode's documents do not
+/// describe it: OpenCode 2.4.1 says it has it with `_meta.steering.supported`
+/// in its `initialize` answer.
+const OPENCODE_STEERING: &str = "_session/steering";
+
+/// What the person is told when the harness did not take a message into its
+/// turn because the turn had ended as the message came.
+const STEER_TOO_LATE: &str = "The Agent's turn ended before it took your message. Send it again.";
 
 pub struct AcpHarness {
     child: Child,
@@ -397,6 +417,8 @@ pub struct AcpHarness {
     supports_load_session: bool,
     supports_close_session: bool,
     supports_delete_session: bool,
+    /// The harness says it can steer a message into a running prompt.
+    supports_steering: bool,
     /// The harness says it is OpenCode: its legacy `task` launcher is told by
     /// its kind alone, which another harness's `Task` act may share.
     is_opencode: bool,
@@ -522,6 +544,7 @@ impl AcpHarness {
             supports_load_session: false,
             supports_close_session: false,
             supports_delete_session: false,
+            supports_steering: false,
             is_opencode: false,
             probing_models: false,
             model_config_id: None,
@@ -945,20 +968,37 @@ impl AcpHarness {
     /// leading slash commands in the person's text.
     pub fn send_prompt(&mut self, thread_id: &str, turn: u64, session_id: &str, context: Option<&str>, text: &str) {
         self.transport_failures.remove(thread_id);
-        let mut blocks = Vec::new();
-        if let Some(ctx) = context {
-            blocks.push(ContentBlock::Text(
-                TextContent::new(format!("{ctx}\n")).annotations(Annotations::new().audience(vec![Role::Assistant])),
-            ));
-        }
-        blocks.push(ContentBlock::from(text.to_string()));
-        let req = PromptRequest::new(SessionId::new(session_id.to_string()), blocks);
+        let req = PromptRequest::new(SessionId::new(session_id.to_string()), prompt_blocks(context, text));
         let id = self.send_request(AGENT_METHOD_NAMES.session_prompt, &req);
         self.pending.insert(
             id,
             PendingRpc::Prompt {
                 thread_id: thread_id.to_string(),
                 turn,
+            },
+        );
+        let _ = self.on_writable();
+    }
+
+    /// Whether the harness can take a message into a turn under way.
+    pub fn can_steer(&self) -> bool {
+        self.initialized && self.supports_steering
+    }
+
+    /// Steers a message into the running prompt of a thread's session, with
+    /// desktop context as a prompt carries it. The harness's answer comes as
+    /// `AcpEvent::SteerAnswered` with Lever's `steer` for it.
+    pub fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str) {
+        let params = json!({
+            "sessionId": session_id,
+            "prompt": prompt_blocks(context, text),
+        });
+        let id = self.send_request(OPENCODE_STEERING, &params);
+        self.pending.insert(
+            id,
+            PendingRpc::Steer {
+                thread_id: thread_id.to_string(),
+                steer,
             },
         );
         let _ = self.on_writable();
@@ -1457,6 +1497,13 @@ impl AcpHarness {
                         outcome: TurnOutcome::Failed(message),
                     });
                 }
+                PendingRpc::Steer { thread_id, steer } => {
+                    let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
+                    events.push(AcpEvent::SteerAnswered {
+                        steer,
+                        taken: Err(format!("The Agent did not take your message into its turn: {message}")),
+                    });
+                }
             }
             return;
         }
@@ -1475,6 +1522,7 @@ impl AcpHarness {
                     self.supports_load_session = resp.agent_capabilities.load_session;
                     self.supports_close_session = resp.agent_capabilities.session_capabilities.close.is_some();
                     self.supports_delete_session = resp.agent_capabilities.session_capabilities.delete.is_some();
+                    self.supports_steering = steering_supported(resp.meta.as_ref());
                     self.is_opencode = resp
                         .agent_info
                         .as_ref()
@@ -1752,6 +1800,12 @@ impl AcpHarness {
                 };
                 self.close_probe(SessionId::new(session_id));
                 events.push(AcpEvent::EffortsProbed { model, result });
+            }
+            PendingRpc::Steer { steer, .. } => {
+                events.push(AcpEvent::SteerAnswered {
+                    steer,
+                    taken: steer_taken(&result),
+                });
             }
             PendingRpc::Prompt { thread_id, turn } => {
                 let transport_failure = self.transport_failures.remove(&thread_id);
@@ -2636,6 +2690,38 @@ impl AcpHarness {
 /// `OPENCODE_DISABLE_FREE_MODELS=1` plus `OPENCODE_DISABLE_MODELS_FETCH=1`
 /// until the person chooses free hosted Models (so nothing contacts
 /// `models.opencode.ai` before the person's choice).
+/// A prompt's content: desktop context, for the Model's eyes alone so a slash
+/// command at the start of the person's text is still one, then the text.
+fn prompt_blocks(context: Option<&str>, text: &str) -> Vec<ContentBlock> {
+    let mut blocks = Vec::new();
+    if let Some(ctx) = context {
+        blocks.push(ContentBlock::Text(
+            TextContent::new(format!("{ctx}\n")).annotations(Annotations::new().audience(vec![Role::Assistant])),
+        ));
+    }
+    blocks.push(ContentBlock::from(text.to_string()));
+    blocks
+}
+
+/// Whether an `initialize` answer's `_meta` says the harness steers, as
+/// OpenCode 2.4.1 says it.
+fn steering_supported(meta: Option<&serde_json::Map<String, Value>>) -> bool {
+    meta.and_then(|m| m.get("steering"))
+        .and_then(|s| s.get("supported"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// What a steering answer says: OpenCode answers `injected` for a message it
+/// took into the running prompt, and `promptRequired` when no prompt runs.
+fn steer_taken(result: &Value) -> Result<(), String> {
+    match result.get("outcome").and_then(Value::as_str) {
+        Some("injected") => Ok(()),
+        Some("promptRequired") => Err(STEER_TOO_LATE.to_string()),
+        _ => Err("The Agent did not take your message into its turn. Send it again.".to_string()),
+    }
+}
+
 fn build_harness_env(
     extra: &[(String, String)],
     existing_config_content: Option<&str>,

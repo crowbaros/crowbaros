@@ -1496,6 +1496,7 @@ fn lever_speaks_every_message_documented_in_readme() {
                 "resumed",
                 "sent",
                 "status",
+                "steered",
             ]
             .map(str::to_string)
         )
@@ -1518,6 +1519,7 @@ fn lever_speaks_every_message_documented_in_readme() {
                 "models",
                 "note",
                 "request",
+                "steered",
                 "stopped",
                 "subagent",
                 "subagent-act",
@@ -1543,6 +1545,7 @@ fn lever_speaks_every_message_documented_in_readme() {
             ],
             "default_model": "stub/stub-1",
             "modes": true,
+            "steering": true,
             "commands": [{ "name": "review", "description": "review changes", "hint": "commit, branch, or pr" }],
             "turns": [
                 {
@@ -1722,6 +1725,15 @@ fn lever_speaks_every_message_documented_in_readme() {
         if ev["event"] == "text" {
             break;
         }
+    }
+    // A message sent while it works is steered into it: steered + steered.
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": thread_id, "text": "Also check the docs" }),
+    )
+    .unwrap();
+    while !seen_replies.contains_key("steered") || !seen_events.contains_key("steered") {
+        record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
     }
     write_frame(&mut peer, &json!({ "op": "stop", "thread": thread_id, "turn": 3 })).unwrap();
     while !seen_replies.contains_key("ok") || !seen_events.contains_key("stopped") {
@@ -9091,6 +9103,215 @@ fn a_report_the_persons_message_took_over_stays_whole_when_a_subagent_asks_after
     let turns = record["turns"].as_array().unwrap();
     assert_eq!(turns.len(), 2, "{record}");
     assert_eq!(turns[1]["answer"], "Report part one. Part two. Next.", "{record}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+/// The harness's JSON-RPC traffic as the stub logged what it was sent.
+fn rpc_sent(log: &Path) -> Vec<Value> {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+#[test]
+fn a_message_sent_while_a_turn_works_is_steered_into_it_where_the_harness_can() {
+    let dir = TempDir::new();
+    let rpc_log = dir.0.join("rpc.jsonl");
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "steering": true,
+            "turns": [{
+                "match": "long task",
+                "steps": [
+                    { "kind": "text", "text": "Looking. " },
+                    { "kind": "await_steer", "text": "Took: {steer}" }
+                ]
+            }]
+        }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, Some(&rpc_log), None);
+    let mut peer = handshake(&lever.person);
+    let mut other = handshake(&lever.person);
+
+    // The adapter says its harness can steer a turn.
+    write_frame(&mut other, &json!({ "op": "models" })).unwrap();
+    let models = read_until(&mut other, |f| f.get("reply").is_some());
+    assert_eq!(models["steering"], true, "{models}");
+
+    let (thread, turn) = send(&mut peer, None, "Do the long task");
+    read_until(&mut peer, |f| f["event"] == "text" && f["text"] == "Looking. ");
+
+    // A second client sends while the turn works: it is taken into that turn.
+    write_frame(
+        &mut other,
+        &json!({ "op": "send", "thread": thread, "text": "Also check the docs" }),
+    )
+    .unwrap();
+    let steered = read_until(&mut other, |f| f.get("reply").is_some());
+    assert_eq!(
+        steered,
+        json!({ "reply": "steered", "thread": thread, "turn": turn }),
+        "{steered}"
+    );
+
+    // Who watches the thread sees where the message was taken, then the rest.
+    let events = turn_events(&mut peer, &thread, turn);
+    let at = events
+        .iter()
+        .position(|e| e["event"] == "steered")
+        .expect("a steered event");
+    assert_eq!(
+        events[at],
+        json!({ "event": "steered", "thread": thread, "turn": turn, "text": "Also check the docs" })
+    );
+    assert_eq!(text_of(&events[at..]), "Took: Also check the docs");
+    assert_eq!(events.last().unwrap()["event"], "done");
+
+    // The record keeps it in its turn, at the place in the answer it was taken.
+    let record = resume(&mut peer, &thread);
+    assert_eq!(record["turns"].as_array().unwrap().len(), 1, "{record}");
+    let kept = &record["turns"][0];
+    assert_eq!(kept["answer"], "Looking. Took: Also check the docs");
+    assert_eq!(
+        kept["steered"],
+        json!([{ "text": "Also check the docs", "at": 9 }]),
+        "{kept}"
+    );
+
+    // One prompt, and the message steered into it through the adapter.
+    let sent = rpc_sent(&rpc_log);
+    assert_eq!(sent.iter().filter(|m| m["method"] == "session/prompt").count(), 1);
+    let steer = sent
+        .iter()
+        .find(|m| m["method"] == "_session/steering")
+        .expect("Lever steers through OpenCode's extension");
+    let prompt = sent.iter().find(|m| m["method"] == "session/prompt").unwrap();
+    assert_eq!(steer["params"]["sessionId"], prompt["params"]["sessionId"]);
+    assert_eq!(
+        steer["params"]["prompt"],
+        json!([{ "type": "text", "text": "Also check the docs" }])
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_message_the_harness_does_not_take_into_its_turn_is_refused() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "steering": true,
+            "steer_refused": true,
+            "turns": [{ "match": "slow", "stall": true, "steps": [{ "kind": "text", "text": "Working. " }] }]
+        }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "slow work");
+    read_until(&mut peer, |f| f["event"] == "text");
+
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": thread, "text": "Change of plan" }),
+    )
+    .unwrap();
+    let refused = read_until(&mut peer, |f| f.get("reply").is_some());
+    assert_eq!(refused["reply"], "error", "{refused}");
+    assert_eq!(refused["code"], "not-steered", "{refused}");
+    assert!(
+        refused["message"].as_str().unwrap().contains("Send it again"),
+        "the person is told what to do: {refused}"
+    );
+
+    // The turn goes on, and nothing of the message is in the record.
+    let record = resume(&mut peer, &thread);
+    assert_eq!(record["working"], true, "{record}");
+    assert_eq!(record["turns"].as_array().unwrap().len(), 1, "{record}");
+    assert!(record["turns"][0].get("steered").is_none(), "{record}");
+
+    write_frame(&mut peer, &json!({ "op": "stop", "thread": thread, "turn": turn })).unwrap();
+    read_until(&mut peer, |f| f["event"] == "stopped");
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_harness_that_cannot_steer_is_never_asked_to_and_the_message_is_refused() {
+    let dir = TempDir::new();
+    let rpc_log = dir.0.join("rpc.jsonl");
+    let script = write_script(
+        &dir.0,
+        &json!({ "turns": [{ "match": "slow", "stall": true, "steps": [{ "kind": "text", "text": "Working. " }] }] }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, Some(&rpc_log), None);
+    let mut peer = handshake(&lever.person);
+
+    write_frame(&mut peer, &json!({ "op": "models" })).unwrap();
+    let models = read_until(&mut peer, |f| f.get("reply").is_some());
+    assert_eq!(models["steering"], false, "{models}");
+
+    let (thread, turn) = send(&mut peer, None, "slow work");
+    read_until(&mut peer, |f| f["event"] == "text");
+    write_frame(
+        &mut peer,
+        &json!({ "op": "send", "thread": thread, "text": "Change of plan" }),
+    )
+    .unwrap();
+    let refused = read_until(&mut peer, |f| f.get("reply").is_some());
+    assert_eq!(refused["code"], "working", "{refused}");
+    assert!(
+        refused["message"].as_str().unwrap().contains("cannot take a message"),
+        "the person is told why: {refused}"
+    );
+    assert!(
+        !rpc_sent(&rpc_log).iter().any(|m| m["method"] == "_session/steering"),
+        "a harness that does not say it can steer is never asked to"
+    );
+
+    write_frame(&mut peer, &json!({ "op": "stop", "thread": thread, "turn": turn })).unwrap();
+    read_until(&mut peer, |f| f["event"] == "stopped");
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_message_whose_harness_ends_before_it_answers_is_refused_and_its_turn_interrupted() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "steering": true,
+            "steer_exits": true,
+            "turns": [{ "match": "slow", "stall": true, "steps": [{ "kind": "text", "text": "Working. " }] }]
+        }),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let mut other = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "slow work");
+    read_until(&mut peer, |f| f["event"] == "text");
+
+    write_frame(
+        &mut other,
+        &json!({ "op": "send", "thread": thread, "text": "Change of plan" }),
+    )
+    .unwrap();
+    let refused = read_until(&mut other, |f| f.get("reply").is_some());
+    assert_eq!(refused["code"], "not-steered", "{refused}");
+    assert!(
+        refused["message"].as_str().unwrap().contains("Send it again"),
+        "{refused}"
+    );
+    let events = turn_events(&mut peer, &thread, turn);
+    assert_eq!(events.last().unwrap()["event"], "interrupted");
+    assert!(!events.iter().any(|e| e["event"] == "steered"));
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));

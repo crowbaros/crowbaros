@@ -7,8 +7,8 @@ use crate::channel::LEVER_VERSION;
 use crate::fulcrum;
 use crate::log::{Event, Log};
 use crate::store::{
-    ActPatch, ActRecord, NewRequest, NewThread, NoteRecord, RequestRecord, Store, SubagentActPatch, SubagentPatch,
-    SubagentRecord, ThreadRecord, ThreadSummary, TurnRecord,
+    ActPatch, ActRecord, NewRequest, NewThread, NoteRecord, RequestRecord, SteerRecord, Store, SubagentActPatch,
+    SubagentPatch, SubagentRecord, ThreadMeta, ThreadRecord, ThreadSummary, TurnRecord,
 };
 use crate::sys;
 use serde_json::{Value, json};
@@ -52,6 +52,17 @@ const NO_MODEL_MESSAGE: &str = "No Model is available. Run `crowbar-agent free-m
 /// again, and what Lever keeps as that note's source.
 const NEW_SESSION_NOTE: &str = "The harness could not pick this thread's session up again. It began a new one, which has none of the turns before.";
 const NEW_SESSION_SOURCE: &str = r#"{"lever":"new-session"}"#;
+/// Why a message sent while a turn works is refused, when the thread's
+/// harness cannot take a message into a turn under way.
+const CANNOT_STEER_MESSAGE: &str = "The Agent is working on this thread, and its harness cannot take a message \
+     into a turn under way. Send it when the turn ends, or stop the turn.";
+/// Why a message sent while a turn works is refused when it would change what
+/// the turn runs with.
+const STEER_CHANGES_MESSAGE: &str = "A message taken into a turn under way cannot change the thread's mode, Model, \
+     or effort. Send it without them, or when the turn ends.";
+/// What the person is told when the harness went before it answered a
+/// message steered into its turn.
+const STEER_LOST_MESSAGE: &str = "The harness stopped before it took your message into the turn. Send it again.";
 
 /// One broadcast event targeted at peers subscribed to `thread_id`.
 pub struct Broadcast {
@@ -213,6 +224,27 @@ struct SubagentEnding {
     error: Option<String>,
 }
 
+/// A message steered into a thread's turn under way, whose taking the
+/// harness has yet to answer.
+struct PendingSteer {
+    /// Lever's number for it, which the harness's answer comes with.
+    steer: u64,
+    /// Peer waiting for the reply, or `None` if it went away.
+    peer_id: Option<u64>,
+    thread_id: String,
+    turn: u64,
+    text: String,
+    /// The desktop context it carries, as the record keeps it.
+    context: Option<Value>,
+}
+
+/// What a message asks of its thread besides its text.
+struct Wanted<'a> {
+    mode: Option<&'a str>,
+    model: Option<&'a str>,
+    effort: Option<&'a str>,
+}
+
 struct PendingDelete {
     peer_id: u64,
     thread: String,
@@ -262,6 +294,13 @@ pub struct Service {
     pending_models: Vec<u64>,
     pending_set_models: Vec<PendingSetModel>,
     pending_set_modes: Vec<PendingSetMode>,
+    /// Messages steered into turns under way, which the harness has yet to
+    /// answer, and the number the next one gets.
+    pending_steers: Vec<PendingSteer>,
+    next_steer: u64,
+    /// The harness last started says it can take a message into a turn under
+    /// way.
+    steering: bool,
     /// The effort levels of each Model, as the harness now running said them.
     /// A Model with none has an empty list.
     efforts: HashMap<String, Vec<EffortOption>>,
@@ -329,6 +368,9 @@ impl Service {
             pending_models: Vec::new(),
             pending_set_models: Vec::new(),
             pending_set_modes: Vec::new(),
+            pending_steers: Vec::new(),
+            next_steer: 0,
+            steering: false,
             efforts: HashMap::new(),
             pending_efforts: Vec::new(),
             commands: None,
@@ -361,6 +403,7 @@ impl Service {
             || !self.waiting.is_empty()
             || !self.pending_models.is_empty()
             || !self.pending_set_models.is_empty()
+            || !self.pending_steers.is_empty()
             || !self.pending_efforts.is_empty()
             || !self.modes_in_flight.is_empty()
             || self.probe_wanted
@@ -565,7 +608,7 @@ impl Service {
         {
             effects.broadcasts.push(Broadcast {
                 thread_id: ACTIVITY.to_string(),
-                message: models_event_json(current, self.free_hosted_models()),
+                message: models_event_json(current, self.free_hosted_models(), self.steering),
             });
         }
     }
@@ -748,6 +791,13 @@ impl Service {
                 pending.peer_id = None;
             }
         }
+        // A message steered into a turn is the turn's once the harness takes
+        // it, whether or not who sent it waits to hear so.
+        for pending in &mut self.pending_steers {
+            if pending.peer_id == Some(peer_id) {
+                pending.peer_id = None;
+            }
+        }
         self.pending_models.retain(|&id| id != peer_id);
         self.pending_efforts.retain(|(id, _)| *id != peer_id);
         self.pending_set_models.retain_mut(|p| {
@@ -795,7 +845,7 @@ impl Service {
             "status" => self.handle_status(),
             "list" => self.handle_list(value),
             "archive" | "delete" => self.handle_lifecycle(peer_id, op, value, log),
-            "send" => self.handle_send(is_person, value, log),
+            "send" => self.handle_send(peer_id, is_person, value, log),
             "resume" => self.handle_resume(value),
             "stop" => self.handle_stop(value, log),
             "models" => self.handle_models(peer_id, value, log),
@@ -1174,7 +1224,7 @@ impl Service {
             && let Some(catalog) = &self.model_catalog
         {
             return RequestOutcome {
-                reply: Some(models_reply_json(catalog, self.free_hosted_models())),
+                reply: Some(models_reply_json(catalog, self.free_hosted_models(), self.steering)),
                 subscribe: None,
                 broadcasts: Vec::new(),
             };
@@ -1588,7 +1638,7 @@ impl Service {
         }
     }
 
-    fn handle_send(&mut self, is_person: bool, value: &Value, log: &mut Log) -> RequestOutcome {
+    fn handle_send(&mut self, peer_id: u64, is_person: bool, value: &Value, log: &mut Log) -> RequestOutcome {
         let Some(text) = value
             .get("text")
             .and_then(Value::as_str)
@@ -1679,6 +1729,27 @@ impl Service {
                         meta.working_turn.is_some() || self.thread_busy(tid)
                     };
                     if busy {
+                        // A message sent while the person's turn works is
+                        // taken into that turn, where the harness can.
+                        if woken.is_none()
+                            && let Some((turn, session_id)) = self.steerable_turn(tid)
+                        {
+                            let wanted = Wanted {
+                                mode: requested_mode,
+                                model: requested_model,
+                                effort: requested_effort,
+                            };
+                            return self.steer_into_turn(
+                                peer_id,
+                                is_person,
+                                tid,
+                                turn,
+                                &session_id,
+                                &meta,
+                                text,
+                                wanted,
+                            );
+                        }
                         return error_outcome("working", "This thread is already working on a turn.");
                     }
                     // OpenCode 2.4.1 withdraws a subagent's request when
@@ -1737,19 +1808,8 @@ impl Service {
             return outcome;
         }
 
-        // Messages from the Agent's surface carry desktop context fetched from
-        // Fulcrum (active window title/app_id, windows by workspace, displays —
-        // never window contents or clipboard). With Fulcrum away, none is sent.
-        let desktop_context = if !is_person {
-            self.fulcrum_socket
-                .as_deref()
-                .and_then(|path| fulcrum::fetch_snapshot(path, fulcrum::SNAPSHOT_TIMEOUT))
-        } else {
-            None
-        };
-        let context_value = desktop_context.as_ref().and_then(|ctx| serde_json::to_value(ctx).ok());
+        let (context_value, context_prompt) = self.desktop_context(is_person);
         let context_json = context_value.as_ref().map(Value::to_string);
-        let context_prompt = desktop_context.as_ref().map(fulcrum::format_desktop_context);
 
         // A new thread's requested Model is persisted only after the harness
         // accepts it (in `SessionReady` or `ModelSet`), so a rejected `--model`
@@ -1864,6 +1924,158 @@ impl Service {
             })),
             subscribe: Some(thread_id),
             broadcasts,
+        }
+    }
+
+    /// The desktop context a message carries, as the record keeps it and as
+    /// the harness is told it. Messages from the Agent's surface carry it,
+    /// fetched from Fulcrum (active window title/app_id, windows by
+    /// workspace, displays — never window contents or clipboard). With
+    /// Fulcrum away, none is sent.
+    fn desktop_context(&self, is_person: bool) -> (Option<Value>, Option<String>) {
+        let desktop_context = if !is_person {
+            self.fulcrum_socket
+                .as_deref()
+                .and_then(|path| fulcrum::fetch_snapshot(path, fulcrum::SNAPSHOT_TIMEOUT))
+        } else {
+            None
+        };
+        (
+            desktop_context.as_ref().and_then(|ctx| serde_json::to_value(ctx).ok()),
+            desktop_context.as_ref().map(fulcrum::format_desktop_context),
+        )
+    }
+
+    /// The person's turn a message sent now could be steered into, with its
+    /// session: one whose prompt the harness is working on, that the person
+    /// has not asked to stop, on a session Lever is changing nothing of.
+    fn steerable_turn(&self, thread_id: &str) -> Option<(u64, String)> {
+        let active = self.working_turns.get(thread_id)?;
+        if active.stop_asked.is_some() || self.session_change_pending(thread_id) {
+            return None;
+        }
+        match &active.dispatch {
+            TurnDispatch::PromptInFlight { session_id } => Some((active.turn, session_id.clone())),
+            _ => None,
+        }
+    }
+
+    /// Steers a message into a thread's turn under way, when its harness can
+    /// take one. The reply waits on the harness's answer: `steered`, or
+    /// `not-steered` with why.
+    #[allow(clippy::too_many_arguments)]
+    fn steer_into_turn(
+        &mut self,
+        peer_id: u64,
+        is_person: bool,
+        thread_id: &str,
+        turn: u64,
+        session_id: &str,
+        meta: &ThreadMeta,
+        text: &str,
+        wanted: Wanted<'_>,
+    ) -> RequestOutcome {
+        if !self.harness.as_ref().is_some_and(AcpHarness::can_steer) {
+            return error_outcome("working", CANNOT_STEER_MESSAGE);
+        }
+        // OpenCode 2.4.1 withdraws a subagent's request when a new prompt
+        // comes, and a steered message comes as one.
+        if self
+            .waiting
+            .values()
+            .any(|w| w.thread_id == thread_id && w.record.subagent.is_some())
+        {
+            return error_outcome(
+                "subagent-asks",
+                "A subagent of this thread waits for your answer. Answer its request, or stop the thread, first.",
+            );
+        }
+        // The turn runs in the mode, Model, and effort it began with.
+        if wanted.mode.is_some_and(|m| m != meta.mode)
+            || wanted.model.is_some_and(|m| meta.model.as_deref() != Some(m))
+            || wanted.effort.is_some_and(|e| meta.effort.as_deref() != Some(e))
+        {
+            return error_outcome("working", STEER_CHANGES_MESSAGE);
+        }
+        let (context, context_prompt) = self.desktop_context(is_person);
+        let steer = self.next_steer;
+        self.next_steer += 1;
+        if let Some(harness) = self.harness.as_mut() {
+            harness.steer(thread_id, steer, session_id, context_prompt.as_deref(), text);
+        }
+        self.pending_steers.push(PendingSteer {
+            steer,
+            peer_id: Some(peer_id),
+            thread_id: thread_id.to_string(),
+            turn,
+            text: text.to_string(),
+            context,
+        });
+        RequestOutcome {
+            reply: None,
+            subscribe: None,
+            broadcasts: Vec::new(),
+        }
+    }
+
+    /// The harness answered a message steered into a turn. One it took is
+    /// kept with its turn, at the place in the answer it came to, and told
+    /// to who watches the thread; one it did not take is refused.
+    fn steer_answered(&mut self, steer: u64, taken: Result<(), String>, log: &mut Log) -> Effects {
+        let Some(at) = self.pending_steers.iter().position(|p| p.steer == steer) else {
+            return Effects::default();
+        };
+        let pending = self.pending_steers.remove(at);
+        let thread_id = pending.thread_id;
+        if let Err(message) = taken {
+            return Effects {
+                broadcasts: Vec::new(),
+                replies: pending
+                    .peer_id
+                    .map(|peer_id| PeerReply {
+                        peer_id,
+                        message: error_json("not-steered", &message),
+                        subscribe: None,
+                    })
+                    .into_iter()
+                    .collect(),
+            };
+        }
+        // The message still goes to who is watching. The turn's end says
+        // that not all of it was saved.
+        let context_json = pending.context.as_ref().map(Value::to_string);
+        if let Err(err) = self.store.insert_steer(
+            &thread_id,
+            pending.turn,
+            &pending.text,
+            context_json.as_deref(),
+            unix_now(),
+        ) {
+            self.could_not_save(&thread_id, &err, log);
+        }
+        let mut event = json!({
+            "event": "steered",
+            "thread": thread_id,
+            "turn": pending.turn,
+            "text": pending.text,
+        });
+        if let Some(context) = pending.context {
+            event["context"] = context;
+        }
+        Effects {
+            broadcasts: vec![Broadcast {
+                thread_id: thread_id.clone(),
+                message: event,
+            }],
+            replies: pending
+                .peer_id
+                .map(|peer_id| PeerReply {
+                    peer_id,
+                    message: json!({ "reply": "steered", "thread": thread_id, "turn": pending.turn }),
+                    subscribe: Some(thread_id.clone()),
+                })
+                .into_iter()
+                .collect(),
         }
     }
 
@@ -2418,7 +2630,9 @@ impl Service {
     fn apply_acp_event(&mut self, event: AcpEvent, log: &mut Log) -> Effects {
         match event {
             AcpEvent::SessionDeleted { thread_id, result } => self.finish_delete(&thread_id, result, None),
+            AcpEvent::SteerAnswered { steer, taken } => self.steer_answered(steer, taken, log),
             AcpEvent::Initialized => {
+                self.steering = self.harness.as_ref().is_some_and(AcpHarness::can_steer);
                 let waiting: Vec<String> = self
                     .working_turns
                     .iter()
@@ -2491,7 +2705,7 @@ impl Service {
                         for peer_id in self.pending_models.drain(..) {
                             effects.replies.push(PeerReply {
                                 peer_id,
-                                message: models_reply_json(&catalog, free),
+                                message: models_reply_json(&catalog, free, self.steering),
                                 subscribe: None,
                             });
                         }
@@ -3282,6 +3496,15 @@ impl Service {
                 message: error_json("harness-error", message),
                 subscribe: None,
             });
+        }
+        for item in self.pending_steers.drain(..) {
+            if let Some(peer_id) = item.peer_id {
+                replies.push(PeerReply {
+                    peer_id,
+                    message: error_json("not-steered", STEER_LOST_MESSAGE),
+                    subscribe: None,
+                });
+            }
         }
         replies
     }
@@ -4321,7 +4544,7 @@ fn error_outcome(code: &str, message: &str) -> RequestOutcome {
     }
 }
 
-fn models_payload_json(kind_key: &str, catalog: &ModelCatalog, free_hosted_models: bool) -> Value {
+fn models_payload_json(kind_key: &str, catalog: &ModelCatalog, free_hosted_models: bool, steering: bool) -> Value {
     let models: Vec<Value> = catalog
         .models
         .iter()
@@ -4344,17 +4567,18 @@ fn models_payload_json(kind_key: &str, catalog: &ModelCatalog, free_hosted_model
             .iter()
             .map(|m| json!({ "id": m, "name": acp::mode_name(m).unwrap_or(m) }))
             .collect::<Vec<_>>(),
+        "steering": steering,
     });
     obj[kind_key] = json!("models");
     obj
 }
 
-fn models_reply_json(catalog: &ModelCatalog, free_hosted_models: bool) -> Value {
-    models_payload_json("reply", catalog, free_hosted_models)
+fn models_reply_json(catalog: &ModelCatalog, free_hosted_models: bool, steering: bool) -> Value {
+    models_payload_json("reply", catalog, free_hosted_models, steering)
 }
 
-fn models_event_json(catalog: &ModelCatalog, free_hosted_models: bool) -> Value {
-    models_payload_json("event", catalog, free_hosted_models)
+fn models_event_json(catalog: &ModelCatalog, free_hosted_models: bool, steering: bool) -> Value {
+    models_payload_json("event", catalog, free_hosted_models, steering)
 }
 
 fn efforts_reply_json(model: &str, levels: &[EffortOption]) -> Value {
@@ -4438,6 +4662,9 @@ fn turn_record_json(t: &TurnRecord) -> Value {
         "notes": t.notes.iter().map(note_record_json).collect::<Vec<_>>(),
         "subagents": t.subagents.iter().map(subagent_record_json).collect::<Vec<_>>(),
     });
+    if !t.steered.is_empty() {
+        obj["steered"] = json!(t.steered.iter().map(steer_record_json).collect::<Vec<_>>());
+    }
     if let Some(mode) = &t.mode {
         obj["mode"] = json!(mode);
     }
@@ -4452,6 +4679,14 @@ fn turn_record_json(t: &TurnRecord) -> Value {
     }
     if let Some(origin) = &t.origin {
         obj["origin"] = json!(origin);
+    }
+    obj
+}
+
+fn steer_record_json(s: &SteerRecord) -> Value {
+    let mut obj = json!({ "text": s.text, "at": s.at });
+    if let Some(context) = &s.context {
+        obj["context"] = context.clone();
     }
     obj
 }

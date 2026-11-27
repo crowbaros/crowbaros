@@ -82,6 +82,20 @@ pub struct TurnRecord {
     pub requests: Vec<RequestRecord>,
     pub notes: Vec<NoteRecord>,
     pub subagents: Vec<SubagentRecord>,
+    /// Messages the person sent while the turn worked, which the harness
+    /// took into it, in the order it took them.
+    pub steered: Vec<SteerRecord>,
+}
+
+/// A message the harness took into a turn under way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SteerRecord {
+    pub text: String,
+    /// The desktop context it carried, when it was sent from the drawer.
+    pub context: Option<serde_json::Value>,
+    /// How much of the turn's answer, in bytes, had come when the harness
+    /// took it: where in the answer it was taken.
+    pub at: u64,
 }
 
 /// One message in a subagent's record: either the `prompt` given to it or
@@ -230,7 +244,7 @@ impl Store {
                  key TEXT PRIMARY KEY,\n\
                  value TEXT NOT NULL\n\
              );\n\
-             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '7');\n\
+             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '8');\n\
              CREATE TABLE IF NOT EXISTS threads (\n\
                  id TEXT PRIMARY KEY,\n\
                  title TEXT NOT NULL,\n\
@@ -313,6 +327,15 @@ impl Store {
                  role TEXT NOT NULL,\n\
                  text TEXT NOT NULL,\n\
                  seq INTEGER NOT NULL\n\
+             );\n\
+             CREATE TABLE IF NOT EXISTS steers (\n\
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,\n\
+                 thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,\n\
+                 turn_number INTEGER NOT NULL,\n\
+                 text TEXT NOT NULL,\n\
+                 context TEXT,\n\
+                 at INTEGER NOT NULL,\n\
+                 created_at INTEGER NOT NULL\n\
              );\n\
              CREATE TABLE IF NOT EXISTS subagent_acts (\n\
                  id TEXT PRIMARY KEY,\n\
@@ -916,6 +939,30 @@ impl Store {
         Ok((recorded_turn, record))
     }
 
+    /// Keeps a message the harness took into a turn under way, at the place
+    /// in the turn's answer it had come to, which it returns.
+    pub fn insert_steer(
+        &self,
+        thread_id: &str,
+        turn_number: u64,
+        text: &str,
+        context: Option<&str>,
+        now: i64,
+    ) -> Result<u64, String> {
+        let at: i64 = self
+            .conn
+            .query_row(
+                "INSERT INTO steers (thread_id, turn_number, text, context, at, created_at) \
+                 SELECT ?1, ?2, ?3, ?4, length(CAST(answer AS BLOB)), ?5 FROM turns \
+                 WHERE thread_id = ?1 AND turn_number = ?2 RETURNING at",
+                params![thread_id, turn_number as i64, text, context, now],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("could not insert steered message: {e}"))?;
+        self.touch_thread(thread_id, now)?;
+        Ok(at as u64)
+    }
+
     /// Stores a note: a harness update's JSON in `notes.raw_json` along with
     /// its plain text rendering. Returns Lever's own note record.
     pub fn insert_note(
@@ -1084,6 +1131,7 @@ impl Store {
                     requests: Vec::new(),
                     notes: Vec::new(),
                     subagents: Vec::new(),
+                    steered: Vec::new(),
                 })
             })
             .map_err(|e| format!("could not query turns: {e}"))?;
@@ -1181,6 +1229,30 @@ impl Store {
             sub.acts = self.subagent_acts(&sub.id)?;
             if let Some(turn) = turns.iter_mut().find(|t| t.turn == turn_number) {
                 turn.subagents.push(sub);
+            }
+        }
+
+        let mut steer_stmt = self
+            .conn
+            .prepare("SELECT turn_number, text, context, at FROM steers WHERE thread_id = ?1 ORDER BY id ASC")
+            .map_err(|e| format!("could not prepare steers query: {e}"))?;
+        let steer_rows = steer_stmt
+            .query_map(params![thread_id], |r| {
+                let raw_context: Option<String> = r.get(2)?;
+                Ok((
+                    r.get::<_, i64>(0)? as u64,
+                    SteerRecord {
+                        text: r.get(1)?,
+                        context: raw_context.and_then(|s| serde_json::from_str(&s).ok()),
+                        at: r.get::<_, i64>(3)? as u64,
+                    },
+                ))
+            })
+            .map_err(|e| format!("could not query steers: {e}"))?;
+        for row in steer_rows {
+            let (turn_number, steer) = row.map_err(|e| format!("could not read steer row: {e}"))?;
+            if let Some(turn) = turns.iter_mut().find(|t| t.turn == turn_number) {
+                turn.steered.push(steer);
             }
         }
 

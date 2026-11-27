@@ -180,6 +180,18 @@ ACP today:
   person sends one as a message that begins with `/` and its name. Lever does
   nothing with such a message but send it: the harness takes it for a slash
   command or for words.
+- **Steering.** A harness that says it can take a message into a turn under
+  way is sent the person's message while its turn works, and says whether it
+  took it. Lever records a message it took with that turn, at the place in
+  the answer it had come to, and refuses one it did not take. Lever asks this
+  of a harness that has said it can, and of no other. Each adapter steers in
+  its harness's own way. ACP's first version has no steering; OpenCode adds
+  its own: its `initialize` answer says `_meta.steering.supported`, and a
+  `_session/steering` request with the session and the message, as a prompt
+  carries them, is answered `injected` when the running prompt takes it, at
+  its next step, and `promptRequired` when no prompt runs. OpenCode says
+  nothing more of the message: the Model's next call has it, and the turn's
+  prompt goes on to its end with the answer to it.
 - **An update that comes after its turn ended goes to the thread's newest
   turn.** ACP gives an update no turn. Lever takes what the harness has said
   before it hears a peer, so an update that is already there when the next
@@ -368,7 +380,7 @@ Request:
 Reply:
 
 ```json
-{"reply":"models","supported":true,"models":[{"id":"stub/stub-1","name":"Stub One","provider":"stub","provider_name":"stub"}],"default":"stub/stub-1","free_hosted_models":false,"modes":[{"id":"ask-first","name":"Ask first"},{"id":"full-access","name":"Full access"},{"id":"plan","name":"Plan"}]}
+{"reply":"models","supported":true,"models":[{"id":"stub/stub-1","name":"Stub One","provider":"stub","provider_name":"stub"}],"default":"stub/stub-1","free_hosted_models":false,"modes":[{"id":"ask-first","name":"Ask first"},{"id":"full-access","name":"Full access"},{"id":"plan","name":"Plan"}],"steering":true}
 ```
 
 - `supported`: `true` when the harness exposes Model selection (or reported
@@ -382,6 +394,8 @@ Reply:
 - `modes`: the modes Lever offers for this harness, as `{id, name}` entries:
   those of `ask-first`, `full-access`, and `plan` the harness reports, in that
   order. Empty when the harness reports no modes.
+- `steering`: `true` when the harness last started said it can take a message
+  into a turn under way (see `send`).
 
 Errors: `no-harness`, `working`, `harness-error`, `invalid-request`.
 
@@ -619,10 +633,28 @@ Reply:
 {"reply":"sent","thread":"t-01a2b3c4d5e6","turn":1}
 ```
 
+A message sent while a turn of the person's works is taken into that turn
+where the harness can steer one, as [the harness](#the-harness) says. The
+reply waits on the harness's answer. When it took the message, the reply is
+`steered`, with the turn it went into, and a `steered` event follows:
+
+```json
+{"reply":"steered","thread":"t-01a2b3c4d5e6","turn":1}
+```
+
+When the harness did not take it, as when the turn ended just as it came,
+the reply is `not-steered`, and the message goes nowhere: the person sends it
+again. A harness that cannot steer has the message refused with `working`,
+and a message that would change the thread's mode, Model, or effort is
+refused the same way: a turn runs in what it began with. So is one sent
+before the harness has the turn's prompt, or after the person asked to stop
+the turn.
+
 A subagent that still works does not hold a message back, and a turn the
 harness began itself is taken over by it, as [the harness](#the-harness)
-says. `working` is for a turn of the person's that works, or a change Lever
-asked of the session that the harness has yet to answer. `subagent-asks` is
+says. `working` is for a turn of the person's that works and cannot be
+steered into, or a change Lever asked of the session that the harness has
+yet to answer. `subagent-asks` is
 for a subagent of the thread whose request waits for the person: OpenCode
 2.4.1 withdraws such a request when a new prompt comes, without answering it
 for the subagent, which then waits on it for good. Answer it, or stop the
@@ -635,7 +667,7 @@ says to send it again, and what the harness says is a turn of its own. If the
 harness had already begun answering in that turn, the message took that
 answer over: the turn keeps it, and its prompt goes once the request ends.
 
-Errors: `no-harness`, `no-model`, `no-thread`, `working`, `subagent-asks`, `invalid-mode`, `invalid-effort`,
+Errors: `no-harness`, `no-model`, `no-thread`, `working`, `not-steered`, `subagent-asks`, `invalid-mode`, `invalid-effort`,
 `invalid-request`, and `storage-error` when Lever's database does not take the turn, or has yet to
 take how the thread's last turn ended.
 
@@ -671,7 +703,10 @@ recorded before modes), its requests (`"requests":[...]`, each as the
 [`request` event](#events) has it, without `event`, `thread`, and `turn`), and
 its subagents (`"subagents":[...]`, each with Lever's `subagent` ID, `title`,
 `state`, `started`, optional `ended` and `error`, `messages` with `role` and
-`text`, and `acts`). A turn the harness began itself carries
+`text`, and `acts`). A turn the harness took messages into while it worked
+carries them in the order it took them (`"steered":[...]`, each with its
+`text`, the `context` it carried when it had one, and `at`: how many bytes of
+the turn's `answer` had come when the harness took it, so it shows there). A turn the harness began itself carries
 `"origin":"harness"` and an empty `"message"`. A thread's `"working"` is `true`
 while any of its turns or subagents still works.
 
@@ -826,6 +861,14 @@ Pushed to every connection subscribed to `thread`:
   A turn the harness began itself, or one Lever ended when it went quiet and
   that works again, comes with `"text":""` and `"origin":"harness"`.
 
+- **`steered`** — the harness took a message of the person's into the turn
+  under way. It shows after what of the answer has come, and carries
+  `"context"` as a `message` does:
+
+  ```json
+  {"event":"steered","thread":"t-01a2b3c4d5e6","turn":1,"text":"Also check the docs"}
+  ```
+
 - **`text`** — a streamed piece of the answer (also taken if it arrives after a
   turn ended):
 
@@ -919,7 +962,7 @@ Pushed to every connection subscribed to `thread`:
   following a sign-in), with the same fields as the `models` reply:
 
   ```json
-  {"event":"models","supported":true,"models":[{"id":"stub/stub-1","name":"Stub One","provider":"stub","provider_name":"stub"}],"default":"stub/stub-1","free_hosted_models":false,"modes":[{"id":"ask-first","name":"Ask first"}]}
+  {"event":"models","supported":true,"models":[{"id":"stub/stub-1","name":"Stub One","provider":"stub","provider_name":"stub"}],"default":"stub/stub-1","free_hosted_models":false,"modes":[{"id":"ask-first","name":"Ask first"}],"steering":true}
   ```
 
 - **`free-models`** — to connections that sent `watch`, when `set-free-models`
