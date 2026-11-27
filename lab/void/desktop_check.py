@@ -2789,7 +2789,8 @@ finally:
                       lambda: not self.guest.ssh('pgrep -x opencode', check=False).stdout.strip())
             threads_before_hand = list(self.agent_view()['state']['threads'])
             self.run(
-                f'cd {hand_dir} && nohup chpst -u {person}:{person} env -i HOME={home} '
+                # Only the command goes to the background, so nothing holds ssh's output.
+                f'cd {hand_dir} || exit 1; nohup chpst -u {person}:{person} env -i HOME={home} '
                 f'XDG_CONFIG_HOME={home}/.config XDG_DATA_HOME={home}/.local/share '
                 f'XDG_CACHE_HOME={home}/.cache XDG_STATE_HOME={home}/.local/state '
                 f'PATH=/usr/local/bin:/usr/bin:/bin '
