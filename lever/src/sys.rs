@@ -312,11 +312,14 @@ impl WorkerChild {
             // its own, and is then ended.
             let deadline = Instant::now() + grace;
             // SAFETY: probing the child's own process group with no signal.
-            while unsafe { libc::kill(group, 0) } == 0 && Instant::now() < deadline {
+            let left = || unsafe { libc::kill(group, 0) } == 0;
+            while left() && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(5));
             }
-            // SAFETY: signalling the child's own process group.
-            unsafe { libc::kill(group, libc::SIGKILL) };
+            if left() {
+                // SAFETY: signalling the child's own process group.
+                unsafe { libc::kill(group, libc::SIGKILL) };
+            }
             worker_children().retain(|&pid| pid != self.child.id());
             return Some(status);
         }

@@ -301,16 +301,18 @@ ACP today:
     asked again while it runs. Listing writes to the harness's own store as the
     harness starts, so a change seen while a pass runs brings a follow-up pass,
     and a follow-up brings another only when what it listed differs from the
-    pass before it, or when the store may have changed after it listed: a
-    one-shot listing watches the store itself, and a write once it has
-    answered is not its own, as the harness writes nothing then; and the
-    harness's own commands, run after listing as classifying a session does,
-    run only for sessions not yet classified, so a quiet store goes quiet. A
-    failed pass brings at most one follow-up. A change seen once a pass has
-    ended always brings a pass. What a pass cannot tell from its own writes is
-    a write made between the harness reading its sessions and its answer
-    reaching Lever, or one made while Lever's own running harness answers a
-    listing; a session's next write brings it. Closing a file
+    pass before it, or when the store may have changed after it listed. A
+    one-shot listing lists twice in the same harness: the harness writes to its
+    store as it starts and not once it has answered, so the second listing,
+    taken once the first has answered, has every write made since in it, and
+    the store is watched from then to the pass's end for any write after it.
+    The harness's own commands, run after listing as classifying a session
+    does, run only for sessions not yet classified, so a quiet store goes
+    quiet. A failed pass brings at most one follow-up. A change seen once a
+    pass has ended always brings a pass. What a pass cannot tell from its own
+    writes is a write made while Lever's own running harness answers a
+    listing, or in the moment a pass hands what it found to Lever; a session's
+    next write brings it. Closing a file
     written to is not watched, as every write was seen as it was made. Each
     listing command has a 15 s deadline, runs in a process group of its own
     that is ended with it, whatever of the group is left ending too, and ends
@@ -321,8 +323,8 @@ ACP today:
     with OpenCode's own `opencode session export --standalone <id>`, without
     reading OpenCode's internal SQLite schema. Sessions are classified newest
     first. The first export of a pass has the full 15 s, and the rest only
-    what is left of the pass's 2 s; what is left waits for the next pass, which
-    follows at once. A session becomes a thread only on
+    what is left of the pass's 2 s, none starting with less than 0.5 s; what is
+    left waits for the next pass, which follows at once. A session becomes a thread only on
     positive evidence: its export has messages and no parent. Only an export
     that names a parent marks it a subagent. A session whose export fails is
     tried again after a wait that doubles each time, from 5 s up to 5 minutes,

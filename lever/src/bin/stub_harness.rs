@@ -102,11 +102,23 @@ struct StubExternalSession {
 struct ChangeAfterList {
     on_start: usize,
     sessions: Value,
+    /// If true, the change is made after the listing is read and before its
+    /// answer is sent, not after.
+    #[serde(default)]
+    before_answer: bool,
 }
 
 /// Replaces the sessions file as `change_after_list` says, if this process
-/// is the one it names.
-fn change_store_after_listing(script: &Script) {
+/// is the one it names, once, `before` its answer or after it.
+fn change_store_after_listing(script: &Script, before: bool, done: &std::sync::atomic::AtomicBool) {
+    if script
+        .change_after_list
+        .as_ref()
+        .is_none_or(|c| c.before_answer != before)
+        || done.load(Ordering::Relaxed)
+    {
+        return;
+    }
     let (Some(change), Some(starts), Some(file)) =
         (&script.change_after_list, &script.touch_on_start, &script.sessions_file)
     else {
@@ -116,8 +128,11 @@ fn change_store_after_listing(script: &Script) {
     if started != change.on_start {
         return;
     }
-    // After the answer has gone out, which a writer thread sends.
-    std::thread::sleep(Duration::from_millis(50));
+    done.store(true, Ordering::Relaxed);
+    if !before {
+        // After the answer has gone out, which a writer thread sends.
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let tmp = format!("{file}.tmp");
     if std::fs::write(&tmp, change.sessions.to_string()).is_ok() {
         let _ = std::fs::rename(&tmp, file);
@@ -1882,6 +1897,7 @@ fn run(options: Options) -> Result<(), String> {
     let modes = Arc::new(Modes::read(script.modes, script.mode_values.as_deref()));
     let next_session = AtomicU64::new(1);
     let prompted = std::sync::atomic::AtomicBool::new(false);
+    let store_changed = std::sync::atomic::AtomicBool::new(false);
     let free_disabled = std::env::var("OPENCODE_DISABLE_FREE_MODELS").ok().as_deref() == Some("1");
     let default_model = script
         .default_model
@@ -2360,9 +2376,12 @@ fn run(options: Options) -> Result<(), String> {
                     if !last_page {
                         resp = resp.next_cursor(end.to_string());
                     }
+                    if last_page {
+                        change_store_after_listing(&script, true, &store_changed);
+                    }
                     writer.send_result(id, resp);
                     if last_page {
-                        change_store_after_listing(&script);
+                        change_store_after_listing(&script, false, &store_changed);
                     }
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),

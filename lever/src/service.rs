@@ -303,8 +303,11 @@ pub struct Service {
     /// True once the running harness left a `session/list` unanswered: until
     /// it is gone, discovery lists with a one-shot harness instead.
     live_list_unanswered: bool,
-    /// How long a pass waits after Lever's database could not be read.
+    /// How long a pass waits after Lever's database could not be read, or
+    /// after a listing failed while a session waited to be tried again.
     discovery_read_retry: Duration,
+    /// Whether a session whose export failed waits to be tried again.
+    export_retry_pending: bool,
     /// True if another pass was asked for while a live `session/list` RPC
     /// was already in flight on `self.harness`.
     live_list_rescan_wanted: bool,
@@ -443,6 +446,7 @@ impl Service {
             live_list_unanswered: false,
             live_list_rescan_wanted: false,
             discovery_read_retry: DISCOVERY_READ_RETRY,
+            export_retry_pending: false,
             loading_history: HashMap::new(),
             dispatched_history: HashSet::new(),
             pending_resumes: Vec::new(),
@@ -582,9 +586,17 @@ impl Service {
             Err(_) => {
                 self.discovery_pass_finished(rescan, PassEnd::Failed);
                 let _ = log.write(Event::Error, "could not list external harness sessions");
+                // A session waiting to be tried again still waits: the pass
+                // that was to try it is tried again, later each time.
+                if self.export_retry_pending {
+                    self.discovery_schedule
+                        .request(Instant::now() + self.discovery_read_retry);
+                    self.discovery_read_retry = (self.discovery_read_retry * 2).min(DISCOVERY_READ_RETRY_MAX);
+                }
                 return Effects::default();
             }
         };
+        self.export_retry_pending = found.retry_at.is_some();
         self.discovery_pass_finished(
             rescan || found.more,
             PassEnd::Listed {
@@ -777,7 +789,12 @@ impl Service {
                                 }),
                             });
                         }
-                        Err(err) => store_failed(log, &err),
+                        Err(err) => {
+                            store_failed(log, &err);
+                            // Listed again, so it is not left out.
+                            self.discovery_schedule
+                                .request(Instant::now() + self.discovery_read_retry);
+                        }
                     }
                 }
                 Err(err) => store_failed(log, &err),

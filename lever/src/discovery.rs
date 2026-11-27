@@ -128,13 +128,20 @@ pub trait SessionDiscoverer: Send + Sync {
 }
 
 /// What a one-shot listing found.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Listing {
     pub sessions: Vec<ExternalSession>,
-    /// Whether the harness's store was written after the listing was taken,
-    /// before the listing harness ended. It writes nothing then itself, so
-    /// the write was someone else's.
-    pub changed_after: bool,
+    /// The store, watched since the listing was taken, when it is.
+    pub watcher: Option<StoreWatcher>,
+}
+
+impl Listing {
+    /// Whether the harness's store has been written since the listing was
+    /// taken. The listing harness writes nothing then itself, so the write
+    /// was someone else's, or a command the pass ran since.
+    pub fn changed_since(&mut self) -> bool {
+        self.watcher.as_mut().is_some_and(StoreWatcher::drain_changed)
+    }
 }
 
 /// What Lever already knows of a harness's sessions.
@@ -239,10 +246,12 @@ impl DiscoveryRunner {
     pub fn request_scan(&mut self, known: KnownSessions) {
         let discoverer = Arc::clone(&self.discoverer);
         self.start_job("lever-discover", move || {
-            let listing = discoverer.list_sessions()?;
+            let mut listing = discoverer.list_sessions()?;
             let fingerprint = listing_fingerprint(&listing.sessions);
-            let mut found = discoverer.classify_sessions(listing.sessions, &known);
-            found.changed_after |= listing.changed_after;
+            let mut found = discoverer.classify_sessions(std::mem::take(&mut listing.sessions), &known);
+            // Watched to the job's end: only the hand-over to the service is
+            // left for the service's own watcher.
+            found.changed_after |= listing.changed_since();
             Ok((found, fingerprint))
         });
     }
@@ -519,15 +528,19 @@ impl AcpSessionDiscoverer {
             .map_err(|e| format!("could not set discovery stdout nonblocking: {e}"))?;
 
         let deadline = Instant::now() + DISCOVERY_RPC_TIMEOUT;
-        let mut read_buf = Vec::new();
-        let mut next_id: i64 = 1;
+        let mut rpc = OneShotRpc {
+            stdin: &mut stdin,
+            stdout: &mut stdout,
+            read_buf: Vec::new(),
+            next_id: 1,
+            deadline,
+        };
 
         let outcome = (|| -> Result<Vec<ExternalSession>, String> {
             let init = InitializeRequest::new(ProtocolVersion::V1)
                 .client_capabilities(ClientCapabilities::new())
                 .client_info(Implementation::new("crowbar-lever", crate::channel::LEVER_VERSION));
-            let init_id = send_acp_request(&mut stdin, &mut next_id, AGENT_METHOD_NAMES.initialize, &init)?;
-            let init_val = recv_acp_response(&mut stdout, &mut read_buf, init_id, deadline)?;
+            let init_val = rpc.call(AGENT_METHOD_NAMES.initialize, &init)?;
             if let Some(err) = init_val.get("error").filter(|v| !v.is_null()) {
                 return Err(format!("initialize failed during discovery: {err}"));
             }
@@ -540,61 +553,81 @@ impl AcpSessionDiscoverer {
             if init_resp.agent_capabilities.session_capabilities.list.is_none() {
                 return Ok(Vec::new());
             }
-
-            let mut all = Vec::new();
-            let mut seen_ids = HashSet::new();
-            let mut cursor: Option<String> = None;
-            for _ in 0..MAX_LIST_PAGES {
-                let mut req = ListSessionsRequest::new();
-                if let Some(ref c) = cursor {
-                    req = req.cursor(c.clone());
-                }
-                let req_id = send_acp_request(&mut stdin, &mut next_id, AGENT_METHOD_NAMES.session_list, &req)?;
-                let val = recv_acp_response(&mut stdout, &mut read_buf, req_id, deadline)?;
-                if let Some(err) = val.get("error").filter(|v| !v.is_null()) {
-                    return Err(format!("session/list failed: {err}"));
-                }
-                let resp: ListSessionsResponse =
-                    serde_json::from_value(val.get("result").cloned().unwrap_or(Value::Null))
-                        .map_err(|e| format!("invalid session/list response: {e}"))?;
-                if resp.sessions.is_empty() {
-                    break;
-                }
-                let mut added = 0;
-                for info in resp.sessions {
-                    let Some(ext) = session_info_to_external(&info) else {
-                        continue;
-                    };
-                    if !seen_ids.insert(ext.harness_session_id.clone()) {
-                        continue;
-                    }
-                    all.push(ext);
-                    added += 1;
-                }
-                if added == 0 {
-                    break;
-                }
-                match resp.next_cursor {
-                    Some(next) if !next.is_empty() && Some(&next) != cursor.as_ref() => cursor = Some(next),
-                    _ => break,
-                }
+            // The harness writes to its store as it starts, and not once it
+            // has answered: a second listing, taken after the first has
+            // answered and its writes are drained, has every write made
+            // since in it, or seen by the watcher.
+            rpc.list_all()?;
+            if let Some(watcher) = watcher.as_mut() {
+                let _ = watcher.drain_changed();
             }
-            Ok(all)
+            rpc.list_all()
         })();
 
-        if let Some(watcher) = watcher.as_mut() {
-            let _ = watcher.drain_changed();
-        }
         // Always close stdin and stop the discovery child immediately so no
         // harness process is ever left running for session discovery.
+        drop(rpc);
         drop(stdin);
         drop(stdout);
         child.finish(Duration::from_millis(300));
-        let changed_after = watcher.as_mut().is_some_and(StoreWatcher::drain_changed);
-        outcome.map(|sessions| Listing {
-            sessions,
-            changed_after,
-        })
+        outcome.map(|sessions| Listing { sessions, watcher })
+    }
+}
+
+/// One-shot JSON-RPC calls to a harness started for one listing.
+struct OneShotRpc<'a> {
+    stdin: &'a mut std::process::ChildStdin,
+    stdout: &'a mut std::process::ChildStdout,
+    read_buf: Vec<u8>,
+    next_id: i64,
+    deadline: Instant,
+}
+
+impl OneShotRpc<'_> {
+    fn call<P: serde::Serialize>(&mut self, method: &str, params: &P) -> Result<Value, String> {
+        let id = send_acp_request(self.stdin, &mut self.next_id, method, params)?;
+        recv_acp_response(self.stdout, &mut self.read_buf, id, self.deadline)
+    }
+
+    /// Every session the harness lists, following its pages.
+    fn list_all(&mut self) -> Result<Vec<ExternalSession>, String> {
+        let mut all = Vec::new();
+        let mut seen_ids = HashSet::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..MAX_LIST_PAGES {
+            let mut req = ListSessionsRequest::new();
+            if let Some(ref c) = cursor {
+                req = req.cursor(c.clone());
+            }
+            let val = self.call(AGENT_METHOD_NAMES.session_list, &req)?;
+            if let Some(err) = val.get("error").filter(|v| !v.is_null()) {
+                return Err(format!("session/list failed: {err}"));
+            }
+            let resp: ListSessionsResponse = serde_json::from_value(val.get("result").cloned().unwrap_or(Value::Null))
+                .map_err(|e| format!("invalid session/list response: {e}"))?;
+            if resp.sessions.is_empty() {
+                break;
+            }
+            let mut added = 0;
+            for info in resp.sessions {
+                let Some(ext) = session_info_to_external(&info) else {
+                    continue;
+                };
+                if !seen_ids.insert(ext.harness_session_id.clone()) {
+                    continue;
+                }
+                all.push(ext);
+                added += 1;
+            }
+            if added == 0 {
+                break;
+            }
+            match resp.next_cursor {
+                Some(next) if !next.is_empty() && Some(&next) != cursor.as_ref() => cursor = Some(next),
+                _ => break,
+            }
+        }
+        Ok(all)
     }
 }
 

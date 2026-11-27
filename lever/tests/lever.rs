@@ -9630,8 +9630,7 @@ fn a_listing_that_writes_to_the_store_it_watches_does_not_start_the_harness_agai
     assert_eq!(lever.wait().code(), Some(0));
 }
 
-#[test]
-fn a_session_written_after_a_follow_up_took_its_listing_is_still_found() {
+fn a_session_written_while_a_follow_up_lists_is_still_found(before_answer: bool) {
     let dir = TempDir::new();
     let store_dir = dir.0.join("harness-store");
     let sessions_file = store_dir.join("sessions.json");
@@ -9655,6 +9654,7 @@ fn a_session_written_after_a_follow_up_took_its_listing_is_still_found() {
             "touch_on_start": starts.to_str().unwrap(),
             "change_after_list": {
                 "on_start": 2,
+                "before_answer": before_answer,
                 "sessions": [session("ses_first", "First"), session("ses_late", "Late")]
             }
         }),
@@ -9679,6 +9679,16 @@ fn a_session_written_after_a_follow_up_took_its_listing_is_still_found() {
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_session_written_after_a_follow_up_answered_its_listing_is_still_found() {
+    a_session_written_while_a_follow_up_lists_is_still_found(false);
+}
+
+#[test]
+fn a_session_written_after_a_follow_up_read_its_sessions_but_before_it_answered_is_still_found() {
+    a_session_written_while_a_follow_up_lists_is_still_found(true);
 }
 
 #[test]

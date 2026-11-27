@@ -747,14 +747,16 @@ impl Store {
         created: i64,
         updated: i64,
     ) -> Result<(), String> {
-        self.conn
-            .execute(
-                "INSERT INTO threads (id, title, cwd, harness_name, harness_session_id, mode, needs_history, created_at, updated_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8)",
-                params![id, title, cwd, harness_name, harness_session_id, mode, created, updated],
-            )
-            .map_err(|e| format!("could not create discovered thread: {e}"))?;
-        self.forget_quiet_session(harness_session_id)
+        self.all_or_none("create discovered thread", || {
+            self.conn
+                .execute(
+                    "INSERT INTO threads (id, title, cwd, harness_name, harness_session_id, mode, needs_history, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8)",
+                    params![id, title, cwd, harness_name, harness_session_id, mode, created, updated],
+                )
+                .map_err(|e| format!("could not create discovered thread: {e}"))?;
+            self.forget_quiet_session(harness_session_id)
+        })
     }
 
     /// Updates the title or timestamp of an unopened discovered thread when

@@ -255,6 +255,8 @@ const OPENCODE_STORE_FILES: [&str; 4] = [
 const CLI_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long a pass starts exports for; what is left goes to the next pass.
 const CLASSIFY_BUDGET: Duration = Duration::from_secs(2);
+/// The least time left of a pass's budget that a later export starts with.
+const EXPORT_FLOOR: Duration = Duration::from_millis(500);
 /// How long a session whose export failed waits before it is tried again,
 /// doubling each time it fails, up to [`EXPORT_RETRY_MAX`].
 const EXPORT_RETRY: Duration = Duration::from_secs(5);
@@ -331,6 +333,10 @@ impl OpenCodeSessionDiscoverer {
             retry: Instant::now(),
             stamp: None,
         });
+        // A session the harness has changed since starts its count again.
+        if failed.stamp != session.stamp {
+            failed.count = 0;
+        }
         failed.count = failed.count.saturating_add(1);
         let wait = EXPORT_RETRY
             .saturating_mul(1 << failed.count.clamp(1, 8).saturating_sub(1))
@@ -374,7 +380,8 @@ impl SessionDiscoverer for OpenCodeSessionDiscoverer {
                 continue;
             }
             let left = CLASSIFY_BUDGET.saturating_sub(started.elapsed());
-            if found.changed_after && left.is_zero() {
+            // Too little left for an export to finish is left for the next pass.
+            if found.changed_after && left < EXPORT_FLOOR {
                 found.more = true;
                 break;
             }
@@ -965,6 +972,29 @@ mod tests {
         let changed = vec![fake.session("ses_slow", "2026-01-01T00:00:02Z")];
         let found = discoverer.classify_sessions(changed, &KnownSessions::default());
         assert_eq!(by_id(&found.sessions).get("ses_slow"), Some(&false));
+    }
+
+    #[test]
+    fn a_session_the_harness_changed_starts_its_failures_again() {
+        let fake = FakeOpenCode::new();
+        let discoverer = fake.discoverer(Duration::from_secs(5));
+        // No export answers for it.
+        let found = discoverer.classify_sessions(
+            vec![fake.session("ses_bad", "2026-01-01T00:00:01Z")],
+            &KnownSessions::default(),
+        );
+        assert!(found.sessions.is_empty());
+        discoverer.failures().get_mut("ses_bad").unwrap().retry = Instant::now();
+        discoverer.classify_sessions(
+            vec![fake.session("ses_bad", "2026-01-01T00:00:01Z")],
+            &KnownSessions::default(),
+        );
+        assert_eq!(discoverer.failures()["ses_bad"].count, 2);
+        discoverer.classify_sessions(
+            vec![fake.session("ses_bad", "2026-01-01T00:00:02Z")],
+            &KnownSessions::default(),
+        );
+        assert_eq!(discoverer.failures()["ses_bad"].count, 1, "its wait is short again");
     }
 
     #[test]
