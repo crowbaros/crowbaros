@@ -861,7 +861,8 @@ Pushed to every connection subscribed to `thread`:
   optional `ended` and `error`). While any subagent is `working`, the thread
   stays `working`, the harness is not stopped as idle, and the thread is not
   deleted. It still takes the person's messages and changes of
-  Model, mode, and effort:
+  Model, mode, and effort, though not a message while a subagent's request
+  waits (`subagent-asks`, under `send`):
 
   ```json
   {"event":"subagent","thread":"t-01a2b3c4d5e6","turn":1,"subagent":"sub-01a2b3c4d5e6","title":"Check workspace","state":"working","started":1764000001}
