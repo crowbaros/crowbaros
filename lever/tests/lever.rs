@@ -8971,3 +8971,55 @@ fn a_message_waiting_on_its_mode_ends_unsent_when_the_harness_goes_on_by_itself(
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn a_message_that_takes_over_with_a_mode_keeps_what_the_harness_says_as_its_mode_is_set() {
+    let dir = TempDir::new();
+    let uid = my_uid();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            // The answer to the mode comes with more of what the harness says.
+            "mode_reply_rides_with_text": " Still reporting.",
+            "turns": [
+                {
+                    "match": "first",
+                    "steps": [
+                        { "kind": "subagent_start", "id": "ses_take_mode", "title": "Dig", "prompt": "Dig in" },
+                        { "kind": "subagent_end", "subagent": "ses_take_mode", "status": "completed" },
+                        { "kind": "text", "text": "Started." }
+                    ],
+                    "after": [{ "kind": "text", "text": "Report in." }]
+                },
+                { "match": "next", "steps": [{ "kind": "text", "text": " Next answer." }] }
+            ]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &["--wake-quiet-ms", "60000"]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "first");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    read_until(&mut peer, |v| v["event"] == "text" && v["text"] == "Report in.");
+
+    // The person's message, with a mode, takes over the turn the harness began.
+    let sent = ask_lever(
+        &mut peer,
+        json!({ "op": "send", "thread": thread, "text": "next", "cwd": "/tmp", "mode": "full-access" }),
+    );
+    assert_eq!(sent["reply"], "sent", "{sent}");
+    let next = sent["turn"].as_u64().unwrap();
+    let ended = read_until(&mut peer, |v| {
+        v["turn"] == next && ["done", "failed", "stopped", "interrupted"].contains(&v["event"].as_str().unwrap_or(""))
+    });
+    assert_eq!(ended["event"], "done", "{ended}");
+    let record = resume(&mut peer, &thread);
+    let answer = record["turns"][2]["answer"].as_str().unwrap_or("");
+    assert!(answer.contains("Next answer."), "{record}");
+    assert_eq!(stub_prompts(&stub_log).len(), 2, "the message was not sent");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}

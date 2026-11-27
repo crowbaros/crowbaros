@@ -4062,12 +4062,18 @@ impl Service {
         broadcasts: &mut Vec<Broadcast>,
         log: &mut Log,
     ) -> Option<u64> {
-        // A message whose prompt has not gone out, as one held for a
-        // subagent's request or waiting on its mode, was never sent: what the
-        // harness begins meanwhile is not its answer. It ends unsent, and
-        // the harness's words are a turn of their own.
+        // A message whose prompt has not gone out, while a subagent's request
+        // waits, cannot go until the request ends: what the harness begins
+        // meanwhile is not its answer. It ends unsent, and the harness's
+        // words are a turn of their own. With no request waiting, the message
+        // goes as soon as it is ready, and the harness takes it into the work
+        // it is doing, as when it takes over a turn the harness began.
         if opens
             && self.subagent_threads.contains(thread_id)
+            && self
+                .waiting
+                .values()
+                .any(|w| w.thread_id == thread_id && w.record.subagent.is_some())
             && let Some(active) = self.working_turns.get(thread_id)
             && !matches!(
                 active.dispatch,

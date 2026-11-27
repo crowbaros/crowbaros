@@ -135,6 +135,10 @@ struct Script {
     /// subagent's (a child session ID), as when the subagent asks just then.
     #[serde(default)]
     mode_reply_rides_with_ask: Option<String>,
+    /// The answer to a mode change comes in one write with this text of the
+    /// session's, as when the harness goes on talking just then.
+    #[serde(default)]
+    mode_reply_rides_with_text: Option<String>,
     /// If true, `session/set_config_option` for an effort is answered with
     /// the effort the session was at, and the new one comes in a
     /// `config_option_update` that follows, as OpenCode does while another
@@ -1983,9 +1987,32 @@ fn run(options: Options) -> Result<(), String> {
                         let delay = Duration::from_millis(script.set_config_delay_ms);
                         let writer = writer.clone();
                         let rides = script.mode_reply_rides_with_ask.clone();
+                        let rides_text = script.mode_reply_rides_with_text.clone();
                         let parent = sid.clone();
                         let respond = move || {
                             thread::sleep(delay);
+                            if let Some(said) = rides_text {
+                                let reply =
+                                    JsonRpcMessage::wrap(Response::<SetSessionConfigOptionResponse, AcpError>::new(
+                                        id,
+                                        Ok(SetSessionConfigOptionResponse::new(opts)),
+                                    ));
+                                writer.send_together(&[
+                                    serde_json::to_value(reply).expect("serialize response"),
+                                    json!({
+                                        "jsonrpc": "2.0",
+                                        "method": CLIENT_METHOD_NAMES.session_update,
+                                        "params": {
+                                            "sessionId": parent,
+                                            "update": {
+                                                "sessionUpdate": "agent_message_chunk",
+                                                "content": { "type": "text", "text": said }
+                                            }
+                                        }
+                                    }),
+                                ]);
+                                return;
+                            }
                             let Some(child) = rides else {
                                 writer.send_result(id, SetSessionConfigOptionResponse::new(opts));
                                 return;
