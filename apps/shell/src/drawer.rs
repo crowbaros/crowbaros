@@ -830,8 +830,12 @@ impl AgentSurface {
                 sync_agent_view(&self.model, cx);
                 cx.notify();
             }
+            // The harness cannot take a message into a turn under way.
             SendPlan::Working => {
-                self.refuse("The Agent is working on this thread. /stop ends the turn.".into(), cx);
+                self.refuse(
+                    "The Agent can't take a message into this turn while it works. Send it when the turn ends, or /stop the turn.".into(),
+                    cx,
+                );
             }
             SendPlan::Ready {
                 tx,
@@ -1768,6 +1772,24 @@ fn styled(id: String, line: &markdown::Line, p: Palette, weight: FontWeight) -> 
     }
 }
 
+/// A message of the person's, set to the right.
+fn message_bubble(text: String, p: Palette) -> Div {
+    div().w_full().flex().justify_end().child(
+        div()
+            .max_w(relative(0.88))
+            .px(px(12.))
+            .py(px(8.))
+            .rounded(px(10.))
+            .bg(rgb(p.surface))
+            .border_1()
+            .border_color(rgb(p.line))
+            .text_size(px(13.))
+            .line_height(px(19.))
+            .text_color(rgb(p.text))
+            .child(text),
+    )
+}
+
 /// An answer, laid out as the Markdown it is.
 fn answer(turn: u64, text: &str, p: Palette) -> Div {
     answer_blocks(&format!("md-{turn}"), text, p)
@@ -2295,23 +2317,7 @@ impl Render for AgentSurface {
                             .child("The Agent went on after a subagent reported"),
                     );
                 } else {
-                    // The person's message, set to the right.
-                    turn_col = turn_col.child(
-                        div().w_full().flex().justify_end().child(
-                            div()
-                                .max_w(relative(0.88))
-                                .px(px(12.))
-                                .py(px(8.))
-                                .rounded(px(10.))
-                                .bg(rgb(p.surface))
-                                .border_1()
-                                .border_color(rgb(p.line))
-                                .text_size(px(13.))
-                                .line_height(px(19.))
-                                .text_color(rgb(p.text))
-                                .child(turn.message.clone()),
-                        ),
-                    );
+                    turn_col = turn_col.child(message_bubble(turn.message.clone(), p));
                 }
                 // The desktop context carried with the message.
                 match &turn.context {
@@ -2469,9 +2475,17 @@ impl Render for AgentSurface {
                             .child(note.text.clone()),
                     );
                 }
-                // The answer, and how the turn ended when it did not end done.
-                if !turn.answer.is_empty() {
-                    turn_col = turn_col.child(answer(turn.turn, &turn.answer, p));
+                // The answer, with each message the harness took into the
+                // turn where it took it, and how the turn ended when it did
+                // not end done.
+                for (part_ix, part) in turn.answer_parts().into_iter().enumerate() {
+                    turn_col = turn_col.child(match part {
+                        agent::AnswerPart::Text(text) if part_ix == 0 => answer(turn.turn, text, p),
+                        agent::AnswerPart::Text(text) => {
+                            answer_blocks(&format!("md-{}-{part_ix}", turn.turn), text, p)
+                        }
+                        agent::AnswerPart::Steered(steer) => message_bubble(steer.text.clone(), p),
+                    });
                 }
                 let ended = match &turn.state {
                     agent::TurnState::Stopped if acts.is_none() => Some("Stopped."),

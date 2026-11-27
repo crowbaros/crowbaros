@@ -3285,12 +3285,18 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 sync_mark_overlay(model, cx);
             }
             session::Event::Agent(agent_event) => {
-                let is_sent = matches!(agent_event, agent::AgentEvent::Sent { .. });
+                // A message taken into the turn under way was sent as much as
+                // one that began a turn: the message box lets it go.
+                let is_sent = matches!(
+                    agent_event,
+                    agent::AgentEvent::Sent { .. } | agent::AgentEvent::SteerTaken { .. }
+                );
                 let is_disconnected = matches!(agent_event, agent::AgentEvent::Disconnected);
                 let is_lifecycle = matches!(agent_event, agent::AgentEvent::Lifecycle { .. });
                 let should_scroll = matches!(
                     agent_event,
                     agent::AgentEvent::Message { .. }
+                        | agent::AgentEvent::Steered { .. }
                         | agent::AgentEvent::Act { .. }
                         | agent::AgentEvent::Note { .. }
                         | agent::AgentEvent::Request { .. }

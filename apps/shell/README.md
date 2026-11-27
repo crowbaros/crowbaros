@@ -153,8 +153,12 @@ historical behavior evidence, not a current Fedora workflow.
   eight lines, and then scrolls. What the person typed in a thread and did
   not send is there when they come back to that thread, and when the drawer
   is put away and summoned again. One quiet line under the box says the
-  thread's Model, effort, and mode. While a turn works the box takes
-  commands and no message.
+  thread's Model, effort, and mode. While a turn works, a message sent from
+  the box goes into that turn where the thread's harness can take one, as
+  Lever's `models` says (`steering`): it shows in the turn's answer where the
+  harness took it, as the person's message does, set to the right, and stays
+  there when the thread is read again. Where the harness cannot take one, or
+  did not take this one, the box keeps the message and the drawer says why.
 - An answer shows as the Markdown it is: paragraphs, headings, lists, quotes,
   strong and emphasised words, links (with destinations shown beside titled
   links; clicking copies the URL to the clipboard since the shell runs as its

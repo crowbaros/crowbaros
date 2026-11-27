@@ -394,6 +394,8 @@ pub struct Offer {
     pub default_model: Option<String>,
     pub free_hosted_models: bool,
     pub modes: Vec<ModeInfo>,
+    /// The harness can take a message into a turn under way.
+    pub steering: bool,
 }
 
 /// A provider in the Model picker's rail: its ID, and its name.
@@ -480,9 +482,54 @@ pub struct Turn {
     /// as OpenCode does when a subagent reports back.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub from_harness: bool,
+    /// Messages the person sent while the turn worked, which the harness
+    /// took into it, in the order it took them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steered: Vec<Steer>,
+}
+
+/// A message the harness took into a turn under way.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Steer {
+    pub text: String,
+    /// How many bytes of the turn's answer had come when the harness took
+    /// it: where in the answer it shows.
+    pub at: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<DesktopContext>,
+}
+
+/// A piece of a turn's answer as it shows: the answer's own words, or a
+/// message the harness took into the turn there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AnswerPart<'a> {
+    Text(&'a str),
+    Steered(&'a Steer),
 }
 
 impl Turn {
+    /// The turn's answer, with each message the harness took into the turn
+    /// at the place in the answer it took it. Words of no length are left
+    /// out.
+    pub fn answer_parts(&self) -> Vec<AnswerPart<'_>> {
+        let mut parts = Vec::new();
+        let mut from = 0;
+        for steer in &self.steered {
+            // Past what the record kept of the answer, it shows at its end.
+            let at = steer.at.min(self.answer.len());
+            let at = if at >= from && self.answer.is_char_boundary(at) { at } else { from };
+            if at > from {
+                parts.push(AnswerPart::Text(&self.answer[from..at]));
+            }
+            parts.push(AnswerPart::Steered(steer));
+            from = at;
+        }
+        if from < self.answer.len() {
+            parts.push(AnswerPart::Text(&self.answer[from..]));
+        }
+        parts
+    }
+
     /// How long the turn has worked, or worked: to `now` while it works.
     pub fn elapsed(&self, now: i64) -> Option<i64> {
         let started = self.started?;
@@ -580,6 +627,12 @@ pub enum LeverMessage {
     List { threads: Vec<ThreadSummary> },
     Resumed(ResumedThread),
     Sent { thread: String, turn: u64 },
+    /// The `steered` reply: the harness took the message sent into the turn
+    /// under way.
+    SteerTaken { thread: String, turn: u64 },
+    /// The `steered` event, which says where in the turn's answer it was
+    /// taken by coming after what of the answer has come.
+    Steered { thread: String, turn: u64, steer: Steer },
     Ok,
     Error { code: String, message: String },
     Message {
@@ -703,6 +756,18 @@ pub enum AgentEvent {
         thread: String,
         turn: u64,
     },
+    /// The harness took the message sent into the turn under way.
+    SteerTaken {
+        thread: String,
+        turn: u64,
+    },
+    /// A message the harness took into a turn, after what of the answer has
+    /// come.
+    Steered {
+        thread: String,
+        turn: u64,
+        steer: Steer,
+    },
     Message {
         thread: String,
         turn: u64,
@@ -821,6 +886,8 @@ impl LeverMessage {
             LeverMessage::Status(s) => Some(AgentEvent::Status(s)),
             LeverMessage::Resumed(r) => Some(AgentEvent::Resumed(r)),
             LeverMessage::Sent { thread, turn } => Some(AgentEvent::Sent { thread, turn }),
+            LeverMessage::SteerTaken { thread, turn } => Some(AgentEvent::SteerTaken { thread, turn }),
+            LeverMessage::Steered { thread, turn, steer } => Some(AgentEvent::Steered { thread, turn, steer }),
             LeverMessage::Message {
                 thread,
                 turn,
@@ -1143,6 +1210,9 @@ pub struct AgentState {
     /// empty `models` list does not mean "no Model available".
     #[serde(skip)]
     pub offer_unsupported: bool,
+    /// The harness can take a message into a turn under way, as Lever said
+    /// in its last `models`.
+    pub steering: bool,
     /// True once the person clicked Sign in from the drawer and Models have not
     /// refreshed (or failed to launch) yet.
     #[serde(skip)]
@@ -1314,9 +1384,15 @@ impl AgentState {
         }
     }
 
+    /// Whether a message sent now goes into the turn under way: the person's
+    /// turn works, and the harness can take a message into it.
+    pub fn can_steer(&self) -> bool {
+        self.steering && self.thread.is_some() && self.turn_working()
+    }
+
     pub fn can_send(&self) -> bool {
         self.connected
-            && !self.turn_working()
+            && (!self.turn_working() || self.can_steer())
             && !self.sending
             && !self.loading
             && !self.no_harness
@@ -1914,11 +1990,31 @@ impl AgentState {
                         started: Some(unix_now()),
                         ended: None,
                         from_harness,
+                        steered: Vec::new(),
                     });
                 }
                 self.error = None;
                 self.thread_mark = Mark::Working;
                 true
+            }
+            AgentEvent::SteerTaken { thread, .. } => {
+                if self.thread.as_deref() != Some(thread.as_str()) {
+                    return false;
+                }
+                self.sending = false;
+                self.error = None;
+                true
+            }
+            AgentEvent::Steered { thread, turn, mut steer } => {
+                if self.thread.as_deref() != Some(thread.as_str()) {
+                    return false;
+                }
+                if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
+                    steer.at = existing.answer.len();
+                    existing.steered.push(steer);
+                    return true;
+                }
+                false
             }
             AgentEvent::Text { thread, turn, text } => {
                 if self.thread.as_deref() != Some(thread.as_str()) {
@@ -2130,6 +2226,7 @@ impl AgentState {
                 self.models = offer.models;
                 self.default_model = offer.default_model;
                 self.free_hosted_models = offer.free_hosted_models;
+                self.steering = offer.steering;
                 self.offer_known = true;
                 self.offer_unsupported = !offer.supported;
                 self.models_chosen =
@@ -2907,6 +3004,10 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                 thread: msg.get("thread")?.as_str()?.to_string(),
                 turn: msg.get("turn")?.as_u64()?,
             }),
+            "steered" => Some(LeverMessage::SteerTaken {
+                thread: msg.get("thread")?.as_str()?.to_string(),
+                turn: msg.get("turn")?.as_u64()?,
+            }),
             "archived" | "deleted" => Some(LeverMessage::Lifecycle {
                 thread: msg.get("thread")?.as_str()?.into(), deleted: reply == "deleted",
                 warning: msg.get("warning").and_then(|v| v.as_str()).map(str::to_string),
@@ -2987,6 +3088,12 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
             turn,
             text: msg.get("text")?.as_str()?.to_string(),
         }),
+        // Taken after what of the answer has come: the state places it.
+        "steered" => Some(LeverMessage::Steered {
+            thread,
+            turn,
+            steer: parse_steer(msg, 0)?,
+        }),
         "act" => Some(LeverMessage::Act {
             thread,
             turn,
@@ -3040,6 +3147,23 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
     }
 }
 
+/// A message taken into a turn, as Lever's record or its event has it: `at`
+/// where the record says, or else `at`.
+fn parse_steer(value: &serde_json::Value, at: usize) -> Option<Steer> {
+    Some(Steer {
+        text: value.get("text")?.as_str()?.to_string(),
+        at: value
+            .get("at")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| usize::try_from(v).ok())
+            .unwrap_or(at),
+        context: value
+            .get("context")
+            .filter(|v| !v.is_null())
+            .and_then(|v| serde_json::from_value::<DesktopContext>(v.clone()).ok()),
+    })
+}
+
 fn parse_offer(msg: &serde_json::Value) -> Offer {
     Offer {
         supported: msg
@@ -3068,6 +3192,7 @@ fn parse_offer(msg: &serde_json::Value) -> Offer {
             .get("free_hosted_models")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        steering: msg.get("steering").and_then(|v| v.as_bool()).unwrap_or(false),
         modes: msg
             .get("modes")
             .and_then(|v| v.as_array())
@@ -3335,6 +3460,11 @@ fn parse_turn(value: &serde_json::Value) -> Option<Turn> {
         .and_then(|v| v.as_array())
         .map(|items| items.iter().filter_map(parse_subagent).collect())
         .unwrap_or_default();
+    let steered = value
+        .get("steered")
+        .and_then(|v| v.as_array())
+        .map(|items| items.iter().filter_map(|item| parse_steer(item, answer.len())).collect())
+        .unwrap_or_default();
     let state = match value.get("state").and_then(|v| v.as_str()) {
         Some("working") => TurnState::Working,
         Some("stopped") => TurnState::Stopped,
@@ -3361,6 +3491,7 @@ fn parse_turn(value: &serde_json::Value) -> Option<Turn> {
         started: value.get("started").and_then(|v| v.as_i64()),
         ended: value.get("ended").and_then(|v| v.as_i64()),
         from_harness: value.get("origin").and_then(|v| v.as_str()) == Some("harness"),
+        steered,
     })
 }
 
@@ -4594,7 +4725,7 @@ mod tests {
         );
         assert_eq!(state.model, None);
         state.thread = Some("t-1".into());
-        state.turns.push(Turn { started: None, ended: None, from_harness: false,
+        state.turns.push(Turn { started: None, ended: None, from_harness: false, steered: Vec::new(),
             turn: 1,
             message: "prev".into(),
             context: None,
@@ -4606,7 +4737,7 @@ mod tests {
             answer: "ok".into(),
             state: TurnState::Done,
         });
-        state.turns.push(Turn { started: None, ended: None, from_harness: false,
+        state.turns.push(Turn { started: None, ended: None, from_harness: false, steered: Vec::new(),
             turn: 2,
             message: "stopped".into(),
             context: None,
@@ -5552,7 +5683,7 @@ mod tests {
                     model: None,
                     mode: None,
                     working: false,
-                    turns: vec![Turn { started: None, ended: None, from_harness: false,
+                    turns: vec![Turn { started: None, ended: None, from_harness: false, steered: Vec::new(),
                         turn: 1,
                         message: "run".into(),
                         context: None,
@@ -5688,7 +5819,7 @@ mod tests {
                     model: None,
                     mode: None,
                     working: false,
-                    turns: vec![Turn { started: None, ended: None, from_harness: false,
+                    turns: vec![Turn { started: None, ended: None, from_harness: false, steered: Vec::new(),
                         turn: 1,
                         message: "slow work".into(),
                         context: None,
@@ -5925,6 +6056,7 @@ mod tests {
                 }],
                 default_model: Some("stub/stub-1".into()),
                 free_hosted_models: false,
+                steering: false,
                 modes: vec![
                     ModeInfo { id: "ask-first".into(), name: "Ask first".into() },
                     ModeInfo { id: "full-access".into(), name: "Full access".into() },
@@ -6096,7 +6228,7 @@ mod tests {
                     model: None,
                     mode: Some("ask-first".into()),
                     working: true,
-                    turns: vec![Turn { started: None, ended: None, from_harness: false,
+                    turns: vec![Turn { started: None, ended: None, from_harness: false, steered: Vec::new(),
                         turn: 1,
                         message: "run".into(),
                         context: None,
@@ -6639,6 +6771,7 @@ mod tests {
             ],
             default_model: Some("acme/small".into()),
             free_hosted_models: false,
+            steering: false,
             modes: Vec::new(),
         }
     }
@@ -6673,6 +6806,7 @@ mod tests {
                 ],
                 default_model: Some("acme/small".into()),
                 free_hosted_models: false,
+                steering: false,
                 modes: Vec::new(),
             }))
         );
@@ -6772,6 +6906,7 @@ mod tests {
             started: Some(100),
             ended: None,
             from_harness: false,
+            steered: Vec::new(),
         };
         // A working turn has worked until now, and an ended one until it ended.
         assert_eq!(turn.elapsed(130), Some(30));
@@ -7561,6 +7696,80 @@ mod tests {
             request_view(&state.turns[0].state, &state.turns[0].requests[0]),
             RequestView::Withdrawn,
             "no answer controls for a request nobody here follows"
+        );
+    }
+
+    #[test]
+    fn a_message_sent_while_the_turn_works_is_taken_into_it_where_the_harness_can_steer() {
+        let mut state = connected_state(true);
+        state.apply(lever_event(serde_json::json!({
+            "reply": "models", "supported": true, "models": [{ "id": "stub/stub-1", "name": "Stub One" }],
+            "default": "stub/stub-1", "free_hosted_models": false, "modes": [], "steering": false
+        })), true);
+        state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
+        state.apply(lever_event(serde_json::json!({ "event": "message", "thread": "t-1", "turn": 1, "text": "Look" })), true);
+        state.apply(lever_event(serde_json::json!({ "event": "text", "thread": "t-1", "turn": 1, "text": "Looking. " })), true);
+        assert!(!state.can_send(), "a harness that cannot steer takes no message while its turn works");
+
+        // A harness that can steer takes one.
+        state.apply(lever_event(serde_json::json!({
+            "reply": "models", "supported": true, "models": [{ "id": "stub/stub-1", "name": "Stub One" }],
+            "default": "stub/stub-1", "free_hosted_models": false, "modes": [], "steering": true
+        })), true);
+        assert!(state.can_steer());
+        assert!(state.can_send());
+        state.sending = true;
+        state.apply(lever_event(serde_json::json!({ "reply": "steered", "thread": "t-1", "turn": 1 })), true);
+        assert!(!state.sending, "the reply ends the sending");
+        state.apply(
+            lever_event(serde_json::json!({ "event": "steered", "thread": "t-1", "turn": 1, "text": "Also the docs" })),
+            true,
+        );
+        state.apply(lever_event(serde_json::json!({ "event": "text", "thread": "t-1", "turn": 1, "text": "Took it." })), true);
+        assert_eq!(state.turns.len(), 1, "the message is the turn's, not a turn of its own");
+        assert_eq!(state.turns[0].answer, "Looking. Took it.");
+        assert_eq!(
+            state.turns[0].steered,
+            vec![Steer { text: "Also the docs".into(), at: 9, context: None }],
+            "it shows where the answer had come to when it was taken"
+        );
+
+        // A refusal says why, and the thread works on.
+        state.sending = true;
+        state.apply(
+            lever_event(serde_json::json!({
+                "reply": "error", "code": "not-steered",
+                "message": "The Agent's turn ended before it took your message. Send it again."
+            })),
+            true,
+        );
+        assert!(!state.sending);
+        assert_eq!(
+            state.error.as_deref(),
+            Some("The Agent's turn ended before it took your message. Send it again.")
+        );
+
+        // The record keeps each where it was taken.
+        let rec = parse_turn(&serde_json::json!({
+            "turn": 1, "message": "Look", "answer": "Looking. Took it.", "state": "done",
+            "steered": [{ "text": "Also the docs", "at": 9 }]
+        }))
+        .unwrap();
+        assert_eq!(rec.steered, vec![Steer { text: "Also the docs".into(), at: 9, context: None }]);
+        assert_eq!(
+            rec.answer_parts(),
+            vec![
+                AnswerPart::Text("Looking. "),
+                AnswerPart::Steered(&rec.steered[0]),
+                AnswerPart::Text("Took it."),
+            ]
+        );
+        // A place the answer does not have shows the message after what it has.
+        let mut odd = rec.clone();
+        odd.steered[0].at = 400;
+        assert_eq!(
+            odd.answer_parts(),
+            vec![AnswerPart::Text("Looking. Took it."), AnswerPart::Steered(&odd.steered[0])]
         );
     }
 }
