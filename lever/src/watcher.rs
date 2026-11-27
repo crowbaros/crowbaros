@@ -337,8 +337,24 @@ mod tests {
         assert!(watcher.drain_changed());
 
         // Delete the directory and recreate it later (as tests or resets do).
+        // The kernel tells of a directory's own removal only once nothing
+        // holds it open, and a process another test forks meanwhile holds a
+        // copy of every descriptor until it runs its program: wait for it.
+        let held = std::fs::File::open(&nested).unwrap();
         std::fs::remove_dir_all(&nested).unwrap();
-        let _ = watcher.drain_changed();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            drop(held);
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while watcher.targets[0].at_target && std::time::Instant::now() < deadline {
+            let _ = watcher.drain_changed();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(
+            !watcher.targets[0].at_target,
+            "the removed directory's watch must move to its parent"
+        );
 
         std::fs::create_dir_all(&nested).unwrap();
         assert!(watcher.drain_changed());
