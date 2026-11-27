@@ -261,27 +261,39 @@ fn lexical(path: &Path) -> PathBuf {
     resolved
 }
 
-/// Where a database that is a link leads, though the file it leads to is
-/// not there yet: SQLite makes it there, and its sidecars beside it.
+/// Where a database that is a link leads, even when the file it leads to is
+/// not there yet: SQLite makes it there, and its sidecars beside it. Each
+/// link on the way is followed from the folder it is really in, as the
+/// system follows it.
 fn link_target(db: &Path) -> Option<PathBuf> {
     if let Ok(target) = std::fs::canonicalize(db) {
         return Some(target);
     }
-    let link = std::fs::read_link(db).ok()?;
-    let target = if link.is_absolute() {
-        link
-    } else {
-        db.parent()?.join(link)
-    };
-    let target = lexical(&target);
-    // The folder it is in may itself be reached through a link.
-    match (
-        target.parent().and_then(|dir| std::fs::canonicalize(dir).ok()),
-        target.file_name(),
-    ) {
-        (Some(dir), Some(name)) => Some(dir.join(name)),
-        _ => Some(target),
+    // As many links as the system follows before it gives up.
+    const MAX_LINKS: usize = 40;
+    let mut current = db.to_path_buf();
+    for _ in 0..MAX_LINKS {
+        let Ok(link) = std::fs::read_link(&current) else {
+            break;
+        };
+        let joined = if link.is_absolute() {
+            link
+        } else {
+            let dir = current.parent()?;
+            std::fs::canonicalize(dir)
+                .unwrap_or_else(|_| dir.to_path_buf())
+                .join(link)
+        };
+        // The folder it names, where it is there, is taken as it really is.
+        current = match (
+            joined.parent().and_then(|dir| std::fs::canonicalize(dir).ok()),
+            joined.file_name(),
+        ) {
+            (Some(dir), Some(name)) => dir.join(name),
+            _ => lexical(&joined),
+        };
     }
+    (current != db).then_some(current)
 }
 
 /// Watches a SQLite database and the files beside it its writes change.
@@ -860,6 +872,67 @@ mod tests {
                 ["real.db", "real.db-wal", "real.db-journal", "real.db-shm"]
             );
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_database_link_is_followed_as_the_system_follows_it() {
+        let root = std::env::temp_dir().join(format!("lever-db-links-{}", sys::random_hex(4)));
+        let real = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(root.file_name().unwrap());
+        let watched_dirs = |data_home: &Path| -> Vec<(PathBuf, Vec<String>)> {
+            let config = HarnessConfig {
+                id: "opencode".into(),
+                name: "OpenCode".into(),
+                program: "opencode".into(),
+                args: vec!["acp".into()],
+                env: vec![
+                    ("XDG_DATA_HOME".into(), data_home.to_string_lossy().into_owned()),
+                    ("OPENCODE_DB".into(), String::new()),
+                ],
+                watch_paths: Vec::new(),
+            };
+            OpenCodeSessionDiscoverer::new(config)
+                .watch_specs()
+                .into_iter()
+                .map(|spec| (spec.dir, spec.filenames))
+                .collect()
+        };
+
+        // The data folder is a link, and the database a relative link out of
+        // it to a file not made yet: `..` is taken from where the link
+        // really is.
+        std::fs::create_dir_all(root.join("disk/oc")).unwrap();
+        std::fs::create_dir_all(root.join("disk/shared")).unwrap();
+        std::fs::create_dir_all(root.join("home/share")).unwrap();
+        std::os::unix::fs::symlink(root.join("disk/oc"), root.join("home/share/opencode")).unwrap();
+        std::os::unix::fs::symlink("../shared/real.db", root.join("disk/oc/opencode.db")).unwrap();
+        let specs = watched_dirs(&root.join("home/share"));
+        assert!(
+            specs
+                .iter()
+                .any(|(dir, names)| *dir == real.join("disk/shared") && names[0] == "real.db"),
+            "{specs:?}"
+        );
+
+        // A link to a link to a file not made yet is followed to the end.
+        std::fs::create_dir_all(root.join("chain/opencode")).unwrap();
+        std::fs::create_dir_all(root.join("chain/middle")).unwrap();
+        std::fs::create_dir_all(root.join("chain/end")).unwrap();
+        std::os::unix::fs::symlink(root.join("chain/end/last.db"), root.join("chain/middle/next.db")).unwrap();
+        std::os::unix::fs::symlink(
+            root.join("chain/middle/next.db"),
+            root.join("chain/opencode/opencode.db"),
+        )
+        .unwrap();
+        let specs = watched_dirs(&root.join("chain"));
+        assert!(
+            specs
+                .iter()
+                .any(|(dir, names)| *dir == real.join("chain/end") && names[0] == "last.db"),
+            "{specs:?}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
