@@ -631,9 +631,9 @@ mode, effort, or Model, holds its prompt in the same way if a subagent asks
 meanwhile, and sends it once the request ends. If the harness goes on by
 itself while such a prompt waits and a subagent's request does, as when
 another subagent reports, the turn ends `failed`, unsent, with a message that
-says to send it again, and what the harness says is a turn of its own. What
-the harness said in the turn before that, the message took over: the turn
-keeps it, and its prompt goes once the request ends.
+says to send it again, and what the harness says is a turn of its own. If the
+harness had already begun answering in that turn, the message took that
+answer over: the turn keeps it, and its prompt goes once the request ends.
 
 Errors: `no-harness`, `no-model`, `no-thread`, `working`, `subagent-asks`, `invalid-mode`, `invalid-effort`,
 `invalid-request`, and `storage-error` when Lever's database does not take the turn, or has yet to

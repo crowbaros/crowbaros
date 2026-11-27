@@ -4069,7 +4069,8 @@ impl Service {
         // A message whose prompt has not gone out, while a subagent's request
         // waits, cannot go until the request ends: what the harness begins
         // meanwhile is not its answer. It ends unsent, and the harness's
-        // words are a turn of their own. With no request waiting, the message
+        // words are a turn of their own, unless the harness already spoke in
+        // this turn, which the message took over. With no request waiting, the message
         // goes as soon as it is ready, and the harness takes it into the work
         // it is doing, as when it takes over a turn the harness began.
         if opens
