@@ -628,7 +628,10 @@ for a subagent of the thread whose request waits for the person: OpenCode
 for the subagent, which then waits on it for good. Answer it, or stop the
 thread, first. A message taken while none asked, whose prompt waits on its
 mode, effort, or Model, holds its prompt in the same way if a subagent asks
-meanwhile, and sends it once the request ends.
+meanwhile, and sends it once the request ends. If the harness goes on by
+itself while the prompt is held, as when another subagent reports, the turn
+ends `failed`, unsent, with a message that says to send it again, and what
+the harness says is a turn of its own.
 
 Errors: `no-harness`, `no-model`, `no-thread`, `working`, `subagent-asks`, `invalid-mode`, `invalid-effort`,
 `invalid-request`, and `storage-error` when Lever's database does not take the turn, or has yet to

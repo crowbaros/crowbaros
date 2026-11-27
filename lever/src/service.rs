@@ -36,6 +36,9 @@ const STARTING_MODES: [&str; 2] = ["ask-first", "full-access"];
 /// failed, though it may go on.
 const UNFOLLOWED_MESSAGE: &str = "The Agent took up this subagent again after its harness restarted. The harness \
      does not pass on what it does or asks now, so it cannot be followed here.";
+/// Why a message held for a subagent's request ended unsent.
+const NOT_SENT_MESSAGE: &str =
+    "Not sent: the Agent went on by itself while a subagent's request waited. Send it again.";
 /// How long Lever waits before it tries again to save how a turn ended.
 const UNSAVED_RETRY: Duration = Duration::from_millis(250);
 /// What a turn failed with when the harness finished it and Lever's database
@@ -4060,6 +4063,21 @@ impl Service {
         broadcasts: &mut Vec<Broadcast>,
         log: &mut Log,
     ) -> Option<u64> {
+        // A message held for a subagent's request was never sent: what the
+        // harness begins meanwhile is not its answer. It ends unsent, and
+        // the harness's words are a turn of their own.
+        if opens
+            && let Some(active) = self.working_turns.get(thread_id)
+            && matches!(active.dispatch, TurnDispatch::WaitingForSubagentAnswer)
+        {
+            let turn = active.turn;
+            self.working_turns.remove(thread_id);
+            self.end_turn(thread_id, turn, "failed", Some(NOT_SENT_MESSAGE), log);
+            broadcasts.push(Broadcast {
+                thread_id: thread_id.to_string(),
+                message: json!({ "event": "failed", "thread": thread_id, "turn": turn, "message": NOT_SENT_MESSAGE }),
+            });
+        }
         if let Some(active) = self.working_turns.get_mut(thread_id) {
             // After a Stop, only what goes on counts as the harness going on:
             // an act it closes is the Stop going through.

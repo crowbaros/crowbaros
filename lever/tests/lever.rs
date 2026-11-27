@@ -8836,3 +8836,69 @@ fn a_prompt_whose_mode_comes_with_a_subagents_request_waits_on_it() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn a_message_held_for_a_subagent_ends_unsent_when_the_harness_goes_on_by_itself() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "set_config_delay_ms": 600,
+            "turns": [
+                {
+                    "match": "Go",
+                    "steps": [
+                        { "kind": "subagent_start", "id": "ses_asker", "title": "Asker", "prompt": "Ask" },
+                        { "kind": "subagent_start", "id": "ses_teller", "title": "Teller", "prompt": "Tell" },
+                        { "kind": "text", "text": "Handed off." }
+                    ],
+                    "after": [
+                        // One subagent asks while the next message's mode is
+                        // set; the other reports, and the harness answers it.
+                        { "kind": "pause_ms", "ms": 200 },
+                        { "kind": "subagent_ask", "subagent": "ses_asker", "id": "call_asker", "tool_kind": "read",
+                          "title": "Read /tmp/asker", "raw_input": { "path": "/tmp/asker" }, "output": "asker",
+                          "wait_for_answer": false },
+                        { "kind": "pause_ms", "ms": 900 },
+                        { "kind": "subagent_end", "subagent": "ses_teller", "status": "completed" },
+                        { "kind": "text", "text": "Background report." }
+                    ]
+                },
+                { "match": "Next", "steps": [{ "kind": "text", "text": "Next." }] }
+            ]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &["--wake-quiet-ms", "60000"]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    let sent = ask_lever(
+        &mut peer,
+        json!({ "op": "send", "thread": thread, "text": "Next", "cwd": "/tmp", "mode": "full-access" }),
+    );
+    assert_eq!(sent["reply"], "sent", "{sent}");
+    let next = sent["turn"].as_u64().unwrap();
+    let failed = read_until(&mut peer, |v| {
+        v["turn"] == next && (v["event"] == "failed" || v["event"] == "done")
+    });
+    assert_eq!(failed["event"], "failed", "{failed}");
+    assert!(
+        failed["message"].as_str().unwrap_or("").contains("Send it again"),
+        "{failed}"
+    );
+    let woke = read_until(&mut peer, |v| v["event"] == "message" && v["origin"] == "harness");
+    assert_eq!(woke["turn"], next + 1, "{woke}");
+    read_until(&mut peer, |v| v["event"] == "text" && v["turn"] == next + 1);
+    let record = resume(&mut peer, &thread);
+    let turns = record["turns"].as_array().unwrap();
+    assert_eq!(turns[1]["answer"], "", "{record}");
+    assert_eq!(turns[2]["answer"], "Background report.", "{record}");
+    assert_eq!(stub_prompts(&stub_log).len(), 1, "the held message was sent");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
