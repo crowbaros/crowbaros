@@ -2289,6 +2289,7 @@ impl Service {
         self.subagent_threads.clear();
         self.held_stops.clear();
         self.harness_children.clear();
+        self.kill_wanted = None;
     }
 
     fn dispatch_turn(&mut self, thread_id: &str) {
@@ -3725,6 +3726,7 @@ impl Service {
         self.subagent_threads.clear();
         self.held_stops.clear();
         self.harness_children.clear();
+        self.kill_wanted = None;
         self.efforts.clear();
         self.commands = None;
         self.thread_commands.clear();
