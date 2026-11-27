@@ -214,6 +214,24 @@ fn show_request(
 }
 
 /// Prints one unrecognized update plainly to standard error.
+/// A message that waits behind a turn, or one a Stop dropped, as the record
+/// or a `queued` event has it. One that went shows as its turn.
+fn show_queued(answer: &mut Answer, queued: &Value, thread: &str) -> Result<()> {
+    let line = match &*text(queued, "state") {
+        "queued" => format!(
+            "[waiting] {} (`crowbar-agent --resume {thread} --unqueue {}` takes it back)",
+            text(queued, "text"),
+            text(queued, "queued")
+        ),
+        "dropped" => format!("[not sent] {}", text(queued, "text")),
+        "removed" => format!("[taken back] {}", text(queued, "text")),
+        _ => return Ok(()),
+    };
+    answer.make_way()?;
+    eprintln!("{line}");
+    Ok(())
+}
+
 fn show_note(answer: &mut Answer, note: &Value) -> Result<()> {
     answer.make_way()?;
     eprintln!("[update] {}", text(note, "text"));
@@ -262,6 +280,30 @@ fn turn(
         eprintln!("crowbar-agent: The Agent took your message into the turn it is working on.");
     }
     let begun = text(&reply, "thread").to_string();
+    if text(&reply, "reply") == "queued" {
+        let queued = text(&reply, "queued").into_owned();
+        eprintln!(
+            "crowbar-agent: The Agent is working on this thread. Your message waits, and goes as its own turn when the turns before it end. Ctrl-C takes it back."
+        );
+        *thread = Some(begun.clone());
+        let Some(turn) = wait_to_go(lever, &begun, &queued)? else {
+            return Ok(Ended::Stopped);
+        };
+        let mut last = Ended::Done;
+        let ended = watch(
+            lever,
+            &begun,
+            WatchStart {
+                turn: Some(turn),
+                answer: Answer::new(),
+                typing: Typing::Waits,
+                waiting: Vec::new(),
+            },
+            subagents,
+            &mut last,
+        );
+        return ended.map(|ended| ended.unwrap_or(last));
+    }
     // How the turn ended, though the person leaves while a request of its waits.
     let mut last = Ended::Done;
     let ended = watch(
@@ -278,6 +320,47 @@ fn turn(
     );
     *thread = Some(begun);
     ended.map(|ended| ended.unwrap_or(last))
+}
+
+/// Waits for a message that waits behind a turn to go, and says the turn it
+/// went as, or `None` when a Stop dropped it or it was taken back. Ctrl-C
+/// takes it back.
+fn wait_to_go(lever: &mut Connection, thread: &str, queued: &str) -> Result<Option<u64>> {
+    let mut went = false;
+    loop {
+        let event = match lever.next(Typing::Waits)? {
+            Happening::Event(event) => event,
+            Happening::Interrupt => {
+                let reply = lever.request(json!({ "op": "unqueue", "thread": thread, "queued": queued }))?;
+                if refused(&reply).is_none() {
+                    eprintln!("Taken back.");
+                    return Ok(None);
+                }
+                // It went already: its turn is followed, and Ctrl-C stops it.
+                continue;
+            }
+            Happening::EndOfInput | Happening::Line(_) => continue,
+        };
+        if text(&event, "thread") != thread {
+            continue;
+        }
+        if text(&event, "event") == "queued" && text(&event, "queued") == queued {
+            match &*text(&event, "state") {
+                "sent" => went = true,
+                "dropped" => {
+                    eprintln!("Not sent: the turn before it was stopped.");
+                    return Ok(None);
+                }
+                "removed" => {
+                    eprintln!("Taken back.");
+                    return Ok(None);
+                }
+                _ => {}
+            }
+        } else if went && text(&event, "event") == "message" {
+            return Ok(event.get("turn").and_then(Value::as_u64));
+        }
+    }
 }
 
 fn subagent_title_for_request<'a>(request: &Value, subagent_titles: &'a HashMap<String, String>) -> Option<&'a str> {
@@ -597,6 +680,11 @@ fn watch(
             show_request(&mut answer, &event, thread, false, sub_title)?;
             continue;
         }
+        // A message that waits, or what became of it, whichever turn it waits behind.
+        if text(&event, "event") == "queued" {
+            show_queued(&mut answer, &event, thread)?;
+            continue;
+        }
         // An act is its own turn's, and may end after a later turn began:
         // the thread's acts are shown whichever turn is watched.
         if text(&event, "event") == "act" {
@@ -750,6 +838,16 @@ fn resume(lever: &mut Connection, thread: &str) -> Result<Option<Resumed>> {
             show_note(&mut answer, note)?;
         }
         write_answer(&mut answer, turn)?;
+        if turn
+            .get("queued")
+            .and_then(Value::as_array)
+            .is_some_and(|q| !q.is_empty())
+        {
+            answer.end()?;
+        }
+        for queued in turn.get("queued").and_then(Value::as_array).into_iter().flatten() {
+            show_queued(&mut answer, queued, thread)?;
+        }
         match &*text(turn, "state") {
             // Its answer goes on from here.
             "working" => break,
@@ -1160,6 +1258,16 @@ pub fn answer(lever: &mut Connection, thread: &str, request: &str, answer: &str)
         return Ok(Ended::Failed);
     }
     eprintln!("Answered {answer}.");
+    Ok(Ended::Done)
+}
+
+/// `crowbar-agent --resume ID --unqueue Q`: take back a message that waits.
+pub fn unqueue(lever: &mut Connection, thread: &str, queued: &str) -> Result<Ended> {
+    let reply = lever.request(json!({ "op": "unqueue", "thread": thread, "queued": queued }))?;
+    if refused(&reply).is_some() {
+        return Ok(Ended::Failed);
+    }
+    eprintln!("Taken back.");
     Ok(Ended::Done)
 }
 

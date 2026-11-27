@@ -767,11 +767,13 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let reply_commands = find_reply("commands");
     let reply_steered = find_reply("steered");
     let ev_steered = find_event("steered");
+    let reply_queued = find_reply("queued");
+    let ev_queued = find_event("queued");
 
     let server_ops = doc_ops.clone();
-    // Serve 22 short connections exercising every documented op, reply (including error), and event.
+    // Serve 24 short connections exercising every documented op, reply (including error), and event.
     let server = std::thread::spawn(move || {
-        for turn_case in 0..22 {
+        for turn_case in 0..24 {
             let (mut stream, _) = listener.accept().expect("accept client");
             let ver = read_framed(&mut stream);
             assert_eq!(ver, json!({ "version": 1 }));
@@ -845,6 +847,18 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
                     write_framed(&mut stream, &ev_text);
                     write_framed(&mut stream, &ev_done);
                 }
+                // One for a thread that works waits, then goes as its own turn.
+                (22, "send") => {
+                    write_framed(&mut stream, &reply_queued);
+                    write_framed(&mut stream, &ev_queued);
+                    let mut sent = ev_queued.clone();
+                    sent["state"] = json!("sent");
+                    write_framed(&mut stream, &sent);
+                    write_framed(&mut stream, &ev_message);
+                    write_framed(&mut stream, &ev_text);
+                    write_framed(&mut stream, &ev_done);
+                }
+                (23, "unqueue") => write_framed(&mut stream, &reply_ok),
                 other => panic!("unexpected connection {other:?}"),
             }
             // Hold the connection open until the client closes it, as Lever does.
@@ -965,6 +979,20 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
         "{steered:?}"
     );
     assert!(steered.err.contains("took your message into the turn"), "{steered:?}");
+
+    let waited = lab.run(&["--resume", "t-01a2b3c4d5e6", "Then run the tests"], "");
+    assert_eq!(
+        (waited.status, waited.out.as_str()),
+        (0, "Here are the files.\n"),
+        "{waited:?}"
+    );
+    assert!(waited.err.contains("Your message waits"), "{waited:?}");
+    let unqueued = lab.run(&["--resume", "t-01a2b3c4d5e6", "--unqueue", "q-01a2b3c4d5e6"], "");
+    assert_eq!(
+        (unqueued.status, unqueued.err.as_str()),
+        (0, "Taken back.\n"),
+        "{unqueued:?}"
+    );
 
     server.join().unwrap();
     assert_eq!(*sent_ops.lock().unwrap(), doc_ops);
@@ -2291,26 +2319,71 @@ fn a_message_sent_while_the_agent_works_is_taken_into_its_turn_and_shown_where_i
 }
 
 #[test]
-fn a_message_the_agent_does_not_or_cannot_take_while_it_works_is_refused_with_why() {
-    for (script, why) in [
-        (json!({ "steering": true, "steer_refused": true }), "Send it again"),
-        (json!({}), "cannot take a message"),
-    ] {
+fn a_message_the_agent_does_not_or_cannot_take_while_it_works_waits_and_goes_as_its_own_turn() {
+    for script in [json!({ "steering": true, "steer_refused": true }), json!({})] {
         let mut script = script;
-        script["turns"] =
-            json!([{ "match": "slow", "stall": true, "steps": [{ "kind": "text", "text": "Working." }] }]);
+        script["turns"] = json!([
+            { "match": "slow", "steps": [{ "kind": "text", "text": "Working. " }, { "kind": "pause_ms", "ms": 800 }, { "kind": "text", "text": "Done." }] },
+            { "match": "Change", "steps": [{ "kind": "text", "text": "Changed." }] }
+        ]);
         let lab = Lab::with_script(script);
         let mut first = Running::start(lab.agent(&["Do slow work."]));
         first.wait_for_out("Working.");
         let thread = only_thread(&lab);
 
-        let refused = lab.run(&["--resume", &thread, "Change of plan."], "");
-        assert_eq!(refused.status, 1, "{refused:?}");
-        assert_eq!(refused.out, "", "{refused:?}");
-        assert!(refused.err.contains(why), "{refused:?}");
+        let waited = lab.run(&["--resume", &thread, "Change of plan."], "");
+        assert_eq!(waited.status, 0, "{waited:?}");
+        assert_eq!(waited.out, "Changed.\n", "{waited:?}");
+        assert!(waited.err.contains("Your message waits"), "{waited:?}");
+        assert_eq!(first.ended(), 0);
 
-        first.signal(libc::SIGINT);
-        first.wait_for_err("Stopped.\n");
-        assert_eq!(first.ended(), 130);
+        let shown = lab.run(&["--resume", &thread], "");
+        assert_eq!(
+            shown.out, "> Do slow work.\nWorking. Done.\n> Change of plan.\nChanged.\n",
+            "{shown:?}"
+        );
     }
+}
+
+#[test]
+fn a_message_that_waits_is_taken_back_or_dropped_by_a_stop() {
+    let lab = Lab::with_script(json!({
+        "turns": [{ "match": "slow", "stall": true, "steps": [{ "kind": "text", "text": "Working." }] }]
+    }));
+    let mut first = Running::start(lab.agent(&["Do slow work."]));
+    first.wait_for_out("Working.");
+    let thread = only_thread(&lab);
+
+    // Ctrl-C while it waits takes it back.
+    let mut waiting = Running::start(lab.agent(&["--resume", &thread, "Change of plan."]));
+    waiting.wait_for_err("Your message waits");
+    first.wait_for_err("[waiting] Change of plan.");
+    waiting.signal(libc::SIGINT);
+    waiting.wait_for_err("Taken back.");
+    assert_eq!(waiting.ended(), 130);
+    first.wait_for_err("[taken back] Change of plan.");
+
+    // Taken back by its ID from another terminal.
+    let mut again = Running::start(lab.agent(&["--resume", &thread, "Another plan."]));
+    first.wait_for_err("[waiting] Another plan.");
+    let id = {
+        let err = first.err.lock().unwrap().clone();
+        let at = err.rfind("--unqueue ").expect("how to take it back") + "--unqueue ".len();
+        err[at..].split('`').next().unwrap().to_string()
+    };
+    let taken = lab.run(&["--resume", &thread, "--unqueue", &id], "");
+    assert_eq!((taken.status, taken.err.as_str()), (0, "Taken back.\n"), "{taken:?}");
+    again.wait_for_err("Taken back.");
+    assert_eq!(again.ended(), 130);
+
+    // A Stop drops what waits, and the record says it was not sent.
+    let mut third = Running::start(lab.agent(&["--resume", &thread, "Third plan."]));
+    first.wait_for_err("[waiting] Third plan.");
+    first.signal(libc::SIGINT);
+    first.wait_for_err("Stopped.\n");
+    assert_eq!(first.ended(), 130);
+    third.wait_for_err("Not sent: the turn before it was stopped.");
+    assert_eq!(third.ended(), 130);
+    let shown = lab.run(&["--resume", &thread], "");
+    assert!(shown.err.contains("[not sent] Third plan."), "{shown:?}");
 }

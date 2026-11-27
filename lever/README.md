@@ -183,10 +183,12 @@ ACP today:
 - **Steering.** A harness that says it can take a message into a turn under
   way is sent the person's message while its turn works, and says whether it
   took it. Lever records a message it took with that turn, at the place in
-  the answer it had come to when the harness said so, and refuses one it did
-  not take. Lever asks this of a harness that has said it can, and of no
-  other: the ACP adapter asks any harness whose `initialize` answer says it
-  as OpenCode does. Each adapter steers in
+  the answer it had come to when the harness said so. One the harness did
+  not take, or had yet to say it took when it ended, waits behind the turn,
+  as a message to a harness that cannot steer does (see `send`). Lever asks
+  this of a harness that has said it can, and of no other: the ACP adapter
+  asks any harness whose `initialize` answer says it as OpenCode does. Each
+  adapter steers in
   its harness's own way. ACP's first version has no steering; OpenCode adds
   its own: its `initialize` answer says `_meta.steering.supported`, and a
   `_session/steering` request with the session and the message, as a prompt
@@ -644,20 +646,41 @@ reply waits on the harness's answer. When it took the message, the reply is
 {"reply":"steered","thread":"t-01a2b3c4d5e6","turn":1}
 ```
 
-When the harness did not take it, as when the turn ended just as it came,
-the reply is `not-steered`, and the message goes nowhere: the person sends it
-again. A harness that cannot steer has the message refused with `working`,
-and a message that would change the thread's mode, Model, or effort is
-refused the same way: a turn runs in what it began with. So is one sent
-before the harness has the turn's prompt, or after the person asked to stop
-the turn.
+Otherwise the message waits behind the turn, and goes as its own turn once
+the turns before it end: when the harness did not take it, as when the turn
+ended just as it came; when the harness cannot steer; when it had yet to say
+it took it when it ended; when a subagent of the thread asks; and when the
+harness has yet to have the turn's prompt. A message for a thread with
+messages waiting waits behind them, whether or not a turn works. The reply
+is `queued`, with Lever's ID for the message and the turn it waits behind,
+and a `queued` event follows:
+
+```json
+{"reply":"queued","thread":"t-01a2b3c4d5e6","turn":1,"queued":"q-01a2b3c4d5e6"}
+```
+
+Messages that wait go one at a time, in the order sent, each as its own
+turn, with the desktop context it was sent with, in the thread's mode, Model,
+and effort as they are when it goes. One goes when the turn before it ends
+`done` or `failed`, and nothing of the thread works or asks. A Stop drops
+what waits behind the turn it stops, and one the harness had yet to say it
+took, and they stay in the record as `dropped`: nothing runs after the person
+said stop. What waits behind a turn that was interrupted, or stopped without
+the person's Stop, waits for the person: their next message goes behind it,
+and all go. Messages that wait are in the record, and outlast Lever. The
+person takes one back with `unqueue`.
+
+A message that would change the thread's mode, Model, or effort while it
+works is refused with `working`: a turn runs in what it began with, and one
+that waits goes in what the thread is at. So is one sent after the person
+asked to stop the turn.
 
 A subagent that still works does not hold a message back, and a turn the
 harness began itself is taken over by it, as [the harness](#the-harness)
-says. `working` is for a turn of the person's that works and cannot be
-steered into, or a change Lever asked of the session that the harness has
-yet to answer. `subagent-asks` is
-for a subagent of the thread whose request waits for the person: OpenCode
+says. `working` is for a turn the person asked to stop, or a change Lever
+asked of the session that the harness has yet to answer. `subagent-asks` is
+for a subagent of the thread whose request waits for the person, when no
+turn works: OpenCode
 2.4.1 withdraws such a request when a new prompt comes, without answering it
 for the subagent, which then waits on it for good. Answer it, or stop the
 thread, first. A message taken while none asked, whose prompt waits on its
@@ -669,9 +692,30 @@ says to send it again, and what the harness says is a turn of its own. If the
 harness had already begun answering in that turn, the message took that
 answer over: the turn keeps it, and its prompt goes once the request ends.
 
-Errors: `no-harness`, `no-model`, `no-thread`, `working`, `not-steered`, `subagent-asks`, `invalid-mode`, `invalid-effort`,
+Errors: `no-harness`, `no-model`, `no-thread`, `working`, `subagent-asks`, `invalid-mode`, `invalid-effort`,
 `invalid-request`, and `storage-error` when Lever's database does not take the turn, or has yet to
 take how the thread's last turn ended.
+
+#### `unqueue`
+
+Takes back a message that waits behind a turn, before it goes. Either socket
+may take one back.
+
+Request:
+
+```json
+{"op":"unqueue","thread":"t-01a2b3c4d5e6","queued":"q-01a2b3c4d5e6"}
+```
+
+Reply:
+
+```json
+{"reply":"ok"}
+```
+
+A `queued` event with `"state":"removed"` follows. Errors: `no-thread`,
+`no-queued` (no such message, or it no longer waits), `invalid-request`,
+`storage-error`.
 
 #### `resume`
 
@@ -708,7 +752,10 @@ its subagents (`"subagents":[...]`, each with Lever's `subagent` ID, `title`,
 `text`, and `acts`). A turn the harness took messages into while it worked
 carries them in the order it took them (`"steered":[...]`, each with its
 `text`, the `context` it carried when it had one, and `at`: how many bytes of
-the turn's `answer` had come when the harness took it, so it shows there). A turn the harness began itself carries
+the turn's `answer` had come when the harness took it, so it shows there),
+and the messages that wait behind it, or that a Stop dropped
+(`"queued":[...]`, each with Lever's `queued` ID, its `text`, the `context`
+it carried when it had one, and `state`: `queued` or `dropped`). A turn the harness began itself carries
 `"origin":"harness"` and an empty `"message"`. A thread's `"working"` is `true`
 while any of its turns or subagents still works.
 
@@ -869,6 +916,15 @@ Pushed to every connection subscribed to `thread`:
 
   ```json
   {"event":"steered","thread":"t-01a2b3c4d5e6","turn":1,"text":"Also check the docs"}
+  ```
+
+- **`queued`** — a message that waits behind the turn, and each change to it.
+  `state` is `queued`, `sent` (it went as its own turn, whose `message` event
+  follows), `dropped` (a Stop dropped it), or `removed` (the person took it
+  back). It carries `"context"` as a `message` does:
+
+  ```json
+  {"event":"queued","thread":"t-01a2b3c4d5e6","turn":1,"queued":"q-01a2b3c4d5e6","text":"Then run the tests","state":"queued"}
   ```
 
 - **`text`** — a streamed piece of the answer (also taken if it arrives after a

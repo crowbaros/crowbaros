@@ -192,6 +192,9 @@ struct Script {
     /// `promptRequired`, as when the turn ends just as it comes.
     #[serde(default)]
     steer_refused: bool,
+    /// A steering message with this in it is never taken.
+    #[serde(default)]
+    steer_refused_for: Option<String>,
     /// If true, the stub ends at once when a steering message comes, with
     /// nothing answered.
     #[serde(default)]
@@ -2270,7 +2273,8 @@ fn run(options: Options) -> Result<(), String> {
                 std::process::exit(1);
             }
             let running = active_cancels.lock().unwrap().contains_key(&session);
-            if running && !script.steer_refused {
+            let refused = script.steer_refused || script.steer_refused_for.as_ref().is_some_and(|t| text.contains(t));
+            if running && !refused {
                 steers.lock().unwrap().entry(session).or_default().push_back(text);
                 writer.send_result(id, json!({ "outcome": "injected" }));
             } else {
