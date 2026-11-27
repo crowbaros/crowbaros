@@ -3332,6 +3332,7 @@ impl Service {
             Ok(saved) => saved,
             Err(err) => {
                 self.could_not_save(thread_id, &err, log);
+                self.stop_untracked_subagent(thread_id, harness_subagent_id, turn);
                 return None;
             }
         };
@@ -3416,6 +3417,11 @@ impl Service {
             Ok(saved) => saved,
             Err(err) => {
                 self.could_not_save(thread_id, &err, log);
+                if existing_id.is_none()
+                    && !matches!(effective_state, Some("done" | "stopped" | "interrupted" | "failed"))
+                {
+                    self.stop_untracked_subagent(thread_id, harness_subagent_id, turn);
+                }
                 // On a terminal state, still release the in-memory subagent,
                 // withdraw any requests waiting on it, and queue the ending
                 // for retry so the thread and harness do not wedge.
@@ -3831,6 +3837,23 @@ impl Service {
         }
     }
 
+    /// A subagent Lever could not record, and so does not follow, that belongs
+    /// to work the person stopped: with nothing to stop it by, the harness is
+    /// stopped.
+    fn stop_untracked_subagent(&mut self, thread_id: &str, harness_subagent_id: &str, turn: u64) {
+        let tracked = self
+            .working_subagents
+            .values()
+            .any(|s| s.thread_id == thread_id && s.harness_session_id == harness_subagent_id);
+        if !tracked
+            && self
+                .stop_for_new_subagent(thread_id, harness_subagent_id, turn)
+                .is_some()
+        {
+            self.kill_wanted = Some("a subagent went on under a Stop, and Lever could not record it");
+        }
+    }
+
     /// A turn the harness began is not quiet while an act of it works.
     fn note_harness_act(&mut self, thread_id: &str, turn: u64, act_id: &str, state: &str) {
         if let Some(active) = self.working_turns.get_mut(thread_id)
@@ -3994,6 +4017,14 @@ impl Service {
         // begins nothing.
         let settled = !self.pending_deletes.iter().any(|p| p.thread == thread_id)
             && !self.unsaved_endings.iter().any(|e| e.thread_id == thread_id);
+        // Under a Stop that holds, what the harness begins while Lever cannot
+        // begin a turn for it, as the last end waits to be saved, is stopped
+        // with the harness: there is no turn to stop it with.
+        if opens && self.held_stops.contains(thread_id) && self.unsaved_endings.iter().any(|e| e.thread_id == thread_id)
+        {
+            self.kill_wanted = Some("it went on under a Stop while Lever could not record a turn for it");
+            return None;
+        }
         let (true, Some(session_id)) = (
             opens && settled && self.subagent_threads.contains(thread_id),
             session_id,
@@ -4005,6 +4036,10 @@ impl Service {
             Ok(None) => return None,
             Err(err) => {
                 store_failed(log, &err);
+                if self.held_stops.contains(thread_id) {
+                    self.kill_wanted = Some("it went on under a Stop, and Lever could not read its thread");
+                    return None;
+                }
                 return self.turn_for_update(thread_id);
             }
         };

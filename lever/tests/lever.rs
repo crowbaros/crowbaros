@@ -8544,3 +8544,136 @@ fn what_the_harness_says_of_a_mode_that_settles_is_not_told_until_it_has() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn what_the_harness_begins_under_a_held_stop_while_the_last_end_is_unsaved_stops_the_harness() {
+    let dir = TempDir::new();
+    let script = wake_script(
+        &dir.0,
+        json!([
+            { "kind": "text", "text": "Reported." },
+            // Stopped, that turn ends and its end is not saved; the harness
+            // goes on while it waits to be.
+            { "kind": "pause_ms", "ms": 1500 },
+            { "kind": "text", "text": "Again." }
+        ]),
+    );
+    let extra = stub_extra(&script, &["--wake-quiet-ms", "60000", "--stop-timeout-ms", "300"]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Look");
+    read_until(&mut peer, |v| {
+        v["event"] == "message" && v["origin"] == "harness" && v["turn"] == turn + 1
+    });
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    refuse_writes(&db, "UPDATE OF state ON turns");
+    assert_eq!(
+        ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }))["reply"],
+        "ok"
+    );
+    read_until(&mut peer, |v| v["event"] == "stopped" && v["turn"] == turn + 1);
+    wait_until("the harness is stopped", || {
+        ask_lever(&mut peer, json!({ "op": "status" }))["harness_started"] == false
+    });
+    db.execute_batch("DROP TRIGGER refused").unwrap();
+    drop(db);
+    std::thread::sleep(Duration::from_millis(400));
+    let record = resume(&mut peer, &thread);
+    assert_eq!(record["turns"][1]["answer"], "Reported.", "{record}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_subagent_under_a_held_stop_that_the_record_cannot_take_stops_the_harness() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [{
+                "steps": [
+                    { "kind": "subagent_start", "id": "ses_first", "title": "First", "prompt": "First" },
+                    { "kind": "subagent_end", "subagent": "ses_first", "status": "completed" },
+                    { "kind": "text", "text": "Handed off." }
+                ],
+                // After the Stop, the harness starts another, which goes on
+                // saying nothing.
+                "after": [
+                    { "kind": "pause_ms", "ms": 800 },
+                    { "kind": "subagent_start", "id": "ses_quiet", "title": "Quiet", "prompt": "Quietly" },
+                    { "kind": "subagent_stall", "subagent": "ses_quiet" }
+                ]
+            }]
+        }),
+    );
+    let extra = stub_extra(&script, &["--wake-quiet-ms", "60000"]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    assert_eq!(
+        ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }))["reply"],
+        "ok"
+    );
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    refuse_writes(&db, "INSERT ON subagents");
+    wait_until("the harness is stopped", || {
+        ask_lever(&mut peer, json!({ "op": "status" }))["harness_started"] == false
+    });
+    db.execute_batch("DROP TRIGGER refused").unwrap();
+    drop(db);
+    let listed = ask_lever(&mut peer, json!({ "op": "list" }));
+    assert_eq!(listed["threads"][0]["working"], false, "{listed}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn what_the_harness_begins_under_a_held_stop_when_its_thread_cannot_be_read_stops_the_harness() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [{
+                "steps": [
+                    { "kind": "subagent_start", "id": "ses_ran", "title": "Ran", "prompt": "Run" },
+                    { "kind": "subagent_end", "subagent": "ses_ran", "status": "completed" },
+                    { "kind": "text", "text": "Handed off." }
+                ],
+                "after": [
+                    { "kind": "pause_ms", "ms": 800 },
+                    { "kind": "text", "text": "Went on." }
+                ]
+            }]
+        }),
+    );
+    let extra = stub_extra(&script, &["--wake-quiet-ms", "60000"]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    assert_eq!(
+        ask_lever(&mut peer, json!({ "op": "stop", "thread": thread }))["reply"],
+        "ok"
+    );
+    // The record of threads cannot be read when the harness goes on.
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    db.busy_timeout(Duration::from_secs(5)).unwrap();
+    db.execute_batch("ALTER TABLE threads RENAME TO threads_away").unwrap();
+    wait_until("the harness is stopped", || {
+        ask_lever(&mut peer, json!({ "op": "status" }))["harness_started"] == false
+    });
+    db.execute_batch("ALTER TABLE threads_away RENAME TO threads").unwrap();
+    drop(db);
+    let record = resume(&mut peer, &thread);
+    assert_eq!(record["turns"].as_array().unwrap().len(), 1, "{record}");
+    assert_eq!(record["turns"][0]["answer"], "Handed off.", "{record}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
