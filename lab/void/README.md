@@ -147,7 +147,10 @@ desktop context reaching the Model without window or
 clipboard contents, a command's output and streamed answer in the drawer, work
 continuing behind a put-away drawer with the `working` and `done` mark in the
 bar and over a fullscreen window, Stop ending a turn and its spawned commands,
-a failed turn showing why, a shell restart redrawing the thread from Lever, a
+a failed turn showing why, a message sent from the drawer while a turn works
+steered into that turn by the pinned OpenCode and answered by the Model in
+the same turn, after the command it was held on, a shell restart redrawing the
+thread from Lever, a
 command the person's own OpenCode settings refuse refused in Ask first with no
 request to allow it, and the person's own OpenCode settings left unchanged and
 free of Lever's additions in a session they start by hand.
