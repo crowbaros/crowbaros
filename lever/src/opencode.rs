@@ -227,9 +227,10 @@ fn env_var(env: &[(String, String)], key: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-/// OpenCode's database, as OpenCode finds it: `OPENCODE_DB` when set, or
-/// `opencode.db`, taken from its data directory unless absolute. `None` for
-/// one kept in memory, which has no file to watch.
+/// OpenCode's database, as a release build of OpenCode finds it:
+/// `OPENCODE_DB` when set, or `opencode.db`, taken from its data directory
+/// unless absolute. `None` for one kept in memory, which has no file to
+/// watch.
 pub fn database_path(env: &[(String, String)]) -> Option<PathBuf> {
     let name = env_var(env, "OPENCODE_DB").unwrap_or_else(|| "opencode.db".to_string());
     if name == ":memory:" {
@@ -264,8 +265,8 @@ fn database_watch(db: &Path) -> Option<WatchSpec> {
     Some(WatchSpec::files(dir.to_path_buf(), filenames))
 }
 
-/// OpenCode's [`SessionDiscoverer`]: watches OpenCode's own store directory
-/// (`opencode.db` and its WAL/journal sidecars), lists sessions across all
+/// OpenCode's [`SessionDiscoverer`]: watches OpenCode's own database
+/// ([`database_path`] and its WAL/journal sidecars), lists sessions across all
 /// folders via short-lived ACP `session/list`, and classifies each brand-new
 /// unseen session with OpenCode's own `opencode session export` so subagents
 /// and empty sessions are never listed as threads. OpenCode is never kept
