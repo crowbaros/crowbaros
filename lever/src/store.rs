@@ -82,6 +82,37 @@ pub struct TurnRecord {
     pub requests: Vec<RequestRecord>,
     pub notes: Vec<NoteRecord>,
     pub subagents: Vec<SubagentRecord>,
+    /// Messages the person sent while the turn worked, which the harness
+    /// took into it, in the order it took them.
+    pub steered: Vec<SteerRecord>,
+    /// Messages the person sent while the turn worked that wait behind it,
+    /// or that a Stop dropped, in the order sent.
+    pub queued: Vec<QueuedRecord>,
+}
+
+/// A message that waits behind a turn, to go as its own turn once the turns
+/// before it end: one the harness did not take into the turn, or one sent to
+/// a harness that cannot take a message into a turn under way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedRecord {
+    /// Lever's ID for it, `q-...`.
+    pub id: String,
+    pub text: String,
+    /// The desktop context it carries, when it was sent from the drawer.
+    pub context: Option<serde_json::Value>,
+    /// `queued`, or `dropped` once a Stop withdrew it.
+    pub state: String,
+}
+
+/// A message the harness took into a turn under way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SteerRecord {
+    pub text: String,
+    /// The desktop context it carried, when it was sent from the drawer.
+    pub context: Option<serde_json::Value>,
+    /// How much of the turn's answer, in bytes, had come when the harness
+    /// took it: where in the answer it was taken.
+    pub at: u64,
 }
 
 /// One message in a subagent's record: either the `prompt` given to it or
@@ -230,7 +261,7 @@ impl Store {
                  key TEXT PRIMARY KEY,\n\
                  value TEXT NOT NULL\n\
              );\n\
-             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '7');\n\
+             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '9');\n\
              CREATE TABLE IF NOT EXISTS threads (\n\
                  id TEXT PRIMARY KEY,\n\
                  title TEXT NOT NULL,\n\
@@ -314,6 +345,25 @@ impl Store {
                  text TEXT NOT NULL,\n\
                  seq INTEGER NOT NULL\n\
              );\n\
+             CREATE TABLE IF NOT EXISTS steers (\n\
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,\n\
+                 thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,\n\
+                 turn_number INTEGER NOT NULL,\n\
+                 text TEXT NOT NULL,\n\
+                 context TEXT,\n\
+                 at INTEGER NOT NULL,\n\
+                 created_at INTEGER NOT NULL\n\
+             );\n\
+             CREATE TABLE IF NOT EXISTS queued (\n\
+                 seq INTEGER PRIMARY KEY AUTOINCREMENT,\n\
+                 id TEXT NOT NULL UNIQUE,\n\
+                 thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,\n\
+                 turn_number INTEGER NOT NULL,\n\
+                 text TEXT NOT NULL,\n\
+                 context TEXT,\n\
+                 state TEXT NOT NULL,\n\
+                 created_at INTEGER NOT NULL\n\
+             );\n\
              CREATE TABLE IF NOT EXISTS subagent_acts (\n\
                  id TEXT PRIMARY KEY,\n\
                  subagent_id TEXT NOT NULL REFERENCES subagents(id) ON DELETE CASCADE,\n\
@@ -353,6 +403,10 @@ impl Store {
         .map_err(|e| format!("could not mark interrupted subagents: {e}"))?;
         conn.execute("UPDATE requests SET state = 'withdrawn' WHERE state = 'waiting'", [])
             .map_err(|e| format!("could not withdraw waiting requests: {e}"))?;
+        // A message steered into a turn that a crash interrupted, whose taking
+        // the harness never said, waits for the person, who may take it back.
+        conn.execute("UPDATE queued SET state = 'queued' WHERE state = 'steering'", [])
+            .map_err(|e| format!("could not keep steered messages: {e}"))?;
 
         tighten_permissions(path)?;
         Ok(Self {
@@ -916,6 +970,148 @@ impl Store {
         Ok((recorded_turn, record))
     }
 
+    /// Keeps a message the harness took into a turn under way, at the place
+    /// in the turn's answer it had come to.
+    pub fn insert_steer(
+        &self,
+        thread_id: &str,
+        turn_number: u64,
+        text: &str,
+        context: Option<&str>,
+        now: i64,
+    ) -> Result<(), String> {
+        let kept = self
+            .conn
+            .execute(
+                "INSERT INTO steers (thread_id, turn_number, text, context, at, created_at) \
+                 SELECT ?1, ?2, ?3, ?4, length(CAST(answer AS BLOB)), ?5 FROM turns \
+                 WHERE thread_id = ?1 AND turn_number = ?2",
+                params![thread_id, turn_number as i64, text, context, now],
+            )
+            .map_err(|e| format!("could not insert steered message: {e}"))?;
+        if kept == 0 {
+            return Err(format!("could not insert steered message: no turn {turn_number}"));
+        }
+        self.touch_thread(thread_id, now)
+    }
+
+    /// Keeps a message that waits behind turn `turn_number` of a thread, and
+    /// gives it Lever's ID. One in `state` `steering` is a message steered
+    /// into the turn whose place in the queue is kept until the harness says
+    /// whether it took it: it is not shown, and does not go.
+    pub fn insert_queued(
+        &self,
+        thread_id: &str,
+        turn_number: u64,
+        text: &str,
+        context: Option<&str>,
+        state: &str,
+        now: i64,
+    ) -> Result<QueuedRecord, String> {
+        let id = format!("q-{}", sys::random_hex(6));
+        self.conn
+            .execute(
+                "INSERT INTO queued (id, thread_id, turn_number, text, context, state, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![id, thread_id, turn_number as i64, text, context, state, now],
+            )
+            .map_err(|e| format!("could not queue the message: {e}"))?;
+        self.touch_thread(thread_id, now)?;
+        Ok(QueuedRecord {
+            id,
+            text: text.to_string(),
+            context: context.and_then(|c| serde_json::from_str(c).ok()),
+            state: state.to_string(),
+        })
+    }
+
+    /// A thread's queued messages in the order sent, each with the turn it
+    /// waits behind: those that wait, and with `dropped` those a Stop dropped.
+    pub fn queued_of(&self, thread_id: &str, dropped: bool) -> Result<Vec<(u64, QueuedRecord)>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT turn_number, id, text, context, state FROM queued \
+                 WHERE thread_id = ?1 AND (state = 'queued' OR (?2 AND state = 'dropped')) ORDER BY seq ASC",
+            )
+            .map_err(|e| format!("could not prepare queued query: {e}"))?;
+        let rows = stmt
+            .query_map(params![thread_id, dropped], |r| {
+                let raw_context: Option<String> = r.get(3)?;
+                Ok((
+                    r.get::<_, i64>(0)? as u64,
+                    QueuedRecord {
+                        id: r.get(1)?,
+                        text: r.get(2)?,
+                        context: raw_context.and_then(|s| serde_json::from_str(&s).ok()),
+                        state: r.get(4)?,
+                    },
+                ))
+            })
+            .map_err(|e| format!("could not query queued messages: {e}"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| format!("could not read queued row: {e}"))?);
+        }
+        Ok(out)
+    }
+
+    /// Takes a message that waits out of the record, as when it goes as its
+    /// own turn or the person takes it back. Says whether one waited.
+    pub fn remove_queued(&self, thread_id: &str, id: &str) -> Result<bool, String> {
+        let removed = self
+            .conn
+            .execute(
+                "DELETE FROM queued WHERE thread_id = ?1 AND id = ?2 AND state = 'queued'",
+                params![thread_id, id],
+            )
+            .map_err(|e| format!("could not take the queued message out: {e}"))?;
+        Ok(removed > 0)
+    }
+
+    /// Moves a queued message from one state to another, as from `queued` to
+    /// `going` while it begins its turn, and says whether it was in the first.
+    pub fn set_queued_state(&self, thread_id: &str, id: &str, from: &str, to: &str) -> Result<bool, String> {
+        let moved = self
+            .conn
+            .execute(
+                "UPDATE queued SET state = ?4 WHERE thread_id = ?1 AND id = ?2 AND state = ?3",
+                params![thread_id, id, from, to],
+            )
+            .map_err(|e| format!("could not change the queued message: {e}"))?;
+        Ok(moved > 0)
+    }
+
+    /// Takes a message that went as its own turn out of the record.
+    pub fn forget_queued(&self, id: &str) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM queued WHERE id = ?1", params![id])
+            .map_err(|e| format!("could not forget the queued message: {e}"))?;
+        Ok(())
+    }
+
+    /// Drops what waits behind a thread's turn (or, with none, all it has
+    /// waiting), as a Stop does. They stay in the record as not sent.
+    pub fn drop_queued(&self, thread_id: &str, turn_number: Option<u64>) -> Result<Vec<(u64, QueuedRecord)>, String> {
+        let waiting: Vec<(u64, QueuedRecord)> = self
+            .queued_of(thread_id, false)?
+            .into_iter()
+            .filter(|(turn, _)| turn_number.is_none_or(|t| *turn == t))
+            .collect();
+        for (_, q) in &waiting {
+            self.conn
+                .execute("UPDATE queued SET state = 'dropped' WHERE id = ?1", params![q.id])
+                .map_err(|e| format!("could not drop the queued message: {e}"))?;
+        }
+        Ok(waiting
+            .into_iter()
+            .map(|(turn, mut q)| {
+                q.state = "dropped".to_string();
+                (turn, q)
+            })
+            .collect())
+    }
+
     /// Stores a note: a harness update's JSON in `notes.raw_json` along with
     /// its plain text rendering. Returns Lever's own note record.
     pub fn insert_note(
@@ -1084,6 +1280,8 @@ impl Store {
                     requests: Vec::new(),
                     notes: Vec::new(),
                     subagents: Vec::new(),
+                    steered: Vec::new(),
+                    queued: Vec::new(),
                 })
             })
             .map_err(|e| format!("could not query turns: {e}"))?;
@@ -1181,6 +1379,36 @@ impl Store {
             sub.acts = self.subagent_acts(&sub.id)?;
             if let Some(turn) = turns.iter_mut().find(|t| t.turn == turn_number) {
                 turn.subagents.push(sub);
+            }
+        }
+
+        let mut steer_stmt = self
+            .conn
+            .prepare("SELECT turn_number, text, context, at FROM steers WHERE thread_id = ?1 ORDER BY id ASC")
+            .map_err(|e| format!("could not prepare steers query: {e}"))?;
+        let steer_rows = steer_stmt
+            .query_map(params![thread_id], |r| {
+                let raw_context: Option<String> = r.get(2)?;
+                Ok((
+                    r.get::<_, i64>(0)? as u64,
+                    SteerRecord {
+                        text: r.get(1)?,
+                        context: raw_context.and_then(|s| serde_json::from_str(&s).ok()),
+                        at: r.get::<_, i64>(3)? as u64,
+                    },
+                ))
+            })
+            .map_err(|e| format!("could not query steers: {e}"))?;
+        for row in steer_rows {
+            let (turn_number, steer) = row.map_err(|e| format!("could not read steer row: {e}"))?;
+            if let Some(turn) = turns.iter_mut().find(|t| t.turn == turn_number) {
+                turn.steered.push(steer);
+            }
+        }
+
+        for (turn_number, queued) in self.queued_of(thread_id, true)? {
+            if let Some(turn) = turns.iter_mut().find(|t| t.turn == turn_number) {
+                turn.queued.push(queued);
             }
         }
 

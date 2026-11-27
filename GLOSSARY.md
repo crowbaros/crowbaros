@@ -134,6 +134,14 @@ _Avoid_: Reasoning level, thinking budget
 What the person types where they type a message, beginning with `/`, to ask something of the thread by name: one of the Agent's surface's own, as `/model`, or one the thread's harness offers. It is not a command the Agent runs, which a request asks about.
 _Avoid_: Shortcut, macro
 
+**Steer**:
+To send a message into a thread's turn while it works, for the harness to take into the work under way rather than wait for the turn to end. Where the harness cannot take it, or does not, the message is queued.
+_Avoid_: Interject
+
+**Queued message**:
+A message the person sent while a thread works that its harness did not take into the turn. It waits in the thread and goes as its own turn once the turns before it end. A Stop drops it, and the person can take it back before it goes.
+_Avoid_: Draft, pending message
+
 **Request**:
 A harness's own question to the person before an act, by the rules of the thread's mode. The person answers it in the Agent's surface.
 _Avoid_: Approval, permission prompt

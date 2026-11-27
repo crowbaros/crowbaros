@@ -1057,6 +1057,24 @@ finally:
                     'after_tool': 'Refused: {tool_output}',
                 },
                 {
+                    # The Model's answer that calls the command is held, so
+                    # the turn still works when the person sends again.
+                    'match': 'steer-hold',
+                    'hold_until': f'{tmp}/steer-release',
+                    'tool_call': {
+                        'name': 'shell',
+                        'arguments': {
+                            'command': 'echo STEER_HELD_RAN',
+                            'description': 'A command the turn is held on',
+                        },
+                    },
+                    'after_tool': 'Should not answer: the person said more',
+                },
+                {
+                    'match': 'steer-also',
+                    'reply': 'STEER_TAKEN_OK after {tool_output}',
+                },
+                {
                     'match': 'make-fail',
                     'error': {
                         'status': 400,
@@ -1969,6 +1987,47 @@ finally:
                 and bool(cmd_prompts)
                 and any('AGENTS.md' in p and p.strip() != '/init' for p in cmd_prompts),
                 json.dumps({'turn': ran_cmd['state']['turns'][2], 'prompts': [p[:120] for p in cmd_prompts]}),
+            )
+            # 7c. A message sent while the turn works is steered into it: the
+            # pinned OpenCode takes it at its next step, and the Model's next
+            # call has it, in the same turn.
+            self.type('/model')
+            self.wait('the Model picker opens', lambda: listed(self.agent_view()).get('kind') is not None)
+            self.key('esc')
+            empty_the_box()
+            self.wait('Lever says the harness can steer a turn',
+                      lambda: self.agent_view()['state'].get('steering') is True)
+            self.type('please steer-hold')
+            self.key('ret')
+            self.wait('the Model is held on the command the turn calls',
+                      lambda: any('steer-hold' in e.get('prompt', '') and e.get('decision') == 'tool_call'
+                                  for e in stub_requests()), timeout=45)
+            working = self.wait('turn 4 works', lambda: (v := self.agent_view()) and len(v['state']['turns']) == 4
+                                and v['state']['turns'][3]['state']['kind'] == 'working' and v)
+            self.check('the drawer takes a message while the turn works', working['state'].get('steering') is True)
+            self.type('please steer-also')
+            self.key('ret')
+            taken = self.wait('the message is steered into turn 4',
+                              lambda: (v := self.agent_view()) and len(v['state']['turns']) == 4
+                              and v['state']['turns'][3].get('steered') and v, timeout=30)
+            time.sleep(0.4)
+            self.capture('27c-drawer-message-steered')
+            self.run(f'touch {tmp}/steer-release')
+            steered = self.wait('turn 4 ends with the steered message answered',
+                                lambda: (v := self.agent_view()) and v['state']['turns'][3]['state']['kind'] == 'done'
+                                and v, timeout=45)
+            turn4 = steered['state']['turns'][3]
+            heard = [e for e in stub_requests() if e.get('has_tools') and 'please steer-also' in e.get('prompt', '')]
+            self.check(
+                'a message sent while the turn works is taken into that turn, shown where it was taken, and the '
+                'Model hears it in the same turn, after the command it called',
+                len(steered['state']['turns']) == 4
+                and [m['text'] for m in turn4.get('steered', [])] == ['please steer-also']
+                and taken.get('draft') == ''
+                and 'STEER_TAKEN_OK' in turn4.get('answer', '')
+                and 'Should not answer' not in turn4.get('answer', '')
+                and bool(heard) and any('STEER_HELD_RAN' in out for out in heard[0].get('history_tool_outputs', [])),
+                json.dumps({'turn': turn4, 'heard': heard[:1]}),
             )
             self.check('new drawer thread starts at home while terminal thread keeps its cwd',
                 second_id != terminal_id and second['state']['mark'] == 'working'

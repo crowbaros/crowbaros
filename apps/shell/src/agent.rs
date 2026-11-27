@@ -394,6 +394,8 @@ pub struct Offer {
     pub default_model: Option<String>,
     pub free_hosted_models: bool,
     pub modes: Vec<ModeInfo>,
+    /// The harness can take a message into a turn under way.
+    pub steering: bool,
 }
 
 /// A provider in the Model picker's rail: its ID, and its name.
@@ -480,9 +482,69 @@ pub struct Turn {
     /// as OpenCode does when a subagent reports back.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub from_harness: bool,
+    /// Messages the person sent while the turn worked, which the harness
+    /// took into it, in the order it took them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steered: Vec<Steer>,
+    /// Messages that wait behind the turn, and those a Stop dropped, in the
+    /// order sent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queued: Vec<Queued>,
+}
+
+/// A message that waits behind a turn, to go as its own turn once the turns
+/// before it end, or one a Stop dropped.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Queued {
+    /// Lever's ID for it.
+    pub id: String,
+    pub text: String,
+    /// `queued`, `dropped`, or, in an event alone, `sent` or `removed`.
+    pub state: String,
+}
+
+/// A message the harness took into a turn under way.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Steer {
+    pub text: String,
+    /// How many bytes of the turn's answer had come when the harness took
+    /// it: where in the answer it shows.
+    pub at: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<DesktopContext>,
+}
+
+/// A piece of a turn's answer as it shows: the answer's own words, or a
+/// message the harness took into the turn there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AnswerPart<'a> {
+    Text(&'a str),
+    Steered(&'a Steer),
 }
 
 impl Turn {
+    /// The turn's answer, with each message the harness took into the turn
+    /// at the place in the answer it took it. Words of no length are left
+    /// out.
+    pub fn answer_parts(&self) -> Vec<AnswerPart<'_>> {
+        let mut parts = Vec::new();
+        let mut from = 0;
+        for steer in &self.steered {
+            // Past what the record kept of the answer, it shows at its end.
+            let at = steer.at.min(self.answer.len());
+            let at = if at >= from && self.answer.is_char_boundary(at) { at } else { from };
+            if at > from {
+                parts.push(AnswerPart::Text(&self.answer[from..at]));
+            }
+            parts.push(AnswerPart::Steered(steer));
+            from = at;
+        }
+        if from < self.answer.len() {
+            parts.push(AnswerPart::Text(&self.answer[from..]));
+        }
+        parts
+    }
+
     /// How long the turn has worked, or worked: to `now` while it works.
     pub fn elapsed(&self, now: i64) -> Option<i64> {
         let started = self.started?;
@@ -580,6 +642,16 @@ pub enum LeverMessage {
     List { threads: Vec<ThreadSummary> },
     Resumed(ResumedThread),
     Sent { thread: String, turn: u64 },
+    /// The `steered` reply: the harness took the message sent into the turn
+    /// under way.
+    SteerTaken { thread: String, turn: u64 },
+    /// The `steered` event, which says where in the turn's answer it was
+    /// taken by coming after what of the answer has come.
+    Steered { thread: String, turn: u64, steer: Steer },
+    /// The `queued` reply: the message waits behind a turn.
+    QueueTaken { thread: String, turn: u64 },
+    /// The `queued` event: a message that waits, and each change to it.
+    Queued { thread: String, turn: u64, queued: Queued },
     Ok,
     Error { code: String, message: String },
     Message {
@@ -703,6 +775,29 @@ pub enum AgentEvent {
         thread: String,
         turn: u64,
     },
+    /// The harness took the message sent into the turn under way.
+    SteerTaken {
+        thread: String,
+        turn: u64,
+    },
+    /// A message the harness took into a turn, after what of the answer has
+    /// come.
+    Steered {
+        thread: String,
+        turn: u64,
+        steer: Steer,
+    },
+    /// Lever keeps the message sent to wait behind a turn.
+    QueueTaken {
+        thread: String,
+        turn: u64,
+    },
+    /// A message that waits behind a turn, and each change to it.
+    Queued {
+        thread: String,
+        turn: u64,
+        queued: Queued,
+    },
     Message {
         thread: String,
         turn: u64,
@@ -821,6 +916,10 @@ impl LeverMessage {
             LeverMessage::Status(s) => Some(AgentEvent::Status(s)),
             LeverMessage::Resumed(r) => Some(AgentEvent::Resumed(r)),
             LeverMessage::Sent { thread, turn } => Some(AgentEvent::Sent { thread, turn }),
+            LeverMessage::SteerTaken { thread, turn } => Some(AgentEvent::SteerTaken { thread, turn }),
+            LeverMessage::Steered { thread, turn, steer } => Some(AgentEvent::Steered { thread, turn, steer }),
+            LeverMessage::QueueTaken { thread, turn } => Some(AgentEvent::QueueTaken { thread, turn }),
+            LeverMessage::Queued { thread, turn, queued } => Some(AgentEvent::Queued { thread, turn, queued }),
             LeverMessage::Message {
                 thread,
                 turn,
@@ -974,6 +1073,10 @@ pub enum AgentCommand {
         request: String,
         answer: String,
     },
+    Unqueue {
+        thread: String,
+        queued: String,
+    },
     SetMode {
         thread: String,
         mode: String,
@@ -1053,6 +1156,11 @@ impl CommandSender {
 
     pub fn set_mode(&self, thread: String, mode: String) {
         let _ = self.tx.send(AgentCommand::SetMode { thread, mode });
+    }
+
+    /// Takes back a message that waits behind a turn.
+    pub fn unqueue(&self, thread: String, queued: String) {
+        let _ = self.tx.send(AgentCommand::Unqueue { thread, queued });
     }
 
     pub fn set_default_mode(&self, mode: String) {
@@ -1143,6 +1251,9 @@ pub struct AgentState {
     /// empty `models` list does not mean "no Model available".
     #[serde(skip)]
     pub offer_unsupported: bool,
+    /// The harness can take a message into a turn under way, as Lever said
+    /// in its last `models`.
+    pub steering: bool,
     /// True once the person clicked Sign in from the drawer and Models have not
     /// refreshed (or failed to launch) yet.
     #[serde(skip)]
@@ -1304,19 +1415,10 @@ impl AgentState {
             && self.threads.is_empty()
     }
 
-    /// Whether a turn of the person's works, which a message waits for. A
-    /// subagent that works on does not hold one back, nor does a turn the
-    /// harness began itself: Lever sends it, and the harness takes it in.
-    pub fn turn_working(&self) -> bool {
-        match self.turns.last() {
-            Some(turn) => matches!(turn.state, TurnState::Working) && !turn.from_harness,
-            None => self.thread_mark == Mark::Working,
-        }
-    }
-
+    /// Whether the message box sends now. While a turn works, Lever takes
+    /// the message into it where the harness can, and otherwise has it wait.
     pub fn can_send(&self) -> bool {
         self.connected
-            && !self.turn_working()
             && !self.sending
             && !self.loading
             && !self.no_harness
@@ -1914,11 +2016,59 @@ impl AgentState {
                         started: Some(unix_now()),
                         ended: None,
                         from_harness,
+                        steered: Vec::new(),
+                        queued: Vec::new(),
                     });
                 }
                 self.error = None;
                 self.thread_mark = Mark::Working;
                 true
+            }
+            AgentEvent::SteerTaken { thread, .. } => {
+                if self.thread.as_deref() != Some(thread.as_str()) {
+                    return false;
+                }
+                self.sending = false;
+                self.error = None;
+                true
+            }
+            AgentEvent::QueueTaken { thread, .. } => {
+                if self.thread.as_deref() != Some(thread.as_str()) {
+                    return false;
+                }
+                self.sending = false;
+                self.error = None;
+                true
+            }
+            AgentEvent::Queued { thread, turn, queued } => {
+                if self.thread.as_deref() != Some(thread.as_str()) {
+                    return false;
+                }
+                let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) else {
+                    return false;
+                };
+                // One that went shows as its own turn, and one taken back as nothing.
+                let gone = matches!(queued.state.as_str(), "sent" | "removed");
+                match existing.queued.iter().position(|q| q.id == queued.id) {
+                    Some(at) if gone => {
+                        existing.queued.remove(at);
+                    }
+                    Some(at) => existing.queued[at] = queued,
+                    None if gone => {}
+                    None => existing.queued.push(queued),
+                }
+                true
+            }
+            AgentEvent::Steered { thread, turn, mut steer } => {
+                if self.thread.as_deref() != Some(thread.as_str()) {
+                    return false;
+                }
+                if let Some(existing) = self.turns.iter_mut().find(|t| t.turn == turn) {
+                    steer.at = existing.answer.len();
+                    existing.steered.push(steer);
+                    return true;
+                }
+                false
             }
             AgentEvent::Text { thread, turn, text } => {
                 if self.thread.as_deref() != Some(thread.as_str()) {
@@ -2130,6 +2280,7 @@ impl AgentState {
                 self.models = offer.models;
                 self.default_model = offer.default_model;
                 self.free_hosted_models = offer.free_hosted_models;
+                self.steering = offer.steering;
                 self.offer_known = true;
                 self.offer_unsupported = !offer.supported;
                 self.models_chosen =
@@ -2328,6 +2479,8 @@ impl AgentState {
                     self.clear_thread();
                     self.working_before_disconnect = None;
                     self.error = None;
+                } else if code == "no-queued" {
+                    self.error = Some("That message no longer waits.".into());
                 } else if code == "no-request" {
                     self.error = Some("That request no longer waits for an answer.".into());
                 } else if code == "invalid-mode" {
@@ -2907,6 +3060,14 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                 thread: msg.get("thread")?.as_str()?.to_string(),
                 turn: msg.get("turn")?.as_u64()?,
             }),
+            "steered" => Some(LeverMessage::SteerTaken {
+                thread: msg.get("thread")?.as_str()?.to_string(),
+                turn: msg.get("turn")?.as_u64()?,
+            }),
+            "queued" => Some(LeverMessage::QueueTaken {
+                thread: msg.get("thread")?.as_str()?.to_string(),
+                turn: msg.get("turn")?.as_u64()?,
+            }),
             "archived" | "deleted" => Some(LeverMessage::Lifecycle {
                 thread: msg.get("thread")?.as_str()?.into(), deleted: reply == "deleted",
                 warning: msg.get("warning").and_then(|v| v.as_str()).map(str::to_string),
@@ -2987,6 +3148,17 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
             turn,
             text: msg.get("text")?.as_str()?.to_string(),
         }),
+        // Taken after what of the answer has come: the state places it.
+        "steered" => Some(LeverMessage::Steered {
+            thread,
+            turn,
+            steer: parse_steer(msg, 0)?,
+        }),
+        "queued" => Some(LeverMessage::Queued {
+            thread,
+            turn,
+            queued: parse_queued(msg)?,
+        }),
         "act" => Some(LeverMessage::Act {
             thread,
             turn,
@@ -3040,6 +3212,32 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
     }
 }
 
+/// A message that waits behind a turn, as Lever's record or its event has it.
+fn parse_queued(value: &serde_json::Value) -> Option<Queued> {
+    Some(Queued {
+        id: value.get("queued")?.as_str()?.to_string(),
+        text: value.get("text")?.as_str()?.to_string(),
+        state: value.get("state")?.as_str()?.to_string(),
+    })
+}
+
+/// A message taken into a turn, as Lever's record or its event has it: `at`
+/// where the record says, or else `at`.
+fn parse_steer(value: &serde_json::Value, at: usize) -> Option<Steer> {
+    Some(Steer {
+        text: value.get("text")?.as_str()?.to_string(),
+        at: value
+            .get("at")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| usize::try_from(v).ok())
+            .unwrap_or(at),
+        context: value
+            .get("context")
+            .filter(|v| !v.is_null())
+            .and_then(|v| serde_json::from_value::<DesktopContext>(v.clone()).ok()),
+    })
+}
+
 fn parse_offer(msg: &serde_json::Value) -> Offer {
     Offer {
         supported: msg
@@ -3068,6 +3266,7 @@ fn parse_offer(msg: &serde_json::Value) -> Offer {
             .get("free_hosted_models")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        steering: msg.get("steering").and_then(|v| v.as_bool()).unwrap_or(false),
         modes: msg
             .get("modes")
             .and_then(|v| v.as_array())
@@ -3335,6 +3534,16 @@ fn parse_turn(value: &serde_json::Value) -> Option<Turn> {
         .and_then(|v| v.as_array())
         .map(|items| items.iter().filter_map(parse_subagent).collect())
         .unwrap_or_default();
+    let queued = value
+        .get("queued")
+        .and_then(|v| v.as_array())
+        .map(|items| items.iter().filter_map(parse_queued).collect())
+        .unwrap_or_default();
+    let steered = value
+        .get("steered")
+        .and_then(|v| v.as_array())
+        .map(|items| items.iter().filter_map(|item| parse_steer(item, answer.len())).collect())
+        .unwrap_or_default();
     let state = match value.get("state").and_then(|v| v.as_str()) {
         Some("working") => TurnState::Working,
         Some("stopped") => TurnState::Stopped,
@@ -3361,6 +3570,8 @@ fn parse_turn(value: &serde_json::Value) -> Option<Turn> {
         started: value.get("started").and_then(|v| v.as_i64()),
         ended: value.get("ended").and_then(|v| v.as_i64()),
         from_harness: value.get("origin").and_then(|v| v.as_str()) == Some("harness"),
+        steered,
+        queued,
     })
 }
 
@@ -3514,6 +3725,7 @@ fn start_with_stream_clone(
                 AgentCommand::FetchCommands { .. } => "commands",
                 AgentCommand::Stop { .. } => "stop",
                 AgentCommand::Answer { .. } => "answer",
+                AgentCommand::Unqueue { .. } => "unqueue",
                 AgentCommand::SetMode { .. } => "set-mode",
                 AgentCommand::SetDefaultMode { .. } => "set-default-mode",
                 AgentCommand::SetFreeModels { .. } => "set-free-models",
@@ -3563,6 +3775,9 @@ fn start_with_stream_clone(
                 } => serde_json::json!({
                     "op": "answer", "thread": thread, "request": request, "answer": answer
                 }),
+                AgentCommand::Unqueue { thread, queued } => {
+                    serde_json::json!({ "op": "unqueue", "thread": thread, "queued": queued })
+                }
                 AgentCommand::SetMode { thread, mode } => {
                     serde_json::json!({ "op": "set-mode", "thread": thread, "mode": mode })
                 }
@@ -4544,7 +4759,7 @@ mod tests {
         assert!(!state.can_send());
         state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
         assert!(!state.sending);
-        assert!(!state.can_send());
+        assert!(state.can_send(), "while the turn works, Lever takes a message into it or has it wait");
 
         // Failure while drawer is put away leaves Mark::Done so the person notices.
         state.apply(
@@ -4594,7 +4809,7 @@ mod tests {
         );
         assert_eq!(state.model, None);
         state.thread = Some("t-1".into());
-        state.turns.push(Turn { started: None, ended: None, from_harness: false,
+        state.turns.push(Turn { started: None, ended: None, from_harness: false, steered: Vec::new(), queued: Vec::new(),
             turn: 1,
             message: "prev".into(),
             context: None,
@@ -4606,7 +4821,7 @@ mod tests {
             answer: "ok".into(),
             state: TurnState::Done,
         });
-        state.turns.push(Turn { started: None, ended: None, from_harness: false,
+        state.turns.push(Turn { started: None, ended: None, from_harness: false, steered: Vec::new(), queued: Vec::new(),
             turn: 2,
             message: "stopped".into(),
             context: None,
@@ -5552,7 +5767,7 @@ mod tests {
                     model: None,
                     mode: None,
                     working: false,
-                    turns: vec![Turn { started: None, ended: None, from_harness: false,
+                    turns: vec![Turn { started: None, ended: None, from_harness: false, steered: Vec::new(), queued: Vec::new(),
                         turn: 1,
                         message: "run".into(),
                         context: None,
@@ -5654,7 +5869,7 @@ mod tests {
             false,
         );
         assert!(state.working());
-        assert!(!state.can_send());
+        assert!(state.can_send(), "while the turn works, Lever takes a message into it or has it wait");
 
         // Disconnect while turn 1 is working.
         state.apply(AgentEvent::Disconnected, false);
@@ -5688,7 +5903,7 @@ mod tests {
                     model: None,
                     mode: None,
                     working: false,
-                    turns: vec![Turn { started: None, ended: None, from_harness: false,
+                    turns: vec![Turn { started: None, ended: None, from_harness: false, steered: Vec::new(), queued: Vec::new(),
                         turn: 1,
                         message: "slow work".into(),
                         context: None,
@@ -5925,6 +6140,7 @@ mod tests {
                 }],
                 default_model: Some("stub/stub-1".into()),
                 free_hosted_models: false,
+                steering: false,
                 modes: vec![
                     ModeInfo { id: "ask-first".into(), name: "Ask first".into() },
                     ModeInfo { id: "full-access".into(), name: "Full access".into() },
@@ -6096,7 +6312,7 @@ mod tests {
                     model: None,
                     mode: Some("ask-first".into()),
                     working: true,
-                    turns: vec![Turn { started: None, ended: None, from_harness: false,
+                    turns: vec![Turn { started: None, ended: None, from_harness: false, steered: Vec::new(), queued: Vec::new(),
                         turn: 1,
                         message: "run".into(),
                         context: None,
@@ -6639,6 +6855,7 @@ mod tests {
             ],
             default_model: Some("acme/small".into()),
             free_hosted_models: false,
+            steering: false,
             modes: Vec::new(),
         }
     }
@@ -6673,6 +6890,7 @@ mod tests {
                 ],
                 default_model: Some("acme/small".into()),
                 free_hosted_models: false,
+                steering: false,
                 modes: Vec::new(),
             }))
         );
@@ -6772,6 +6990,8 @@ mod tests {
             started: Some(100),
             ended: None,
             from_harness: false,
+            steered: Vec::new(),
+            queued: Vec::new(),
         };
         // A working turn has worked until now, and an ended one until it ended.
         assert_eq!(turn.elapsed(130), Some(30));
@@ -7561,6 +7781,83 @@ mod tests {
             request_view(&state.turns[0].state, &state.turns[0].requests[0]),
             RequestView::Withdrawn,
             "no answer controls for a request nobody here follows"
+        );
+    }
+
+    #[test]
+    fn a_message_sent_while_the_turn_works_is_taken_into_it_or_waits_behind_it() {
+        let mut state = connected_state(true);
+        state.apply(lever_event(serde_json::json!({
+            "reply": "models", "supported": true, "models": [{ "id": "stub/stub-1", "name": "Stub One" }],
+            "default": "stub/stub-1", "free_hosted_models": false, "modes": [], "steering": false
+        })), true);
+        state.apply(AgentEvent::Sent { thread: "t-1".into(), turn: 1 }, true);
+        state.apply(lever_event(serde_json::json!({ "event": "message", "thread": "t-1", "turn": 1, "text": "Look" })), true);
+        state.apply(lever_event(serde_json::json!({ "event": "text", "thread": "t-1", "turn": 1, "text": "Looking. " })), true);
+        assert!(state.can_send(), "a message sent while the turn works goes to Lever, whatever the harness");
+
+        // One the harness cannot take waits behind the turn, with a way back.
+        state.sending = true;
+        state.apply(lever_event(serde_json::json!({ "reply": "queued", "thread": "t-1", "turn": 1, "queued": "q-1" })), true);
+        assert!(!state.sending, "the reply ends the sending");
+        state.apply(lever_event(serde_json::json!({
+            "event": "queued", "thread": "t-1", "turn": 1, "queued": "q-1", "text": "Then this", "state": "queued"
+        })), true);
+        assert_eq!(state.turns.len(), 1, "a message that waits is no turn yet");
+        assert_eq!(
+            state.turns[0].queued,
+            vec![Queued { id: "q-1".into(), text: "Then this".into(), state: "queued".into() }]
+        );
+        state.apply(lever_event(serde_json::json!({
+            "event": "queued", "thread": "t-1", "turn": 1, "queued": "q-1", "text": "Then this", "state": "removed"
+        })), true);
+        assert!(state.turns[0].queued.is_empty(), "one taken back is gone");
+
+        // A harness that can steer takes one into the turn.
+        state.apply(lever_event(serde_json::json!({
+            "reply": "models", "supported": true, "models": [{ "id": "stub/stub-1", "name": "Stub One" }],
+            "default": "stub/stub-1", "free_hosted_models": false, "modes": [], "steering": true
+        })), true);
+        assert!(state.steering);
+        state.sending = true;
+        state.apply(lever_event(serde_json::json!({ "reply": "steered", "thread": "t-1", "turn": 1 })), true);
+        assert!(!state.sending, "the reply ends the sending");
+        state.apply(
+            lever_event(serde_json::json!({ "event": "steered", "thread": "t-1", "turn": 1, "text": "Also the docs" })),
+            true,
+        );
+        state.apply(lever_event(serde_json::json!({ "event": "text", "thread": "t-1", "turn": 1, "text": "Took it." })), true);
+        assert_eq!(state.turns.len(), 1, "the message is the turn's, not a turn of its own");
+        assert_eq!(state.turns[0].answer, "Looking. Took it.");
+        assert_eq!(
+            state.turns[0].steered,
+            vec![Steer { text: "Also the docs".into(), at: 9, context: None }],
+            "it shows where the answer had come to when it was taken"
+        );
+
+        // The record keeps each where it was taken.
+        let rec = parse_turn(&serde_json::json!({
+            "turn": 1, "message": "Look", "answer": "Looking. Took it.", "state": "stopped",
+            "steered": [{ "text": "Also the docs", "at": 9 }],
+            "queued": [{ "queued": "q-2", "text": "And that", "state": "dropped" }]
+        }))
+        .unwrap();
+        assert_eq!(rec.steered, vec![Steer { text: "Also the docs".into(), at: 9, context: None }]);
+        assert_eq!(rec.queued, vec![Queued { id: "q-2".into(), text: "And that".into(), state: "dropped".into() }]);
+        assert_eq!(
+            rec.answer_parts(),
+            vec![
+                AnswerPart::Text("Looking. "),
+                AnswerPart::Steered(&rec.steered[0]),
+                AnswerPart::Text("Took it."),
+            ]
+        );
+        // A place the answer does not have shows the message after what it has.
+        let mut odd = rec.clone();
+        odd.steered[0].at = 400;
+        assert_eq!(
+            odd.answer_parts(),
+            vec![AnswerPart::Text("Looking. Took it."), AnswerPart::Steered(&odd.steered[0])]
         );
     }
 }

@@ -214,6 +214,24 @@ fn show_request(
 }
 
 /// Prints one unrecognized update plainly to standard error.
+/// A message that waits behind a turn, or one a Stop dropped, as the record
+/// or a `queued` event has it. One that went shows as its turn.
+fn show_queued(answer: &mut Answer, queued: &Value, thread: &str) -> Result<()> {
+    let line = match &*text(queued, "state") {
+        "queued" => format!(
+            "[waiting] {} (`crowbar-agent --resume {thread} --unqueue {}` takes it back)",
+            text(queued, "text"),
+            text(queued, "queued")
+        ),
+        "dropped" => format!("[not sent] {}", text(queued, "text")),
+        "removed" => format!("[taken back] {}", text(queued, "text")),
+        _ => return Ok(()),
+    };
+    answer.make_way()?;
+    eprintln!("{line}");
+    Ok(())
+}
+
 fn show_note(answer: &mut Answer, note: &Value) -> Result<()> {
     answer.make_way()?;
     eprintln!("[update] {}", text(note, "text"));
@@ -258,7 +276,34 @@ fn turn(
             Ended::Failed
         });
     }
+    if text(&reply, "reply") == "steered" {
+        eprintln!("crowbar-agent: The Agent took your message into the turn it is working on.");
+    }
     let begun = text(&reply, "thread").to_string();
+    if text(&reply, "reply") == "queued" {
+        let queued = text(&reply, "queued").into_owned();
+        eprintln!(
+            "crowbar-agent: The Agent is working on this thread. Your message waits, and goes as its own turn when the turns before it end. Ctrl-C takes it back."
+        );
+        *thread = Some(begun.clone());
+        let Some(turn) = wait_to_go(lever, &begun, &queued)? else {
+            return Ok(Ended::Stopped);
+        };
+        let mut last = Ended::Done;
+        let ended = watch(
+            lever,
+            &begun,
+            WatchStart {
+                turn: Some(turn),
+                answer: Answer::new(),
+                typing: Typing::Waits,
+                waiting: Vec::new(),
+            },
+            subagents,
+            &mut last,
+        );
+        return ended.map(|ended| ended.unwrap_or(last));
+    }
     // How the turn ended, though the person leaves while a request of its waits.
     let mut last = Ended::Done;
     let ended = watch(
@@ -275,6 +320,55 @@ fn turn(
     );
     *thread = Some(begun);
     ended.map(|ended| ended.unwrap_or(last))
+}
+
+/// Waits for a message that waits behind a turn to go, and says the turn it
+/// went as, or `None` when a Stop dropped it or it was taken back. Ctrl-C
+/// takes it back.
+fn wait_to_go(lever: &mut Connection, thread: &str, queued: &str) -> Result<Option<u64>> {
+    let mut went = false;
+    loop {
+        let event = match lever.next(Typing::Waits)? {
+            Happening::Event(event) => event,
+            Happening::Interrupt => {
+                let reply = lever.request(json!({ "op": "unqueue", "thread": thread, "queued": queued }))?;
+                match refused(&reply).as_deref() {
+                    None => {
+                        eprintln!("Taken back.");
+                        return Ok(None);
+                    }
+                    // It went already: its turn is followed, and Ctrl-C stops it.
+                    Some("no-queued") => continue,
+                    // The thread is gone, or Lever cannot say: there is nothing to wait for here.
+                    Some(_) => return Ok(None),
+                }
+            }
+            Happening::EndOfInput | Happening::Line(_) => continue,
+        };
+        if text(&event, "thread") != thread {
+            continue;
+        }
+        if text(&event, "event") == "deleted" {
+            eprintln!("Not sent: the thread was deleted.");
+            return Ok(None);
+        }
+        if text(&event, "event") == "queued" && text(&event, "queued") == queued {
+            match &*text(&event, "state") {
+                "sent" => went = true,
+                "dropped" => {
+                    eprintln!("Not sent: the turn before it was stopped.");
+                    return Ok(None);
+                }
+                "removed" => {
+                    eprintln!("Taken back.");
+                    return Ok(None);
+                }
+                _ => {}
+            }
+        } else if went && text(&event, "event") == "message" {
+            return Ok(event.get("turn").and_then(Value::as_u64));
+        }
+    }
 }
 
 fn subagent_title_for_request<'a>(request: &Value, subagent_titles: &'a HashMap<String, String>) -> Option<&'a str> {
@@ -308,6 +402,31 @@ impl Subagents {
     fn working_on(&self, thread: &str) -> bool {
         self.working.values().any(|t| t == thread)
     }
+}
+
+/// Writes a turn's answer as the record has it, with each message the Agent
+/// took into the turn at the place in the answer it took it.
+fn write_answer(answer: &mut Answer, turn: &Value) -> Result<()> {
+    let whole = text(turn, "answer");
+    let mut from = 0;
+    for steered in turn.get("steered").and_then(Value::as_array).into_iter().flatten() {
+        let at = steer_place(&whole, from, steered.get("at").and_then(Value::as_u64));
+        answer.write(&whole[from..at])?;
+        answer.end()?;
+        answer.write(&format!("> {}\n", text(steered, "text")))?;
+        from = at;
+    }
+    answer.write(&whole[from..])
+}
+
+/// Where in `whole`, an answer written up to `from`, a message the Agent took
+/// at `at` shows: there, or past what the record kept of the answer, at its
+/// end, and never before what is written or inside a character.
+fn steer_place(whole: &str, from: usize, at: Option<u64>) -> usize {
+    at.and_then(|at| usize::try_from(at).ok())
+        .map(|at| at.min(whole.len()))
+        .filter(|&at| at >= from && whole.is_char_boundary(at))
+        .unwrap_or(from)
 }
 
 /// The line a turn begins with: the person's message, or, for a turn the
@@ -569,6 +688,11 @@ fn watch(
             show_request(&mut answer, &event, thread, false, sub_title)?;
             continue;
         }
+        // A message that waits, or what became of it, whichever turn it waits behind.
+        if text(&event, "event") == "queued" {
+            show_queued(&mut answer, &event, thread)?;
+            continue;
+        }
         // An act is its own turn's, and may end after a later turn began:
         // the thread's acts are shown whichever turn is watched.
         if text(&event, "event") == "act" {
@@ -598,6 +722,12 @@ fn watch(
         let end = match &*text(&event, "event") {
             "text" => {
                 answer.write(&text(&event, "text"))?;
+                continue;
+            }
+            // A message the Agent took into the turn, where it took it.
+            "steered" => {
+                answer.end()?;
+                answer.write(&format!("> {}\n", text(&event, "text")))?;
                 continue;
             }
             "note" => {
@@ -715,7 +845,17 @@ fn resume(lever: &mut Connection, thread: &str) -> Result<Option<Resumed>> {
         for note in turn.get("notes").and_then(Value::as_array).into_iter().flatten() {
             show_note(&mut answer, note)?;
         }
-        answer.write(&text(turn, "answer"))?;
+        write_answer(&mut answer, turn)?;
+        if turn
+            .get("queued")
+            .and_then(Value::as_array)
+            .is_some_and(|q| !q.is_empty())
+        {
+            answer.end()?;
+        }
+        for queued in turn.get("queued").and_then(Value::as_array).into_iter().flatten() {
+            show_queued(&mut answer, queued, thread)?;
+        }
         match &*text(turn, "state") {
             // Its answer goes on from here.
             "working" => break,
@@ -1129,6 +1269,16 @@ pub fn answer(lever: &mut Connection, thread: &str, request: &str, answer: &str)
     Ok(Ended::Done)
 }
 
+/// `crowbar-agent --resume ID --unqueue Q`: take back a message that waits.
+pub fn unqueue(lever: &mut Connection, thread: &str, queued: &str) -> Result<Ended> {
+    let reply = lever.request(json!({ "op": "unqueue", "thread": thread, "queued": queued }))?;
+    if refused(&reply).is_some() {
+        return Ok(Ended::Failed);
+    }
+    eprintln!("Taken back.");
+    Ok(Ended::Done)
+}
+
 /// `crowbar-agent default-mode [ask-first|full-access]`: show or set the mode
 /// new threads start in.
 pub fn default_mode(lever: &mut Connection, mode: Option<&str>) -> Result<Ended> {
@@ -1434,6 +1584,18 @@ pub fn lifecycle(lever: &mut Connection, op: &str, thread: &str) -> Result<Ended
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_message_taken_into_a_turn_shows_where_it_was_taken_or_after_what_the_record_kept() {
+        let whole = "Looking. Took it.";
+        assert_eq!(steer_place(whole, 0, Some(9)), 9);
+        // Past what the record kept of the answer: at its end, not its start.
+        assert_eq!(steer_place(whole, 0, Some(400)), whole.len());
+        // Never before what is written, nor inside a character.
+        assert_eq!(steer_place(whole, 12, Some(9)), 12);
+        assert_eq!(steer_place("né", 0, Some(2)), 0);
+        assert_eq!(steer_place(whole, 3, None), 3);
+    }
 
     #[test]
     fn a_time_is_said_in_the_largest_unit_that_fits() {

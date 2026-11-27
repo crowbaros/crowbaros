@@ -7,8 +7,8 @@ use crate::channel::LEVER_VERSION;
 use crate::fulcrum;
 use crate::log::{Event, Log};
 use crate::store::{
-    ActPatch, ActRecord, NewRequest, NewThread, NoteRecord, RequestRecord, Store, SubagentActPatch, SubagentPatch,
-    SubagentRecord, ThreadRecord, ThreadSummary, TurnRecord,
+    ActPatch, ActRecord, NewRequest, NewThread, NoteRecord, QueuedRecord, RequestRecord, SteerRecord, Store,
+    SubagentActPatch, SubagentPatch, SubagentRecord, ThreadMeta, ThreadRecord, ThreadSummary, TurnRecord,
 };
 use crate::sys;
 use serde_json::{Value, json};
@@ -52,6 +52,10 @@ const NO_MODEL_MESSAGE: &str = "No Model is available. Run `crowbar-agent free-m
 /// again, and what Lever keeps as that note's source.
 const NEW_SESSION_NOTE: &str = "The harness could not pick this thread's session up again. It began a new one, which has none of the turns before.";
 const NEW_SESSION_SOURCE: &str = r#"{"lever":"new-session"}"#;
+/// Why a message sent while a turn works is refused when it would change what
+/// the turn runs with.
+const STEER_CHANGES_MESSAGE: &str = "A message sent while the thread works cannot change its mode, Model, or \
+     effort. Send it without them, or when the turn ends.";
 
 /// One broadcast event targeted at peers subscribed to `thread_id`.
 pub struct Broadcast {
@@ -213,6 +217,44 @@ struct SubagentEnding {
     error: Option<String>,
 }
 
+/// A message steered into a thread's turn under way, whose taking the
+/// harness has yet to answer.
+struct PendingSteer {
+    /// Lever's number for it, which the harness's answer comes with.
+    steer: u64,
+    /// Peer waiting for the reply, or `None` if it went away.
+    peer_id: Option<u64>,
+    thread_id: String,
+    turn: u64,
+    text: String,
+    /// The desktop context it carries, as the record keeps it, and as the
+    /// harness is told it.
+    context: Option<Value>,
+    context_prompt: Option<String>,
+    /// The person stopped its turn before the harness answered: a message
+    /// the harness did not take is dropped, not queued.
+    stopped: bool,
+    /// Its place in the thread's queue, kept until the harness answers, so a
+    /// message it did not take waits ahead of those sent after it.
+    queued: QueuedRecord,
+}
+
+/// What a message asks of its thread besides its text.
+struct Wanted<'a> {
+    mode: Option<&'a str>,
+    model: Option<&'a str>,
+    effort: Option<&'a str>,
+}
+
+impl Wanted<'_> {
+    /// Whether it asks for a mode, Model, or effort the thread is not at.
+    fn changes(&self, meta: &ThreadMeta) -> bool {
+        self.mode.is_some_and(|m| m != meta.mode)
+            || self.model.is_some_and(|m| meta.model.as_deref() != Some(m))
+            || self.effort.is_some_and(|e| meta.effort.as_deref() != Some(e))
+    }
+}
+
 struct PendingDelete {
     peer_id: u64,
     thread: String,
@@ -262,6 +304,23 @@ pub struct Service {
     pending_models: Vec<u64>,
     pending_set_models: Vec<PendingSetModel>,
     pending_set_modes: Vec<PendingSetMode>,
+    /// Messages steered into turns under way, which the harness has yet to
+    /// answer, and the number the next one gets.
+    pending_steers: Vec<PendingSteer>,
+    next_steer: u64,
+    /// Threads whose next queued message may go as its own turn once the
+    /// thread is free: its turn ended done or failed, or the person sent
+    /// another message.
+    drain_wanted: HashSet<String>,
+    /// The desktop context each queued message carries, as the harness is
+    /// told it, by its ID. One queued before Lever started is told it again
+    /// from the record.
+    queued_prompts: HashMap<String, (String, String)>,
+    /// Threads whose next queued message Lever could not begin, logged once.
+    drain_stuck: HashSet<String>,
+    /// The harness last started says it can take a message into a turn under
+    /// way.
+    steering: bool,
     /// The effort levels of each Model, as the harness now running said them.
     /// A Model with none has an empty list.
     efforts: HashMap<String, Vec<EffortOption>>,
@@ -329,6 +388,12 @@ impl Service {
             pending_models: Vec::new(),
             pending_set_models: Vec::new(),
             pending_set_modes: Vec::new(),
+            pending_steers: Vec::new(),
+            next_steer: 0,
+            drain_wanted: HashSet::new(),
+            queued_prompts: HashMap::new(),
+            drain_stuck: HashSet::new(),
+            steering: false,
             efforts: HashMap::new(),
             pending_efforts: Vec::new(),
             commands: None,
@@ -361,6 +426,7 @@ impl Service {
             || !self.waiting.is_empty()
             || !self.pending_models.is_empty()
             || !self.pending_set_models.is_empty()
+            || !self.pending_steers.is_empty()
             || !self.pending_efforts.is_empty()
             || !self.modes_in_flight.is_empty()
             || self.probe_wanted
@@ -565,7 +631,7 @@ impl Service {
         {
             effects.broadcasts.push(Broadcast {
                 thread_id: ACTIVITY.to_string(),
-                message: models_event_json(current, self.free_hosted_models()),
+                message: models_event_json(current, self.free_hosted_models(), self.steering),
             });
         }
     }
@@ -700,6 +766,7 @@ impl Service {
         } else if self.idle_remaining().is_some_and(|left| left.is_zero()) {
             self.stop_harness("after idle timeout", log);
         }
+        effects.broadcasts.extend(self.drain_queues(log));
         effects.broadcasts.extend(self.activity_changed());
         effects
     }
@@ -748,6 +815,13 @@ impl Service {
                 pending.peer_id = None;
             }
         }
+        // A message steered into a turn is the turn's once the harness takes
+        // it, whether or not who sent it waits to hear so.
+        for pending in &mut self.pending_steers {
+            if pending.peer_id == Some(peer_id) {
+                pending.peer_id = None;
+            }
+        }
         self.pending_models.retain(|&id| id != peer_id);
         self.pending_efforts.retain(|(id, _)| *id != peer_id);
         self.pending_set_models.retain_mut(|p| {
@@ -767,6 +841,7 @@ impl Service {
 
     pub fn handle_request(&mut self, peer_id: u64, is_person: bool, value: &Value, log: &mut Log) -> RequestOutcome {
         let mut outcome = self.handle_op(peer_id, is_person, value, log);
+        outcome.broadcasts.extend(self.drain_queues(log));
         // An answer can free a prompt that waited on it.
         self.send_held_prompts();
         // An answer or a Stop can leave the harness with nothing to do.
@@ -795,7 +870,8 @@ impl Service {
             "status" => self.handle_status(),
             "list" => self.handle_list(value),
             "archive" | "delete" => self.handle_lifecycle(peer_id, op, value, log),
-            "send" => self.handle_send(is_person, value, log),
+            "send" => self.send_message(peer_id, is_person, value, None, log),
+            "unqueue" => self.handle_unqueue(value, log),
             "resume" => self.handle_resume(value),
             "stop" => self.handle_stop(value, log),
             "models" => self.handle_models(peer_id, value, log),
@@ -812,6 +888,7 @@ impl Service {
         let ok = self.harness.as_mut().is_none_or(AcpHarness::on_writable);
         if !ok {
             let mut effects = self.on_harness_exited(log);
+            effects.broadcasts.extend(self.drain_queues(log));
             effects.broadcasts.extend(self.activity_changed());
             return effects;
         }
@@ -855,6 +932,7 @@ impl Service {
             self.read_what_the_harness_offers(log);
         }
         self.refresh_idle_timer();
+        effects.broadcasts.extend(self.drain_queues(log));
         effects.broadcasts.extend(self.activity_changed());
         effects
     }
@@ -1031,6 +1109,8 @@ impl Service {
     fn delete_record(&mut self, thread: &str, warning: Option<&str>) -> RequestOutcome {
         self.subagent_threads.remove(thread);
         self.held_stops.remove(thread);
+        self.drain_wanted.remove(thread);
+        self.queued_prompts.retain(|_, (t, _)| t != thread);
         if let Err(e) = self.store.delete_thread(thread) {
             return error_outcome("storage-error", &e);
         }
@@ -1174,7 +1254,7 @@ impl Service {
             && let Some(catalog) = &self.model_catalog
         {
             return RequestOutcome {
-                reply: Some(models_reply_json(catalog, self.free_hosted_models())),
+                reply: Some(models_reply_json(catalog, self.free_hosted_models(), self.steering)),
                 subscribe: None,
                 broadcasts: Vec::new(),
             };
@@ -1588,7 +1668,16 @@ impl Service {
         }
     }
 
-    fn handle_send(&mut self, is_person: bool, value: &Value, log: &mut Log) -> RequestOutcome {
+    /// Sends a message to a thread, or begins one. `from_queue` is the
+    /// desktop context of a queued message that now goes as its own turn.
+    fn send_message(
+        &mut self,
+        peer_id: u64,
+        is_person: bool,
+        value: &Value,
+        from_queue: Option<(Option<Value>, Option<String>)>,
+        log: &mut Log,
+    ) -> RequestOutcome {
         let Some(text) = value
             .get("text")
             .and_then(Value::as_str)
@@ -1678,7 +1767,40 @@ impl Service {
                     } else {
                         meta.working_turn.is_some() || self.thread_busy(tid)
                     };
+                    let wanted = Wanted {
+                        mode: requested_mode,
+                        model: requested_model,
+                        effort: requested_effort,
+                    };
+                    // A message for a thread with messages waiting waits
+                    // behind them.
+                    let steer_pending =
+                        !self.working_turns.contains_key(tid) && self.pending_steers.iter().any(|p| p.thread_id == tid);
+                    if from_queue.is_none() && (self.has_queued(tid) || steer_pending) {
+                        return self.queue_message(peer_id, is_person, tid, &meta, text, wanted, log);
+                    }
                     if busy {
+                        // A message sent while the person's turn works is
+                        // taken into that turn, where the harness can, and
+                        // otherwise waits behind it.
+                        if woken.is_none()
+                            && let Some((turn, session_id)) = self.steerable_turn(tid)
+                        {
+                            return self.steer_into_turn(
+                                peer_id,
+                                is_person,
+                                tid,
+                                turn,
+                                &session_id,
+                                &meta,
+                                text,
+                                wanted,
+                                log,
+                            );
+                        }
+                        if woken.is_none() && self.queueable_turn(tid) {
+                            return self.queue_message(peer_id, is_person, tid, &meta, text, wanted, log);
+                        }
                         return error_outcome("working", "This thread is already working on a turn.");
                     }
                     // OpenCode 2.4.1 withdraws a subagent's request when
@@ -1737,19 +1859,11 @@ impl Service {
             return outcome;
         }
 
-        // Messages from the Agent's surface carry desktop context fetched from
-        // Fulcrum (active window title/app_id, windows by workspace, displays —
-        // never window contents or clipboard). With Fulcrum away, none is sent.
-        let desktop_context = if !is_person {
-            self.fulcrum_socket
-                .as_deref()
-                .and_then(|path| fulcrum::fetch_snapshot(path, fulcrum::SNAPSHOT_TIMEOUT))
-        } else {
-            None
+        let (context_value, context_prompt) = match from_queue {
+            Some(context) => context,
+            None => self.desktop_context(is_person),
         };
-        let context_value = desktop_context.as_ref().and_then(|ctx| serde_json::to_value(ctx).ok());
         let context_json = context_value.as_ref().map(Value::to_string);
-        let context_prompt = desktop_context.as_ref().map(fulcrum::format_desktop_context);
 
         // A new thread's requested Model is persisted only after the harness
         // accepts it (in `SessionReady` or `ModelSet`), so a rejected `--model`
@@ -1867,6 +1981,459 @@ impl Service {
         }
     }
 
+    /// The desktop context a message carries, as the record keeps it and as
+    /// the harness is told it. Messages from the Agent's surface carry it,
+    /// fetched from Fulcrum (active window title/app_id, windows by
+    /// workspace, displays — never window contents or clipboard). With
+    /// Fulcrum away, none is sent.
+    fn desktop_context(&self, is_person: bool) -> (Option<Value>, Option<String>) {
+        let desktop_context = if !is_person {
+            self.fulcrum_socket
+                .as_deref()
+                .and_then(|path| fulcrum::fetch_snapshot(path, fulcrum::SNAPSHOT_TIMEOUT))
+        } else {
+            None
+        };
+        (
+            desktop_context.as_ref().and_then(|ctx| serde_json::to_value(ctx).ok()),
+            desktop_context.as_ref().map(fulcrum::format_desktop_context),
+        )
+    }
+
+    /// The person's turn a message sent now could be steered into, with its
+    /// session: one whose prompt the harness is working on, that the person
+    /// has not asked to stop, on a session Lever is changing nothing of.
+    fn steerable_turn(&self, thread_id: &str) -> Option<(u64, String)> {
+        let active = self.working_turns.get(thread_id)?;
+        if active.stop_asked.is_some() || self.session_change_pending(thread_id) {
+            return None;
+        }
+        match &active.dispatch {
+            TurnDispatch::PromptInFlight { session_id } => Some((active.turn, session_id.clone())),
+            _ => None,
+        }
+    }
+
+    /// Steers a message into a thread's turn under way, when its harness can
+    /// take one. The reply waits on the harness's answer: `steered`, or
+    /// `not-steered` with why.
+    #[allow(clippy::too_many_arguments)]
+    fn steer_into_turn(
+        &mut self,
+        peer_id: u64,
+        is_person: bool,
+        thread_id: &str,
+        turn: u64,
+        session_id: &str,
+        meta: &ThreadMeta,
+        text: &str,
+        wanted: Wanted<'_>,
+        log: &mut Log,
+    ) -> RequestOutcome {
+        // A harness that cannot steer has the message wait behind the turn.
+        // So does a thread whose subagent asks: OpenCode 2.4.1 withdraws a
+        // subagent's request when a new prompt comes, and a steered message
+        // comes as one.
+        if !self.harness.as_ref().is_some_and(AcpHarness::can_steer)
+            || self
+                .waiting
+                .values()
+                .any(|w| w.thread_id == thread_id && w.record.subagent.is_some())
+        {
+            return self.queue_message(peer_id, is_person, thread_id, meta, text, wanted, log);
+        }
+        // The turn runs in the mode, Model, and effort it began with.
+        if wanted.changes(meta) {
+            return error_outcome("working", STEER_CHANGES_MESSAGE);
+        }
+        let (context, context_prompt) = self.desktop_context(is_person);
+        let context_json = context.as_ref().map(Value::to_string);
+        let queued =
+            match self
+                .store
+                .insert_queued(thread_id, turn, text, context_json.as_deref(), "steering", unix_now())
+            {
+                Ok(queued) => queued,
+                Err(err) => {
+                    store_failed(log, &err);
+                    return error_outcome("storage-error", &err);
+                }
+            };
+        let steer = self.next_steer;
+        self.next_steer += 1;
+        if let Some(harness) = self.harness.as_mut() {
+            harness.steer(thread_id, steer, session_id, context_prompt.as_deref(), text);
+        }
+        self.pending_steers.push(PendingSteer {
+            steer,
+            peer_id: Some(peer_id),
+            thread_id: thread_id.to_string(),
+            turn,
+            text: text.to_string(),
+            context,
+            context_prompt,
+            stopped: false,
+            queued,
+        });
+        RequestOutcome {
+            reply: None,
+            subscribe: None,
+            broadcasts: Vec::new(),
+        }
+    }
+
+    /// Whether a thread has messages that wait behind a turn.
+    fn has_queued(&self, thread_id: &str) -> bool {
+        self.store.queued_of(thread_id, false).is_ok_and(|q| !q.is_empty())
+    }
+
+    /// Whether a message sent now can wait behind the thread's turn: one of
+    /// the person's works, they have not asked to stop it, and Lever is
+    /// changing nothing of its session.
+    fn queueable_turn(&self, thread_id: &str) -> bool {
+        self.working_turns.get(thread_id).is_some_and(|active| {
+            active.stop_asked.is_none() && !matches!(active.dispatch, TurnDispatch::HarnessStarted { .. })
+        }) && !self.session_change_pending(thread_id)
+    }
+
+    /// Keeps a message to wait behind the thread's newest turn, and replies
+    /// `queued`. It goes as its own turn once the turns before it end. A
+    /// thread that is free has its queue go now.
+    #[allow(clippy::too_many_arguments)]
+    fn queue_message(
+        &mut self,
+        peer_id: u64,
+        is_person: bool,
+        thread_id: &str,
+        meta: &ThreadMeta,
+        text: &str,
+        wanted: Wanted<'_>,
+        log: &mut Log,
+    ) -> RequestOutcome {
+        // A queued message goes in the thread's mode, Model, and effort as
+        // they are when it goes.
+        if wanted.changes(meta) {
+            return error_outcome("working", STEER_CHANGES_MESSAGE);
+        }
+        let turn = match self.store.latest_turn(thread_id) {
+            Ok(Some((turn, _, _))) => turn,
+            Ok(None) => 0,
+            Err(err) => return error_outcome("storage-error", &err),
+        };
+        let (context, context_prompt) = self.desktop_context(is_person);
+        let effects = self.queue(Some(peer_id), thread_id, turn, text, context, context_prompt, log);
+        let mut replies = effects.replies.into_iter();
+        let reply = replies.next();
+        RequestOutcome {
+            reply: reply.as_ref().map(|r| r.message.clone()),
+            subscribe: reply.and_then(|r| r.subscribe),
+            broadcasts: effects.broadcasts,
+        }
+    }
+
+    /// A message the harness did not take into its turn, or had yet to say
+    /// it took when it ended, waits behind that turn. Its turn stopped, it is
+    /// dropped.
+    fn queue_untaken(&mut self, pending: PendingSteer, log: &mut Log) -> Effects {
+        let PendingSteer {
+            peer_id,
+            thread_id,
+            turn,
+            context_prompt,
+            stopped,
+            mut queued,
+            ..
+        } = pending;
+        let to = if stopped { "dropped" } else { "queued" };
+        if let Err(err) = self.store.set_queued_state(&thread_id, &queued.id, "steering", to) {
+            store_failed(log, &err);
+            return Effects {
+                broadcasts: Vec::new(),
+                replies: peer_id
+                    .map(|peer_id| PeerReply {
+                        peer_id,
+                        message: error_json("storage-error", &err),
+                        subscribe: None,
+                    })
+                    .into_iter()
+                    .collect(),
+            };
+        }
+        queued.state = to.to_string();
+        self.announce_queued(peer_id, &thread_id, turn, &queued, context_prompt.filter(|_| !stopped))
+    }
+
+    /// Keeps a message behind `turn`, tells who watches the thread, and
+    /// answers `peer_id` with `queued`.
+    #[allow(clippy::too_many_arguments)]
+    fn queue(
+        &mut self,
+        peer_id: Option<u64>,
+        thread_id: &str,
+        turn: u64,
+        text: &str,
+        context: Option<Value>,
+        context_prompt: Option<String>,
+        log: &mut Log,
+    ) -> Effects {
+        let context_json = context.as_ref().map(Value::to_string);
+        let queued =
+            match self
+                .store
+                .insert_queued(thread_id, turn, text, context_json.as_deref(), "queued", unix_now())
+            {
+                Ok(queued) => queued,
+                Err(err) => {
+                    store_failed(log, &err);
+                    return Effects {
+                        broadcasts: Vec::new(),
+                        replies: peer_id
+                            .map(|peer_id| PeerReply {
+                                peer_id,
+                                message: error_json("storage-error", &err),
+                                subscribe: None,
+                            })
+                            .into_iter()
+                            .collect(),
+                    };
+                }
+            };
+        self.announce_queued(peer_id, thread_id, turn, &queued, context_prompt)
+    }
+
+    /// Tells who watches a thread of a message that now waits behind `turn`,
+    /// or was dropped there, and answers `peer_id` with `queued`.
+    fn announce_queued(
+        &mut self,
+        peer_id: Option<u64>,
+        thread_id: &str,
+        turn: u64,
+        queued: &QueuedRecord,
+        context_prompt: Option<String>,
+    ) -> Effects {
+        if let Some(prompt) = context_prompt {
+            self.queued_prompts
+                .insert(queued.id.clone(), (thread_id.to_string(), prompt));
+        }
+        // A thread with no turn working goes on with what waits as soon as
+        // nothing else holds it.
+        if queued.state == "queued" && !self.working_turns.contains_key(thread_id) {
+            self.drain_wanted.insert(thread_id.to_string());
+        }
+        Effects {
+            broadcasts: vec![Broadcast {
+                thread_id: thread_id.to_string(),
+                message: queued_event_json(thread_id, turn, queued),
+            }],
+            replies: peer_id
+                .map(|peer_id| PeerReply {
+                    peer_id,
+                    message: json!({ "reply": "queued", "thread": thread_id, "turn": turn, "queued": queued.id }),
+                    subscribe: Some(thread_id.to_string()),
+                })
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    /// Drops what waits behind a thread's turn, or all it has waiting, and
+    /// tells who watches the thread.
+    fn drop_queued(&mut self, thread_id: &str, turn: Option<u64>, log: &mut Log) -> Vec<Broadcast> {
+        self.drain_wanted.remove(thread_id);
+        match self.store.drop_queued(thread_id, turn) {
+            Ok(dropped) => dropped
+                .into_iter()
+                .map(|(turn, q)| {
+                    self.queued_prompts.remove(&q.id);
+                    Broadcast {
+                        thread_id: thread_id.to_string(),
+                        message: queued_event_json(thread_id, turn, &q),
+                    }
+                })
+                .collect(),
+            Err(err) => {
+                store_failed(log, &err);
+                Vec::new()
+            }
+        }
+    }
+
+    /// `unqueue`: the person takes back a message that waits.
+    fn handle_unqueue(&mut self, value: &Value, log: &mut Log) -> RequestOutcome {
+        let (Some(thread_id), Some(id)) = (
+            value.get("thread").and_then(Value::as_str).filter(|s| !s.is_empty()),
+            value.get("queued").and_then(Value::as_str).filter(|s| !s.is_empty()),
+        ) else {
+            return error_outcome("invalid-request", "Expected non-empty string thread and queued fields.");
+        };
+        let waiting = match self.store.queued_of(thread_id, false) {
+            Ok(waiting) => waiting,
+            Err(err) => return error_outcome("storage-error", &err),
+        };
+        let Some((turn, mut queued)) = waiting.into_iter().find(|(_, q)| q.id == id) else {
+            return match self.store.thread_meta(thread_id) {
+                Ok(None) => error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
+                Err(err) => error_outcome("storage-error", &err),
+                Ok(Some(_)) => error_outcome("no-queued", "That message no longer waits."),
+            };
+        };
+        match self.store.remove_queued(thread_id, id) {
+            Ok(true) => {}
+            Ok(false) => return error_outcome("no-queued", "That message no longer waits."),
+            Err(err) => {
+                store_failed(log, &err);
+                return error_outcome("storage-error", &err);
+            }
+        }
+        self.queued_prompts.remove(id);
+        queued.state = "removed".to_string();
+        RequestOutcome {
+            reply: Some(json!({ "reply": "ok" })),
+            subscribe: None,
+            broadcasts: vec![Broadcast {
+                thread_id: thread_id.to_string(),
+                message: queued_event_json(thread_id, turn, &queued),
+            }],
+        }
+    }
+
+    /// Sends the next message that waits on each thread that may go on, as
+    /// its own turn: one whose turn ended done or failed, or to which the
+    /// person sent another message, once nothing of the thread holds it. One
+    /// Lever cannot begin now is tried again at the next pass.
+    fn drain_queues(&mut self, log: &mut Log) -> Vec<Broadcast> {
+        let mut broadcasts = Vec::new();
+        let wanted: Vec<String> = self.drain_wanted.iter().cloned().collect();
+        for thread_id in wanted {
+            // A turn works: its end says whether what waits goes.
+            if self.working_turns.contains_key(&thread_id) {
+                self.drain_wanted.remove(&thread_id);
+                continue;
+            }
+            // A change of the session, a delete, a message the harness has yet
+            // to say it took, and a subagent's request each hold what waits
+            // until they end: OpenCode 2.4.1 strands a subagent's request on
+            // a new prompt.
+            if self.session_change_pending(&thread_id)
+                || self.pending_steers.iter().any(|p| p.thread_id == thread_id)
+                || self
+                    .waiting
+                    .values()
+                    .any(|w| w.thread_id == thread_id && w.record.subagent.is_some())
+            {
+                continue;
+            }
+            let next = match self.store.queued_of(&thread_id, false) {
+                Ok(waiting) => waiting.into_iter().next(),
+                Err(err) => {
+                    store_failed(log, &err);
+                    continue;
+                }
+            };
+            let Some((behind, queued)) = next else {
+                self.drain_wanted.remove(&thread_id);
+                continue;
+            };
+            // Marked as going first, so a record that takes no more writes
+            // after the turn begins never sends it twice.
+            match self.store.set_queued_state(&thread_id, &queued.id, "queued", "going") {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(err) => {
+                    store_failed(log, &err);
+                    continue;
+                }
+            }
+            let prompt = self.queued_prompts.get(&queued.id).map(|(_, p)| p.clone()).or_else(|| {
+                queued
+                    .context
+                    .clone()
+                    .and_then(|c| serde_json::from_value::<fulcrum::DesktopContext>(c).ok())
+                    .map(|c| fulcrum::format_desktop_context(&c))
+            });
+            let value = json!({ "op": "send", "thread": thread_id, "text": queued.text });
+            let outcome = self.send_message(0, true, &value, Some((queued.context.clone(), prompt)), log);
+            if outcome.reply.as_ref().is_none_or(|r| r["reply"] != "sent") {
+                // It waits still, and is tried again at the next pass.
+                if let Err(err) = self.store.set_queued_state(&thread_id, &queued.id, "going", "queued") {
+                    store_failed(log, &err);
+                }
+                if self.drain_stuck.insert(thread_id.clone()) {
+                    let _ = log.write(Event::Error, "a queued message could not begin its turn yet");
+                }
+                continue;
+            }
+            self.drain_wanted.remove(&thread_id);
+            self.drain_stuck.remove(&thread_id);
+            self.queued_prompts.remove(&queued.id);
+            if let Err(err) = self.store.forget_queued(&queued.id) {
+                store_failed(log, &err);
+            }
+            let mut sent = queued.clone();
+            sent.state = "sent".to_string();
+            broadcasts.push(Broadcast {
+                thread_id: thread_id.clone(),
+                message: queued_event_json(&thread_id, behind, &sent),
+            });
+            broadcasts.extend(outcome.broadcasts);
+        }
+        broadcasts
+    }
+
+    /// The harness answered a message steered into a turn. One it took is
+    /// kept with its turn, at the place in the answer it came to, and told
+    /// to who watches the thread; one it did not take is refused.
+    fn steer_answered(&mut self, steer: u64, taken: Result<(), String>, log: &mut Log) -> Effects {
+        let Some(at) = self.pending_steers.iter().position(|p| p.steer == steer) else {
+            return Effects::default();
+        };
+        let pending = self.pending_steers.remove(at);
+        if taken.is_err() {
+            // One the harness did not take waits behind the turn.
+            return self.queue_untaken(pending, log);
+        }
+        if let Err(err) = self.store.forget_queued(&pending.queued.id) {
+            store_failed(log, &err);
+        }
+        let thread_id = pending.thread_id;
+        // The message still goes to who is watching. The turn's end says
+        // that not all of it was saved.
+        let context_json = pending.context.as_ref().map(Value::to_string);
+        if let Err(err) = self.store.insert_steer(
+            &thread_id,
+            pending.turn,
+            &pending.text,
+            context_json.as_deref(),
+            unix_now(),
+        ) {
+            self.could_not_save(&thread_id, &err, log);
+        }
+        let mut event = json!({
+            "event": "steered",
+            "thread": thread_id,
+            "turn": pending.turn,
+            "text": pending.text,
+        });
+        if let Some(context) = pending.context {
+            event["context"] = context;
+        }
+        Effects {
+            broadcasts: vec![Broadcast {
+                thread_id: thread_id.clone(),
+                message: event,
+            }],
+            replies: pending
+                .peer_id
+                .map(|peer_id| PeerReply {
+                    peer_id,
+                    message: json!({ "reply": "steered", "thread": thread_id, "turn": pending.turn }),
+                    subscribe: Some(thread_id.clone()),
+                })
+                .into_iter()
+                .collect(),
+        }
+    }
+
     fn handle_stop(&mut self, value: &Value, log: &mut Log) -> RequestOutcome {
         let Some(thread_id) = value.get("thread").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
             return error_outcome("invalid-request", "Expected a non-empty string thread field.");
@@ -1899,6 +2466,16 @@ impl Service {
             |w| w.thread_id == thread_id && requested_turn.is_none_or(|t| w.turn == t),
             log,
         );
+
+        // Stop drops what waits on the thread, behind the turn it stops or
+        // the ones before it, and what the harness has yet to say it took:
+        // nothing runs after the person said stop.
+        broadcasts.extend(self.drop_queued(thread_id, None, log));
+        for pending in &mut self.pending_steers {
+            if pending.thread_id == thread_id {
+                pending.stopped = true;
+            }
+        }
 
         // Cancel any subagents still working on this thread (or requested turn).
         let now = Instant::now();
@@ -2418,7 +2995,9 @@ impl Service {
     fn apply_acp_event(&mut self, event: AcpEvent, log: &mut Log) -> Effects {
         match event {
             AcpEvent::SessionDeleted { thread_id, result } => self.finish_delete(&thread_id, result, None),
+            AcpEvent::SteerAnswered { steer, taken } => self.steer_answered(steer, taken, log),
             AcpEvent::Initialized => {
+                self.steering = self.harness.as_ref().is_some_and(AcpHarness::can_steer);
                 let waiting: Vec<String> = self
                     .working_turns
                     .iter()
@@ -2491,7 +3070,7 @@ impl Service {
                         for peer_id in self.pending_models.drain(..) {
                             effects.replies.push(PeerReply {
                                 peer_id,
-                                message: models_reply_json(&catalog, free),
+                                message: models_reply_json(&catalog, free, self.steering),
                                 subscribe: None,
                             });
                         }
@@ -3784,9 +4363,15 @@ impl Service {
         self.models_refresh_pending = false;
         self.idle_since = None;
 
-        let replies = self.fail_pending_peer_requests(why);
+        let mut replies = self.fail_pending_peer_requests(why);
         self.modes_in_flight.clear();
         let mut broadcasts = self.withdraw_requests(|_| true, log);
+        // What the harness had yet to say it took into a turn waits behind it.
+        for pending in std::mem::take(&mut self.pending_steers) {
+            let effects = self.queue_untaken(pending, log);
+            replies.extend(effects.replies);
+            broadcasts.extend(effects.broadcasts);
+        }
 
         // Every working subagent is interrupted, or stopped when the person
         // had asked to stop it.
@@ -3875,6 +4460,11 @@ impl Service {
     /// and tried again on each wake, so the thread is not left working in the
     /// record after its turn is over.
     fn end_turn(&mut self, thread_id: &str, turn: u64, state: &'static str, error: Option<&str>, log: &mut Log) {
+        // What waits behind a turn that ended done or failed goes next. After
+        // a Stop or an interruption it waits for the person.
+        if matches!(state, "done" | "failed") && self.has_queued(thread_id) {
+            self.drain_wanted.insert(thread_id.to_string());
+        }
         if let Err(err) = self.store.finish_turn(thread_id, turn, state, error, unix_now()) {
             store_failed(log, &err);
             self.unsaved_endings.push(Ending {
@@ -4321,7 +4911,7 @@ fn error_outcome(code: &str, message: &str) -> RequestOutcome {
     }
 }
 
-fn models_payload_json(kind_key: &str, catalog: &ModelCatalog, free_hosted_models: bool) -> Value {
+fn models_payload_json(kind_key: &str, catalog: &ModelCatalog, free_hosted_models: bool, steering: bool) -> Value {
     let models: Vec<Value> = catalog
         .models
         .iter()
@@ -4344,17 +4934,18 @@ fn models_payload_json(kind_key: &str, catalog: &ModelCatalog, free_hosted_model
             .iter()
             .map(|m| json!({ "id": m, "name": acp::mode_name(m).unwrap_or(m) }))
             .collect::<Vec<_>>(),
+        "steering": steering,
     });
     obj[kind_key] = json!("models");
     obj
 }
 
-fn models_reply_json(catalog: &ModelCatalog, free_hosted_models: bool) -> Value {
-    models_payload_json("reply", catalog, free_hosted_models)
+fn models_reply_json(catalog: &ModelCatalog, free_hosted_models: bool, steering: bool) -> Value {
+    models_payload_json("reply", catalog, free_hosted_models, steering)
 }
 
-fn models_event_json(catalog: &ModelCatalog, free_hosted_models: bool) -> Value {
-    models_payload_json("event", catalog, free_hosted_models)
+fn models_event_json(catalog: &ModelCatalog, free_hosted_models: bool, steering: bool) -> Value {
+    models_payload_json("event", catalog, free_hosted_models, steering)
 }
 
 fn efforts_reply_json(model: &str, levels: &[EffortOption]) -> Value {
@@ -4438,6 +5029,12 @@ fn turn_record_json(t: &TurnRecord) -> Value {
         "notes": t.notes.iter().map(note_record_json).collect::<Vec<_>>(),
         "subagents": t.subagents.iter().map(subagent_record_json).collect::<Vec<_>>(),
     });
+    if !t.steered.is_empty() {
+        obj["steered"] = json!(t.steered.iter().map(steer_record_json).collect::<Vec<_>>());
+    }
+    if !t.queued.is_empty() {
+        obj["queued"] = json!(t.queued.iter().map(queued_record_json).collect::<Vec<_>>());
+    }
     if let Some(mode) = &t.mode {
         obj["mode"] = json!(mode);
     }
@@ -4452,6 +5049,32 @@ fn turn_record_json(t: &TurnRecord) -> Value {
     }
     if let Some(origin) = &t.origin {
         obj["origin"] = json!(origin);
+    }
+    obj
+}
+
+fn queued_record_json(q: &QueuedRecord) -> Value {
+    let mut obj = json!({ "queued": q.id, "text": q.text, "state": q.state });
+    if let Some(context) = &q.context {
+        obj["context"] = context.clone();
+    }
+    obj
+}
+
+/// A `queued` event: a message that waits behind a turn, and each change to
+/// it.
+fn queued_event_json(thread_id: &str, turn: u64, q: &QueuedRecord) -> Value {
+    let mut obj = queued_record_json(q);
+    obj["event"] = json!("queued");
+    obj["thread"] = json!(thread_id);
+    obj["turn"] = json!(turn);
+    obj
+}
+
+fn steer_record_json(s: &SteerRecord) -> Value {
+    let mut obj = json!({ "text": s.text, "at": s.at });
+    if let Some(context) = &s.context {
+        obj["context"] = context.clone();
     }
     obj
 }

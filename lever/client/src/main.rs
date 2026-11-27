@@ -28,6 +28,7 @@ usage: crowbar-agent                          talk with the Agent, a line at a t
        crowbar-agent --resume ID --mode MODE  set a thread's mode
        crowbar-agent --mode MODE \"<request>\"  start a thread in a mode
        crowbar-agent --resume ID --answer R A answer a thread's request R with A
+       crowbar-agent --resume ID --unqueue Q  take back message Q that waits in a thread
        crowbar-agent --stop ID                stop the working turn of a thread
        crowbar-agent models                   list the Models the harness offers
        crowbar-agent efforts M                list the effort levels of Model M
@@ -75,6 +76,10 @@ enum Command {
         request: String,
         answer: String,
     },
+    Unqueue {
+        thread: String,
+        queued: String,
+    },
     DefaultMode {
         mode: Option<String>,
     },
@@ -118,6 +123,7 @@ fn command(args: &[String]) -> Result<Command, String> {
     let (mut resumed, mut model, mut stop, mut list, mut words) = (None, None, None, false, Vec::new());
     let (mut mode, mut answer): (Option<String>, Option<(String, String)>) = (None, None);
     let mut effort: Option<String> = None;
+    let mut unqueue: Option<String> = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         // An option comes before the request. A dash inside a request is the request's.
@@ -170,6 +176,13 @@ fn command(args: &[String]) -> Result<Command, String> {
                 let chosen = rest.next().ok_or("--answer needs an answer after the request's ID")?;
                 answer = Some((request.clone(), chosen.clone()));
             }
+            "--unqueue" if unqueue.is_none() => {
+                unqueue = Some(
+                    rest.next()
+                        .ok_or("--unqueue needs a waiting message's ID, as `[waiting]` shows it")?
+                        .clone(),
+                );
+            }
             "--stop" if stop.is_none() => {
                 stop = Some(
                     rest.next()
@@ -181,8 +194,8 @@ fn command(args: &[String]) -> Result<Command, String> {
                 if effort.is_some() {
                     return Err("--effort takes nothing but --resume".to_string());
                 }
-                if list || stop.is_some() || answer.is_some() {
-                    return Err("-- cannot be combined with --list, --stop, or --answer".to_string());
+                if list || stop.is_some() || answer.is_some() || unqueue.is_some() {
+                    return Err("-- cannot be combined with --list, --stop, --answer, or --unqueue".to_string());
                 }
                 words.extend(rest.by_ref().cloned());
                 if words.iter().all(|word| word.trim().is_empty()) {
@@ -195,7 +208,7 @@ fn command(args: &[String]) -> Result<Command, String> {
                     message: words.join(" "),
                 });
             }
-            "--list" | "--resume" | "--model" | "--mode" | "--effort" | "--answer" | "--stop" => {
+            "--list" | "--resume" | "--model" | "--mode" | "--effort" | "--answer" | "--unqueue" | "--stop" => {
                 return Err(format!("{arg} is given twice"));
             }
             option if option.starts_with('-') => return Err(format!("no option {option}")),
@@ -209,6 +222,7 @@ fn command(args: &[String]) -> Result<Command, String> {
         || mode.is_some()
         || effort.is_some()
         || answer.is_some()
+        || unqueue.is_some()
     {
         let alone = |what: &str| -> Result<(), String> {
             if resumed.is_none()
@@ -216,6 +230,7 @@ fn command(args: &[String]) -> Result<Command, String> {
                 && mode.is_none()
                 && effort.is_none()
                 && answer.is_none()
+                && unqueue.is_none()
                 && words.is_empty()
             {
                 Ok(())
@@ -243,6 +258,16 @@ fn command(args: &[String]) -> Result<Command, String> {
                 Ok(Command::SetEffort { thread, effort: level })
             } else {
                 Err("--effort takes nothing but --resume".to_string())
+            };
+        }
+        if let Some(queued) = unqueue {
+            let Some(thread) = resumed else {
+                return Err("--unqueue needs --resume ID, the message's thread".to_string());
+            };
+            return if model.is_none() && mode.is_none() && effort.is_none() && answer.is_none() && words.is_empty() {
+                Ok(Command::Unqueue { thread, queued })
+            } else {
+                Err("--unqueue takes nothing but --resume".to_string())
             };
         }
         if let Some((request, chosen)) = answer {
@@ -379,6 +404,7 @@ fn main() -> ExitCode {
             request,
             answer,
         } => talk::answer(&mut lever, thread, request, answer),
+        Command::Unqueue { thread, queued } => talk::unqueue(&mut lever, thread, queued),
         Command::DefaultMode { mode } => talk::default_mode(&mut lever, mode.as_deref()),
         Command::Lifecycle { op, thread } => talk::lifecycle(&mut lever, op, thread),
         Command::List => talk::list(&mut lever),

@@ -24,6 +24,13 @@
 //! `commands` in the script, each new or loaded session is followed by an
 //! `available_commands_update` that names them.
 //!
+//! With `steering` in the script, it steers as OpenCode 2.4.1 does: its
+//! `initialize` answer says `_meta.steering.supported`, and a
+//! `_session/steering` request for a session whose prompt runs is answered
+//! `injected` and handed to that prompt, where an `await_steer` step takes
+//! it. For a session with no prompt running, or with `steer_refused`, it is
+//! answered `promptRequired`.
+//!
 //! Usage:
 //!   crowbar-stub-harness --script <path> [--log <path>]
 
@@ -177,6 +184,25 @@ struct Script {
     /// it set, as a harness that says only what changed.
     #[serde(default)]
     partial_config_replies: bool,
+    /// If true, says it can steer a turn, and steers as OpenCode does (see
+    /// the module's doc).
+    #[serde(default)]
+    steering: bool,
+    /// If true, a steering message is never taken: each is answered
+    /// `promptRequired`, as when the turn ends just as it comes.
+    #[serde(default)]
+    steer_refused: bool,
+    /// A steering message with this in it is never taken.
+    #[serde(default)]
+    steer_refused_for: Option<String>,
+    /// Waits this long before it answers a steering message, and goes on with
+    /// its other work meanwhile, as the turn's end.
+    #[serde(default)]
+    steer_delay_ms: u64,
+    /// If true, the stub ends at once when a steering message comes, with
+    /// nothing answered.
+    #[serde(default)]
+    steer_exits: bool,
     #[serde(default)]
     turns: Vec<TurnScript>,
 }
@@ -273,6 +299,11 @@ enum Step {
     },
     Title {
         title: String,
+    },
+    /// Waits for a steering message to the session, or a cancel, then says
+    /// `text` with `{steer}` in it as the message's text.
+    AwaitSteer {
+        text: String,
     },
     Thought {
         text: String,
@@ -618,6 +649,22 @@ impl CancelFlag {
         let mut guard = self.cancelled.lock().unwrap();
         while !*guard {
             guard = self.cv.wait(guard).unwrap();
+        }
+    }
+}
+
+/// Messages steered into each session's running prompt, until a step takes them.
+type Steers = Mutex<HashMap<String, std::collections::VecDeque<String>>>;
+
+/// Waits until a message is steered into the session, or the turn is
+/// cancelled, and returns the message, or `None` when cancelled.
+fn await_steer(steers: &Steers, session: &str, cancel: &CancelFlag) -> Option<String> {
+    loop {
+        if let Some(text) = steers.lock().unwrap().get_mut(session).and_then(|q| q.pop_front()) {
+            return Some(text);
+        }
+        if cancel.sleep_or_cancel(Duration::from_millis(10)) {
+            return None;
         }
     }
 }
@@ -1578,6 +1625,7 @@ fn emit_step(
         }
         // Carried out by the turn, which has what they need.
         Step::Ask(_)
+        | Step::AwaitSteer { .. }
         | Step::ModeChange { .. }
         | Step::SubagentStart { .. }
         | Step::SubagentText { .. }
@@ -1730,6 +1778,7 @@ fn run(options: Options) -> Result<(), String> {
         )
     });
     let always: Arc<Mutex<HashMap<String, Vec<String>>>> = Arc::new(Mutex::new(HashMap::new()));
+    let steers: Arc<Steers> = Arc::new(Mutex::new(HashMap::new()));
     let replies: Arc<Replies> = Arc::new(Mutex::new(HashMap::new()));
     let next_request = Arc::new(AtomicU64::new(0));
     let modes = Arc::new(Modes::read(script.modes, script.mode_values.as_deref()));
@@ -1811,6 +1860,12 @@ fn run(options: Options) -> Result<(), String> {
                     let resp = InitializeResponse::new(ProtocolVersion::V1)
                         .agent_capabilities(caps)
                         .agent_info(Implementation::new("crowbar-stub-harness", "0.1.0"));
+                    let mut resp = serde_json::to_value(resp).expect("serialize initialize response");
+                    if script.steering {
+                        // Where OpenCode 2.4.1 says it, beside the
+                        // capabilities ACP's first version names.
+                        resp["_meta"] = json!({ "steering": { "supported": true } });
+                    }
                     writer.send_result(id, resp);
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
@@ -2199,6 +2254,57 @@ fn run(options: Options) -> Result<(), String> {
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
             }
+        } else if script.steering && req.method.as_ref() == "_session/steering" {
+            // OpenCode 2.4.1's own extension: the message goes into the
+            // session's running prompt, which takes it at its next step.
+            let session = params
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let text: String = params
+                .get("prompt")
+                .and_then(Value::as_array)
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .filter_map(|b| b.get("text").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+            if script.steer_exits {
+                std::process::exit(1);
+            }
+            let running = active_cancels.lock().unwrap().contains_key(&session);
+            let refused = script.steer_refused || script.steer_refused_for.as_ref().is_some_and(|t| text.contains(t));
+            let answer = |running: bool| {
+                if running && !refused {
+                    json!({ "outcome": "injected" })
+                } else {
+                    json!({ "outcome": "promptRequired", "reason": "noRunningTurn" })
+                }
+            };
+            if script.steer_delay_ms > 0 {
+                // Answered later, by whether a prompt runs then.
+                let (writer, active_cancels, delay) = (writer.clone(), active_cancels.clone(), script.steer_delay_ms);
+                let outcome = answer(true);
+                workers.push(thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(delay));
+                    let running = active_cancels.lock().unwrap().contains_key(&session);
+                    let outcome = if running {
+                        outcome
+                    } else {
+                        json!({ "outcome": "promptRequired", "reason": "noRunningTurn" })
+                    };
+                    writer.send_result(id, outcome);
+                }));
+            } else {
+                if running && !refused {
+                    steers.lock().unwrap().entry(session).or_default().push_back(text);
+                }
+                writer.send_result(id, answer(running));
+            }
         } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_prompt {
             let prompt_req = match serde_json::from_value::<PromptRequest>(params) {
                 Ok(p) => p,
@@ -2218,6 +2324,7 @@ fn run(options: Options) -> Result<(), String> {
             let writer = writer.clone();
             let active_cancels = active_cancels.clone();
             let session_id = prompt_req.session_id;
+            let steers = Arc::clone(&steers);
             let (modes, session_modes, always, replies, next_request) = (
                 Arc::clone(&modes),
                 Arc::clone(&session_modes),
@@ -2284,6 +2391,18 @@ fn run(options: Options) -> Result<(), String> {
                                 step,
                             );
                         }
+                        Step::AwaitSteer { text } => match await_steer(&steers, &sid_key, heard) {
+                            Some(steer) => {
+                                let step = Step::Text {
+                                    text: text.replace("{steer}", &steer),
+                                };
+                                let _ = emit_step(&writer, &session_id, &step, Some(heard), model.as_deref());
+                            }
+                            None => {
+                                was_cancelled = true;
+                                break;
+                            }
+                        },
                         Step::ModeChange { mode } => {
                             let sid = session_id.0.as_ref().to_string();
                             session_modes.lock().unwrap().insert(sid, mode.clone());
@@ -2319,6 +2438,8 @@ fn run(options: Options) -> Result<(), String> {
                     std::process::exit(0);
                 }
                 active_cancels.lock().unwrap().remove(&sid_key);
+                // What no step took goes with the prompt.
+                steers.lock().unwrap().remove(&sid_key);
 
                 if was_cancelled && turn_script.cancel_with_error {
                     writer.send_error(id, AcpError::request_cancelled());
