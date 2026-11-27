@@ -742,6 +742,7 @@ struct Launcher {
 }
 impl Launcher {
     fn results(&self) -> Vec<AppEntry> {
+        if crowbar_calc::launcher_expression(&self.query) { return Vec::new(); }
         catalog::ranked(&self.apps, &self.query)
             .into_iter()
             .map(|i| self.apps[i].clone())
@@ -760,6 +761,13 @@ impl Launcher {
     }
     fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
+            return;
+        }
+        if let Some(result) = crowbar_calc::launcher_result(&self.query) {
+            if let Ok(value) = result {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(value.to_string()));
+                self.close(window, cx);
+            }
             return;
         }
         if let Some(app) = self.results().get(self.selected) {
@@ -798,6 +806,9 @@ fn palette_keycap(label: &'static str, p: Palette) -> Div {
 impl Render for Launcher {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.model.read(cx).palette();
+        let calculation = crowbar_calc::launcher_result(&self.query);
+        let is_math = calculation.is_some();
+        let math_ready = matches!(calculation, Some(Ok(_)));
         let results = self.results();
         let total = results.len();
         let selected = self.selected;
@@ -869,7 +880,17 @@ impl Render for Launcher {
                             .flex()
                             .flex_col()
                             .gap(px(2.))
-                            .when(total == 0, |d| {
+                            .when_some(calculation, |d, result| {
+                                let valid = result.is_ok();
+                                let text = result.map(|v| v.to_string()).unwrap_or_else(|e| e.to_string());
+                                d.child(div().id("math-result").px(px(12.)).py(px(16.)).rounded(px(7.))
+                                    .bg(rgb(p.surface)).border_1().border_color(rgb(p.focus))
+                                    .child(div().font_family("IBM Plex Mono").text_size(px(if valid { 24. } else { 13. })).text_ellipsis().child(text))
+                                    .child(div().mt(px(6.)).text_size(px(12.)).text_color(rgb(p.muted))
+                                        .child(if valid { "Enter to copy result" } else { "Edit the expression to try again" }))
+                                    .when(valid, |d| d.cursor_pointer().on_click(cx.listener(|this, _, w, cx| this.open(w, cx)))))
+                            })
+                            .when(total == 0 && !is_math, |d| {
                                 d.child(
                                     div()
                                         .px(px(12.))
@@ -1005,6 +1026,8 @@ impl Render for Launcher {
                                     .gap(px(10.))
                                     .child(if busy {
                                         "Opening application…".into()
+                                    } else if is_math {
+                                        "Calculator".into()
                                     } else if total > 6 {
                                         format!(
                                             "{}–{} of {total}",
@@ -1062,22 +1085,22 @@ impl Render for Launcher {
                                     .flex()
                                     .items_center()
                                     .gap(px(10.))
-                                    .child(
+                                    .when(!is_math, |d| d.child(
                                         div()
                                             .flex()
                                             .items_center()
                                             .gap(px(4.))
                                             .child(palette_keycap("↑ ↓", p))
                                             .child("choose"),
-                                    )
-                                    .child(
+                                    ))
+                                    .when(!is_math || math_ready, |d| d.child(
                                         div()
                                             .flex()
                                             .items_center()
                                             .gap(px(4.))
                                             .child(palette_keycap("Enter", p))
-                                            .child("open"),
-                                    )
+                                            .child(if is_math { "copy" } else { "open" }),
+                                    ))
                                     .child(
                                         div()
                                             .flex()
