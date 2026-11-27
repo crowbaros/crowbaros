@@ -2785,8 +2785,10 @@ finally:
             # Every OpenCode now is Lever's harness or under it; no session
             # by hand runs yet.
             self.run("ps -eo pid,ppid,args | grep '[o]pencode'; pkill -KILL -x opencode; true")
+            # A killed process Lever has yet to reap is a zombie, not running.
             self.wait("Lever's own OpenCode stopped before the hand-started session",
-                      lambda: not self.guest.ssh('pgrep -x opencode', check=False).stdout.strip())
+                      lambda: not self.guest.ssh("ps -eo stat=,comm= | awk '$2 == \"opencode\" && $1 !~ /^Z/'",
+                                                 check=False).stdout.strip())
             threads_before_hand = list(self.agent_view()['state']['threads'])
             self.run(
                 # Only the command goes to the background, so nothing holds ssh's output.
