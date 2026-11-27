@@ -106,16 +106,23 @@ struct ChangeAfterList {
     /// answer is sent, not after.
     #[serde(default)]
     before_answer: bool,
+    /// Which of the process's listings it follows: the first by default.
+    #[serde(default = "first_listing")]
+    listing: u64,
+}
+
+fn first_listing() -> u64 {
+    1
 }
 
 /// Replaces the sessions file as `change_after_list` says, if this process
-/// is the one it names, once, `before` its answer or after it.
-fn change_store_after_listing(script: &Script, before: bool, done: &std::sync::atomic::AtomicBool) {
+/// and its `listed`th listing are the ones it names, `before` its answer or
+/// after it.
+fn change_store_after_listing(script: &Script, before: bool, listed: u64) {
     if script
         .change_after_list
         .as_ref()
-        .is_none_or(|c| c.before_answer != before)
-        || done.load(Ordering::Relaxed)
+        .is_none_or(|c| c.before_answer != before || c.listing != listed)
     {
         return;
     }
@@ -128,7 +135,6 @@ fn change_store_after_listing(script: &Script, before: bool, done: &std::sync::a
     if started != change.on_start {
         return;
     }
-    done.store(true, Ordering::Relaxed);
     if !before {
         // After the answer has gone out, which a writer thread sends.
         std::thread::sleep(Duration::from_millis(50));
@@ -145,6 +151,10 @@ struct Script {
     /// writes to its own store whenever it opens it.
     #[serde(default)]
     touch_on_start: Option<String>,
+    /// A file the stub appends a line to as it answers each listing, as a
+    /// running harness's own turn writes to its store meanwhile.
+    #[serde(default)]
+    touch_on_list: Option<String>,
     #[serde(default)]
     list_sessions: bool,
     /// If set, the sessions file is replaced with these sessions once the
@@ -1897,7 +1907,7 @@ fn run(options: Options) -> Result<(), String> {
     let modes = Arc::new(Modes::read(script.modes, script.mode_values.as_deref()));
     let next_session = AtomicU64::new(1);
     let prompted = std::sync::atomic::AtomicBool::new(false);
-    let store_changed = std::sync::atomic::AtomicBool::new(false);
+    let listings = AtomicU64::new(0);
     let free_disabled = std::env::var("OPENCODE_DISABLE_FREE_MODELS").ok().as_deref() == Some("1");
     let default_model = script
         .default_model
@@ -2376,13 +2386,19 @@ fn run(options: Options) -> Result<(), String> {
                     if !last_page {
                         resp = resp.next_cursor(end.to_string());
                     }
-                    if last_page {
-                        change_store_after_listing(&script, true, &store_changed);
+                    let listed = if last_page {
+                        listings.fetch_add(1, Ordering::Relaxed) + 1
+                    } else {
+                        0
+                    };
+                    if let Some(path) = &script.touch_on_list
+                        && let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path)
+                    {
+                        let _ = writeln!(file, "listed");
                     }
+                    change_store_after_listing(&script, true, listed);
                     writer.send_result(id, resp);
-                    if last_page {
-                        change_store_after_listing(&script, false, &store_changed);
-                    }
+                    change_store_after_listing(&script, false, listed);
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
             }

@@ -303,9 +303,11 @@ pub struct Service {
     /// True once the running harness left a `session/list` unanswered: until
     /// it is gone, discovery lists with a one-shot harness instead.
     live_list_unanswered: bool,
-    /// How long a pass waits after Lever's database could not be read, or
-    /// after a listing failed while a session waited to be tried again.
+    /// How long a pass waits after Lever's database could not be read.
     discovery_read_retry: Duration,
+    /// How long a pass waits after a listing failed while a session waited
+    /// to be tried again.
+    listing_retry: Duration,
     /// Whether a session whose export failed waits to be tried again.
     export_retry_pending: bool,
     /// True if another pass was asked for while a live `session/list` RPC
@@ -446,6 +448,7 @@ impl Service {
             live_list_unanswered: false,
             live_list_rescan_wanted: false,
             discovery_read_retry: DISCOVERY_READ_RETRY,
+            listing_retry: DISCOVERY_READ_RETRY,
             export_retry_pending: false,
             loading_history: HashMap::new(),
             dispatched_history: HashSet::new(),
@@ -584,18 +587,11 @@ impl Service {
         let (found, fingerprint) = match outcome {
             Ok(done) => done,
             Err(_) => {
-                self.discovery_pass_finished(rescan, PassEnd::Failed);
-                let _ = log.write(Event::Error, "could not list external harness sessions");
-                // A session waiting to be tried again still waits: the pass
-                // that was to try it is tried again, later each time.
-                if self.export_retry_pending {
-                    self.discovery_schedule
-                        .request(Instant::now() + self.discovery_read_retry);
-                    self.discovery_read_retry = (self.discovery_read_retry * 2).min(DISCOVERY_READ_RETRY_MAX);
-                }
+                self.listing_failed(rescan, log);
                 return Effects::default();
             }
         };
+        self.listing_retry = DISCOVERY_READ_RETRY;
         self.export_retry_pending = found.retry_at.is_some();
         self.discovery_pass_finished(
             rescan || found.more,
@@ -677,6 +673,18 @@ impl Service {
             ignored.insert(cid.clone());
         }
         Some(KnownSessions { owned, ignored, quiet })
+    }
+
+    /// A listing failed. A session waiting to be tried again still waits:
+    /// the pass that was to try it is tried again, later each time until a
+    /// listing succeeds.
+    fn listing_failed(&mut self, rescan: bool, log: &mut Log) {
+        self.discovery_pass_finished(rescan, PassEnd::Failed);
+        let _ = log.write(Event::Error, "could not list external harness sessions");
+        if self.export_retry_pending {
+            self.discovery_schedule.request(Instant::now() + self.listing_retry);
+            self.listing_retry = (self.listing_retry * 2).min(DISCOVERY_READ_RETRY_MAX);
+        }
     }
 
     /// Lever's database could not be read for a pass: the pass is listed
@@ -4534,8 +4542,7 @@ impl Service {
                 let sessions = match result {
                     Ok(sessions) => sessions,
                     Err(_) => {
-                        self.discovery_pass_finished(rescan, PassEnd::Failed);
-                        let _ = log.write(Event::Error, "could not list external harness sessions");
+                        self.listing_failed(rescan, log);
                         return Effects::default();
                     }
                 };
@@ -4560,11 +4567,16 @@ impl Service {
                     }
                 }
                 let fingerprint = discovery::listing_fingerprint(&sessions);
+                self.listing_retry = DISCOVERY_READ_RETRY;
                 self.discovery_pass_finished(
                     rescan,
                     PassEnd::Listed {
                         fingerprint,
-                        changed_after: false,
+                        // A write seen while the running harness listed may
+                        // be its own turn's or the person's, after it read
+                        // its sessions: it is listed again, a few times at
+                        // most while nothing it lists changes.
+                        changed_after: true,
                     },
                 );
                 self.apply_discovered_sessions(sessions, log)

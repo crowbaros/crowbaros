@@ -9655,6 +9655,10 @@ fn a_session_written_while_a_follow_up_lists_is_still_found(before_answer: bool)
             "change_after_list": {
                 "on_start": 2,
                 "before_answer": before_answer,
+                // After the second listing's answer, the change only the
+                // watch to the pass's end sees; before the first's, the
+                // change the second listing has in it.
+                "listing": if before_answer { 1 } else { 2 },
                 "sessions": [session("ses_first", "First"), session("ses_late", "Late")]
             }
         }),
@@ -9689,6 +9693,62 @@ fn a_session_written_after_a_follow_up_answered_its_listing_is_still_found() {
 #[test]
 fn a_session_written_after_a_follow_up_read_its_sessions_but_before_it_answered_is_still_found() {
     a_session_written_while_a_follow_up_lists_is_still_found(true);
+}
+
+#[test]
+fn a_session_written_while_the_running_harness_lists_is_still_found() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("sessions.json");
+    let session = |id: &str, title: &str| {
+        json!({
+            "session_id": id,
+            "cwd": "/tmp",
+            "title": title,
+            "history": [{ "kind": "user_text", "text": "hi" }, { "kind": "text", "text": "hello" }]
+        })
+    };
+    // Lever's own harness runs, and its turn writes to the store as it
+    // lists; the person's session is written after the running harness's
+    // follow-up has read its sessions, and nothing writes after.
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "touch_on_start": dir.0.join("starts.log").to_str().unwrap(),
+            "touch_on_list": store_dir.join("turn.log").to_str().unwrap(),
+            "change_after_list": {
+                "on_start": 1,
+                "listing": 2,
+                "before_answer": true,
+                "sessions": [session("ses_first", "First"), session("ses_late", "Late")]
+            },
+            "turns": [{ "match": "hello", "steps": [{ "kind": "text", "text": "Hi." }] }]
+        }),
+    );
+    let mut lever = start_lever_with_discovery(&dir.0, &script, None, &store_dir);
+    let mut peer = handshake(&lever.person);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let (thread, turn) = send(&mut peer, None, "hello");
+    assert_eq!(turn_events(&mut peer, &thread, turn).last().unwrap()["event"], "done");
+
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+    write_sessions_file(&sessions_file, &json!([session("ses_first", "First")]));
+    read_until(&mut watcher, |f| {
+        f["event"] == "threads"
+            && f["threads"]
+                .as_array()
+                .is_some_and(|ts| ts.iter().any(|t| t["title"] == "Late"))
+    });
+    assert_eq!(count_lines(&dir.0.join("starts.log")), 1, "the running harness listed");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
 }
 
 #[test]
