@@ -132,6 +132,9 @@ struct WorkingTurn {
     unsaved: bool,
     /// When the person asked to stop this turn and the harness was told.
     stop_asked: Option<Instant>,
+    /// The harness said something in this turn before its prompt went out:
+    /// the person's message took over what it was doing.
+    heard_before_prompt: bool,
 }
 
 /// A request that waits for the person, as Lever holds it: the harness's
@@ -1833,6 +1836,7 @@ impl Service {
                 dispatch: TurnDispatch::WaitingForInit,
                 unsaved: false,
                 stop_asked: None,
+                heard_before_prompt: false,
             },
         );
 
@@ -4075,6 +4079,7 @@ impl Service {
                 .values()
                 .any(|w| w.thread_id == thread_id && w.record.subagent.is_some())
             && let Some(active) = self.working_turns.get(thread_id)
+            && !active.heard_before_prompt
             && !matches!(
                 active.dispatch,
                 TurnDispatch::PromptInFlight { .. } | TurnDispatch::HarnessStarted { .. }
@@ -4103,6 +4108,17 @@ impl Service {
             });
         }
         if let Some(active) = self.working_turns.get_mut(thread_id) {
+            // What the harness says before the turn's prompt went out is the
+            // work the person's message took over: the turn keeps it, and is
+            // not ended unsent after.
+            if opens
+                && !matches!(
+                    active.dispatch,
+                    TurnDispatch::PromptInFlight { .. } | TurnDispatch::HarnessStarted { .. }
+                )
+            {
+                active.heard_before_prompt = true;
+            }
             // After a Stop, only what goes on counts as the harness going on:
             // an act it closes is the Stop going through.
             let goes_on = opens || active.stop_asked.is_none();
@@ -4207,6 +4223,7 @@ impl Service {
                 // Asked after it was last heard from, so a turn that says no
                 // more once told to stop ends stopped and spares the harness.
                 stop_asked: held.then(Instant::now),
+                heard_before_prompt: false,
             },
         );
         broadcasts.push(Broadcast {

@@ -9017,8 +9017,80 @@ fn a_message_that_takes_over_with_a_mode_keeps_what_the_harness_says_as_its_mode
     assert_eq!(ended["event"], "done", "{ended}");
     let record = resume(&mut peer, &thread);
     let answer = record["turns"][2]["answer"].as_str().unwrap_or("");
+    assert!(answer.contains("Still reporting."), "{record}");
     assert!(answer.contains("Next answer."), "{record}");
     assert_eq!(stub_prompts(&stub_log).len(), 2, "the message was not sent");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_report_the_persons_message_took_over_stays_whole_when_a_subagent_asks_after() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "set_config_delay_ms": 700,
+            "turns": [
+                {
+                    "match": "Go",
+                    "steps": [
+                        { "kind": "subagent_start", "id": "ses_reporter", "title": "Reporter", "prompt": "Report" },
+                        { "kind": "subagent_start", "id": "ses_later", "title": "Later", "prompt": "Ask later" },
+                        { "kind": "text", "text": "Handed off." }
+                    ],
+                    "after": [
+                        // While the next message's mode is set, one subagent
+                        // reports and the harness begins to answer it; the
+                        // other asks before the answer is done.
+                        { "kind": "pause_ms", "ms": 150 },
+                        { "kind": "subagent_end", "subagent": "ses_reporter", "status": "completed" },
+                        { "kind": "text", "text": "Report part one." },
+                        { "kind": "pause_ms", "ms": 150 },
+                        { "kind": "subagent_ask", "subagent": "ses_later", "id": "call_later", "tool_kind": "read",
+                          "title": "Read /tmp/later", "raw_input": { "path": "/tmp/later" }, "output": "later",
+                          "wait_for_answer": false },
+                        { "kind": "pause_ms", "ms": 100 },
+                        { "kind": "text", "text": " Part two." }
+                    ]
+                },
+                { "match": "Next", "steps": [{ "kind": "text", "text": " Next." }] }
+            ]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &["--wake-quiet-ms", "60000"]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    let sent = ask_lever(
+        &mut peer,
+        json!({ "op": "send", "thread": thread, "text": "Next", "cwd": "/tmp", "mode": "full-access" }),
+    );
+    assert_eq!(sent["reply"], "sent", "{sent}");
+    let next = sent["turn"].as_u64().unwrap();
+    let asked = read_until(&mut peer, |v| v["event"] == "request" && v["state"] == "waiting");
+    read_until(&mut peer, |v| {
+        assert!(
+            !(v["event"] == "failed" && v["turn"] == next),
+            "the message ended unsent after it took over the report: {v}"
+        );
+        v["event"] == "text" && v["text"] == " Part two."
+    });
+    let answered = ask_lever(
+        &mut peer,
+        json!({ "op": "answer", "thread": thread, "request": asked["request"], "answer": "once" }),
+    );
+    assert_eq!(answered["reply"], "ok", "{answered}");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == next);
+    let record = resume(&mut peer, &thread);
+    let turns = record["turns"].as_array().unwrap();
+    assert_eq!(turns.len(), 2, "{record}");
+    assert_eq!(turns[1]["answer"], "Report part one. Part two. Next.", "{record}");
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
