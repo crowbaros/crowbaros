@@ -1,0 +1,1431 @@
+
+CHECK .: python3 -m unittest discover -s base -p test_*.py
+...................
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: there is no account file at /tmp/tmpd1m7x91o/account.json, so this image has the lab account `crowbar`.
+Its password, `crowbar`, is published in this repository, so anyone at the
+machine can unlock its desktop. Never put it on a machine anyone else can reach.
+To set your own account, see base/README.md, "The person's account".
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: there is no account file at /tmp/tmpo5suey7d/account.json, so this image has the lab account `crowbar`.
+Its password, `crowbar`, is published in this repository, so anyone at the
+machine can unlock its desktop. Never put it on a machine anyone else can reach.
+To set your own account, see base/README.md, "The person's account".
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: there is no account file at /tmp/tmpmsbxs9jj/account.json, so this image has the lab account `crowbar`.
+Its password, `crowbar`, is published in this repository, so anyone at the
+machine can unlock its desktop. Never put it on a machine anyone else can reach.
+To set your own account, see base/README.md, "The person's account".
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+..
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: there is no account file at /tmp/tmpax6tlpzz/account.json, so this image has the lab account `crowbar`.
+Its password, `crowbar`, is published in this repository, so anyone at the
+machine can unlock its desktop. Never put it on a machine anyone else can reach.
+To set your own account, see base/README.md, "The person's account".
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: --lab-account ignores any account file, as the checks do, so this image has the lab account `crowbar`.
+Its password, `crowbar`, is published in this repository, so anyone at the
+machine can unlock its desktop. Never put it on a machine anyone else can reach.
+To set your own account, see base/README.md, "The person's account".
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+..
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: there is no account file at /tmp/tmpw4orzjtd/account.json, so this image has the lab account `crowbar`.
+Its password, `crowbar`, is published in this repository, so anyone at the
+machine can unlock its desktop. Never put it on a machine anyone else can reach.
+To set your own account, see base/README.md, "The person's account".
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: there is no account file at /tmp/tmp_40oirhf/account.json, so this image has the lab account `crowbar`.
+Its password, `crowbar`, is published in this repository, so anyone at the
+machine can unlock its desktop. Never put it on a machine anyone else can reach.
+To set your own account, see base/README.md, "The person's account".
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+...
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: there is no account file at /tmp/tmp0sg2h_0o/account.json, so this image has the lab account `crowbar`.
+Its password, `crowbar`, is published in this repository, so anyone at the
+machine can unlock its desktop. Never put it on a machine anyone else can reach.
+To set your own account, see base/README.md, "The person's account".
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: there is no account file at /tmp/tmp8bafsykh/account.json, so this image has the lab account `crowbar`.
+Its password, `crowbar`, is published in this repository, so anyone at the
+machine can unlock its desktop. Never put it on a machine anyone else can reach.
+To set your own account, see base/README.md, "The person's account".
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: --lab-account ignores any account file, as the checks do, so this image has the lab account `crowbar`.
+Its password, `crowbar`, is published in this repository, so anyone at the
+machine can unlock its desktop. Never put it on a machine anyone else can reach.
+To set your own account, see base/README.md, "The person's account".
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+..
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: there is no account file at /tmp/tmptswtees_/account.json, so this image has the lab account `crowbar`.
+Its password, `crowbar`, is published in this repository, so anyone at the
+machine can unlock its desktop. Never put it on a machine anyone else can reach.
+To set your own account, see base/README.md, "The person's account".
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+...................
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: there is no account file at /tmp/tmppz4j5_o9/account.json, so this image has the lab account `crowbar`.
+Its password, `crowbar`, is published in this repository, so anyone at the
+machine can unlock its desktop. Never put it on a machine anyone else can reach.
+To set your own account, see base/README.md, "The person's account".
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+.....................crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmpjwx1eob4/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `crowbar` (the lab account; see the warning above).
+Building with the account `jim` from /tmp/tmpks4u5lb7/account.json
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmpks4u5lb7/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `jim`.
+Building with the account `jim` from /tmp/tmpx14f__zf/account.json
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmpx14f__zf/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `jim`.
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmpx14f__zf/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `crowbar` (the lab account; see the warning above).
+Building with the account `jim` from /tmp/tmpfswwk70f/account.json
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmpfswwk70f/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `jim`.
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmp9y584ads/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `crowbar` (the lab account; see the warning above).
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmp8054p9qt/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `crowbar` (the lab account; see the warning above).
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmpo5suey7d/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `crowbar` (the lab account; see the warning above).
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmpax6tlpzz/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `crowbar` (the lab account; see the warning above).
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmpax6tlpzz/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `crowbar` (the lab account; see the warning above).
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmp_40oirhf/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `crowbar` (the lab account; see the warning above).
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmp0sg2h_0o/a checkout with spaces/.lab/base/base.raw with kernel 6.18.10_1
+The image's person's account is `crowbar` (the lab account; see the warning above).
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmp8bafsykh/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `crowbar` (the lab account; see the warning above).
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmpn4y960tt/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `crowbar` (the lab account; see the warning above).
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmptswtees_/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `crowbar` (the lab account; see the warning above).
+crowbar-compositor: sha256 digest
+crowbar-probe: sha256 digest
+crowbaros-shell: sha256 digest
+crowbaros-files: sha256 digest
+crowbaros-editor: sha256 digest
+crowbaros-monitor: sha256 digest
+crowbaros-viewer: sha256 digest
+crowbaros-studio-settings: sha256 digest
+crowbar-helpers: sha256 digest
+crowbar-lever: sha256 digest
+crowbar-agent: sha256 digest
+Built /tmp/tmppz4j5_o9/a checkout with spaces/.lab/base/base.raw with kernel 6.18.64_1
+The image's person's account is `crowbar` (the lab account; see the warning above).
+Installing the Void build root: 19 packages and what they depend on. The first time, this downloads them into /home/build/.cache/crowbaros/void/packages.
+.Installing the Void root: 55 packages and what they depend on. The first time, this downloads them into /home/build/.cache/crowbaros/void/packages.
+..Installed the Void root at /tmp/tmp00jxyy68/rootfs (log: /tmp/tmp00jxyy68/rootfs.log)
+Using the Void root at /tmp/tmp00jxyy68/rootfs (pass --force to install it again)
+Installing the Void root: 55 packages and what they depend on. The first time, this downloads them into /home/build/.cache/crowbaros/void/packages.
+Installed the Void root at /tmp/tmp_fucn731/rootfs (log: /tmp/tmp_fucn731/rootfs.log)
++ tar --zstd --numeric-owner --xattrs '--xattrs-include=*' --acls --sparse -C /tmp/tmp_fucn731 -cf /tmp/tmp_fucn731/cache/root.tar.zst.part rootfs rootfs.done
+Saved the Void root to /tmp/tmp_fucn731/cache/root.tar.zst (0 MiB)
++ rm -rf /tmp/tmp_fucn731/rootfs
++ tar --zstd --numeric-owner --xattrs '--xattrs-include=*' --acls --sparse -C /tmp/tmp_fucn731 -xpf /tmp/tmp_fucn731/cache/root.tar.zst
+Restored the Void root from /tmp/tmp_fucn731/cache/root.tar.zst
+The Void root at /tmp/tmp_fucn731/rootfs is not a finished install of these packages; installing it again
+Installing the Void root: 56 packages and what they depend on. The first time, this downloads them into /home/build/.cache/crowbaros/void/packages.
+.Installed the Void root at /tmp/tmp_fucn731/rootfs (log: /tmp/tmp_fucn731/rootfs.log)
+Installing the Void root: 55 packages and what they depend on. The first time, this downloads them into /home/build/.cache/crowbaros/void/packages.
+The Void root at /tmp/tmpynmnz1y6/rootfs is not a finished install of these packages; installing it again
+Installing the Void root: 55 packages and what they depend on. The first time, this downloads them into /home/build/.cache/crowbaros/void/packages.
+.Installed the Void root at /tmp/tmpynmnz1y6/rootfs (log: /tmp/tmpynmnz1y6/rootfs.log)
+Installing the Void root: 55 packages and what they depend on. The first time, this downloads them into /home/build/.cache/crowbaros/void/packages.
+Installed the Void root at /tmp/tmphqafuiz_/rootfs (log: /tmp/tmphqafuiz_/rootfs.log)
++ tar --zstd --numeric-owner --xattrs '--xattrs-include=*' --acls --sparse -C /tmp/tmphqafuiz_ -cf /tmp/tmphqafuiz_/cache/root.tar.zst.part rootfs rootfs.done
+Saved the Void root to /tmp/tmphqafuiz_/cache/root.tar.zst (0 MiB)
++ rm -rf /tmp/tmphqafuiz_/rootfs
++ tar --zstd --numeric-owner --xattrs '--xattrs-include=*' --acls --sparse -C /tmp/tmphqafuiz_ -xpf /tmp/tmphqafuiz_/cache/root.tar.zst
+/*stdin*\ : Read error (39) : premature end 
+tar: Child returned status 1
+tar: Error is not recoverable: exiting now
+/tmp/tmphqafuiz_/cache/root.tar.zst did not unpack; the build installs the Void root
+Installing the Void root: 55 packages and what they depend on. The first time, this downloads them into /home/build/.cache/crowbaros/void/packages.
+.Installed the Void root at /tmp/tmphqafuiz_/rootfs (log: /tmp/tmphqafuiz_/rootfs.log)
+Installing the Void root: 55 packages and what they depend on. The first time, this downloads them into /home/build/.cache/crowbaros/void/packages.
+.Installing the Void root: 55 packages and what they depend on. The first time, this downloads them into /home/build/.cache/crowbaros/void/packages.
+.Installing the Void root: 55 packages and what they depend on. The first time, this downloads them into /home/build/.cache/crowbaros/void/packages.
+Installed the Void root at /tmp/tmpca4v875e/rootfs (log: /tmp/tmpca4v875e/rootfs.log)
++ tar --zstd --numeric-owner --xattrs '--xattrs-include=*' --acls --sparse -C /tmp/tmpca4v875e -cf /tmp/tmpca4v875e/cache/root.tar.zst.part rootfs rootfs.done
+Saved the Void root to /tmp/tmpca4v875e/cache/root.tar.zst (0 MiB)
++ rm -rf /tmp/tmpca4v875e/rootfs
++ tar --zstd --numeric-owner --xattrs '--xattrs-include=*' --acls --sparse -C /tmp/tmpca4v875e -xpf /tmp/tmpca4v875e/cache/root.tar.zst
+.Restored the Void root from /tmp/tmpca4v875e/cache/root.tar.zst
+Using the Void root at /tmp/tmpca4v875e/rootfs (pass --force to install it again)
+Installing the Void root: 55 packages and what they depend on. The first time, this downloads them into /home/build/.cache/crowbaros/void/packages.
+.......................
+----------------------------------------------------------------------
+Ran 105 tests in 0.359s
+
+OK
+
+CHECK .: python3 -m unittest discover -s lab/void -p test_*.py
+[04:36:56] # The CrowbarOS compositor on a TTY in Base's image
+[04:36:56] CrowbarOS commit abc1234, with changes that are not committed
+[04:36:56] Evidence and new guest disk: /tmp/tmpg5z51zhr
+[04:36:56] Building Base's image; output goes to /tmp/tmpg5z51zhr/build.log
+[04:36:56] binary crowbar-compositor: sha256 aaa (built and tested in Base's Void build root)
+[04:36:56] binary crowbar-probe: sha256 bbb (built and tested in Base's Void build root)
+[04:36:56] PASS: stub
+[04:36:56] FAIL: the run finished - KeyboardInterrupt()
+[04:36:56] 
+[04:36:56] == compositor log, without the line for each frame
+[04:36:56] 
+[04:36:56] RESULT: 1 passed, 1 failed
+[04:36:56] log: /tmp/tmpg5z51zhr/compositor-20261127T043656Z.log
+[04:36:56] # The CrowbarOS compositor on a TTY in Base's image
+[04:36:56] CrowbarOS commit abc1234, with changes that are not committed
+[04:36:56] Evidence and new guest disk: /tmp/tmpo8fx3ek4
+[04:36:56] Building Base's image; output goes to /tmp/tmpo8fx3ek4/build.log
+[04:36:56] binary crowbar-compositor: sha256 aaa (built and tested in Base's Void build root)
+[04:36:56] binary crowbar-probe: sha256 bbb (built and tested in Base's Void build root)
+[04:36:56] PASS: stub
+[04:36:56] FAIL: the run finished - SystemExit(1)
+[04:36:56] 
+[04:36:56] == compositor log, without the line for each frame
+[04:36:56] 
+[04:36:56] RESULT: 1 passed, 1 failed
+[04:36:56] log: /tmp/tmpo8fx3ek4/compositor-20261127T043656Z.log
+[04:36:56] # The CrowbarOS compositor on a TTY in Base's image
+[04:36:56] CrowbarOS commit abc1234, with changes that are not committed
+[04:36:56] Evidence and new guest disk: /tmp/tmpvtd_ubue
+[04:36:56] Building Base's image; output goes to /tmp/tmpvtd_ubue/build.log
+[04:36:56] binary crowbar-compositor: sha256 aaa (built and tested in Base's Void build root)
+[04:36:56] binary crowbar-probe: sha256 bbb (built and tested in Base's Void build root)
+[04:36:56] PASS: stub
+[04:36:56] FAIL: the run finished - RuntimeError('the guest went away')
+[04:36:56] 
+[04:36:56] == compositor log, without the line for each frame
+[04:36:56] 
+[04:36:56] RESULT: 1 passed, 1 failed
+[04:36:56] log: /tmp/tmpvtd_ubue/compositor-20261127T043656Z.log
+.[04:36:56] # The CrowbarOS compositor on a TTY in Base's image
+[04:36:56] CrowbarOS commit abc1234, with changes that are not committed
+[04:36:56] Evidence and new guest disk: /tmp/tmp0p6hqsg8
+[04:36:56] Building Base's image; output goes to /tmp/tmp0p6hqsg8/build.log
+[04:36:56] binary crowbar-compositor: sha256 aaa (built and tested in Base's Void build root)
+[04:36:56] binary crowbar-probe: sha256 bbb (built and tested in Base's Void build root)
+[04:36:56] FAIL: stub
+[04:36:56] 
+[04:36:56] == compositor log, without the line for each frame
+[04:36:56] 
+[04:36:56] RESULT: 0 passed, 1 failed
+[04:36:56] log: /tmp/tmp0p6hqsg8/compositor-20261127T043656Z.log
+.[04:36:56] # The CrowbarOS compositor on a TTY in Base's image
+[04:36:56] CrowbarOS commit abc1234, with changes that are not committed
+[04:36:56] Evidence and new guest disk: /tmp/tmpk45s81w0
+[04:36:56] NOT EVIDENCE: --no-build booted the image the last build left, which this run did not build from the files as they are now
+[04:36:56] binary crowbar-compositor: sha256 aaa (as the last build left it)
+[04:36:56] binary crowbar-probe: sha256 bbb (as the last build left it)
+[04:36:56] PASS: stub
+[04:36:56] 
+[04:36:56] == compositor log, without the line for each frame
+[04:36:56] 
+[04:36:56] NOT EVIDENCE: --no-build booted the image the last build left, which this run did not build from the files as they are now
+[04:36:56] RESULT (NOT EVIDENCE): 1 passed, 0 failed
+[04:36:56] log: /tmp/tmpk45s81w0/compositor-20261127T043656Z.log
+[04:36:56] # The CrowbarOS compositor on a TTY in Base's image
+[04:36:56] CrowbarOS commit abc1234, with changes that are not committed
+[04:36:56] Evidence and new guest disk: /tmp/tmpeg0vv35s
+[04:36:56] Building Base's image; output goes to /tmp/tmpeg0vv35s/build.log
+[04:36:56] binary crowbar-compositor: sha256 aaa (built and tested in Base's Void build root)
+[04:36:56] binary crowbar-probe: sha256 bbb (built and tested in Base's Void build root)
+[04:36:56] PASS: stub
+[04:36:56] 
+[04:36:56] == compositor log, without the line for each frame
+[04:36:56] 
+[04:36:56] RESULT: 1 passed, 0 failed
+[04:36:56] log: /tmp/tmpeg0vv35s/compositor-20261127T043656Z.log
+..[04:36:56] # The CrowbarOS compositor on a TTY in Base's image
+[04:36:56] CrowbarOS commit abc1234, with changes that are not committed
+[04:36:56] Evidence and new guest disk: /tmp/tmpumnjy_8y
+[04:36:56] Building Base's image; output goes to /tmp/tmpumnjy_8y/build.log
+[04:36:56] binary crowbar-compositor: sha256 aaa (built and tested in Base's Void build root)
+[04:36:56] binary crowbar-probe: sha256 bbb (built and tested in Base's Void build root)
+[04:36:56] PASS: stub
+[04:36:56] 
+[04:36:56] == compositor log, without the line for each frame
+[04:36:56] 
+[04:36:56] RESULT: 1 passed, 0 failed
+[04:36:56] log: /tmp/tmpumnjy_8y/compositor-20261127T043656Z.log
+.[04:36:56] guest$ sv down crowbar-shell crowbar-compositor crowbar-launcher crowbar-unlock crowbar-ctrl-alt-del
+[04:36:56] guest$ pids=$(pidof crowbar-compositor crowbaros-shell 2>/dev/null || true); [ -n "$pids" ] && kill $pids || true; pkill -f '/usr/local/bin/crowbar-(shell-connect|launcher|unlock|ctrl-alt-del)' || true
+[04:36:56] guest$ rm -rf /run/crowbar-trusted /run/crowbar-apps /run/crowbar-launch /run/crowbar-displays /run/crowbar-unlock /run/crowbar-ctrl-alt-del /run/user/1000 /run/user/1001 /run/user/1003
+.....[04:36:56] guest$ cmd1
+[04:36:56] ok
+[04:36:56] PASS: first passes
+[04:36:56] guest$ cmd2
+[04:36:56] bad
+[04:36:56] FAIL: second fails on output — bad
+[04:36:56] guest$ cmd3
+[04:36:56] boom
+[04:36:56] FAIL: third fails on exit — exit 1
+[04:36:56] guest$ cmd4
+[04:36:56] ok
+[04:36:56] PASS: fourth still runs
+.[04:36:56] guest$ cat /etc/os-release
+[04:36:56] ID=void
+[04:36:56] PASS: Void Linux
+[04:36:56] guest(crowbar)$ id -u
+[04:36:56] 1003
+[04:36:56] PASS: person ssh
+[04:36:56] guest$ test -d /sys/firmware/efi && echo efi
+[04:36:56] efi
+[04:36:56] PASS: booted with UEFI
+.[04:36:56] guest$ grep 'commits so far' /var/log/crowbar-compositor.log | tail -1 || true
+[04:36:56] INFO crowbar_compositor: commits so far: layer crowbaros-bar: 9, layer crowbaros-dock: 8, layer crowbaros-wallpaper: 7, window 0x2d foot: 2 frames=12
+.....[04:36:56] Evidence and new guest disk: /tmp/tmpnxh9ap37
+[04:36:56] Building the image with Base's build; its output goes to /tmp/tmpnxh9ap37/build.log
+[04:36:56] PASS: stub
+[04:36:56] RESULT: 1 passed, 0 failed
+[04:36:56] Evidence: /tmp/tmpnxh9ap37
+.[04:36:56] Evidence and new guest disk: /tmp/tmpwgsih1hr
+[04:36:56] Building the image with Base's build; its output goes to /tmp/tmpwgsih1hr/build.log
+[04:36:56] PASS: stub
+[04:36:56] FAIL: KeyboardInterrupt()
+[04:36:56] RESULT: 1 passed, 1 failed
+[04:36:56] Evidence: /tmp/tmpwgsih1hr
+[04:36:56] Evidence and new guest disk: /tmp/tmpdw41hzjl
+[04:36:56] Building the image with Base's build; its output goes to /tmp/tmpdw41hzjl/build.log
+[04:36:56] PASS: stub
+[04:36:56] FAIL: SystemExit(1)
+[04:36:56] RESULT: 1 passed, 1 failed
+[04:36:56] Evidence: /tmp/tmpdw41hzjl
+[04:36:56] Evidence and new guest disk: /tmp/tmp1lwuw76u
+[04:36:56] Building the image with Base's build; its output goes to /tmp/tmp1lwuw76u/build.log
+[04:36:56] PASS: stub
+[04:36:56] FAIL: RuntimeError('the guest went away')
+[04:36:56] RESULT: 1 passed, 1 failed
+[04:36:56] Evidence: /tmp/tmp1lwuw76u
+.[04:36:56] Evidence and new guest disk: /tmp/tmpw0snilxv
+[04:36:56] Building the image with Base's build; its output goes to /tmp/tmpw0snilxv/build.log
+[04:36:56] PASS: stub
+[04:36:56] RESULT: 1 passed, 0 failed
+[04:36:56] Evidence: /tmp/tmpw0snilxv
+[04:36:56] Evidence and new guest disk: /tmp/tmplp6cn1ih
+[04:36:56] Building the image with Base's build; its output goes to /tmp/tmplp6cn1ih/build.log
+[04:36:56] FAIL: stub
+[04:36:56] RESULT: 0 passed, 1 failed
+[04:36:56] Evidence: /tmp/tmplp6cn1ih
+.[04:36:56] Evidence and new guest disk: /tmp/tmpoy65xmdq
+[04:36:56] NOT EVIDENCE: --no-build booted the image the last build left, which this run did not build from the files as they are now
+[04:36:56] PASS: stub
+[04:36:56] NOT EVIDENCE: --no-build booted the image the last build left, which this run did not build from the files as they are now
+[04:36:56] RESULT (NOT EVIDENCE): 1 passed, 0 failed
+[04:36:56] Not evidence: /tmp/tmpoy65xmdq
+.[04:36:56] PASS: the bar draws a workspace in the frame it changes or the next — 23.5, 24.1, 25.6, 40.0 ms; at most 33.3 ms
+.[04:36:56] FAIL: the bar draws a workspace in the frame it changes or the next — 95.0, 700.0, 782.0, 838.0 ms; at most 33.3 ms
+.[04:36:56] guest$ date +%S
+[04:36:56] 10
+[04:36:56] guest$ grep -c 'commits so far' /var/log/crowbar-compositor.log || true
+[04:36:56] 4
+[04:36:56] guest$ grep -c 'commits so far' /var/log/crowbar-compositor.log || true
+[04:36:56] 7
+[04:36:56] FAIL: still — 3 reports in 12 s
+.[04:36:56] guest$ date +%S
+[04:36:56] 10
+[04:36:56] guest$ grep -c 'commits so far' /var/log/crowbar-compositor.log || true
+[04:36:56] 4
+[04:36:56] guest$ grep -c 'commits so far' /var/log/crowbar-compositor.log || true
+[04:36:56] 4
+[04:36:56] PASS: still — 0 reports in 12 s
+..............................
+----------------------------------------------------------------------
+Ran 54 tests in 4.672s
+
+OK
+
+CHECK .: python3 -m unittest discover -s .github/workflows -p test_*.py
+......................
+----------------------------------------------------------------------
+Ran 22 tests in 0.568s
+
+OK
+
+CHECK .: python3 -m unittest discover -s apps/shell/packaging -p test_*.py
+patching file src/lib.rs
+.patching file src/lib.rs
+patching file src/lib.rs
+.patching file src/lib.rs
+patching file src/lib.rs
+.patching file src/lib.rs
+patching file src/lib.rs
+.patching file src/lib.rs
+patching file src/lib.rs
+.patching file src/lib.rs
+..
+----------------------------------------------------------------------
+Ran 7 tests in 0.019s
+
+OK
+
+CHECK libs/crowbar-theme: cargo test --locked
+   Compiling crowbar-theme v0.1.0 (/workspace/crowbaros/libs/crowbar-theme)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.55s
+     Running unittests src/lib.rs (target/debug/deps/crowbar_theme-4f00cc8f91dfd510)
+
+running 13 tests
+test tests::all_builtin_themes_meet_wcag_readability_targets ... ok
+test tests::ensure_contrast_flips_direction_for_mid_gray_backgrounds ... ok
+test tests::hex_and_contrast_helpers_work ... ok
+test tests::builtin_themes_are_complete_and_match_repo_manifests ... ok
+test wallpaper::tests::malformed_headers_and_lengths_are_rejected ... ok
+test tests::custom_theme_save_list_and_delete ... ok
+test tests::path_traversal_and_invalid_inputs_are_rejected ... ok
+test tests::apply_theme_writes_current_theme_strict_appearance_foot_and_gtk ... ok
+test wallpaper::tests::only_canonical_revisions_are_accepted ... ok
+test wallpaper::tests::pixels_and_revision_round_trip_without_changing_alpha ... ok
+test wallpaper::tests::dimensions_bound_both_edges_and_total_pixels ... ok
+test tests::system_and_user_overrides_and_legacy_fallback_work ... ok
+test tests::multi_background_add_cycle_and_remove ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests crowbar_theme
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+CHECK apps/shell: cargo test --locked
+   Compiling crowbar-theme v0.1.0 (/workspace/crowbaros/libs/crowbar-theme)
+   Compiling gpui v0.2.2 (/workspace/crowbaros/apps/shell/gpui-source)
+   Compiling crowbaros-shell v0.1.1 (/workspace/crowbaros/apps/shell)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.26s
+     Running unittests src/main.rs (target/debug/deps/crowbaros_shell-f8611c86989c174b)
+
+running 134 tests
+test agent::tests::a_background_archive_does_not_unlock_a_pending_history_read ... ok
+test agent::tests::a_new_thread_starts_with_the_model_and_effort_last_picked ... ok
+test agent::tests::a_request_after_its_turn_is_answered_and_stop_withdraws_it ... ok
+test agent::tests::a_reconnect_that_cannot_resume_leaves_no_cached_subagent_working_or_its_request_waiting ... ok
+test agent::tests::a_thread_keeps_its_mode_and_the_drawer_picks_one ... ok
+test agent::tests::context_summary_lists_active_windows_and_displays ... ok
+test agent::tests::list_groups_newest_folders_and_threads_and_hides_archived_work_without_losing_the_mark ... ok
+test agent::tests::fullscreen_mark_overlay_visibility_and_output_rules ... ok
+test agent::tests::first_summon_choice_blocks_sending_until_free_models_or_sign_in_catalog_arrives ... ok
+test agent::tests::a_request_waits_then_is_answered_or_withdrawn ... ok
+test agent::tests::a_thread_shows_its_model_and_effort_as_soon_as_lever_says_them ... ok
+test agent::tests::a_thread_has_the_commands_its_session_named_and_else_the_harness_s ... ok
+test agent::tests::how_long_a_turn_worked_reads_as_seconds_minutes_and_hours ... ok
+test agent::tests::draft_after_send_clears_exact_strips_typed_ahead_and_keeps_edits ... ok
+test agent::tests::all_threads_drive_the_mark_but_only_the_selected_thread_blocks_the_composer ... ok
+test agent::tests::a_request_comes_back_with_its_thread_after_a_restart ... ok
+test agent::tests::a_turn_the_harness_begins_shows_as_its_own_reopens_and_takes_a_message ... ok
+test agent::tests::queued_recovery_keeps_the_new_composer_selected ... ok
+test agent::tests::preserved_thread_reconnect_unwedges_working_turn_and_keeps_done_memory ... ok
+test agent::tests::selecting_new_thread_clears_the_previous_threads_work_and_mode ... ok
+test agent::tests::rapid_send_guard_stopped_interrupted_failed_and_no_thread_recovery ... ok
+test agent::tests::parses_models_with_their_providers_efforts_and_commands ... ok
+test agent::tests::parses_requests_modes_and_activity ... ok
+test agent::tests::parses_every_lever_surface_message ... ok
+test agent::tests::a_fresh_shell_restores_the_thread_that_waits_for_the_person ... ok
+test agent::tests::request_detail_shows_a_command_as_it_is_and_an_edit_as_a_diff ... ok
+test agent::tests::subagent_keeps_thread_working_after_turn_ends_and_request_drives_waiting_mark ... ok
+test agent::tests::surface_client_reports_error_when_stop_sent_while_disconnected ... ok
+test agent::tests::a_recovery_reply_does_not_reopen_a_thread_the_person_left ... ok
+test agent::tests::surface_client_connects_to_lever_and_reports_no_harness ... ok
+test agent::tests::the_mark_follows_activity_waiting_over_working_over_done ... ok
+test agent::tests::terminal_turn_never_displays_unfinished_act_as_working ... ok
+test agent::tests::the_mark_overlay_shows_waiting_over_a_fullscreen_window ... ok
+test agent::tests::the_rail_has_each_provider_once_in_the_harness_s_order ... ok
+test agent::tests::threads_snapshot_keeps_optimistic_model_and_status_or_error_bumps_catalog_epoch ... ok
+test agent::tests::surface_client_stays_connected_when_resume_returns_storage_error ... ok
+test agent::tests::the_model_and_effort_last_picked_are_kept_for_the_next_shell ... ok
+test agent::tests::turn_finishing_during_disconnect_lights_done_on_reconnect ... ok
+test agent::tests::turn_streaming_acts_notes_and_mark_transitions_behind_drawer ... ok
+test calendar::tests::leap_year_and_month_grid_highlight_today ... ok
+test calendar::tests::month_navigation_wraps_across_year_boundaries ... ok
+test calendar::tests::quick_timer_counts_down_and_stops_at_zero ... ok
+test catalog::tests::chromium_uses_browser_icon_and_matches_wayland_app_ids ... ok
+test catalog::tests::files_uses_files_icon_and_matches_wayland_app_id ... ok
+test agent::tests::surface_client_restores_persisted_thread_over_newer_working_thread ... ok
+test catalog::tests::localized_names_and_unicode_search ... ok
+test catalog::tests::prioritizes_names_and_matches_all_words ... ok
+test composer::tests::oversized_paste_truncates_on_utf8_boundary_and_reports_inserted_bytes ... ok
+test catalog::tests::respects_visibility_and_sections ... ok
+test drawer::tests::closing_effort_menu_resets_offer_guard_after_failed_model_lookup ... ok
+test drawer::tests::alt_digit_is_ignored_when_held_or_away_from_thread ... ok
+test drawer::tests::held_enter_and_modified_enter_are_ignored_in_composer ... ok
+test drawer::tests::list_for_key_changes_when_async_choices_arrive ... ok
+test drawer::tests::reconcile_draft_on_sent_preserves_post_send_edits_whether_open_or_closed ... ok
+test lock_tests::a_snapshot_that_did_not_reach_the_compositor_leaves_the_lock_screen_alone ... ok
+test lock_tests::bar_mark_matches_theme_and_studio_override ... ok
+test lock_tests::background_asset_follows_wallpaper_and_studio_neutral_canvas ... ok
+test lock_tests::dock_pin_state_distinguishes_idle_backgrounded_focused_and_attention ... ok
+test agent::tests::the_surface_client_asks_lever_for_models_efforts_and_commands_and_sets_them ... ok
+test lock_tests::embedded_lock_assets_load ... ok
+test lock_tests::nightwatch_size_handles_zero_viewport ... ok
+test agent::tests::surface_client_resumes_newest_thread_after_restart_and_streams_acts_and_stop ... ok
+test lock_tests::lock_layout_keeps_login_clear_of_crow_on_1280x960 ... ok
+test lock_tests::occupied_workspaces_deduplicates_and_bar_includes_extra_workspaces ... ok
+test agent::tests::surface_client_watches_answers_and_sets_modes ... ok
+test lock_tests::password_dots_cap_at_field_capacity ... ok
+test lock_tests::person_label_prefers_explicit_env_then_human_account_then_fallback ... ok
+test lock_tests::lock_layout_matches_brand_proportions_at_1600x900 ... ok
+test lock_tests::the_agents_surface_is_a_third_of_its_display ... ok
+test lock_tests::the_summon_gesture_shows_the_agents_surface_returns_the_keyboard_or_puts_it_away ... ok
+test markdown::tests::a_mark_that_is_not_one_stays_as_it_was_typed ... ok
+test markdown::tests::brackets_before_a_link_stay_plain_text ... ok
+test markdown::tests::code_holds_what_is_in_it_as_it_is ... ok
+test markdown::tests::an_answer_reads_as_its_blocks ... ok
+test markdown::tests::fenced_code_is_kept_as_written_and_reads_as_code_before_it_is_closed ... ok
+test markdown::tests::links_keep_their_words_and_where_they_go ... ok
+test markdown::tests::what_looks_like_a_block_and_is_not_one_is_a_paragraph ... ok
+test quick_settings::tests::osd_timeout_state_tracks_expiry_and_clamps_values ... ok
+test markdown::tests::words_keep_their_marks_out_of_the_text_and_in_their_looks ... ok
+test agent::tests::working_after_a_transient_resume_failure_resubscribes_without_resending ... ok
+test quick_settings::tests::volume_and_brightness_clamping_and_stepping ... ok
+test quick_settings::tests::parses_quick_status_with_absent_optional_hardware ... ok
+test session::tests::a_broken_control_channel_does_not_fall_back_to_hyprland ... ok
+test session::tests::a_channel_the_compositor_closed_is_closed_for_good ... ok
+test session::tests::a_frame_longer_than_the_shell_reads_closes_the_channel ... ok
+test session::tests::a_control_channel_descriptor_is_adopted_and_used ... ok
+test session::tests::a_launched_program_is_not_given_the_shells_channels ... ok
+test session::tests::a_compositor_that_states_another_version_or_none_is_given_up ... ok
+test session::tests::a_hyprland_window_whose_workspace_has_no_id_does_not_lose_the_snapshot ... ok
+test session::tests::a_refusal_from_the_compositor_is_an_error ... ok
+test session::tests::an_event_that_arrives_before_the_reply_is_skipped ... ok
+test session::tests::a_snapshot_reply_becomes_the_shells_snapshot ... ok
+test session::tests::a_window_that_wants_attention_is_marked_in_the_snapshot ... ok
+test session::tests::focus_requests_use_the_compositors_wire_format ... ok
+test session::tests::the_agents_surface_asks_for_the_keyboard_and_gives_it_back_in_the_compositors_wire_format ... ok
+test session::tests::the_shell_states_the_version_first_and_each_message_is_a_frame ... ok
+test session::tests::saved_input_and_power_are_restored_through_the_bounded_bridge ... ok
+test session::tests::saved_preferences_cannot_choose_ops_or_skip_validation ... ok
+test session::tests::the_summon_gesture_reaches_the_shell_with_its_display_and_the_keyboard ... ok
+test session::tests::the_wait_for_a_display_ends_without_a_compositor_to_ask ... ok
+test session::tests::display_bridge_forwards_outputs_and_configure_output_and_refuses_everything_else ... ok
+test session::tests::with_neither_a_control_channel_nor_hyprland_there_is_no_adapter ... ok
+test session::tests::the_shell_waits_for_a_display ... ok
+test slash::tests::a_command_is_one_line_that_begins_with_a_slash_and_a_name ... ok
+test session::tests::the_unlock_helper_hears_the_password_and_its_answer_is_said ... ok
+test session::tests::without_a_control_channel_focus_requests_go_to_hyprland ... ok
+test slash::tests::a_slash_lists_the_drawers_commands_and_then_the_harness_s ... ok
+test session::tests::without_a_control_channel_the_shell_reads_its_snapshot_from_hyprland ... ok
+test slash::tests::a_command_typed_whole_needs_no_list ... ok
+test slash::tests::a_thread_offers_what_it_can_take_and_says_why_it_cannot ... ok
+test slash::tests::free_models_and_sign_in_commands_list_and_resolve ... ok
+test slash::tests::effort_lists_the_levels_of_the_threads_model_and_asks_for_them_once ... ok
+test slash::tests::only_drawer_owned_commands_are_excluded_from_drafts_and_empty_catalog_retries ... ok
+test slash::tests::mode_and_default_mode_list_what_the_harness_offers ... ok
+test slash::tests::model_lists_one_providers_models_beside_a_rail_and_a_search_looks_through_all ... ok
+test slash::tests::the_harness_s_commands_are_the_threads_own_once_lever_has_said_them ... ok
+test theme::tests::preferences_with_wallpaper_field_loads_selected_wallpaper ... ok
+test wallpaper::tests::deleting_override_restores_builtin_once ... ok
+test theme::tests::preferences_without_wallpaper_field_loads_with_default ... ok
+test theme::tests::wallpaper_deserializes_kebab_case_variants ... ok
+test wallpaper::tests::only_fetches_pixels_when_revision_changes ... ok
+test wallpaper::tests::rejects_stale_or_malformed_transfers ... ok
+test slash::tests::typing_narrows_the_list_by_name_first_and_then_by_what_a_command_does ... ok
+test session::tests::reading_events_for_a_while_survives_a_wait_that_ends_late ... ok
+test agent::tests::surface_client_recovers_when_resume_frame_exceeds_max_frame ... ok
+test session::tests::super_tapped_alone_toggles_the_launcher_and_a_launch_is_announced ... ok
+test agent::tests::a_failed_writer_clone_keeps_first_connection_thread_discovery ... ok
+test agent::tests::surface_client_recovers_when_resume_times_out_preserving_saved_thread ... ok
+test agent::tests::missing_saved_thread_starts_fresh_without_adopting_other_thread ... ok
+test agent::tests::surface_client_preserves_saved_thread_across_storage_error_and_retries_it ... ok
+test agent::tests::surface_client_enforces_monotonic_deadline_on_fragmented_status_reply ... ok
+test agent::tests::surface_client_holds_connected_until_initial_status_and_reconnects_on_timeout ... ok
+test session::tests::a_late_reply_is_skipped_and_the_next_request_gets_its_own ... ok
+test session::tests::a_late_reply_that_comes_while_no_request_waits_is_skipped_too ... ok
+
+test result: ok. 134 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+
+     Running tests/gpui_axis.rs (target/debug/deps/gpui_axis-e6ae362d693ee3cd)
+
+running 4 tests
+test axis::tests::bare_axis_and_touchpad_frames_keep_continuous_pixels ... ok
+test axis::tests::each_frame_selects_only_its_own_events ... ok
+test axis::tests::high_resolution_wheel_keeps_fractional_lines ... ok
+test axis::tests::wheel_discrete_takes_precedence_without_adding_continuous_movement ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/gpui_clipboard.rs (target/debug/deps/gpui_clipboard-1affc54e69bf01d3)
+
+running 4 tests
+test clipboard_data::tests::each_image_format_offers_and_sends_only_its_own_encoding ... ok
+test clipboard_data::tests::image_copy_advertises_png_and_sends_the_encoded_bytes ... ok
+test clipboard_data::tests::mixed_entries_deduplicate_offers_and_select_the_requested_payload ... ok
+test clipboard_data::tests::text_aliases_and_the_process_marker_preserve_text_without_metadata ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/gpui_source.rs (target/debug/deps/gpui_source-adda462c720e2b52)
+
+running 5 tests
+test the_grid_columns_float_literals_say_they_are_f32 ... ok
+test the_method_wayland_does_not_call_is_marked_unused_without_x11 ... ok
+test wayland_image_clipboard_routes_offers_and_transfers_through_the_tested_selector ... ok
+test wayland_axis_frames_do_not_require_an_axis_source ... ok
+test no_app_builds_proc_macro_error2 ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+CHECK apps/files: cargo test --locked
+   Compiling crowbar-theme v0.1.0 (/workspace/crowbaros/libs/crowbar-theme)
+   Compiling gpui v0.2.2 (/workspace/crowbaros/apps/shell/gpui-source)
+   Compiling crowbar-ui v0.1.0 (/workspace/crowbaros/libs/crowbar-ui)
+   Compiling crowbaros-files v0.1.0 (/workspace/crowbaros/apps/files)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.36s
+     Running unittests src/main.rs (target/debug/deps/crowbaros_files-d8c80439730d4c5c)
+
+running 45 tests
+test fs_model::tests::a_clash_inside_a_copy_is_a_failure_not_a_taken_name ... ok
+test fs_model::tests::a_copy_drops_setuid_and_setgid ... ok
+test fs_model::tests::a_failed_copy_leaves_nothing_behind ... ok
+test fs_model::tests::a_half_written_trashinfo_does_not_hold_its_name ... ok
+test fs_model::tests::a_pipe_is_never_read_for_a_preview ... ok
+test fs_model::tests::a_copy_is_built_privately_then_published_whole_under_a_free_name ... ok
+test fs_model::tests::a_folder_that_holds_the_trash_is_refused ... ok
+test fs_model::tests::breadcrumbs_and_path_expansion ... ok
+test fs_model::tests::a_folder_with_a_dot_duplicates_whole_and_files_keep_their_times ... ok
+test fs_model::tests::a_relative_trash_path_is_relative_to_the_folder_holding_the_trash ... ok
+test fs_model::tests::a_write_between_two_looks_counts_as_a_change ... ok
+test fs_model::tests::an_original_replaced_during_a_copy_is_kept ... ok
+test fs_model::tests::formats_sizes_and_counts ... ok
+test fs_model::tests::grid_thumbnails_stay_within_their_budget ... ok
+test fs_model::tests::only_images_that_were_shown_are_released ... ok
+test fs_model::tests::file_uris_with_a_host_keep_their_path ... ok
+test fs_model::tests::rename_keeps_spaces_the_person_typed ... ok
+test fs_model::tests::parent_of_a_link_is_the_parent_of_its_target ... ok
+test fs_model::tests::a_moved_folder_is_kept_when_anything_inside_changed_after_its_copy ... ok
+test fs_model::tests::links_are_judged_as_links_not_as_their_folders ... ok
+test fs_model::tests::names_that_are_not_utf8_copy_trash_and_restore_byte_for_byte ... ok
+test fs_model::tests::search_finds_nested_files ... ok
+test fs_model::tests::the_fallback_rename_never_replaces_either ... ok
+test fs_model::tests::read_only_folders_copy_whole_and_keep_their_permissions ... ok
+test fs_model::tests::reads_sorts_and_never_overwrites_on_copy_or_rename ... ok
+test fs_model::tests::trash_and_restore_round_trip ... ok
+test state::tests::pane_navigation_back_forward_and_up ... ok
+test fs_model::tests::what_takes_a_cut_items_path_is_not_the_cut_item ... ok
+test tests::browser_keys_stand_down_while_a_prompt_or_overlay_is_open ... ok
+test tests::cli_parses_version_and_paths ... ok
+test tests::grid_steps_by_the_columns_its_pane_shows ... ok
+test state::tests::view_mode_labels_and_pins_toggle ... ok
+test fs_model::tests::trash_never_overwrites_an_existing_trashinfo ... ok
+test fs_model::tests::moves_between_filesystems_copy_then_remove_the_original ... ok
+test fs_model::tests::rename_never_replaces_an_existing_target ... ok
+test tests::every_root_context_has_a_way_out ... ok
+test fs_model::tests::trash_keeps_everything_when_the_move_is_refused ... ok
+test state::tests::a_cut_pastes_only_the_item_it_cut_and_a_copy_pastes_the_path_as_it_is ... ok
+test theme::tests::palettes_match_design_tokens ... ok
+test theme::tests::typography_tokens_match_design_system ... ok
+test tests::interface_text_uses_manrope_and_reserves_mono_for_technical_data ... ok
+test fs_model::tests::a_webp_size_comes_from_its_first_chunk_and_animations_are_refused ... ok
+test fs_model::tests::an_image_size_comes_from_the_start_of_its_file_alone ... ok
+test fs_model::tests::a_full_size_cache_never_rereads_what_is_still_listed ... ok
+test fs_model::tests::a_fingerprint_sees_a_same_size_same_time_replacement_and_a_permission_change ... ok
+
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+CHECK apps/editor: cargo test --locked
+   Compiling gpui v0.2.2 (/workspace/crowbaros/apps/shell/gpui-source)
+   Compiling crowbar-theme v0.1.0 (/workspace/crowbaros/libs/crowbar-theme)
+   Compiling crowbar-ui v0.1.0 (/workspace/crowbaros/libs/crowbar-ui)
+   Compiling gpui-component-assets v0.5.1
+   Compiling gpui-component v0.5.1
+   Compiling crowbaros-editor v0.1.0 (/workspace/crowbaros/apps/editor)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 17.75s
+     Running unittests src/lib.rs (target/debug/deps/crowbaros_editor-0dc9b1284728ee2b)
+
+running 4 tests
+test document::tests::find_wraps_and_returns_native_input_offsets ... ok
+test document::tests::refuses_binary_data_and_special_files ... ok
+test document::tests::cli_preserves_each_path_including_non_utf8_names ... ok
+test document::tests::replacement_leaves_old_open_descriptor_intact ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/crowbaros_editor-94b0444016af1fb3)
+
+running 1 test
+test tests::keyboard_edits_undo_redo_replace_and_save ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+   Doc-tests crowbaros_editor
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+CHECK apps/monitor: cargo test --locked
+   Compiling gpui v0.2.2 (/workspace/crowbaros/apps/shell/gpui-source)
+   Compiling crowbar-theme v0.1.0 (/workspace/crowbaros/libs/crowbar-theme)
+   Compiling crowbar-ui v0.1.0 (/workspace/crowbaros/libs/crowbar-ui)
+   Compiling gpui-component-assets v0.5.1
+   Compiling gpui-component v0.5.1
+   Compiling crowbaros-monitor v0.1.0 (/workspace/crowbaros/apps/monitor)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 18.10s
+     Running unittests src/lib.rs (target/debug/deps/crowbaros_monitor-f4edb91cd0b9f1a2)
+
+running 18 tests
+test metrics::tests::byte_units ... ok
+test metrics::tests::cpu_ignores_guest_and_handles_reset ... ok
+test metrics::tests::memory_uses_available_not_free ... ok
+test metrics::tests::numeric_query_identifies_one_pid_without_substring_matches ... ok
+test metrics::tests::malformed_and_mixed_identity_processes_are_not_actionable ... ok
+test metrics::tests::missing_or_overflowing_metrics_do_not_become_zero ... ok
+test metrics::tests::process_fields_and_ownership ... ok
+test metrics::tests::sorting_search_and_history_are_bounded ... ok
+test system::tests::device_changes_do_not_create_spikes ... ok
+test metrics::tests::process_sorting_keeps_a_stable_pid_tiebreaker ... ok
+test metrics::tests::traffic_parsers_and_counter_reset ... ok
+test system::tests::nvidia_devices_have_distinct_history_keys_and_missing_metrics_stay_unknown ... ok
+test system::tests::root_and_self_are_refused ... ok
+test system::tests::service_report_rejects_stale_empty_and_missing_snapshots ... ok
+test system::tests::force_quit_ends_only_the_owned_child ... ok
+test system::tests::ending_an_owned_child_and_rejecting_stale_identity ... ok
+test system::tests::live_metrics_read_without_privileges ... ok
+test system::tests::system_commands_have_output_and_time_limits ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.02s
+
+     Running unittests src/main.rs (target/debug/deps/crowbaros_monitor-c21455d16340d4b7)
+
+running 2 tests
+test tests::pending_confirmation_does_not_repeat_a_completed_signal_notice ... ok
+test tests::metric_warnings_remain_visible_beside_feedback_and_errors ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests crowbaros_monitor
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+CHECK apps/viewer: cargo test --locked
+   Compiling gpui v0.2.2 (/workspace/crowbaros/apps/shell/gpui-source)
+   Compiling crowbar-theme v0.1.0 (/workspace/crowbaros/libs/crowbar-theme)
+   Compiling crowbar-ui v0.1.0 (/workspace/crowbaros/libs/crowbar-ui)
+   Compiling gpui-component-assets v0.5.1
+   Compiling gpui-component v0.5.1
+   Compiling crowbaros-viewer v0.1.0 (/workspace/crowbaros/apps/viewer)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.78s
+     Running unittests src/lib.rs (target/debug/deps/crowbaros_viewer-7ba056afe37844e2)
+
+running 33 tests
+test image_document::tests::dimension_gate_rejects_zero_area_and_overflow_sized_headers ... ok
+test image_document::tests::dimensions_are_read_without_decoding_pixel_data ... ok
+test image_document::tests::zoom_fit_rotation_and_invalid_input_preserve_valid_geometry ... ok
+test image_document::tests::exif_inspector_extracts_camera_and_ignores_malformed_metadata ... ok
+test image_document::tests::sibling_discovery_is_sorted_and_skips_directories_and_symlinks ... ok
+test pdf_document::tests::validates_page_count_and_page_navigation ... ok
+test image_document::tests::too_large_regular_file_is_rejected_before_reading_it ... ok
+test image_document::tests::regular_png_decodes_and_special_files_are_refused ... ok
+test view_model::tests::file_urls_reject_remote_hosts_malformed_escapes_and_nuls ... ok
+test view_model::tests::local_file_urls_decode_spaces_unicode_and_native_bytes ... ok
+test view_model::tests::failed_thumbnails_do_not_retry_forever_or_block_other_pages ... ok
+test view_model::tests::native_paths_are_not_url_decoded ... ok
+test pdf_document::tests::parses_size_and_rotation_and_refuses_invalid_dimensions ... ok
+test view_model::tests::page_anchor_survives_zoom_and_sidebar_layouts ... ok
+test view_model::tests::pdf_ranges_stay_in_document_and_bound_live_rasters ... ok
+test view_model::tests::page_jump_rejects_zero_out_of_range_and_overflow ... ok
+test view_model::tests::search_navigation_wraps_and_resets_after_results_change ... ok
+test pdf_document::tests::rejects_nonregular_oversized_and_non_pdf_inputs ... ok
+test view_model::tests::scrolling_while_a_batch_runs_discards_unwanted_pixels_and_bounds_memory ... ok
+test view_model::tests::thumbnail_requests_follow_the_rail_without_loading_document_pages ... ok
+test view_model::tests::zoomed_out_pages_are_loaded_for_the_whole_viewport ... ok
+test view_model::tests::switching_documents_rejects_late_thumbnails_without_releasing_a_new_worker ... ok
+test wallpaper::tests::failure_preserves_existing_wallpaper ... ok
+test image_document::tests::svg_is_bounded_and_does_not_read_image_references ... ok
+test wallpaper::tests::saves_rotation_and_changes_revision_on_replacement ... ok
+test image_document::tests::svg_refuses_unbounded_intermediate_layers_before_rendering ... ok
+test image_document::tests::raster_formats_decode_through_the_same_bounded_path ... ok
+test image_document::tests::svg_keeps_simple_vectors_gradients_and_bundled_text ... ok
+test pdf_document::tests::search_tracks_pages_unicode_offsets_and_caps_results ... ok
+test pdf_document::tests::subprocess_output_is_bounded ... ok
+test pdf_document::tests::poppler_opens_renders_extracts_and_searches_an_immutable_snapshot ... ok
+test pdf_document::tests::a_bad_neighbor_does_not_block_other_pages_or_their_text ... ok
+test wallpaper::tests::wide_images_fit_the_transfer_budget ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.40s
+
+     Running unittests src/main.rs (target/debug/deps/crowbaros_viewer-0ba92e6c08dc90e2)
+
+running 3 tests
+test tests::copying_and_displaying_use_the_same_rotation ... ok
+test tests::optional_pdf_text_failure_leaves_a_readable_notice ... ok
+test tests::pdf_routing_uses_contents_when_the_name_has_no_pdf_suffix ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests crowbaros_viewer
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+CHECK apps/studio-settings: cargo test --locked
+   Compiling crowbar-theme v0.1.0 (/workspace/crowbaros/libs/crowbar-theme)
+   Compiling gpui v0.2.2 (/workspace/crowbaros/apps/shell/gpui-source)
+   Compiling crowbar-ui v0.1.0 (/workspace/crowbaros/libs/crowbar-ui)
+   Compiling crowbaros-studio-settings v0.1.3 (/workspace/crowbaros/apps/studio-settings)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.70s
+     Running unittests src/main.rs (target/debug/deps/crowbaros_studio_settings-8e0c87fa999426ea)
+
+running 42 tests
+test bluetooth::tests::maps_bluez_errors_cleanly ... ok
+test bluetooth::tests::no_adapter_in_bluez_tree_yields_calm_unavailable_state ... ok
+test default_apps::tests::mimeapps_roundtrip_preserves_unrelated_sections_and_keys ... ok
+test displays::tests::dedup_sorted_modes_orders_by_area_then_refresh_and_keeps_current ... ok
+test bluetooth::tests::parses_adapter_and_sorts_connected_paired_nearby_devices ... ok
+test displays::tests::project_diagram_fits_and_centers_displays ... ok
+test displays::tests::configure_request_only_includes_changed_fields ... ok
+test displays::tests::logical_size_uses_120ths_scale ... ok
+test displays::tests::missing_socket_reports_unavailable_not_failure ... ok
+test displays::tests::scale_and_refresh_formatting_is_human_readable ... ok
+test network::tests::empty_iwd_objects_yields_calm_unavailable_state ... ok
+test network::tests::maps_iwd_errors_without_echoing_raw_details_or_secrets ... ok
+test network::tests::masks_passphrase_by_default_and_reveals_on_toggle ... ok
+test default_apps::tests::atomic_category_update_writes_all_category_mimes ... ok
+test displays::tests::arrange_relative_normalizes_negative_origins ... ok
+test input_config::tests::input_settings_roundtrip_and_clamp ... ok
+test network::tests::parses_ethernet_and_separates_wireless_and_loopback ... ok
+test session::tests::only_crowbaros_desktop_has_no_animations ... ok
+test network::tests::parses_iwd_objects_with_ordered_networks_and_known_flag ... ok
+test power_config::tests::power_settings_roundtrip_and_timeout_formatting ... ok
+test settings::tests::failed_compositor_does_not_write_preferences ... ok
+test settings::tests::failed_preferences_preserve_the_custom_wallpaper ... ok
+test settings::tests::failed_rename_restores_previous_motion ... ok
+test displays::tests::socket_roundtrip_fetches_and_applies_outputs ... ok
+test sound::tests::clamps_and_formats_volumes_safely ... ok
+test settings::tests::no_animation_session_saves_preferences_without_a_motion_effect ... ok
+test sound::tests::parses_multiple_sinks_and_sources_with_brackets_and_muted ... ok
+test settings::tests::failed_wallpaper_removal_reports_committed_preferences_and_can_be_retried ... ok
+test settings::tests::refuses_unknown_schema_and_corruption ... ok
+test settings::tests::loads_schema_one_without_wallpaper_and_rejects_unknown_fields ... ok
+test sound::tests::parses_qemu_dummy_output_with_no_sources ... ok
+test tests::control_tab_order_preserves_theme_indices_and_shifts_remaining ... ok
+test system_info::tests::parses_os_cpu_and_memory_cleanly ... ok
+test theme::tests::palette_for_preferences_preserves_exact_nullkeel_and_studio_tokens ... ok
+test settings::tests::wallpaper_roundtrip_and_labels ... ok
+test tests::wallpaper_paths_resolve_in_checkout ... ok
+test settings::tests::theme_saves_preserve_custom_wallpaper_until_a_builtin_is_explicitly_chosen ... ok
+test settings::tests::saves_roundtrip_and_rejects_stale_window ... ok
+test sound::tests::returns_unavailable_when_pipewire_output_is_missing ... ok
+test theme::tests::resolve_palette_follows_live_custom_theme_unless_previewing ... ok
+test theme::tests::sync_theme_store_writes_current_theme_foot_gtk_and_keeps_strict_appearance_json ... ok
+test sound::tests::watcher_coalesces_burst_and_never_drops_trailing_volume_change ... ok
+
+test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+
+CHECK libs/crowbar-ui: cargo test --locked
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling crowbar-theme v0.1.0 (/workspace/crowbaros/libs/crowbar-theme)
+   Compiling gpui v0.2.2 (/workspace/crowbaros/apps/shell/gpui-source)
+   Compiling crowbar-ui v0.1.0 (/workspace/crowbaros/libs/crowbar-ui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.96s
+     Running unittests src/lib.rs (target/debug/deps/crowbar_ui-9dced73593081c99)
+
+running 6 tests
+test theme::tests::palette_default_matches_nullkeel_dark ... ok
+test theme::tests::palette_from_active_handles_dark_light_warm_paper_and_studio_override ... ok
+test theme::tests::typography_tokens_match_design_system ... ok
+test theme::tests::palette_on_danger_maintains_wcag_contrast_across_builtins ... ok
+test theme::tests::theme_watcher_detects_direct_appearance_json_updates ... ok
+test theme::tests::theme_watcher_detects_creation_switch_and_studio_changes ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+   Doc-tests crowbar_ui
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+CHECK apps/viewer: cargo fmt --check
+
+CHECK apps/viewer: cargo clippy --locked --all-targets -- -D warnings
+    Checking gpui v0.2.2 (/workspace/crowbaros/apps/shell/gpui-source)
+    Checking crowbar-theme v0.1.0 (/workspace/crowbaros/libs/crowbar-theme)
+    Checking gpui-component-assets v0.5.1
+    Checking gpui-component v0.5.1
+    Checking crowbar-ui v0.1.0 (/workspace/crowbaros/libs/crowbar-ui)
+    Checking crowbaros-viewer v0.1.0 (/workspace/crowbaros/apps/viewer)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.76s
+
+CHECK base/helpers: cargo fmt --check
+
+CHECK base/helpers: cargo clippy --locked --all-targets -- -D warnings
+    Checking crowbar-theme v0.1.0 (/workspace/crowbaros/libs/crowbar-theme)
+    Checking crowbar-helpers v0.1.0 (/workspace/crowbaros/base/helpers)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.20s
+
+CHECK lever: cargo fmt --check
+
+CHECK lever: cargo clippy --locked --all-targets -- -D warnings
+    Checking crowbar-agent v0.1.0 (/workspace/crowbaros/lever/client)
+    Checking crowbar-lever v0.1.0 (/workspace/crowbaros/lever)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.20s
+
+CHECK base/helpers: cargo test --locked
+   Compiling crowbar-theme v0.1.0 (/workspace/crowbaros/libs/crowbar-theme)
+   Compiling crowbar-helpers v0.1.0 (/workspace/crowbaros/base/helpers)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.38s
+     Running unittests src/main.rs (target/debug/deps/crowbar_helpers-c7c9f7c190a63d79)
+
+running 54 tests
+test ctrl_alt_del::tests::anyone_else_or_anything_else_is_not ... ok
+test ctrl_alt_del::tests::the_compositor_saying_the_chord_is_heard ... ok
+test launcher::tests::a_directory_symlink_cannot_escape_the_preferences_directory ... ok
+test launcher::tests::a_file_symlink_cannot_make_the_launcher_read_another_file ... ok
+test launcher::tests::a_fifo_or_an_oversized_file_is_refused_without_blocking ... ok
+test launcher::tests::a_malformed_or_unknown_request_is_refused ... ok
+test launcher::tests::a_replaced_or_removed_wallpaper_is_not_returned_under_an_old_revision ... ok
+test launcher::tests::an_app_gets_the_cursor_theme_and_size ... ok
+test launcher::tests::absent_and_regular_preferences ... ok
+test launcher::tests::an_app_learns_it_is_on_crowbaros_desktop ... ok
+test launcher::tests::an_app_gets_the_systems_locale ... ok
+test launcher::tests::an_app_is_the_person_at_the_ordinary_wayland_socket ... ok
+test launcher::tests::any_desktop_entry_launches_by_its_full_path ... ok
+test launcher::tests::preferences_cannot_be_a_different_owners_file_or_a_hard_link ... ok
+test launcher::tests::only_the_person_runs_a_program_as_an_app_and_only_a_program ... ok
+test launcher::tests::only_the_shell_may_make_a_request ... ok
+test launcher::tests::over_its_socket_the_launcher_refuses_anyone_but_the_shell ... ok
+test launcher::tests::quick_settings_parsers_and_backlight_helpers ... ok
+test launcher::tests::power_op_only_accepts_bounded_actions_from_the_shell ... ok
+test ctrl_alt_del::tests::over_its_socket_only_the_compositors_account_reboots ... ok
+test launcher::tests::the_shell_reads_the_persons_appearance ... ok
+test launcher::tests::wallpaper_rejects_special_files_wrong_owners_and_hard_links ... ok
+test launcher::tests::a_launch_runs_gio_as_the_launcher_itself_at_the_persons_socket ... ok
+test launcher::tests::wallpaper_rejects_symlinks_in_the_file_and_both_config_directories ... ok
+test shell_connect::tests::a_socket_served_by_another_account_is_refused ... ok
+test launcher::tests::saved_input_and_power_are_available_only_to_the_shell_from_fixed_files ... ok
+test launcher::tests::the_shell_reads_wallpaper_metadata_then_the_same_revision_pixels ... ok
+test launcher::tests::wallpaper_rejects_malformed_and_oversized_files_before_returning_pixels ... ok
+test launcher::tests::a_failed_launch_is_reported ... ok
+test tests::anything_else_names_no_helper ... ok
+test shell_connect::tests::the_shell_connects_to_the_compositors_account ... ok
+test sys::tests::a_peer_is_known_by_its_user_id ... ok
+test launcher::tests::wallpaper_requests_cannot_choose_paths_or_skip_the_shell_account ... ok
+test launcher::tests::a_program_run_as_an_app_is_given_its_arguments ... ok
+test tests::a_helper_is_named_by_the_command_or_by_the_first_argument ... ok
+test sys::tests::a_socket_is_bound_for_its_group_alone ... ok
+test unlock::tests::the_compositors_refusal_is_the_helpers_error ... ok
+test unlock::tests::the_compositor_is_told_in_frames_once_both_have_stated_the_version ... ok
+test unlock::tests::a_locked_or_empty_account_matches_nothing ... ok
+test unlock::tests::the_persons_hash_is_found_by_name_in_shadow ... ok
+test unlock::tests::a_compositor_that_does_not_state_the_helpers_version_is_asked_nothing ... ok
+test sys::tests::an_account_is_found_by_name_and_by_user_id ... ok
+test unlock::tests::only_the_shell_may_ask_to_unlock ... ok
+test unlock::tests::a_request_is_the_password_and_nothing_else ... ok
+test unlock::tests::over_its_socket_the_helper_refuses_anyone_but_the_shell ... ok
+test launcher::tests::a_program_run_as_an_app_gets_the_apps_environment_alone_and_starts_in_the_persons_home ... ok
+test unlock::tests::with_no_person_account_nothing_matches ... ok
+test unlock::tests::an_account_from_the_account_file_does_not_take_the_lab_password ... ok
+test crypt::tests::a_hash_matches_its_password_and_no_other ... ok
+test unlock::tests::a_wrong_password_costs_a_pause_and_the_right_one_none ... ok
+test unlock::tests::the_password_unlocks_and_nothing_else_does ... ok
+test shell_connect::tests::the_shell_waits_for_the_compositor_and_then_gives_up ... ok
+test launcher::tests::the_largest_wallpaper_fits_the_separate_data_reply_bound ... ok
+test unlock::tests::over_its_socket_the_helper_hears_one_attempt_at_a_time ... ok
+
+test result: ok. 54 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.91s
+
+
+CHECK lever: cargo test --locked
+   Compiling crowbar-agent v0.1.0 (/workspace/crowbaros/lever/client)
+   Compiling crowbar-lever v0.1.0 (/workspace/crowbaros/lever)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.40s
+     Running unittests src/main.rs (target/debug/deps/crowbar_agent-6391ffcb1e60f643)
+
+running 12 tests
+test connection::tests::a_frame_is_taken_whole_however_its_bytes_arrive ... ok
+test connection::tests::a_frame_too_long_is_an_error_as_soon_as_its_length_is_read ... ok
+test tests::a_command_line_that_asks_for_nothing_the_client_does_is_refused ... ok
+test tests::a_request_that_starts_with_a_commands_name_goes_after_two_dashes_or_in_quotes ... ok
+test talk::tests::a_time_is_said_in_the_largest_unit_that_fits ... ok
+test connection::tests::what_lever_says_is_shown_with_no_character_that_drives_a_terminal ... ok
+test tests::archive_and_delete_take_exactly_one_thread ... ok
+test tests::the_command_line_is_read_as_the_usage_has_it ... ok
+test connection::tests::what_lever_sent_is_given_before_anything_typed_is_read ... ok
+test connection::tests::each_stop_sets_aside_its_turns_waiting_requests_until_lever_replies_to_it ... ok
+test connection::tests::a_reply_to_a_request_that_was_not_waited_for_is_not_taken_for_the_next_requests ... ok
+test connection::tests::a_message_of_levers_that_comes_in_two_parts_is_given_before_anything_typed ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/lever.rs (target/debug/deps/lever-50fab6c9adb3bbab)
+
+running 34 tests
+test a_request_on_its_way_when_ctrl_c_returns_to_the_prompt_is_not_asked_for_there ... ok
+test a_request_lever_takes_after_it_took_a_stop_is_asked_for ... ok
+test a_request_is_answered_at_the_prompt_on_a_terminal ... ok
+test an_act_in_the_middle_of_a_line_adds_nothing_to_a_piped_answer_and_ends_the_line_on_a_terminal ... ok
+test ctrl_c_just_after_an_answer_stops_the_turn_followed_and_not_the_answered_requests ... ok
+test client_speaks_and_reads_every_message_documented_in_readme ... ok
+test control_characters_in_answers_acts_and_notes_cannot_drive_the_terminal ... ok
+test archive_keeps_readable_history_and_delete_requests_harness_cleanup ... ok
+test a_thread_s_mode_and_the_starting_mode_are_set_from_the_terminal ... ok
+test a_request_shows_its_command_and_is_answered_from_another_terminal ... ok
+test ctrl_d_at_a_request_after_its_turn_failed_leaves_with_the_failure ... ok
+test a_thread_goes_a_line_at_a_time_and_is_listed_and_resumed ... ok
+test ctrl_c_while_only_a_subagent_works_stops_it_with_exit_status_130 ... ok
+test one_request_streams_answer_acts_and_unknown_updates_cleanly ... ok
+test another_clients_turn_streams_live_and_ctrl_d_leaves_without_stopping_it ... ok
+test requests_that_wait_after_their_turn_are_each_asked_for_and_then_the_thread_takes_a_message ... ok
+test lever_killed_mid_turn_leaves_turn_interrupted_in_client ... ok
+test choice_of_free_models_model_selection_and_login_work_from_the_terminal ... ok
+test ctrl_d_leaves_a_turn_that_was_working_when_its_thread_was_resumed ... ok
+test two_threads_work_at_the_same_time_from_separate_clients ... ok
+test refused_account_missing_lever_no_harness_and_errors_are_reported_clearly ... ok
+test a_request_that_waits_when_its_turn_ends_is_still_asked_for_before_the_prompt ... ok
+test subagents_show_in_list_resume_and_live_and_their_requests_are_answered ... ok
+test stop_flag_and_ctrl_c_stop_working_turns_and_a_departing_client_does_not ... ok
+test ctrl_d_while_a_request_waits_leaves_with_how_a_followed_turn_ended ... ok
+test a_request_that_comes_while_the_prompt_waits_is_asked_for_there ... ok
+test a_turn_the_harness_begins_after_a_subagent_reports_is_shown_as_its_own ... ok
+test ctrl_c_during_a_newer_turn_stops_it_and_then_an_older_turns_subagent ... ok
+test ctrl_c_on_a_followed_turn_with_nothing_asked_stops_it_and_waits_for_its_end ... ok
+test ctrl_c_turns_down_the_request_asked_by_stopping_its_turn_and_says_how_to_answer_the_next ... ok
+test an_act_that_ends_after_the_next_turn_began_is_still_shown ... ok
+test a_turn_another_client_begins_while_a_request_is_asked_shows_and_ctrl_c_stops_only_the_requests_turn ... ok
+test a_run_says_how_its_own_turn_ended_though_the_harness_goes_on_after_it ... ok
+test ctrl_c_once_a_newer_turn_ended_stops_an_older_turns_subagent ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.54s
+
+     Running unittests src/main.rs (target/debug/deps/crowbar_lever-90ae1a61d25bb538)
+
+running 29 tests
+test acp::tests::an_act_with_no_text_says_what_its_output_or_else_its_input_names ... ok
+test acp::tests::a_raw_value_gives_an_act_only_its_text_command_or_path ... ok
+test acp::tests::a_command_keeps_its_name_what_the_harness_says_of_it_and_its_hint ... ok
+test acp::tests::an_id_is_redacted_as_a_whole_word_and_the_longest_first ... ok
+test acp::tests::a_models_provider_is_its_group_or_what_its_id_says ... ok
+test acp::tests::a_request_shows_the_exact_command_or_the_file_and_the_change ... ok
+test acp::tests::no_models_error_is_recognized_by_error_name_or_message ... ok
+test acp::tests::child_title_prefix_and_opencode_subagent_metadata_are_normalized ... ok
+test acp::tests::effort_is_the_thought_level_option_and_a_selector_with_no_levels_is_none ... ok
+test acp::tests::harness_env_toggles_free_hosted_models_without_losing_extra_env ... ok
+test acp::tests::transport_retry_failure_triggers_only_for_repeated_transport_errors ... ok
+test acp::tests::modes_are_lever_s_own_and_only_those_the_harness_reports ... ok
+test fulcrum::tests::format_desktop_context_escapes_fence_breakout_in_labels ... ok
+test fulcrum::tests::rejects_malformed_or_non_snapshot_replies ... ok
+test fulcrum::tests::parses_snapshot_resolves_active_and_sanitizes_labels ... ok
+test acp::tests::opencode_config_content_disables_self_update_adds_ask_first_and_preserves_other_keys ... ok
+test log::tests::a_full_log_moves_to_one_backup_and_both_stay_private ... ok
+test log::tests::a_log_found_where_the_next_one_opens_is_held_to_the_limit_too ... ok
+test log::tests::a_rotation_that_could_not_open_the_new_log_is_finished_by_the_next_line ... ok
+test acp::tests::a_change_shows_as_the_lines_it_removes_and_adds_with_a_few_around_it ... ok
+test opencode::tests::settings_with_comments_and_trailing_commas_are_read ... ok
+test opencode::tests::ask_first_asks_before_all_and_keeps_the_persons_own_rules_after_it ... ok
+test opencode::tests::the_persons_settings_are_read_where_opencode_reads_them ... ok
+test store::tests::opens_and_migrates_v2_database_without_threads_model_column ... ok
+test store::tests::a_v6_database_takes_subagents_and_harness_turns_and_keeps_no_half_subagent ... ok
+test store::tests::opens_and_migrates_v3_database_without_turns_context_column ... ok
+test store::tests::opens_a_v4_database_with_no_modes_or_requests_and_keeps_both_after ... ok
+test fulcrum::tests::fetch_snapshot_enforces_monotonic_deadline_on_fragmented_replies ... ok
+test fulcrum::tests::fetch_snapshot_returns_none_when_socket_is_missing_or_stalls ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running unittests src/bin/stub_harness.rs (target/debug/deps/crowbar_stub_harness-aec280b4951ca328)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/lever.rs (target/debug/deps/lever-289897d8953eb724)
+
+running 144 tests
+test a_launch_that_fails_ends_its_subagent_and_an_end_said_twice_is_said_once ... ok
+test a_harness_that_says_only_what_changed_still_offers_its_modes ... ok
+test a_harness_failure_is_a_failure_though_the_person_had_asked_to_stop ... ok
+test a_launch_the_harness_has_yet_to_report_lends_its_prompt_to_no_other_subagent ... ok
+test a_message_in_another_mode_tells_who_watches_the_threads_mode ... ok
+test a_catalog_update_between_set_effort_and_send_keeps_the_picked_effort ... ok
+test a_harness_turn_whose_end_or_answer_the_database_refuses_begins_no_turn_after_it_and_fails ... ok
+test a_harness_started_again_has_the_ids_of_earlier_acts_taken_out_of_what_it_says ... ok
+test a_harness_whose_modes_are_not_levers_runs_turns_and_new_threads_start_only_in_one_it_offers ... ok
+test a_message_that_takes_over_with_a_mode_keeps_what_the_harness_says_as_its_mode_is_set ... ok
+test a_message_the_database_takes_only_part_of_begins_no_turn ... ok
+test a_message_waits_while_a_subagent_of_its_thread_asks ... ok
+test a_mode_the_live_session_refuses_between_turns_leaves_the_thread_as_it_was ... ok
+test a_harness_that_ends_when_told_to_stop_leaves_nothing_of_the_turn_running ... ok
+test a_models_effort_levels_are_read_from_the_harness_and_kept ... ok
+test a_peer_that_sends_and_resumes_at_once_is_told_of_the_new_turn_once ... ok
+test a_mode_set_while_a_subagent_works_is_the_sessions_before_the_harness_goes_on ... ok
+test a_mode_the_record_does_not_take_is_taken_back_from_the_session ... ok
+test a_harness_turn_whose_answer_the_database_refuses_ends_failed ... ok
+test a_harness_that_never_answers_a_stopped_turns_mode_is_ended_and_the_thread_is_free ... ok
+test a_nested_subagent_of_an_older_turns_subagent_is_not_stopped_with_a_newer_turn ... ok
+test a_harness_that_ends_while_the_database_takes_no_writes_still_interrupts_its_turns ... ok
+test a_prompt_whose_mode_comes_with_a_subagents_request_waits_on_it ... ok
+test a_record_says_when_each_turn_began_and_ended ... ok
+test a_message_is_sent_while_a_subagent_works_and_takes_over_a_turn_the_harness_began ... ok
+test a_nested_subagent_told_of_before_its_launcher_names_it_keeps_its_launchers_turn ... ok
+test a_request_lever_holds_is_answered_and_a_working_thread_stopped_though_its_record_cannot_be_read ... ok
+test a_request_of_a_subagent_that_has_ended_is_put_to_nobody ... ok
+test a_request_that_does_not_say_its_kind_leaves_its_acts_kind ... ok
+test a_harness_that_writes_a_line_with_no_end_is_stopped_and_its_turn_interrupted ... ok
+test a_request_in_the_name_of_another_threads_subagent_is_put_to_nobody ... ok
+test a_result_with_a_null_error_is_a_result_and_an_update_with_a_null_id_is_an_update ... ok
+test a_message_held_for_a_subagent_ends_unsent_when_the_harness_goes_on_by_itself ... ok
+test a_session_id_the_harness_gives_twice_is_one_threads_alone ... ok
+test a_session_id_the_record_has_for_two_threads_is_loaded_for_neither ... ok
+test a_request_the_harness_withdraws_is_answered_cancelled_and_withdrawn_for_the_person ... ok
+test a_report_the_persons_message_took_over_stays_whole_when_a_subagent_asks_after ... ok
+test a_pending_act_of_a_harness_turn_holds_it_open ... ok
+test a_session_with_no_id_is_no_session ... ok
+test a_session_the_record_did_not_take_is_not_used ... ok
+test a_stop_for_a_turn_that_ended_withdraws_nothing_of_the_turn_after_it ... ok
+test a_prompt_that_waited_on_a_mode_waits_too_while_a_subagent_asks ... ok
+test a_session_id_one_thread_is_loading_is_not_given_to_another ... ok
+test a_request_after_a_stop_of_a_thread_at_rest_is_put_to_nobody ... ok
+test a_quiet_stopped_turn_ends_without_waiting_on_an_older_turns_subagent_stopped_after_it ... ok
+test a_stop_of_a_quiet_turn_the_harness_began_ends_it_and_no_message_takes_it_over_meanwhile ... ok
+test a_request_waits_for_the_person_with_no_time_limit_and_is_answered_once_always_or_no ... ok
+test a_request_after_its_turn_keeps_the_harness_until_stop_withdraws_it ... ok
+test a_subagent_first_heard_of_after_its_turn_was_stopped_is_stopped ... ok
+test a_stop_holds_against_a_turn_the_harness_begins_on_a_stopped_subagents_report ... ok
+test a_subagent_id_from_a_harness_that_ended_routes_no_new_session_to_its_thread ... ok
+test a_subagent_that_launches_a_subagent_shows_it_and_names_no_session ... ok
+test a_subagent_stopped_with_a_quiet_harness_turn_spares_the_harness ... ok
+test a_subagent_the_harness_launches_under_a_held_stop_before_it_says_anything_is_stopped ... ok
+test a_message_waiting_on_its_mode_ends_unsent_when_the_harness_goes_on_by_itself ... ok
+test a_request_that_begins_a_turn_under_a_held_stop_asks_nothing ... ok
+test a_stop_the_harness_ignores_ends_the_turn_and_every_command_it_started ... ok
+test a_stop_the_harness_carries_out_leaves_the_other_threads_working ... ok
+test a_thread_keeps_its_effort_and_each_turn_runs_at_it ... ok
+test a_thread_whose_session_cannot_be_loaded_says_its_harness_began_afresh ... ok
+test a_thread_keeps_its_mode_and_new_threads_start_in_the_mode_the_person_chose ... ok
+test a_thread_with_no_session_given_another_model_has_no_effort_until_its_next_turn ... ok
+test a_threads_commands_come_as_an_event_to_who_watches_it ... ok
+test a_peer_that_reads_none_of_a_threads_events_is_closed_and_the_thread_goes_on ... ok
+test a_stop_the_harness_ignores_ends_what_it_started_and_not_what_an_earlier_harness_left ... ok
+test a_subagent_taken_up_again_after_its_harness_restarted_is_not_shown_working_on ... ok
+test a_session_that_fails_after_its_turn_was_stopped_fails_the_turn_that_waits_and_no_other ... ok
+test a_peer_that_reads_nothing_is_held_and_loses_nothing_it_sent ... ok
+test a_turn_whose_effort_the_harness_refuses_fails_and_the_thread_goes_back_to_the_sessions ... ok
+test a_turn_whose_end_waits_to_be_saved_has_ended_for_whoever_asks ... ok
+test a_stop_of_a_newer_turn_is_not_taken_on_by_an_older_turns_subagent_that_says_more ... ok
+test acp_v1_subagent_works_and_stop_cancels_subagent_outliving_its_turn ... ok
+test a_subagent_under_a_held_stop_that_the_record_cannot_take_stops_the_harness ... ok
+test a_turn_stopped_while_its_effort_is_set_holds_the_thread_until_the_harness_answers ... ok
+test an_act_of_one_thread_is_not_taken_for_another_threads_launch_with_the_same_call_id ... ok
+test a_turn_the_person_asked_to_stop_asks_them_nothing_more ... ok
+test an_answer_the_database_does_not_take_is_kept_and_saved_when_it_does ... ok
+test an_option_given_twice_is_refused ... ok
+test a_turn_the_database_did_not_take_fails_and_its_end_is_saved_when_the_database_takes_it ... ok
+test both_sockets_speak_version_one_and_answer_status ... ok
+test a_long_event_a_peer_has_read_gives_it_no_more_room_to_fall_behind ... ok
+test an_effort_answered_with_the_one_before_is_taken_and_the_update_after_says_so ... ok
+test a_turn_working_when_lever_is_told_to_stop_is_interrupted_in_the_record_it_leaves ... ok
+test commands_refuses_with_no_harness_and_does_not_reprobe_when_harness_names_none ... ok
+test an_effort_is_one_models_and_a_thread_given_another_model_takes_what_the_harness_has ... ok
+test framing_handles_split_writes_pipelining_bad_version_and_oversized_frames ... ok
+test each_socket_keeps_its_own_count_of_connections ... ok
+test free_models_off_while_working_refuses_new_sends_until_harness_restarts ... ok
+test harness_crash_and_lever_kill_record_interrupted_turns ... ok
+test delete_removes_the_record_and_asks_the_harness_but_keeps_history_on_failure ... ok
+test how_a_request_ends_is_told_though_the_database_can_be_neither_read_nor_written ... ok
+test harness_env_disables_autoupdate_and_free_models_until_chosen_and_selects_models ... ok
+test known_acp_updates_like_thoughts_and_available_commands_do_not_become_notes ... ok
+test lever_adds_ask_first_for_its_own_harness_and_leaves_the_persons_opencode_files_alone ... ok
+test list_watch_tracks_terminal_work_and_archive_preserves_history_without_a_harness ... ok
+test a_stop_of_a_turn_the_harness_began_spares_an_older_turns_subagent_and_the_harness ... ok
+test lever_speaks_every_message_documented_in_readme ... ok
+test models_refresh_broadcasts_catalog_live_and_persists_signed_in_choice ... ok
+test models_refresh_while_busy_defers_harness_restart_until_turn_finishes ... ok
+test models_say_each_models_provider_apart_from_its_name ... ok
+test disconnecting_while_waiting_for_models_reply_does_not_stall_lever ... ok
+test no_harness_id_or_message_type_appears_on_levers_sockets ... ok
+test harness_starts_on_demand_stops_when_idle_and_restarts_for_next_turn ... ok
+test peer_uid_is_checked_on_each_socket_independently ... ok
+test restart_after_kill_replaces_stale_sockets_and_logs_restart_and_sigint_stops_cleanly ... ok
+test a_subagent_whose_end_is_unsaved_stays_ended_though_it_says_more ... ok
+test state_is_private_database_is_wal_and_clean_stop_removes_sockets ... ok
+test a_stop_of_each_turn_in_turn_holds_as_a_stop_of_the_thread_does ... ok
+test reused_tool_call_id_short_id_in_answer_and_error_on_cancel_are_handled_correctly ... ok
+test lever_restart_marks_working_subagent_interrupted_and_withdraws_its_request ... ok
+test stop_and_the_ends_of_lever_and_its_harness_withdraw_a_waiting_request ... ok
+test surface_send_attaches_fulcrum_desktop_context_and_falls_back_when_fulcrum_is_away ... ok
+test a_subagent_that_starts_and_asks_while_its_thread_is_deleted_goes_nowhere ... ok
+test surface_socket_can_toggle_free_models_and_model_switch_preserves_default ... ok
+test the_harness_s_commands_are_kept_for_each_thread_and_a_command_is_sent_as_a_message ... ok
+test a_turn_the_record_cannot_take_under_a_held_stop_stops_the_harness ... ok
+test thread_streams_answer_and_acts_and_persists_across_restart ... ok
+test two_threads_work_concurrently_on_one_harness_and_stop_cancels_the_turn ... ok
+test a_turn_stopped_while_its_mode_is_set_holds_the_thread_until_the_harness_answers ... ok
+test what_a_harness_says_when_it_cannot_start_is_the_persons_and_not_the_logs ... ok
+test unreachable_model_transport_retry_loop_fails_the_turn_with_reason ... ok
+test unknown_update_is_kept_as_json_and_shown_plainly_and_post_turn_updates_are_recorded ... ok
+test restart_during_writes_preserves_every_thread_and_loads_sessions_without_replaying_work ... ok
+test what_a_peer_sent_before_it_went_is_carried_out ... ok
+test what_comes_in_one_read_after_the_harness_is_stopped_is_not_taken ... ok
+test an_act_a_stopped_harness_turn_closes_spares_the_harness ... ok
+test subagent_ending_withdraws_waiting_request_and_maps_cancelled_to_stopped ... ok
+test what_a_new_harness_says_after_a_turn_opens_no_harness_turn_for_an_old_harnesss_subagent ... ok
+test replies_reach_a_peer_that_has_sent_all_it_will ... ok
+test an_act_a_request_is_the_first_word_of_holds_a_turn_the_harness_began_while_it_runs ... ok
+test one_event_longer_than_the_backlog_reaches_a_peer_that_reads ... ok
+test a_turn_the_harness_began_waits_its_quiet_from_when_its_subagent_ended ... ok
+test turns_the_person_asked_to_stop_end_as_stopped_when_the_harness_is_ended ... ok
+test subagent_outlives_turn_raises_request_keeps_harness_alive_and_hides_harness_names ... ok
+test stopping_turn_during_model_switch_locks_thread_and_preserves_saved_model ... ok
+test what_the_harness_says_of_a_mode_that_settles_is_not_told_until_it_has ... ok
+test what_a_subagent_first_asks_after_its_work_was_stopped_is_asked_of_nobody ... ok
+test what_the_harness_begins_under_a_held_stop_when_its_thread_cannot_be_read_stops_the_harness ... ok
+test what_the_harness_says_after_a_subagent_reports_is_a_turn_of_its_own_that_ends_when_quiet ... ok
+test what_a_held_stop_catches_after_a_turn_the_harness_began_ended_is_a_turn_of_its_own ... ok
+test each_peer_that_goes_is_logged_once ... ok
+test what_the_harness_begins_under_a_held_stop_while_the_last_end_is_unsaved_stops_the_harness ... ok
+test many_requests_for_a_long_record_from_a_peer_that_reads_nothing_are_answered_as_it_reads ... ok
+test a_peer_that_keeps_sending_and_reading_is_answered_beside_the_others ... ok
+
+test result: ok. 144 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.25s
+
