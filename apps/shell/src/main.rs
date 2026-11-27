@@ -3289,7 +3289,9 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 // one that began a turn: the message box lets it go.
                 let is_sent = matches!(
                     agent_event,
-                    agent::AgentEvent::Sent { .. } | agent::AgentEvent::SteerTaken { .. }
+                    agent::AgentEvent::Sent { .. }
+                        | agent::AgentEvent::SteerTaken { .. }
+                        | agent::AgentEvent::QueueTaken { .. }
                 );
                 let is_disconnected = matches!(agent_event, agent::AgentEvent::Disconnected);
                 let is_lifecycle = matches!(agent_event, agent::AgentEvent::Lifecycle { .. });
@@ -3297,6 +3299,7 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                     agent_event,
                     agent::AgentEvent::Message { .. }
                         | agent::AgentEvent::Steered { .. }
+                        | agent::AgentEvent::Queued { .. }
                         | agent::AgentEvent::Act { .. }
                         | agent::AgentEvent::Note { .. }
                         | agent::AgentEvent::Request { .. }

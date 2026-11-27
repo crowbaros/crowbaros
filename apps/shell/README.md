@@ -158,7 +158,9 @@ historical behavior evidence, not a current Fedora workflow.
   Lever's `models` says (`steering`): it shows in the turn's answer where the
   harness took it, as the person's message does, set to the right, and stays
   there when the thread is read again. Where the harness cannot take one, or
-  did not take this one, the box keeps the message and the drawer says why.
+  did not take this one, it waits under the turn, faded, with **Take back**
+  (`unqueue`), and goes as its own turn when the turns before it end. A Stop
+  drops what waits, which then shows as not sent.
 - An answer shows as the Markdown it is: paragraphs, headings, lists, quotes,
   strong and emphasised words, links (with destinations shown beside titled
   links; clicking copies the URL to the clipboard since the shell runs as its

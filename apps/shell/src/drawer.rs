@@ -39,6 +39,8 @@ pub(crate) enum ThreadAction {
     Acts(u64),
     /// Open or fold a subagent in its turn.
     Subagent(String),
+    /// Take back a message that waits behind a turn.
+    Unqueue(String),
 }
 
 pub(crate) struct AgentSurface {
@@ -314,6 +316,7 @@ impl AgentSurface {
                 | ThreadAction::SignIn
                 | ThreadAction::ChooseFreeModels(_)
                 | ThreadAction::RefreshModels
+                | ThreadAction::Unqueue(_)
         );
         let busy = {
             let s = &self.model.read(cx).agent_state;
@@ -384,6 +387,15 @@ impl AgentSurface {
                     }
                 });
                 self.confirm_delete = false;
+            }
+            ThreadAction::Unqueue(id) => {
+                let (tx, thread) = {
+                    let m = self.model.read(cx);
+                    (m.agent_tx.clone(), m.agent_state.thread.clone())
+                };
+                if let (Some(tx), Some(thread)) = (tx, thread) {
+                    tx.unqueue(thread, id);
+                }
             }
             ThreadAction::Act(id) => {
                 if !self.expanded_acts.remove(&id) {
@@ -487,6 +499,7 @@ impl AgentSurface {
             ThreadAction::Context(turn) => format!("context:{turn}"),
             ThreadAction::Acts(turn) => format!("acts:{turn}"),
             ThreadAction::Subagent(id) => format!("subagent:{id}"),
+            ThreadAction::Unqueue(id) => format!("unqueue:{id}"),
         };
         div()
             .id(id)
@@ -765,7 +778,6 @@ impl AgentSurface {
     fn send(&mut self, cx: &mut Context<Self>) {
         enum SendPlan {
             Ignore,
-            Working,
             NoModel,
             Ready {
                 tx: agent::CommandSender,
@@ -793,11 +805,7 @@ impl AgentSurface {
                 return SendPlan::NoModel;
             }
             if !state.can_send() {
-                return if state.refuses_while_working() {
-                    SendPlan::Working
-                } else {
-                    SendPlan::Ignore
-                };
+                return SendPlan::Ignore;
             }
             let Some(tx) = m.agent_tx.clone() else {
                 return SendPlan::Ignore;
@@ -829,13 +837,6 @@ impl AgentSurface {
             SendPlan::NoModel => {
                 sync_agent_view(&self.model, cx);
                 cx.notify();
-            }
-            // The harness cannot take a message into a turn under way.
-            SendPlan::Working => {
-                self.refuse(
-                    "The Agent can't take a message into this turn while it works. Send it when the turn ends, or /stop the turn.".into(),
-                    cx,
-                );
             }
             SendPlan::Ready {
                 tx,
@@ -2509,6 +2510,36 @@ impl Render for AgentSurface {
                             .text_color(rgb(p.text))
                             .child(err.clone()),
                     );
+                }
+                // Messages that wait behind the turn, each with a way to take
+                // it back, and those a Stop dropped.
+                for queued in &turn.queued {
+                    let waits = queued.state == "queued";
+                    let mut row = div()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .items_end()
+                        .gap(px(4.))
+                        .opacity(0.7)
+                        .child(message_bubble(queued.text.clone(), p))
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .text_color(rgb(p.muted))
+                                .child(if waits { "Waiting for the turn to end" } else { "Not sent: the turn was stopped" }),
+                        );
+                    if waits {
+                        row = row.child(self.button(
+                            SharedString::from(format!("unqueue-{}", queued.id)),
+                            "Take back",
+                            ThreadAction::Unqueue(queued.id.clone()),
+                            true,
+                            p,
+                            cx,
+                        ));
+                    }
+                    turn_col = turn_col.child(row);
                 }
                 body = body.child(turn_col);
             }
