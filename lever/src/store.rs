@@ -940,7 +940,7 @@ impl Store {
     }
 
     /// Keeps a message the harness took into a turn under way, at the place
-    /// in the turn's answer it had come to, which it returns.
+    /// in the turn's answer it had come to.
     pub fn insert_steer(
         &self,
         thread_id: &str,
@@ -948,19 +948,20 @@ impl Store {
         text: &str,
         context: Option<&str>,
         now: i64,
-    ) -> Result<u64, String> {
-        let at: i64 = self
+    ) -> Result<(), String> {
+        let kept = self
             .conn
-            .query_row(
+            .execute(
                 "INSERT INTO steers (thread_id, turn_number, text, context, at, created_at) \
                  SELECT ?1, ?2, ?3, ?4, length(CAST(answer AS BLOB)), ?5 FROM turns \
-                 WHERE thread_id = ?1 AND turn_number = ?2 RETURNING at",
+                 WHERE thread_id = ?1 AND turn_number = ?2",
                 params![thread_id, turn_number as i64, text, context, now],
-                |r| r.get(0),
             )
             .map_err(|e| format!("could not insert steered message: {e}"))?;
-        self.touch_thread(thread_id, now)?;
-        Ok(at as u64)
+        if kept == 0 {
+            return Err(format!("could not insert steered message: no turn {turn_number}"));
+        }
+        self.touch_thread(thread_id, now)
     }
 
     /// Stores a note: a harness update's JSON in `notes.raw_json` along with

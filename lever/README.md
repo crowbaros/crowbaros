@@ -183,8 +183,10 @@ ACP today:
 - **Steering.** A harness that says it can take a message into a turn under
   way is sent the person's message while its turn works, and says whether it
   took it. Lever records a message it took with that turn, at the place in
-  the answer it had come to, and refuses one it did not take. Lever asks this
-  of a harness that has said it can, and of no other. Each adapter steers in
+  the answer it had come to when the harness said so, and refuses one it did
+  not take. Lever asks this of a harness that has said it can, and of no
+  other: the ACP adapter asks any harness whose `initialize` answer says it
+  as OpenCode does. Each adapter steers in
   its harness's own way. ACP's first version has no steering; OpenCode adds
   its own: its `initialize` answer says `_meta.steering.supported`, and a
   `_session/steering` request with the session and the message, as a prompt

@@ -2684,12 +2684,6 @@ impl AcpHarness {
     }
 }
 
-/// Builds the environment overrides Lever passes to a harness child:
-/// any `--harness-env` entries, `OPENCODE_CONFIG_CONTENT` with OpenCode's
-/// self-update disabled (preserving any keys already present), and
-/// `OPENCODE_DISABLE_FREE_MODELS=1` plus `OPENCODE_DISABLE_MODELS_FETCH=1`
-/// until the person chooses free hosted Models (so nothing contacts
-/// `models.opencode.ai` before the person's choice).
 /// A prompt's content: desktop context, for the Model's eyes alone so a slash
 /// command at the start of the person's text is still one, then the text.
 fn prompt_blocks(context: Option<&str>, text: &str) -> Vec<ContentBlock> {
@@ -2722,6 +2716,12 @@ fn steer_taken(result: &Value) -> Result<(), String> {
     }
 }
 
+/// Builds the environment overrides Lever passes to a harness child:
+/// any `--harness-env` entries, `OPENCODE_CONFIG_CONTENT` with OpenCode's
+/// self-update disabled (preserving any keys already present), and
+/// `OPENCODE_DISABLE_FREE_MODELS=1` plus `OPENCODE_DISABLE_MODELS_FETCH=1`
+/// until the person chooses free hosted Models (so nothing contacts
+/// `models.opencode.ai` before the person's choice).
 fn build_harness_env(
     extra: &[(String, String)],
     existing_config_content: Option<&str>,

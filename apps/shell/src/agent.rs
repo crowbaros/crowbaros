@@ -1390,6 +1390,13 @@ impl AgentState {
         self.steering && self.thread.is_some() && self.turn_working()
     }
 
+    /// Whether a message the drawer cannot send now is refused because the
+    /// thread works and its harness cannot take a message into the turn. One
+    /// sent before, still on its way, is no reason to say so.
+    pub fn refuses_while_working(&self) -> bool {
+        self.connected && !self.sending && self.working() && !self.can_steer()
+    }
+
     pub fn can_send(&self) -> bool {
         self.connected
             && (!self.turn_working() || self.can_steer())
@@ -7710,6 +7717,7 @@ mod tests {
         state.apply(lever_event(serde_json::json!({ "event": "message", "thread": "t-1", "turn": 1, "text": "Look" })), true);
         state.apply(lever_event(serde_json::json!({ "event": "text", "thread": "t-1", "turn": 1, "text": "Looking. " })), true);
         assert!(!state.can_send(), "a harness that cannot steer takes no message while its turn works");
+        assert!(state.refuses_while_working());
 
         // A harness that can steer takes one.
         state.apply(lever_event(serde_json::json!({
@@ -7719,6 +7727,10 @@ mod tests {
         assert!(state.can_steer());
         assert!(state.can_send());
         state.sending = true;
+        assert!(
+            !state.refuses_while_working(),
+            "a message on its way into the turn is no reason to say the harness cannot take one"
+        );
         state.apply(lever_event(serde_json::json!({ "reply": "steered", "thread": "t-1", "turn": 1 })), true);
         assert!(!state.sending, "the reply ends the sending");
         state.apply(

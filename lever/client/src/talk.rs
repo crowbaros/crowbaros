@@ -313,21 +313,13 @@ impl Subagents {
     }
 }
 
-/// The line a turn begins with: the person's message, or, for a turn the
-/// harness began itself, as when a subagent reported, a mark saying so.
-/// `turn` is a turn's record or its `message` event, whose text is `field`.
 /// Writes a turn's answer as the record has it, with each message the Agent
 /// took into the turn at the place in the answer it took it.
 fn write_answer(answer: &mut Answer, turn: &Value) -> Result<()> {
     let whole = text(turn, "answer");
     let mut from = 0;
     for steered in turn.get("steered").and_then(Value::as_array).into_iter().flatten() {
-        let at = steered
-            .get("at")
-            .and_then(Value::as_u64)
-            .and_then(|at| usize::try_from(at).ok())
-            .filter(|&at| at >= from && whole.is_char_boundary(at))
-            .unwrap_or(from);
+        let at = steer_place(&whole, from, steered.get("at").and_then(Value::as_u64));
         answer.write(&whole[from..at])?;
         answer.end()?;
         answer.write(&format!("> {}\n", text(steered, "text")))?;
@@ -336,6 +328,19 @@ fn write_answer(answer: &mut Answer, turn: &Value) -> Result<()> {
     answer.write(&whole[from..])
 }
 
+/// Where in `whole`, an answer written up to `from`, a message the Agent took
+/// at `at` shows: there, or past what the record kept of the answer, at its
+/// end, and never before what is written or inside a character.
+fn steer_place(whole: &str, from: usize, at: Option<u64>) -> usize {
+    at.and_then(|at| usize::try_from(at).ok())
+        .map(|at| at.min(whole.len()))
+        .filter(|&at| at >= from && whole.is_char_boundary(at))
+        .unwrap_or(from)
+}
+
+/// The line a turn begins with: the person's message, or, for a turn the
+/// harness began itself, as when a subagent reported, a mark saying so.
+/// `turn` is a turn's record or its `message` event, whose text is `field`.
 fn message_line(turn: &Value, field: &str) -> String {
     if text(turn, "origin") == "harness" {
         "[the Agent went on after a subagent reported]".to_string()
@@ -1463,6 +1468,18 @@ pub fn lifecycle(lever: &mut Connection, op: &str, thread: &str) -> Result<Ended
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_message_taken_into_a_turn_shows_where_it_was_taken_or_after_what_the_record_kept() {
+        let whole = "Looking. Took it.";
+        assert_eq!(steer_place(whole, 0, Some(9)), 9);
+        // Past what the record kept of the answer: at its end, not its start.
+        assert_eq!(steer_place(whole, 0, Some(400)), whole.len());
+        // Never before what is written, nor inside a character.
+        assert_eq!(steer_place(whole, 12, Some(9)), 12);
+        assert_eq!(steer_place("né", 0, Some(2)), 0);
+        assert_eq!(steer_place(whole, 3, None), 3);
+    }
 
     #[test]
     fn a_time_is_said_in_the_largest_unit_that_fits() {

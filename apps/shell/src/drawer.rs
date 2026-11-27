@@ -793,7 +793,7 @@ impl AgentSurface {
                 return SendPlan::NoModel;
             }
             if !state.can_send() {
-                return if state.connected && state.working() {
+                return if state.refuses_while_working() {
                     SendPlan::Working
                 } else {
                     SendPlan::Ignore
