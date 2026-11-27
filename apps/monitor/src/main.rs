@@ -227,6 +227,7 @@ impl Monitor {
         match control {
             Control::Page(page) => {
                 self.page = page;
+                self.message.clear();
                 self.focus.focus(w);
             }
             Control::Sort(sort) => {
@@ -250,6 +251,7 @@ impl Monitor {
                         .filter(|p| can_signal(p, person_uid(), std::process::id()))
                         .cloned()
                 {
+                    self.message.clear();
                     self.confirmation = Some(p);
                     self.controls[12].focus(w);
                 }
@@ -262,6 +264,7 @@ impl Monitor {
             }
             Control::Cancel => {
                 self.confirmation = None;
+                self.message.clear();
                 self.focus.focus(w);
             }
             Control::Close => w.remove_window(),
@@ -283,6 +286,15 @@ impl Monitor {
         if self.error.is_some() || self.busy || !can_signal(&p, person_uid(), std::process::id()) {
             return;
         }
+        let completed = format!(
+            "{} sent to {} ({}). The process list will refresh.",
+            match signal {
+                Signal::Terminate => "SIGTERM",
+                Signal::Kill => "SIGKILL",
+            },
+            p.name,
+            p.pid
+        );
         self.busy = true;
         self.message = format!("Sending signal to {} ({})…", p.name, p.pid);
         cx.spawn(async move |this, cx| {
@@ -293,7 +305,7 @@ impl Monitor {
             let _ = this.update(cx, |m, cx| {
                 m.busy = false;
                 m.message = match result {
-                    Ok(()) => "Signal sent. The process list will refresh.".into(),
+                    Ok(()) => completed,
                     Err(e) => e,
                 };
                 cx.notify();
@@ -724,6 +736,7 @@ impl Render for Monitor {
             .on_action(cx.listener(|m, _: &Search, w, cx| {
                 if m.confirmation.is_none() {
                     m.page = Page::Processes;
+                    m.message.clear();
                     m.query.read(cx).focus_handle(cx).focus(w);
                     cx.notify();
                 }
@@ -778,26 +791,35 @@ impl Render for Monitor {
                     ),
             );
         }
-        let status = self
-            .error
-            .as_ref()
-            .map(|e| format!("{e} Displaying the last sample; retrying automatically."))
-            .unwrap_or_else(|| {
-                if !self.message.is_empty() {
-                    self.message.clone()
-                } else {
-                    self.snapshot
-                        .as_ref()
-                        .map(|s| s.warnings.join(" · "))
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or_else(|| {
-                            "Alt+1 Overview · Alt+2 Processes · Alt+3 Services & Storage · Ctrl+F Search".into()
-                        })
-                }
-            });
+        let status = footer_text(
+            self.error.as_deref(),
+            self.confirmation.is_some(),
+            &self.message,
+            self.snapshot
+                .as_ref()
+                .map(|s| s.warnings.as_slice())
+                .unwrap_or_default(),
+        );
         root.child(crowbar_ui::status_footer(status, p))
     }
 }
+fn footer_text(error: Option<&str>, confirmation: bool, message: &str, warnings: &[String]) -> String {
+    let mut status = if let Some(error) = error {
+        format!("{error} Displaying the last sample; retrying automatically.")
+    } else if confirmation {
+        "Force Quit is awaiting confirmation. No SIGKILL signal has been sent.".into()
+    } else if !message.is_empty() {
+        message.to_string()
+    } else {
+        "Alt+1 Overview · Alt+2 Processes · Alt+3 Services & Storage · Ctrl+F Search".into()
+    };
+    if !warnings.is_empty() {
+        status.push_str(" · ");
+        status.push_str(&warnings.join(" · "));
+    }
+    status
+}
+
 fn percent(value: Option<f64>) -> String {
     value
         .map(|v| format!("{v:.1}%"))
@@ -859,4 +881,26 @@ fn main() {
         )
         .expect("open Monitor window");
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::footer_text;
+    #[test]
+    fn pending_confirmation_does_not_repeat_a_completed_signal_notice() {
+        let status = footer_text(None, true, "Signal sent. The process list will refresh.", &[]);
+        assert!(status.contains("awaiting confirmation"));
+        assert!(!status.contains("Signal sent."));
+    }
+    #[test]
+    fn metric_warnings_remain_visible_beside_feedback_and_errors() {
+        let warnings = vec!["Network throughput unavailable".into()];
+        for (error, confirmation) in [(None, false), (None, true), (Some("CPU metrics unavailable"), false)] {
+            let status = footer_text(error, confirmation, "SIGTERM sent to example (42).", &warnings);
+            assert!(status.contains("Network throughput unavailable"));
+            if error.is_some() {
+                assert!(!status.contains("SIGTERM sent"));
+            }
+        }
+    }
 }
