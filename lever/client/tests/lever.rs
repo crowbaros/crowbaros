@@ -765,11 +765,13 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let reply_efforts = find_reply("efforts");
     let reply_effort_set = find_reply("effort-set");
     let reply_commands = find_reply("commands");
+    let reply_steered = find_reply("steered");
+    let ev_steered = find_event("steered");
 
     let server_ops = doc_ops.clone();
-    // Serve 21 short connections exercising every documented op, reply (including error), and event.
+    // Serve 22 short connections exercising every documented op, reply (including error), and event.
     let server = std::thread::spawn(move || {
-        for turn_case in 0..21 {
+        for turn_case in 0..22 {
             let (mut stream, _) = listener.accept().expect("accept client");
             let ver = read_framed(&mut stream);
             assert_eq!(ver, json!({ "version": 1 }));
@@ -836,6 +838,13 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
                 (18, "efforts") => write_framed(&mut stream, &reply_efforts),
                 (19, "set-effort") => write_framed(&mut stream, &reply_effort_set),
                 (20, "commands") => write_framed(&mut stream, &reply_commands),
+                // A message for a thread that works is taken into its turn.
+                (21, "send") => {
+                    write_framed(&mut stream, &reply_steered);
+                    write_framed(&mut stream, &ev_steered);
+                    write_framed(&mut stream, &ev_text);
+                    write_framed(&mut stream, &ev_done);
+                }
                 other => panic!("unexpected connection {other:?}"),
             }
             // Hold the connection open until the client closes it, as Lever does.
@@ -948,6 +957,14 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
         (0, "/review  review changes\n"),
         "{commands:?}"
     );
+
+    let steered = lab.run(&["--resume", "t-01a2b3c4d5e6", "Also check the docs"], "");
+    assert_eq!(
+        (steered.status, steered.out.as_str()),
+        (0, "> Also check the docs\nHere are the files.\n"),
+        "{steered:?}"
+    );
+    assert!(steered.err.contains("took your message into the turn"), "{steered:?}");
 
     server.join().unwrap();
     assert_eq!(*sent_ops.lock().unwrap(), doc_ops);
@@ -2237,4 +2254,63 @@ fn a_run_says_how_its_own_turn_ended_though_the_harness_goes_on_after_it() {
         "the run did not follow the harness's turn: {ran:?}"
     );
     assert_eq!(ran.status, 1, "{ran:?}");
+}
+
+#[test]
+fn a_message_sent_while_the_agent_works_is_taken_into_its_turn_and_shown_where_it_was_taken() {
+    let lab = Lab::with_script(json!({
+        "steering": true,
+        "turns": [{
+            "match": "Look",
+            "steps": [
+                { "kind": "text", "text": "Looking. " },
+                { "kind": "await_steer", "text": "Took: {steer}" }
+            ]
+        }]
+    }));
+    let mut first = Running::start(lab.agent(&["Look around."]));
+    first.wait_for_out("Looking. ");
+    let thread = only_thread(&lab);
+
+    // From another terminal, a message for the thread while it works.
+    let steered = lab.run(&["--resume", &thread, "Also the docs."], "");
+    assert_eq!(steered.status, 0, "{steered:?}");
+    assert_eq!(steered.out, "> Also the docs.\nTook: Also the docs.\n", "{steered:?}");
+    assert!(steered.err.contains("took your message into the turn"), "{steered:?}");
+
+    // The client that began the turn shows it where the Agent took it.
+    first.wait_for_out("Looking. \n> Also the docs.\nTook: Also the docs.\n");
+    assert_eq!(first.ended(), 0);
+
+    // And so does the thread's record.
+    let shown = lab.run(&["--resume", &thread], "");
+    assert_eq!(
+        shown.out, "> Look around.\nLooking. \n> Also the docs.\nTook: Also the docs.\n",
+        "{shown:?}"
+    );
+}
+
+#[test]
+fn a_message_the_agent_does_not_or_cannot_take_while_it_works_is_refused_with_why() {
+    for (script, why) in [
+        (json!({ "steering": true, "steer_refused": true }), "Send it again"),
+        (json!({}), "cannot take a message"),
+    ] {
+        let mut script = script;
+        script["turns"] =
+            json!([{ "match": "slow", "stall": true, "steps": [{ "kind": "text", "text": "Working." }] }]);
+        let lab = Lab::with_script(script);
+        let mut first = Running::start(lab.agent(&["Do slow work."]));
+        first.wait_for_out("Working.");
+        let thread = only_thread(&lab);
+
+        let refused = lab.run(&["--resume", &thread, "Change of plan."], "");
+        assert_eq!(refused.status, 1, "{refused:?}");
+        assert_eq!(refused.out, "", "{refused:?}");
+        assert!(refused.err.contains(why), "{refused:?}");
+
+        first.signal(libc::SIGINT);
+        first.wait_for_err("Stopped.\n");
+        assert_eq!(first.ended(), 130);
+    }
 }

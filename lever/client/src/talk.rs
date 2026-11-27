@@ -258,6 +258,9 @@ fn turn(
             Ended::Failed
         });
     }
+    if text(&reply, "reply") == "steered" {
+        eprintln!("crowbar-agent: The Agent took your message into the turn it is working on.");
+    }
     let begun = text(&reply, "thread").to_string();
     // How the turn ended, though the person leaves while a request of its waits.
     let mut last = Ended::Done;
@@ -313,6 +316,26 @@ impl Subagents {
 /// The line a turn begins with: the person's message, or, for a turn the
 /// harness began itself, as when a subagent reported, a mark saying so.
 /// `turn` is a turn's record or its `message` event, whose text is `field`.
+/// Writes a turn's answer as the record has it, with each message the Agent
+/// took into the turn at the place in the answer it took it.
+fn write_answer(answer: &mut Answer, turn: &Value) -> Result<()> {
+    let whole = text(turn, "answer");
+    let mut from = 0;
+    for steered in turn.get("steered").and_then(Value::as_array).into_iter().flatten() {
+        let at = steered
+            .get("at")
+            .and_then(Value::as_u64)
+            .and_then(|at| usize::try_from(at).ok())
+            .filter(|&at| at >= from && whole.is_char_boundary(at))
+            .unwrap_or(from);
+        answer.write(&whole[from..at])?;
+        answer.end()?;
+        answer.write(&format!("> {}\n", text(steered, "text")))?;
+        from = at;
+    }
+    answer.write(&whole[from..])
+}
+
 fn message_line(turn: &Value, field: &str) -> String {
     if text(turn, "origin") == "harness" {
         "[the Agent went on after a subagent reported]".to_string()
@@ -600,6 +623,12 @@ fn watch(
                 answer.write(&text(&event, "text"))?;
                 continue;
             }
+            // A message the Agent took into the turn, where it took it.
+            "steered" => {
+                answer.end()?;
+                answer.write(&format!("> {}\n", text(&event, "text")))?;
+                continue;
+            }
             "note" => {
                 show_note(&mut answer, &event)?;
                 continue;
@@ -715,7 +744,7 @@ fn resume(lever: &mut Connection, thread: &str) -> Result<Option<Resumed>> {
         for note in turn.get("notes").and_then(Value::as_array).into_iter().flatten() {
             show_note(&mut answer, note)?;
         }
-        answer.write(&text(turn, "answer"))?;
+        write_answer(&mut answer, turn)?;
         match &*text(turn, "state") {
             // Its answer goes on from here.
             "working" => break,

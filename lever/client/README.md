@@ -97,6 +97,15 @@ crowbar-agent status                   # Lever's status, what works, and what wa
   answers, acts, notes, and errors are shown as their Unicode pictures (`␛` for
   escape) and do nothing. Line ends and tabs stay, and carriage returns are
   dropped.
+- **A message while the Agent works.** `crowbar-agent --resume ID
+  "<request>"` sent while the thread works on a turn is taken into that turn
+  where its harness can steer one: the client says so on standard error, and
+  writes the rest of the turn's answer, with the message as `> <request>` where
+  the Agent took it. Every client that follows the turn shows it there, and
+  `--resume ID` shows it there in the record. Where the harness cannot take a
+  message into a turn under way, or did not take this one, as when the turn
+  ended just as it came, Lever refuses it, the client says why, and exits with
+  status 1. The line-at-a-time mode takes no message while a turn works.
 - **A thread starts with its first message**, in the terminal's current working
   directory. `crowbar-agent` with no argument asks for a line, sends it, writes
   the answer, and asks again. Ctrl-D leaves, and stops nothing: a turn another
