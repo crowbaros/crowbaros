@@ -8,6 +8,7 @@ assets, and pinned dependencies carry forward to Void.
 | App | Current role |
 | --- | --- |
 | [shell/](shell/README.md) | Workspace bar, dock, launcher, wallpaper, and the Agent's surface; starting point for the trusted shell |
+| [monitor/](monitor/README.md) | Live resource history, searchable processes with owned-process controls, and read-only service/storage status |
 | [files/](files/README.md) | Default file manager: Columns, List, and Grid views, inspector preview, quick preview, Trash, and safe file operations |
 | [studio-settings/](studio-settings/README.md) | Appearance preview, Save/Undo, and restored preferences on CrowbarOS's desktop |
 | [gpui-probe/](gpui-probe/README.md) | Optional GPUI rendering/input reference |

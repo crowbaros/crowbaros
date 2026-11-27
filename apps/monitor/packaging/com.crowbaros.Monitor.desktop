@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Monitor
+Comment=View system resources, processes, services, and storage
+Exec=crowbaros-monitor
+Icon=utilities-system-monitor
+StartupWMClass=com.crowbaros.Monitor
+Terminal=false
+Categories=System;Monitor;

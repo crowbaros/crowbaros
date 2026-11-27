@@ -75,7 +75,8 @@ GROW
 # The desktop. Three accounts: the compositor, which alone is in `_seatd`; the
 # shell; and the person's, with a home and a login shell, in `netdev` to join
 # Wi-Fi and `wheel` for sudo, whose password unlocks the desktop and as whom
-# every app runs. Its UID is fixed, as the desktop's services find it by UID.
+# every app runs. The socklog group lets Monitor read system logs using Void's
+# existing read permission. Its UID is fixed, as the desktop's services find it by UID.
 # runit starts the seat manager, the compositor on virtual terminal 2 in place
 # of its getty, the shell, the launcher, as the person, the unlock helper, and
 # the service that reboots for Ctrl+Alt+Del; see desktop/ and helpers/. The
@@ -84,8 +85,8 @@ ln -sfn /etc/sv/seatd "$SV/seatd"
 rm -f "$SV/agetty-tty2"
 chroot "$R" useradd -m -u 1000 -G _seatd crowbar-compositor
 chroot "$R" useradd -m -u 1001 crowbar-shell
-chroot "$R" useradd -m -u "$PERSON_UID" -G netdev,wheel,audio,bluetooth -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
-for service in compositor shell launcher unlock ctrl-alt-del lever pipewire; do
+chroot "$R" useradd -m -u "$PERSON_UID" -G netdev,wheel,audio,bluetooth,socklog -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
+for service in compositor shell launcher unlock ctrl-alt-del lever pipewire monitor-status; do
   install -D -m 755 "$DESKTOP/$service-run" "$R/etc/sv/crowbar-$service/run"
   ln -sfn "/etc/sv/crowbar-$service" "$SV/crowbar-$service"
 done
@@ -119,6 +120,7 @@ install -d "$R/usr/share/crowbaros-shell" "$R/usr/share/applications" "$R/usr/sh
 install -m 644 "$REPO_ROOT/apps/shell/assets/wallpaper.png" "$REPO_ROOT/apps/shell/assets/nightwatch.png" "$REPO_ROOT/apps/shell/assets/mark.png" "$REPO_ROOT/apps/shell/assets/quiet-signal.png" "$R/usr/share/crowbaros-shell/"
 install -m 644 "$REPO_ROOT/apps/studio-settings/packaging/com.crowbaros.StudioSettings.desktop" "$R/usr/share/applications/"
 install -m 644 "$REPO_ROOT/apps/editor/packaging/com.crowbaros.Editor.desktop" "$R/usr/share/applications/"
+install -m 644 "$REPO_ROOT/apps/monitor/packaging/com.crowbaros.Monitor.desktop" "$R/usr/share/applications/"
 install -m 644 "$REPO_ROOT/apps/files/packaging/com.crowbaros.Files.desktop" "$R/usr/share/applications/"
 install -m 644 "$DESKTOP/com.crowbaros.AgentSignIn.desktop" "$R/usr/share/applications/"
 install -D -m 644 "$REPO_ROOT/apps/files/packaging/com.crowbaros.Files.svg" "$R/usr/share/icons/hicolor/scalable/apps/com.crowbaros.Files.svg"
