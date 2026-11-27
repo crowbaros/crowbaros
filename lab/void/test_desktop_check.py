@@ -277,6 +277,16 @@ class AgentSurface(unittest.TestCase):
         # No colour at all is like none.
         self.assertFalse(desktop_check.like((), light))
 
+    def test_terminal_probe_emits_a_background_distinct_from_every_drawer_ground(self):
+        output = subprocess.check_output(['sh', '-c', desktop_check.AGENT_TERMINAL_SETUP])
+        match = re.fullmatch(rb'\x1b\]11;#([0-9a-f]{6})\x07', output)
+        self.assertIsNotNone(match)
+        colour = tuple(bytes.fromhex(match[1].decode()))
+        for ground in [*desktop_check.CANVAS.values(), (0x11, 0x11, 0x11)]:
+            self.assertFalse(desktop_check.like(colour, ground))
+        # The setup command must also be typeable through the native driver.
+        self.assertTrue(desktop_check.qmp_keys_for_text(desktop_check.AGENT_TERMINAL_SETUP))
+
     def test_a_pixel_is_read_from_the_display_asked_for(self):
         class Screens:
             def screendump(self, path, head):

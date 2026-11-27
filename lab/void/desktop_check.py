@@ -1320,6 +1320,10 @@ finally:
         # the display's top edge, where the bar's ground was.
         self.click(680, 935)
         self.wait('Terminal has the keyboard', lambda: active() == terminal['address'])
+        # A themed terminal can have the drawer's exact ground. Give this
+        # visual probe a distinct background before testing their stacking.
+        self.type(AGENT_TERMINAL_SETUP)
+        self.key('ret')
         self.check('the bar shows above a window that is not fullscreen', drawn('13-before-fullscreen', point=(300, 1)))
         self.key('meta_l', 'f')
         self.wait('Terminal goes fullscreen', lambda: not drawn('13-fullscreen', point=(300, 1)))
@@ -3407,6 +3411,7 @@ CANVAS = {'dark': (0x08, 0x0d, 0x12), 'light': (0xf4, 0xf7, 0xf9), 'warm-paper':
 # A point of the first display that the Agent's surface covers with its
 # ground alone: in its right third, below its text and above its foot.
 DRAWER_POINT = (1250, 700)
+AGENT_TERMINAL_SETUP = r"printf '\033]11;#302040\007'"
 
 
 def like(colour, expected):
@@ -3423,6 +3428,9 @@ BAR_FOLLOWS = 2 * 1000 / 60
 
 
 QMP_PUNCTUATION = {
+    '\\': ('backslash',),
+    ']': ('bracket_right',),
+    '#': ('shift', '3'),
     '*': ('shift', '8'),
     '(': ('shift', '9'),
     ')': ('shift', '0'),
