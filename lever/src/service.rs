@@ -4062,16 +4062,34 @@ impl Service {
         broadcasts: &mut Vec<Broadcast>,
         log: &mut Log,
     ) -> Option<u64> {
-        // A message held for a subagent's request was never sent: what the
+        // A message whose prompt has not gone out, as one held for a
+        // subagent's request or waiting on its mode, was never sent: what the
         // harness begins meanwhile is not its answer. It ends unsent, and
         // the harness's words are a turn of their own.
         if opens
             && self.subagent_threads.contains(thread_id)
             && let Some(active) = self.working_turns.get(thread_id)
-            && matches!(active.dispatch, TurnDispatch::WaitingForSubagentAnswer)
+            && !matches!(
+                active.dispatch,
+                TurnDispatch::PromptInFlight { .. } | TurnDispatch::HarnessStarted { .. }
+            )
         {
             let turn = active.turn;
-            self.working_turns.remove(thread_id);
+            let active = self.working_turns.remove(thread_id)?;
+            // What Lever asked of the session for it is still to be
+            // answered: until it is, the thread is held, as for a Stop.
+            match active.dispatch {
+                TurnDispatch::WaitingForMode | TurnDispatch::WaitingForEffort => {
+                    self.modes_in_flight.push((thread_id.to_string(), Instant::now()));
+                }
+                TurnDispatch::WaitingForModel => self.pending_set_models.push(PendingSetModel {
+                    peer_id: None,
+                    thread_id: thread_id.to_string(),
+                    model: active.desired_model.clone().unwrap_or_default(),
+                    in_flight_on_session: true,
+                }),
+                _ => {}
+            }
             self.end_turn(thread_id, turn, "failed", Some(NOT_SENT_MESSAGE), log);
             broadcasts.push(Broadcast {
                 thread_id: thread_id.to_string(),

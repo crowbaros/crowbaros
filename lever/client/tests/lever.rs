@@ -2209,3 +2209,32 @@ fn ctrl_c_during_a_newer_turn_stops_it_and_then_an_older_turns_subagent() {
         shown.child.try_wait().expect("try_wait").is_some()
     });
 }
+
+#[test]
+fn a_run_says_how_its_own_turn_ended_though_the_harness_goes_on_after_it() {
+    let lab = Lab::with_script(json!({
+        "turns": [{
+            "steps": [
+                { "kind": "subagent_start", "id": "ses_cli_after", "title": "After", "prompt": "Look" },
+                { "kind": "subagent_start", "id": "ses_cli_longer", "title": "Longer", "prompt": "Wait" },
+                { "kind": "text", "text": "Started." }
+            ],
+            // The person's turn fails; one subagent reports, and the turn the
+            // harness then begins ends well while the other still works.
+            "error": { "code": -32603, "message": "Stub turn failed" },
+            "after": [
+                { "kind": "pause_ms", "ms": 100 },
+                { "kind": "subagent_end", "subagent": "ses_cli_after", "status": "completed" },
+                { "kind": "text", "text": "Reported." },
+                { "kind": "pause_ms", "ms": 900 },
+                { "kind": "subagent_end", "subagent": "ses_cli_longer", "status": "completed" }
+            ]
+        }]
+    }));
+    let ran = lab.run(&["go"], "");
+    assert!(
+        ran.out.contains("Reported."),
+        "the run did not follow the harness's turn: {ran:?}"
+    );
+    assert_eq!(ran.status, 1, "{ran:?}");
+}

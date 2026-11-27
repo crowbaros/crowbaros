@@ -385,10 +385,14 @@ fn watch(
     // How the turn ended, once it has while a request asked for here or a
     // subagent still works: those finish before the prompt comes back.
     let mut ended: Option<Ended> = None;
+    // How the turn the watch began on ended: what the run says, whatever
+    // turn the harness begins after it.
+    let own = turn;
+    let mut own_end: Option<Ended> = None;
     loop {
         if (turn.is_none() || ended.is_some()) && (!prompted || open.is_empty()) && !working_here(working_subagents) {
             answer.end()?;
-            return Ok(Some(stopped_or(stopping, ended.unwrap_or(*last))));
+            return Ok(Some(stopped_or(stopping, own_end.or(ended).unwrap_or(*last))));
         }
         if asking.is_none()
             && taken.is_none()
@@ -622,6 +626,9 @@ fn watch(
             _ => continue,
         };
         *last = end;
+        if own.is_some() && turn == own {
+            own_end.get_or_insert(end);
+        }
         // The turn followed has ended stopped while an older turn's subagent
         // still holds the watch: Ctrl-C was for all the watch shows, so the
         // thread is stopped.
@@ -632,7 +639,7 @@ fn watch(
         // On a terminal, a request that still waits is asked for first, and
         // any working subagent keeps the watch open until it finishes.
         if (stopping || !prompted || open.is_empty()) && !working_here(working_subagents) {
-            return Ok(Some(stopped_or(stopping, end)));
+            return Ok(Some(stopped_or(stopping, own_end.unwrap_or(end))));
         }
         ended = Some(end);
     }
