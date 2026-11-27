@@ -1,0 +1,32 @@
+[package]
+name = "crowbaros-theme-studio"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[features]
+default = ["ui"]
+ui = ["dep:gpui", "dep:gpui-component", "dep:gpui-component-assets", "dep:crowbar-ui"]
+
+[dependencies]
+crowbar-theme = { path = "../../libs/crowbar-theme", features = ["images"] }
+serde_json = "1"
+image = { version = "=0.25.10", default-features = false }
+gpui = { version = "=0.2.2", default-features = false, features = ["wayland"], optional = true }
+gpui-component = { version = "=0.5.1", optional = true }
+gpui-component-assets = { version = "=0.5.1", optional = true }
+crowbar-ui = { path = "../../libs/crowbar-ui", optional = true }
+
+[patch.crates-io]
+gpui = { path = "../shell/gpui-source" }
+
+[[bin]]
+name = "crowbaros-theme-studio"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 2
+debug = 0
+lto = false
+codegen-units = 16

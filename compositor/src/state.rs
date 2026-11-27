@@ -101,6 +101,7 @@ pub struct State {
     /// The workspace showing.
     pub(crate) workspace: u32,
     pub(crate) controls: crate::control::Controls,
+    pub(crate) theme_colors: [u32; 3],
     pub(crate) explicit_sync: crate::explicit_sync::ExplicitSync,
     /// Each monitor's mode, place, and scale, as the person chose them.
     pub(crate) layout: crate::layout::Layout,
@@ -163,6 +164,11 @@ impl State {
             agent: crate::agent::Agent::default(),
             workspace: 1,
             controls: crate::control::Controls::default(),
+            theme_colors: [
+                crate::scene::FRAME_FOCUSED,
+                crate::scene::FRAME_UNFOCUSED,
+                crate::windows::BACKGROUND,
+            ],
             explicit_sync: crate::explicit_sync::ExplicitSync::default(),
             layout: crate::layout::Layout::default(),
             primary: crate::primary_selection::PrimarySelections::default(),

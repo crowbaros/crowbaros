@@ -21,7 +21,7 @@ use std::{
 };
 
 const MAX_JSON_BYTES: u64 = 256 * 1024;
-const SUPPORTED_IMAGE_EXTS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "bmp", "gif"];
+const SUPPORTED_IMAGE_EXTS: [&str; 8] = ["png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff"];
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Manages built-in, system, and user themes plus live activation on disk.
@@ -165,6 +165,7 @@ impl ThemeStore {
     /// 4. `/usr/share/crowbaros-shell/<bg>` (mapping `signal-feather.png` -> `wallpaper.png`)
     /// 5. Repo fallback `apps/shell/assets/<bg>` (and brand-kit wallpapers)
     pub fn resolve_background_path(&self, theme: &Theme, bg: Option<&str>) -> Option<PathBuf> {
+        validate_slug(&theme.id).ok()?;
         let filename = match bg {
             Some(name) => {
                 validate_filename(name).ok()?;
@@ -179,7 +180,7 @@ impl ThemeStore {
         // 1. Theme's own directory.
         if let Some(root) = &theme.root_dir {
             let candidate = root.join("backgrounds").join(filename);
-            if candidate.is_file() {
+            if candidate.is_file() && contained(&candidate, root) {
                 return Some(candidate);
             }
         }
@@ -390,6 +391,9 @@ impl ThemeStore {
             .get_theme(theme_id)
             .ok_or_else(|| format!("Theme '{theme_id}' not found."))?;
 
+        if background.is_some_and(|bg| !theme.backgrounds.iter().any(|b| b == bg)) {
+            return Err("Background does not belong to this theme.".into());
+        }
         let prev_current = self.read_current_theme();
         let prev_legacy = self.read_legacy_appearance();
         let prev_active = self.load_active();
@@ -455,10 +459,32 @@ impl ThemeStore {
         let foot_ini = render_foot_ini(&active);
         atomic_write(&self.xdg_config_dir.join("foot/theme.ini"), foot_ini.as_bytes())?;
 
+        let foot_config = self.xdg_config_dir.join("foot/foot.ini");
+        if !foot_config.exists() {
+            let inherited = if Path::new("/etc/xdg/foot/foot.ini").is_file() {
+                "include=/etc/xdg/foot/foot.ini\n"
+            } else {
+                ""
+            };
+            atomic_write(
+                &foot_config,
+                format!(
+                    "{inherited}include={}\n",
+                    self.xdg_config_dir.join("foot/theme.ini").display()
+                )
+                .as_bytes(),
+            )?;
+        }
         let gtk_css = render_gtk_css(&active);
         atomic_write(&self.xdg_config_dir.join("gtk-3.0/colors.css"), gtk_css.as_bytes())?;
         atomic_write(&self.xdg_config_dir.join("gtk-4.0/colors.css"), gtk_css.as_bytes())?;
 
+        for version in ["gtk-3.0", "gtk-4.0"] {
+            let config = self.xdg_config_dir.join(version).join("gtk.css");
+            if !config.exists() {
+                atomic_write(&config, b"@import url(\"colors.css\");\n")?;
+            }
+        }
         Ok(active)
     }
 
@@ -493,7 +519,13 @@ impl ThemeStore {
         appearance: Appearance,
         background_sources: &[PathBuf],
     ) -> Result<Theme, String> {
+        if background_sources.len() > 16 {
+            return Err("A theme can hold at most 16 backgrounds.".into());
+        }
         let trimmed = name.trim();
+        if trimmed.len() > 128 {
+            return Err("Theme names must be at most 128 bytes.".into());
+        }
         if trimmed.is_empty() {
             return Err("Theme name must not be empty.".into());
         }
@@ -503,9 +535,13 @@ impl ThemeStore {
 
         let slug = slugify(trimmed);
         validate_slug(&slug)?;
+        if is_builtin_id(&slug) {
+            return Err("Choose a name other than a built-in theme name.".into());
+        }
 
         let theme_dir = self.user_themes_dir().join(&slug);
         let bg_dir = theme_dir.join("backgrounds");
+        refuse_symlink_ancestors(&bg_dir)?;
         fs::create_dir_all(&bg_dir)
             .map_err(|e| format!("Failed to create theme directory '{}': {e}", bg_dir.display()))?;
 
@@ -538,8 +574,12 @@ impl ThemeStore {
             .get_theme(theme_id)
             .ok_or_else(|| format!("Theme '{theme_id}' not found."))?;
 
+        if theme.backgrounds.len() >= 16 {
+            return Err("A theme can hold at most 16 backgrounds.".into());
+        }
         let theme_dir = self.user_themes_dir().join(theme_id);
         let bg_dir = theme_dir.join("backgrounds");
+        refuse_symlink_ancestors(&bg_dir)?;
         fs::create_dir_all(&bg_dir)
             .map_err(|e| format!("Failed to create backgrounds directory '{}': {e}", bg_dir.display()))?;
 
@@ -568,6 +608,7 @@ impl ThemeStore {
         theme.backgrounds.remove(pos);
 
         let theme_dir = self.user_themes_dir().join(theme_id);
+        refuse_symlink_ancestors(&theme_dir)?;
         let bg_file = theme_dir.join("backgrounds").join(filename);
         if bg_file.is_file() {
             let _ = fs::remove_file(&bg_file);
@@ -590,6 +631,7 @@ impl ThemeStore {
             return Err(format!("Custom theme '{theme_id}' not found."));
         }
 
+        refuse_symlink_ancestors(&theme_dir)?;
         fs::remove_dir_all(&theme_dir).map_err(|e| format!("Failed to delete theme '{theme_id}': {e}"))?;
 
         if let Some(active) = self.read_current_theme()
@@ -614,6 +656,22 @@ impl ThemeStore {
     }
 }
 
+fn contained(path: &Path, root: &Path) -> bool {
+    match (path.canonicalize(), root.canonicalize()) {
+        (Ok(path), Ok(root)) => path.starts_with(root),
+        _ => false,
+    }
+}
+
+fn refuse_symlink_ancestors(path: &Path) -> Result<(), String> {
+    for ancestor in path.ancestors() {
+        if fs::symlink_metadata(ancestor).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err("Theme folders must not be symbolic links.".into());
+        }
+    }
+    Ok(())
+}
+
 fn check_shell_asset_dir(dir: &Path, filename: &str) -> Option<PathBuf> {
     let direct = dir.join(filename);
     if direct.is_file() {
@@ -635,7 +693,7 @@ fn scan_theme_dir(dir: &Path) -> Vec<Theme> {
     let mut out = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_dir() {
+        if !path.is_dir() || !contained(&path, dir) {
             continue;
         }
         let Some(folder_name) = entry.file_name().into_string().ok() else {
@@ -651,10 +709,14 @@ fn scan_theme_dir(dir: &Path) -> Vec<Theme> {
         let Ok(mut theme) = serde_json::from_slice::<Theme>(&bytes) else {
             continue;
         };
-        if theme.schema_version != SCHEMA_VERSION || validate_slug(&theme.id).is_err() {
+        if theme.schema_version != SCHEMA_VERSION || validate_slug(&theme.id).is_err() || theme.id != folder_name {
             continue;
         }
         theme.backgrounds.retain(|bg| validate_filename(bg).is_ok());
+        theme.backgrounds.truncate(16);
+        if theme.name.len() > 128 || theme.author.len() > 128 {
+            continue;
+        }
         theme.root_dir = Some(path);
         out.push(theme);
     }
@@ -684,10 +746,11 @@ fn read_bounded(path: &Path, max_bytes: u64) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("Invalid path '{}'.", path.display()))?;
+    refuse_symlink_ancestors(parent)?;
     fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory '{}': {e}", parent.display()))?;
 
     let stamp = SystemTime::now()
@@ -769,7 +832,7 @@ fn copy_background_image(src: &Path, dest_dir: &Path, existing: &[String]) -> Re
     }
     validate_filename(&candidate)?;
 
-    let bytes = fs::read(src).map_err(|e| format!("Failed to read background image '{}': {e}", src.display()))?;
+    let bytes = read_bounded(src, 64 * 1024 * 1024)?;
     atomic_write(&dest_dir.join(&candidate), &bytes)?;
     Ok(candidate)
 }

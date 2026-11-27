@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "id": "warm-paper",
+  "name": "Warm Paper",
+  "author": "CrowbarOS",
+  "appearance": "warm-paper",
+  "colors": {
+    "canvas": "#f7f2e8",
+    "surface": "#eae3d7",
+    "surface_elevated": "#fcf9f2",
+    "text": "#211f1c",
+    "muted": "#5c564b",
+    "line": "#bcb3a3",
+    "accent": "#49d7e8",
+    "on_accent": "#080d12",
+    "focus": "#526c6c",
+    "danger": "#b53932",
+    "warning": "#996414",
+    "success": "#2f7048",
+    "ansi": [
+      "#211f1c",
+      "#b53932",
+      "#2f7048",
+      "#996414",
+      "#2d5b85",
+      "#7c4678",
+      "#2b6e75",
+      "#6b6458",
+      "#5c564b",
+      "#cf4a42",
+      "#3d8a5a",
+      "#b3781e",
+      "#3d72a3",
+      "#965891",
+      "#39878f",
+      "#211f1c"
+    ]
+  },
+  "backgrounds": [
+    "quiet-signal.png",
+    "signal-feather.png",
+    "nightwatch.png"
+  ]
+}

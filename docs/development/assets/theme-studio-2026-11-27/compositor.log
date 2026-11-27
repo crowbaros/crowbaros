@@ -1,0 +1,816 @@
+[15:51:35] # The CrowbarOS compositor on a TTY in Base's image
+[15:51:35] CrowbarOS commit 410724c12656067bc4cdccb51fc6ac5acf4a0223, with changes that are not committed
+[15:51:35] Evidence and new guest disk: <checkout>/.lab/void-compositor-checks/20261127T085135-qzlw62lx
+[15:51:35] Building Base's image; output goes to <checkout>/.lab/void-compositor-checks/20261127T085135-qzlw62lx/build.log
+[15:53:53] binary crowbar-compositor: sha256 7d3f017f62e82895226517804005c7b420c21b047b826ff1e6679091b4ba5fb1 (built and tested in Base's Void build root)
+[15:53:53] binary crowbar-probe: sha256 fc50e31705d60ee2aefe676dad4746536fe4188a31d7d50cd1abf474f4960b97 (built and tested in Base's Void build root)
+[15:54:07] 
+[15:54:07] == the binaries in the guest are the ones that were built
+[15:54:07] guest$ sha256sum /usr/local/bin/crowbar-compositor /usr/local/bin/crowbar-probe
+[15:54:07]     7d3f017f62e82895226517804005c7b420c21b047b826ff1e6679091b4ba5fb1  /usr/local/bin/crowbar-compositor
+[15:54:07]     fc50e31705d60ee2aefe676dad4746536fe4188a31d7d50cd1abf474f4960b97  /usr/local/bin/crowbar-probe
+[15:54:07] PASS: the guest runs the binaries built above
+[15:54:07] 
+[15:54:07] == the guest: Void Linux, UEFI, runit, seatd, no systemd
+[15:54:07] guest$ uname -sr; cat /etc/os-release | head -2
+[15:54:07]     Linux 6.18.65_1
+[15:54:07]     NAME="Void"
+[15:54:07]     ID="void"
+[15:54:07] guest$ ps -o pid,user,args -p 1
+[15:54:07]       PID USER     COMMAND
+[15:54:07]         1 root     runit
+[15:54:07] guest$ ls /run/systemd 2>&1; pgrep -l 'systemd|elogind' || echo 'no systemd or elogind process'
+[15:54:08]     ls: cannot access '/run/systemd': No such file or directory
+[15:54:08]     no systemd or elogind process
+[15:54:08] PASS: no systemd and no elogind in the guest
+[15:54:08] guest$ sv status seatd
+[15:54:08]     run: seatd: (pid 607) 9s; run: log: (pid 606) 9s
+[15:54:08] PASS: seatd runs under runit
+[15:54:08] 
+[15:54:08] == what the binary links, and the Void package each library comes from
+[15:54:08] guest$ ldd /usr/local/bin/crowbar-compositor
+[15:54:08]     	linux-vdso.so.1 (0x00007f08937fe000)
+[15:54:08]     	libinput.so.10 => /usr/lib/libinput.so.10 (0x00007f0893635000)
+[15:54:08]     	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007f08935ce000)
+[15:54:08]     	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f08935a1000)
+[15:54:08]     	libm.so.6 => /usr/lib/libm.so.6 (0x00007f08934b3000)
+[15:54:08]     	libc.so.6 => /usr/lib/libc.so.6 (0x00007f08932c9000)
+[15:54:08]     	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f0893800000)
+[15:54:08]     	libmtdev.so.1 => /usr/lib/libmtdev.so.1 (0x00007f08932c2000)
+[15:54:08]     	libudev.so.1 => /usr/lib/libudev.so.1 (0x00007f0893298000)
+[15:54:08]     	libevdev.so.2 => /usr/lib/libevdev.so.2 (0x00007f089327a000)
+[15:54:08]     	libwacom.so.9 => /usr/lib/libwacom.so.9 (0x00007f0893269000)
+[15:54:08]     	liblua5.4.so.5.4 => /usr/lib/liblua5.4.so.5.4 (0x00007f0893222000)
+[15:54:08]     	libgudev-1.0.so.0 => /usr/lib/libgudev-1.0.so.0 (0x00007f0893215000)
+[15:54:08]     	libgobject-2.0.so.0 => /usr/lib/libgobject-2.0.so.0 (0x00007f08931af000)
+[15:54:08]     	libglib-2.0.so.0 => /usr/lib/libglib-2.0.so.0 (0x00007f0893059000)
+[15:54:08]     	libffi.so.7 => /usr/lib/libffi.so.7 (0x00007f089304d000)
+[15:54:08]     	libpcre2-8.so.0 => /usr/lib/libpcre2-8.so.0 (0x00007f0892f9c000)
+[15:54:08] guest$ for lib in $(ldd /usr/local/bin/crowbar-compositor | awk '$3 ~ /^\// {print $3}'); do xbps-query -o "$(readlink -f $lib)" | cut -d: -f1; done | sort -u
+[15:54:10]     eudev-libudev-3.2.14_2
+[15:54:10]     glib-2.88.3_1
+[15:54:10]     glibc-2.41_1
+[15:54:10]     libevdev-1.14.0_1
+[15:54:10]     libffi-3.3_2
+[15:54:10]     libgcc-14.2.1+20250405_4
+[15:54:10]     libgudev-238_1
+[15:54:10]     libinput-1.31.3_2
+[15:54:10]     libpcre2-10.49_1
+[15:54:10]     libwacom-2.20.0_1
+[15:54:10]     libxkbcommon-1.13.2_1
+[15:54:10]     lua54-5.4.9_1
+[15:54:10]     mtdev-1.1.7_1
+[15:54:10] PASS: the binary's libraries all resolve
+[15:54:10] 
+[15:54:10] == stop Base's boot-time desktop services and start Fulcrum on virtual terminal 2
+[15:54:10] guest$ sv down crowbar-shell crowbar-compositor crowbar-launcher crowbar-unlock crowbar-ctrl-alt-del
+[15:54:10] guest$ pids=$(pidof crowbar-compositor crowbaros-shell 2>/dev/null || true); [ -n "$pids" ] && kill $pids || true; pkill -f '/usr/local/bin/crowbar-(shell-connect|launcher|unlock|ctrl-alt-del)' || true
+[15:54:10] guest$ rm -rf /run/crowbar-trusted /run/crowbar-apps /run/crowbar-launch /run/crowbar-displays /run/crowbar-unlock /run/crowbar-ctrl-alt-del /run/user/1000 /run/user/1001 /run/user/1003
+[15:54:10] guest$ install -d -o crowbar-compositor -g crowbar-compositor -m 700 /run/user/1000; install -d -m 755 /run/crowbar; install -d -o crowbar-compositor -g crowbar-shell -m 2750 /run/crowbar/compositor-shell; install -d -o crowbar-compositor -g crowbar -m 2750 /run/crowbar-apps; install -d -o crowbar-compositor -g crowbar -m 2750 /run/crowbar/compositor-agent
+[15:54:11] guest$ openvt -c 2 -s -f -- chpst -u crowbar-compositor:crowbar-compositor:_seatd env HOME=/home/crowbar-compositor XDG_RUNTIME_DIR=/run/user/1000 LIBSEAT_BACKEND=seatd FULCRUM_LOG=debug sh -c 'echo /proc/$$/fd/* >/tmp/started-with; exec crowbar-compositor --backend tty --shell-socket /run/crowbar/compositor-shell/wayland --shell-uid 1001 --shell-control-socket /run/crowbar/compositor-shell/control --apps-socket /run/crowbar-apps/wayland-0 --apps-uid 1003 --agent-socket /run/crowbar/compositor-agent/compositor >/tmp/compositor.log 2>&1'
+[15:54:11] PASS: the compositor starts on a TTY
+[15:54:11] PASS: the seat comes from seatd
+[15:54:11] PASS: the display is a DRM device
+[15:54:11] PASS: the first output is up
+[15:54:11] guest$ cat /sys/class/tty/tty0/active; ls -l /run/seatd.sock; ps -o uid=,tty=,args= -C crowbar-compositor; id -u crowbar-compositor; getent group _seatd
+[15:54:11]     tty2
+[15:54:11]     srwxrwx--- 1 root _seatd 0 Nov 27 15:53 /run/seatd.sock
+[15:54:11]      1000 tty2     crowbar-compositor --backend tty --shell-socket /run/crowbar/compositor-shell/wayland --shell-uid 1001 --shell-control-socket /run/crowbar/compositor-shell/control --apps-socket /run/crowbar-apps/wayland-0 --apps-uid 1003 --agent-socket /run/crowbar/compositor-agent/compositor
+[15:54:11]     1000
+[15:54:11]     _seatd:x:996:crowbar-compositor
+[15:54:11] PASS: the compositor runs as its own user, the only member of _seatd
+[15:54:11] guest$ pidof crowbar-compositor
+[15:54:11]     1024
+[15:54:11] guest$ pgrep -P 1024 || echo 'no child process'
+[15:54:11]     no child process
+[15:54:11] PASS: the compositor started no process
+[15:54:11] guest$ cd /proc/1024 && for fd in fd/*; do flags=$(awk '/^flags:/ {print $2}' fdinfo/${fd#fd/}); [ $(( 0$flags & 02000000 )) -ne 0 ] || echo INHERITABLE ${fd#fd/} $(readlink $fd); done; echo looked at $(ls fd | wc -l) descriptors
+[15:54:12]     INHERITABLE 0 /dev/tty2
+[15:54:12]     INHERITABLE 1 /tmp/compositor.log
+[15:54:12]     INHERITABLE 2 /tmp/compositor.log
+[15:54:12]     INHERITABLE 4 /dev/tty2
+[15:54:12]     looked at 30 descriptors
+[15:54:12] guest$ cat /tmp/started-with
+[15:54:12]     /proc/1024/fd/0 /proc/1024/fd/1 /proc/1024/fd/2 /proc/1024/fd/3 /proc/1024/fd/4
+[15:54:12] PASS: every descriptor the compositor opened on the TTY is close-on-exec
+[15:54:12] 
+[15:54:12] == routes around the compositor that ADR 0014 names: input devices and tracing
+[15:54:12] guest$ modprobe uinput 2>&1; ls -l /dev/uinput /dev/input/ 2>&1
+[15:54:12]     crw------- 1 root root 10, 223 Nov 27 15:53 /dev/uinput
+[15:54:12]     
+[15:54:12]     /dev/input/:
+[15:54:12]     total 0
+[15:54:12]     drwxr-xr-x 2 root root     200 Nov 27 15:53 by-path
+[15:54:12]     crw-rw---- 1 root input 13, 64 Nov 27 15:53 event0
+[15:54:12]     crw-rw---- 1 root input 13, 65 Nov 27 15:53 event1
+[15:54:12]     crw-rw---- 1 root input 13, 66 Nov 27 15:53 event2
+[15:54:12]     crw-rw---- 1 root input 13, 67 Nov 27 15:53 event3
+[15:54:12]     crw-rw---- 1 root input 13, 68 Nov 27 15:53 event4
+[15:54:12]     crw-rw---- 1 root input 13, 69 Nov 27 15:53 event5
+[15:54:12]     crw-rw---- 1 root input 13, 70 Nov 27 15:53 event6
+[15:54:12]     crw-rw---- 1 root input 13, 63 Nov 27 15:53 mice
+[15:54:12]     crw-rw---- 1 root input 13, 32 Nov 27 15:53 mouse0
+[15:54:12]     crw-rw---- 1 root input 13, 33 Nov 27 15:53 mouse1
+[15:54:12]     crw-rw---- 1 root input 13, 34 Nov 27 15:53 mouse2
+[15:54:12] guest$ id crowbar
+[15:54:12]     uid=1003(crowbar) gid=1003(crowbar) groups=1003(crowbar),4(wheel),12(audio),998(socklog),994(bluetooth),992(netdev)
+[15:54:12] PASS: the person's account is in neither _seatd nor input
+[15:54:12] guest$ sh -c 'test -c /dev/uinput && exec 3<>/dev/uinput && echo OPENED' 2>&1
+[15:54:12]     OPENED
+[15:54:12] guest$ chpst -u crowbar:crowbar env HOME=/home/crowbar sh -c 'test -c /dev/uinput && exec 3<>/dev/uinput && echo OPENED' 2>&1
+[15:54:12]     sh: 1: cannot create /dev/uinput: Permission denied
+[15:54:12] PASS: root can open /dev/uinput and the person's account is refused
+[15:54:12] guest$ sh -c 'for d in /dev/input/event*; do out=$( (exec 3<$d) 2>&1 ) && echo OPENED $d || echo FAILED $d: $out; done'
+[15:54:12]     OPENED /dev/input/event0
+[15:54:12]     OPENED /dev/input/event1
+[15:54:12]     OPENED /dev/input/event2
+[15:54:12]     OPENED /dev/input/event3
+[15:54:12]     OPENED /dev/input/event4
+[15:54:12]     OPENED /dev/input/event5
+[15:54:12]     OPENED /dev/input/event6
+[15:54:12] guest$ chpst -u crowbar:crowbar env HOME=/home/crowbar sh -c 'for d in /dev/input/event*; do out=$( (exec 3<$d) 2>&1 ) && echo OPENED $d || echo FAILED $d: $out; done'
+[15:54:13]     FAILED /dev/input/event0: sh: 1: cannot open /dev/input/event0: Permission denied
+[15:54:13]     FAILED /dev/input/event1: sh: 1: cannot open /dev/input/event1: Permission denied
+[15:54:13]     FAILED /dev/input/event2: sh: 1: cannot open /dev/input/event2: Permission denied
+[15:54:13]     FAILED /dev/input/event3: sh: 1: cannot open /dev/input/event3: Permission denied
+[15:54:13]     FAILED /dev/input/event4: sh: 1: cannot open /dev/input/event4: Permission denied
+[15:54:13]     FAILED /dev/input/event5: sh: 1: cannot open /dev/input/event5: Permission denied
+[15:54:13]     FAILED /dev/input/event6: sh: 1: cannot open /dev/input/event6: Permission denied
+[15:54:13] PASS: root can read every input device and the person's account is refused each one
+[15:54:13] guest$ cat /proc/sys/kernel/yama/ptrace_scope 2>&1 || echo 'no Yama ptrace_scope'
+[15:54:13]     1
+[15:54:13] 
+[15:54:13] == the compositor's sockets: only the apps' socket answers the person's account
+[15:54:13] guest$ find / -xdev -type s 2>/dev/null; find /run /tmp /dev -type s 2>/dev/null
+[15:54:13]     /run/crowbar-apps/wayland-0
+[15:54:13]     /run/crowbar/compositor-agent/compositor
+[15:54:13]     /run/crowbar/compositor-shell/control
+[15:54:13]     /run/crowbar/compositor-shell/wayland
+[15:54:13]     /run/crowbar-lever/surface
+[15:54:13]     /run/seatd.sock
+[15:54:13]     /run/dhcpcd/sock
+[15:54:13]     /run/dbus/system_bus_socket
+[15:54:13]     /run/udev/control
+[15:54:13]     /dev/log
+[15:54:13] guest$ ls -A /run/user/1000
+[15:54:13] PASS: the compositor made its four sockets and no other
+[15:54:13] guest$ for s in /dev/log /run/crowbar-apps/wayland-0 /run/crowbar-lever/surface /run/crowbar/compositor-agent/compositor /run/crowbar/compositor-shell/control /run/crowbar/compositor-shell/wayland /run/dbus/system_bus_socket /run/dhcpcd/sock /run/seatd.sock /run/udev/control; do chpst -u crowbar:crowbar env HOME=/home/crowbar WAYLAND_DISPLAY=$s timeout 3 crowbar-probe globals >/dev/null 2>&1 && echo ANSWERED $s; done; echo asked
+[15:54:13]     ANSWERED /run/crowbar-apps/wayland-0
+[15:54:13]     asked
+[15:54:13] PASS: of the 10 sockets on the machine, only the apps' socket answers the person's account
+[15:54:13] guest$ chmod o+rx /run/crowbar/compositor-shell; chmod o+rw /run/crowbar/compositor-shell/wayland /run/crowbar/compositor-shell/control
+[15:54:13] guest$ chpst -u crowbar:crowbar env HOME=/home/crowbar WAYLAND_DISPLAY=/run/crowbar/compositor-shell/wayland timeout 3 crowbar-probe globals 2>&1 && echo ANSWERED; echo asked
+[15:54:14]     crowbar-probe: Connection reset by peer (os error 104)
+[15:54:14]     asked
+[15:54:14] guest$ chpst -u crowbar:crowbar env HOME=/home/crowbar python3 -c '
+import socket, struct, sys
+def send(message):
+    s.sendall(struct.pack(">I", len(message)) + message)
+def read():
+    length = f.read(4)
+    if len(length) < 4:
+        raise EOFError
+    message = f.read(struct.unpack(">I", length)[0])
+    if len(message) < struct.unpack(">I", length)[0]:
+        raise EOFError
+    return message
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(5)
+try:
+    s.connect(sys.argv[1])
+    f = s.makefile("rb")
+    send(b'"'"'{"version":1}'"'"')
+    if read() != b'"'"'{"version":1}'"'"':
+        raise EOFError
+    send(sys.argv[2].encode())
+    while (message := read()).startswith(b'"'"'{"event":'"'"'):
+        pass
+    print(message.decode(errors="replace"))
+except (OSError, EOFError):
+    pass
+' /run/crowbar/compositor-shell/control '{"op":"snapshot"}' 2>&1
+[15:54:14] guest$ chpst -u crowbar:crowbar env HOME=/home/crowbar python3 -c '
+import socket, struct, sys
+def send(message):
+    s.sendall(struct.pack(">I", len(message)) + message)
+def read():
+    length = f.read(4)
+    if len(length) < 4:
+        raise EOFError
+    message = f.read(struct.unpack(">I", length)[0])
+    if len(message) < struct.unpack(">I", length)[0]:
+        raise EOFError
+    return message
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(5)
+try:
+    s.connect(sys.argv[1])
+    f = s.makefile("rb")
+    send(b'"'"'{"version":1}'"'"')
+    if read() != b'"'"'{"version":1}'"'"':
+        raise EOFError
+    send(sys.argv[2].encode())
+    while (message := read()).startswith(b'"'"'{"event":'"'"'):
+        pass
+    print(message.decode(errors="replace"))
+except (OSError, EOFError):
+    pass
+' /run/crowbar/compositor-shell/control '{"op":"set_theme","focused":"#112233","unfocused":"#445566","background":"#778899"}' 2>&1
+[15:54:14] guest$ chmod 2750 /run/crowbar/compositor-shell; chmod 660 /run/crowbar/compositor-shell/wayland /run/crowbar/compositor-shell/control
+[15:54:14] PASS: given the shell's socket on purpose, an app is refused on its user ID
+[15:54:14] PASS: given the shell's control channel on purpose, an app is refused on its user ID
+[15:54:14] PASS: an ordinary app cannot set the compositor theme
+[15:54:14] PASS: the compositor logs both refusals - it logged 3
+[15:54:14] guest$ chmod o+rx /run/crowbar-apps; chmod o+rw /run/crowbar-apps/wayland-0
+[15:54:14] guest$ for as in '' 'chpst -u crowbar-shell:crowbar-shell'; do $as env WAYLAND_DISPLAY=/run/crowbar-apps/wayland-0 timeout 3 crowbar-probe globals >/dev/null 2>&1 && echo ANSWERED "$as"; done; echo asked
+[15:54:14]     asked
+[15:54:14] guest$ chmod 2750 /run/crowbar-apps; chmod 660 /run/crowbar-apps/wayland-0
+[15:54:15] PASS: a peer that is not the person, root or the shell, is refused at the apps' socket - the compositor logged 2
+[15:54:15] guest$ chpst -u crowbar:crowbar env HOME=/home/crowbar python3 -c '
+import socket, struct, sys
+def send(message):
+    s.sendall(struct.pack(">I", len(message)) + message)
+def read():
+    length = f.read(4)
+    if len(length) < 4:
+        raise EOFError
+    message = f.read(struct.unpack(">I", length)[0])
+    if len(message) < struct.unpack(">I", length)[0]:
+        raise EOFError
+    return message
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(5)
+try:
+    s.connect(sys.argv[1])
+    f = s.makefile("rb")
+    send(b'"'"'{"version":1}'"'"')
+    if read() != b'"'"'{"version":1}'"'"':
+        raise EOFError
+    send(sys.argv[2].encode())
+    while (message := read()).startswith(b'"'"'{"event":'"'"'):
+        pass
+    print(message.decode(errors="replace"))
+except (OSError, EOFError):
+    pass
+' /run/crowbar/compositor-agent/compositor '{"op":"snapshot"}' 2>&1
+[15:54:15]     {"reply":"snapshot","workspace":1,"active":null,"locked":false,"windows":[],"displays":[{"name":"Virtual-1","width":1280,"height":960,"x":0,"y":0,"scale":120}]}
+[15:54:15] PASS: the person's user ID is served on Fulcrum's Harness socket - {"reply":"snapshot","workspace":1,"active":null,"locked":false,"windows":[],"displays":[{"name":"Virtual-1","width":1280,"height":960,"x":0,"y":0,"scale":120}]}
+[15:54:15] guest$ chmod o+rx /run/crowbar/compositor-agent; chmod o+rw /run/crowbar/compositor-agent/compositor
+[15:54:15] guest$ python3 -c '
+import socket, struct, sys
+def send(message):
+    s.sendall(struct.pack(">I", len(message)) + message)
+def read():
+    length = f.read(4)
+    if len(length) < 4:
+        raise EOFError
+    message = f.read(struct.unpack(">I", length)[0])
+    if len(message) < struct.unpack(">I", length)[0]:
+        raise EOFError
+    return message
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(5)
+try:
+    s.connect(sys.argv[1])
+    f = s.makefile("rb")
+    send(b'"'"'{"version":1}'"'"')
+    if read() != b'"'"'{"version":1}'"'"':
+        raise EOFError
+    send(sys.argv[2].encode())
+    while (message := read()).startswith(b'"'"'{"event":'"'"'):
+        pass
+    print(message.decode(errors="replace"))
+except (OSError, EOFError):
+    pass
+' /run/crowbar/compositor-agent/compositor '{"op":"snapshot"}' 2>&1
+[15:54:15] guest$ chpst -u crowbar-shell:crowbar-shell python3 -c '
+import socket, struct, sys
+def send(message):
+    s.sendall(struct.pack(">I", len(message)) + message)
+def read():
+    length = f.read(4)
+    if len(length) < 4:
+        raise EOFError
+    message = f.read(struct.unpack(">I", length)[0])
+    if len(message) < struct.unpack(">I", length)[0]:
+        raise EOFError
+    return message
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(5)
+try:
+    s.connect(sys.argv[1])
+    f = s.makefile("rb")
+    send(b'"'"'{"version":1}'"'"')
+    if read() != b'"'"'{"version":1}'"'"':
+        raise EOFError
+    send(sys.argv[2].encode())
+    while (message := read()).startswith(b'"'"'{"event":'"'"'):
+        pass
+    print(message.decode(errors="replace"))
+except (OSError, EOFError):
+    pass
+' /run/crowbar/compositor-agent/compositor '{"op":"snapshot"}' 2>&1
+[15:54:15] guest$ chmod 2750 /run/crowbar/compositor-agent; chmod 660 /run/crowbar/compositor-agent/compositor
+[15:54:16] PASS: a peer that is not the person, root or the shell, is refused at Fulcrum's Harness socket - the compositor logged 2
+[15:54:16] 
+[15:54:16] == what the shell is offered, and its control channel (wayland-info inside the guest)
+[15:54:16] guest$ chpst -u crowbar-shell:crowbar-shell env HOME=/home/crowbar-shell WAYLAND_DISPLAY=/run/crowbar/compositor-shell/wayland wayland-info | grep -E "^interface|name:"
+[15:54:16]     interface: 'wl_compositor',                              version:  6, name:  1
+[15:54:16]     interface: 'wl_subcompositor',                           version:  1, name:  2
+[15:54:16]     interface: 'wl_shm',                                     version:  2, name:  3
+[15:54:16]     interface: 'xdg_wm_base',                                version:  6, name:  4
+[15:54:16]     interface: 'zwlr_layer_shell_v1',                        version:  4, name:  5
+[15:54:16]     interface: 'wl_seat',                                    version:  7, name:  6
+[15:54:16]     	name: seat0
+[15:54:16]     interface: 'wl_data_device_manager',                     version:  3, name:  7
+[15:54:16]     interface: 'wp_presentation',                            version:  2, name:  8
+[15:54:16]     interface: 'wp_fractional_scale_manager_v1',             version:  1, name:  9
+[15:54:16]     interface: 'wp_viewporter',                              version:  1, name: 10
+[15:54:16]     interface: 'zwp_primary_selection_device_manager_v1',    version:  1, name: 11
+[15:54:16]     interface: 'zwp_idle_inhibit_manager_v1',                version:  1, name: 12
+[15:54:16]     interface: 'wp_cursor_shape_manager_v1',                 version:  2, name: 13
+[15:54:16]     interface: 'wl_output',                                  version:  4, name: 14
+[15:54:16]     	name: Virtual-1
+[15:54:16]     interface: 'zwp_linux_dmabuf_v1',                        version:  4, name: 15
+[15:54:16]     interface: 'wp_linux_drm_syncobj_manager_v1',            version:  1, name: 16
+[15:54:16] PASS: the shell is offered exactly the policy's list
+[15:54:16] guest$ chpst -u crowbar-shell:crowbar-shell env HOME=/home/crowbar-shell WAYLAND_DISPLAY=/run/crowbar/compositor-shell/wayland crowbar-probe layer 2>&1 || true
+[15:54:16]     layer surface created, size (1280, 60)
+[15:54:16] PASS: the shell can create a layer surface
+[15:54:16] guest$ chpst -u crowbar-shell:crowbar-shell python3 -c '
+import socket, struct, sys
+def send(message):
+    s.sendall(struct.pack(">I", len(message)) + message)
+def read():
+    length = f.read(4)
+    if len(length) < 4:
+        raise EOFError
+    message = f.read(struct.unpack(">I", length)[0])
+    if len(message) < struct.unpack(">I", length)[0]:
+        raise EOFError
+    return message
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(5)
+try:
+    s.connect(sys.argv[1])
+    f = s.makefile("rb")
+    send(b'"'"'{"version":1}'"'"')
+    if read() != b'"'"'{"version":1}'"'"':
+        raise EOFError
+    send(sys.argv[2].encode())
+    while (message := read()).startswith(b'"'"'{"event":'"'"'):
+        pass
+    print(message.decode(errors="replace"))
+except (OSError, EOFError):
+    pass
+' /run/crowbar/compositor-shell/control '{"op":"snapshot"}' 2>&1
+[15:54:16]     {"reply":"snapshot","workspace":1,"active":null,"locked":false,"windows":[]}
+[15:54:16] PASS: the shell's user ID is served on the control channel
+[15:54:16] 
+[15:54:16] == what an app at the apps' socket is offered, as the person's account
+[15:54:16] guest$ chpst -u crowbar:crowbar env HOME=/home/crowbar WAYLAND_DISPLAY=/run/crowbar-apps/wayland-0 wayland-info | grep ^interface
+[15:54:16]     interface: 'wl_compositor',                              version:  6, name:  1
+[15:54:16]     interface: 'wl_subcompositor',                           version:  1, name:  2
+[15:54:16]     interface: 'wl_shm',                                     version:  2, name:  3
+[15:54:16]     interface: 'xdg_wm_base',                                version:  6, name:  4
+[15:54:16]     interface: 'wl_seat',                                    version:  7, name:  6
+[15:54:16]     interface: 'wl_data_device_manager',                     version:  3, name:  7
+[15:54:16]     interface: 'wp_presentation',                            version:  2, name:  8
+[15:54:16]     interface: 'wp_fractional_scale_manager_v1',             version:  1, name:  9
+[15:54:16]     interface: 'wp_viewporter',                              version:  1, name: 10
+[15:54:16]     interface: 'zwp_primary_selection_device_manager_v1',    version:  1, name: 11
+[15:54:16]     interface: 'zwp_idle_inhibit_manager_v1',                version:  1, name: 12
+[15:54:16]     interface: 'wp_cursor_shape_manager_v1',                 version:  2, name: 13
+[15:54:16]     interface: 'wl_output',                                  version:  4, name: 14
+[15:54:16]     interface: 'zwp_linux_dmabuf_v1',                        version:  4, name: 15
+[15:54:16]     interface: 'wp_linux_drm_syncobj_manager_v1',            version:  1, name: 16
+[15:54:16] PASS: an app is offered exactly the policy's list
+[15:54:16] PASS: an app is offered all the shell is offered but layer shell
+[15:54:16] 
+[15:54:16] == an app asks for layer shell, session lock, and security contexts, which it is refused
+[15:54:16] PASS: none of them is offered to it
+[15:54:16] guest$ chpst -u crowbar:crowbar env HOME=/home/crowbar WAYLAND_DISPLAY=/run/crowbar-apps/wayland-0 crowbar-probe guess zwlr_layer_shell_v1 ext_session_lock_manager_v1 wp_security_context_manager_v1 2>&1; echo exit $?
+[15:54:16]     zwlr_layer_shell_v1: refused at every number it could guess
+[15:54:16]     ext_session_lock_manager_v1: refused at every number it could guess
+[15:54:16]     wp_security_context_manager_v1: refused at every number it could guess
+[15:54:16]     exit 0
+[15:54:16] PASS: each of the 3 is refused at every global number it could guess
+[15:54:16] guest$ chpst -u crowbar:crowbar env HOME=/home/crowbar WAYLAND_DISPLAY=/run/crowbar-apps/wayland-0 crowbar-probe layer 2>&1 || true
+[15:54:16]     crowbar-probe: zwlr_layer_shell_v1 is not offered to this client
+[15:54:16] PASS: an app cannot create a layer surface
+[15:54:16] 
+[15:54:16] == keys from the virtual keyboard, through the kernel and libinput
+[15:54:16] guest$ (chpst -u crowbar:crowbar env HOME=/home/crowbar WAYLAND_DISPLAY=/run/crowbar-apps/wayland-0 crowbar-probe keylog first >/tmp/keylog-1.out 2>&1 &); true
+[15:54:18] guest$ cat /tmp/keylog-1.out
+[15:54:18]        0.003 window mapped
+[15:54:18]        0.145 enter held=[]
+[15:54:18]        0.145 key 30 pressed
+[15:54:18]        0.296 key 30 released
+[15:54:18] PASS: a new window takes the keyboard, and a plain key reaches it
+[15:54:20] guest$ cat /tmp/keylog-1.out
+[15:54:20]        0.003 window mapped
+[15:54:20]        0.145 enter held=[]
+[15:54:20]        0.145 key 30 pressed
+[15:54:20]        0.296 key 30 released
+[15:54:20]        2.173 key 48 pressed
+[15:54:20]        2.323 key 48 released
+[15:54:20] PASS: a click on the window keeps the keyboard there, and a plain key reaches it
+[15:54:20] 
+[15:54:20] == to the console and back, while a second keyboard is unplugged
+[15:54:20] guest$ rm -f /tmp/unplug; cat >/tmp/second-keyboard.py <<'EOF'
+import fcntl, os, struct, time
+fd = os.open('/dev/uinput', os.O_WRONLY)
+fcntl.ioctl(fd, 0x40045564, 1)  # UI_SET_EVBIT EV_KEY
+fcntl.ioctl(fd, 0x40045565, 30)  # UI_SET_KEYBIT KEY_A
+fcntl.ioctl(fd, 0x405c5503, struct.pack('HHHH80sI', 3, 1, 1, 1, b'crowbar-second-keyboard', 0))
+fcntl.ioctl(fd, 0x5501)  # UI_DEV_CREATE
+while not os.path.exists('/tmp/unplug'):
+    time.sleep(0.1)
+fcntl.ioctl(fd, 0x5502)  # UI_DEV_DESTROY
+EOF
+(python3 /tmp/second-keyboard.py >/tmp/second-keyboard.out 2>&1 &); true
+[15:54:20] PASS: the compositor takes the second keyboard
+[15:54:20] guest$ chvt 1
+[15:54:21] PASS: the session pauses for the console
+[15:54:21] guest$ touch /tmp/unplug; for i in $(seq 50); do grep -q crowbar-second-keyboard /proc/bus/input/devices || break; sleep 0.1; done
+[15:54:21] guest$ cat /proc/bus/input/devices
+[15:54:21]     I: Bus=0011 Vendor=0001 Product=0001 Version=ab41
+[15:54:21]     N: Name="AT Translated Set 2 keyboard"
+[15:54:21]     P: Phys=isa0060/serio0/input0
+[15:54:21]     S: Sysfs=/devices/platform/i8042/serio0/input/input0
+[15:54:21]     U: Uniq=
+[15:54:21]     H: Handlers=sysrq kbd event0 leds 
+[15:54:21]     B: PROP=0
+[15:54:21]     B: EV=120013
+[15:54:21]     B: KEY=402000007 ff803078f800d001 feffffdfffcfffff fffffffffffffffe
+[15:54:21]     B: MSC=10
+[15:54:21]     B: LED=7
+[15:54:21]     
+[15:54:21]     I: Bus=0019 Vendor=0000 Product=0001 Version=0000
+[15:54:21]     N: Name="Power Button"
+[15:54:21]     P: Phys=LNXPWRBN/button/input0
+[15:54:21]     S: Sysfs=/devices/platform/LNXPWRBN:00/input/input2
+[15:54:21]     U: Uniq=
+[15:54:21]     H: Handlers=kbd event1 
+[15:54:21]     B: PROP=0
+[15:54:21]     B: EV=3
+[15:54:21]     B: KEY=8000 10000000000000 0
+[15:54:21]     
+[15:54:21]     I: Bus=0011 Vendor=0002 Product=0013 Version=0006
+[15:54:21]     N: Name="VirtualPS/2 VMware VMMouse"
+[15:54:21]     P: Phys=isa0060/serio1/input1
+[15:54:21]     S: Sysfs=/devices/platform/i8042/serio1/input/input4
+[15:54:21]     U: Uniq=
+[15:54:21]     H: Handlers=mouse0 event2 
+[15:54:21]     B: PROP=0
+[15:54:21]     B: EV=b
+[15:54:21]     B: KEY=70000 0 0 0 0
+[15:54:21]     B: ABS=3
+[15:54:21]     
+[15:54:21]     I: Bus=0011 Vendor=0002 Product=0013 Version=0006
+[15:54:21]     N: Name="VirtualPS/2 VMware VMMouse"
+[15:54:21]     P: Phys=isa0060/serio1/input0
+[15:54:21]     S: Sysfs=/devices/platform/i8042/serio1/input/input3
+[15:54:21]     U: Uniq=
+[15:54:21]     H: Handlers=mouse1 event3 
+[15:54:21]     B: PROP=1
+[15:54:21]     B: EV=7
+[15:54:21]     B: KEY=30000 0 0 0 0
+[15:54:21]     B: REL=103
+[15:54:21]     
+[15:54:21]     I: Bus=0010 Vendor=001f Product=0001 Version=0100
+[15:54:21]     N: Name="PC Speaker"
+[15:54:21]     P: Phys=isa0061/input0
+[15:54:21]     S: Sysfs=/devices/platform/pcspkr/input/input5
+[15:54:21]     U: Uniq=
+[15:54:21]     H: Handlers=kbd event4 
+[15:54:21]     B: PROP=0
+[15:54:21]     B: EV=40001
+[15:54:21]     B: SND=6
+[15:54:21]     
+[15:54:21]     I: Bus=0006 Vendor=0627 Product=0001 Version=0001
+[15:54:21]     N: Name="QEMU Virtio Keyboard"
+[15:54:21]     P: Phys=virtio2/input0
+[15:54:21]     S: Sysfs=/devices/pci0000:00/0000:00:03.0/virtio2/input/input6
+[15:54:21]     U: Uniq=
+[15:54:21]     H: Handlers=sysrq kbd event5 leds 
+[15:54:21]     B: PROP=0
+[15:54:21]     B: EV=120003
+[15:54:21]     B: KEY=ffffffffff ffffffffffffffff ffffffffffffffff fffffffffffffffe
+[15:54:21]     B: LED=7
+[15:54:21]     
+[15:54:21]     I: Bus=0006 Vendor=0627 Product=0003 Version=0002
+[15:54:21]     N: Name="QEMU Virtio Tablet"
+[15:54:21]     P: Phys=virtio3/input0
+[15:54:21]     S: Sysfs=/devices/pci0000:00/0000:00:04.0/virtio3/input/input7
+[15:54:21]     U: Uniq=
+[15:54:21]     H: Handlers=mouse2 event6 
+[15:54:21]     B: PROP=0
+[15:54:21]     B: EV=f
+[15:54:21]     B: KEY=30400 1f0000 0 0 0 0
+[15:54:21]     B: REL=100
+[15:54:21]     B: ABS=3
+[15:54:21] PASS: the second keyboard is unplugged while the console shows
+[15:54:21] guest$ chvt 2
+[15:54:21] PASS: the session comes back to the desktop
+[15:54:23] guest$ cat /tmp/keylog-1.out
+[15:54:24]        0.003 window mapped
+[15:54:24]        0.145 enter held=[]
+[15:54:24]        0.145 key 30 pressed
+[15:54:24]        0.296 key 30 released
+[15:54:24]        2.173 key 48 pressed
+[15:54:24]        2.323 key 48 released
+[15:54:24]        5.632 key 46 pressed
+[15:54:24]        5.782 key 46 released
+[15:54:24] PASS: back on the desktop, the keyboard that stayed still types into the window
+[15:54:24] 
+[15:54:24] == a still desktop draws no frames (ADR 0020)
+[15:54:37]     frames drawn: 6 then 6; times the compositor's process ran: 268 then 278
+[15:54:37] PASS: ten seconds with a window on screen and nothing changing draw no frame
+[15:54:37] PASS: the compositor's process barely ran in those ten seconds - it ran 10 times, of 278 since it started
+[15:54:41]     frames drawn after the pointer moved: 16
+[15:54:41] PASS: moving the pointer, which the compositor draws, draws frames again
+[15:54:49] PASS: and the desktop is still again afterwards
+[15:54:49] 
+[15:54:49] == plug a second monitor in
+[15:54:50] PASS: the hotplug reaches the compositor through udev
+[15:54:50] PASS: the second output comes up
+[15:54:50] guest$ chpst -u crowbar:crowbar env HOME=/home/crowbar WAYLAND_DISPLAY=/run/crowbar-apps/wayland-0 wayland-info | grep -A12 "interface: 'wl_output'" | grep -E "name:|width:"
+[15:54:51]     interface: 'wl_output',                                  version:  4, name: 14
+[15:54:51]     	name: Virtual-1
+[15:54:51]     	physical_width: 0 mm, physical_height: 0 mm,
+[15:54:51]     		width: 1280 px, height: 960 px, refresh: 74.998 Hz,
+[15:54:51]     interface: 'zwp_linux_dmabuf_v1',                        version:  4, name: 15
+[15:54:51]     interface: 'wl_output',                                  version:  4, name: 17
+[15:54:51]     	name: Virtual-2
+[15:54:51]     	physical_width: 0 mm, physical_height: 0 mm,
+[15:54:51]     		width: 1024 px, height: 768 px, refresh: 74.993 Hz,
+[15:54:51] PASS: a client is told of both outputs
+[15:54:52] screens: <checkout>/.lab/void-compositor-checks/20261127T085135-qzlw62lx/compositor-20261127T155135Z-*.png
+[15:54:52] 
+[15:54:52] == Void's own foot, as an app at the apps' socket
+[15:54:52] guest$ (chpst -u crowbar:crowbar env HOME=/home/crowbar WAYLAND_DISPLAY=/run/crowbar-apps/wayland-0 foot --working-directory=/home/crowbar sh -c 'echo foot on the CrowbarOS compositor; sleep 60' >/tmp/foot.out 2>&1 &); true
+[15:54:52] guest$ cat /tmp/foot.out 2>/dev/null || true
+[15:54:52]     warn: main.c:495: 'C' is not a UTF-8 locale, falling back to 'C.UTF-8'
+[15:54:52]     warn: wayland.c:1874: compositor does not implement XDG activation, bell.urgent will fall back to coloring the window margins red
+[15:54:52]     warn: wayland.c:1888: compositor does not implement the xdg-toplevel-icon protocol
+[15:54:52]     warn: wayland.c:1893: text input interface not implemented by compositor; IME will be disabled
+[15:54:52] guest$ pgrep -x foot || echo 'foot is not running'
+[15:54:52]     1484
+[15:54:52] PASS: foot opens a window and keeps running
+[15:54:52] guest$ ps -o uid= -C foot || true
+[15:54:52]      1003
+[15:54:52] PASS: foot runs as the person's account
+[15:54:52] guest$ pkill -x foot; true
+[15:54:52] 
+[15:54:52] == compositor log, without the line for each frame
+[15:54:52]     INFO crowbar_compositor: session opened through seatd seat=seat0
+[15:54:52]     INFO crowbar_compositor: DRM device opened path=/dev/dri/card0
+[15:54:52]     WARN crowbar_compositor: libinput did not take /dev/input/event4
+[15:54:52]     INFO crowbar_compositor: renderer=gles gpu=llvmpipe (LLVM 22.1.8, 256 bits)
+[15:54:52]     INFO crowbar_compositor: output scale from its density name=Virtual-1 scale=120 physical=320x240mm
+[15:54:52]     INFO crowbar_compositor: output connected name=Virtual-1 size=1280x960 refresh=74998 pointer=cursor-plane
+[15:54:52]     INFO crowbar_compositor: linux-dmabuf imported by the GPU formats=76
+[15:54:52]     INFO crowbar_compositor: compositor is up backend=tty
+[15:54:52]     DEBUG crowbar_compositor: client 1 connected as App
+[15:54:52]     INFO crowbar_compositor: commits so far:  frames=1
+[15:54:52]     DEBUG crowbar_compositor: client 1: the peer closed the connection
+[15:54:52]     DEBUG crowbar_compositor: client 1 disconnected
+[15:54:52]     INFO crowbar_compositor: agent connected id=1
+[15:54:52]     WARN crowbar_compositor: closed a control connection: a frame of 16777216 bytes is longer than 4096
+[15:54:52]     INFO crowbar_compositor: agent disconnected id=1
+[15:54:52]     WARN crowbar_compositor: refused a peer with the wrong user ID 1003 (Shell)
+[15:54:52]     WARN crowbar_compositor: refused a peer with the wrong user ID 1003 (shell control)
+[15:54:52]     WARN crowbar_compositor: refused a peer with the wrong user ID 1003 (shell control)
+[15:54:52]     WARN crowbar_compositor: refused a peer with the wrong user ID 0 (App)
+[15:54:52]     WARN crowbar_compositor: refused a peer with the wrong user ID 1001 (App)
+[15:54:52]     INFO crowbar_compositor: agent connected id=2
+[15:54:52]     INFO crowbar_compositor: agent disconnected id=2
+[15:54:52]     WARN crowbar_compositor: refused a peer with the wrong user ID 0 (agent)
+[15:54:52]     WARN crowbar_compositor: refused a peer with the wrong user ID 1001 (agent)
+[15:54:52]     DEBUG crowbar_compositor: client 2 connected as Shell
+[15:54:52]     DEBUG crowbar_compositor: client 2: the peer closed the connection
+[15:54:52]     DEBUG crowbar_compositor: client 2 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 3 connected as Shell
+[15:54:52]     DEBUG crowbar_compositor: client 3: the peer closed the connection
+[15:54:52]     DEBUG crowbar_compositor: client 3 disconnected
+[15:54:52]     INFO crowbar_compositor: shell control connected id=3
+[15:54:52]     INFO crowbar_compositor: shell control disconnected id=3
+[15:54:52]     DEBUG crowbar_compositor: client 4 connected as App
+[15:54:52]     DEBUG crowbar_compositor: client 4: the peer closed the connection
+[15:54:52]     DEBUG crowbar_compositor: client 4 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 5 connected as App
+[15:54:52]     DEBUG crowbar_compositor: client 5: the peer closed the connection
+[15:54:52]     DEBUG crowbar_compositor: client 5 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 6 connected as App
+[15:54:52]     DEBUG crowbar_compositor: client 7 connected as App
+[15:54:52]     WARN crowbar_compositor: client 7: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (5)
+[15:54:52]     DEBUG crowbar_compositor: client 7 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 8 connected as App
+[15:54:52]     WARN crowbar_compositor: client 8: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (17)
+[15:54:52]     DEBUG crowbar_compositor: client 8 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 9 connected as App
+[15:54:52]     WARN crowbar_compositor: client 9: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (18)
+[15:54:52]     DEBUG crowbar_compositor: client 9 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 10 connected as App
+[15:54:52]     WARN crowbar_compositor: client 10: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (19)
+[15:54:52]     DEBUG crowbar_compositor: client 10 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 11 connected as App
+[15:54:52]     WARN crowbar_compositor: client 11: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (20)
+[15:54:52]     DEBUG crowbar_compositor: client 11 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 12 connected as App
+[15:54:52]     WARN crowbar_compositor: client 12: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (21)
+[15:54:52]     DEBUG crowbar_compositor: client 12 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 13 connected as App
+[15:54:52]     WARN crowbar_compositor: client 13: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (22)
+[15:54:52]     DEBUG crowbar_compositor: client 13 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 14 connected as App
+[15:54:52]     WARN crowbar_compositor: client 14: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (23)
+[15:54:52]     DEBUG crowbar_compositor: client 14 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 15 connected as App
+[15:54:52]     WARN crowbar_compositor: client 15: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (24)
+[15:54:52]     DEBUG crowbar_compositor: client 15 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 16 connected as App
+[15:54:52]     WARN crowbar_compositor: client 16: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (25)
+[15:54:52]     DEBUG crowbar_compositor: client 16 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 17 connected as App
+[15:54:52]     WARN crowbar_compositor: client 17: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (26)
+[15:54:52]     DEBUG crowbar_compositor: client 17 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 18 connected as App
+[15:54:52]     WARN crowbar_compositor: client 18: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (27)
+[15:54:52]     DEBUG crowbar_compositor: client 18 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 19 connected as App
+[15:54:52]     WARN crowbar_compositor: client 19: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (28)
+[15:54:52]     DEBUG crowbar_compositor: client 19 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 20 connected as App
+[15:54:52]     WARN crowbar_compositor: client 20: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (29)
+[15:54:52]     DEBUG crowbar_compositor: client 20 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 21 connected as App
+[15:54:52]     WARN crowbar_compositor: client 21: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (30)
+[15:54:52]     DEBUG crowbar_compositor: client 21 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 22 connected as App
+[15:54:52]     WARN crowbar_compositor: client 22: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (31)
+[15:54:52]     DEBUG crowbar_compositor: client 22 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 23 connected as App
+[15:54:52]     WARN crowbar_compositor: client 23: protocol error on object 2 (code 0): invalid global zwlr_layer_shell_v1 (32)
+[15:54:52]     DEBUG crowbar_compositor: client 23 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 6: the peer closed the connection
+[15:54:52]     DEBUG crowbar_compositor: client 6 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 24 connected as App
+[15:54:52]     DEBUG crowbar_compositor: client 24: the peer closed the connection
+[15:54:52]     DEBUG crowbar_compositor: client 24 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 25 connected as App
+[15:54:52]     DEBUG crowbar_compositor: client 26 connected as App
+[15:54:52]     WARN crowbar_compositor: client 26: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (5)
+[15:54:52]     DEBUG crowbar_compositor: client 26 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 27 connected as App
+[15:54:52]     WARN crowbar_compositor: client 27: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (17)
+[15:54:52]     DEBUG crowbar_compositor: client 27 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 28 connected as App
+[15:54:52]     WARN crowbar_compositor: client 28: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (18)
+[15:54:52]     DEBUG crowbar_compositor: client 28 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 29 connected as App
+[15:54:52]     WARN crowbar_compositor: client 29: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (19)
+[15:54:52]     DEBUG crowbar_compositor: client 29 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 30 connected as App
+[15:54:52]     WARN crowbar_compositor: client 30: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (20)
+[15:54:52]     DEBUG crowbar_compositor: client 30 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 31 connected as App
+[15:54:52]     WARN crowbar_compositor: client 31: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (21)
+[15:54:52]     DEBUG crowbar_compositor: client 31 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 32 connected as App
+[15:54:52]     WARN crowbar_compositor: client 32: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (22)
+[15:54:52]     DEBUG crowbar_compositor: client 32 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 33 connected as App
+[15:54:52]     WARN crowbar_compositor: client 33: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (23)
+[15:54:52]     DEBUG crowbar_compositor: client 33 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 34 connected as App
+[15:54:52]     WARN crowbar_compositor: client 34: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (24)
+[15:54:52]     DEBUG crowbar_compositor: client 34 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 35 connected as App
+[15:54:52]     WARN crowbar_compositor: client 35: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (25)
+[15:54:52]     DEBUG crowbar_compositor: client 35 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 36 connected as App
+[15:54:52]     WARN crowbar_compositor: client 36: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (26)
+[15:54:52]     DEBUG crowbar_compositor: client 36 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 37 connected as App
+[15:54:52]     WARN crowbar_compositor: client 37: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (27)
+[15:54:52]     DEBUG crowbar_compositor: client 37 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 38 connected as App
+[15:54:52]     WARN crowbar_compositor: client 38: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (28)
+[15:54:52]     DEBUG crowbar_compositor: client 38 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 39 connected as App
+[15:54:52]     WARN crowbar_compositor: client 39: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (29)
+[15:54:52]     DEBUG crowbar_compositor: client 39 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 40 connected as App
+[15:54:52]     WARN crowbar_compositor: client 40: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (30)
+[15:54:52]     DEBUG crowbar_compositor: client 40 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 41 connected as App
+[15:54:52]     WARN crowbar_compositor: client 41: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (31)
+[15:54:52]     DEBUG crowbar_compositor: client 41 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 42 connected as App
+[15:54:52]     WARN crowbar_compositor: client 42: protocol error on object 2 (code 0): invalid global ext_session_lock_manager_v1 (32)
+[15:54:52]     DEBUG crowbar_compositor: client 42 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 25: the peer closed the connection
+[15:54:52]     DEBUG crowbar_compositor: client 25 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 43 connected as App
+[15:54:52]     DEBUG crowbar_compositor: client 43: the peer closed the connection
+[15:54:52]     DEBUG crowbar_compositor: client 43 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 44 connected as App
+[15:54:52]     DEBUG crowbar_compositor: client 45 connected as App
+[15:54:52]     WARN crowbar_compositor: client 45: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (5)
+[15:54:52]     DEBUG crowbar_compositor: client 45 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 46 connected as App
+[15:54:52]     WARN crowbar_compositor: client 46: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (17)
+[15:54:52]     DEBUG crowbar_compositor: client 46 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 47 connected as App
+[15:54:52]     WARN crowbar_compositor: client 47: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (18)
+[15:54:52]     DEBUG crowbar_compositor: client 47 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 48 connected as App
+[15:54:52]     WARN crowbar_compositor: client 48: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (19)
+[15:54:52]     DEBUG crowbar_compositor: client 48 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 49 connected as App
+[15:54:52]     WARN crowbar_compositor: client 49: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (20)
+[15:54:52]     DEBUG crowbar_compositor: client 49 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 50 connected as App
+[15:54:52]     WARN crowbar_compositor: client 50: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (21)
+[15:54:52]     DEBUG crowbar_compositor: client 50 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 51 connected as App
+[15:54:52]     WARN crowbar_compositor: client 51: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (22)
+[15:54:52]     DEBUG crowbar_compositor: client 51 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 52 connected as App
+[15:54:52]     WARN crowbar_compositor: client 52: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (23)
+[15:54:52]     DEBUG crowbar_compositor: client 52 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 53 connected as App
+[15:54:52]     WARN crowbar_compositor: client 53: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (24)
+[15:54:52]     DEBUG crowbar_compositor: client 53 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 54 connected as App
+[15:54:52]     WARN crowbar_compositor: client 54: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (25)
+[15:54:52]     DEBUG crowbar_compositor: client 54 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 55 connected as App
+[15:54:52]     WARN crowbar_compositor: client 55: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (26)
+[15:54:52]     DEBUG crowbar_compositor: client 55 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 56 connected as App
+[15:54:52]     WARN crowbar_compositor: client 56: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (27)
+[15:54:52]     DEBUG crowbar_compositor: client 56 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 57 connected as App
+[15:54:52]     WARN crowbar_compositor: client 57: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (28)
+[15:54:52]     DEBUG crowbar_compositor: client 57 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 58 connected as App
+[15:54:52]     WARN crowbar_compositor: client 58: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (29)
+[15:54:52]     DEBUG crowbar_compositor: client 58 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 59 connected as App
+[15:54:52]     WARN crowbar_compositor: client 59: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (30)
+[15:54:52]     DEBUG crowbar_compositor: client 59 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 60 connected as App
+[15:54:52]     WARN crowbar_compositor: client 60: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (31)
+[15:54:52]     DEBUG crowbar_compositor: client 60 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 61 connected as App
+[15:54:52]     WARN crowbar_compositor: client 61: protocol error on object 2 (code 0): invalid global wp_security_context_manager_v1 (32)
+[15:54:52]     DEBUG crowbar_compositor: client 61 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 44: the peer closed the connection
+[15:54:52]     DEBUG crowbar_compositor: client 44 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 62 connected as App
+[15:54:52]     DEBUG crowbar_compositor: client 62: the peer closed the connection
+[15:54:52]     DEBUG crowbar_compositor: client 62 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 63 connected as App
+[15:54:52]     DEBUG crowbar_compositor: window mapped client=63 app_id=org.crowbaros.Probe at=48,48
+[15:54:52]     INFO crowbar_compositor: input device added name=AT Translated Set 2 keyboard sysname=event0
+[15:54:52]     INFO crowbar_compositor: input device added name=Power Button sysname=event1
+[15:54:52]     INFO crowbar_compositor: input device added name=VirtualPS/2 VMware VMMouse sysname=event2
+[15:54:52]     INFO crowbar_compositor: input device added name=VirtualPS/2 VMware VMMouse sysname=event3
+[15:54:52]     INFO crowbar_compositor: input device added name=QEMU Virtio Keyboard sysname=event5
+[15:54:52]     INFO crowbar_compositor: input device added name=QEMU Virtio Tablet sysname=event6
+[15:54:52]     INFO crowbar_compositor: input device added name=crowbar-second-keyboard sysname=event7
+[15:54:52]     INFO crowbar_compositor: input device removed sysname=event7
+[15:54:52]     INFO crowbar_compositor: input device removed sysname=event6
+[15:54:52]     INFO crowbar_compositor: input device removed sysname=event5
+[15:54:52]     INFO crowbar_compositor: input device removed sysname=event3
+[15:54:52]     INFO crowbar_compositor: input device removed sysname=event2
+[15:54:52]     INFO crowbar_compositor: input device removed sysname=event1
+[15:54:52]     INFO crowbar_compositor: input device removed sysname=event0
+[15:54:52]     INFO crowbar_compositor: the session is paused: another virtual terminal is showing
+[15:54:52]     INFO crowbar_compositor: the session is back
+[15:54:52]     DEBUG crowbar_compositor: libinput did not take 1 input devices
+[15:54:52]     INFO crowbar_compositor: input device added name=AT Translated Set 2 keyboard sysname=event0
+[15:54:52]     INFO crowbar_compositor: input device added name=Power Button sysname=event1
+[15:54:52]     INFO crowbar_compositor: input device added name=VirtualPS/2 VMware VMMouse sysname=event2
+[15:54:52]     INFO crowbar_compositor: input device added name=VirtualPS/2 VMware VMMouse sysname=event3
+[15:54:52]     INFO crowbar_compositor: input device added name=QEMU Virtio Keyboard sysname=event5
+[15:54:52]     INFO crowbar_compositor: input device added name=QEMU Virtio Tablet sysname=event6
+[15:54:52]     INFO crowbar_compositor: commits so far: layer crowbar-probe: 2, window 0x4 org.crowbaros.Probe: 1 frames=6
+[15:54:52]     INFO crowbar_compositor: commits so far: layer crowbar-probe: 2, window 0x4 org.crowbaros.Probe: 1 frames=7
+[15:54:52]     INFO crowbar_compositor: udev says the DRM device changed path=/dev/dri/card0
+[15:54:52]     INFO crowbar_compositor: output scale from its density name=Virtual-2 scale=120 physical=260x190mm
+[15:54:52]     INFO crowbar_compositor: output connected name=Virtual-2 size=1024x768 refresh=74993 pointer=cursor-plane
+[15:54:52]     INFO crowbar_compositor: commits so far: layer crowbar-probe: 2, window 0x4 org.crowbaros.Probe: 1 frames=17
+[15:54:52]     DEBUG crowbar_compositor: client 64 connected as App
+[15:54:52]     DEBUG crowbar_compositor: client 64: the peer closed the connection
+[15:54:52]     DEBUG crowbar_compositor: client 64 disconnected
+[15:54:52]     DEBUG crowbar_compositor: client 65 connected as App
+[15:54:52]     DEBUG crowbar_compositor: window mapped client=65 app_id=foot at=80,80
+[15:54:52]     DEBUG crowbar_compositor: client 65: the peer closed the connection
+[15:54:52]     DEBUG crowbar_compositor: client 65 disconnected
+[15:54:57] 
+[15:54:57] RESULT: 47 passed, 0 failed
+[15:54:57] log: <checkout>/.lab/void-compositor-checks/20261127T085135-qzlw62lx/compositor-20261127T155135Z.log

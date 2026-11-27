@@ -2,6 +2,11 @@
 
 Where the buildout paused, how to run everything, what trips people up, and how to start each next piece. [The plan](PLAN.md) has where each milestone stands. This page is how to get moving again. Keep it current when the work pauses.
 
+The shell can now apply frame and background colors through `set_theme`
+([ADR 0038](../../docs/adr/0038-the-shell-applies-the-desktops-theme.md)); its
+geometry and lock colors remain fixed. Theme Studio and the shell switcher
+use this alongside Base’s bounded wallpaper transfer.
+
 ## Where it paused
 
 Fulcrum runs CrowbarOS's desktop on Base's image. It has two kinds of client, the shell and the person's apps ([ADR 0032](../../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md)), each at a socket of its own that takes one user ID. Copy and paste, the primary selection, and drag and drop work between the shell and every app, and a new window takes the keyboard, as on any desktop. The desktop starts locked, the person's password unlocks it through Base's helper, and a compositor restart comes back locked. CrowbarOS's desktop check shows each of these on a copy of Base's image, booted under UEFI.

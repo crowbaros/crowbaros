@@ -632,6 +632,28 @@ impl State {
             "unfocus_agent" => only(&[], &request)
                 .and_then(|()| self.unfocus_agent())
                 .map(|()| ok_reply()),
+            "set_theme" => only(&["focused", "unfocused", "background"], &request).and_then(|()| {
+                let color = |name: &str| -> Result<u32, String> {
+                    match request.get(name) {
+                        Some(Value::String(value))
+                            if value.len() == 7
+                                && value.starts_with('#')
+                                && value[1..].bytes().all(|b| b.is_ascii_hexdigit()) =>
+                        {
+                            u32::from_str_radix(&value[1..], 16)
+                                .map(|rgb| 0xff00_0000 | rgb)
+                                .map_err(|e| e.to_string())
+                        }
+                        _ => Err(format!("{name} must be an opaque #rrggbb color")),
+                    }
+                };
+                let colors = [color("focused")?, color("unfocused")?, color("background")?];
+                if self.theme_colors != colors {
+                    self.theme_colors = colors;
+                    self.queue_redraw_all();
+                }
+                Ok(ok_reply())
+            }),
             "outputs" => only(&[], &request).map(|()| self.outputs_reply()),
             "lock" => only(&[], &request).map(|()| {
                 self.lock("shell");

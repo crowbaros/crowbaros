@@ -6,7 +6,10 @@
 
 pub mod builtin;
 pub mod color;
+pub mod extract;
 pub mod generators;
+#[cfg(feature = "images")]
+pub mod images;
 pub mod store;
 pub mod wallpaper;
 
@@ -264,6 +267,40 @@ mod tests {
     }
 
     #[test]
+    fn theme_paths_refuse_symlink_escape_and_mismatched_manifest_ids() {
+        use std::os::unix::fs::symlink;
+        let fx = TestFixture::new("escape");
+        let outside = fx.root.join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::create_dir_all(fx.store.user_themes_dir()).unwrap();
+        symlink(&outside, fx.store.user_themes_dir().join("escape")).unwrap();
+        assert!(
+            fx.store
+                .save_custom_theme("Escape", builtin::nord().colors, Appearance::Dark, &[])
+                .is_err()
+        );
+        assert!(!outside.join("theme.json").exists());
+        let mut theme = builtin::nord();
+        theme.id = "../escape".into();
+        assert!(fx.store.resolve_background_path(&theme, Some("one.png")).is_none());
+        let folder = fx.store.user_themes_dir().join("mismatch");
+        fs::create_dir_all(&folder).unwrap();
+        theme.id = "somewhere-else".into();
+        fs::write(folder.join("theme.json"), serde_json::to_vec(&theme).unwrap()).unwrap();
+        assert!(fx.store.get_theme("somewhere-else").is_none());
+        let bg = fx.write_stub_png("one.png", b"one");
+        let saved = fx
+            .store
+            .save_custom_theme("Safe", builtin::nord().colors, Appearance::Dark, &[bg])
+            .unwrap();
+        let target = saved.root_dir.as_ref().unwrap().join("backgrounds/one.png");
+        fs::remove_file(&target).unwrap();
+        fs::write(outside.join("one.png"), b"outside").unwrap();
+        symlink(outside.join("one.png"), &target).unwrap();
+        assert!(fx.store.resolve_background_path(&saved, Some("one.png")).is_none());
+    }
+
+    #[test]
     fn hex_and_contrast_helpers_work() {
         assert_eq!(hex(0x080d12), "#080d12");
         assert_eq!(hex(0xff49_d7e8), "#49d7e8");
@@ -291,6 +328,14 @@ mod tests {
         assert_eq!(themes.len(), 7);
         let ids: Vec<&str> = themes.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, BUILTIN_THEME_IDS);
+        for theme in &themes {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../base/desktop/themes")
+                .join(&theme.id)
+                .join("theme.json");
+            let installed: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+            assert_eq!(installed, serde_json::to_value(theme).unwrap());
+        }
 
         // Verify exact CrowbarOS Nullkeel Dark/Light/Warm Paper + Studio values.
         let dark = fx.store.get_theme("nullkeel-dark").unwrap();

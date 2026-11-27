@@ -74,6 +74,12 @@ class Changes(unittest.TestCase):
             cwd=self.repo, env=env, check=True, capture_output=True, text=True).stdout
         return dict(line.split('=', 1) for line in self.output.read_text().splitlines())
 
+    def test_theme_studio_needs_interface_and_boot_checks(self):
+        head = self.commit({'apps/theme-studio/src/main.rs': 'fn main() {}'})
+        needs = self.needs(base=self.first, head=head)
+        self.assertEqual(needs['code'], 'true')
+        self.assertEqual(needs['boot'], 'true')
+
     def test_docs_alone_need_no_job(self):
         head = self.commit({'docs/VISION.md': 'The vision, amended\n', 'README.md': 'CrowbarOS, again\n',
                             'lever/README.md': 'Lever docs\n'})

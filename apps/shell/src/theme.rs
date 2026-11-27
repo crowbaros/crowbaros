@@ -68,6 +68,11 @@ pub struct Palette {
     pub focus: u32,
 }
 impl Palette {
+    pub fn from_colors(c: &crowbar_theme::ThemeColors) -> Self {
+        Self { canvas:c.canvas, surface:c.surface, text:c.text, muted:c.muted,
+            line:c.line, accent:c.accent, on_accent:c.on_accent, focus:c.focus }
+    }
+
     pub fn for_preferences(p: &Preferences) -> Self {
         if p.studio {
             Self {

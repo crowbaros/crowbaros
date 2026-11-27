@@ -10,6 +10,8 @@ mod quick_settings;
 mod session;
 mod slash;
 mod theme;
+mod themes;
+mod theme_switcher;
 mod wallpaper;
 use catalog::AppEntry;
 use drawer::AgentSurface;
@@ -26,6 +28,7 @@ impl AssetSource for Assets {
             "files" => include_bytes!("../assets/files.svg"),
             "browser" => include_bytes!("../assets/browser.svg"),
             "terminal" => include_bytes!("../assets/terminal.svg"),
+            "palette" => include_bytes!("../assets/palette.svg"),
             "settings" => include_bytes!("../assets/settings.svg"),
             "lock" => include_bytes!("../assets/lock.svg"),
             "application" => include_bytes!("../assets/application.svg"),
@@ -151,6 +154,8 @@ impl ClockDisplay {
 struct Model {
     snapshot: session::Snapshot,
     preferences: Preferences,
+    themes: Option<themes::Catalog>,
+    theme_switcher: Option<WindowHandle<theme_switcher::ThemeSwitcher>>,
     wallpaper: Option<Arc<RenderImage>>,
     launcher: Option<WindowHandle<Launcher>>,
     quick_settings: Option<WindowHandle<QuickSettingsPopover>>,
@@ -184,7 +189,7 @@ struct Model {
 }
 impl Model {
     fn palette(&self) -> Palette {
-        Palette::for_preferences(&self.preferences)
+        self.themes.as_ref().map(|t| Palette::from_colors(&t.active.colors)).unwrap_or_else(|| Palette::for_preferences(&self.preferences))
     }
 }
 fn layer(
@@ -527,6 +532,10 @@ impl Render for Bar {
                     .when_some(render_mark_pill(m.agent_state.mark, p), |d, pill| {
                         d.child(pill)
                     })
+                    .child(div().id("theme-switcher").w(px(24.)).h(px(20.)).flex().items_center().justify_center()
+                        .rounded(px(4.)).cursor_pointer().hover(move |s| s.bg(rgb(p.surface)))
+                        .child(icon("palette", p.muted, 15.))
+                        .on_click(cx.listener(|this, _, _, cx| theme_switcher::toggle(this.model.clone(), cx))))
                     .child(
                         div()
                             .id("lock")
@@ -1126,6 +1135,7 @@ fn toggle_launcher(model: Entity<Model>, cx: &mut App) {
         return;
     }
     close_quick_settings(&model, cx);
+    theme_switcher::close(&model, cx);
     close_calendar(&model, cx);
     log::info!("SHELL launcher open=true");
     let apps = catalog::discover();
@@ -1909,6 +1919,7 @@ fn toggle_quick_settings(model: Entity<Model>, cx: &mut App) {
         return;
     }
     close_launcher(&model, cx);
+    theme_switcher::close(&model, cx);
     close_calendar(&model, cx);
     log::info!("SHELL quick-settings open=true");
     let tx = model.read(cx).tx.clone();
@@ -2253,6 +2264,7 @@ fn toggle_calendar(model: Entity<Model>, cx: &mut App) {
     }
     close_launcher(&model, cx);
     close_quick_settings(&model, cx);
+    theme_switcher::close(&model, cx);
     log::info!("SHELL calendar open=true");
     let model2 = model.clone();
     let result = cx.open_window(
@@ -3242,6 +3254,7 @@ fn set_lock_screen(model: &Entity<Model>, locked: bool, cx: &mut App) {
     }
     close_launcher(model, cx);
     close_quick_settings(model, cx);
+    theme_switcher::close(model, cx);
     close_calendar(model, cx);
     close_osd(model, cx);
     log::info!("SHELL lock open=true");
@@ -3279,6 +3292,11 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
     let mut refresh = false;
     for e in events {
         match e {
+            session::Event::Themes(catalog) => {
+                log::info!("SHELL theme={}", catalog.active.theme_id);
+                model.update(cx, |m, _| m.themes = Some(catalog));
+                refresh = true;
+            }
             session::Event::Wallpaper(wallpaper) => {
                 let image = wallpaper.map(|mut wallpaper| {
                     for pixel in wallpaper.rgba.chunks_exact_mut(4) { pixel.swap(0, 2); }
@@ -3292,7 +3310,7 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 refresh = true;
             }
             session::Event::Toggle => toggle_launcher(model.clone(), cx),
-            session::Event::Summon(summon) => summoned(model, summon, cx),
+            session::Event::Summon(summon) => { theme_switcher::close(model, cx); summoned(model, summon, cx); },
             session::Event::MediaKey(key) => handle_media_key(model, key, cx),
             session::Event::QuickStatus(status) => {
                 model.update(cx, |m, _| m.quick_status = status);
@@ -3559,6 +3577,7 @@ fn main() -> anyhow::Result<()> {
     session::connect();
     let (tx, rx) = session::channel();
     wallpaper::watch(tx.clone());
+    themes::watch(tx.clone());
     session::deliver_events_to(tx.clone());
     let agent_tx = agent::start_from_env(tx.clone());
     let agent_configured = agent_tx.is_some();
@@ -3616,6 +3635,7 @@ fn main() -> anyhow::Result<()> {
             KeyBinding::new("shift-tab", Previous, Some("Launcher")),
             KeyBinding::new("enter", Open, Some("Launcher")),
             KeyBinding::new("escape", Close, Some("Launcher")),
+            KeyBinding::new("escape", Close, Some("ThemeSwitcher")),
             KeyBinding::new("escape", Close, Some("QuickSettings")),
             KeyBinding::new("escape", Close, Some("Calendar")),
             KeyBinding::new("left", PrevMonth, Some("Calendar")),
@@ -3640,6 +3660,8 @@ fn main() -> anyhow::Result<()> {
             },
             launcher: None,
             quick_settings: None,
+            themes: None,
+            theme_switcher: None,
             calendar: None,
             osd: None,
             quick_status: quick_settings::QuickStatus::default(),

@@ -26,7 +26,7 @@ The substrate vision before it is archived, and its code is at the
 | --- | --- |
 | Base | Being rebuilt as plain Void with the desktop on it, built without root, booted under UEFI, in [`base/`](base/) |
 | Compositor | Our own ([ADR 0015](docs/adr/0015-our-own-compositor-on-smithay.md)), named Fulcrum, built in [`compositor/`](compositor/) ([ADR 0031](docs/adr/0031-the-compositor-is-built-in-this-repository-again.md)), written from the ground up with Smithay as its reference ([ADR 0028](docs/adr/0028-the-compositor-is-written-from-the-ground-up.md)). The desktop runs on it |
-| Shell, Editor, Files, Monitor, Viewer, Calculator, and Studio Settings | The desktop on Base, with separate runit services and saved appearance, booted under UEFI by the desktop check. [Earlier lab record](docs/development/void-desktop-smoke-2026-11-15.md), [apps](apps/) |
+| Shell, Editor, Files, Monitor, Viewer, Calculator, Theme Studio, and Studio Settings | The desktop on Base, with separate runit services and saved appearance, booted under UEFI by the desktop check. [Earlier lab record](docs/development/void-desktop-smoke-2026-11-15.md), [apps](apps/) |
 | Brand and design system | Approved. [Brand kit](docs/branding/), [DESIGN.md](DESIGN.md) |
 | The Agent | Super+Space brings up the Agent's surface, a drawer the [shell](apps/shell/README.md) draws, and Fulcrum serves desktop context on its agent socket. Base bundles OpenCode, and [Lever](lever/README.md) (`crowbar-lever`) runs from boot as the person, drives `opencode acp` on demand over ACP v1, attaches desktop context from Fulcrum on drawer messages, keeps the record of every thread in SQLite, and serves the drawer on its surface socket and [`crowbar-agent`](lever/client/README.md) on its person socket ([ADR 0036](docs/adr/0036-lever-drives-the-harnesses-a-person-has-and-crowbaros-builds-none.md)). See the [vision](docs/VISION.md#the-agent) |
 
@@ -35,7 +35,7 @@ The substrate vision before it is archived, and its code is at the
 | Path | Contents |
 | --- | --- |
 | [`base/`](base/) | Plain Void Linux with the desktop on it, built without root, that boots under UEFI in a VM or [on a real machine](base/HARDWARE.md) |
-| [`apps/`](apps/) | The GPUI interfaces: desktop shell, Editor, Files, Monitor, Viewer, Calculator, Studio Settings, and the GPUI probe |
+| [`apps/`](apps/) | The GPUI interfaces: desktop shell, Editor, Files, Monitor, Viewer, Calculator, Theme Studio, Studio Settings, and the GPUI probe |
 | [`libs/`](libs/) | Shared libraries: [`crowbar-theme`](libs/crowbar-theme/README.md) (pure Rust palettes, WCAG contrast, store, config renderers) and [`crowbar-ui`](libs/crowbar-ui/README.md) (GPUI 0.2.2 bundled fonts, `UiPalette`, `ThemeWatcher`, and `DESIGN.md` primitives), plus [`crowbar-calc`](libs/crowbar-calc/README.md) (shared math evaluator) |
 | [`compositor/`](compositor/) | Fulcrum, the Wayland compositor: its own Cargo project, with its own CI workflow |
 | [`lever/`](lever/) | [Lever](lever/README.md) (`crowbar-lever`), the Rust service that runs from boot as the person, speaks ACP v1 to a harness, and keeps every thread's record ([ADR 0036](docs/adr/0036-lever-drives-the-harnesses-a-person-has-and-crowbaros-builds-none.md)); its scripted ACP stub harness (`crowbar-stub-harness`); and [`lever/client/`](lever/client/README.md) (`crowbar-agent`) |

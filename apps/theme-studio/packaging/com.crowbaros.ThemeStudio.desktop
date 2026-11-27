@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Theme Studio
+Comment=Create color themes from images and change desktop backgrounds
+Exec=/usr/local/bin/crowbaros-theme-studio
+Icon=preferences-desktop-theme
+Terminal=false
+Categories=Settings;DesktopSettings;
+StartupWMClass=com.crowbaros.ThemeStudio

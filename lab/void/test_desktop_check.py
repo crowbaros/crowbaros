@@ -277,6 +277,16 @@ class AgentSurface(unittest.TestCase):
         # No colour at all is like none.
         self.assertFalse(desktop_check.like((), light))
 
+    def test_terminal_probe_emits_a_background_distinct_from_every_drawer_ground(self):
+        output = subprocess.check_output(['sh', '-c', desktop_check.AGENT_TERMINAL_SETUP])
+        match = re.fullmatch(rb'\x1b\]11;#([0-9a-f]{6})\x07', output)
+        self.assertIsNotNone(match)
+        colour = tuple(bytes.fromhex(match[1].decode()))
+        for ground in [*desktop_check.CANVAS.values(), (0x11, 0x11, 0x11)]:
+            self.assertFalse(desktop_check.like(colour, ground))
+        # The setup command must also be typeable through the native driver.
+        self.assertTrue(desktop_check.qmp_keys_for_text(desktop_check.AGENT_TERMINAL_SETUP))
+
     def test_a_pixel_is_read_from_the_display_asked_for(self):
         class Screens:
             def screendump(self, path, head):
@@ -293,6 +303,23 @@ class AgentSurface(unittest.TestCase):
         for x, y in ((7, 2), (3, 5)):
             with self.assertRaises(ValueError):
                 check.pixel('second', x, y, head=1)
+
+    def test_region_distinguishes_a_drawer_with_the_same_ground_as_the_display(self):
+        check = self.make_check(lambda user, command: (1, '', ''))
+        ground = bytes(desktop_check.CANVAS['light'])
+        empty = [ground * 4 for _ in range(3)]
+        drawer = [ground + b'\x10\x20\x30' + ground * 2, *empty[1:]]
+        # A body pixel cannot tell them apart; the header region must.
+        self.assertEqual(empty[2], drawer[2])
+        with patch.object(check, 'capture'), patch.object(guest, 'png_pixels') as pixels:
+            pixels.return_value = (4, 3, empty)
+            baseline = check.region('before', 1, 0, 2, 2, head=1)
+            pixels.return_value = (4, 3, drawer)
+            self.assertNotEqual(check.region('shown', 1, 0, 2, 2, head=1), baseline)
+            pixels.return_value = (4, 3, empty)
+            self.assertEqual(check.region('away', 1, 0, 2, 2, head=1), baseline)
+            with self.assertRaises(ValueError):
+                check.region('outside', 3, 0, 2, 2, head=1)
 
     def test_a_log_is_counted_by_its_lines_and_a_log_without_the_text_counts_none(self):
         asked = []

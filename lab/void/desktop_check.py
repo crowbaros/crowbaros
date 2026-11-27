@@ -230,6 +230,14 @@ class Check:
             raise ValueError(f'{name}.png is {width} by {height}, and has no pixel at {x},{y}')
         return tuple(rows[y][3 * x:3 * x + 3])
 
+    def region(self, name, x, y, width, height, head=0):
+        """Read a region, including content that separates equal backgrounds."""
+        self.capture(name, head)
+        image_width, image_height, rows = guest.png_pixels(self.work / f'{name}.png')
+        if not (0 <= x < x + width <= image_width and 0 <= y < y + height <= image_height):
+            raise ValueError('screenshot region is outside the display')
+        return b''.join(row[3*x:3*(x+width)] for row in rows[y:y+height])
+
     def count(self, text, log='/var/log/crowbar-compositor.log'):
         """How many lines of a log in the guest hold `text`."""
         result = self.guest.ssh(f'grep -c -e {shlex.quote(text)} {log}', check=False)
@@ -304,6 +312,89 @@ class Check:
             self.capture('final-or-failure')
         except (OSError, RuntimeError, ValueError) as error:
             self.log(f'Could not capture final display: {error}')
+
+    def theme_studio_check(self, appearance):
+        """Theme bundles, bounded backgrounds, native switching, and the app."""
+        person, home = self.person()
+        prefix = f'chpst -u {person} env HOME={home} crowbaros-theme-studio '
+        directory = self.python('import tempfile; print(tempfile.mkdtemp(prefix="theme-studio-check-"))', person).strip()
+        self.python(f'''
+import shutil
+from pathlib import Path
+root=Path({home!r})/'.config'; backup=Path({directory!r})/'backup'; backup.mkdir()
+for name in ['crowbaros','foot','gtk-3.0','gtk-4.0']:
+    if (root/name).exists(): shutil.copytree(root/name,backup/name)
+''', person)
+        try:
+            self.capture(f'themes-{appearance}-before')
+            reply = self.run(guest.ask_fulcrum('/run/crowbar-trusted/unlock/compositor', '{"op":"set_theme","focused":"#112233","unfocused":"#445566","background":"#778899"}'))
+            self.check('the unlock authority cannot change the desktop theme', '"reply":"error"' in reply)
+            themes = json.loads(self.run(prefix + '--list-themes'))
+            self.check('Theme Studio discovers seven built-in bundles', len(themes) == 7 and all(len(t['backgrounds']) >= 2 for t in themes))
+            for theme in ['nord', 'nullkeel-light', 'nullkeel-dark']:
+                offset = len(self.shell_log())
+                self.run(prefix + '--apply-theme ' + theme)
+                self.wait('shell applies ' + theme, lambda: ('SHELL theme=' + theme) in self.shell_log()[offset:])
+                current = json.loads(self.run(f'cat {home}/.config/crowbaros/current-theme.json'))
+                self.check('applying ' + theme + ' updates saved active colors', current['theme_id'] == theme)
+            self.run(f'chpst -u {person} env HOME={home} foot --check-config')
+            self.check('generated foot configuration passes foot --check-config', True)
+            first='/usr/share/crowbaros-shell/wallpaper.png'
+            second='/usr/share/crowbaros-shell/nightwatch.png'
+            self.run(prefix + f'--extract {first} "Lab Palette" {appearance} {second}')
+            self.run(prefix + '--apply-theme lab-palette')
+            first_state=json.loads(self.run(f'cat {home}/.config/crowbaros/current-theme.json'))
+            self.run(prefix + '--cycle-background')
+            next_state=json.loads(self.run(f'cat {home}/.config/crowbaros/current-theme.json'))
+            self.check('an extracted two-background theme cycles and keeps its palette', first_state['colors'] == next_state['colors'] and first_state['background'] != next_state['background'])
+            self.wait('the shell receives extracted palette colors',lambda:'SHELL theme=lab-palette' in self.shell_log())
+            time.sleep(2)
+            self.click(1208,12)
+            self.wait('Quick Theme Switcher opens',lambda:'SHELL theme-switcher open=true' in self.shell_log())
+            self.capture(f'themes-{appearance}-switcher')
+            self.key('shift','tab')
+            self.key('ret')
+            self.wait('Create theme opens Theme Studio as an ordinary app',lambda:self.snapshot()['active'].get('class')=='com.crowbaros.ThemeStudio')
+            time.sleep(1)
+            self.capture(f'themes-{appearance}-studio')
+            self.type(first)
+            self.click(380,464)
+            time.sleep(1)
+            self.click(490,412)
+            self.key('ctrl','a')
+            self.type(second)
+            self.click(515,464)
+            time.sleep(1)
+            if appearance == 'light':
+                self.click(430,520)
+            self.capture(f'themes-{appearance}-extracted')
+            self.key('ctrl','q')
+            self.capture(f'themes-{appearance}-close-protection')
+            self.check('closing an unsaved palette preserves its window',self.snapshot()['active'].get('class')=='com.crowbaros.ThemeStudio')
+            self.key('esc')
+            # Missing-name recovery focuses the native input, then Save applies.
+            self.click(975,888)
+            self.type('Native Palette')
+            self.click(975,888)
+            self.wait('Theme Studio saves and applies a named palette',lambda: self.python(
+                f'import json; from pathlib import Path; print(json.loads(Path({home!r}+"/.config/crowbaros/current-theme.json").read_text())["theme_id"])',person).strip() == 'native-palette')
+            saved=json.loads(self.run(prefix+'--list-themes'))
+            self.check('the native creation flow saves both backgrounds',any(t['id']=='native-palette' and len(t['backgrounds'])==2 for t in saved))
+            self.capture(f'themes-{appearance}-saved')
+            self.key('ctrl','q')
+            self.wait('Theme Studio closes',lambda:not any(c['class']=='com.crowbaros.ThemeStudio' for c in self.snapshot()['clients']))
+            self.capture(f'themes-{appearance}-after')
+        finally:
+            self.python(f'''
+import shutil
+from pathlib import Path
+root=Path({home!r})/'.config'; backup=Path({directory!r})/'backup'
+for name in ['crowbaros','foot','gtk-3.0','gtk-4.0']:
+    if (root/name).exists(): shutil.rmtree(root/name)
+    if (backup/name).exists(): shutil.copytree(backup/name,root/name)
+shutil.rmtree({directory!r})
+''',person)
+            time.sleep(2)
 
     def calculator_check(self, theme):
         """Real keyboard expressions and inter-client copying, in both themes."""
@@ -755,6 +846,7 @@ print(base64.b64encode(result.stdout).decode('ascii'))
         self.monitor_check('dark')
         self.viewer_check('dark')
         self.calculator_check('dark')
+        self.theme_studio_check('dark')
         self.check('fresh guest has no saved preferences', self.preferences() is None)
         self.click(680, 935)  # Terminal dock entry (Applications · Files · Chromium · Terminal · Settings).
         terminal = self.wait('terminal launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
@@ -1006,6 +1098,7 @@ for name, original in {original_files!r}.items():
         self.monitor_check('light')
         self.viewer_check('light')
         self.calculator_check('light')
+        self.theme_studio_check('light')
         log_offset = len(self.app_log())
         self.click(720, 935)
         self.wait('Settings restored Light after reboot', lambda: 'event=opened theme=Light' in self.app_log()[log_offset:])
@@ -1235,6 +1328,10 @@ finally:
         # the display's top edge, where the bar's ground was.
         self.click(680, 935)
         self.wait('Terminal has the keyboard', lambda: active() == terminal['address'])
+        # A themed terminal can have the drawer's exact ground. Give this
+        # visual probe a distinct background before testing their stacking.
+        self.type(AGENT_TERMINAL_SETUP)
+        self.key('ret')
         self.check('the bar shows above a window that is not fullscreen', drawn('13-before-fullscreen', point=(300, 1)))
         self.key('meta_l', 'f')
         self.wait('Terminal goes fullscreen', lambda: not drawn('13-fullscreen', point=(300, 1)))
@@ -1310,6 +1407,10 @@ finally:
                 ('Virtual-2', (1280 + 500, 300), 1, 'at=1963,0 size=341x768', 341, (1024 - 30, 600)),
                 ('Virtual-1', (600, 400), 0, 'at=853,0 size=427x960', 427, DRAWER_POINT)):
             self.qmp.pointer(x / (1280 + 1024), y / 960)
+            # The empty output and drawer may share the theme's canvas.
+            # Compare the header's content against the pre-summon display.
+            region = ((1280 if head == 0 else 1024) - width + 16, 12, 180, 130)
+            baseline = self.region(f'17-before-{output}', *region, head=head)
             shows = self.count(shown)
             told = summon(opened, output=output)
             self.wait(f'the Agent\'s surface shows on {output}', lambda: self.count(shown) > shows)
@@ -1318,10 +1419,12 @@ finally:
             asked = f'SHELL agent-surface up=true output={output} width={width}'
             self.check(f'with two displays, Super+Space brings the Agent\'s surface up on {output}, where the pointer is',
                        told and f'output={output} {place}' in placed and asked in self.shell_log()
-                       and drawn(f'17-summoned-on-{output}', head, point), placed)
+                       and drawn(f'17-summoned-on-{output}', head, point)
+                       and self.region(f'17-content-on-{output}', *region, head=head) != baseline, placed)
             self.capture(f'17-other-display-while-on-{output}', 1 - head)
             summon(away, output=output, keyboard=True)
-            self.wait('the Agent\'s surface is put away', lambda: not drawn(f'17-put-away-on-{output}', head, point))
+            self.wait('the Agent\'s surface is put away',
+                      lambda: self.region(f'17-put-away-on-{output}', *region, head=head) == baseline)
 
     def agent_reached_lever_idle(self):
         """With Lever running from boot (ADR 0036) configured with OpenCode,
@@ -3322,6 +3425,7 @@ CANVAS = {'dark': (0x08, 0x0d, 0x12), 'light': (0xf4, 0xf7, 0xf9), 'warm-paper':
 # A point of the first display that the Agent's surface covers with its
 # ground alone: in its right third, below its text and above its foot.
 DRAWER_POINT = (1250, 700)
+AGENT_TERMINAL_SETUP = r"printf '\033]11;#302040\007'"
 
 
 def like(colour, expected):
@@ -3338,6 +3442,9 @@ BAR_FOLLOWS = 2 * 1000 / 60
 
 
 QMP_PUNCTUATION = {
+    '\\': ('backslash',),
+    ']': ('bracket_right',),
+    '#': ('shift', '3'),
     '*': ('shift', '8'),
     '(': ('shift', '9'),
     ')': ('shift', '0'),

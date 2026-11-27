@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "nord",
+  "name": "Nord",
+  "author": "Arctic Ice Studio",
+  "appearance": "dark",
+  "colors": {
+    "canvas": "#2e3440",
+    "surface": "#3b4252",
+    "surface_elevated": "#434c5e",
+    "text": "#eceff4",
+    "muted": "#d8dee9",
+    "line": "#4c566a",
+    "accent": "#88c0d0",
+    "on_accent": "#2e3440",
+    "focus": "#81a1c1",
+    "danger": "#bf616a",
+    "warning": "#ebcb8b",
+    "success": "#a3be8c",
+    "ansi": [
+      "#3b4252",
+      "#bf616a",
+      "#a3be8c",
+      "#ebcb8b",
+      "#81a1c1",
+      "#b48ead",
+      "#88c0d0",
+      "#e5e9f0",
+      "#4c566a",
+      "#bf616a",
+      "#a3be8c",
+      "#ebcb8b",
+      "#81a1c1",
+      "#b48ead",
+      "#8fbcbb",
+      "#eceff4"
+    ]
+  },
+  "backgrounds": [
+    "signal-feather.png",
+    "quiet-signal.png"
+  ]
+}

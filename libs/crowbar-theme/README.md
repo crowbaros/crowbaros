@@ -15,3 +15,8 @@ Pure Rust theming library for CrowbarOS with zero GPUI or Wayland dependencies.
 ```sh
 cargo test --locked
 ```
+
+The optional `images` feature adds bounded raster decoding and theme wallpaper
+activation on the person side. `extract` itself accepts RGBA pixels with no
+image dependency and derives deterministic, contrast-tested palettes. Run
+`cargo test --locked --features images` for both paths.
