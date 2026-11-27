@@ -2782,7 +2782,9 @@ finally:
             # history on open and accepts a follow-up from the drawer.
             hand_dir = f'{tmp}/hand-session'
             self.run(f'install -d -o {person} -g {person} {hand_dir}')
-            self.run("pkill -x -P \"$(pgrep -x -d, crowbar-lever)\" opencode; true")
+            # Every OpenCode now is Lever's harness or under it; no session
+            # by hand runs yet.
+            self.run("ps -eo pid,ppid,args | grep '[o]pencode'; pkill -KILL -x opencode; true")
             self.wait("Lever's own OpenCode stopped before the hand-started session",
                       lambda: not self.guest.ssh('pgrep -x opencode', check=False).stdout.strip())
             threads_before_hand = list(self.agent_view()['state']['threads'])
