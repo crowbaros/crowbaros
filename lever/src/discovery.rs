@@ -16,7 +16,7 @@
 use crate::acp::{self, HarnessConfig};
 use crate::opencode;
 use crate::sys;
-use crate::watcher::WatchSpec;
+use crate::watcher::{StoreWatcher, WatchSpec};
 use agent_client_protocol_schema::ProtocolVersion;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, ClientCapabilities, Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage,
@@ -109,7 +109,7 @@ pub trait SessionDiscoverer: Send + Sync {
     /// Lists sessions from the harness's store without keeping a long-lived
     /// harness process running. What it lists is then classified by
     /// [`Self::classify_sessions`].
-    fn list_sessions(&self) -> Result<Vec<ExternalSession>, String>;
+    fn list_sessions(&self) -> Result<Listing, String>;
 
     /// Whether raw ACP `session/list` results need harness-specific
     /// classification (e.g. distinguishing subagent or empty sessions).
@@ -125,6 +125,16 @@ pub trait SessionDiscoverer: Send + Sync {
             ..Classified::default()
         }
     }
+}
+
+/// What a one-shot listing found.
+#[derive(Debug, Default)]
+pub struct Listing {
+    pub sessions: Vec<ExternalSession>,
+    /// Whether the harness's store was written after the listing was taken,
+    /// before the listing harness ended. It writes nothing then itself, so
+    /// the write was someone else's.
+    pub changed_after: bool,
 }
 
 /// What Lever already knows of a harness's sessions.
@@ -157,9 +167,10 @@ impl KnownSessions {
 pub struct Classified {
     /// The sessions to apply: threads, subagents, and those already known.
     pub sessions: Vec<ExternalSession>,
-    /// Whether it ran commands of the harness's own, which write to its
-    /// store, after the listing was taken.
-    pub ran_after: bool,
+    /// Whether the store may have changed after the listing was taken: it
+    /// ran commands of the harness's own then, which write to its store, or
+    /// the listing saw a write then.
+    pub changed_after: bool,
     /// Whether sessions were left for the next pass.
     pub more: bool,
     /// Sessions newly found empty or archived, with their stamps.
@@ -228,9 +239,11 @@ impl DiscoveryRunner {
     pub fn request_scan(&mut self, known: KnownSessions) {
         let discoverer = Arc::clone(&self.discoverer);
         self.start_job("lever-discover", move || {
-            let listed = discoverer.list_sessions()?;
-            let fingerprint = listing_fingerprint(&listed);
-            Ok((discoverer.classify_sessions(listed, &known), fingerprint))
+            let listing = discoverer.list_sessions()?;
+            let fingerprint = listing_fingerprint(&listing.sessions);
+            let mut found = discoverer.classify_sessions(listing.sessions, &known);
+            found.changed_after |= listing.changed_after;
+            Ok((found, fingerprint))
         });
     }
 
@@ -333,9 +346,8 @@ pub struct DiscoverySchedule {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PassEnd {
     /// It listed: the listing's fingerprint ([`listing_fingerprint`]), and
-    /// whether it ran commands of the harness's own after taking it, as
-    /// classifying a session does.
-    Listed { fingerprint: u64, ran_after: bool },
+    /// whether the store may have changed after it was taken.
+    Listed { fingerprint: u64, changed_after: bool },
     /// It failed, or was lost.
     Failed,
 }
@@ -394,17 +406,20 @@ impl DiscoverySchedule {
     /// The pass that was taken has ended.
     ///
     /// A change seen while it ran brings a follow-up. A follow-up brings
-    /// another only when its listing changed, or when it ran the harness's
-    /// commands after listing, so a change seen then may be the person's
-    /// after the listing was taken; such commands run only for sessions not
-    /// yet classified, so this ends. A failed pass brings no follow-up of a
+    /// another only when its listing changed, or when the store may have
+    /// changed after its listing was taken: a write the listing saw then, or
+    /// the harness's commands run then, which run only for sessions not yet
+    /// classified, so this ends. A failed pass brings no follow-up of a
     /// follow-up.
     pub fn pass_finished(&mut self, now: Instant, end: PassEnd) {
         let again = match end {
-            PassEnd::Listed { fingerprint, ran_after } => {
+            PassEnd::Listed {
+                fingerprint,
+                changed_after,
+            } => {
                 let changed = self.last_listing != Some(fingerprint);
                 self.last_listing = Some(fingerprint);
-                !self.followup_now || changed || ran_after
+                !self.followup_now || changed || changed_after
             }
             PassEnd::Failed => !self.followup_now,
         };
@@ -481,7 +496,10 @@ impl AcpSessionDiscoverer {
 
     /// Runs a single one-shot ACP `initialize` + `session/list` against
     /// `self.config` and immediately terminates the child process.
-    pub fn list_via_acp(&self) -> Result<Vec<ExternalSession>, String> {
+    pub fn list_via_acp(&self) -> Result<Listing, String> {
+        // The store, watched while the listing runs: what it writes as it
+        // starts is its own, and a write once it has answered is not.
+        let mut watcher = StoreWatcher::new(self.watch_specs.clone()).ok().flatten();
         let (env_set, env_remove) = acp::build_discovery_env(&self.config);
         let cmd = sys::harness_command(&self.config.program, &self.config.args, &env_set, &env_remove);
         // Dropping the child on any early return ends and waits for it.
@@ -564,12 +582,19 @@ impl AcpSessionDiscoverer {
             Ok(all)
         })();
 
+        if let Some(watcher) = watcher.as_mut() {
+            let _ = watcher.drain_changed();
+        }
         // Always close stdin and stop the discovery child immediately so no
         // harness process is ever left running for session discovery.
         drop(stdin);
         drop(stdout);
         child.finish(Duration::from_millis(300));
-        outcome
+        let changed_after = watcher.as_mut().is_some_and(StoreWatcher::drain_changed);
+        outcome.map(|sessions| Listing {
+            sessions,
+            changed_after,
+        })
     }
 }
 
@@ -582,7 +607,7 @@ impl SessionDiscoverer for AcpSessionDiscoverer {
         self.watch_specs.iter().any(spec_has_data)
     }
 
-    fn list_sessions(&self) -> Result<Vec<ExternalSession>, String> {
+    fn list_sessions(&self) -> Result<Listing, String> {
         self.list_via_acp()
     }
 }
@@ -825,7 +850,7 @@ mod tests {
     fn listed(fingerprint: u64) -> PassEnd {
         PassEnd::Listed {
             fingerprint,
-            ran_after: false,
+            changed_after: false,
         }
     }
 
@@ -906,7 +931,7 @@ mod tests {
             t0 + ms(3000),
             PassEnd::Listed {
                 fingerprint: 1,
-                ran_after: true,
+                changed_after: true,
             },
         );
         assert!(s.take_due(t0 + ms(3400)), "a fresh listing, after the person's change");

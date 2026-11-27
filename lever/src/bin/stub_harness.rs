@@ -99,6 +99,32 @@ struct StubExternalSession {
 }
 
 #[derive(Debug, Deserialize)]
+struct ChangeAfterList {
+    on_start: usize,
+    sessions: Value,
+}
+
+/// Replaces the sessions file as `change_after_list` says, if this process
+/// is the one it names.
+fn change_store_after_listing(script: &Script) {
+    let (Some(change), Some(starts), Some(file)) =
+        (&script.change_after_list, &script.touch_on_start, &script.sessions_file)
+    else {
+        return;
+    };
+    let started = std::fs::read_to_string(starts).map(|t| t.lines().count()).unwrap_or(0);
+    if started != change.on_start {
+        return;
+    }
+    // After the answer has gone out, which a writer thread sends.
+    std::thread::sleep(Duration::from_millis(50));
+    let tmp = format!("{file}.tmp");
+    if std::fs::write(&tmp, change.sessions.to_string()).is_ok() {
+        let _ = std::fs::rename(&tmp, file);
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct Script {
     /// A file the stub appends a line to each time it starts, as OpenCode
     /// writes to its own store whenever it opens it.
@@ -106,6 +132,11 @@ struct Script {
     touch_on_start: Option<String>,
     #[serde(default)]
     list_sessions: bool,
+    /// If set, the sessions file is replaced with these sessions once the
+    /// process that starts the `on_start`th time (as `touch_on_start` counts)
+    /// has answered a listing: the store changes after the listing was taken.
+    #[serde(default)]
+    change_after_list: Option<ChangeAfterList>,
     /// If set, the mode a session this process did not begin is reported in
     /// when it is loaded, as OpenCode reports its own default agent.
     #[serde(default)]
@@ -2325,10 +2356,14 @@ fn run(options: Options) -> Result<(), String> {
                         })
                         .collect();
                     let mut resp = ListSessionsResponse::new(page);
-                    if end < filtered.len() {
+                    let last_page = end >= filtered.len();
+                    if !last_page {
                         resp = resp.next_cursor(end.to_string());
                     }
                     writer.send_result(id, resp);
+                    if last_page {
+                        change_store_after_listing(&script);
+                    }
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
             }

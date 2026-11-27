@@ -308,6 +308,15 @@ impl WorkerChild {
         self.done = true;
         let group = -(self.child.id() as libc::pid_t);
         if let Some(status) = wait_until(&mut self.child, Instant::now() + grace) {
+            // What it started and left behind has the same grace to end on
+            // its own, and is then ended.
+            let deadline = Instant::now() + grace;
+            // SAFETY: probing the child's own process group with no signal.
+            while unsafe { libc::kill(group, 0) } == 0 && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            // SAFETY: signalling the child's own process group.
+            unsafe { libc::kill(group, libc::SIGKILL) };
             worker_children().retain(|&pid| pid != self.child.id());
             return Some(status);
         }
@@ -340,6 +349,9 @@ fn wait_until(child: &mut Child, deadline: Instant) -> Option<std::process::Exit
     }
 }
 
+/// The error a bounded run gives when it runs out of time.
+pub const TIMED_OUT: &str = "timed out";
+
 /// What a bounded one-shot command printed.
 #[derive(Debug)]
 pub struct BoundedOutput {
@@ -360,7 +372,7 @@ pub fn run_bounded(mut cmd: Command, timeout: Duration, max_stdout: usize) -> Re
     let mut chunk = [0u8; 8192];
     loop {
         let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
-            return Err("timed out".to_string());
+            return Err(TIMED_OUT.to_string());
         };
         let mut pfd = [libc::pollfd {
             fd: stdout.as_raw_fd(),
@@ -630,6 +642,28 @@ mod tests {
         assert!(
             matches!(process_state(grandchild), None | Some('Z' | 'X')),
             "it outlived the timeout"
+        );
+    }
+
+    #[test]
+    fn what_a_command_leaves_behind_when_it_ends_is_ended_too() {
+        let marker = std::env::temp_dir().join(format!("lever-group-left-{}", random_hex(4)));
+        let mut cmd = Command::new("sh");
+        cmd.args([
+            "-c",
+            &format!("sleep 30 >/dev/null & echo $! > {}; echo done", marker.display()),
+        ]);
+        let out = run_bounded(cmd, Duration::from_secs(5), 1024).unwrap();
+        assert!(out.success);
+        let left: u32 = std::fs::read_to_string(&marker).unwrap().trim().parse().unwrap();
+        let _ = std::fs::remove_file(&marker);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !matches!(process_state(left), None | Some('Z' | 'X')) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            matches!(process_state(left), None | Some('Z' | 'X')),
+            "what it left still runs"
         );
     }
 

@@ -9631,6 +9631,57 @@ fn a_listing_that_writes_to_the_store_it_watches_does_not_start_the_harness_agai
 }
 
 #[test]
+fn a_session_written_after_a_follow_up_took_its_listing_is_still_found() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    let sessions_file = store_dir.join("sessions.json");
+    let starts = store_dir.join("starts.log");
+    let session = |id: &str, title: &str| {
+        json!({
+            "session_id": id,
+            "cwd": "/tmp",
+            "title": title,
+            "history": [{ "kind": "user_text", "text": "hi" }, { "kind": "text", "text": "hello" }]
+        })
+    };
+    write_sessions_file(&sessions_file, &json!([session("ses_first", "First")]));
+    // The first listing's own writes bring a follow-up; the person's session
+    // is written once that follow-up has listed, and nothing writes after.
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "touch_on_start": starts.to_str().unwrap(),
+            "change_after_list": {
+                "on_start": 2,
+                "sessions": [session("ses_first", "First"), session("ses_late", "Late")]
+            }
+        }),
+    );
+    let mut lever = start_lever_with_discovery(&dir.0, &script, None, &store_dir);
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    let initial = read_frame(&mut watcher).unwrap();
+    if !initial["threads"]
+        .as_array()
+        .is_some_and(|ts| ts.iter().any(|t| t["title"] == "Late"))
+    {
+        read_until(&mut watcher, |f| {
+            f["event"] == "threads"
+                && f["threads"]
+                    .as_array()
+                    .is_some_and(|ts| ts.iter().any(|t| t["title"] == "Late"))
+        });
+    }
+    assert!(count_lines(&starts) >= 2);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
 fn a_session_appears_while_its_store_keeps_changing() {
     let dir = TempDir::new();
     let store_dir = dir.0.join("harness-store");

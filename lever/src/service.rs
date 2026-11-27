@@ -589,7 +589,7 @@ impl Service {
             rescan || found.more,
             PassEnd::Listed {
                 fingerprint,
-                ran_after: found.ran_after,
+                changed_after: found.changed_after,
             },
         );
         if let Some(retry) = found.retry_at {
@@ -4544,7 +4544,7 @@ impl Service {
                     rescan,
                     PassEnd::Listed {
                         fingerprint,
-                        ran_after: false,
+                        changed_after: false,
                     },
                 );
                 self.apply_discovered_sessions(sessions, log)

@@ -301,26 +301,32 @@ ACP today:
     asked again while it runs. Listing writes to the harness's own store as the
     harness starts, so a change seen while a pass runs brings a follow-up pass,
     and a follow-up brings another only when what it listed differs from the
-    pass before it, or when it ran the harness's own commands after listing,
-    as classifying a session does; those run only for sessions not yet
-    classified, so a quiet store goes quiet. A failed pass brings at most one
-    follow-up. A change seen once a pass has ended always brings a pass. What a
-    pass cannot tell from its own writes is a session whose every write lands
-    while a follow-up that classifies nothing runs, after it listed and before
-    it ends; a session's next write brings it. Closing a file
+    pass before it, or when the store may have changed after it listed: a
+    one-shot listing watches the store itself, and a write once it has
+    answered is not its own, as the harness writes nothing then; and the
+    harness's own commands, run after listing as classifying a session does,
+    run only for sessions not yet classified, so a quiet store goes quiet. A
+    failed pass brings at most one follow-up. A change seen once a pass has
+    ended always brings a pass. What a pass cannot tell from its own writes is
+    a write made between the harness reading its sessions and its answer
+    reaching Lever, or one made while Lever's own running harness answers a
+    listing; a session's next write brings it. Closing a file
     written to is not watched, as every write was seen as it was made. Each
     listing command has a 15 s deadline, runs in a process group of its own
-    that is ended with it, and ends with Lever.
+    that is ended with it, whatever of the group is left ending too, and ends
+    with Lever.
     Generic ACP harnesses are queried via one-shot `initialize` + paginated
     `session/list`. For OpenCode, Lever lists across all directories via
     one-shot `opencode acp` `session/list` and classifies each unseen session
     with OpenCode's own `opencode session export --standalone <id>`, without
     reading OpenCode's internal SQLite schema. Sessions are classified newest
-    first, and a pass starts exports for at most 2 s; the rest wait for the
-    next pass, which follows at once. A session becomes a thread only on
+    first. The first export of a pass has the full 15 s, and the rest only
+    what is left of the pass's 2 s; what is left waits for the next pass, which
+    follows at once. A session becomes a thread only on
     positive evidence: its export has messages and no parent. Only an export
     that names a parent marks it a subagent. A session whose export fails is
-    tried again after a wait that doubles each time, from 5 s up to 5 minutes.
+    tried again after a wait that doubles each time, from 5 s up to 5 minutes,
+    or at once when the harness changes it.
     An empty or archived one is remembered in Lever's database with its
     `updated` stamp, and looked at again only once that stamp changes. Sessions Lever started itself, the sessions it
     opens to read what the harness offers, the sessions a replacement took over

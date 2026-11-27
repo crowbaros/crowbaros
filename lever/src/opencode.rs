@@ -14,7 +14,7 @@
 
 use crate::acp::{self, HarnessConfig};
 use crate::discovery::{
-    AcpSessionDiscoverer, Classified, ExternalSession, KnownSessions, SessionDiscoverer, spec_has_data,
+    AcpSessionDiscoverer, Classified, ExternalSession, KnownSessions, Listing, SessionDiscoverer, spec_has_data,
     watch_specs_from_paths,
 };
 use crate::sys;
@@ -241,9 +241,8 @@ pub struct OpenCodeSessionDiscoverer {
     acp: AcpSessionDiscoverer,
     watch_specs: Vec<WatchSpec>,
     cli_timeout: Duration,
-    /// Sessions whose export failed: how often in a row, and when it may be
-    /// tried again.
-    failures: Mutex<HashMap<String, (u32, Instant)>>,
+    /// Sessions whose export failed.
+    failures: Mutex<HashMap<String, Failures>>,
 }
 
 const OPENCODE_STORE_FILES: [&str; 4] = [
@@ -285,7 +284,7 @@ impl OpenCodeSessionDiscoverer {
     }
 
     /// Runs `opencode session <args>`, bounded in time and output.
-    fn run_cli(&self, args: &[&str]) -> Option<String> {
+    fn run_cli(&self, args: &[&str], timeout: Duration) -> Ran {
         let (env_set, env_remove) = acp::build_discovery_env(&self.config);
         let mut cmd = Command::new(&self.config.program);
         cmd.arg("session").args(args).env_remove("PWD");
@@ -295,38 +294,50 @@ impl OpenCodeSessionDiscoverer {
         for (key, value) in &env_set {
             cmd.env(key, value);
         }
-        let out = sys::run_bounded(cmd, self.cli_timeout, CLI_MAX_STDOUT).ok()?;
-        out.success.then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+        match sys::run_bounded(cmd, timeout, CLI_MAX_STDOUT) {
+            Ok(out) if out.success => Ran::Printed(String::from_utf8_lossy(&out.stdout).into_owned()),
+            Err(err) if err == sys::TIMED_OUT => Ran::TimedOut,
+            _ => Ran::Failed,
+        }
     }
 
-    fn run_cli_export(&self, session_id: &str) -> Option<ExportSummary> {
-        parse_cli_session_export(&self.run_cli(&["export", "--standalone", session_id])?)
+    fn run_cli_export(&self, session_id: &str, timeout: Duration) -> Result<ExportSummary, Ran> {
+        match self.run_cli(&["export", "--standalone", session_id], timeout) {
+            Ran::Printed(out) => parse_cli_session_export(&out).ok_or(Ran::Failed),
+            other => Err(other),
+        }
     }
 
-    fn failures(&self) -> std::sync::MutexGuard<'_, HashMap<String, (u32, Instant)>> {
+    fn failures(&self) -> std::sync::MutexGuard<'_, HashMap<String, Failures>> {
         self.failures.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// When a session whose export failed lately may be tried again, while
-    /// it may not yet.
-    fn backing_off(&self, sid: &str) -> Option<Instant> {
+    /// it may not yet. One the harness has changed since may be at once.
+    fn backing_off(&self, session: &ExternalSession) -> Option<Instant> {
         self.failures()
-            .get(sid)
-            .map(|(_, retry)| *retry)
+            .get(&session.harness_session_id)
+            .filter(|failed| failed.stamp == session.stamp)
+            .map(|failed| failed.retry)
             .filter(|retry| Instant::now() < *retry)
     }
 
     /// A session's export failed: it waits longer each time before the
     /// next. Returns when it may be tried again.
-    fn failed(&self, sid: &str) -> Instant {
+    fn failed(&self, session: &ExternalSession) -> Instant {
         let mut failures = self.failures();
-        let entry = failures.entry(sid.to_string()).or_insert((0, Instant::now()));
-        entry.0 = entry.0.saturating_add(1);
+        let failed = failures.entry(session.harness_session_id.clone()).or_insert(Failures {
+            count: 0,
+            retry: Instant::now(),
+            stamp: None,
+        });
+        failed.count = failed.count.saturating_add(1);
         let wait = EXPORT_RETRY
-            .saturating_mul(1 << entry.0.min(6).saturating_sub(1))
+            .saturating_mul(1 << failed.count.clamp(1, 8).saturating_sub(1))
             .min(EXPORT_RETRY_MAX);
-        entry.1 = Instant::now() + wait;
-        entry.1
+        failed.retry = Instant::now() + wait;
+        failed.stamp = session.stamp.clone();
+        failed.retry
     }
 }
 
@@ -339,7 +350,7 @@ impl SessionDiscoverer for OpenCodeSessionDiscoverer {
         self.watch_specs.iter().any(spec_has_data)
     }
 
-    fn list_sessions(&self) -> Result<Vec<ExternalSession>, String> {
+    fn list_sessions(&self) -> Result<Listing, String> {
         self.acp.list_via_acp()
     }
 
@@ -358,22 +369,39 @@ impl SessionDiscoverer for OpenCodeSessionDiscoverer {
         unseen.sort_by(|a, b| b.updated.cmp(&a.updated).then_with(|| b.stamp.cmp(&a.stamp)));
         for mut session in unseen {
             let sid = session.harness_session_id.clone();
-            if let Some(retry) = self.backing_off(&sid) {
+            if let Some(retry) = self.backing_off(&session) {
                 found.retry_at = Some(found.retry_at.map_or(retry, |at| at.min(retry)));
                 continue;
             }
-            if started.elapsed() >= CLASSIFY_BUDGET {
+            let left = CLASSIFY_BUDGET.saturating_sub(started.elapsed());
+            if found.changed_after && left.is_zero() {
                 found.more = true;
-                continue;
+                break;
             }
-            found.ran_after = true;
+            // The first export has its full time; the rest only what is left
+            // of the pass's, so a slow old one does not hold back the newest.
+            let first = !found.changed_after;
+            let timeout = if first {
+                self.cli_timeout
+            } else {
+                left.min(self.cli_timeout)
+            };
+            found.changed_after = true;
             // Only the session's own export says it has a message and no
             // parent: a title and a later `updated` come from a rename too.
-            let Some(summary) = self.run_cli_export(&sid) else {
-                // Unknown: never published, and tried again after a wait.
-                let retry = self.failed(&sid);
-                found.retry_at = Some(found.retry_at.map_or(retry, |at| at.min(retry)));
-                continue;
+            let summary = match self.run_cli_export(&sid, timeout) {
+                Ok(summary) => summary,
+                Err(Ran::TimedOut) if !first => {
+                    // Out of the pass's time: first in line on the next.
+                    found.more = true;
+                    break;
+                }
+                Err(_) => {
+                    // Unknown: never published, and tried again after a wait.
+                    let retry = self.failed(&session);
+                    found.retry_at = Some(found.retry_at.map_or(retry, |at| at.min(retry)));
+                    continue;
+                }
             };
             self.failures().remove(&sid);
             if summary.has_parent {
@@ -393,6 +421,23 @@ impl SessionDiscoverer for OpenCodeSessionDiscoverer {
         }
         found
     }
+}
+
+/// How a `session` command ran.
+#[derive(Debug, PartialEq, Eq)]
+enum Ran {
+    Printed(String),
+    TimedOut,
+    Failed,
+}
+
+/// A session whose export failed: how often in a row, when it may be tried
+/// again, and its stamp then.
+#[derive(Debug)]
+struct Failures {
+    count: u32,
+    retry: Instant,
+    stamp: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -841,7 +886,7 @@ mod tests {
         };
 
         let found = discoverer.classify_sessions(sessions(first), &known);
-        assert!(found.ran_after);
+        assert!(found.changed_after);
         let kept_ids = by_id(&found.sessions);
         assert_eq!(kept_ids.get("ses_root"), Some(&false));
         let root = found
@@ -878,7 +923,7 @@ mod tests {
         let calls_before = fake.calls().len();
         let again = discoverer.classify_sessions(sessions(first), &known);
         assert!(fake.calls()[calls_before..].is_empty(), "{:?}", fake.calls());
-        assert!(!again.ran_after, "nothing was exported");
+        assert!(!again.changed_after, "nothing was exported");
         let again_ids = by_id(&again.sessions);
         for quiet in ["ses_empty", "ses_archived", "ses_renamed"] {
             assert!(!again_ids.contains_key(quiet), "{quiet} was handed on as a thread");
@@ -914,10 +959,11 @@ mod tests {
         std::fs::remove_file(fake.dir.join("hang-ses_slow")).unwrap();
         // Not straight away: it waits before it is tried again.
         let found = discoverer.classify_sessions(session(), &KnownSessions::default());
-        assert!(found.sessions.is_empty() && !found.ran_after);
+        assert!(found.sessions.is_empty() && !found.changed_after);
         assert!(found.retry_at.is_some());
-        discoverer.failures().get_mut("ses_slow").unwrap().1 = Instant::now();
-        let found = discoverer.classify_sessions(session(), &KnownSessions::default());
+        // Once the harness has changed it, it is tried at once.
+        let changed = vec![fake.session("ses_slow", "2026-01-01T00:00:02Z")];
+        let found = discoverer.classify_sessions(changed, &KnownSessions::default());
         assert_eq!(by_id(&found.sessions).get("ses_slow"), Some(&false));
     }
 
@@ -930,18 +976,28 @@ mod tests {
                 &format!(r#"{{"info":{{"id":"{id}"}},"messages":[{{}}]}}"#),
             );
         }
-        // The old one's export is held past the pass's budget.
+        // The old one's export would take far longer than the pass has.
         fake.write("hang-ses_old", "");
-        let discoverer = fake.discoverer(Duration::from_millis(2500));
+        let discoverer = fake.discoverer(Duration::from_secs(10));
         let sessions = vec![
             fake.session("ses_old", "2026-01-01T00:00:01Z"),
             fake.session("ses_new", "2026-01-02T00:00:01Z"),
             fake.session("ses_older", "2025-01-01T00:00:01Z"),
         ];
+        let started = Instant::now();
         let found = discoverer.classify_sessions(sessions, &KnownSessions::default());
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "took {:?}",
+            started.elapsed()
+        );
         assert_eq!(by_id(&found.sessions).get("ses_new"), Some(&false));
         assert_eq!(fake.calls().first().map(String::as_str), Some("export ses_new"));
-        assert!(found.more, "the session after the budget waits for the next pass");
+        assert!(found.more, "what is left waits for the next pass");
         assert!(!fake.calls().iter().any(|c| c.ends_with("ses_older")));
+        assert!(
+            discoverer.failures().get("ses_old").is_none(),
+            "running out of the pass's time is no failure"
+        );
     }
 }
