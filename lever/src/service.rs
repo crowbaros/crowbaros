@@ -847,7 +847,10 @@ impl Service {
                         }
                     }
                 }
-                Err(err) => store_failed(log, &err),
+                Err(err) => {
+                    store_failed(log, &err);
+                    create_failed = true;
+                }
             }
         }
         self.discovery_settled = settled;

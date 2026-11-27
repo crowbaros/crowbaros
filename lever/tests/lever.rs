@@ -10936,6 +10936,24 @@ fn an_opencode_session_that_cannot_be_written_is_not_exported_again_and_again() 
 }
 
 #[test]
+fn a_harness_that_cannot_list_brings_no_more_passes_for_its_own_writes() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let starts = store_dir.join("starts.log");
+    // It writes to its store as it starts, and offers no `session/list`.
+    let script = write_script(&dir.0, &json!({ "touch_on_start": starts.to_str().unwrap() }));
+    let mut lever = start_lever_with_discovery(&dir.0, &script, None, &store_dir);
+    std::fs::write(store_dir.join("changed"), "x").unwrap();
+    std::thread::sleep(Duration::from_millis(7000));
+    let started = count_lines(&starts);
+    assert!((1..=2).contains(&started), "started {started} times for one change");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
 fn missing_store_directory_is_promoted_when_created_later() {
     let dir = TempDir::new();
     let store_dir = dir.0.join("nested").join("store");

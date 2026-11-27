@@ -319,31 +319,31 @@ ACP today:
     while a session waits to be tried again or to be written, or a session a
     pass found and could not write, brings another pass after a wait that
     doubles from 1 s to 60 s and starts again once a pass's writes all
-    succeed; such a pass is a follow-up, and brings no run of its own. A change seen once a pass has ended always brings a pass. What
-    a pass cannot tell from its own writes is a write in the moment a pass
-    hands what it found to Lever, or one while that later pass lists; a
-    session's next write brings it. Closing a file
-    written to is not watched, as every write was seen as it was made. Each
-    listing command has a 15 s deadline, runs in a process group of its own
-    that is ended with it, whatever of the group is left ending too, and ends
-    with Lever.
-    Generic ACP harnesses are queried via one-shot `initialize` + paginated
-    `session/list`. For OpenCode, Lever lists across all directories via
-    one-shot `opencode acp` `session/list` and classifies each unseen session
-    with OpenCode's own `opencode session export --standalone <id>`, without
-    reading OpenCode's internal SQLite schema. Sessions are classified newest
-    first. The first export of a pass has the full 15 s, and the rest only
-    what is left of the pass's 2 s, none starting with less than 0.5 s; what is
-    left waits for the next pass, which follows at once. A session becomes a thread only on
-    positive evidence: its export has messages and no parent. Only an export
-    that names a parent marks it a subagent. A session whose export fails is
-    tried again after a wait that doubles each time, from 5 s up to 5 minutes,
-    or at once when the harness changes it.
-    An empty or archived one is remembered in Lever's database with its
-    `updated` stamp, and looked at again only once that stamp changes. Sessions Lever started itself, the sessions it
-    opens to read what the harness offers, the sessions a replacement took over
-    from, and subagents Lever knows about are never listed twice or promoted to
-    threads.
+    succeed; such a pass is a follow-up, and brings no run of its own. A
+    change seen once a pass has ended always brings a pass. What a pass
+    cannot tell from its own writes is a write in the moment a pass hands
+    what it found to Lever, or one while that later pass lists; a session's
+    next write brings it. Closing a file written to is not watched, as every
+    write was seen as it was made. Each listing command has a 15 s deadline,
+    runs in a process group of its own that is ended with it, whatever of
+    the group is left ending too, and ends with Lever. Generic ACP harnesses
+    are queried via one-shot `initialize` + paginated `session/list`. For
+    OpenCode, Lever lists across all directories via one-shot `opencode acp`
+    `session/list` and classifies each unseen session with OpenCode's own
+    `opencode session export --standalone <id>`, without reading OpenCode's
+    internal SQLite schema. Sessions are classified newest first. The first
+    export of a pass has the full 15 s, and the rest only what is left of
+    the pass's 2 s, none starting with less than 0.5 s; what is left waits
+    for the next pass, which follows at once. A session becomes a thread
+    only on positive evidence: its export has messages and no parent. Only
+    an export that names a parent marks it a subagent. A session whose
+    export fails is tried again after a wait that doubles each time, from 5
+    s up to 5 minutes, or at once when the harness changes it. An empty or
+    archived one is remembered in Lever's database with its `updated` stamp,
+    and looked at again only once that stamp changes. Sessions Lever started
+    itself, the sessions it opens to read what the harness offers, the
+    sessions a replacement took over from, and subagents Lever knows about
+    are never listed twice or promoted to threads.
   - **Lazy import on open or send.** A newly discovered session becomes a thread
     in Lever's database with its own `t-...` ID and the folder (`cwd`) it was
     started in, and appears in `list` and live `threads` updates. The first

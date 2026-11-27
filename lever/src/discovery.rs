@@ -1090,6 +1090,26 @@ mod tests {
     }
 
     #[test]
+    fn follow_ups_that_record_what_they_classify_are_not_capped() {
+        let ms = Duration::from_millis;
+        let (mut s, t0) = schedule();
+        s.store_changed(t0, false);
+        assert!(s.take_due(t0 + ms(400)));
+        let progress = PassEnd::Listed {
+            fingerprint: 1,
+            changed_after: true,
+            progressed: true,
+        };
+        let mut now = t0 + ms(400);
+        for pass in 0..(MAX_UNCHANGED_FOLLOWUPS + 3) {
+            s.store_changed(now + ms(10), true);
+            s.pass_finished(now + ms(20), progress);
+            now += ms(500);
+            assert!(s.take_due(now), "follow-up {pass} of a backlog was capped");
+        }
+    }
+
+    #[test]
     fn a_failing_listing_is_tried_once_more_and_no_further() {
         let ms = Duration::from_millis;
         let (mut s, t0) = schedule();
