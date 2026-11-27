@@ -3,18 +3,20 @@
 //! the pinned `agent-client-protocol-schema` v1 types.
 
 use crate::channel::LEVER_VERSION;
+use crate::discovery::{ExternalSession, ImportedAct, ImportedSubagent, ImportedTurn, SessionHistory};
 use crate::opencode;
 use crate::sys;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, Annotations, AvailableCommandInput, CLIENT_METHOD_NAMES, CancelNotification,
     CancelRequestNotification, ClientCapabilities, CloseSessionRequest, ContentBlock, Error as AcpError, ErrorCode,
-    IdleStopReason, Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage, LoadSessionRequest,
-    LoadSessionResponse, NewSessionRequest, NewSessionResponse, Notification, PROTOCOL_LEVEL_METHOD_NAMES,
-    PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId, RequestPermissionOutcome,
-    RequestPermissionRequest, RequestPermissionResponse, Response, Role, SelectedPermissionOutcome, SessionConfigId,
-    SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOptions, SessionId,
-    SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StateUpdate, StopReason,
-    SubagentCapabilities, TextContent, ToolCall, ToolCallContent, ToolCallStatus, ToolCallUpdate, ToolKind,
+    IdleStopReason, Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage, ListSessionsRequest,
+    ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, Notification,
+    PROTOCOL_LEVEL_METHOD_NAMES, PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, Response, Role,
+    SelectedPermissionOutcome, SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigSelectOptions, SessionId, SessionUpdate, SetSessionConfigOptionRequest,
+    SetSessionConfigOptionResponse, StateUpdate, StopReason, SubagentCapabilities, TextContent, ToolCall,
+    ToolCallContent, ToolCallStatus, ToolCallUpdate, ToolKind,
 };
 use agent_client_protocol_schema::{MaybeUndefined, ProtocolVersion};
 use serde_json::{Value, json};
@@ -88,6 +90,9 @@ pub struct HarnessConfig {
     pub program: String,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
+    /// Additional on-disk store paths to watch for sessions started outside
+    /// Lever (used by tests or harnesses without built-in default paths).
+    pub watch_paths: Vec<PathBuf>,
 }
 
 /// One Model option offered by a harness.
@@ -332,6 +337,20 @@ pub enum AcpEvent {
         steer: u64,
         taken: Result<(), String>,
     },
+    /// History of an externally-started session read via `session/load` into
+    /// Lever's harness-agnostic [`SessionHistory`] format.
+    HistoryLoaded {
+        thread_id: String,
+        history: SessionHistory,
+        catalog: Option<ModelCatalog>,
+    },
+    /// Reading an externally-started session's history failed (or is unsupported).
+    HistoryLoadFailed {
+        thread_id: String,
+        message: String,
+    },
+    /// Sessions listed via `session/list` on the already-running harness.
+    SessionsListed(Result<Vec<ExternalSession>, String>),
     Exited,
 }
 
@@ -352,6 +371,17 @@ enum PendingRpc {
         turn: u64,
         session_id: String,
         cwd: String,
+    },
+    /// Loads an externally-started session via `session/load` and captures its
+    /// replayed updates into a [`SessionHistory`].
+    LoadHistory {
+        thread_id: String,
+        session_id: String,
+    },
+    /// Lists sessions on the already-running harness via paginated `session/list`.
+    ListSessions {
+        page: usize,
+        prev_cursor: Option<String>,
     },
     SetModel {
         thread_id: String,
@@ -415,6 +445,7 @@ pub struct AcpHarness {
     next_id: i64,
     initialized: bool,
     supports_load_session: bool,
+    supports_list_sessions: bool,
     supports_close_session: bool,
     supports_delete_session: bool,
     /// The harness says it can steer a message into a running prompt.
@@ -423,6 +454,9 @@ pub struct AcpHarness {
     /// its kind alone, which another harness's `Task` act may share.
     is_opencode: bool,
     probing_models: bool,
+    listing_sessions: bool,
+    live_sessions_acc: Vec<ExternalSession>,
+    live_sessions_seen: HashSet<String>,
     model_config_id: Option<String>,
     mode_config_id: Option<String>,
     pending: HashMap<i64, PendingRpc>,
@@ -445,6 +479,9 @@ pub struct AcpHarness {
     /// Models whose effort levels are being read.
     probing_efforts: HashSet<String>,
     loading_sessions: HashSet<String>,
+    /// Externally-started sessions whose history is currently being replayed
+    /// during `session/load`, keyed by harness session ID.
+    history_loads: HashMap<String, HistoryBuilder>,
     /// Why Lever is ending this harness, when the harness did not end itself.
     fault: Option<&'static str>,
     /// Tool call IDs seen per thread, used only to redact harness error messages
@@ -542,11 +579,15 @@ impl AcpHarness {
             next_id: 1,
             initialized: false,
             supports_load_session: false,
+            supports_list_sessions: false,
             supports_close_session: false,
             supports_delete_session: false,
             supports_steering: false,
             is_opencode: false,
             probing_models: false,
+            listing_sessions: false,
+            live_sessions_acc: Vec::new(),
+            live_sessions_seen: HashSet::new(),
             model_config_id: None,
             mode_config_id: None,
             pending: HashMap::new(),
@@ -560,6 +601,7 @@ impl AcpHarness {
             probe_sessions: VecDeque::new(),
             probing_efforts: HashSet::new(),
             loading_sessions: HashSet::new(),
+            history_loads: HashMap::new(),
             fault: None,
             thread_tool_ids: HashMap::new(),
             thread_subagent_ids: HashMap::new(),
@@ -612,6 +654,18 @@ impl AcpHarness {
 
     pub fn session_for_thread(&self, thread_id: &str) -> Option<&str> {
         self.thread_to_session.get(thread_id).map(String::as_str)
+    }
+
+    /// Session IDs Lever opened as short-lived probes (for Models or efforts),
+    /// plus any sessions currently active or loading, so external session
+    /// discovery never lists Lever's own probe or active sessions.
+    pub fn own_session_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.probe_sessions.iter().cloned().collect();
+        ids.extend(self.session_to_thread.keys().cloned());
+        ids.extend(self.loading_sessions.iter().cloned());
+        ids.extend(self.history_loads.keys().cloned());
+        ids.extend(self.child_to_thread.keys().cloned());
+        ids
     }
 
     /// The subagent session that launched a nested child, if a subagent did.
@@ -744,6 +798,38 @@ impl AcpHarness {
             self.pending.insert(id, PendingRpc::CloseProbe);
             let _ = self.on_writable();
         }
+    }
+
+    /// Whether the live harness is initialized and advertises ACP `session/list`.
+    pub fn can_list_sessions(&self) -> bool {
+        self.initialized && self.supports_list_sessions
+    }
+
+    /// Whether a live `session/list` request is currently in flight.
+    pub fn is_listing_sessions(&self) -> bool {
+        self.listing_sessions
+    }
+
+    /// Starts a paginated `session/list` on the already-running harness so
+    /// discovery does not spawn a second harness process while one is live.
+    pub fn list_sessions(&mut self) -> bool {
+        if !self.can_list_sessions() || self.listing_sessions {
+            return false;
+        }
+        self.listing_sessions = true;
+        self.live_sessions_acc.clear();
+        self.live_sessions_seen.clear();
+        let req = ListSessionsRequest::new();
+        let id = self.send_request(AGENT_METHOD_NAMES.session_list, &req);
+        self.pending.insert(
+            id,
+            PendingRpc::ListSessions {
+                page: 0,
+                prev_cursor: None,
+            },
+        );
+        let _ = self.on_writable();
+        true
     }
 
     /// Reads a session's effort selector from its configuration options, and
@@ -904,7 +990,8 @@ impl AcpHarness {
         // record says was given to another thread since: its ID is empty.
         let taken = sid.is_empty()
             || self.session_to_thread.get(sid).is_some_and(|owner| owner != thread_id)
-            || self.loading_sessions.contains(sid);
+            || self.loading_sessions.contains(sid)
+            || self.history_loads.contains_key(sid);
         if !self.supports_load_session || taken {
             self.request_new_session(thread_id, turn, cwd, true);
             return;
@@ -938,12 +1025,45 @@ impl AcpHarness {
         let _ = self.on_writable();
     }
 
+    /// Loads an externally-started session via `session/load` and captures its
+    /// replayed history into a [`SessionHistory`]. Returns `false` if the
+    /// harness does not advertise `loadSession` or the session is already held
+    /// by another thread.
+    pub fn load_session_history(&mut self, thread_id: &str, session_id: &str, cwd: &str) -> bool {
+        if !self.supports_load_session || session_id.is_empty() {
+            return false;
+        }
+        if self.history_loads.contains_key(session_id)
+            || self.loading_sessions.contains(session_id)
+            || self
+                .session_to_thread
+                .get(session_id)
+                .is_some_and(|owner| owner != thread_id)
+        {
+            return false;
+        }
+        self.history_loads
+            .insert(session_id.to_string(), HistoryBuilder::new(self.is_opencode));
+        let req = LoadSessionRequest::new(SessionId::new(session_id.to_string()), PathBuf::from(cwd));
+        let id = self.send_request(AGENT_METHOD_NAMES.session_load, &req);
+        self.pending.insert(
+            id,
+            PendingRpc::LoadHistory {
+                thread_id: thread_id.to_string(),
+                session_id: session_id.to_string(),
+            },
+        );
+        let _ = self.on_writable();
+        true
+    }
+
     /// Makes `session_id` the session of `thread_id`, and of no other. Says
     /// no when another thread holds it or is loading it: two threads on one
     /// session would have each other's answers. A thread that loaded a
     /// session is no longer loading it when it comes here.
     fn bind_session(&mut self, thread_id: &str, session_id: &str) -> bool {
         if self.loading_sessions.contains(session_id)
+            || self.history_loads.contains_key(session_id)
             || self
                 .session_to_thread
                 .get(session_id)
@@ -1435,6 +1555,17 @@ impl AcpHarness {
                     self.loading_sessions.remove(&session_id);
                     self.request_new_session(&thread_id, turn, &cwd, true);
                 }
+                PendingRpc::LoadHistory { thread_id, session_id } => {
+                    self.history_loads.remove(&session_id);
+                    let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
+                    events.push(AcpEvent::HistoryLoadFailed { thread_id, message });
+                }
+                PendingRpc::ListSessions { .. } => {
+                    self.listing_sessions = false;
+                    self.live_sessions_acc.clear();
+                    self.live_sessions_seen.clear();
+                    events.push(AcpEvent::SessionsListed(Err(self.redact_for_thread(None, &raw_msg))));
+                }
                 PendingRpc::SetModel { thread_id, turn, .. } => {
                     let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
                     events.push(AcpEvent::ModelSetFailed {
@@ -1520,6 +1651,7 @@ impl AcpHarness {
                 Ok(resp) if resp.protocol_version == ProtocolVersion::V1 => {
                     self.initialized = true;
                     self.supports_load_session = resp.agent_capabilities.load_session;
+                    self.supports_list_sessions = resp.agent_capabilities.session_capabilities.list.is_some();
                     self.supports_close_session = resp.agent_capabilities.session_capabilities.close.is_some();
                     self.supports_delete_session = resp.agent_capabilities.session_capabilities.delete.is_some();
                     self.supports_steering = steering_supported(resp.meta.as_ref());
@@ -1656,6 +1788,104 @@ impl AcpHarness {
                         });
                     }
                     _ => self.request_new_session(&thread_id, turn, &cwd, true),
+                }
+            }
+            PendingRpc::LoadHistory { thread_id, session_id } => {
+                let builder = self.history_loads.remove(&session_id);
+                match serde_json::from_value::<LoadSessionResponse>(result) {
+                    Ok(resp) if self.bind_session(&thread_id, &session_id) => {
+                        let mut catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
+                        let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
+                        if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
+                            self.model_config_id = Some(cid.clone());
+                        }
+                        if let Some(ref m) = current_model {
+                            self.session_models.insert(session_id.clone(), m.clone());
+                        }
+                        self.take_effort(&session_id, resp.config_options.as_deref().unwrap_or(&[]));
+                        let effort = self.session_efforts.get(&session_id).map(|e| e.current.clone());
+                        let modes = self.take_modes(&session_id, resp.config_options.as_deref());
+                        let current_mode = modes.as_ref().and_then(|s| s.current.clone());
+                        if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
+                            cat.modes = selector.modes.clone();
+                        }
+                        let (mut history, tool_ids, subagent_ids) = builder
+                            .unwrap_or_else(|| HistoryBuilder::new(self.is_opencode))
+                            .finish(current_model.clone(), effort, current_mode);
+                        if !tool_ids.is_empty() {
+                            self.remember_tool_ids(&thread_id, tool_ids);
+                        }
+                        if !subagent_ids.is_empty() {
+                            for cid in &subagent_ids {
+                                let _ = self.register_child(&thread_id, cid, None);
+                            }
+                        }
+                        if let Some(ref title) = history.title {
+                            let clean = title.trim();
+                            if clean.is_empty() {
+                                history.title = None;
+                            }
+                        }
+                        events.push(AcpEvent::HistoryLoaded {
+                            thread_id,
+                            history,
+                            catalog,
+                        });
+                    }
+                    Ok(_) => events.push(AcpEvent::HistoryLoadFailed {
+                        thread_id,
+                        message: "The session is already in use by another thread.".to_string(),
+                    }),
+                    Err(_) => events.push(AcpEvent::HistoryLoadFailed {
+                        thread_id,
+                        message: "The harness returned an invalid session response.".to_string(),
+                    }),
+                }
+            }
+            PendingRpc::ListSessions { page, prev_cursor } => {
+                match serde_json::from_value::<ListSessionsResponse>(result) {
+                    Ok(resp) => {
+                        let mut added = 0;
+                        for info in &resp.sessions {
+                            if let Some(ext) = crate::discovery::session_info_to_external(info)
+                                && self.live_sessions_seen.insert(ext.harness_session_id.clone())
+                            {
+                                self.live_sessions_acc.push(ext);
+                                added += 1;
+                            }
+                        }
+                        let next = resp
+                            .next_cursor
+                            .filter(|c| !c.is_empty() && Some(c) != prev_cursor.as_ref());
+                        if added > 0
+                            && page + 1 < 32
+                            && let Some(cursor) = next
+                        {
+                            let req = ListSessionsRequest::new().cursor(cursor.clone());
+                            let id = self.send_request(AGENT_METHOD_NAMES.session_list, &req);
+                            self.pending.insert(
+                                id,
+                                PendingRpc::ListSessions {
+                                    page: page + 1,
+                                    prev_cursor: Some(cursor),
+                                },
+                            );
+                            let _ = self.on_writable();
+                        } else {
+                            self.listing_sessions = false;
+                            let sessions = std::mem::take(&mut self.live_sessions_acc);
+                            self.live_sessions_seen.clear();
+                            events.push(AcpEvent::SessionsListed(Ok(sessions)));
+                        }
+                    }
+                    Err(_) => {
+                        self.listing_sessions = false;
+                        self.live_sessions_acc.clear();
+                        self.live_sessions_seen.clear();
+                        events.push(AcpEvent::SessionsListed(Err(
+                            "The harness returned an invalid session list response.".to_string(),
+                        )));
+                    }
                 }
             }
             PendingRpc::SetModel {
@@ -2302,6 +2532,31 @@ impl AcpHarness {
         let Some(raw_update) = params.get("update") else {
             return;
         };
+        // When importing an externally-started session's history, capture the
+        // replayed updates into the session's `HistoryBuilder` instead of
+        // dropping them or streaming them as live turn events.
+        if let Some(builder) = self.history_loads.get_mut(session_id) {
+            if let Ok(SessionUpdate::AvailableCommandsUpdate(update)) =
+                serde_json::from_value::<SessionUpdate>(raw_update.clone())
+            {
+                let thread_id = self.pending.values().find_map(|p| match p {
+                    PendingRpc::LoadHistory {
+                        thread_id,
+                        session_id: loading,
+                    } if loading == session_id => Some(thread_id.clone()),
+                    _ => None,
+                });
+                if let Some(thread_id) = thread_id {
+                    events.push(AcpEvent::Commands {
+                        thread_id: Some(thread_id),
+                        commands: harness_commands(update.available_commands),
+                    });
+                }
+            } else {
+                builder.push_update(raw_update);
+            }
+            return;
+        }
         // Ignore history replayed by the harness while `session/load` is in flight:
         // Lever already owns the authoritative record in SQLite. The session's
         // commands are no history, and are kept, as are those of a session
@@ -2714,6 +2969,326 @@ fn steer_taken(result: &Value) -> Result<(), String> {
         Some("promptRequired") => Err(STEER_TOO_LATE.to_string()),
         _ => Err("The Agent did not take your message into its turn. Send it again.".to_string()),
     }
+}
+
+/// Builds a sanitized environment for one-shot session discovery commands:
+/// never enables free hosted Models, never contacts `models.opencode.ai`,
+/// disables self-update, and removes `PWD` so `.current_dir(...)` is honored.
+pub fn build_discovery_env(config: &HarnessConfig) -> (Vec<(String, String)>, Vec<&'static str>) {
+    let existing_config = config
+        .env
+        .iter()
+        .rev()
+        .find(|(k, _)| k == "OPENCODE_CONFIG_CONTENT")
+        .map(|(_, v)| v.clone())
+        .or_else(|| std::env::var("OPENCODE_CONFIG_CONTENT").ok());
+    let mut env_set: Vec<(String, String)> = config
+        .env
+        .iter()
+        .filter(|(k, _)| {
+            k != "OPENCODE_CONFIG_CONTENT"
+                && k != "OPENCODE_DISABLE_FREE_MODELS"
+                && k != "OPENCODE_DISABLE_MODELS_FETCH"
+                && k != "PWD"
+        })
+        .cloned()
+        .collect();
+    let mut cfg_map = existing_config
+        .as_deref()
+        .and_then(opencode::parse_jsonc)
+        .and_then(|val| val.as_object().cloned())
+        .unwrap_or_default();
+    cfg_map.insert("update".to_string(), json!("disable"));
+    env_set.push((
+        "OPENCODE_CONFIG_CONTENT".to_string(),
+        Value::Object(cfg_map).to_string(),
+    ));
+    env_set.push(("OPENCODE_DISABLE_FREE_MODELS".to_string(), "1".to_string()));
+    env_set.push(("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "1".to_string()));
+    (env_set, vec!["PWD"])
+}
+
+/// Accumulates replayed ACP `session/update` notifications during `session/load`
+/// for an externally-started session into Lever's harness-agnostic
+/// [`SessionHistory`].
+struct HistoryBuilder {
+    is_opencode: bool,
+    title: Option<String>,
+    turns: Vec<ImportedTurn>,
+    in_user_message: bool,
+    last_agent_message_id: Option<String>,
+    tool_ids: Vec<String>,
+    subagent_ids: Vec<String>,
+    /// Tracks subagent launcher calls by `toolCallId` so their `ToolCallUpdate`
+    /// output attaches to the imported subagent instead of creating a raw act.
+    launcher_calls: HashMap<String, (usize, usize)>,
+    pending_launchers: HashMap<String, (Option<String>, Option<String>)>,
+}
+
+impl HistoryBuilder {
+    fn new(is_opencode: bool) -> Self {
+        Self {
+            is_opencode,
+            title: None,
+            turns: Vec::new(),
+            in_user_message: false,
+            last_agent_message_id: None,
+            tool_ids: Vec::new(),
+            subagent_ids: Vec::new(),
+            launcher_calls: HashMap::new(),
+            pending_launchers: HashMap::new(),
+        }
+    }
+
+    fn current_turn_mut(&mut self) -> (usize, &mut ImportedTurn) {
+        if self.turns.is_empty() {
+            self.turns.push(ImportedTurn {
+                message: String::new(),
+                answer: String::new(),
+                acts: Vec::new(),
+                notes: Vec::new(),
+                subagents: Vec::new(),
+                origin: Some("harness".to_string()),
+            });
+        }
+        let idx = self.turns.len() - 1;
+        (idx, &mut self.turns[idx])
+    }
+
+    fn push_update(&mut self, raw_update: &Value) {
+        let msg_id = raw_update.get("messageId").and_then(Value::as_str).map(str::to_string);
+        match serde_json::from_value::<SessionUpdate>(raw_update.clone()) {
+            Ok(SessionUpdate::UserMessageChunk(chunk)) => {
+                if let Some(text) = content_block_text(&chunk.content) {
+                    if !self.in_user_message || self.turns.is_empty() {
+                        self.turns.push(ImportedTurn {
+                            message: text,
+                            answer: String::new(),
+                            acts: Vec::new(),
+                            notes: Vec::new(),
+                            subagents: Vec::new(),
+                            origin: None,
+                        });
+                        self.in_user_message = true;
+                        self.last_agent_message_id = None;
+                    } else if let Some(turn) = self.turns.last_mut() {
+                        turn.message.push_str(&text);
+                    }
+                }
+            }
+            Ok(SessionUpdate::AgentMessageChunk(chunk)) => {
+                self.in_user_message = false;
+                if let Some(text) = content_block_text(&chunk.content) {
+                    let sep_needed = self.last_agent_message_id.is_some()
+                        && msg_id.is_some()
+                        && self.last_agent_message_id != msg_id;
+                    let (_, turn) = self.current_turn_mut();
+                    if sep_needed && !turn.answer.is_empty() && !turn.answer.ends_with('\n') {
+                        turn.answer.push_str("\n\n");
+                    }
+                    turn.answer.push_str(&text);
+                    if msg_id.is_some() {
+                        self.last_agent_message_id = msg_id;
+                    }
+                }
+            }
+            Ok(SessionUpdate::ToolCall(tc)) => {
+                self.in_user_message = false;
+                let call_id = tc.tool_call_id.0.as_ref().to_string();
+                self.tool_ids.push(call_id.clone());
+                if is_opencode_subagent_tool(&tc.title, tc.kind, tc.raw_input.as_ref(), raw_update, self.is_opencode) {
+                    let (title, prompt, child_sid) =
+                        extract_subagent_call_fields(tc.raw_input.as_ref(), tc.raw_output.as_ref());
+                    if let Some(cid) = child_sid {
+                        self.record_subagent_call(&call_id, cid, title, prompt, tc.status);
+                    } else {
+                        self.pending_launchers.insert(call_id, (title, prompt));
+                    }
+                    return;
+                }
+                let detail = tool_detail(&tc.content, tc.raw_output.as_ref(), tc.raw_input.as_ref());
+                let kind = map_tool_kind(tc.kind).to_string();
+                let state = map_tool_status(tc.status).to_string();
+                let (_, turn) = self.current_turn_mut();
+                if let Some(existing) = turn.acts.iter_mut().find(|a| a.harness_call_id == call_id) {
+                    existing.kind = kind;
+                    existing.title = tc.title;
+                    existing.state = state;
+                    if detail.is_some() {
+                        existing.detail = detail;
+                    }
+                } else {
+                    turn.acts.push(ImportedAct {
+                        harness_call_id: call_id,
+                        kind,
+                        title: tc.title,
+                        state,
+                        detail,
+                    });
+                }
+            }
+            Ok(SessionUpdate::ToolCallUpdate(tcu)) => {
+                self.in_user_message = false;
+                let call_id = tcu.tool_call_id.0.as_ref().to_string();
+                self.tool_ids.push(call_id.clone());
+                if let Some((turn_idx, sub_idx)) = self.launcher_calls.get(&call_id).copied() {
+                    if let Some(sub) = self.turns.get_mut(turn_idx).and_then(|t| t.subagents.get_mut(sub_idx))
+                        && let Some(status) = tcu.fields.status
+                    {
+                        sub.state = match status {
+                            ToolCallStatus::Failed => "failed".to_string(),
+                            _ => "done".to_string(),
+                        };
+                    }
+                    return;
+                }
+                if let Some((prev_title, prev_prompt)) = self.pending_launchers.remove(&call_id) {
+                    let (new_title, new_prompt, child_sid) =
+                        extract_subagent_call_fields(tcu.fields.raw_input.as_ref(), tcu.fields.raw_output.as_ref());
+                    let child_sid = child_sid.or_else(|| {
+                        tool_detail(
+                            tcu.fields.content.as_deref().unwrap_or(&[]),
+                            tcu.fields.raw_output.as_ref(),
+                            tcu.fields.raw_input.as_ref(),
+                        )
+                        .and_then(|d| extract_session_id_from_text(&d))
+                    });
+                    let title = new_title.or(prev_title);
+                    let prompt = new_prompt.or(prev_prompt);
+                    if let Some(cid) = child_sid {
+                        self.record_subagent_call(
+                            &call_id,
+                            cid,
+                            title,
+                            prompt,
+                            tcu.fields.status.unwrap_or(ToolCallStatus::Completed),
+                        );
+                    } else if !matches!(
+                        tcu.fields.status,
+                        Some(ToolCallStatus::Completed | ToolCallStatus::Failed)
+                    ) {
+                        self.pending_launchers.insert(call_id, (title, prompt));
+                    }
+                    return;
+                }
+                let detail = tool_detail(
+                    tcu.fields.content.as_deref().unwrap_or(&[]),
+                    tcu.fields.raw_output.as_ref(),
+                    tcu.fields.raw_input.as_ref(),
+                );
+                let kind = tcu.fields.kind.map(|k| map_tool_kind(k).to_string());
+                let state = tcu.fields.status.map(|s| map_tool_status(s).to_string());
+                let (_, turn) = self.current_turn_mut();
+                if let Some(existing) = turn.acts.iter_mut().find(|a| a.harness_call_id == call_id) {
+                    if let Some(k) = kind {
+                        existing.kind = k;
+                    }
+                    if let Some(t) = tcu.fields.title {
+                        existing.title = t;
+                    }
+                    if let Some(s) = state {
+                        existing.state = s;
+                    }
+                    if detail.is_some() {
+                        existing.detail = detail;
+                    }
+                } else {
+                    turn.acts.push(ImportedAct {
+                        harness_call_id: call_id,
+                        kind: kind.unwrap_or_else(|| "other".to_string()),
+                        title: tcu.fields.title.unwrap_or_else(|| "Act".to_string()),
+                        state: state.unwrap_or_else(|| "done".to_string()),
+                        detail,
+                    });
+                }
+            }
+            Ok(SessionUpdate::SessionInfoUpdate(info)) => {
+                if let MaybeUndefined::Value(title) = info.title {
+                    let clean = title.trim();
+                    if !clean.is_empty() {
+                        self.title = Some(clean.to_string());
+                    }
+                }
+            }
+            Ok(
+                SessionUpdate::AgentThoughtChunk(_)
+                | SessionUpdate::CurrentModeUpdate(_)
+                | SessionUpdate::UsageUpdate(_)
+                | SessionUpdate::Plan(_)
+                | SessionUpdate::ConfigOptionUpdate(_)
+                | SessionUpdate::AvailableCommandsUpdate(_)
+                | SessionUpdate::Notice(_),
+            ) => {}
+            _ => {}
+        }
+    }
+
+    fn record_subagent_call(
+        &mut self,
+        call_id: &str,
+        child_sid: String,
+        title: Option<String>,
+        prompt: Option<String>,
+        status: ToolCallStatus,
+    ) {
+        self.subagent_ids.push(child_sid.clone());
+        let state = match status {
+            ToolCallStatus::Failed => "failed".to_string(),
+            _ => "done".to_string(),
+        };
+        let (turn_idx, turn) = self.current_turn_mut();
+        let sub_idx = turn.subagents.len();
+        turn.subagents.push(ImportedSubagent {
+            harness_session_id: child_sid,
+            title: title
+                .filter(|t| !t.trim().is_empty())
+                .unwrap_or_else(|| "Subagent".to_string()),
+            state,
+            error: None,
+            prompt,
+        });
+        self.launcher_calls.insert(call_id.to_string(), (turn_idx, sub_idx));
+    }
+
+    fn finish(
+        mut self,
+        model: Option<String>,
+        effort: Option<String>,
+        mode: Option<String>,
+    ) -> (SessionHistory, Vec<String>, Vec<String>) {
+        // Normalize any still-pending replayed acts to done since the historical
+        // turn already completed before import.
+        for turn in &mut self.turns {
+            for act in &mut turn.acts {
+                if matches!(act.state.as_str(), "pending" | "working") {
+                    act.state = "done".to_string();
+                }
+            }
+        }
+        (
+            SessionHistory {
+                title: self.title,
+                turns: self.turns,
+                model,
+                effort,
+                mode,
+            },
+            self.tool_ids,
+            self.subagent_ids,
+        )
+    }
+}
+
+/// Extracts a `sessionID: <id>` token from a subagent launcher's text content
+/// when `rawOutput` omitted structured metadata.
+fn extract_session_id_from_text(text: &str) -> Option<String> {
+    let idx = text.find("sessionID:")?;
+    let rest = text[idx + "sessionID:".len()..].trim_start();
+    let id: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+        .collect();
+    (!id.is_empty()).then_some(id)
 }
 
 /// Builds the environment overrides Lever passes to a harness child:
@@ -3813,5 +4388,85 @@ mod tests {
             extract_opencode_error(Some(&json!({ "message": "boom" }))).as_deref(),
             Some("boom")
         );
+    }
+
+    #[test]
+    fn history_builder_reconstructs_multi_turn_replay_with_acts_and_subagents() {
+        let mut b = HistoryBuilder::new(true);
+        b.push_update(&json!({
+            "sessionUpdate": "user_message_chunk",
+            "content": { "type": "text", "text": "Hello " }
+        }));
+        b.push_update(&json!({
+            "sessionUpdate": "user_message_chunk",
+            "content": { "type": "text", "text": "world" }
+        }));
+        b.push_update(&json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "call_1",
+            "title": "echo hi",
+            "kind": "execute",
+            "status": "pending",
+            "rawInput": { "command": "echo hi" }
+        }));
+        b.push_update(&json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "content": [{ "type": "content", "content": { "type": "text", "text": "hi\n" } }]
+        }));
+        b.push_update(&json!({
+            "sessionUpdate": "agent_message_chunk",
+            "messageId": "m1",
+            "content": { "type": "text", "text": "Done: hi" }
+        }));
+        b.push_update(&json!({
+            "sessionUpdate": "user_message_chunk",
+            "content": { "type": "text", "text": "Spawn helper" }
+        }));
+        b.push_update(&json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "call_sub",
+            "name": "subagent",
+            "title": "subagent",
+            "kind": "think",
+            "status": "pending",
+            "rawInput": { "description": "Child helper", "prompt": "Check logs" }
+        }));
+        b.push_update(&json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call_sub",
+            "status": "completed",
+            "content": [{ "type": "content", "content": { "type": "text", "text": "Working (sessionID: ses_child_1)" } }]
+        }));
+        b.push_update(&json!({
+            "sessionUpdate": "agent_message_chunk",
+            "messageId": "m2",
+            "content": { "type": "text", "text": "Helper finished." }
+        }));
+        b.push_update(&json!({
+            "sessionUpdate": "session_info_update",
+            "title": "Terminal session"
+        }));
+
+        let (history, tool_ids, sub_ids) = b.finish(Some("stub/stub-1".into()), Some("default".into()), None);
+        assert_eq!(history.title.as_deref(), Some("Terminal session"));
+        assert_eq!(history.model.as_deref(), Some("stub/stub-1"));
+        assert_eq!(history.turns.len(), 2);
+        assert_eq!(history.turns[0].message, "Hello world");
+        assert_eq!(history.turns[0].answer, "Done: hi");
+        assert_eq!(history.turns[0].acts.len(), 1);
+        assert_eq!(history.turns[0].acts[0].title, "echo hi");
+        assert_eq!(history.turns[0].acts[0].state, "done");
+        assert_eq!(history.turns[0].acts[0].detail.as_deref(), Some("hi\n"));
+        assert_eq!(history.turns[1].message, "Spawn helper");
+        assert_eq!(history.turns[1].answer, "Helper finished.");
+        assert!(history.turns[1].acts.is_empty(), "subagent launcher is not a raw act");
+        assert_eq!(history.turns[1].subagents.len(), 1);
+        assert_eq!(history.turns[1].subagents[0].harness_session_id, "ses_child_1");
+        assert_eq!(history.turns[1].subagents[0].title, "Child helper");
+        assert_eq!(history.turns[1].subagents[0].prompt.as_deref(), Some("Check logs"));
+        assert!(tool_ids.contains(&"call_1".to_string()));
+        assert_eq!(sub_ids, vec!["ses_child_1".to_string()]);
     }
 }

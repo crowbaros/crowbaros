@@ -98,10 +98,12 @@ impl RunningLever {
             &person_uid.to_string(),
         ]);
         cmd.args(extra);
-        // Lever reads the person's OpenCode settings: in a test, the person
-        // has none, unless the test gives them some.
+        // Lever reads the person's OpenCode settings and store: in a test, the
+        // person has none, unless the test gives them some.
         let home = dir.join("lever-home");
-        cmd.env("HOME", &home).env("XDG_CONFIG_HOME", home.join(".config"));
+        cmd.env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_DATA_HOME", home.join(".local/share"));
         for key in ["OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT"] {
             cmd.env_remove(key);
         }
@@ -9522,6 +9524,610 @@ fn a_message_the_harness_had_yet_to_answer_keeps_its_place_ahead_of_one_sent_aft
     assert_eq!(first["reply"], "queued", "{first}");
     assert_eq!(text_of(&turn_events(&mut peer, &thread, turn + 1)), "Changed.");
     assert_eq!(text_of(&turn_events(&mut peer, &thread, turn + 2)), "This too.");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+fn start_lever_with_discovery(dir: &Path, script: &Path, log: Option<&Path>, watch_dir: &Path) -> RunningLever {
+    let mut extra: Vec<String> = vec![
+        "--harness".into(),
+        STUB_BIN.into(),
+        "--harness-name".into(),
+        "Stub".into(),
+        "--harness-arg".into(),
+        "--script".into(),
+        "--harness-arg".into(),
+        script.to_str().unwrap().into(),
+        "--harness-watch".into(),
+        watch_dir.to_str().unwrap().into(),
+        "--discovery-debounce-ms".into(),
+        "40".into(),
+    ];
+    if let Some(log) = log {
+        extra.push("--harness-arg".into());
+        extra.push("--log".into());
+        extra.push("--harness-arg".into());
+        extra.push(log.to_str().unwrap().into());
+    }
+    RunningLever::start_with_extra(dir, my_uid(), my_uid(), &extra)
+}
+
+fn write_sessions_file(path: &Path, sessions: &Value) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(sessions).unwrap()).unwrap();
+    std::fs::rename(&tmp, path).unwrap();
+}
+
+#[test]
+fn external_sessions_appear_on_store_change_without_keeping_harness_running_and_import_on_resume() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("sessions.json");
+    let rpc_log = dir.0.join("rpc.jsonl");
+    let term_cwd = dir.0.join("project-a");
+    std::fs::create_dir_all(&term_cwd).unwrap();
+
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "list_page_size": 1,
+            "models": [
+                { "id": "stub/stub-1", "name": "Stub 1", "efforts": ["low", "high"] }
+            ],
+            "turns": [
+                {
+                    "match": "follow-up from drawer",
+                    "steps": [{ "kind": "text", "text": "Continued in the same session." }]
+                }
+            ]
+        }),
+    );
+
+    let mut lever = start_lever_with_discovery(&dir.0, &script, Some(&rpc_log), &store_dir);
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    let initial = read_frame(&mut watcher).unwrap();
+    assert_eq!(initial["reply"], "list");
+    assert_eq!(initial["threads"].as_array().unwrap().len(), 0);
+
+    // Write an external session, a second external session (to exercise pagination),
+    // and two subagent sessions that must never become threads.
+    write_sessions_file(
+        &sessions_file,
+        &json!([
+            {
+                "session_id": "ses_term_1",
+                "cwd": term_cwd.to_str().unwrap(),
+                "title": "Terminal draft",
+                "updated_at": "2026-04-10T12:00:00Z",
+                "history": [
+                    { "kind": "user_text", "text": "Check status in terminal" },
+                    {
+                        "kind": "act",
+                        "id": "call_term_1",
+                        "title": "git status",
+                        "tool_kind": "execute",
+                        "status": "in_progress"
+                    },
+                    {
+                        "kind": "act_update",
+                        "id": "call_term_1",
+                        "status": "completed",
+                        "content": "clean tree"
+                    },
+                    { "kind": "text", "text": "The working tree is clean." },
+                    { "kind": "user_text", "text": "Inspect with a helper" },
+                    {
+                        "kind": "act",
+                        "id": "call_sub_1",
+                        "title": "subagent",
+                        "tool_kind": "think",
+                        "status": "pending",
+                        "raw_input": { "description": "Helper", "prompt": "Look around" }
+                    },
+                    {
+                        "kind": "act_update",
+                        "id": "call_sub_1",
+                        "status": "completed",
+                        "content": "Helper done (sessionID: ses_term_child)"
+                    },
+                    { "kind": "text", "text": "Helper reported back." }
+                ]
+            },
+            {
+                "session_id": "ses_term_child",
+                "cwd": term_cwd.to_str().unwrap(),
+                "title": "Subagent session",
+                "is_subagent": true,
+                "history": [
+                    { "kind": "user_text", "text": "Look around" },
+                    { "kind": "text", "text": "Done." }
+                ]
+            },
+            {
+                "session_id": "ses_term_child_2",
+                "cwd": term_cwd.to_str().unwrap(),
+                "title": "Subagent with parent",
+                "parent_session_id": "ses_term_1",
+                "history": []
+            },
+            {
+                "session_id": "ses_term_2",
+                "cwd": "/tmp",
+                "title": "Second terminal session",
+                "updated_at": "2026-04-10T11:00:00Z",
+                "history": [
+                    { "kind": "user_text", "text": "Hello two" },
+                    { "kind": "text", "text": "Reply two" }
+                ]
+            }
+        ]),
+    );
+
+    let pushed = read_until(&mut watcher, |f| {
+        f["event"] == "threads" && f["threads"].as_array().is_some_and(|t| t.len() == 2)
+    });
+    let threads = pushed["threads"].as_array().unwrap();
+    let pushed_blob = serde_json::to_string(&pushed).unwrap();
+    assert!(
+        !pushed_blob.contains("ses_term_"),
+        "harness session ID leaked: {pushed_blob}"
+    );
+
+    let term1 = threads
+        .iter()
+        .find(|t| t["cwd"] == term_cwd.to_str().unwrap())
+        .expect("discovered thread in project-a");
+    assert_eq!(term1["title"], "Terminal draft");
+    assert_eq!(term1["state"], "idle");
+    let term1_id = term1["thread"].as_str().unwrap().to_string();
+    assert!(term1_id.starts_with("t-"), "expected Lever thread ID, got {term1_id}");
+
+    // Discovery must not keep the harness process running.
+    let mut peer = handshake(&lever.person);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut peer, &json!({ "op": "status" })).unwrap();
+    let status = read_frame(&mut peer).unwrap();
+    assert_eq!(
+        status["harness_started"], false,
+        "discovery must not keep harness running: {status}"
+    );
+
+    // Updating the external session's title while unopened updates the list.
+    let mut updated_sessions: Value = serde_json::from_slice(&std::fs::read(&sessions_file).unwrap()).unwrap();
+    updated_sessions[0]["title"] = json!("Terminal renamed");
+    updated_sessions[0]["updated_at"] = json!("2026-04-10T12:05:00Z");
+    write_sessions_file(&sessions_file, &updated_sessions);
+    let renamed = read_until(&mut watcher, |f| {
+        f["event"] == "threads"
+            && f["threads"].as_array().is_some_and(|ts| {
+                ts.iter()
+                    .any(|t| t["thread"] == term1_id && t["title"] == "Terminal renamed")
+            })
+    });
+    assert!(renamed["threads"].as_array().unwrap().len() == 2);
+
+    // Opening (`resume`) imports the full multi-turn history into Lever's record.
+    let record = resume(&mut peer, &term1_id);
+    let record_blob = serde_json::to_string(&record).unwrap();
+    assert!(
+        !record_blob.contains("ses_term_"),
+        "harness session ID leaked into resumed record: {record_blob}"
+    );
+    let turns = record["turns"].as_array().unwrap();
+    assert_eq!(turns.len(), 2, "expected 2 imported turns: {record}");
+    assert_eq!(turns[0]["message"], "Check status in terminal");
+    assert_eq!(turns[0]["answer"], "The working tree is clean.");
+    assert_eq!(turns[0]["state"], "done");
+    assert_eq!(turns[0]["acts"].as_array().unwrap().len(), 1);
+    assert_eq!(turns[0]["acts"][0]["title"], "git status");
+    assert_eq!(turns[0]["acts"][0]["detail"], "clean tree");
+    assert_eq!(turns[1]["message"], "Inspect with a helper");
+    assert_eq!(turns[1]["answer"], "Helper reported back.");
+    assert_eq!(turns[1]["subagents"].as_array().unwrap().len(), 1);
+    assert_eq!(turns[1]["subagents"][0]["title"], "Helper");
+    assert_eq!(turns[1]["subagents"][0]["messages"][0]["role"], "prompt");
+    assert_eq!(turns[1]["subagents"][0]["messages"][0]["text"], "Look around");
+
+    // Sending from Lever continues the SAME harness session as turn 3.
+    let (sent_thread, sent_turn) = send(&mut peer, Some(&term1_id), "follow-up from drawer");
+    assert_eq!(sent_thread, term1_id);
+    assert_eq!(sent_turn, 3);
+    let events = turn_events(&mut peer, &term1_id, sent_turn);
+    assert_eq!(text_of(&events), "Continued in the same session.");
+    assert_eq!(events.last().unwrap()["event"], "done");
+
+    let rpc = std::fs::read_to_string(&rpc_log).unwrap();
+    assert!(
+        rpc.contains("\"method\":\"session/load\"") && rpc.contains("\"sessionId\":\"ses_term_1\""),
+        "expected session/load on ses_term_1 in rpc log:\n{rpc}"
+    );
+    assert!(
+        rpc.contains("\"method\":\"session/prompt\"") && rpc.contains("\"sessionId\":\"ses_term_1\""),
+        "expected session/prompt on ses_term_1 in rpc log:\n{rpc}"
+    );
+
+    // After restarting Lever, re-opening the already-imported thread reads from
+    // SQLite without starting the harness.
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+
+    // Remove sessions_file so startup doesn't run a scan; re-opening must still
+    // serve the imported record from SQLite with harness_started == false.
+    std::fs::remove_file(&sessions_file).unwrap();
+    let mut lever = start_lever_with_discovery(&dir.0, &script, Some(&rpc_log), &store_dir);
+    let mut peer = handshake(&lever.person);
+    let reopened = resume(&mut peer, &term1_id);
+    assert_eq!(reopened["turns"].as_array().unwrap().len(), 3, "{reopened}");
+    assert_eq!(reopened["turns"][0]["message"], "Check status in terminal");
+    assert_eq!(reopened["turns"][2]["answer"], "Continued in the same session.");
+    write_frame(&mut peer, &json!({ "op": "status" })).unwrap();
+    let status = read_frame(&mut peer).unwrap();
+    assert_eq!(
+        status["harness_started"], false,
+        "resuming imported record must not start harness"
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn external_session_sent_directly_before_resume_imports_history_first() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("sessions.json");
+    let rpc_log = dir.0.join("rpc.jsonl");
+
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "turns": [
+                {
+                    "match": "second message",
+                    "steps": [{ "kind": "text", "text": "Second answer." }]
+                }
+            ]
+        }),
+    );
+
+    let mut lever = start_lever_with_discovery(&dir.0, &script, Some(&rpc_log), &store_dir);
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+
+    write_sessions_file(
+        &sessions_file,
+        &json!([
+            {
+                "session_id": "ses_direct_send",
+                "cwd": "/tmp",
+                "title": "Direct send test",
+                "updated_at": "2026-04-10T12:00:00Z",
+                "history": [
+                    { "kind": "user_text", "text": "First message in terminal" },
+                    { "kind": "text", "text": "First answer in terminal." }
+                ]
+            }
+        ]),
+    );
+
+    let pushed = read_until(&mut watcher, |f| {
+        f["event"] == "threads" && f["threads"].as_array().is_some_and(|t| t.len() == 1)
+    });
+    let tid = pushed["threads"][0]["thread"].as_str().unwrap().to_string();
+
+    // Send directly without calling `resume` first: history is imported as turn 1
+    // and this message runs as turn 2.
+    let mut peer = handshake(&lever.person);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let (sent_thread, sent_turn) = send(&mut peer, Some(&tid), "second message");
+    assert_eq!(sent_thread, tid);
+    assert_eq!(sent_turn, 2, "imported history should occupy turn 1");
+    let events = turn_events(&mut peer, &tid, sent_turn);
+    assert_eq!(text_of(&events), "Second answer.");
+
+    let record = resume(&mut peer, &tid);
+    let turns = record["turns"].as_array().unwrap();
+    assert_eq!(turns.len(), 2, "{record}");
+    assert_eq!(turns[0]["message"], "First message in terminal");
+    assert_eq!(turns[0]["answer"], "First answer in terminal.");
+    assert_eq!(turns[1]["message"], "second message");
+    assert_eq!(turns[1]["answer"], "Second answer.");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn lever_started_session_and_its_subagent_are_never_duplicated_by_discovery() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("sessions.json");
+    let rpc_log = dir.0.join("rpc.jsonl");
+
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "turns": [
+                {
+                    "match": "start from lever",
+                    "steps": [
+                        {
+                            "kind": "subagent_start",
+                            "id": "ses_lever_sub_1",
+                            "title": "Child",
+                            "prompt": "Work"
+                        },
+                        {
+                            "kind": "subagent_end",
+                            "subagent": "ses_lever_sub_1",
+                            "status": "completed"
+                        },
+                        { "kind": "text", "text": "Parent finished." }
+                    ]
+                }
+            ]
+        }),
+    );
+
+    let mut lever = start_lever_with_discovery(&dir.0, &script, Some(&rpc_log), &store_dir);
+    let mut peer = handshake(&lever.person);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+
+    // Start a thread from Lever itself.
+    let (lever_tid, turn) = send(&mut peer, None, "start from lever");
+    let events = turn_events(&mut peer, &lever_tid, turn);
+    assert_eq!(events.last().unwrap()["event"], "done");
+
+    // Find the harness session ID that stub-harness assigned to Lever's thread.
+    let lever_sid = std::fs::read_to_string(&rpc_log)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find_map(|v| {
+            if v["method"] == "session/prompt" {
+                v["params"]["sessionId"].as_str().map(str::to_string)
+            } else {
+                None
+            }
+        })
+        .expect("harness session ID for Lever thread");
+
+    // Now have the harness list Lever's own session, Lever's subagent session
+    // (even WITHOUT any is_subagent marker!), and one genuinely external session.
+    write_sessions_file(
+        &sessions_file,
+        &json!([
+            {
+                "session_id": lever_sid,
+                "cwd": "/tmp",
+                "title": "Duplicate of Lever session",
+                "updated_at": "2026-04-10T12:00:00Z"
+            },
+            {
+                "session_id": "ses_lever_sub_1",
+                "cwd": "/tmp",
+                "title": "Lever subagent without marker",
+                "updated_at": "2026-04-10T12:01:00Z"
+            },
+            {
+                "session_id": "ses_genuinely_external",
+                "cwd": "/tmp",
+                "title": "Started in terminal",
+                "updated_at": "2026-04-10T12:02:00Z",
+                "history": [
+                    { "kind": "user_text", "text": "Hi" },
+                    { "kind": "text", "text": "Hello" }
+                ]
+            }
+        ]),
+    );
+
+    let pushed = read_until(&mut watcher, |f| {
+        f["event"] == "threads"
+            && f["threads"]
+                .as_array()
+                .is_some_and(|ts| ts.iter().any(|t| t["title"] == "Started in terminal"))
+    });
+    let threads = pushed["threads"].as_array().unwrap();
+    assert_eq!(
+        threads.len(),
+        2,
+        "only Lever's original thread and the one external session should be listed: {threads:?}"
+    );
+    assert!(threads.iter().any(|t| t["thread"] == lever_tid));
+    assert!(threads.iter().any(|t| t["title"] == "Started in terminal"));
+    assert!(!threads.iter().any(|t| t["title"] == "Lever subagent without marker"));
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn external_session_load_failure_is_retryable_and_delete_does_not_resurrect() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("sessions.json");
+
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "delete_session": false,
+            "load_session_error": { "code": -32000, "message": "temporary load failure" },
+            "turns": []
+        }),
+    );
+
+    let mut lever = start_lever_with_discovery(&dir.0, &script, None, &store_dir);
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+
+    write_sessions_file(
+        &sessions_file,
+        &json!([
+            {
+                "session_id": "ses_flaky_load",
+                "cwd": "/tmp",
+                "title": "Flaky load",
+                "updated_at": "2026-04-10T12:00:00Z",
+                "history": [
+                    { "kind": "user_text", "text": "Hello" },
+                    { "kind": "text", "text": "World" }
+                ]
+            }
+        ]),
+    );
+
+    let pushed = read_until(&mut watcher, |f| {
+        f["event"] == "threads" && f["threads"].as_array().is_some_and(|t| t.len() == 1)
+    });
+    let tid = pushed["threads"][0]["thread"].as_str().unwrap().to_string();
+
+    // First resume fails cleanly and keeps the thread eligible to retry.
+    let mut peer = handshake(&lever.person);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut peer, &json!({ "op": "resume", "thread": tid })).unwrap();
+    let err = read_frame(&mut peer).unwrap();
+    assert_eq!(err["reply"], "error", "{err}");
+    assert_eq!(err["code"], "harness-error", "{err}");
+
+    // Restart Lever with a working script (no load_session_error) and retry resume.
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+
+    let working_script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "delete_session": false,
+            "turns": []
+        }),
+    );
+    let mut lever = start_lever_with_discovery(&dir.0, &working_script, None, &store_dir);
+    let mut peer = handshake(&lever.person);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let record = resume(&mut peer, &tid);
+    assert_eq!(record["turns"].as_array().unwrap().len(), 1, "{record}");
+    assert_eq!(record["turns"][0]["answer"], "World");
+
+    // Deleting when harness does not support delete_session returns a warning
+    // and records the session as ignored so later store changes do not resurrect it.
+    write_frame(&mut peer, &json!({ "op": "delete", "thread": tid })).unwrap();
+    let deleted = read_until(&mut peer, |f| f.get("reply").is_some());
+    assert_eq!(deleted["reply"], "deleted", "{deleted}");
+    assert!(deleted.get("warning").is_some(), "{deleted}");
+
+    // Add a second session to trigger another discovery scan and verify the
+    // deleted session stays gone while the new one appears.
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+
+    write_sessions_file(
+        &sessions_file,
+        &json!([
+            {
+                "session_id": "ses_flaky_load",
+                "cwd": "/tmp",
+                "title": "Flaky load",
+                "updated_at": "2026-04-10T12:00:00Z"
+            },
+            {
+                "session_id": "ses_after_delete",
+                "cwd": "/tmp",
+                "title": "Fresh session",
+                "updated_at": "2026-04-10T12:05:00Z"
+            }
+        ]),
+    );
+
+    let pushed = read_until(&mut watcher, |f| {
+        f["event"] == "threads"
+            && f["threads"]
+                .as_array()
+                .is_some_and(|ts| ts.iter().any(|t| t["title"] == "Fresh session"))
+    });
+    let threads = pushed["threads"].as_array().unwrap();
+    assert_eq!(threads.len(), 1, "deleted session must not resurrect: {threads:?}");
+    assert_eq!(threads[0]["title"], "Fresh session");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn missing_store_directory_is_promoted_when_created_later() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("nested").join("store");
+    let sessions_file = store_dir.join("sessions.json");
+
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "turns": []
+        }),
+    );
+
+    // Start Lever BEFORE `nested/store` exists.
+    let mut lever = start_lever_with_discovery(&dir.0, &script, None, &store_dir);
+    let mut peer = handshake(&lever.person);
+    write_frame(&mut peer, &json!({ "op": "status" })).unwrap();
+    assert_eq!(read_frame(&mut peer).unwrap()["harness_started"], false);
+
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+
+    // Create the nested store directory and write a session file.
+    write_sessions_file(
+        &sessions_file,
+        &json!([
+            {
+                "session_id": "ses_late_dir",
+                "cwd": "/tmp",
+                "title": "Created later",
+                "updated_at": "2026-04-10T12:00:00Z"
+            }
+        ]),
+    );
+
+    let pushed = read_until(&mut watcher, |f| {
+        f["event"] == "threads"
+            && f["threads"]
+                .as_array()
+                .is_some_and(|ts| ts.iter().any(|t| t["title"] == "Created later"))
+    });
+    assert_eq!(pushed["threads"].as_array().unwrap().len(), 1);
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));

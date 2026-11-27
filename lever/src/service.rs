@@ -4,6 +4,7 @@
 
 use crate::acp::{self, AcpEvent, AcpHarness, EffortOption, HarnessCommand, HarnessConfig, ModelCatalog, TurnOutcome};
 use crate::channel::LEVER_VERSION;
+use crate::discovery::{self, DiscoveryRunner, ExternalSession, SessionHistory};
 use crate::fulcrum;
 use crate::log::{Event, Log};
 use crate::store::{
@@ -11,6 +12,7 @@ use crate::store::{
     SubagentActPatch, SubagentPatch, SubagentRecord, ThreadMeta, ThreadRecord, ThreadSummary, TurnRecord,
 };
 use crate::sys;
+use crate::watcher::StoreWatcher;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::os::fd::RawFd;
@@ -27,6 +29,9 @@ pub const DEFAULT_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the harness says nothing in a turn it began itself before Lever
 /// takes that turn as done. ACP gives such a turn no end of its own.
 pub const DEFAULT_WAKE_QUIET: Duration = Duration::from_secs(10);
+/// Default debounce after a harness's session store changes on disk before
+/// Lever lists its sessions to pick up any started outside Lever.
+pub const DEFAULT_DISCOVERY_DEBOUNCE: Duration = Duration::from_millis(400);
 /// The key peers that sent `watch` are subscribed under. No thread has it.
 const ACTIVITY: &str = "*activity";
 /// The modes a new thread can start in.
@@ -262,12 +267,38 @@ struct PendingDelete {
     dispatched: bool,
 }
 
+struct PendingSend {
+    peer_id: u64,
+    is_person: bool,
+    thread_id: String,
+    value: Value,
+}
+
 pub struct Service {
     pending_deletes: Vec<PendingDelete>,
     store: Store,
     harness_config: Option<HarnessConfig>,
     fulcrum_socket: Option<PathBuf>,
     harness: Option<AcpHarness>,
+    watcher: Option<StoreWatcher>,
+    discovery: Option<DiscoveryRunner>,
+    discovery_debounce: Duration,
+    discovery_due: Option<Instant>,
+    /// True if another store change arrived while a live `session/list` RPC
+    /// was already in flight on `self.harness`.
+    live_list_rescan_wanted: bool,
+    /// Discovered threads whose history load is queued or in flight:
+    /// `thread_id -> (harness_session_id, cwd)`.
+    loading_history: HashMap<String, (String, String)>,
+    /// Threads whose `session/load` RPC for history import is already in flight
+    /// on the currently running harness.
+    dispatched_history: HashSet<String>,
+    /// Peers waiting for `resume` on a discovered thread whose history is being
+    /// read from its harness.
+    pending_resumes: Vec<(u64, String)>,
+    /// `send` requests targeting an unopened discovered thread, waiting until
+    /// its history is read into Lever's record so the new turn follows it.
+    pending_sends: Vec<PendingSend>,
     model_catalog: Option<ModelCatalog>,
     /// True when `free_hosted_models` changed while the harness was busy, so
     /// it should be stopped as soon as all active work finishes.
@@ -362,13 +393,34 @@ impl Service {
         idle_timeout: Duration,
         stop_timeout: Duration,
         wake_quiet: Duration,
+        discovery_debounce: Duration,
     ) -> Self {
+        let discovery = harness_config
+            .as_ref()
+            .and_then(discovery::for_harness)
+            .and_then(|d| DiscoveryRunner::new(d).ok());
+        let watcher = discovery
+            .as_ref()
+            .and_then(|d| StoreWatcher::new(d.watch_specs()).ok().flatten());
+        let discovery_due = discovery
+            .as_ref()
+            .is_some_and(DiscoveryRunner::has_store_data)
+            .then(Instant::now);
         Self {
             pending_deletes: Vec::new(),
             store,
             harness_config,
             fulcrum_socket,
             harness: None,
+            watcher,
+            discovery,
+            discovery_debounce,
+            discovery_due,
+            live_list_rescan_wanted: false,
+            loading_history: HashMap::new(),
+            dispatched_history: HashSet::new(),
+            pending_resumes: Vec::new(),
+            pending_sends: Vec::new(),
             model_catalog: None,
             harness_env_stale: false,
             models_refresh_pending: false,
@@ -419,6 +471,175 @@ impl Service {
             .and_then(AcpHarness::stdin_fd)
     }
 
+    pub fn watcher_fd(&self) -> Option<RawFd> {
+        self.watcher.as_ref().map(StoreWatcher::fd)
+    }
+
+    pub fn discovery_fd(&self) -> Option<RawFd> {
+        self.discovery.as_ref().map(DiscoveryRunner::fd)
+    }
+
+    /// Drains `inotify` events from watched harness stores and schedules a
+    /// debounced discovery scan when anything changed.
+    pub fn on_store_changed(&mut self) {
+        if self.watcher.as_mut().is_some_and(StoreWatcher::drain_changed) && self.discovery.is_some() {
+            self.discovery_due = Some(Instant::now() + self.discovery_debounce);
+        }
+    }
+
+    /// Collects the completed background discovery scan and records any newly
+    /// discovered external sessions as threads in Lever's database.
+    pub fn on_discovery_ready(&mut self, log: &mut Log) -> Effects {
+        let Some((outcome, rescan)) = self.discovery.as_mut().and_then(DiscoveryRunner::take_result) else {
+            return Effects::default();
+        };
+        if rescan {
+            self.discovery_due = Some(Instant::now() + self.discovery_debounce);
+        }
+        let sessions = match outcome {
+            Ok(sessions) => sessions,
+            Err(_) => {
+                let _ = log.write(Event::Error, "could not list external harness sessions");
+                return Effects::default();
+            }
+        };
+        self.apply_discovered_sessions(sessions, log)
+    }
+
+    fn trigger_discovery(&mut self) {
+        if self.discovery.is_none() {
+            return;
+        }
+        // When Lever's own harness is already running and supports ACP
+        // `session/list`, ask it over the existing pipe instead of spawning a
+        // second harness process on every write Lever's own turns make.
+        if let Some(harness) = self.harness.as_mut()
+            && harness.can_list_sessions()
+        {
+            if harness.is_listing_sessions() {
+                self.live_list_rescan_wanted = true;
+            } else {
+                self.live_list_rescan_wanted = false;
+                let _ = harness.list_sessions();
+            }
+            return;
+        }
+        let (owned, ignored) = self.known_sessions_for_discovery();
+        if let Some(runner) = self.discovery.as_mut() {
+            runner.request_scan(owned, ignored);
+        }
+    }
+
+    fn known_sessions_for_discovery(&self) -> (HashSet<String>, HashSet<String>) {
+        let (mut owned, mut ignored) = self.store.known_harness_sessions().unwrap_or_default();
+        if let Some(harness) = self.harness.as_ref() {
+            for sid in harness.own_session_ids() {
+                owned.insert(sid);
+            }
+        }
+        for cid in &self.harness_children {
+            ignored.insert(cid.clone());
+        }
+        (owned, ignored)
+    }
+
+    fn apply_discovered_sessions(&mut self, sessions: Vec<ExternalSession>, log: &mut Log) -> Effects {
+        let (known_owned, known_ignored) = self.store.known_harness_sessions().unwrap_or_default();
+        let live_own: HashSet<String> = self
+            .harness
+            .as_ref()
+            .map(|h| h.own_session_ids().into_iter().collect())
+            .unwrap_or_default();
+        let harness_name = self.harness_config.as_ref().map(|c| c.name.clone());
+        let default_mode = self.default_mode();
+        let now = unix_now();
+        let mut broadcasts = Vec::new();
+
+        for session in sessions {
+            let sid = session.harness_session_id;
+            if sid.is_empty() {
+                continue;
+            }
+            if session.is_subagent {
+                if let Err(err) = self.store.remember_ignored_session(&sid, "subagent", now) {
+                    store_failed(log, &err);
+                }
+                continue;
+            }
+            if known_ignored.contains(&sid) || self.harness_children.contains(&sid) {
+                continue;
+            }
+            // Skip probe or in-flight sessions currently held by Lever's own
+            // harness process that are not yet tied to a thread row.
+            if live_own.contains(&sid) && !known_owned.contains(&sid) {
+                continue;
+            }
+            match self.store.thread_by_harness_session(&sid) {
+                Ok(Some((tid, _cur_title, _cur_updated, needs_history))) => {
+                    if needs_history {
+                        let updated = session.updated.unwrap_or(now);
+                        match self
+                            .store
+                            .update_discovered_thread(&tid, session.title.as_deref(), updated)
+                        {
+                            Ok(true) => {
+                                let title = session.title.as_deref().unwrap_or("Thread");
+                                broadcasts.push(Broadcast {
+                                    thread_id: tid.clone(),
+                                    message: json!({
+                                        "event": "thread-updated",
+                                        "thread": tid,
+                                        "title": title,
+                                    }),
+                                });
+                            }
+                            Ok(false) => {}
+                            Err(err) => store_failed(log, &err),
+                        }
+                    }
+                }
+                Ok(None) => {
+                    let tid = format!("t-{}", sys::random_hex(6));
+                    let title = session
+                        .title
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("Thread");
+                    let updated = session.updated.unwrap_or(now);
+                    let created = session.created.unwrap_or(updated);
+                    match self.store.create_discovered_thread(
+                        &tid,
+                        title,
+                        &session.cwd,
+                        harness_name.as_deref(),
+                        &sid,
+                        &default_mode,
+                        created,
+                        updated,
+                    ) {
+                        Ok(()) => {
+                            broadcasts.push(Broadcast {
+                                thread_id: tid.clone(),
+                                message: json!({
+                                    "event": "thread-updated",
+                                    "thread": tid,
+                                    "title": title,
+                                }),
+                            });
+                        }
+                        Err(err) => store_failed(log, &err),
+                    }
+                }
+                Err(err) => store_failed(log, &err),
+            }
+        }
+        Effects {
+            broadcasts,
+            replies: Vec::new(),
+        }
+    }
+
     fn has_active_work(&self) -> bool {
         !self.pending_deletes.is_empty()
             || !self.working_turns.is_empty()
@@ -429,6 +650,9 @@ impl Service {
             || !self.pending_steers.is_empty()
             || !self.pending_efforts.is_empty()
             || !self.modes_in_flight.is_empty()
+            || !self.loading_history.is_empty()
+            || !self.pending_resumes.is_empty()
+            || !self.pending_sends.is_empty()
             || self.probe_wanted
             || self.harness.as_ref().is_some_and(AcpHarness::probing_models)
     }
@@ -462,6 +686,7 @@ impl Service {
         self.pending_deletes.iter().any(|p| p.thread == thread_id)
             || self.pending_set_models.iter().any(|p| p.thread_id == thread_id)
             || self.modes_in_flight.iter().any(|(t, _)| t == thread_id)
+            || self.loading_history.contains_key(thread_id)
     }
 
     /// Whether a thread is being deleted: what its harness says of it now
@@ -656,7 +881,14 @@ impl Service {
             .iter()
             .filter_map(|(tid, active)| self.harness_turn_quiet_in(tid, active))
             .min();
-        match [self.idle_remaining(), retry, stop, quiet].into_iter().flatten().min() {
+        let discovery = self
+            .discovery_due
+            .map(|due| due.saturating_duration_since(Instant::now()));
+        match [self.idle_remaining(), retry, stop, quiet, discovery]
+            .into_iter()
+            .flatten()
+            .min()
+        {
             None => -1,
             // Rounded up: the last part of a millisecond is waited for, not
             // spun through.
@@ -679,6 +911,10 @@ impl Service {
     /// the harness if no thread has worked for `idle_timeout`.
     pub fn on_wake(&mut self, log: &mut Log) -> Effects {
         sys::reap_orphans(self.harness.as_ref().map(AcpHarness::pid));
+        if self.discovery_due.is_some_and(|due| Instant::now() >= due) {
+            self.discovery_due = None;
+            self.trigger_discovery();
+        }
         self.save_endings();
         self.send_held_prompts();
         let mut effects = Effects::default();
@@ -824,6 +1060,8 @@ impl Service {
         }
         self.pending_models.retain(|&id| id != peer_id);
         self.pending_efforts.retain(|(id, _)| *id != peer_id);
+        self.pending_resumes.retain(|(id, _)| *id != peer_id);
+        self.pending_sends.retain(|p| p.peer_id != peer_id);
         self.pending_set_models.retain_mut(|p| {
             if p.peer_id == Some(peer_id) {
                 if p.in_flight_on_session {
@@ -872,7 +1110,7 @@ impl Service {
             "archive" | "delete" => self.handle_lifecycle(peer_id, op, value, log),
             "send" => self.send_message(peer_id, is_person, value, None, log),
             "unqueue" => self.handle_unqueue(value, log),
-            "resume" => self.handle_resume(value),
+            "resume" => self.handle_resume(peer_id, value, log),
             "stop" => self.handle_stop(value, log),
             "models" => self.handle_models(peer_id, value, log),
             "set-free-models" => self.handle_set_free_models(value, log),
@@ -1107,12 +1345,19 @@ impl Service {
     }
 
     fn delete_record(&mut self, thread: &str, warning: Option<&str>) -> RequestOutcome {
+        let deleted_session = warning
+            .and_then(|_| self.store.thread_meta(thread).ok().flatten())
+            .and_then(|m| m.harness_session_id)
+            .filter(|s| !s.is_empty());
         self.subagent_threads.remove(thread);
         self.held_stops.remove(thread);
         self.drain_wanted.remove(thread);
         self.queued_prompts.retain(|_, (t, _)| t != thread);
         if let Err(e) = self.store.delete_thread(thread) {
             return error_outcome("storage-error", &e);
+        }
+        if let Some(sid) = deleted_session {
+            let _ = self.store.remember_ignored_session(&sid, "deleted", unix_now());
         }
         if let Some(h) = self.harness.as_mut() {
             h.forget_session(thread);
@@ -1171,10 +1416,34 @@ impl Service {
         effects
     }
 
-    fn handle_resume(&self, value: &Value) -> RequestOutcome {
+    fn handle_resume(&mut self, peer_id: u64, value: &Value, log: &mut Log) -> RequestOutcome {
         let Some(thread_id) = value.get("thread").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
             return error_outcome("invalid-request", "Expected a non-empty string thread field.");
         };
+        let meta = match self.store.thread_meta(thread_id) {
+            Ok(Some(meta)) => meta,
+            Ok(None) => return error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
+            Err(err) => return error_outcome("storage-error", &err),
+        };
+        // A thread discovered from a harness's own store reads its history from
+        // the harness into Lever's record when opened, before answering.
+        if meta.needs_history
+            && let Some(session_id) = meta.harness_session_id.as_deref().filter(|s| !s.is_empty())
+        {
+            if let Err((code, msg)) = self.ensure_history_load(thread_id, session_id, &meta.cwd, log) {
+                return error_outcome(code, &msg);
+            }
+            self.pending_resumes.push((peer_id, thread_id.to_string()));
+            return RequestOutcome {
+                reply: None,
+                subscribe: None,
+                broadcasts: Vec::new(),
+            };
+        }
+        self.resume_from_store(thread_id)
+    }
+
+    fn resume_from_store(&self, thread_id: &str) -> RequestOutcome {
         match self.store.get_thread(thread_id) {
             Ok(Some(mut record)) => {
                 // As in `list`: whoever resumes the thread now was not
@@ -1219,6 +1488,205 @@ impl Service {
             }
             Ok(None) => error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
             Err(err) => error_outcome("storage-error", &err),
+        }
+    }
+
+    fn ensure_history_load(
+        &mut self,
+        thread_id: &str,
+        session_id: &str,
+        cwd: &str,
+        log: &mut Log,
+    ) -> Result<(), (&'static str, String)> {
+        if self.harness_config.is_none() {
+            return Err(("no-harness", "No harness is available.".to_string()));
+        }
+        if self.harness_env_stale {
+            return Err((
+                "working",
+                "Lever is restarting the harness after the free hosted Models setting changed; try again when active turns finish.".to_string(),
+            ));
+        }
+        if self.harness.is_none()
+            && let Err(err) = self.start_harness(log)
+        {
+            return Err(("harness-error", err));
+        }
+        self.idle_since = None;
+        self.loading_history
+            .entry(thread_id.to_string())
+            .or_insert_with(|| (session_id.to_string(), cwd.to_string()));
+        if self.harness.as_ref().is_some_and(AcpHarness::is_initialized) && !self.dispatched_history.contains(thread_id)
+        {
+            let loaded = self
+                .harness
+                .as_mut()
+                .is_some_and(|h| h.load_session_history(thread_id, session_id, cwd));
+            if !loaded {
+                self.loading_history.remove(thread_id);
+                return Err((
+                    "harness-error",
+                    "The harness does not support loading session history.".to_string(),
+                ));
+            }
+            self.dispatched_history.insert(thread_id.to_string());
+        }
+        Ok(())
+    }
+
+    fn dispatch_history_loads(&mut self) -> Effects {
+        let mut effects = Effects::default();
+        let pending: Vec<(String, String, String)> = self
+            .loading_history
+            .iter()
+            .filter(|(tid, _)| !self.dispatched_history.contains(*tid))
+            .map(|(tid, (sid, cwd))| (tid.clone(), sid.clone(), cwd.clone()))
+            .collect();
+        for (thread_id, session_id, cwd) in pending {
+            let loaded = self
+                .harness
+                .as_mut()
+                .is_some_and(|h| h.load_session_history(&thread_id, &session_id, &cwd));
+            if loaded {
+                self.dispatched_history.insert(thread_id);
+            } else {
+                effects.extend(
+                    self.fail_history_load(&thread_id, "The harness does not support loading session history."),
+                );
+            }
+        }
+        effects
+    }
+
+    fn finish_history_loaded(
+        &mut self,
+        thread_id: &str,
+        history: SessionHistory,
+        catalog: Option<ModelCatalog>,
+        log: &mut Log,
+    ) -> Effects {
+        self.loading_history.remove(thread_id);
+        self.dispatched_history.remove(thread_id);
+        let mut effects = Effects::default();
+        if let Some(cat) = catalog {
+            self.apply_model_catalog(cat, false, log, &mut effects);
+        }
+        let fallback_title = history
+            .turns
+            .first()
+            .map(|t| initial_title(&t.message))
+            .filter(|s| !s.is_empty());
+        if let Err(err) = self
+            .store
+            .import_thread_history(thread_id, &history, fallback_title.as_deref(), unix_now())
+        {
+            store_failed(log, &err);
+            effects.extend(self.fail_history_waiters(thread_id, "storage-error", &err));
+            return effects;
+        }
+        effects.broadcasts.extend(self.mirror_effort(thread_id, log));
+
+        let resumed_outcome = self.resume_from_store(thread_id);
+        let resumed_reply = resumed_outcome
+            .reply
+            .unwrap_or_else(|| error_json("storage-error", "Could not read imported thread."));
+        let is_resumed = resumed_reply.get("reply").and_then(Value::as_str) == Some("resumed");
+
+        // Broadcast `thread-updated` so thread list watchers update turn count,
+        // state, title, and model immediately.
+        if is_resumed {
+            let mut upd = json!({
+                "event": "thread-updated",
+                "thread": thread_id,
+                "title": resumed_reply["title"],
+            });
+            if let Some(model) = resumed_reply.get("model").and_then(Value::as_str) {
+                upd["model"] = json!(model);
+            }
+            effects.broadcasts.push(Broadcast {
+                thread_id: thread_id.to_string(),
+                message: upd,
+            });
+        }
+
+        let mut remaining_resumes = Vec::new();
+        for (peer_id, tid) in std::mem::take(&mut self.pending_resumes) {
+            if tid == thread_id {
+                effects.replies.push(PeerReply {
+                    peer_id,
+                    message: resumed_reply.clone(),
+                    subscribe: is_resumed.then(|| thread_id.to_string()),
+                });
+            } else {
+                remaining_resumes.push((peer_id, tid));
+            }
+        }
+        self.pending_resumes = remaining_resumes;
+
+        // Replay any `send` requests that arrived for this unopened thread
+        // before its history finished loading.
+        let mut remaining_sends = Vec::new();
+        let mut ready_sends = Vec::new();
+        for item in std::mem::take(&mut self.pending_sends) {
+            if item.thread_id == thread_id {
+                ready_sends.push(item);
+            } else {
+                remaining_sends.push(item);
+            }
+        }
+        self.pending_sends = remaining_sends;
+        for item in ready_sends {
+            let outcome = self.send_message(item.peer_id, item.is_person, &item.value, None, log);
+            effects.broadcasts.extend(outcome.broadcasts);
+            if let Some(reply) = outcome.reply {
+                effects.replies.push(PeerReply {
+                    peer_id: item.peer_id,
+                    message: reply,
+                    subscribe: outcome.subscribe,
+                });
+            }
+        }
+
+        effects
+    }
+
+    fn fail_history_load(&mut self, thread_id: &str, message: &str) -> Effects {
+        self.loading_history.remove(thread_id);
+        self.dispatched_history.remove(thread_id);
+        self.fail_history_waiters(thread_id, "harness-error", message)
+    }
+
+    fn fail_history_waiters(&mut self, thread_id: &str, code: &str, message: &str) -> Effects {
+        let mut replies = Vec::new();
+        let mut remaining_resumes = Vec::new();
+        for (peer_id, tid) in std::mem::take(&mut self.pending_resumes) {
+            if tid == thread_id {
+                replies.push(PeerReply {
+                    peer_id,
+                    message: error_json(code, message),
+                    subscribe: None,
+                });
+            } else {
+                remaining_resumes.push((peer_id, tid));
+            }
+        }
+        self.pending_resumes = remaining_resumes;
+        let mut remaining_sends = Vec::new();
+        for item in std::mem::take(&mut self.pending_sends) {
+            if item.thread_id == thread_id {
+                replies.push(PeerReply {
+                    peer_id: item.peer_id,
+                    message: error_json(code, message),
+                    subscribe: None,
+                });
+            } else {
+                remaining_sends.push(item);
+            }
+        }
+        self.pending_sends = remaining_sends;
+        Effects {
+            broadcasts: Vec::new(),
+            replies,
         }
     }
 
@@ -1762,6 +2230,28 @@ impl Service {
         {
             match self.store.thread_meta(tid) {
                 Ok(Some(meta)) => {
+                    // If a client sends directly to an unopened discovered
+                    // thread before calling `resume`, load its history into
+                    // Lever's record first so the new message becomes turn N+1.
+                    if from_queue.is_none()
+                        && meta.needs_history
+                        && let Some(session_id) = meta.harness_session_id.as_deref().filter(|s| !s.is_empty())
+                    {
+                        if let Err((code, msg)) = self.ensure_history_load(tid, session_id, &meta.cwd, log) {
+                            return error_outcome(code, &msg);
+                        }
+                        self.pending_sends.push(PendingSend {
+                            peer_id,
+                            is_person,
+                            thread_id: tid.to_string(),
+                            value: value.clone(),
+                        });
+                        return RequestOutcome {
+                            reply: None,
+                            subscribe: None,
+                            broadcasts: Vec::new(),
+                        };
+                    }
                     let busy = if woken.is_some() {
                         self.session_change_pending(tid)
                     } else {
@@ -2899,11 +3389,16 @@ impl Service {
         self.probe_wanted = false;
         self.harness_env_stale = false;
         self.models_refresh_pending = false;
+        if std::mem::take(&mut self.live_list_rescan_wanted) {
+            self.discovery_due = Some(Instant::now() + self.discovery_debounce);
+        }
         self.idle_since = None;
         self.subagent_threads.clear();
         self.held_stops.clear();
         self.harness_children.clear();
         self.kill_wanted = None;
+        self.loading_history.clear();
+        self.dispatched_history.clear();
     }
 
     fn dispatch_turn(&mut self, thread_id: &str) {
@@ -3018,7 +3513,9 @@ impl Service {
                         harness.probe_efforts(&default_cwd(), model);
                     }
                 }
-                self.dispatch_deletes()
+                let mut effects = self.dispatch_history_loads();
+                effects.extend(self.dispatch_deletes());
+                effects
             }
             AcpEvent::InitializeFailed { message } => {
                 // What the harness said goes to the turns it fails, which
@@ -3817,6 +4314,41 @@ impl Service {
                     replies: Vec::new(),
                 }
             }
+            AcpEvent::HistoryLoaded {
+                thread_id,
+                history,
+                catalog,
+            } => self.finish_history_loaded(&thread_id, history, catalog, log),
+            AcpEvent::HistoryLoadFailed { thread_id, message } => self.fail_history_load(&thread_id, &message),
+            AcpEvent::SessionsListed(result) => {
+                if std::mem::take(&mut self.live_list_rescan_wanted) {
+                    self.discovery_due = Some(Instant::now() + self.discovery_debounce);
+                }
+                let sessions = match result {
+                    Ok(sessions) => sessions,
+                    Err(_) => {
+                        let _ = log.write(Event::Error, "could not list external harness sessions");
+                        return Effects::default();
+                    }
+                };
+                let needs_classify = self
+                    .discovery
+                    .as_ref()
+                    .is_some_and(DiscoveryRunner::needs_classification);
+                if needs_classify {
+                    let (owned, ignored) = self.known_sessions_for_discovery();
+                    let has_unseen = sessions.iter().any(|s| {
+                        !s.is_subagent
+                            && !owned.contains(&s.harness_session_id)
+                            && !ignored.contains(&s.harness_session_id)
+                    });
+                    if has_unseen && let Some(runner) = self.discovery.as_mut() {
+                        runner.request_classify(sessions, owned, ignored);
+                        return Effects::default();
+                    }
+                }
+                self.apply_discovered_sessions(sessions, log)
+            }
             AcpEvent::Exited => Effects::default(),
         }
     }
@@ -3858,6 +4390,22 @@ impl Service {
         for (peer_id, _) in self.pending_efforts.drain(..) {
             replies.push(PeerReply {
                 peer_id,
+                message: error_json("harness-error", message),
+                subscribe: None,
+            });
+        }
+        self.loading_history.clear();
+        self.dispatched_history.clear();
+        for (peer_id, _) in self.pending_resumes.drain(..) {
+            replies.push(PeerReply {
+                peer_id,
+                message: error_json("harness-error", message),
+                subscribe: None,
+            });
+        }
+        for item in self.pending_sends.drain(..) {
+            replies.push(PeerReply {
+                peer_id: item.peer_id,
                 message: error_json("harness-error", message),
                 subscribe: None,
             });
@@ -4361,6 +4909,9 @@ impl Service {
         self.probe_wanted = false;
         self.harness_env_stale = false;
         self.models_refresh_pending = false;
+        if std::mem::take(&mut self.live_list_rescan_wanted) {
+            self.discovery_due = Some(Instant::now() + self.discovery_debounce);
+        }
         self.idle_since = None;
 
         let mut replies = self.fail_pending_peer_requests(why);

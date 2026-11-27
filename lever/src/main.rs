@@ -5,6 +5,7 @@
 
 mod acp;
 mod channel;
+mod discovery;
 mod frames;
 mod fulcrum;
 mod log;
@@ -12,12 +13,14 @@ mod opencode;
 mod service;
 mod store;
 mod sys;
+mod watcher;
 
 use acp::HarnessConfig;
 use channel::{Channel, LEVER_VERSION, Peer};
 use log::{Event, Log};
 use service::{
-    Broadcast, DEFAULT_IDLE_TIMEOUT, DEFAULT_STOP_TIMEOUT, DEFAULT_WAKE_QUIET, Effects, PeerReply, Service, unix_now,
+    Broadcast, DEFAULT_DISCOVERY_DEBOUNCE, DEFAULT_IDLE_TIMEOUT, DEFAULT_STOP_TIMEOUT, DEFAULT_WAKE_QUIET, Effects,
+    PeerReply, Service, unix_now,
 };
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -42,8 +45,8 @@ const USAGE: &str = "usage: crowbar-lever \
   --surface-socket <path> --shell-uid <uid> \
   --person-socket <path> --person-uid <uid> \
   [--fulcrum-socket <path>] \
-  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>]] \
-  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>] [--wake-quiet-ms <ms>]";
+  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-watch <path>]... [--harness-name <name>]] \
+  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>] [--wake-quiet-ms <ms>] [--discovery-debounce-ms <ms>]";
 
 struct Options {
     state: PathBuf,
@@ -56,6 +59,7 @@ struct Options {
     idle_timeout: Duration,
     stop_timeout: Duration,
     wake_quiet: Duration,
+    discovery_debounce: Duration,
 }
 
 fn parse_options(args: &[String]) -> Option<Options> {
@@ -69,9 +73,11 @@ fn parse_options(args: &[String]) -> Option<Options> {
     let mut harness_name = None;
     let mut harness_args = Vec::new();
     let mut harness_env = Vec::new();
+    let mut harness_watch = Vec::new();
     let mut idle_timeout = None;
     let mut stop_timeout = None;
     let mut wake_quiet = None;
+    let mut discovery_debounce = None;
 
     let mut iter = args.iter();
     while let Some(flag) = iter.next() {
@@ -96,6 +102,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
                 }
                 harness_env.push((k.to_string(), v.to_string()));
             }
+            "--harness-watch" => harness_watch.push(PathBuf::from(value)),
             "--stop-timeout-ms" if stop_timeout.is_none() => {
                 stop_timeout = Some(Duration::from_millis(value.parse::<u64>().ok()?));
             }
@@ -104,6 +111,9 @@ fn parse_options(args: &[String]) -> Option<Options> {
             }
             "--wake-quiet-ms" if wake_quiet.is_none() => {
                 wake_quiet = Some(Duration::from_millis(value.parse::<u64>().ok()?));
+            }
+            "--discovery-debounce-ms" if discovery_debounce.is_none() => {
+                discovery_debounce = Some(Duration::from_millis(value.parse::<u64>().ok()?));
             }
             _ => return None,
         }
@@ -124,9 +134,16 @@ fn parse_options(args: &[String]) -> Option<Options> {
                 program,
                 args: harness_args,
                 env: harness_env,
+                watch_paths: harness_watch,
             })
         }
-        None if harness_name.is_some() || !harness_args.is_empty() || !harness_env.is_empty() => return None,
+        None if harness_name.is_some()
+            || !harness_args.is_empty()
+            || !harness_env.is_empty()
+            || !harness_watch.is_empty() =>
+        {
+            return None;
+        }
         None => None,
     };
 
@@ -141,6 +158,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
         idle_timeout: idle_timeout.unwrap_or(DEFAULT_IDLE_TIMEOUT),
         stop_timeout: stop_timeout.unwrap_or(DEFAULT_STOP_TIMEOUT),
         wake_quiet: wake_quiet.unwrap_or(DEFAULT_WAKE_QUIET),
+        discovery_debounce: discovery_debounce.unwrap_or(DEFAULT_DISCOVERY_DEBOUNCE),
     })
 }
 
@@ -355,6 +373,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         options.idle_timeout,
         options.stop_timeout,
         options.wake_quiet,
+        options.discovery_debounce,
     );
 
     if let Some(parent) = options.person_socket.parent() {
@@ -416,8 +435,10 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
 
         let harness_stdout_fd = service.harness_stdout_fd();
         let harness_stdin_fd = service.harness_stdin_fd();
+        let watcher_fd = service.watcher_fd();
+        let discovery_fd = service.discovery_fd();
 
-        let mut pollfds = Vec::with_capacity(5 + peers.len());
+        let mut pollfds = Vec::with_capacity(7 + peers.len());
         pollfds.push(libc::pollfd {
             fd: signals.fd(),
             events: libc::POLLIN,
@@ -462,6 +483,24 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
             pollfds.push(libc::pollfd {
                 fd,
                 events: libc::POLLOUT,
+                revents: 0,
+            });
+            i
+        });
+        let watcher_idx = watcher_fd.map(|fd| {
+            let i = pollfds.len();
+            pollfds.push(libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            });
+            i
+        });
+        let discovery_idx = discovery_fd.map(|fd| {
+            let i = pollfds.len();
+            pollfds.push(libc::pollfd {
+                fd,
+                events: libc::POLLIN,
                 revents: 0,
             });
             i
@@ -513,6 +552,18 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
                 effects.broadcasts.extend(got.broadcasts);
                 effects.replies.extend(got.replies);
             }
+        }
+        if let Some(i) = watcher_idx
+            && pollfds[i].revents & libc::POLLIN != 0
+        {
+            service.on_store_changed();
+        }
+        if let Some(i) = discovery_idx
+            && pollfds[i].revents & libc::POLLIN != 0
+        {
+            let got = service.on_discovery_ready(log);
+            effects.broadcasts.extend(got.broadcasts);
+            effects.replies.extend(got.replies);
         }
         deliver_replies(&effects.replies, &mut peers, &keep, log);
         deliver_broadcasts(&effects.broadcasts, &mut peers, &keep, log, &service);

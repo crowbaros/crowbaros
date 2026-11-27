@@ -39,10 +39,11 @@ use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AgentCapabilities, AvailableCommand, AvailableCommandInput, AvailableCommandsUpdate,
     CLIENT_METHOD_NAMES, CancelNotification, CloseSessionRequest, CloseSessionResponse, ConfigOptionUpdate,
     ContentBlock, ContentChunk, Diff, Error as AcpError, Implementation, InitializeRequest, InitializeResponse,
-    JsonRpcMessage, LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, Notification,
-    PROTOCOL_LEVEL_METHOD_NAMES, PermissionOption, PermissionOptionKind, PromptRequest, PromptResponse, Request,
-    RequestId, RequestPermissionRequest, Response, SessionCapabilities, SessionCloseCapabilities, SessionConfigOption,
-    SessionConfigOptionCategory, SessionConfigSelectOption, SessionId, SessionInfoUpdate, SessionNotification,
+    JsonRpcMessage, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, LoadSessionResponse,
+    NewSessionRequest, NewSessionResponse, Notification, PROTOCOL_LEVEL_METHOD_NAMES, PermissionOption,
+    PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId, RequestPermissionRequest, Response,
+    SessionCapabilities, SessionCloseCapabilities, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigSelectOption, SessionId, SessionInfo, SessionInfoUpdate, SessionListCapabilities, SessionNotification,
     SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason, TextContent, ToolCall,
     ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
     UnstructuredCommandInput,
@@ -81,8 +82,34 @@ struct StubCommand {
 /// offer the one it had.
 const DEFAULT_EFFORT: &str = "default";
 
+#[derive(Debug, Clone, Deserialize)]
+struct StubExternalSession {
+    session_id: String,
+    cwd: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    updated_at: Option<String>,
+    #[serde(default)]
+    is_subagent: bool,
+    #[serde(default)]
+    parent_session_id: Option<String>,
+    #[serde(default)]
+    history: Vec<Step>,
+}
+
 #[derive(Debug, Deserialize)]
 struct Script {
+    #[serde(default)]
+    list_sessions: bool,
+    #[serde(default)]
+    sessions_file: Option<String>,
+    #[serde(default)]
+    external_sessions: Vec<StubExternalSession>,
+    #[serde(default)]
+    list_page_size: Option<usize>,
+    #[serde(default)]
+    load_session_error: Option<ScriptError>,
     #[serde(default)]
     delete_session: bool,
     #[serde(default)]
@@ -264,6 +291,9 @@ fn default_stop_reason() -> String {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Step {
+    UserText {
+        text: String,
+    },
     Text {
         text: String,
     },
@@ -1521,6 +1551,12 @@ fn emit_step(
             }
             thread::sleep(dur);
         }
+        Step::UserText { text } => {
+            writer.send_update(
+                session_id,
+                SessionUpdate::UserMessageChunk(ContentChunk::new(ContentBlock::Text(TextContent::new(text.clone())))),
+            );
+        }
         Step::Text { text } => {
             let rendered = match model {
                 Some(m) => text.replace("{model}", m),
@@ -1729,6 +1765,17 @@ fn build_config_options(
     (!options.is_empty()).then_some(options)
 }
 
+fn read_external_sessions(script: &Script) -> Vec<StubExternalSession> {
+    let mut all = script.external_sessions.clone();
+    if let Some(path) = &script.sessions_file
+        && let Ok(raw) = std::fs::read_to_string(path)
+        && let Ok(from_file) = serde_json::from_str::<Vec<StubExternalSession>>(&raw)
+    {
+        all.extend(from_file);
+    }
+    all
+}
+
 fn run(options: Options) -> Result<(), String> {
     let script_text = std::fs::read_to_string(&options.script).map_err(|e| format!("could not read script: {e}"))?;
     let script: Script = serde_json::from_str(&script_text).map_err(|e| format!("invalid script JSON: {e}"))?;
@@ -1850,6 +1897,9 @@ fn run(options: Options) -> Result<(), String> {
             match serde_json::from_value::<InitializeRequest>(params) {
                 Ok(_init) => {
                     let mut session_caps = SessionCapabilities::new().close(SessionCloseCapabilities::new());
+                    if script.list_sessions || script.sessions_file.is_some() || !script.external_sessions.is_empty() {
+                        session_caps = session_caps.list(SessionListCapabilities::new());
+                    }
                     if script.delete_session {
                         session_caps =
                             session_caps.delete(agent_client_protocol_schema::v1::SessionDeleteCapabilities::new());
@@ -2201,15 +2251,82 @@ fn run(options: Options) -> Result<(), String> {
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
             }
+        } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_list {
+            if !(script.list_sessions || script.sessions_file.is_some() || !script.external_sessions.is_empty()) {
+                writer.send_error(id, AcpError::method_not_found());
+                continue;
+            }
+            match serde_json::from_value::<ListSessionsRequest>(params) {
+                Ok(list_req) => {
+                    let all = read_external_sessions(&script);
+                    let filtered: Vec<&StubExternalSession> = all
+                        .iter()
+                        .filter(|s| {
+                            list_req
+                                .cwd
+                                .as_ref()
+                                .is_none_or(|wanted| wanted.to_string_lossy() == s.cwd)
+                        })
+                        .collect();
+                    let offset: usize = list_req
+                        .cursor
+                        .as_deref()
+                        .and_then(|c| c.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    let page_size = script.list_page_size.unwrap_or(filtered.len().max(1));
+                    let end = (offset + page_size).min(filtered.len());
+                    let page: Vec<SessionInfo> = filtered
+                        .get(offset..end)
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|s| {
+                            let mut info = SessionInfo::new(s.session_id.clone(), PathBuf::from(&s.cwd));
+                            if let Some(title) = &s.title {
+                                info = info.title(title.clone());
+                            }
+                            if let Some(updated_at) = &s.updated_at {
+                                info = info.updated_at(updated_at.clone());
+                            }
+                            if s.is_subagent || s.parent_session_id.is_some() {
+                                let mut meta = serde_json::Map::new();
+                                if s.is_subagent {
+                                    meta.insert("isSubagent".to_string(), json!(true));
+                                }
+                                if let Some(parent) = &s.parent_session_id {
+                                    meta.insert("parentSessionId".to_string(), json!(parent));
+                                }
+                                info = info.meta(meta);
+                            }
+                            info
+                        })
+                        .collect();
+                    let mut resp = ListSessionsResponse::new(page);
+                    if end < filtered.len() {
+                        resp = resp.next_cursor(end.to_string());
+                    }
+                    writer.send_result(id, resp);
+                }
+                Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
+            }
         } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_load {
             match serde_json::from_value::<LoadSessionRequest>(params) {
                 Ok(load_req) => {
                     if !script.load_session {
                         writer.send_error(id, AcpError::method_not_found());
+                    } else if let Some(err) = &script.load_session_error {
+                        writer.send_error(id, AcpError::new(err.code, err.message.clone()));
                     } else {
-                        let (writer, replay) = (writer.clone(), script.load_replay.clone());
-                        let delay = Duration::from_millis(script.load_delay_ms);
                         let sid = load_req.session_id.0.as_ref().to_string();
+                        let external_history = read_external_sessions(&script)
+                            .into_iter()
+                            .find(|s| s.session_id == sid)
+                            .map(|s| s.history)
+                            .filter(|h| !h.is_empty());
+                        let (writer, replay) = (
+                            writer.clone(),
+                            external_history.unwrap_or_else(|| script.load_replay.clone()),
+                        );
+                        let delay = Duration::from_millis(script.load_delay_ms);
                         let cur = session_models
                             .lock()
                             .unwrap()

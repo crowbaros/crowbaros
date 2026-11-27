@@ -5,8 +5,10 @@
 //! updates Lever shows as neither text nor an act (kept as JSON, along with a
 //! plain rendering).
 
+use crate::discovery::SessionHistory;
 use crate::sys;
 use rusqlite::{Connection, OptionalExtension, params};
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -45,6 +47,9 @@ pub struct ThreadMeta {
     pub mode: String,
     pub latest_turn: Option<u64>,
     pub working_turn: Option<u64>,
+    /// True when this thread was discovered from a harness's own store and its
+    /// history has not yet been read into Lever's record.
+    pub needs_history: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -261,7 +266,7 @@ impl Store {
                  key TEXT PRIMARY KEY,\n\
                  value TEXT NOT NULL\n\
              );\n\
-             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '9');\n\
+             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '10');\n\
              CREATE TABLE IF NOT EXISTS threads (\n\
                  id TEXT PRIMARY KEY,\n\
                  title TEXT NOT NULL,\n\
@@ -271,8 +276,14 @@ impl Store {
                  model TEXT,\n\
                  mode TEXT,\n\
                  effort TEXT,\n\
+                 needs_history INTEGER NOT NULL DEFAULT 0,\n\
                  created_at INTEGER NOT NULL,\n\
                  updated_at INTEGER NOT NULL\n\
+             );\n\
+             CREATE TABLE IF NOT EXISTS ignored_sessions (\n\
+                 harness_session_id TEXT PRIMARY KEY,\n\
+                 reason TEXT NOT NULL,\n\
+                 created_at INTEGER NOT NULL\n\
              );\n\
              CREATE TABLE IF NOT EXISTS turns (\n\
                  id INTEGER PRIMARY KEY AUTOINCREMENT,\n\
@@ -388,6 +399,7 @@ impl Store {
         ensure_column(&conn, "threads", "effort", "TEXT")?;
         ensure_column(&conn, "requests", "subagent_id", "TEXT")?;
         ensure_column(&conn, "turns", "origin", "TEXT")?;
+        ensure_column(&conn, "threads", "needs_history", "INTEGER NOT NULL DEFAULT 0")?;
 
         // Any turn or subagent left working by a Lever that ended abruptly is
         // interrupted, and a request that waited went with the harness that asked it.
@@ -561,17 +573,24 @@ impl Store {
     }
 
     pub fn thread_meta(&self, thread_id: &str) -> Result<Option<ThreadMeta>, String> {
-        type Row = (String, Option<String>, Option<String>, Option<String>, Option<String>);
+        type Row = (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            bool,
+        );
         let row: Option<Row> = self
             .conn
             .query_row(
-                "SELECT cwd, harness_session_id, model, mode, effort FROM threads WHERE id = ?1",
+                "SELECT cwd, harness_session_id, model, mode, effort, needs_history FROM threads WHERE id = ?1",
                 params![thread_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
             )
             .optional()
             .map_err(|e| format!("could not query thread: {e}"))?;
-        let Some((cwd, harness_session_id, model, mode, effort)) = row else {
+        let Some((cwd, harness_session_id, model, mode, effort, needs_history)) = row else {
             return Ok(None);
         };
         let latest_turn: Option<u64> = self
@@ -604,7 +623,268 @@ impl Store {
             mode: mode.unwrap_or_else(|| STARTING_MODE.to_string()),
             latest_turn,
             working_turn,
+            needs_history,
         }))
+    }
+
+    /// Returns `(known_thread_sessions, known_subagents_and_ignored)` from the
+    /// database so session discovery skips sessions Lever already owns or has
+    /// already classified as subagents/ignored.
+    pub fn known_harness_sessions(&self) -> Result<(HashSet<String>, HashSet<String>), String> {
+        let mut owned = HashSet::new();
+        {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT harness_session_id FROM threads WHERE harness_session_id IS NOT NULL AND harness_session_id <> ''")
+                .map_err(|e| format!("could not prepare known thread sessions query: {e}"))?;
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(|e| format!("could not query known thread sessions: {e}"))?;
+            for row in rows {
+                owned.insert(row.map_err(|e| format!("could not read known thread session: {e}"))?);
+            }
+        }
+        let mut ignored = HashSet::new();
+        {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT harness_session_id FROM subagents WHERE harness_session_id <> '' \
+                     UNION \
+                     SELECT harness_session_id FROM ignored_sessions",
+                )
+                .map_err(|e| format!("could not prepare ignored sessions query: {e}"))?;
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(|e| format!("could not query ignored sessions: {e}"))?;
+            for row in rows {
+                ignored.insert(row.map_err(|e| format!("could not read ignored session: {e}"))?);
+            }
+        }
+        Ok((owned, ignored))
+    }
+
+    /// Remembers a harness session ID that must never be listed as a top-level
+    /// thread (a subagent session or a deleted session whose copy may remain).
+    pub fn remember_ignored_session(&self, harness_session_id: &str, reason: &str, now: i64) -> Result<(), String> {
+        if harness_session_id.is_empty() {
+            return Ok(());
+        }
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO ignored_sessions (harness_session_id, reason, created_at) VALUES (?1, ?2, ?3)",
+                params![harness_session_id, reason, now],
+            )
+            .map_err(|e| format!("could not record ignored session: {e}"))?;
+        Ok(())
+    }
+
+    /// Looks up a thread by its `harness_session_id`, returning
+    /// `(thread_id, title, updated_at, needs_history)` if present.
+    pub fn thread_by_harness_session(
+        &self,
+        harness_session_id: &str,
+    ) -> Result<Option<(String, String, i64, bool)>, String> {
+        self.conn
+            .query_row(
+                "SELECT id, title, updated_at, needs_history FROM threads WHERE harness_session_id = ?1 LIMIT 1",
+                params![harness_session_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()
+            .map_err(|e| format!("could not query thread by harness session: {e}"))
+    }
+
+    /// Records a newly discovered external session as a thread whose history
+    /// will be read from the harness when opened (`needs_history = 1`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_discovered_thread(
+        &self,
+        id: &str,
+        title: &str,
+        cwd: &str,
+        harness_name: Option<&str>,
+        harness_session_id: &str,
+        mode: &str,
+        created: i64,
+        updated: i64,
+    ) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO threads (id, title, cwd, harness_name, harness_session_id, mode, needs_history, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8)",
+                params![id, title, cwd, harness_name, harness_session_id, mode, created, updated],
+            )
+            .map_err(|e| format!("could not create discovered thread: {e}"))?;
+        Ok(())
+    }
+
+    /// Updates the title or timestamp of an unopened discovered thread when
+    /// newer metadata arrives from the harness store. Returns `true` if the row
+    /// changed.
+    pub fn update_discovered_thread(&self, thread_id: &str, title: Option<&str>, updated: i64) -> Result<bool, String> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE threads \
+                 SET title = COALESCE(?1, title), updated_at = MAX(updated_at, ?2) \
+                 WHERE id = ?3 AND needs_history = 1 \
+                   AND ((?1 IS NOT NULL AND title <> ?1) OR updated_at < ?2)",
+                params![title, updated, thread_id],
+            )
+            .map_err(|e| format!("could not update discovered thread: {e}"))?;
+        Ok(changed > 0)
+    }
+
+    /// Atomically writes an imported [`SessionHistory`] into a discovered
+    /// thread's record and clears `needs_history`. All turns, acts, notes, and
+    /// subagents are committed together or rolled back on failure.
+    pub fn import_thread_history(
+        &self,
+        thread_id: &str,
+        history: &SessionHistory,
+        fallback_title: Option<&str>,
+        now: i64,
+    ) -> Result<(), String> {
+        self.all_or_none("import thread history", || {
+            let row: Option<(String, i64, i64, bool)> = self
+                .conn
+                .query_row(
+                    "SELECT title, created_at, updated_at, needs_history FROM threads WHERE id = ?1",
+                    params![thread_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .optional()
+                .map_err(|e| format!("could not query thread for history import: {e}"))?;
+            let Some((cur_title, created_at, updated_at, needs_history)) = row else {
+                return Err(format!("there is no thread {thread_id}"));
+            };
+            if !needs_history {
+                return Ok(());
+            }
+
+            let turn_time = updated_at.max(created_at);
+            let mut act_seq: i64 = 0;
+            let mut note_seq: i64 = 0;
+            let mut sub_seq: i64 = 0;
+
+            for (idx, turn) in history.turns.iter().enumerate() {
+                let turn_number = (idx + 1) as i64;
+                self.conn
+                    .execute(
+                        "INSERT INTO turns (thread_id, turn_number, message, context, answer, state, mode, origin, created_at, ended_at) \
+                         VALUES (?1, ?2, ?3, NULL, ?4, 'done', NULL, ?5, ?6, ?7)",
+                        params![
+                            thread_id,
+                            turn_number,
+                            turn.message,
+                            turn.answer,
+                            turn.origin.as_deref(),
+                            created_at,
+                            turn_time,
+                        ],
+                    )
+                    .map_err(|e| format!("could not insert imported turn: {e}"))?;
+
+                for act in &turn.acts {
+                    act_seq += 1;
+                    let act_id = format!("act-{}", sys::random_hex(6));
+                    self.conn
+                        .execute(
+                            "INSERT OR IGNORE INTO acts (id, thread_id, turn_number, harness_call_id, kind, title, state, detail, seq) \
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                            params![
+                                act_id,
+                                thread_id,
+                                turn_number,
+                                act.harness_call_id,
+                                act.kind,
+                                act.title,
+                                act.state,
+                                act.detail.as_deref(),
+                                act_seq,
+                            ],
+                        )
+                        .map_err(|e| format!("could not insert imported act: {e}"))?;
+                }
+
+                for (raw_json, plain_text) in &turn.notes {
+                    note_seq += 1;
+                    let note_id = format!("note-{}", sys::random_hex(6));
+                    self.conn
+                        .execute(
+                            "INSERT INTO notes (id, thread_id, turn_number, raw_json, plain_text, after_turn, seq) \
+                             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
+                            params![note_id, thread_id, turn_number, raw_json, plain_text, note_seq],
+                        )
+                        .map_err(|e| format!("could not insert imported note: {e}"))?;
+                }
+
+                for sub in &turn.subagents {
+                    sub_seq += 1;
+                    let sub_id = format!("sub-{}", sys::random_hex(6));
+                    let inserted = self
+                        .conn
+                        .execute(
+                            "INSERT OR IGNORE INTO subagents (id, thread_id, turn_number, harness_session_id, title, state, error, created_at, ended_at, seq) \
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                            params![
+                                sub_id,
+                                thread_id,
+                                turn_number,
+                                sub.harness_session_id,
+                                sub.title,
+                                sub.state,
+                                sub.error.as_deref(),
+                                created_at,
+                                turn_time,
+                                sub_seq,
+                            ],
+                        )
+                        .map_err(|e| format!("could not insert imported subagent: {e}"))?;
+                    if inserted > 0
+                        && let Some(prompt) = sub.prompt.as_deref().filter(|p| !p.is_empty())
+                    {
+                        self.conn
+                            .execute(
+                                "INSERT INTO subagent_messages (subagent_id, role, text, seq) VALUES (?1, 'prompt', ?2, 1)",
+                                params![sub_id, prompt],
+                            )
+                            .map_err(|e| format!("could not insert imported subagent prompt: {e}"))?;
+                    }
+                }
+            }
+
+            let new_title = history
+                .title
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    (cur_title.trim().is_empty() || cur_title == "Thread")
+                        .then_some(fallback_title)
+                        .flatten()
+                });
+            self.conn
+                .execute(
+                    "UPDATE threads \
+                     SET needs_history = 0, \
+                         title = COALESCE(?1, title), \
+                         model = COALESCE(?2, model), \
+                         effort = COALESCE(?3, effort), \
+                         updated_at = MAX(updated_at, ?4) \
+                     WHERE id = ?5",
+                    params![
+                        new_title,
+                        history.model.as_deref(),
+                        history.effort.as_deref(),
+                        now.min(turn_time.max(created_at)),
+                        thread_id,
+                    ],
+                )
+                .map_err(|e| format!("could not finalize imported thread: {e}"))?;
+            Ok(())
+        })
     }
 
     pub fn set_thread_mode(&self, thread_id: &str, mode: &str, now: i64) -> Result<(), String> {
@@ -2297,6 +2577,102 @@ mod tests {
         let rec = store.get_thread("t-v6").unwrap().unwrap();
         let subagents: usize = rec.turns.iter().map(|t| t.subagents.len()).sum();
         assert_eq!(subagents, 1, "no subagent is left working that Lever does not hold");
+        store.close().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn discovered_threads_import_history_atomically_and_track_ignored_sessions() {
+        use crate::discovery::{ImportedAct, ImportedSubagent, ImportedTurn};
+
+        let dir = std::env::temp_dir().join(format!(
+            "crowbar-lever-store-discovered-{}-{}",
+            std::process::id(),
+            crate::sys::random_hex(4)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("lever.db");
+
+        let store = Store::open(&db, 100).unwrap();
+        store
+            .create_discovered_thread(
+                "t-ext1",
+                "Thread",
+                "/tmp/work",
+                Some("OpenCode"),
+                "ses-ext-1",
+                STARTING_MODE,
+                90,
+                95,
+            )
+            .unwrap();
+        store.remember_ignored_session("ses-sub-1", "subagent", 96).unwrap();
+
+        let (owned, ignored) = store.known_harness_sessions().unwrap();
+        assert!(owned.contains("ses-ext-1"));
+        assert!(ignored.contains("ses-sub-1"));
+
+        let meta = store.thread_meta("t-ext1").unwrap().unwrap();
+        assert!(meta.needs_history);
+        assert_eq!(meta.harness_session_id.as_deref(), Some("ses-ext-1"));
+
+        assert!(
+            store
+                .update_discovered_thread("t-ext1", Some("Terminal chat"), 98)
+                .unwrap()
+        );
+        assert!(
+            !store
+                .update_discovered_thread("t-ext1", Some("Terminal chat"), 97)
+                .unwrap()
+        );
+
+        let history = SessionHistory {
+            title: None,
+            turns: vec![ImportedTurn {
+                message: "List the files".to_string(),
+                answer: "Found Cargo.toml".to_string(),
+                acts: vec![ImportedAct {
+                    harness_call_id: "call-1".to_string(),
+                    kind: "command".to_string(),
+                    title: "ls".to_string(),
+                    state: "done".to_string(),
+                    detail: Some("Cargo.toml".to_string()),
+                }],
+                notes: vec![],
+                subagents: vec![ImportedSubagent {
+                    harness_session_id: "ses-sub-2".to_string(),
+                    title: "Helper".to_string(),
+                    state: "done".to_string(),
+                    error: None,
+                    prompt: Some("Inspect".to_string()),
+                }],
+                origin: None,
+            }],
+            model: Some("stub/stub-1".to_string()),
+            effort: Some("high".to_string()),
+            mode: None,
+        };
+        store.import_thread_history("t-ext1", &history, None, 105).unwrap();
+
+        let meta = store.thread_meta("t-ext1").unwrap().unwrap();
+        assert!(!meta.needs_history);
+        assert_eq!(meta.model.as_deref(), Some("stub/stub-1"));
+        assert_eq!(meta.effort.as_deref(), Some("high"));
+
+        let rec = store.get_thread("t-ext1").unwrap().unwrap();
+        assert_eq!(rec.title, "Terminal chat");
+        assert_eq!(rec.turns.len(), 1);
+        assert_eq!(rec.turns[0].message, "List the files");
+        assert_eq!(rec.turns[0].answer, "Found Cargo.toml");
+        assert_eq!(rec.turns[0].acts.len(), 1);
+        assert_eq!(rec.turns[0].acts[0].title, "ls");
+        assert_eq!(rec.turns[0].subagents.len(), 1);
+        assert_eq!(rec.turns[0].subagents[0].title, "Helper");
+
+        let (_, ignored_after) = store.known_harness_sessions().unwrap();
+        assert!(ignored_after.contains("ses-sub-2"));
+
         store.close().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
