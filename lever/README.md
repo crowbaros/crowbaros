@@ -290,7 +290,8 @@ ACP today:
     sidecar files (`-wal`, `-journal`, `-shm`): `OPENCODE_DB` when it is set,
     taken from OpenCode's data directory unless absolute, or `opencode.db`
     there; the data directory is `$XDG_DATA_HOME/opencode`, or
-    `~/.local/share/opencode`. Additional
+    `~/.local/share/opencode`. A database that is a link is watched where it
+    leads as well, as it was when Lever started. Additional
     watch directories can be passed with `--harness-watch <dir>` for any ACP
     harness.
   - **Listing without keeping the harness running.** After a short debounce

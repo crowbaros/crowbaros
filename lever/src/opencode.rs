@@ -236,11 +236,32 @@ pub fn database_path(env: &[(String, String)]) -> Option<PathBuf> {
         return None;
     }
     let path = PathBuf::from(&name);
-    if path.is_absolute() {
-        Some(path)
+    let path = if path.is_absolute() {
+        path
     } else {
-        Some(data_dir(env)?.join(path))
+        data_dir(env)?.join(path)
+    };
+    // As OpenCode resolves it: `.` and `..` are taken out by the path alone,
+    // whether or not what they name is there.
+    let mut resolved = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                resolved.pop();
+            }
+            other => resolved.push(other),
+        }
     }
+    Some(resolved)
+}
+
+/// Watches a SQLite database and the files beside it its writes change.
+fn database_watch(db: &Path) -> Option<WatchSpec> {
+    let (dir, name) = (db.parent()?, db.file_name()?.to_str()?);
+    let mut filenames = vec![name.to_string()];
+    filenames.extend(SQLITE_SIDECARS.iter().map(|side| format!("{name}{side}")));
+    Some(WatchSpec::files(dir.to_path_buf(), filenames))
 }
 
 /// OpenCode's [`SessionDiscoverer`]: watches OpenCode's own store directory
@@ -286,12 +307,15 @@ impl OpenCodeSessionDiscoverer {
 
     fn with_cli_timeout(config: HarnessConfig, cli_timeout: Duration) -> Self {
         let mut watch_specs = watch_specs_from_paths(&config.watch_paths);
-        if let Some(db) = database_path(&config.env)
-            && let (Some(dir), Some(name)) = (db.parent(), db.file_name().and_then(|n| n.to_str()))
-        {
-            let mut filenames = vec![name.to_string()];
-            filenames.extend(SQLITE_SIDECARS.iter().map(|side| format!("{name}{side}")));
-            watch_specs.push(WatchSpec::files(dir.to_path_buf(), filenames));
+        if let Some(db) = database_path(&config.env) {
+            watch_specs.extend(database_watch(&db));
+            // A database that is a link is written where it leads, and its
+            // sidecars are kept there.
+            if let Ok(target) = std::fs::canonicalize(&db)
+                && target != db
+            {
+                watch_specs.extend(database_watch(&target));
+            }
         }
         let acp = AcpSessionDiscoverer::new(config.clone(), watch_specs.clone());
         Self {
@@ -742,6 +766,12 @@ mod tests {
             Some(PathBuf::from("/elsewhere/work.db"))
         );
         assert_eq!(database_path(&env(&[("OPENCODE_DB", ":memory:")])), None);
+        // `..` is taken out though the folder it climbs out of is not there.
+        let climbing = [("XDG_DATA_HOME", "/data"), ("OPENCODE_DB", "retired/../profile.db")];
+        assert_eq!(
+            database_path(&env(&climbing)),
+            Some(PathBuf::from("/data/opencode/profile.db"))
+        );
 
         let config = HarnessConfig {
             id: "opencode".into(),
@@ -758,6 +788,36 @@ mod tests {
             specs[0].filenames,
             ["profile.db", "profile.db-wal", "profile.db-journal", "profile.db-shm"]
         );
+    }
+
+    #[test]
+    fn a_database_that_is_a_link_is_watched_where_it_leads() {
+        let root = std::env::temp_dir().join(format!("lever-db-link-{}", sys::random_hex(4)));
+        let data = root.join("data").join("opencode");
+        let moved = root.join("moved");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&moved).unwrap();
+        std::fs::write(moved.join("opencode.db"), "").unwrap();
+        std::os::unix::fs::symlink(moved.join("opencode.db"), data.join("opencode.db")).unwrap();
+        let config = HarnessConfig {
+            id: "opencode".into(),
+            name: "OpenCode".into(),
+            program: "opencode".into(),
+            args: vec!["acp".into()],
+            env: vec![
+                ("XDG_DATA_HOME".into(), root.join("data").to_string_lossy().into_owned()),
+                ("OPENCODE_DB".into(), String::new()),
+            ],
+            watch_paths: Vec::new(),
+        };
+        let dirs: Vec<PathBuf> = OpenCodeSessionDiscoverer::new(config)
+            .watch_specs()
+            .into_iter()
+            .map(|spec| spec.dir)
+            .collect();
+        assert!(dirs.contains(&data));
+        assert!(dirs.contains(&std::fs::canonicalize(&moved).unwrap()), "{dirs:?}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

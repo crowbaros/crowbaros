@@ -5738,8 +5738,6 @@ impl Service {
     }
 }
 
-/// Says in the log that the database did not take a write. The database's
-/// error names what it could not do, and nothing a thread said.
 /// What applying a pass's sessions did.
 #[derive(Default)]
 struct Applied {
@@ -5753,6 +5751,8 @@ struct Applied {
     read_failed: bool,
 }
 
+/// Says in the log that the database did not take a write. The database's
+/// error names what it could not do, and nothing a thread said.
 fn store_failed(log: &mut Log, err: &str) {
     let _ = log.write(Event::Error, &format!("storage: {err}"));
 }
