@@ -598,8 +598,9 @@ impl Service {
         self.export_retry_pending = found.retry_at.is_some();
         if let Some(retry) = found.retry_at {
             // A session whose export failed is tried again then, though the
-            // store is quiet by then.
-            self.discovery_schedule.request(retry);
+            // store is quiet by then: a follow-up, which brings no run of
+            // its own.
+            self.discovery_schedule.request_followup(retry);
         }
         let mut quiet_failed = false;
         for (sid, stamp) in &found.quiet {
@@ -4643,7 +4644,7 @@ impl Service {
                         // its sessions: it is listed again, a few times at
                         // most while nothing it lists changes.
                         changed_after: true,
-                        progressed: false,
+                        progressed: applied.settled,
                     },
                 );
                 applied.effects
