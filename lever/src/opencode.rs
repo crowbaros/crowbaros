@@ -394,6 +394,7 @@ impl SessionDiscoverer for OpenCodeSessionDiscoverer {
                 left.min(self.cli_timeout)
             };
             found.changed_after = true;
+            found.exported = true;
             // Only the session's own export says it has a message and no
             // parent: a title and a later `updated` come from a rename too.
             let summary = match self.run_cli_export(&sid, timeout) {

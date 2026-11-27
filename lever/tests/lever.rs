@@ -10750,6 +10750,48 @@ fn a_session_found_empty_is_no_thread_until_it_changes() {
 }
 
 #[test]
+fn a_session_that_cannot_be_written_is_listed_again_later_each_time() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("sessions.json");
+    let starts = dir.0.join("starts.log");
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "touch_on_start": starts.to_str().unwrap(),
+        }),
+    );
+    // Lever's database reads, but will not take a new thread.
+    let mut lever = start_lever_with_discovery(&dir.0, &script, None, &store_dir);
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+    let db = rusqlite::Connection::open(dir.0.join("state").join("lever.sqlite")).unwrap();
+    db.execute_batch("CREATE TRIGGER refused BEFORE INSERT ON threads BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .unwrap();
+    drop(db);
+    write_sessions_file(
+        &sessions_file,
+        &json!([{
+            "session_id": "ses_hand",
+            "cwd": "/tmp",
+            "title": "By hand",
+            "history": [{ "kind": "user_text", "text": "hi" }, { "kind": "text", "text": "hello" }]
+        }]),
+    );
+    let mut lever = start_lever_with_discovery(&dir.0, &script, None, &store_dir);
+    std::thread::sleep(Duration::from_millis(6500));
+    // Tried at once, then after 1, 2 and 4 s: not every second.
+    let tried = count_lines(&starts);
+    assert!((2..=4).contains(&tried), "listed {tried} times in 6.5 s");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
 fn missing_store_directory_is_promoted_when_created_later() {
     let dir = TempDir::new();
     let store_dir = dir.0.join("nested").join("store");

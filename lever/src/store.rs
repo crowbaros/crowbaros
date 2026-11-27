@@ -2779,6 +2779,27 @@ mod tests {
             .unwrap();
         store.remember_ignored_session("ses-quiet-2", "subagent", 97).unwrap();
         assert!(store.quiet_sessions().unwrap().is_empty());
+        // A thread and its quiet mark are written together or not at all.
+        store
+            .remember_quiet_session("ses-quiet-3", "2026-01-01T00:00:00.100Z")
+            .unwrap();
+        store
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER refused BEFORE DELETE ON quiet_sessions BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            )
+            .unwrap();
+        assert!(
+            store
+                .create_discovered_thread("t-quiet-3", "Thread", "/tmp", None, "ses-quiet-3", "ask-first", 90, 96)
+                .is_err()
+        );
+        assert!(
+            store.thread_meta("t-quiet-3").unwrap().is_none(),
+            "half a write was kept"
+        );
+        assert!(store.quiet_sessions().unwrap().contains_key("ses-quiet-3"));
+        store.conn.execute_batch("DROP TRIGGER refused").unwrap();
 
         // A session a new one replaces is never taken for one started by hand.
         store.set_harness_session_id("t-ext1", "ses-ext-1b").unwrap();

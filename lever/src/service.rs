@@ -306,7 +306,9 @@ pub struct Service {
     /// How long a pass waits after Lever's database could not be read.
     discovery_read_retry: Duration,
     /// How long a pass waits after a listing failed while a session waited
-    /// to be tried again.
+    /// to be tried again, or after what it found could not be written: it
+    /// doubles each time, and starts again only once a pass has listed and
+    /// written all it found.
     listing_retry: Duration,
     /// Whether a session whose export failed waits to be tried again.
     export_retry_pending: bool,
@@ -591,13 +593,13 @@ impl Service {
                 return Effects::default();
             }
         };
-        self.listing_retry = DISCOVERY_READ_RETRY;
         self.export_retry_pending = found.retry_at.is_some();
         self.discovery_pass_finished(
             rescan || found.more,
             PassEnd::Listed {
                 fingerprint,
                 changed_after: found.changed_after,
+                progressed: found.exported || found.more,
             },
         );
         if let Some(retry) = found.retry_at {
@@ -722,6 +724,7 @@ impl Service {
         let default_mode = self.default_mode();
         let now = unix_now();
         let mut broadcasts = Vec::new();
+        let mut create_failed = false;
 
         for session in sessions {
             // One found empty or archived, unchanged since, is no thread.
@@ -802,14 +805,20 @@ impl Service {
                         }
                         Err(err) => {
                             store_failed(log, &err);
-                            // Listed again, so it is not left out.
-                            self.discovery_schedule
-                                .request(Instant::now() + self.discovery_read_retry);
+                            // Listed again, so it is not left out, later
+                            // each time while it cannot be written.
+                            create_failed = true;
                         }
                     }
                 }
                 Err(err) => store_failed(log, &err),
             }
+        }
+        if create_failed {
+            self.discovery_schedule.request(Instant::now() + self.listing_retry);
+            self.listing_retry = (self.listing_retry * 2).min(DISCOVERY_READ_RETRY_MAX);
+        } else {
+            self.listing_retry = DISCOVERY_READ_RETRY;
         }
         Effects {
             broadcasts,
@@ -4567,7 +4576,8 @@ impl Service {
                     }
                 }
                 let fingerprint = discovery::listing_fingerprint(&sessions);
-                self.listing_retry = DISCOVERY_READ_RETRY;
+                // Nothing in it waits to be classified any more.
+                self.export_retry_pending = false;
                 self.discovery_pass_finished(
                     rescan,
                     PassEnd::Listed {
@@ -4577,6 +4587,7 @@ impl Service {
                         // its sessions: it is listed again, a few times at
                         // most while nothing it lists changes.
                         changed_after: true,
+                        progressed: false,
                     },
                 );
                 self.apply_discovered_sessions(sessions, log)

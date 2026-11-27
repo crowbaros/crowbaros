@@ -180,6 +180,8 @@ pub struct Classified {
     pub changed_after: bool,
     /// Whether sessions were left for the next pass.
     pub more: bool,
+    /// Whether it ran the harness's own commands to classify sessions.
+    pub exported: bool,
     /// Sessions newly found empty or archived, with their stamps.
     pub quiet: Vec<(String, String)>,
     /// The soonest a session whose export failed may be tried again, when
@@ -353,16 +355,23 @@ pub struct DiscoverySchedule {
     unchanged_followups: u32,
 }
 
-/// The most follow-ups in a row that list the same and see a change after
-/// listing: a harness that writes as it ends would bring them for ever.
+/// How many follow-ups in a row that list the same, classify nothing, and
+/// see a change after listing may each bring another: a harness that writes
+/// as it ends would bring them for ever.
 const MAX_UNCHANGED_FOLLOWUPS: u32 = 3;
 
 /// How a pass ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PassEnd {
-    /// It listed: the listing's fingerprint ([`listing_fingerprint`]), and
-    /// whether the store may have changed after it was taken.
-    Listed { fingerprint: u64, changed_after: bool },
+    /// It listed: the listing's fingerprint ([`listing_fingerprint`]),
+    /// whether the store may have changed after it was taken, and whether it
+    /// classified sessions or left some for the next pass: work that ends,
+    /// so a follow-up of it is not counted against the cap.
+    Listed {
+        fingerprint: u64,
+        changed_after: bool,
+        progressed: bool,
+    },
     /// It failed, or was lost.
     Failed,
 }
@@ -432,10 +441,11 @@ impl DiscoverySchedule {
             PassEnd::Listed {
                 fingerprint,
                 changed_after,
+                progressed,
             } => {
                 let changed = self.last_listing != Some(fingerprint);
                 self.last_listing = Some(fingerprint);
-                if !self.followup_now || changed {
+                if !self.followup_now || changed || progressed {
                     self.unchanged_followups = 0;
                     true
                 } else if changed_after && self.unchanged_followups < MAX_UNCHANGED_FOLLOWUPS {
@@ -566,6 +576,8 @@ impl AcpSessionDiscoverer {
                 return Err("harness uses an unsupported protocol version".to_string());
             }
             if init_resp.agent_capabilities.session_capabilities.list.is_none() {
+                // Nothing was listed, so nothing since is told.
+                watcher = None;
                 return Ok(Vec::new());
             }
             // The harness writes to its store as it starts, and not once it
@@ -899,6 +911,7 @@ mod tests {
         PassEnd::Listed {
             fingerprint,
             changed_after: false,
+            progressed: false,
         }
     }
 
@@ -980,6 +993,7 @@ mod tests {
             PassEnd::Listed {
                 fingerprint: 1,
                 changed_after: true,
+                progressed: true,
             },
         );
         assert!(s.take_due(t0 + ms(3400)), "a fresh listing, after the person's change");
@@ -997,6 +1011,7 @@ mod tests {
         let after = PassEnd::Listed {
             fingerprint: 1,
             changed_after: true,
+            progressed: false,
         };
         let mut passes = 1;
         let mut now = t0 + ms(400);
