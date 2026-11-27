@@ -110,6 +110,12 @@ class Changes(unittest.TestCase):
         self.assertEqual(self.needs(base=self.first, head=head),
                          {'code': 'true', 'compositor': 'false', 'lever': 'false', 'boot': 'true'})
 
+    def test_calculator_needs_interface_and_boot_jobs(self):
+        head = self.commit({'apps/calc/src/main.rs': 'fn main() {}\n'})
+        self.assertEqual(self.needs(base=self.first, head=head),
+                         {'code': 'true', 'compositor': 'false', 'lever': 'false', 'boot': 'true'})
+        self.assertIn('apps/calc, libs/crowbar-calc', WORKFLOW.read_text())
+
     def test_shared_libs_need_the_code_jobs_and_the_boot(self):
         head = self.commit({'libs/crowbar-theme/src/lib.rs': 'pub fn ok() {}\n'})
         self.assertEqual(self.needs(base=self.first, head=head),

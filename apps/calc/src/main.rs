@@ -201,54 +201,51 @@ impl Render for Calc {
             Some(Err(e)) => e.to_string(),
             None => "0".into(),
         };
-        let extra: &[&str] = match self.calculator.page {
-            Page::Standard => &[],
-            Page::Scientific => &[
-                "sin(", "cos(", "tan(", "ln(", "log(", "sqrt(", "asin(", "acos(", "atan(", "exp(", "pi", "e",
-            ],
-            Page::Programmer => &[
-                "0x", "0o", "0b", " AND ", " OR ", " XOR ", "NOT ", " << ", " >> ", "A", "B", "C", "D", "E", "F",
-            ],
-        };
-        let mut keys = div().flex().flex_col().gap_2();
-        for (row, group) in extra.chunks(6).enumerate() {
-            keys = keys.child(div().flex().gap_2().children(group.iter().enumerate().map(|(col, &s)| {
-                self.control(12 + row * 6 + col, s.trim(), Control::Insert(s), true, w, cx)
-                    .flex_1()
-                    .min_w_0()
-                    .px_1()
-            })));
+        let mut rows: Vec<&[&'static str]> = Vec::new();
+        if self.calculator.page == Page::Programmer {
+            rows.extend([
+                &["A", "B", "C", "D", "E", "F"][..],
+                &[" AND ", " OR ", " XOR ", "NOT ", " << ", " >> "][..],
+                &["0x", "0o", "0b", "(", ")", "%"][..],
+                &["7", "8", "9", "/", "^", "Clear"][..],
+                &["4", "5", "6", "*", "-", "Copy"][..],
+                &["1", "2", "3", "0", "+", "="][..],
+            ]);
+        } else {
+            if self.calculator.page == Page::Scientific {
+                rows.extend([
+                    &["sin(", "cos(", "tan(", "ln(", "log(", "sqrt("][..],
+                    &["asin(", "acos(", "atan(", "exp(", "pi", "e"][..],
+                ]);
+            }
+            rows.extend([
+                &["(", ")", "%", "^"][..],
+                &["7", "8", "9", "/"][..],
+                &["4", "5", "6", "*"][..],
+                &["1", "2", "3", "-"][..],
+                &["0", ".", "=", "+"][..],
+            ]);
         }
-        for (row, group) in [
-            ["(", ")", "%", "^"],
-            ["7", "8", "9", "/"],
-            ["4", "5", "6", "*"],
-            ["1", "2", "3", "-"],
-            ["0", ".", "=", "+"],
-        ]
-        .iter()
-        .enumerate()
-        {
+        let mut keys = div().flex().flex_col().gap_2();
+        for (row, group) in rows.iter().enumerate() {
             keys = keys.child(div().flex().gap_2().children(group.iter().enumerate().map(|(col, &s)| {
+                let action = match s {
+                    "=" => Control::Evaluate,
+                    "Clear" => Control::Clear,
+                    "Copy" => Control::Copy,
+                    _ => Control::Insert(s),
+                };
                 self.control(
-                    30 + row * 4 + col,
-                    s,
-                    if s == "=" {
-                        Control::Evaluate
-                    } else {
-                        Control::Insert(s)
-                    },
-                    if s == "." {
-                        self.calculator.page != Page::Programmer
-                    } else if s == "=" {
-                        valid
-                    } else {
-                        true
-                    },
+                    12 + row * 6 + col,
+                    s.trim(),
+                    action,
+                    !matches!(action, Control::Evaluate | Control::Copy) || valid,
                     w,
                     cx,
                 )
                 .flex_1()
+                .min_w_0()
+                .px_1()
             })));
         }
         let mut display = div()
@@ -348,19 +345,24 @@ impl Render for Calc {
                         )
                     })
                     .children(self.calculator.history.iter().enumerate().map(|(i, e)| {
-                        self.control(60 + i, "", Control::Reuse(i), true, w, cx)
+                        self.control(60 + i, e.expression.clone(), Control::Reuse(i), true, w, cx)
                             .h_auto()
                             .p_3()
                             .flex_col()
                             .items_start()
                             .gap_1()
-                            .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(e.page.label()))
+                            .font_family(FONT_MONO)
+                            .text_ellipsis()
                             .child(
                                 div()
-                                    .w_full()
-                                    .font_family(FONT_MONO)
-                                    .text_ellipsis()
-                                    .child(e.expression.clone()),
+                                    .font_family(FONT_UI)
+                                    .text_size(px(11.))
+                                    .text_color(rgb(p.muted))
+                                    .child(if e.page == Page::Programmer {
+                                        format!("Programmer · {}-bit", e.width)
+                                    } else {
+                                        e.page.label().into()
+                                    }),
                             )
                             .child(
                                 div()
@@ -426,17 +428,19 @@ impl Render for Calc {
                             .overflow_y_scroll()
                             .child(display)
                             .child(keys)
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_2()
-                                    .mt_3()
-                                    .child(
-                                        self.control(3, "Clear expression", Control::Clear, true, w, cx)
-                                            .flex_1(),
-                                    )
-                                    .child(self.control(4, "Copy result", Control::Copy, valid, w, cx).flex_1()),
-                            )
+                            .when(self.calculator.page != Page::Programmer, |d| {
+                                d.child(
+                                    div()
+                                        .flex()
+                                        .gap_2()
+                                        .mt_3()
+                                        .child(
+                                            self.control(3, "Clear expression", Control::Clear, true, w, cx)
+                                                .flex_1(),
+                                        )
+                                        .child(self.control(4, "Copy result", Control::Copy, valid, w, cx).flex_1()),
+                                )
+                            })
                             .child(div().mt_3().text_size(px(12.)).text_color(rgb(p.muted)).child(
                                 match self.calculator.page {
                                     Page::Standard => "Type freely · Enter keeps the result · Ctrl+C copies",

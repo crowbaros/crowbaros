@@ -305,6 +305,87 @@ class Check:
         except (OSError, RuntimeError, ValueError) as error:
             self.log(f'Could not capture final display: {error}')
 
+    def calculator_check(self, theme):
+        """Real keyboard expressions and inter-client copying, in both themes."""
+        self.capture(f'calc-{theme}-before')
+        logfile = f'/tmp/calc-{theme}.log'
+        app_class = 'com.crowbaros.Calc'
+        self.as_app('env CROWBAR_CALC_CHECK=1 crowbaros-calc', logfile)
+        self.wait('Calculator opens and takes keyboard focus',
+                  lambda: self.snapshot()['active'].get('class') == app_class)
+        for mode, expression, answer in [('Standard', '1280 * 1.25', '1600'),
+                                          ('Scientific', 'sqrt(81) + log(100)', '11'),
+                                          ('Programmer', '0xff XOR 0x0f', '240')]:
+            self.key('alt', str(['Standard', 'Scientific', 'Programmer'].index(mode) + 1))
+            self.key('ctrl', 'l')
+            self.key('ctrl', 'a')
+            self.type(expression)
+            self.key('ret')
+            self.wait(f'Calculator evaluates {mode} keyboard input in {theme}',
+                      lambda: f'CALC mode={mode} width=64 result={answer}' in self.run('cat ' + logfile))
+            self.capture(f'calc-{theme}-{mode.lower()}')
+            self.key('ctrl', 'c')
+            copied = self.clipboard('text/plain;charset=utf-8', app_class)
+            self.check(f'Calculator copies the {mode} answer in {theme}', copied == answer.encode())
+        # Pointer-only calculations exercise every mode's keypad and word widths.
+        for point in [(138, 340), (632, 630), (424, 534), (424, 726), (632, 726)]:
+            self.click(*point)
+        self.wait('Programmer pointer keys evaluate an 8-bit NOT',
+                  lambda: 'CALC mode=Programmer width=8 result=255' in self.run('cat ' + logfile))
+        self.capture(f'calc-{theme}-programmer-pointer')
+        for point in [(214, 151), (200, 688), (632, 348), (450, 490), (294, 444), (450, 640)]:
+            self.click(*point)
+        self.wait('Scientific pointer keys evaluate a square root',
+                  lambda: 'CALC mode=Scientific width=8 result=3' in self.run('cat ' + logfile))
+        for point in [(110, 151), (200, 592), (294, 490), (608, 540), (450, 490), (450, 540)]:
+            self.click(*point)
+        self.wait('Standard pointer keys evaluate an addition',
+                  lambda: 'CALC mode=Standard width=8 result=5' in self.run('cat ' + logfile))
+        kept = self.count('CALC mode=Standard width=8 result=5', logfile)
+        self.key('alt', '3')
+        self.click(800, 280)
+        self.key('ret')
+        self.wait('clicking history restores its expression and mode',
+                  lambda: self.count('CALC mode=Standard width=8 result=5', logfile) > kept)
+        self.capture(f'calc-{theme}-history')
+        self.key('alt', '1')
+        self.key('ctrl', 'l')
+        self.key('ctrl', 'a')
+        self.type('1/0')
+        self.capture(f'calc-{theme}-error')
+        self.key('ctrl', 'a')
+        self.type('(2+3)*4')
+        self.key('ret')
+        self.wait('Calculator recovers after an invalid expression',
+                  lambda: 'CALC mode=Standard width=8 result=20' in self.run('cat ' + logfile))
+        self.capture(f'calc-{theme}-after')
+        frames = self.work / f'calc-{theme}-typing-frames'
+        frames.mkdir()
+        self.key('ctrl', 'l')
+        self.key('ctrl', 'a')
+        for index, character in enumerate('1280*1.25'):
+            self.type(character)
+            self.capture(f'{frames.name}/frame-{index:03d}')
+        encode_recording(frames, self.work / f'calc-{theme}-typing.mp4')
+        for frame in frames.iterdir():
+            frame.unlink()
+        frames.rmdir()
+        for expression, answer in [('1280 * 1.25', '1600'), ('0xff + 16', '271')]:
+            opened = self.shell_log().count('SHELL launcher open=true')
+            self.key('meta_l')
+            self.wait('launcher opens for inline math',
+                      lambda: self.shell_log().count('SHELL launcher open=true') > opened)
+            self.type(expression)
+            self.capture(f'calc-{theme}-launcher-{answer}')
+            self.key('ret')
+            self.wait('copying launcher math returns focus to Calculator',
+                      lambda: self.snapshot()['active'].get('class') == app_class)
+            copied = self.clipboard('text/plain;charset=utf-8', app_class)
+            self.check(f'launcher copies {answer} in {theme}', copied == answer.encode())
+        self.key('ctrl', 'q')
+        self.wait('Calculator closes',
+                  lambda: not any(c['class'] == app_class for c in self.snapshot()['clients']))
+
     def monitor_check(self, theme):
         """Exercise the real window as the person, using disposable child processes."""
         person, _ = self.person()
@@ -431,7 +512,7 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
             self.python(viewer_state_code(home, directory, restore=True), person)
             self.python(f'import shutil; shutil.rmtree({directory!r})', person)
 
-    def clipboard(self, mime):
+    def clipboard(self, mime, app_class='com.crowbaros.Viewer'):
         """Read the compositor's actual selection as another ordinary client."""
         person, home = self.person()
         encoded = self.python(f'''
@@ -445,8 +526,8 @@ print(base64.b64encode(result.stdout).decode('ascii'))
         # wl-paste's fallback reader briefly maps its own surface to receive
         # the selection. Return the keyboard with a real click after it exits.
         self.click(640, 480)
-        self.wait('Viewer regains focus after the clipboard reader',
-                  lambda: self.snapshot()['active'].get('class') == 'com.crowbaros.Viewer')
+        self.wait('the app regains focus after the clipboard reader',
+                  lambda: self.snapshot()['active'].get('class') == app_class)
         return base64.b64decode(encoded.strip())
 
     def viewer_pan(self, theme):
@@ -673,6 +754,7 @@ print(base64.b64encode(result.stdout).decode('ascii'))
         self.editor_check('dark')
         self.monitor_check('dark')
         self.viewer_check('dark')
+        self.calculator_check('dark')
         self.check('fresh guest has no saved preferences', self.preferences() is None)
         self.click(680, 935)  # Terminal dock entry (Applications · Files · Chromium · Terminal · Settings).
         terminal = self.wait('terminal launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
@@ -923,6 +1005,7 @@ for name, original in {original_files!r}.items():
         self.editor_check('light')
         self.monitor_check('light')
         self.viewer_check('light')
+        self.calculator_check('light')
         log_offset = len(self.app_log())
         self.click(720, 935)
         self.wait('Settings restored Light after reboot', lambda: 'event=opened theme=Light' in self.app_log()[log_offset:])
@@ -3255,6 +3338,13 @@ BAR_FOLLOWS = 2 * 1000 / 60
 
 
 QMP_PUNCTUATION = {
+    '*': ('shift', '8'),
+    '(': ('shift', '9'),
+    ')': ('shift', '0'),
+    '^': ('shift', '6'),
+    '%': ('shift', '5'),
+    '<': ('shift', 'comma'),
+    '>': ('shift', 'dot'),
     ' ': ('spc',),
     '-': ('minus',),
     '_': ('shift', 'minus'),

@@ -35,3 +35,6 @@ The apps have also rendered on [Void hardware](../docs/research/compositor-nvidi
 Base's desktop does not call the shell's and Settings' retained Hyprland or
 systemd adapters, which are from before Void. The old hooks are archived and
 are not installed.
+
+[Calculator](calc/README.md) provides standard, scientific, and programmer math;
+the shell launcher shares its evaluator for quick expressions.

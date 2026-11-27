@@ -527,6 +527,15 @@ class Desktop(BuildFixture):
         self.assertEqual(programs, [str(path) for path in void_base.binaries().values()])
         self.assertTrue(all(' ' in path for path in programs))
 
+    def test_calculator_and_shared_evaluator_are_built_with_the_desktop(self):
+        self.assertIn('apps/calc', dict(void_base.PROJECTS))
+        self.assertIn('libs/crowbar-calc', dict(void_base.PROJECTS))
+        self.assertEqual(void_base.PROGRAMS['crowbaros-calc'], 'apps/calc')
+        entry = (void_base.HERE.parent / 'apps/calc/packaging/com.crowbaros.Calc.desktop').read_text()
+        self.assertIn('Exec=crowbaros-calc', entry)
+        self.assertIn('apps/calc/packaging/com.crowbaros.Calc.desktop',
+                      (void_base.HERE / 'host/image.sh').read_text())
+
     def test_files_is_built_with_the_desktop(self):
         self.assertIn('apps/files', dict(void_base.PROJECTS))
         self.assertEqual(void_base.PROGRAMS['crowbaros-files'], 'apps/files')

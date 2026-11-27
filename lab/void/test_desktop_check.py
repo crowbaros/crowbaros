@@ -442,6 +442,11 @@ class DrawerReachedLeverAndTyping(unittest.TestCase):
         self.assertNotIn('HARNESS_NODE', source)
         self.assertIn('/usr/local/lib/crowbar-lab/stub-model.py', source)
 
+    def test_qmp_types_calculator_operators(self):
+        self.assertEqual(desktop_check.qmp_keys_for_text('(*)^%<>'),
+                         [('shift', '9'), ('shift', '8'), ('shift', '0'),
+                          ('shift', '6'), ('shift', '5'), ('shift', 'comma'), ('shift', 'dot')])
+
     def test_qmp_keys_for_text_maps_spaces_punctuation_and_case(self):
         self.assertEqual(
             desktop_check.qmp_keys_for_text('Hi app_id?'),

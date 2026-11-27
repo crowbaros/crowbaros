@@ -122,6 +122,7 @@ install -m 644 "$REPO_ROOT/apps/studio-settings/packaging/com.crowbaros.StudioSe
 install -m 644 "$REPO_ROOT/apps/editor/packaging/com.crowbaros.Editor.desktop" "$R/usr/share/applications/"
 install -m 644 "$REPO_ROOT/apps/monitor/packaging/com.crowbaros.Monitor.desktop" "$R/usr/share/applications/"
 install -m 644 "$REPO_ROOT/apps/viewer/packaging/com.crowbaros.Viewer.desktop" "$R/usr/share/applications/"
+install -m 644 "$REPO_ROOT/apps/calc/packaging/com.crowbaros.Calc.desktop" "$R/usr/share/applications/"
 install -m 644 "$REPO_ROOT/apps/files/packaging/com.crowbaros.Files.desktop" "$R/usr/share/applications/"
 install -m 644 "$DESKTOP/com.crowbaros.AgentSignIn.desktop" "$R/usr/share/applications/"
 install -D -m 644 "$REPO_ROOT/apps/files/packaging/com.crowbaros.Files.svg" "$R/usr/share/icons/hicolor/scalable/apps/com.crowbaros.Files.svg"

@@ -64,13 +64,13 @@ REPOSITORY = CFG["void_repository"]
 NONFREE = REPOSITORY + "/nonfree"
 # What the desktop is built from: each Cargo project, and the part of the
 # target directory it builds in. The apps share theirs.
-PROJECTS = [("compositor", "compositor"), ("apps/shell", ""), ("apps/files", ""), ("apps/editor", ""), ("apps/monitor", ""), ("apps/viewer", ""), ("apps/studio-settings", ""),
+PROJECTS = [("compositor", "compositor"), ("apps/shell", ""), ("apps/files", ""), ("apps/editor", ""), ("apps/monitor", ""), ("apps/viewer", ""), ("apps/calc", ""), ("libs/crowbar-calc", ""), ("apps/studio-settings", ""),
             ("base/helpers", "helpers"), ("lever", "lever")]
 # The programs the image holds, and the project each comes from. The probe is
 # Fulcrum's test client. The helpers are the desktop's four helpers in one
 # program; see helpers/README.md.
 PROGRAMS = {"crowbar-compositor": "compositor", "crowbar-probe": "compositor",
-            "crowbaros-shell": "apps/shell", "crowbaros-files": "apps/files", "crowbaros-editor": "apps/editor", "crowbaros-monitor": "apps/monitor", "crowbaros-viewer": "apps/viewer", "crowbaros-studio-settings": "apps/studio-settings",
+            "crowbaros-shell": "apps/shell", "crowbaros-files": "apps/files", "crowbaros-editor": "apps/editor", "crowbaros-monitor": "apps/monitor", "crowbaros-viewer": "apps/viewer", "crowbaros-calc": "apps/calc", "crowbaros-studio-settings": "apps/studio-settings",
             "crowbar-helpers": "base/helpers", "crowbar-lever": "lever", "crowbar-agent": "lever"}
 
 
