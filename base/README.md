@@ -2,7 +2,8 @@
 
 Plain Void Linux with the desktop on it, built without root and booted under
 UEFI, in a VM or on a real machine ([the guide](HARDWARE.md)). The desktop is
-Fulcrum, the shell, Files, Editor, Monitor, and Studio Settings, as the lab ran them. It has no apply engine and no generations.
+Fulcrum, the shell, Files, Editor, Monitor, Viewer, and Studio Settings, as the
+lab ran them. It has no apply engine and no generations.
 
 ```sh
 base/void_base.py check          # build, boot, check, record a log, power off
