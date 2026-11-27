@@ -151,6 +151,10 @@ struct Script {
     /// writes to its own store whenever it opens it.
     #[serde(default)]
     touch_on_start: Option<String>,
+    /// If set, the process that starts this many times (as
+    /// `touch_on_start` counts) fails every `session/list`.
+    #[serde(default)]
+    fail_list_on_start: Option<usize>,
     /// A file the stub appends a line to as it answers each listing, as a
     /// running harness's own turn writes to its store meanwhile.
     #[serde(default)]
@@ -2335,6 +2339,12 @@ fn run(options: Options) -> Result<(), String> {
                 continue;
             }
             if script.withhold_list_after_prompt && prompted.load(Ordering::Relaxed) {
+                continue;
+            }
+            if let (Some(fail_on), Some(starts)) = (script.fail_list_on_start, &script.touch_on_start)
+                && std::fs::read_to_string(starts).map(|t| t.lines().count()).unwrap_or(0) == fail_on
+            {
+                writer.send_error(id, AcpError::new(-32000, "store is busy".to_string()));
                 continue;
             }
             match serde_json::from_value::<ListSessionsRequest>(params) {

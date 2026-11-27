@@ -312,6 +312,8 @@ pub struct Service {
     listing_retry: Duration,
     /// Whether a session whose export failed waits to be tried again.
     export_retry_pending: bool,
+    /// Whether a session a pass found could not be written, and waits to be.
+    write_retry_pending: bool,
     /// True if another pass was asked for while a live `session/list` RPC
     /// was already in flight on `self.harness`.
     live_list_rescan_wanted: bool,
@@ -452,6 +454,7 @@ impl Service {
             discovery_read_retry: DISCOVERY_READ_RETRY,
             listing_retry: DISCOVERY_READ_RETRY,
             export_retry_pending: false,
+            write_retry_pending: false,
             loading_history: HashMap::new(),
             dispatched_history: HashSet::new(),
             pending_resumes: Vec::new(),
@@ -594,14 +597,6 @@ impl Service {
             }
         };
         self.export_retry_pending = found.retry_at.is_some();
-        self.discovery_pass_finished(
-            rescan || found.more,
-            PassEnd::Listed {
-                fingerprint,
-                changed_after: found.changed_after,
-                progressed: found.exported || found.more,
-            },
-        );
         if let Some(retry) = found.retry_at {
             // A session whose export failed is tried again then, though the
             // store is quiet by then.
@@ -612,7 +607,18 @@ impl Service {
                 store_failed(log, &err);
             }
         }
-        self.apply_discovered_sessions(found.sessions, log)
+        // What it found is written first: classifying is progress only once
+        // what it classified is kept.
+        let effects = self.apply_discovered_sessions(found.sessions, log);
+        self.discovery_pass_finished(
+            rescan || found.more,
+            PassEnd::Listed {
+                fingerprint,
+                changed_after: found.changed_after,
+                progressed: (found.exported && !self.write_retry_pending) || found.more,
+            },
+        );
+        effects
     }
 
     fn trigger_discovery(&mut self, log: &mut Log) {
@@ -677,13 +683,14 @@ impl Service {
         Some(KnownSessions { owned, ignored, quiet })
     }
 
-    /// A listing failed. A session waiting to be tried again still waits:
+    /// A listing failed. A session waiting to be tried again, or to be
+    /// written, still waits:
     /// the pass that was to try it is tried again, later each time until a
     /// listing succeeds.
     fn listing_failed(&mut self, rescan: bool, log: &mut Log) {
         self.discovery_pass_finished(rescan, PassEnd::Failed);
         let _ = log.write(Event::Error, "could not list external harness sessions");
-        if self.export_retry_pending {
+        if self.export_retry_pending || self.write_retry_pending {
             self.discovery_schedule.request(Instant::now() + self.listing_retry);
             self.listing_retry = (self.listing_retry * 2).min(DISCOVERY_READ_RETRY_MAX);
         }
@@ -814,6 +821,7 @@ impl Service {
                 Err(err) => store_failed(log, &err),
             }
         }
+        self.write_retry_pending = create_failed;
         if create_failed {
             self.discovery_schedule.request(Instant::now() + self.listing_retry);
             self.listing_retry = (self.listing_retry * 2).min(DISCOVERY_READ_RETRY_MAX);

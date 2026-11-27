@@ -353,7 +353,14 @@ pub struct DiscoverySchedule {
     last_listing: Option<u64>,
     /// Follow-ups in a row that listed the same and saw a change after.
     unchanged_followups: u32,
+    /// Whether the later pass a full run of such follow-ups brings has been
+    /// asked for since the last pass of the person's own.
+    reconciled: bool,
 }
+
+/// How long after a full run of unchanged follow-ups the one later pass
+/// looks again.
+pub const RECONCILE_AFTER: Duration = Duration::from_secs(5);
 
 /// How many follow-ups in a row that list the same, classify nothing, and
 /// see a change after listing may each bring another: a harness that writes
@@ -389,6 +396,7 @@ impl DiscoverySchedule {
             followup_now: false,
             last_listing: None,
             unchanged_followups: 0,
+            reconciled: false,
         }
     }
 
@@ -447,11 +455,21 @@ impl DiscoverySchedule {
                 self.last_listing = Some(fingerprint);
                 if !self.followup_now || changed || progressed {
                     self.unchanged_followups = 0;
+                    self.reconciled = false;
                     true
                 } else if changed_after && self.unchanged_followups < MAX_UNCHANGED_FOLLOWUPS {
                     self.unchanged_followups += 1;
                     true
                 } else {
+                    if changed_after && self.missed && !self.reconciled {
+                        // A change may yet be the person's: one later pass
+                        // looks again, and brings no more unless what it
+                        // lists has changed.
+                        self.reconciled = true;
+                        self.missed = false;
+                        self.followup_next = true;
+                        self.request(now + RECONCILE_AFTER);
+                    }
                     false
                 }
             }
@@ -1025,6 +1043,38 @@ mod tests {
             passes += 1;
         }
         assert_eq!(passes, 2 + MAX_UNCHANGED_FOLLOWUPS);
+        // One later pass looks again, in case a change was the person's, and
+        // brings no more while it lists the same.
+        assert!(!s.take_due(now + RECONCILE_AFTER - ms(600)));
+        let later = now + RECONCILE_AFTER;
+        assert!(s.take_due(later));
+        s.store_changed(later + ms(10), true);
+        s.pass_finished(later + ms(20), after);
+        assert_eq!(s.wait(later + ms(20)), None);
+        // What it lists has changed: the person's session was there.
+        let mut s2 = DiscoverySchedule::new(ms(400), ms(2000));
+        s2.store_changed(t0, false);
+        assert!(s2.take_due(t0 + ms(400)));
+        let mut now = t0 + ms(400);
+        loop {
+            s2.store_changed(now + ms(10), true);
+            s2.pass_finished(now + ms(20), after);
+            now += ms(500);
+            if !s2.take_due(now) {
+                break;
+            }
+        }
+        assert!(s2.take_due(now + RECONCILE_AFTER));
+        s2.store_changed(now + RECONCILE_AFTER + ms(10), true);
+        s2.pass_finished(
+            now + RECONCILE_AFTER + ms(20),
+            PassEnd::Listed {
+                fingerprint: 2,
+                changed_after: true,
+                progressed: false,
+            },
+        );
+        assert!(s2.wait(now + RECONCILE_AFTER + ms(20)).is_some());
     }
 
     #[test]

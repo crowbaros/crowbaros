@@ -9695,8 +9695,7 @@ fn a_session_written_after_a_follow_up_read_its_sessions_but_before_it_answered_
     a_session_written_while_a_follow_up_lists_is_still_found(true);
 }
 
-#[test]
-fn a_session_written_while_the_running_harness_lists_is_still_found() {
+fn a_session_written_while_the_running_harness_lists_is_still_found_at(listing: u64) {
     let dir = TempDir::new();
     let store_dir = dir.0.join("harness-store");
     std::fs::create_dir_all(&store_dir).unwrap();
@@ -9721,7 +9720,7 @@ fn a_session_written_while_the_running_harness_lists_is_still_found() {
             "touch_on_list": store_dir.join("turn.log").to_str().unwrap(),
             "change_after_list": {
                 "on_start": 1,
-                "listing": 2,
+                "listing": listing,
                 "before_answer": true,
                 "sessions": [session("ses_first", "First"), session("ses_late", "Late")]
             },
@@ -9735,7 +9734,7 @@ fn a_session_written_while_the_running_harness_lists_is_still_found() {
     assert_eq!(turn_events(&mut peer, &thread, turn).last().unwrap()["event"], "done");
 
     let mut watcher = handshake(&lever.surface);
-    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    watcher.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
     assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
     write_sessions_file(&sessions_file, &json!([session("ses_first", "First")]));
@@ -9749,6 +9748,17 @@ fn a_session_written_while_the_running_harness_lists_is_still_found() {
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_session_written_while_the_running_harness_lists_is_still_found() {
+    a_session_written_while_the_running_harness_lists_is_still_found_at(2);
+}
+
+#[test]
+fn a_session_written_while_the_running_harness_lists_its_last_follow_up_is_still_found() {
+    // Its fifth listing is the last follow-up the cap allows.
+    a_session_written_while_the_running_harness_lists_is_still_found_at(5);
 }
 
 #[test]
@@ -10786,6 +10796,66 @@ fn a_session_that_cannot_be_written_is_listed_again_later_each_time() {
     // Tried at once, then after 1, 2 and 4 s: not every second.
     let tried = count_lines(&starts);
     assert!((2..=4).contains(&tried), "listed {tried} times in 6.5 s");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_session_that_could_not_be_written_waits_through_a_failed_listing() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("sessions.json");
+    let starts = dir.0.join("starts.log");
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "touch_on_start": starts.to_str().unwrap(),
+            "fail_list_on_start": 2,
+        }),
+    );
+    let mut lever = start_lever_with_discovery(&dir.0, &script, None, &store_dir);
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+    let db_path = dir.0.join("state").join("lever.sqlite");
+    rusqlite::Connection::open(&db_path)
+        .unwrap()
+        .execute_batch("CREATE TRIGGER refused BEFORE INSERT ON threads BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .unwrap();
+    write_sessions_file(
+        &sessions_file,
+        &json!([{
+            "session_id": "ses_hand",
+            "cwd": "/tmp",
+            "title": "By hand",
+            "history": [{ "kind": "user_text", "text": "hi" }, { "kind": "text", "text": "hello" }]
+        }]),
+    );
+    // Its thread cannot be written; the pass that tries again cannot list;
+    // then both are fine again, and nothing writes to the store.
+    let mut lever = start_lever_with_discovery(&dir.0, &script, None, &store_dir);
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while count_lines(&starts) < 2 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(count_lines(&starts), 2, "it listed again after the write failed");
+    rusqlite::Connection::open(&db_path)
+        .unwrap()
+        .execute_batch("DROP TRIGGER refused")
+        .unwrap();
+    read_until(&mut watcher, |f| {
+        f["event"] == "threads"
+            && f["threads"]
+                .as_array()
+                .is_some_and(|ts| ts.iter().any(|t| t["title"] == "By hand"))
+    });
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
