@@ -221,6 +221,11 @@ impl DiscoveryRunner {
         self.in_flight
     }
 
+    /// Asks for one more scan once the running job ends.
+    pub fn want_rescan(&mut self) {
+        self.rescan_wanted = true;
+    }
+
     fn start_job(&mut self, name: &str, job: impl FnOnce() -> JobResult + Send + 'static) {
         if self.in_flight {
             self.rescan_wanted = true;

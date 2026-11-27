@@ -580,8 +580,15 @@ impl Service {
     }
 
     fn trigger_discovery(&mut self) {
-        if self.discovery.is_none() {
-            return;
+        // One pass at a time: a classification still running takes this one
+        // after it.
+        match self.discovery.as_mut() {
+            None => return,
+            Some(runner) if runner.in_flight() => {
+                runner.want_rescan();
+                return;
+            }
+            Some(_) => {}
         }
         // When Lever's own harness is already running and supports ACP
         // `session/list`, ask it over the existing pipe instead of spawning a
@@ -619,7 +626,14 @@ impl Service {
     }
 
     fn apply_discovered_sessions(&mut self, sessions: Vec<ExternalSession>, log: &mut Log) -> Effects {
-        let (known_owned, known_ignored) = self.store.known_harness_sessions().unwrap_or_default();
+        // Without what Lever knows of, a deleted thread could come back.
+        let (known_owned, known_ignored) = match self.store.known_harness_sessions() {
+            Ok(known) => known,
+            Err(err) => {
+                store_failed(log, &err);
+                return Effects::default();
+            }
+        };
         let live_own: HashSet<String> = self
             .harness
             .as_ref()
@@ -1220,6 +1234,19 @@ impl Service {
             Some(h) => h.on_readable(),
             None => return Effects::default(),
         };
+        // A session Lever opened only to read what the harness offers is
+        // never a thread, after this harness is gone too: it is remembered
+        // before anything in the batch can end the harness.
+        let probes = self
+            .harness
+            .as_mut()
+            .map(AcpHarness::take_new_probe_sessions)
+            .unwrap_or_default();
+        for probe in probes {
+            if let Err(err) = self.store.remember_ignored_session(&probe, "probe", unix_now()) {
+                store_failed(log, &err);
+            }
+        }
         let mut effects = Effects::default();
         let pid = self.harness.as_ref().map(AcpHarness::pid);
         self.in_harness_batch = true;
@@ -1241,18 +1268,6 @@ impl Service {
             }
         }
         self.in_harness_batch = false;
-        // A session Lever opened only to read what the harness offers is
-        // never a thread, after this harness is gone too.
-        let probes = self
-            .harness
-            .as_mut()
-            .map(AcpHarness::take_new_probe_sessions)
-            .unwrap_or_default();
-        for probe in probes {
-            if let Err(err) = self.store.remember_ignored_session(&probe, "probe", unix_now()) {
-                store_failed(log, &err);
-            }
-        }
         // A request the harness withdrew, or a subagent's end, can free a
         // prompt that waited on it, as can the end of the batch.
         self.send_held_prompts();
@@ -4464,8 +4479,7 @@ impl Service {
                         // asked for meanwhile follows it.
                         runner.request_classify(sessions, owned, ignored);
                         if rescan {
-                            self.discovery_schedule
-                                .request(Instant::now() + self.discovery_debounce);
+                            runner.want_rescan();
                         }
                         return Effects::default();
                     }
