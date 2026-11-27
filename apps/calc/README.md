@@ -69,3 +69,7 @@ app and evaluator in Base's Void build root. It launches Calculator on
 Fulcrum, types calculations in each mode, reads copied answers from another
 Wayland client, exercises launcher math, and retains Dark and Light captures
 with the run's `desktop.log` and `results.json`.
+
+The [November 27 validation record](../../docs/development/calculator-validation-2026-11-27.md)
+records the passing full run, before/after captures, typing recordings, and
+independent visual review.
