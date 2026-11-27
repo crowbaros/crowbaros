@@ -10396,6 +10396,160 @@ fn a_session_lever_opened_to_read_the_models_is_never_a_thread() {
 }
 
 #[test]
+fn an_opened_hand_started_thread_keeps_its_sessions_mode_and_the_persons_chosen_effort() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    let sessions_file = store_dir.join("sessions.json");
+    let rpc_log = dir.0.join("rpc.jsonl");
+    let session = |id: &str, title: &str| {
+        json!({
+            "session_id": id,
+            "cwd": "/tmp",
+            "title": title,
+            "mode": "plan",
+            "history": [{ "kind": "user_text", "text": "plan it" }, { "kind": "text", "text": "A plan." }]
+        })
+    };
+    write_sessions_file(
+        &sessions_file,
+        &json!([session("ses_plan", "Planned"), session("ses_effort", "Effort")]),
+    );
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "modes": true,
+            "models": [{ "id": "stub/stub-1", "name": "Stub 1", "efforts": ["low", "high"] }],
+            "turns": [{ "match": "go on", "steps": [{ "kind": "text", "text": "Going on." }] }]
+        }),
+    );
+    let mut lever = start_lever_with_discovery(&dir.0, &script, Some(&rpc_log), &store_dir);
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    let initial = read_frame(&mut watcher).unwrap();
+    let listed = if initial["threads"].as_array().is_some_and(|t| t.len() == 2) {
+        initial
+    } else {
+        read_until(&mut watcher, |f| {
+            f["event"] == "threads" && f["threads"].as_array().is_some_and(|t| t.len() == 2)
+        })
+    };
+    let id_of = |title: &str| {
+        listed["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["title"] == title)
+            .unwrap()["thread"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (planned, effort) = (id_of("Planned"), id_of("Effort"));
+    let mut peer = handshake(&lever.person);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+
+    // Opened, it is in the session's own mode, and a message does not change it.
+    let record = resume(&mut peer, &planned);
+    assert_eq!(record["mode"], "plan", "{record}");
+    let (_, turn) = send(&mut peer, Some(&planned), "go on");
+    let events = turn_events(&mut peer, &planned, turn);
+    assert_eq!(events.last().unwrap()["event"], "done", "{events:?}");
+    let rpc = std::fs::read_to_string(&rpc_log).unwrap();
+    assert!(
+        !rpc.lines()
+            .any(|l| l.contains("session/set_config_option") && l.contains("\"mode\"")),
+        "the first message changed the session's mode"
+    );
+
+    // An effort chosen before it is opened outlives the import.
+    write_frame(
+        &mut peer,
+        &json!({ "op": "set-effort", "thread": effort, "effort": "high" }),
+    )
+    .unwrap();
+    let set = read_until(&mut peer, |f| f.get("reply").is_some());
+    assert_eq!(set["reply"], "effort-set", "{set}");
+    let record = resume(&mut peer, &effort);
+    assert_eq!(record["effort"], "high", "{record}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_running_harness_that_never_answers_a_listing_does_not_stall_discovery() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("sessions.json");
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "withhold_list_after_prompt": true,
+            "turns": [{ "match": "hello", "steps": [{ "kind": "text", "text": "Hi." }] }]
+        }),
+    );
+    let mut extra: Vec<String> = [
+        "--harness",
+        STUB_BIN,
+        "--harness-name",
+        "Stub",
+        "--harness-arg",
+        "--script",
+        "--harness-arg",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
+    extra.push(script.to_str().unwrap().into());
+    for arg in [
+        "--harness-watch",
+        store_dir.to_str().unwrap(),
+        "--discovery-debounce-ms",
+        "40",
+        "--discovery-timeout-ms",
+        "300",
+    ] {
+        extra.push(arg.into());
+    }
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    // The harness runs, and has taken a prompt.
+    let (thread, turn) = send(&mut peer, None, "hello");
+    assert_eq!(turn_events(&mut peer, &thread, turn).last().unwrap()["event"], "done");
+
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+    write_sessions_file(
+        &sessions_file,
+        &json!([{
+            "session_id": "ses_hand",
+            "cwd": "/tmp",
+            "title": "By hand",
+            "history": [{ "kind": "user_text", "text": "hi" }, { "kind": "text", "text": "hello" }]
+        }]),
+    );
+    // The running harness never answers; a one-shot listing does.
+    read_until(&mut watcher, |f| {
+        f["event"] == "threads"
+            && f["threads"]
+                .as_array()
+                .is_some_and(|ts| ts.iter().any(|t| t["title"] == "By hand"))
+    });
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
 fn missing_store_directory_is_promoted_when_created_later() {
     let dir = TempDir::new();
     let store_dir = dir.0.join("nested").join("store");

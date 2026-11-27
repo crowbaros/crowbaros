@@ -46,7 +46,7 @@ const USAGE: &str = "usage: crowbar-lever \
   --person-socket <path> --person-uid <uid> \
   [--fulcrum-socket <path>] \
   [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-watch <dir>]... [--harness-name <name>]] \
-  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>] [--wake-quiet-ms <ms>] [--discovery-debounce-ms <ms>]";
+  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>] [--wake-quiet-ms <ms>] [--discovery-debounce-ms <ms>] [--discovery-timeout-ms <ms>]";
 
 struct Options {
     state: PathBuf,
@@ -60,6 +60,7 @@ struct Options {
     stop_timeout: Duration,
     wake_quiet: Duration,
     discovery_debounce: Duration,
+    discovery_timeout: Option<Duration>,
 }
 
 fn parse_options(args: &[String]) -> Option<Options> {
@@ -78,6 +79,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
     let mut stop_timeout = None;
     let mut wake_quiet = None;
     let mut discovery_debounce = None;
+    let mut discovery_timeout = None;
 
     let mut iter = args.iter();
     while let Some(flag) = iter.next() {
@@ -114,6 +116,9 @@ fn parse_options(args: &[String]) -> Option<Options> {
             }
             "--discovery-debounce-ms" if discovery_debounce.is_none() => {
                 discovery_debounce = Some(Duration::from_millis(value.parse::<u64>().ok()?));
+            }
+            "--discovery-timeout-ms" if discovery_timeout.is_none() => {
+                discovery_timeout = Some(Duration::from_millis(value.parse::<u64>().ok()?));
             }
             _ => return None,
         }
@@ -159,6 +164,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
         stop_timeout: stop_timeout.unwrap_or(DEFAULT_STOP_TIMEOUT),
         wake_quiet: wake_quiet.unwrap_or(DEFAULT_WAKE_QUIET),
         discovery_debounce: discovery_debounce.unwrap_or(DEFAULT_DISCOVERY_DEBOUNCE),
+        discovery_timeout,
     })
 }
 
@@ -375,6 +381,9 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         options.wake_quiet,
         options.discovery_debounce,
     );
+    if let Some(timeout) = options.discovery_timeout {
+        service.set_live_list_timeout(timeout);
+    }
 
     if let Some(parent) = options.person_socket.parent() {
         ensure_private_dir(parent)?;

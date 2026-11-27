@@ -29,6 +29,9 @@ pub const DEFAULT_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the harness says nothing in a turn it began itself before Lever
 /// takes that turn as done. ACP gives such a turn no end of its own.
 pub const DEFAULT_WAKE_QUIET: Duration = Duration::from_secs(10);
+/// How long a running harness has to answer a `session/list`, by default.
+const DEFAULT_LIVE_LIST_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Default debounce after a harness's session store changes on disk before
 /// Lever lists its sessions to pick up any started outside Lever.
 pub const DEFAULT_DISCOVERY_DEBOUNCE: Duration = Duration::from_millis(400);
@@ -286,6 +289,13 @@ pub struct Service {
     discovery_debounce: Duration,
     /// True while a live `session/list` RPC is in flight on `self.harness`.
     live_list_in_flight: bool,
+    /// When the live `session/list` in flight was asked.
+    live_list_asked: Option<Instant>,
+    /// How long a running harness has to answer a `session/list`.
+    live_list_timeout: Duration,
+    /// True once the running harness left a `session/list` unanswered: until
+    /// it is gone, discovery lists with a one-shot harness instead.
+    live_list_unanswered: bool,
     /// True if another pass was asked for while a live `session/list` RPC
     /// was already in flight on `self.harness`.
     live_list_rescan_wanted: bool,
@@ -419,6 +429,9 @@ impl Service {
             discovery_schedule,
             discovery_debounce,
             live_list_in_flight: false,
+            live_list_asked: None,
+            live_list_timeout: DEFAULT_LIVE_LIST_TIMEOUT,
+            live_list_unanswered: false,
             live_list_rescan_wanted: false,
             loading_history: HashMap::new(),
             dispatched_history: HashSet::new(),
@@ -474,6 +487,11 @@ impl Service {
             .and_then(AcpHarness::stdin_fd)
     }
 
+    /// Sets how long a running harness has to answer a `session/list`.
+    pub fn set_live_list_timeout(&mut self, timeout: Duration) {
+        self.live_list_timeout = timeout;
+    }
+
     pub fn watcher_fd(&self) -> Option<RawFd> {
         self.watcher.as_ref().map(StoreWatcher::fd)
     }
@@ -497,21 +515,45 @@ impl Service {
         self.live_list_in_flight || self.discovery.as_ref().is_some_and(DiscoveryRunner::in_flight)
     }
 
+    /// A live `session/list` the harness has not answered in
+    /// `live_list_timeout` is given up: the pass is lost, and discovery
+    /// lists with a one-shot harness while this one runs.
+    fn give_up_unanswered_live_list(&mut self, log: &mut Log) {
+        if !self
+            .live_list_asked
+            .is_some_and(|asked| asked.elapsed() >= self.live_list_timeout)
+        {
+            return;
+        }
+        if let Some(harness) = self.harness.as_mut() {
+            harness.abandon_list_sessions();
+        }
+        let _ = log.write(Event::Error, "the harness did not answer a session listing");
+        self.live_list_asked = None;
+        self.live_list_in_flight = false;
+        self.live_list_rescan_wanted = false;
+        self.live_list_unanswered = true;
+        self.discovery_pass_finished(true, None);
+    }
+
     /// A live `session/list` the harness will not answer, as it stopped or
     /// exited, is a lost pass: another runs after a quiet period.
     fn lose_live_list(&mut self) {
+        self.live_list_asked = None;
+        self.live_list_unanswered = false;
         let lost = std::mem::take(&mut self.live_list_in_flight);
         let rescan = std::mem::take(&mut self.live_list_rescan_wanted);
         if lost || rescan {
-            self.discovery_pass_finished(true);
+            self.discovery_pass_finished(true, None);
         }
     }
 
     /// A discovery pass ended, or was lost; one more runs after a quiet
-    /// period if another was asked for while it ran.
-    fn discovery_pass_finished(&mut self, rescan: bool) {
+    /// period if another was asked for while it ran. `listing` is the
+    /// fingerprint of what the pass listed, when it listed.
+    fn discovery_pass_finished(&mut self, rescan: bool, listing: Option<u64>) {
         let now = Instant::now();
-        self.discovery_schedule.pass_finished(now);
+        self.discovery_schedule.pass_finished(now, listing);
         if rescan {
             self.discovery_schedule.request(now + self.discovery_debounce);
         }
@@ -520,10 +562,13 @@ impl Service {
     /// Collects the completed background discovery scan and records any newly
     /// discovered external sessions as threads in Lever's database.
     pub fn on_discovery_ready(&mut self, log: &mut Log) -> Effects {
-        let Some((outcome, rescan)) = self.discovery.as_mut().and_then(DiscoveryRunner::take_result) else {
+        // What the pass's listing wrote to the store was written before it
+        // ended: it is read while the pass still counts as running.
+        self.on_store_changed();
+        let Some((outcome, listing, rescan)) = self.discovery.as_mut().and_then(DiscoveryRunner::take_result) else {
             return Effects::default();
         };
-        self.discovery_pass_finished(rescan);
+        self.discovery_pass_finished(rescan, listing);
         let sessions = match outcome {
             Ok(sessions) => sessions,
             Err(_) => {
@@ -543,12 +588,14 @@ impl Service {
         // second harness process on every write Lever's own turns make.
         if let Some(harness) = self.harness.as_mut()
             && harness.can_list_sessions()
+            && !self.live_list_unanswered
         {
             if harness.is_listing_sessions() {
                 self.live_list_rescan_wanted = true;
             } else {
                 self.live_list_rescan_wanted = false;
                 self.live_list_in_flight = harness.list_sessions();
+                self.live_list_asked = self.live_list_in_flight.then(Instant::now);
             }
             return;
         }
@@ -910,7 +957,15 @@ impl Service {
             .iter()
             .filter_map(|(tid, active)| self.harness_turn_quiet_in(tid, active))
             .min();
-        let discovery = self.discovery_schedule.wait(Instant::now());
+        let discovery = self
+            .discovery_schedule
+            .wait(Instant::now())
+            .into_iter()
+            .chain(
+                self.live_list_asked
+                    .map(|asked| self.live_list_timeout.saturating_sub(asked.elapsed())),
+            )
+            .min();
         match [self.idle_remaining(), retry, stop, quiet, discovery]
             .into_iter()
             .flatten()
@@ -938,6 +993,7 @@ impl Service {
     /// the harness if no thread has worked for `idle_timeout`.
     pub fn on_wake(&mut self, log: &mut Log) -> Effects {
         sys::reap_orphans(self.harness.as_ref().map(AcpHarness::pid));
+        self.give_up_unanswered_live_list(log);
         if self.discovery_schedule.take_due(Instant::now()) {
             self.trigger_discovery();
         }
@@ -1611,10 +1667,22 @@ impl Service {
             .first()
             .map(|t| initial_title(&t.message))
             .filter(|s| !s.is_empty());
-        if let Err(err) = self
+        // An effort the person chose before opening it is theirs, and the
+        // session's own does not replace it.
+        let chosen_effort = self
             .store
-            .import_thread_history(thread_id, &history, fallback_title.as_deref(), unix_now())
-        {
+            .thread_meta(thread_id)
+            .ok()
+            .flatten()
+            .and_then(|meta| meta.effort);
+        let default_mode = self.default_mode();
+        if let Err(err) = self.store.import_thread_history(
+            thread_id,
+            &history,
+            fallback_title.as_deref(),
+            &default_mode,
+            unix_now(),
+        ) {
             store_failed(log, &err);
             // Not imported, so not yet the thread's: the next open loads it again.
             if let Some(h) = self.harness.as_mut() {
@@ -1623,7 +1691,11 @@ impl Service {
             effects.extend(self.fail_history_waiters(thread_id, "storage-error", &err));
             return effects;
         }
-        effects.broadcasts.extend(self.mirror_effort(thread_id, log));
+        if chosen_effort.is_none() {
+            effects.broadcasts.extend(self.mirror_effort(thread_id, log));
+        } else {
+            self.note_session_efforts(thread_id);
+        }
 
         let resumed_outcome = self.resume_from_store(thread_id);
         let resumed_reply = resumed_outcome
@@ -1977,13 +2049,11 @@ impl Service {
     /// of its Model, and the effort it is at. That effort is the thread's,
     /// unless the turn that waits has one of its own the Model offers, which
     /// it sets before its prompt.
-    fn mirror_effort(&mut self, thread_id: &str, log: &mut Log) -> Vec<Broadcast> {
-        let Some(harness) = self.harness.as_ref() else {
-            return Vec::new();
-        };
-        let Some(session_id) = harness.session_for_thread(thread_id) else {
-            return Vec::new();
-        };
+    /// Keeps the effort levels a thread's session offers for its Model, and
+    /// returns the session's effort selector.
+    fn note_session_efforts(&mut self, thread_id: &str) -> Option<Option<crate::acp::EffortSelector>> {
+        let harness = self.harness.as_ref()?;
+        let session_id = harness.session_for_thread(thread_id)?;
         let selector = harness.session_effort(session_id).cloned();
         if let Some(model) = harness.session_current_model(session_id) {
             self.efforts.insert(
@@ -1991,6 +2061,13 @@ impl Service {
                 selector.as_ref().map(|s| s.options.clone()).unwrap_or_default(),
             );
         }
+        Some(selector)
+    }
+
+    fn mirror_effort(&mut self, thread_id: &str, log: &mut Log) -> Vec<Broadcast> {
+        let Some(selector) = self.note_session_efforts(thread_id) else {
+            return Vec::new();
+        };
         let wanted = self
             .working_turns
             .get(thread_id)
@@ -4358,12 +4435,15 @@ impl Service {
             } => self.finish_history_loaded(&thread_id, history, catalog, log),
             AcpEvent::HistoryLoadFailed { thread_id, message } => self.fail_history_load(&thread_id, &message),
             AcpEvent::SessionsListed(result) => {
+                // What the listing wrote, it wrote before it answered.
+                self.on_store_changed();
                 self.live_list_in_flight = false;
+                self.live_list_asked = None;
                 let rescan = std::mem::take(&mut self.live_list_rescan_wanted);
                 let sessions = match result {
                     Ok(sessions) => sessions,
                     Err(_) => {
-                        self.discovery_pass_finished(rescan);
+                        self.discovery_pass_finished(rescan, None);
                         let _ = log.write(Event::Error, "could not list external harness sessions");
                         return Effects::default();
                     }
@@ -4390,7 +4470,7 @@ impl Service {
                         return Effects::default();
                     }
                 }
-                self.discovery_pass_finished(rescan);
+                self.discovery_pass_finished(rescan, Some(discovery::listing_fingerprint(&sessions)));
                 self.apply_discovered_sessions(sessions, log)
             }
             AcpEvent::Exited => Effects::default(),

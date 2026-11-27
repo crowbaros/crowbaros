@@ -94,6 +94,9 @@ struct StubExternalSession {
     is_subagent: bool,
     #[serde(default)]
     parent_session_id: Option<String>,
+    /// The mode the session was left in, a harness value such as `plan`.
+    #[serde(default)]
+    mode: Option<String>,
     #[serde(default)]
     history: Vec<Step>,
 }
@@ -106,6 +109,10 @@ struct Script {
     touch_on_start: Option<String>,
     #[serde(default)]
     list_sessions: bool,
+    /// If true, `session/list` goes unanswered once this process has taken
+    /// a prompt, as a harness that is busy and never gets to it.
+    #[serde(default)]
+    withhold_list_after_prompt: bool,
     #[serde(default)]
     sessions_file: Option<String>,
     #[serde(default)]
@@ -1842,6 +1849,7 @@ fn run(options: Options) -> Result<(), String> {
     let next_request = Arc::new(AtomicU64::new(0));
     let modes = Arc::new(Modes::read(script.modes, script.mode_values.as_deref()));
     let next_session = AtomicU64::new(1);
+    let prompted = std::sync::atomic::AtomicBool::new(false);
     let free_disabled = std::env::var("OPENCODE_DISABLE_FREE_MODELS").ok().as_deref() == Some("1");
     let default_model = script
         .default_model
@@ -2268,6 +2276,9 @@ fn run(options: Options) -> Result<(), String> {
                 writer.send_error(id, AcpError::method_not_found());
                 continue;
             }
+            if script.withhold_list_after_prompt && prompted.load(Ordering::Relaxed) {
+                continue;
+            }
             match serde_json::from_value::<ListSessionsRequest>(params) {
                 Ok(list_req) => {
                     let all = read_external_sessions(&script);
@@ -2329,11 +2340,13 @@ fn run(options: Options) -> Result<(), String> {
                         writer.send_error(id, AcpError::new(err.code, err.message.clone()));
                     } else {
                         let sid = load_req.session_id.0.as_ref().to_string();
-                        let external_history = read_external_sessions(&script)
+                        let external = read_external_sessions(&script)
                             .into_iter()
-                            .find(|s| s.session_id == sid)
-                            .map(|s| s.history)
-                            .filter(|h| !h.is_empty());
+                            .find(|s| s.session_id == sid);
+                        if let Some(mode) = external.as_ref().and_then(|s| s.mode.clone()) {
+                            session_modes.lock().unwrap().entry(sid.clone()).or_insert(mode);
+                        }
+                        let external_history = external.map(|s| s.history).filter(|h| !h.is_empty());
                         let (writer, replay) = (
                             writer.clone(),
                             external_history.unwrap_or_else(|| script.load_replay.clone()),
@@ -2435,6 +2448,7 @@ fn run(options: Options) -> Result<(), String> {
                 writer.send_result(id, answer(running));
             }
         } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_prompt {
+            prompted.store(true, Ordering::Relaxed);
             let prompt_req = match serde_json::from_value::<PromptRequest>(params) {
                 Ok(p) => p,
                 Err(e) => {

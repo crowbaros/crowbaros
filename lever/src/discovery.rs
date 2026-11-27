@@ -47,6 +47,9 @@ pub struct ExternalSession {
     pub title: Option<String>,
     pub created: Option<i64>,
     pub updated: Option<i64>,
+    /// The harness's own `updated` stamp, at its full precision: what tells
+    /// one version of a session from the next.
+    pub stamp: Option<String>,
     /// True when the harness reports this session is a child/subagent session
     /// rather than a top-level thread.
     pub is_subagent: bool,
@@ -105,16 +108,9 @@ pub trait SessionDiscoverer: Send + Sync {
     fn has_store_data(&self) -> bool;
 
     /// Lists sessions from the harness's store without keeping a long-lived
-    /// harness process running.
-    ///
-    /// `known_sessions` holds harness session IDs Lever already owns (including
-    /// threads and active probes); `known_subagents` holds IDs already known to
-    /// be subagents or ignored. Adapters may use these to avoid redundant work.
-    fn list_sessions(
-        &self,
-        known_sessions: &HashSet<String>,
-        known_subagents: &HashSet<String>,
-    ) -> Result<Vec<ExternalSession>, String>;
+    /// harness process running. What it lists is then classified by
+    /// [`Self::classify_sessions`].
+    fn list_sessions(&self) -> Result<Vec<ExternalSession>, String>;
 
     /// Whether raw ACP `session/list` results need harness-specific
     /// classification (e.g. distinguishing subagent or empty sessions).
@@ -122,8 +118,12 @@ pub trait SessionDiscoverer: Send + Sync {
         false
     }
 
-    /// Classifies raw `session/list` results obtained from an already-running
-    /// ACP harness without spawning a second ACP process.
+    /// Classifies raw `session/list` results, from [`Self::list_sessions`] or
+    /// an already-running ACP harness.
+    ///
+    /// `known_sessions` holds harness session IDs Lever already owns (including
+    /// threads and active probes); `known_subagents` holds IDs already known to
+    /// be subagents or ignored. Adapters may use these to avoid redundant work.
     fn classify_sessions(
         &self,
         sessions: Vec<ExternalSession>,
@@ -134,7 +134,12 @@ pub trait SessionDiscoverer: Send + Sync {
     }
 }
 
-type PendingScan = Arc<Mutex<Option<Result<Vec<ExternalSession>, String>>>>;
+/// What a job found, and a fingerprint of the listing it classified.
+type JobResult = Result<(Vec<ExternalSession>, u64), String>;
+type PendingScan = Arc<Mutex<Option<JobResult>>>;
+/// A finished job: what it found, the fingerprint of its listing when it
+/// listed, and whether another pass was asked for while it ran.
+pub type FinishedJob = (Result<Vec<ExternalSession>, String>, Option<u64>, bool);
 
 /// Non-blocking runner for a [`SessionDiscoverer`] that integrates with
 /// Lever's `poll(2)` loop over a self-pipe.
@@ -188,7 +193,10 @@ impl DiscoveryRunner {
     pub fn request_scan(&mut self, known_sessions: HashSet<String>, known_subagents: HashSet<String>) {
         let discoverer = Arc::clone(&self.discoverer);
         self.start_job("lever-discover", move || {
-            discoverer.list_sessions(&known_sessions, &known_subagents)
+            let listed = discoverer.list_sessions()?;
+            let fingerprint = listing_fingerprint(&listed);
+            let kept = discoverer.classify_sessions(listed, &known_sessions, &known_subagents)?;
+            Ok((kept, fingerprint))
         });
     }
 
@@ -202,7 +210,9 @@ impl DiscoveryRunner {
     ) {
         let discoverer = Arc::clone(&self.discoverer);
         self.start_job("lever-classify", move || {
-            discoverer.classify_sessions(sessions, &known_sessions, &known_subagents)
+            let fingerprint = listing_fingerprint(&sessions);
+            let kept = discoverer.classify_sessions(sessions, &known_sessions, &known_subagents)?;
+            Ok((kept, fingerprint))
         });
     }
 
@@ -211,7 +221,7 @@ impl DiscoveryRunner {
         self.in_flight
     }
 
-    fn start_job(&mut self, name: &str, job: impl FnOnce() -> Result<Vec<ExternalSession>, String> + Send + 'static) {
+    fn start_job(&mut self, name: &str, job: impl FnOnce() -> JobResult + Send + 'static) {
         if self.in_flight {
             self.rescan_wanted = true;
             return;
@@ -237,9 +247,10 @@ impl DiscoveryRunner {
         }
     }
 
-    /// Drains the wake pipe and returns any completed scan result along with
-    /// whether another scan was requested while it ran.
-    pub fn take_result(&mut self) -> Option<(Result<Vec<ExternalSession>, String>, bool)> {
+    /// Drains the wake pipe and returns any completed scan result, the
+    /// fingerprint of what it listed, and whether another scan was requested
+    /// while it ran.
+    pub fn take_result(&mut self) -> Option<FinishedJob> {
         let mut buf = [0u8; 64];
         loop {
             // SAFETY: draining an owned non-blocking pipe descriptor.
@@ -251,7 +262,10 @@ impl DiscoveryRunner {
         let outcome = self.result.lock().ok().and_then(|mut g| g.take())?;
         self.in_flight = false;
         let rescan = std::mem::take(&mut self.rescan_wanted);
-        Some((outcome, rescan))
+        Some(match outcome {
+            Ok((kept, fingerprint)) => (Ok(kept), Some(fingerprint), rescan),
+            Err(err) => (Err(err), None, rescan),
+        })
     }
 }
 
@@ -263,19 +277,23 @@ pub const DISCOVERY_MAX_WAIT: Duration = Duration::from_secs(2);
 /// first change, so a store that keeps changing is still read.
 ///
 /// Listing a harness's sessions writes to its store, so a change seen while a
-/// pass runs, or within `debounce` after it ends, may be the pass's own. Such
-/// a change brings one follow-up pass, in case it was the person's, and the
-/// follow-up's own changes bring none: a quiet store goes quiet.
+/// pass runs may be the pass's own, or the person's after the listing was
+/// taken. Such a change brings a follow-up pass, and a follow-up brings
+/// another only when its listing differs from the one before it: a listing's
+/// own writes change no session, so a quiet store goes quiet. A change seen
+/// once a pass has ended is the person's, always. The service reads every
+/// change a pass made before it calls [`Self::pass_finished`]: a listing's
+/// writes are all made before it answers or ends.
 #[derive(Debug)]
 pub struct DiscoverySchedule {
     debounce: Duration,
     max_wait: Duration,
     due: Option<Instant>,
     dirty_since: Option<Instant>,
-    settle_until: Option<Instant>,
     missed: bool,
     followup_next: bool,
     followup_now: bool,
+    last_listing: Option<u64>,
 }
 
 impl DiscoverySchedule {
@@ -285,26 +303,17 @@ impl DiscoverySchedule {
             max_wait,
             due: None,
             dirty_since: None,
-            settle_until: None,
             missed: false,
             followup_next: false,
             followup_now: false,
+            last_listing: None,
         }
     }
 
     /// The harness's store changed. `busy` is whether a pass is running.
     pub fn store_changed(&mut self, now: Instant, busy: bool) {
         if busy {
-            if !self.followup_now {
-                self.missed = true;
-            }
-            return;
-        }
-        if let Some(until) = self.settle_until.filter(|until| now < *until) {
-            if !self.followup_now {
-                self.followup_next = true;
-                self.request(until);
-            }
+            self.missed = true;
             return;
         }
         let since = *self.dirty_since.get_or_insert(now);
@@ -327,13 +336,17 @@ impl DiscoverySchedule {
         true
     }
 
-    /// The pass that was taken has ended, or was lost.
-    pub fn pass_finished(&mut self, now: Instant) {
-        let until = now + self.debounce;
-        self.settle_until = Some(until);
-        if std::mem::take(&mut self.missed) && !self.followup_now {
+    /// The pass that was taken has ended. `listing` is a fingerprint of what
+    /// it listed ([`listing_fingerprint`]), or `None` when it listed nothing
+    /// or was lost.
+    pub fn pass_finished(&mut self, now: Instant, listing: Option<u64>) {
+        let changed = listing.is_none() || listing != self.last_listing;
+        if listing.is_some() {
+            self.last_listing = listing;
+        }
+        if std::mem::take(&mut self.missed) && (!self.followup_now || changed) {
             self.followup_next = true;
-            self.request(until);
+            self.request(now + self.debounce);
         }
     }
 
@@ -341,6 +354,20 @@ impl DiscoverySchedule {
     pub fn wait(&self, now: Instant) -> Option<Duration> {
         self.due.map(|due| due.saturating_duration_since(now))
     }
+}
+
+/// A fingerprint of a listing: each session's ID, folder, title, and the
+/// harness's own `updated` stamp, in any order.
+pub fn listing_fingerprint(sessions: &[ExternalSession]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut entries: Vec<_> = sessions
+        .iter()
+        .map(|s| (&s.harness_session_id, &s.cwd, &s.title, &s.stamp))
+        .collect();
+    entries.sort();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    entries.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Converts an ACP v1 `SessionInfo` into Lever's harness-agnostic
@@ -370,6 +397,7 @@ pub(crate) fn session_info_to_external(
         title,
         created: None,
         updated,
+        stamp: info.updated_at.clone(),
         is_subagent,
     })
 }
@@ -490,11 +518,7 @@ impl SessionDiscoverer for AcpSessionDiscoverer {
         self.watch_specs.iter().any(spec_has_data)
     }
 
-    fn list_sessions(
-        &self,
-        _known_sessions: &HashSet<String>,
-        _known_subagents: &HashSet<String>,
-    ) -> Result<Vec<ExternalSession>, String> {
+    fn list_sessions(&self) -> Result<Vec<ExternalSession>, String> {
         self.list_via_acp()
     }
 }
@@ -748,35 +772,52 @@ mod tests {
         assert!(s.take_due(t0 + ms(400)));
         // The listing writes to the store while it runs and as it closes.
         s.store_changed(t0 + ms(450), true);
-        s.pass_finished(t0 + ms(600));
-        s.store_changed(t0 + ms(650), false);
+        s.pass_finished(t0 + ms(600), Some(1));
         assert!(
             s.take_due(t0 + ms(1000)),
             "one follow-up, in case a change was the person's"
         );
-        // The follow-up's own writes bring nothing more.
+        // The follow-up lists the same: its writes were its own.
         s.store_changed(t0 + ms(1050), true);
-        s.pass_finished(t0 + ms(1200));
-        s.store_changed(t0 + ms(1300), false);
-        assert_eq!(s.wait(t0 + ms(1300)), None);
+        s.pass_finished(t0 + ms(1200), Some(1));
+        assert_eq!(s.wait(t0 + ms(1200)), None);
         for step in 0..100 {
-            assert!(!s.take_due(t0 + ms(1300 + step * 100)));
+            assert!(!s.take_due(t0 + ms(1200 + step * 100)));
         }
-        // A change once the store has settled is the person's again.
-        s.store_changed(t0 + ms(2000), false);
-        assert!(s.take_due(t0 + ms(2400)));
     }
 
     #[test]
-    fn a_change_just_after_a_pass_ends_brings_a_follow_up() {
+    fn a_change_once_a_pass_has_ended_is_always_read() {
         let ms = Duration::from_millis;
         let (mut s, t0) = schedule();
         s.store_changed(t0, false);
         assert!(s.take_due(t0 + ms(400)));
-        s.pass_finished(t0 + ms(500));
-        s.store_changed(t0 + ms(600), false);
-        assert!(!s.take_due(t0 + ms(899)));
+        s.store_changed(t0 + ms(450), true);
+        s.pass_finished(t0 + ms(500), Some(1));
         assert!(s.take_due(t0 + ms(900)));
+        s.store_changed(t0 + ms(950), true);
+        s.pass_finished(t0 + ms(1000), Some(1));
+        // Just after the follow-up ended, the person's session writes.
+        s.store_changed(t0 + ms(1001), false);
+        assert!(s.take_due(t0 + ms(1401)));
+    }
+
+    #[test]
+    fn a_follow_up_whose_listing_changed_brings_another() {
+        let ms = Duration::from_millis;
+        let (mut s, t0) = schedule();
+        s.store_changed(t0, false);
+        assert!(s.take_due(t0 + ms(400)));
+        s.store_changed(t0 + ms(450), true);
+        s.pass_finished(t0 + ms(500), Some(1));
+        assert!(s.take_due(t0 + ms(900)));
+        // A session was started by hand while the follow-up ran.
+        s.store_changed(t0 + ms(950), true);
+        s.pass_finished(t0 + ms(1000), Some(2));
+        assert!(s.take_due(t0 + ms(1400)));
+        s.store_changed(t0 + ms(1450), true);
+        s.pass_finished(t0 + ms(1500), Some(2));
+        assert_eq!(s.wait(t0 + ms(1500)), None);
     }
 
     #[test]
@@ -793,6 +834,28 @@ mod tests {
             s.store_changed(now, false);
         }
         assert_eq!(taken, Some(t0 + ms(2000)));
+    }
+
+    #[test]
+    fn a_listings_fingerprint_follows_its_sessions_not_their_order() {
+        let session = |id: &str, stamp: &str| ExternalSession {
+            harness_session_id: id.into(),
+            cwd: "/tmp".into(),
+            title: None,
+            created: None,
+            updated: Some(1),
+            stamp: Some(stamp.into()),
+            is_subagent: false,
+        };
+        let a = [
+            session("a", "2026-01-01T00:00:00.100Z"),
+            session("b", "2026-01-01T00:00:00.100Z"),
+        ];
+        let b = [a[1].clone(), a[0].clone()];
+        assert_eq!(listing_fingerprint(&a), listing_fingerprint(&b));
+        // Within the same second, a new version is a change.
+        let c = [session("a", "2026-01-01T00:00:00.500Z"), a[1].clone()];
+        assert_ne!(listing_fingerprint(&a), listing_fingerprint(&c));
     }
 
     #[test]

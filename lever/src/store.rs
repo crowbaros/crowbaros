@@ -739,11 +739,15 @@ impl Store {
     /// Atomically writes an imported [`SessionHistory`] into a discovered
     /// thread's record and clears `needs_history`. All turns, acts, notes, and
     /// subagents are committed together or rolled back on failure.
+    /// The thread keeps a Model, effort, or mode the person chose before it
+    /// was opened, and otherwise takes the session's own: a thread still in
+    /// `default_mode`, the one it was found with, takes the session's mode.
     pub fn import_thread_history(
         &self,
         thread_id: &str,
         history: &SessionHistory,
         fallback_title: Option<&str>,
+        default_mode: &str,
         now: i64,
     ) -> Result<(), String> {
         self.all_or_none("import thread history", || {
@@ -872,6 +876,7 @@ impl Store {
                          title = COALESCE(?1, title), \
                          model = COALESCE(model, ?2), \
                          effort = COALESCE(effort, ?3), \
+                         mode = CASE WHEN ?6 IS NOT NULL AND mode = ?7 THEN ?6 ELSE mode END, \
                          updated_at = MAX(updated_at, ?4) \
                      WHERE id = ?5",
                     params![
@@ -880,6 +885,8 @@ impl Store {
                         history.effort.as_deref(),
                         now.min(turn_time.max(created_at)),
                         thread_id,
+                        history.mode.as_deref(),
+                        default_mode,
                     ],
                 )
                 .map_err(|e| format!("could not finalize imported thread: {e}"))?;
@@ -2680,7 +2687,9 @@ mod tests {
             effort: Some("high".to_string()),
             mode: None,
         };
-        store.import_thread_history("t-ext1", &history, None, 105).unwrap();
+        store
+            .import_thread_history("t-ext1", &history, None, "ask-first", 105)
+            .unwrap();
 
         let meta = store.thread_meta("t-ext1").unwrap().unwrap();
         assert!(!meta.needs_history);
@@ -2700,10 +2709,35 @@ mod tests {
             )
             .unwrap();
         store.set_thread_model("t-ext2", "stub/chosen", 100).unwrap();
-        store.import_thread_history("t-ext2", &history, None, 105).unwrap();
+        let planned = SessionHistory {
+            mode: Some("plan".into()),
+            ..history.clone()
+        };
+        store
+            .import_thread_history("t-ext2", &planned, None, "ask-first", 105)
+            .unwrap();
         let meta = store.thread_meta("t-ext2").unwrap().unwrap();
         assert_eq!(meta.model.as_deref(), Some("stub/chosen"));
         assert_eq!(meta.effort.as_deref(), Some("high"));
+        assert_eq!(meta.mode, "plan", "the session's own mode, as the person chose none");
+        // A mode the person chose before opening it is theirs.
+        store
+            .create_discovered_thread(
+                "t-ext3",
+                "Thread",
+                "/tmp",
+                Some("OpenCode"),
+                "ses-ext-3",
+                "ask-first",
+                90,
+                96,
+            )
+            .unwrap();
+        store.set_thread_mode("t-ext3", "full-access", 100).unwrap();
+        store
+            .import_thread_history("t-ext3", &planned, None, "ask-first", 105)
+            .unwrap();
+        assert_eq!(store.thread_meta("t-ext3").unwrap().unwrap().mode, "full-access");
 
         let rec = store.get_thread("t-ext1").unwrap().unwrap();
         assert_eq!(rec.title, "Terminal chat");

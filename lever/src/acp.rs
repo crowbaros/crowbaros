@@ -819,6 +819,16 @@ impl AcpHarness {
         self.listing_sessions
     }
 
+    /// Gives up on a live `session/list` the harness has not answered: a
+    /// reply that comes later is dropped.
+    pub fn abandon_list_sessions(&mut self) {
+        self.pending
+            .retain(|_, pending| !matches!(pending, PendingRpc::ListSessions { .. }));
+        self.listing_sessions = false;
+        self.live_sessions_acc.clear();
+        self.live_sessions_seen.clear();
+    }
+
     /// Starts a paginated `session/list` on the already-running harness so
     /// discovery does not spawn a second harness process while one is live.
     pub fn list_sessions(&mut self) -> bool {

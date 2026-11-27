@@ -59,13 +59,11 @@ pub struct StoreWatcher {
     by_wd: HashMap<libc::c_int, Vec<usize>>,
 }
 
-const TARGET_MASK: u32 = libc::IN_MODIFY
-    | libc::IN_CLOSE_WRITE
-    | libc::IN_CREATE
-    | libc::IN_MOVED_TO
-    | libc::IN_DELETE
-    | libc::IN_DELETE_SELF
-    | libc::IN_MOVE_SELF;
+/// What changes a store. Closing a file written to is not watched: every
+/// write was told as it was made, and a process that only opened its store
+/// to read it, as a one-shot listing does, closes it as it ends.
+const TARGET_MASK: u32 =
+    libc::IN_MODIFY | libc::IN_CREATE | libc::IN_MOVED_TO | libc::IN_DELETE | libc::IN_DELETE_SELF | libc::IN_MOVE_SELF;
 
 const ANCESTOR_MASK: u32 = libc::IN_CREATE | libc::IN_MOVED_TO | libc::IN_DELETE_SELF | libc::IN_MOVE_SELF;
 

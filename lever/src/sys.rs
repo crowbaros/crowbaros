@@ -287,6 +287,8 @@ impl WorkerChild {
     /// before it is known.
     pub fn spawn(mut cmd: Command) -> io::Result<Self> {
         die_with_lever(&mut cmd);
+        // In a group of its own, so what it starts is ended with it.
+        cmd.process_group(0);
         let mut owned = worker_children();
         let child = cmd.spawn()?;
         owned.push(child.id());
@@ -304,12 +306,15 @@ impl WorkerChild {
             return None;
         }
         self.done = true;
+        let group = -(self.child.id() as libc::pid_t);
         let status = wait_until(&mut self.child, Instant::now() + grace).or_else(|| {
-            signal_pid(self.child.id(), libc::SIGTERM);
+            // SAFETY: signalling the child's own process group.
+            unsafe { libc::kill(group, libc::SIGTERM) };
             wait_until(&mut self.child, Instant::now() + grace)
         });
         let status = status.or_else(|| {
-            let _ = self.child.kill();
+            // SAFETY: signalling the child's own process group.
+            unsafe { libc::kill(group, libc::SIGKILL) };
             self.child.wait().ok()
         });
         worker_children().retain(|&pid| pid != self.child.id());
@@ -491,7 +496,9 @@ pub fn start_time(pid: u32) -> Option<u64> {
 /// harness left it, and it is not this one's to end.
 pub fn live_of_harness(harness: u32, started: u64) -> Vec<u32> {
     let mut found = Vec::new();
-    let workers = worker_children().clone();
+    // Held while Lever's children are read, so a worker's child started
+    // meanwhile is known before it can be seen.
+    let workers = worker_children();
     for root in own_children() {
         if workers.contains(&root) {
             continue;
@@ -502,6 +509,7 @@ pub fn live_of_harness(harness: u32, started: u64) -> Vec<u32> {
         found.push(root);
         found.extend(descendants(root));
     }
+    drop(workers);
     found.retain(|&pid| !matches!(process_state(pid), None | Some('Z' | 'X')));
     found.sort_unstable();
     found.dedup();
@@ -570,6 +578,36 @@ mod tests {
         // Still its own to wait for, with its own exit status.
         let status = child.finish(Duration::from_secs(1)).unwrap();
         assert_eq!(status.code(), Some(7));
+    }
+
+    #[test]
+    fn a_running_workers_child_is_not_the_harnesss() {
+        let mut cmd = Command::new("sleep");
+        cmd.arg("5");
+        let mut child = WorkerChild::spawn(cmd).unwrap();
+        let pid = child.child().id();
+        assert!(!live_of_harness(u32::MAX, 0).contains(&pid));
+        child.finish(Duration::from_millis(10));
+    }
+
+    #[test]
+    fn a_command_that_runs_too_long_is_ended_with_what_it_started() {
+        let marker = std::env::temp_dir().join(format!("lever-group-{}", random_hex(4)));
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", &format!("sleep 30 & echo $! > {}; wait", marker.display())]);
+        let started = Instant::now();
+        assert!(run_bounded(cmd, Duration::from_millis(300), 1024).is_err());
+        let grandchild: u32 = std::fs::read_to_string(&marker).unwrap().trim().parse().unwrap();
+        let _ = std::fs::remove_file(&marker);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !matches!(process_state(grandchild), None | Some('Z' | 'X')) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            matches!(process_state(grandchild), None | Some('Z' | 'X')),
+            "what it started still runs"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[test]
