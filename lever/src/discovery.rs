@@ -349,7 +349,13 @@ pub struct DiscoverySchedule {
     followup_next: bool,
     followup_now: bool,
     last_listing: Option<u64>,
+    /// Follow-ups in a row that listed the same and saw a change after.
+    unchanged_followups: u32,
 }
+
+/// The most follow-ups in a row that list the same and see a change after
+/// listing: a harness that writes as it ends would bring them for ever.
+const MAX_UNCHANGED_FOLLOWUPS: u32 = 3;
 
 /// How a pass ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -373,6 +379,7 @@ impl DiscoverySchedule {
             followup_next: false,
             followup_now: false,
             last_listing: None,
+            unchanged_followups: 0,
         }
     }
 
@@ -428,7 +435,15 @@ impl DiscoverySchedule {
             } => {
                 let changed = self.last_listing != Some(fingerprint);
                 self.last_listing = Some(fingerprint);
-                !self.followup_now || changed || changed_after
+                if !self.followup_now || changed {
+                    self.unchanged_followups = 0;
+                    true
+                } else if changed_after && self.unchanged_followups < MAX_UNCHANGED_FOLLOWUPS {
+                    self.unchanged_followups += 1;
+                    true
+                } else {
+                    false
+                }
             }
             PassEnd::Failed => !self.followup_now,
         };
@@ -971,6 +986,30 @@ mod tests {
         s.store_changed(t0 + ms(3450), true);
         s.pass_finished(t0 + ms(3500), listed(1));
         assert_eq!(s.wait(t0 + ms(3500)), None);
+    }
+
+    #[test]
+    fn a_harness_that_writes_as_it_ends_brings_only_a_few_follow_ups() {
+        let ms = Duration::from_millis;
+        let (mut s, t0) = schedule();
+        s.store_changed(t0, false);
+        assert!(s.take_due(t0 + ms(400)));
+        let after = PassEnd::Listed {
+            fingerprint: 1,
+            changed_after: true,
+        };
+        let mut passes = 1;
+        let mut now = t0 + ms(400);
+        for _ in 0..20 {
+            s.store_changed(now + ms(10), true);
+            s.pass_finished(now + ms(20), after);
+            now += ms(500);
+            if !s.take_due(now) {
+                break;
+            }
+            passes += 1;
+        }
+        assert_eq!(passes, 2 + MAX_UNCHANGED_FOLLOWUPS);
     }
 
     #[test]

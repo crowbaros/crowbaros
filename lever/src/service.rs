@@ -695,7 +695,10 @@ impl Service {
             .known_harness_sessions()
             .and_then(|known| Ok((known, self.store.quiet_sessions()?)));
         let ((known_owned, known_ignored), quiet) = match read {
-            Ok(read) => read,
+            Ok(read) => {
+                self.discovery_read_retry = DISCOVERY_READ_RETRY;
+                read
+            }
             Err(err) => {
                 // What was listed is not lost: it is listed again.
                 self.discovery_read_failed(&err, log);

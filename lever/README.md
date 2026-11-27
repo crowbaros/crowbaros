@@ -308,7 +308,9 @@ ACP today:
     the store is watched from then to the pass's end for any write after it.
     The harness's own commands, run after listing as classifying a session
     does, run only for sessions not yet classified, so a quiet store goes
-    quiet. A failed pass brings at most one follow-up. A change seen once a
+    quiet. Three follow-ups in a row that list the same and still see a change
+    bring no more, in case a harness writes to its store as it ends. A failed
+    pass brings at most one follow-up. A change seen once a
     pass has ended always brings a pass. What a pass cannot tell from its own
     writes is a write made while Lever's own running harness answers a
     listing, or in the moment a pass hands what it found to Lever; a session's
