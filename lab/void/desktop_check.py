@@ -230,6 +230,14 @@ class Check:
             raise ValueError(f'{name}.png is {width} by {height}, and has no pixel at {x},{y}')
         return tuple(rows[y][3 * x:3 * x + 3])
 
+    def region(self, name, x, y, width, height, head=0):
+        """Read a region, including content that separates equal backgrounds."""
+        self.capture(name, head)
+        image_width, image_height, rows = guest.png_pixels(self.work / f'{name}.png')
+        if not (0 <= x < x + width <= image_width and 0 <= y < y + height <= image_height):
+            raise ValueError('screenshot region is outside the display')
+        return b''.join(row[3*x:3*(x+width)] for row in rows[y:y+height])
+
     def count(self, text, log='/var/log/crowbar-compositor.log'):
         """How many lines of a log in the guest hold `text`."""
         result = self.guest.ssh(f'grep -c -e {shlex.quote(text)} {log}', check=False)
@@ -1399,6 +1407,10 @@ finally:
                 ('Virtual-2', (1280 + 500, 300), 1, 'at=1963,0 size=341x768', 341, (1024 - 30, 600)),
                 ('Virtual-1', (600, 400), 0, 'at=853,0 size=427x960', 427, DRAWER_POINT)):
             self.qmp.pointer(x / (1280 + 1024), y / 960)
+            # The empty output and drawer may share the theme's canvas.
+            # Compare the header's content against the pre-summon display.
+            region = ((1280 if head == 0 else 1024) - width + 16, 12, 180, 130)
+            baseline = self.region(f'17-before-{output}', *region, head=head)
             shows = self.count(shown)
             told = summon(opened, output=output)
             self.wait(f'the Agent\'s surface shows on {output}', lambda: self.count(shown) > shows)
@@ -1407,10 +1419,12 @@ finally:
             asked = f'SHELL agent-surface up=true output={output} width={width}'
             self.check(f'with two displays, Super+Space brings the Agent\'s surface up on {output}, where the pointer is',
                        told and f'output={output} {place}' in placed and asked in self.shell_log()
-                       and drawn(f'17-summoned-on-{output}', head, point), placed)
+                       and drawn(f'17-summoned-on-{output}', head, point)
+                       and self.region(f'17-content-on-{output}', *region, head=head) != baseline, placed)
             self.capture(f'17-other-display-while-on-{output}', 1 - head)
             summon(away, output=output, keyboard=True)
-            self.wait('the Agent\'s surface is put away', lambda: not drawn(f'17-put-away-on-{output}', head, point))
+            self.wait('the Agent\'s surface is put away',
+                      lambda: self.region(f'17-put-away-on-{output}', *region, head=head) == baseline)
 
     def agent_reached_lever_idle(self):
         """With Lever running from boot (ADR 0036) configured with OpenCode,
