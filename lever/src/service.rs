@@ -307,13 +307,14 @@ pub struct Service {
     discovery_read_retry: Duration,
     /// How long a pass waits after a listing failed while a session waited
     /// to be tried again, or after what it found could not be written: it
-    /// doubles each time, and starts again only once a pass has listed and
-    /// written all it found.
+    /// doubles each time, and starts again once a pass's writes all succeed.
     listing_retry: Duration,
     /// Whether a session whose export failed waits to be tried again.
     export_retry_pending: bool,
     /// Whether a session a pass found could not be written, and waits to be.
     write_retry_pending: bool,
+    /// Whether the last pass applied recorded a session Lever did not know.
+    discovery_settled: bool,
     /// True if another pass was asked for while a live `session/list` RPC
     /// was already in flight on `self.harness`.
     live_list_rescan_wanted: bool,
@@ -455,6 +456,7 @@ impl Service {
             listing_retry: DISCOVERY_READ_RETRY,
             export_retry_pending: false,
             write_retry_pending: false,
+            discovery_settled: false,
             loading_history: HashMap::new(),
             dispatched_history: HashSet::new(),
             pending_resumes: Vec::new(),
@@ -602,23 +604,40 @@ impl Service {
             // store is quiet by then.
             self.discovery_schedule.request(retry);
         }
+        let mut quiet_failed = false;
         for (sid, stamp) in &found.quiet {
             if let Err(err) = self.store.remember_quiet_session(sid, stamp) {
                 store_failed(log, &err);
+                quiet_failed = true;
             }
         }
-        // What it found is written first: classifying is progress only once
-        // what it classified is kept.
+        // What it found is written first: a pass made progress only when it
+        // recorded something it had not, as no session it settled is
+        // classified again; one that settled nothing is a follow-up like any.
         let effects = self.apply_discovered_sessions(found.sessions, log);
+        if quiet_failed {
+            self.discovery_write_failed();
+        }
+        let settled = self.discovery_settled || (!found.quiet.is_empty() && !quiet_failed);
         self.discovery_pass_finished(
             rescan || found.more,
             PassEnd::Listed {
                 fingerprint,
                 changed_after: found.changed_after,
-                progressed: (found.exported && !self.write_retry_pending) || found.more,
+                progressed: settled || found.more,
             },
         );
         effects
+    }
+
+    /// What a pass found could not be written: it is listed again, later
+    /// each time while it cannot be, as a follow-up, so its own writes to
+    /// the store bring no run of follow-ups of their own.
+    fn discovery_write_failed(&mut self) {
+        self.write_retry_pending = true;
+        self.discovery_schedule
+            .request_followup(Instant::now() + self.listing_retry);
+        self.listing_retry = (self.listing_retry * 2).min(DISCOVERY_READ_RETRY_MAX);
     }
 
     fn trigger_discovery(&mut self, log: &mut Log) {
@@ -691,7 +710,8 @@ impl Service {
         self.discovery_pass_finished(rescan, PassEnd::Failed);
         let _ = log.write(Event::Error, "could not list external harness sessions");
         if self.export_retry_pending || self.write_retry_pending {
-            self.discovery_schedule.request(Instant::now() + self.listing_retry);
+            self.discovery_schedule
+                .request_followup(Instant::now() + self.listing_retry);
             self.listing_retry = (self.listing_retry * 2).min(DISCOVERY_READ_RETRY_MAX);
         }
     }
@@ -732,6 +752,10 @@ impl Service {
         let now = unix_now();
         let mut broadcasts = Vec::new();
         let mut create_failed = false;
+        // Whether a session Lever did not know of is now a thread or known
+        // as a subagent.
+        let mut settled = false;
+        self.discovery_settled = false;
 
         for session in sessions {
             // One found empty or archived, unchanged since, is no thread.
@@ -743,8 +767,12 @@ impl Service {
                 continue;
             }
             if session.is_subagent {
-                if let Err(err) = self.store.remember_ignored_session(&sid, "subagent", now) {
-                    store_failed(log, &err);
+                match self.store.remember_ignored_session(&sid, "subagent", now) {
+                    Ok(()) => settled |= !known_ignored.contains(&sid),
+                    Err(err) => {
+                        store_failed(log, &err);
+                        create_failed = true;
+                    }
                 }
                 continue;
             }
@@ -801,6 +829,7 @@ impl Service {
                         updated,
                     ) {
                         Ok(()) => {
+                            settled = true;
                             broadcasts.push(Broadcast {
                                 thread_id: tid.clone(),
                                 message: json!({
@@ -821,11 +850,11 @@ impl Service {
                 Err(err) => store_failed(log, &err),
             }
         }
-        self.write_retry_pending = create_failed;
+        self.discovery_settled = settled;
         if create_failed {
-            self.discovery_schedule.request(Instant::now() + self.listing_retry);
-            self.listing_retry = (self.listing_retry * 2).min(DISCOVERY_READ_RETRY_MAX);
+            self.discovery_write_failed();
         } else {
+            self.write_retry_pending = false;
             self.listing_retry = DISCOVERY_READ_RETRY;
         }
         Effects {

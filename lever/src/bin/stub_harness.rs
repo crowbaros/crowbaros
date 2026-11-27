@@ -2719,8 +2719,42 @@ fn run(options: Options) -> Result<(), String> {
     Ok(())
 }
 
+/// Answers `session export --standalone <id>` as OpenCode does, from
+/// `$STUB_EXPORT_DIR/export-<id>.json`, logging each to `exports.log` there
+/// and writing to `$STUB_TOUCH` first, as OpenCode writes to its store as it
+/// starts.
+fn export_session(args: &[String]) -> ExitCode {
+    let Ok(dir) = std::env::var("STUB_EXPORT_DIR") else {
+        return ExitCode::from(1);
+    };
+    let dir = PathBuf::from(dir);
+    if let Ok(touch) = std::env::var("STUB_TOUCH")
+        && let Ok(mut file) = OpenOptions::new().create(true).append(true).open(touch)
+    {
+        let _ = writeln!(file, "export");
+    }
+    let id = args.last().cloned().unwrap_or_default();
+    if let Ok(mut log) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("exports.log"))
+    {
+        let _ = writeln!(log, "{id}");
+    }
+    match std::fs::read_to_string(dir.join(format!("export-{id}.json"))) {
+        Ok(text) => {
+            println!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(_) => ExitCode::from(1),
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("session") && args.get(1).map(String::as_str) == Some("export") {
+        return export_session(&args);
+    }
     let Some(options) = parse_options(&args) else {
         eprintln!("usage: crowbar-stub-harness --script <path> [--log <path>]");
         return ExitCode::from(2);

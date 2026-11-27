@@ -308,16 +308,18 @@ ACP today:
     the store is watched from then to the pass's end for any write after it.
     The harness's own commands, run after listing as classifying a session
     does, run only for sessions not yet classified, so a quiet store goes
-    quiet. A follow-up that lists the same, classifies nothing, and still sees
-    a change brings another at most three times in a row, in case a harness
+    quiet. A follow-up that lists the same, records no session Lever did not
+    know of, and still sees a change brings another at most three times in a
+    row, in case a harness
     writes to its store as it ends; one pass 5 s later then looks once more,
     and brings no more unless what it lists has changed. Lever's own running harness is asked
     again when a write came while it listed, which may be its own turn's or
     the person's, within the same three while what it lists does not
     change. A failed pass brings at most one follow-up. A listing that fails
     while a session waits to be tried again or to be written, or a session a
-    pass found and could not write, brings another pass after a wait that doubles from 1 s
-    to 60 s and starts again once a pass has written all it found. A change seen once a pass has ended always brings a pass. What
+    pass found and could not write, brings another pass after a wait that
+    doubles from 1 s to 60 s and starts again once a pass's writes all
+    succeed; such a pass is a follow-up, and brings no run of its own. A change seen once a pass has ended always brings a pass. What
     a pass cannot tell from its own writes is a write in the moment a pass
     hands what it found to Lever, or one while that later pass lists; a
     session's next write brings it. Closing a file

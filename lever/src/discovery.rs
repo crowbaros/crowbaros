@@ -180,8 +180,6 @@ pub struct Classified {
     pub changed_after: bool,
     /// Whether sessions were left for the next pass.
     pub more: bool,
-    /// Whether it ran the harness's own commands to classify sessions.
-    pub exported: bool,
     /// Sessions newly found empty or archived, with their stamps.
     pub quiet: Vec<(String, String)>,
     /// The soonest a session whose export failed may be tried again, when
@@ -264,7 +262,12 @@ impl DiscoveryRunner {
         let discoverer = Arc::clone(&self.discoverer);
         self.start_job("lever-classify", move || {
             let fingerprint = listing_fingerprint(&sessions);
-            Ok((discoverer.classify_sessions(sessions, &known), fingerprint))
+            let mut found = discoverer.classify_sessions(sessions, &known);
+            // The running harness's listing may have missed a write made
+            // after it read its sessions, as it cannot be watched apart from
+            // the harness's own turn.
+            found.changed_after = true;
+            Ok((found, fingerprint))
         });
     }
 
@@ -372,8 +375,9 @@ const MAX_UNCHANGED_FOLLOWUPS: u32 = 3;
 pub enum PassEnd {
     /// It listed: the listing's fingerprint ([`listing_fingerprint`]),
     /// whether the store may have changed after it was taken, and whether it
-    /// classified sessions or left some for the next pass: work that ends,
-    /// so a follow-up of it is not counted against the cap.
+    /// recorded a session Lever did not know of or left some for the next
+    /// pass: work that ends, so a follow-up of it is not counted against
+    /// the cap.
     Listed {
         fingerprint: u64,
         changed_after: bool,
@@ -415,6 +419,14 @@ impl DiscoverySchedule {
     /// Asks for a pass at `at` at the latest, whatever the store does.
     pub fn request(&mut self, at: Instant) {
         self.requested_due = Some(self.requested_due.map_or(at, |due| due.min(at)));
+    }
+
+    /// Asks for a pass at `at` at the latest that is a follow-up: one that
+    /// tries again what a pass could not do, and brings no run of follow-ups
+    /// of its own while it lists the same.
+    pub fn request_followup(&mut self, at: Instant) {
+        self.request(at);
+        self.followup_next = true;
     }
 
     fn due(&self) -> Option<Instant> {

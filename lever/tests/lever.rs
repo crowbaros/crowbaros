@@ -10862,6 +10862,80 @@ fn a_session_that_could_not_be_written_waits_through_a_failed_listing() {
 }
 
 #[test]
+fn an_opencode_session_that_cannot_be_written_is_not_exported_again_and_again() {
+    let dir = TempDir::new();
+    // The stub stands in for OpenCode: its store is OpenCode's, it writes to
+    // it as it starts, and it answers `session export` as OpenCode does.
+    let store_dir = dir.0.join("data").join("opencode");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("opencode.db");
+    let wal = store_dir.join("opencode.db-wal");
+    let exports = dir.0.join("exports");
+    std::fs::create_dir_all(&exports).unwrap();
+    std::fs::write(
+        exports.join("export-ses_hand.json"),
+        r#"{"info":{"id":"ses_hand","title":"By hand"},"messages":[{}]}"#,
+    )
+    .unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "touch_on_start": wal.to_str().unwrap(),
+        }),
+    );
+    let extra: Vec<String> = [
+        "--harness",
+        STUB_BIN,
+        "--harness-name",
+        "OpenCode",
+        "--harness-arg",
+        "--script",
+        "--harness-arg",
+        script.to_str().unwrap(),
+        "--harness-env",
+        &format!("XDG_DATA_HOME={}", dir.0.join("data").display()),
+        "--harness-env",
+        &format!("STUB_EXPORT_DIR={}", exports.display()),
+        "--harness-env",
+        &format!("STUB_TOUCH={}", wal.display()),
+        "--discovery-debounce-ms",
+        "40",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    // Lever's database reads, but will not take a new thread.
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+    rusqlite::Connection::open(dir.0.join("state").join("lever.sqlite"))
+        .unwrap()
+        .execute_batch("CREATE TRIGGER refused BEFORE INSERT ON threads BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .unwrap();
+    std::fs::write(
+        &sessions_file,
+        serde_json::to_vec(&json!([{
+            "session_id": "ses_hand",
+            "cwd": "/tmp",
+            "title": "By hand",
+            "updated_at": "2026-04-10T12:00:00.100Z",
+            "history": [{ "kind": "user_text", "text": "hi" }, { "kind": "text", "text": "hello" }]
+        }]))
+        .unwrap(),
+    )
+    .unwrap();
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    std::thread::sleep(Duration::from_millis(6500));
+    let exported = count_lines(&exports.join("exports.log"));
+    assert!((1..=10).contains(&exported), "exported {exported} times in 6.5 s");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
 fn missing_store_directory_is_promoted_when_created_later() {
     let dir = TempDir::new();
     let store_dir = dir.0.join("nested").join("store");
