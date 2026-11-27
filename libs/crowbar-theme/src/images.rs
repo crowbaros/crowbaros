@@ -17,7 +17,15 @@ pub fn load(path: &Path) -> Result<RgbaImage, String> {
         .read(true)
         .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
         .open(path)
-        .map_err(|e| format!("Cannot open image: {e}"))?;
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                "Image not found. Check the path, then choose Extract colors again.".to_string()
+            }
+            std::io::ErrorKind::PermissionDenied => {
+                "This image cannot be read. Choose a file you can open, then try again.".to_string()
+            }
+            _ => "Cannot open this image. Choose a readable image file, then try again.".to_string(),
+        })?;
     let meta = file.metadata().map_err(|e| e.to_string())?;
     if !meta.is_file() || meta.len() > MAX_FILE {
         return Err("Choose a regular image file of at most 64 MiB.".into());
@@ -162,6 +170,9 @@ mod tests {
         let broken = root.join("broken.png");
         std::fs::write(&broken, b"not an image").unwrap();
         assert!(load(&broken).is_err());
+        let missing = load(&root.join("missing.png")).unwrap_err();
+        assert!(missing.contains("Check the path"));
+        assert!(!missing.contains("os error"));
         assert!(load(Path::new("/dev/null")).is_err());
         store
             .save_custom_theme("Broken", builtin::nord().colors, Appearance::Dark, &[broken])

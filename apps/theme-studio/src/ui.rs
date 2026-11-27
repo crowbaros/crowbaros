@@ -4,13 +4,15 @@ use crowbar_ui::{ButtonVariant, FONT_MONO, FONT_UI, ThemeWatcher, UiPalette, but
 use gpui::{actions, prelude::*, *};
 use gpui_component::{
     Root, Theme, ThemeMode,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
 };
 use std::{path::PathBuf, sync::Arc};
-actions!(studio, [Quit, Tab, BackTab]);
+actions!(studio, [Quit, Tab, BackTab, CancelClose]);
 #[derive(Clone)]
 enum Action {
     Close,
+    KeepEditing,
+    DiscardClose,
     Refresh,
     Apply(String),
     Delete(String),
@@ -49,6 +51,8 @@ struct Studio {
     confirm_delete: Option<String>,
     focus: FocusHandle,
     controls: Vec<FocusHandle>,
+    draft: crowbaros_theme_studio::DraftState,
+    _name_subscription: Subscription,
 }
 fn appearance(p: UiPalette, cx: &mut App) {
     Theme::change(if p.is_dark { ThemeMode::Dark } else { ThemeMode::Light }, None, cx);
@@ -88,7 +92,15 @@ impl Studio {
                 .placeholder("Name your theme")
                 .validate(|s, _| s.len() <= 80)
         });
+        let name_subscription = cx.subscribe_in(&name, w, |s: &mut Self, _, event, _, cx| {
+            if matches!(event, InputEvent::Change) {
+                s.draft.changed();
+                cx.notify();
+            }
+        });
         let mut s = Self {
+            draft: Default::default(),
+            _name_subscription: name_subscription,
             store,
             themes: vec![],
             active: String::new(),
@@ -108,26 +120,67 @@ impl Studio {
             focus: cx.focus_handle(),
             controls: (0..640).map(|_| cx.focus_handle().tab_stop(true)).collect(),
         };
+        let weak = cx.weak_entity();
+        w.on_window_should_close(cx, move |w, cx| {
+            weak.update(cx, |s, cx| {
+                if s.busy {
+                    return false;
+                }
+                if s.draft.request_close() {
+                    true
+                } else {
+                    s.controls[16].focus(w);
+                    cx.notify();
+                    false
+                }
+            })
+            .unwrap_or(true)
+        });
         s.path.read(cx).focus_handle(cx).focus(w);
         s.execute(Action::Refresh, w, cx);
         s
     }
     fn execute(&mut self, action: Action, w: &mut Window, cx: &mut Context<Self>) {
-        if matches!(action, Action::Close) {
-            w.remove_window();
-            return;
+        match action {
+            Action::Close => {
+                if self.busy {
+                    self.message = "Wait for the current operation to finish before closing.".into();
+                } else if self.draft.request_close() {
+                    w.remove_window();
+                    return;
+                } else {
+                    self.controls[16].focus(w);
+                }
+                cx.notify();
+                return;
+            }
+            Action::KeepEditing => {
+                self.draft.keep_editing();
+                self.name.read(cx).focus_handle(cx).focus(w);
+                cx.notify();
+                return;
+            }
+            Action::DiscardClose => {
+                w.remove_window();
+                return;
+            }
+            _ => (),
         }
         if self.busy {
             return;
         }
         match action {
             Action::Mode(mode) => {
+                if !self.backgrounds.is_empty() {
+                    self.draft.changed();
+                }
                 self.appearance = mode;
                 self.colors = extract::palette_from_accent(self.chosen_accent, mode);
                 cx.notify();
                 return;
             }
             Action::Accent(color) => {
+                self.draft.changed();
                 self.chosen_accent = color;
                 self.colors = extract::palette_from_accent(color, self.appearance);
                 cx.notify();
@@ -136,6 +189,7 @@ impl Studio {
             Action::Remove(index) => {
                 if index < self.backgrounds.len() {
                     self.backgrounds.remove(index);
+                    self.draft.changed();
                 }
                 cx.notify();
                 return;
@@ -161,6 +215,7 @@ impl Studio {
         let colors = self.colors.clone();
         let mode = self.appearance;
         let backgrounds = self.backgrounds.clone();
+        let saving_revision = matches!(action, Action::Save).then_some(self.draft.revision());
         self.busy = true;
         self.error = false;
         self.message = "Working…".into();
@@ -227,8 +282,12 @@ impl Studio {
                 s.active = active;
                 match result {
                     Ok(out) => {
+                        if let Some(revision) = saving_revision {
+                            s.draft.saved(revision);
+                        }
                         s.message = out.message;
                         if let Some(mut loaded) = out.loaded {
+                            s.draft.changed();
                             if !loaded.append {
                                 s.backgrounds.clear();
                                 s.candidates = loaded.candidates;
@@ -502,7 +561,12 @@ impl Render for Studio {
             .text_size(px(13.))
             .key_context("ThemeStudio")
             .track_focus(&self.focus)
-            .on_action(cx.listener(|_, _: &Quit, w, _| w.remove_window()))
+            .on_action(cx.listener(|s, _: &Quit, w, cx| s.execute(Action::Close, w, cx)))
+            .on_action(cx.listener(|s, _: &CancelClose, w, cx| {
+                if s.draft.confirming_close {
+                    s.execute(Action::KeepEditing, w, cx);
+                }
+            }))
             .on_action(cx.listener(|_, _: &Tab, w, _| w.focus_next()))
             .on_action(cx.listener(|_, _: &BackTab, w, _| w.focus_prev()))
             .child(crowbar_ui::titlebar(
@@ -531,17 +595,27 @@ impl Render for Studio {
                             .flex_1()
                             .min_w_0()
                             .text_color(rgb(if self.error { p.danger } else { p.muted }))
-                            .child(self.message.clone()),
+                            .child(if self.draft.confirming_close {
+                                "Discard this unsaved theme?".to_string()
+                            } else {
+                                self.message.clone()
+                            }),
                     )
-                    .child(self.control(
-                        5,
-                        "Save & apply",
-                        Action::Save,
-                        !self.backgrounds.is_empty(),
-                        true,
-                        w,
-                        cx,
-                    )),
+                    .when(self.draft.confirming_close, |d| {
+                        d.child(self.control(16, "Keep editing", Action::KeepEditing, true, true, w, cx))
+                            .child(self.control(17, "Discard & close", Action::DiscardClose, true, false, w, cx))
+                    })
+                    .when(!self.draft.confirming_close, |d| {
+                        d.child(self.control(
+                            5,
+                            "Save & apply",
+                            Action::Save,
+                            !self.backgrounds.is_empty(),
+                            true,
+                            w,
+                            cx,
+                        ))
+                    }),
             )
     }
 }
@@ -558,6 +632,7 @@ pub fn run() {
         load_fonts(cx);
         cx.bind_keys([
             KeyBinding::new("ctrl-q", Quit, Some("ThemeStudio")),
+            KeyBinding::new("escape", CancelClose, Some("ThemeStudio")),
             KeyBinding::new("tab", Tab, Some("ThemeStudio")),
             KeyBinding::new("shift-tab", BackTab, Some("ThemeStudio")),
         ]);

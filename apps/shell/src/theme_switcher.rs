@@ -65,6 +65,7 @@ impl ThemeSwitcher {
             } else {
                 p.line
             }))
+            .when(focus.is_focused(w), |d| d.border_dashed())
             .bg(rgb(if selected { p.surface } else { p.canvas }))
             .text_color(rgb(p.text))
             .cursor_pointer()

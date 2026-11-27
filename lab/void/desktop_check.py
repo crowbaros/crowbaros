@@ -360,6 +360,10 @@ for name in ['crowbaros','foot','gtk-3.0','gtk-4.0']:
             if appearance == 'light':
                 self.click(430,520)
             self.capture(f'themes-{appearance}-extracted')
+            self.key('ctrl','q')
+            self.capture(f'themes-{appearance}-close-protection')
+            self.check('closing an unsaved palette preserves its window',self.snapshot()['active'].get('class')=='com.crowbaros.ThemeStudio')
+            self.key('esc')
             # Missing-name recovery focuses the native input, then Save applies.
             self.click(975,888)
             self.type('Native Palette')

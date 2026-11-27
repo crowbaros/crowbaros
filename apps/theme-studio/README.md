@@ -10,6 +10,8 @@ image path and choose **Add background** to attach more wallpapers (up to 16).
 Name the theme and choose **Save & apply**. The installed list applies themes;
 custom themes offer an inline, two-step Delete action. Tab and Shift+Tab move
 through controls; Enter or Space activates buttons; Ctrl+Q closes the app.
+Closing an unsaved draft asks Keep editing or Discard & close; Escape keeps
+the draft. This also applies to native window-close requests.
 
 PNG, JPEG, WebP, GIF (first frame), BMP, and TIFF are supported. Decoding rejects
 special files, files over 64 MiB, and images over 40 megapixels; wallpapers are

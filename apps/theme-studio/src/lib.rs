@@ -49,3 +49,50 @@ mod tests {
         );
     }
 }
+
+/// A draft remains unsaved if it changes while persistence is in flight.
+#[derive(Default)]
+pub struct DraftState {
+    revision: u64,
+    saved: u64,
+    pub confirming_close: bool,
+}
+impl DraftState {
+    pub fn changed(&mut self) {
+        self.revision = self.revision.saturating_add(1);
+        self.confirming_close = false;
+    }
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+    pub fn saved(&mut self, revision: u64) {
+        self.saved = revision;
+    }
+    pub fn request_close(&mut self) -> bool {
+        self.confirming_close = self.revision != self.saved;
+        !self.confirming_close
+    }
+    pub fn keep_editing(&mut self) {
+        self.confirming_close = false;
+    }
+}
+#[cfg(test)]
+mod draft_tests {
+    use super::*;
+    #[test]
+    fn close_preserves_unsaved_work_and_a_late_save_does_not_erase_edits() {
+        let mut draft = DraftState::default();
+        assert!(draft.request_close());
+        draft.changed();
+        assert!(!draft.request_close());
+        assert!(draft.confirming_close);
+        draft.keep_editing();
+        assert!(!draft.confirming_close);
+        let saving = draft.revision();
+        draft.changed();
+        draft.saved(saving);
+        assert!(!draft.request_close());
+        draft.saved(draft.revision());
+        assert!(draft.request_close());
+    }
+}
