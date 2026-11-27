@@ -449,34 +449,44 @@ impl Monitor {
                                     .child(self.chart(name, name, percent(*value), Some(100.)))
                             }),
                     ),
-                )
-                .child(self.chart(
-                    "Memory",
-                    "Memory",
-                    format!("{} / {}", bytes(s.memory.used as f64), bytes(s.memory.total as f64)),
-                    Some(s.memory.total as f64),
-                ))
-                .child(self.chart(
-                    "Swap",
-                    "Swap",
-                    if s.memory.swap_total == 0 {
-                        "Not configured".into()
-                    } else {
-                        format!(
-                            "{} / {}",
-                            bytes(s.memory.swap_used as f64),
-                            bytes(s.memory.swap_total as f64)
-                        )
-                    },
-                    Some(s.memory.swap_total as f64),
-                ));
-        for (label, value) in [
-            ("Disk read", s.disk_read),
-            ("Disk write", s.disk_write),
-            ("Network received", s.net_read),
-            ("Network sent", s.net_write),
+                );
+        let pair = |left, right| {
+            div()
+                .flex()
+                .gap_6()
+                .child(div().flex_1().min_w_0().child(left))
+                .child(div().flex_1().min_w_0().child(right))
+        };
+        body = body.child(pair(
+            self.chart(
+                "Memory",
+                "Memory",
+                format!("{} / {}", bytes(s.memory.used as f64), bytes(s.memory.total as f64)),
+                Some(s.memory.total as f64),
+            ),
+            self.chart(
+                "Swap",
+                "Swap",
+                if s.memory.swap_total == 0 {
+                    "Not configured".into()
+                } else {
+                    format!(
+                        "{} / {}",
+                        bytes(s.memory.swap_used as f64),
+                        bytes(s.memory.swap_total as f64)
+                    )
+                },
+                Some(s.memory.swap_total as f64),
+            ),
+        ));
+        for ((left, left_value), (right, right_value)) in [
+            (("Disk read", s.disk_read), ("Disk write", s.disk_write)),
+            (("Network received", s.net_read), ("Network sent", s.net_write)),
         ] {
-            body = body.child(self.chart(label, label, throughput(value), None));
+            body = body.child(pair(
+                self.chart(left, left, throughput(left_value), None),
+                self.chart(right, right, throughput(right_value), None),
+            ));
         }
         if s.gpus.is_empty() {
             body = body.child("GPU metrics are not exposed by this system.");
@@ -543,6 +553,7 @@ impl Monitor {
                         Some(
                             div()
                                 .id(("pid", process.pid as usize))
+                                .w_full()
                                 .h(px(36.))
                                 .flex()
                                 .items_center()
@@ -561,7 +572,7 @@ impl Monitor {
                                         cx.notify();
                                     }
                                 }))
-                                .child(div().flex_1().min_w_0().overflow_hidden().child(process.name.clone()))
+                                .child(div().flex_1().min_w_0().truncate().child(process.name.clone()))
                                 .children(
                                     [
                                         process.pid.to_string(),
@@ -575,7 +586,7 @@ impl Monitor {
                                         div()
                                             .w(px(100.))
                                             .flex_shrink_0()
-                                            .overflow_hidden()
+                                            .truncate()
                                             .font_family(FONT_MONO)
                                             .child(v)
                                     }),
@@ -586,6 +597,7 @@ impl Monitor {
             })
         })
         .track_scroll(self.scroll.clone())
+        .w_full()
         .flex_1()
         .min_h_0();
         let allowed = self.error.is_none()
@@ -661,7 +673,7 @@ impl Monitor {
                         if d.services.is_empty() {
                             "Reading services…".into()
                         } else {
-                            d.services.join("\n")
+                            d.services.join("\n").replace("/var/service/", "")
                         }
                     })
                     .unwrap_or_else(|| "Reading services…".into()),

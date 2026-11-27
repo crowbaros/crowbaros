@@ -86,7 +86,7 @@ rm -f "$SV/agetty-tty2"
 chroot "$R" useradd -m -u 1000 -G _seatd crowbar-compositor
 chroot "$R" useradd -m -u 1001 crowbar-shell
 chroot "$R" useradd -m -u "$PERSON_UID" -G netdev,wheel,audio,bluetooth,socklog -s /bin/bash -c "$PERSON_FULL_NAME" "$PERSON"
-for service in compositor shell launcher unlock ctrl-alt-del lever pipewire; do
+for service in compositor shell launcher unlock ctrl-alt-del lever pipewire monitor-status; do
   install -D -m 755 "$DESKTOP/$service-run" "$R/etc/sv/crowbar-$service/run"
   ln -sfn "/etc/sv/crowbar-$service" "$SV/crowbar-$service"
 done

@@ -217,6 +217,11 @@ class Check:
         self.check(f'Monitor reads live metrics without root in {theme}',
                    sample['memory']['total'] > 0 and 'cpu' in sample['cpu']
                    and len(sample['processes']) > 0 and bool(sample['details']['storage']))
+        self.check('Monitor reads runit status without access to its controls',
+                   any(line.startswith('run: /var/service/crowbar-compositor:')
+                       for line in sample['details']['services']))
+        access = self.run(f"su -s /bin/sh {person} -c 'test -r /run/crowbar-monitor/services && test ! -w /run/crowbar-monitor/services && test ! -w /var/service/crowbar-compositor/supervise/control && echo read-only'")
+        self.check('Monitor status grants read access without service control', access.strip() == 'read-only')
         self.check('Monitor reads recent socklog lines as the person',
                    'Monitor log visibility check' in sample['details']['logs'])
         self.capture(f'monitor-{theme}-before')

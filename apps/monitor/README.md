@@ -14,8 +14,12 @@ to processes owned by the person, excluding Monitor itself and exited processes.
 Monitor opens a pidfd and rechecks the process's start time and ownership before
 signalling, so a stale row cannot target a reused PID. It never elevates privileges.
 
-Services & Storage is read-only: `sv status`, root filesystem space from
-`statvfs`, Btrfs usage where readable, and the last 30 lines of
+Services & Storage is read-only: Base publishes `sv status` every five seconds
+through `crowbar-monitor-status`, leaving runit’s supervision directories and
+control FIFOs private. Monitor reads that root-owned report from
+`/run/crowbar-monitor/services` and rejects reports older than 20 seconds.
+It also shows root filesystem space from
+`statvfs` (including Btrfs), and the last 30 lines of
 `/var/log/socklog/everything/current`. Permission errors remain visible. Monitor
 changes no service or log permissions and does not ask for root access. Base
 adds the person to Void’s `socklog` group so existing system logs are readable

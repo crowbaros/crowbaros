@@ -26,6 +26,9 @@ name = "crowbaros-monitor"
 path = "src/main.rs"
 required-features = ["ui"]
 
+[dev-dependencies]
+tempfile = "3"
+
 [profile.release]
 opt-level = 2
 debug = 0

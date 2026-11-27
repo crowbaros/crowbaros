@@ -902,12 +902,12 @@ class DesktopServicesCheck(unittest.TestCase):
         # The services the image step turns on for the desktop, but for
         # Ctrl+Alt+Del's, which the check of every service covers.
         script = (Path(void_base.HERE) / 'host/image.sh').read_text()
-        self.assertIn('for service in compositor shell launcher unlock ctrl-alt-del lever pipewire; do', script)
+        self.assertIn('for service in compositor shell launcher unlock ctrl-alt-del lever pipewire monitor-status; do', script)
         self.assertIn('ln -sfn /etc/sv/seatd "$SV/seatd"', script)
         command = next(command for name, command, *_ in void_base.CHECKS
                        if name == "the desktop's services stay up")
         for service in ('seatd', 'crowbar-compositor', 'crowbar-shell', 'crowbar-launcher',
-                        'crowbar-unlock', 'crowbar-lever', 'crowbar-pipewire'):
+                        'crowbar-unlock', 'crowbar-lever', 'crowbar-pipewire', 'crowbar-monitor-status'):
             self.assertIn(f'/var/service/{service}', command)
 
 

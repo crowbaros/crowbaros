@@ -302,3 +302,13 @@ from the firmware's boot menu, and join Wi-Fi from a terminal.
   `/boot/grub/grub.cfg` with `update-grub`, and that path is untested.
 - The initramfs is dracut's generic one, about 200 MB.
 - No locale or time zone, and no installer.
+
+## Monitor's read-only service report
+
+`crowbar-monitor-status` runs `sv status` as a runit service and atomically
+publishes its bounded output every five seconds to the root-owned, readable
+`/run/crowbar-monitor/services`. Monitor reads the report as the person and
+rejects it when more than 20 seconds old. Runit's supervision directories and
+control FIFOs retain their original permissions; this service accepts no
+requests and cannot be used to start, stop, or signal a service. The person's
+`socklog` group membership separately permits reading the existing system logs.

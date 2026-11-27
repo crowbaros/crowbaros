@@ -396,26 +396,24 @@ fn parse_nvidia(text: &str) -> Vec<Gpu> {
         })
         .collect()
 }
+fn service_report(path: &Path) -> Result<Vec<String>, String> {
+    let age = fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map_err(|e| e.to_string())?
+        .elapsed()
+        .map_err(|_| "Service report timestamp is invalid")?;
+    if age > Duration::from_secs(20) {
+        return Err("The service report is stale; waiting for Base to refresh it.".into());
+    }
+    let text = read(path).map_err(|e| e.to_string())?;
+    if text.trim().is_empty() {
+        return Err("The service report is empty.".into());
+    }
+    Ok(text.lines().map(str::to_owned).collect())
+}
 fn details() -> Details {
-    let services = match fs::read_dir("/var/service") {
-        Ok(entries) => {
-            let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
-            paths.sort();
-            let args: Vec<_> = std::iter::once("status".to_string())
-                .chain(paths.into_iter().take(256).map(|p| p.to_string_lossy().into_owned()))
-                .collect();
-            if args.len() == 1 {
-                vec!["No runit services found.".into()]
-            } else {
-                command("/usr/bin/sv", &args.iter().map(String::as_str).collect::<Vec<_>>())
-                    .unwrap_or_else(|e| format!("Service status unavailable: {e}"))
-                    .lines()
-                    .map(str::to_owned)
-                    .collect()
-            }
-        }
-        Err(_) => vec!["Service status unavailable. /var/service is not readable.".into()],
-    };
+    let services = service_report(Path::new("/run/crowbar-monitor/services"))
+        .unwrap_or_else(|e| vec![format!("Service status unavailable: {e}")]);
     let mut storage = root_usage().unwrap_or_else(|e| format!("Root filesystem usage unavailable: {e}"));
     if read("/proc/mounts").is_ok_and(|s| {
         s.lines().any(|l| {
@@ -423,12 +421,7 @@ fn details() -> Details {
             f.get(1) == Some(&"/") && f.get(2) == Some(&"btrfs")
         })
     }) {
-        storage.push_str("\n\nBtrfs\n");
-        storage.push_str(
-            &command("/usr/bin/btrfs", &["filesystem", "usage", "-b", "/"]).unwrap_or_else(|_| {
-                "Detailed Btrfs usage is not readable by this account. Filesystem totals are shown above.".into()
-            }),
-        );
+        storage = storage.replacen("Root filesystem", "Btrfs root filesystem", 1);
     }
     let logs = log_tail(Path::new("/var/log/socklog/everything/current"))
         .unwrap_or_else(|_| "Recent system logs are not readable by this account.".into());
@@ -491,6 +484,23 @@ mod tests {
                 .used
                 .is_none()
         );
+    }
+    #[test]
+    fn service_report_rejects_stale_empty_and_missing_snapshots() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("services");
+        assert!(service_report(&path).is_err());
+        fs::write(&path, "run: example: (pid 2) 10s\n").unwrap();
+        assert_eq!(service_report(&path).unwrap(), vec!["run: example: (pid 2) 10s"]);
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(30))
+            .unwrap();
+        assert!(service_report(&path).unwrap_err().contains("stale"));
+        fs::write(&path, "").unwrap();
+        assert!(service_report(&path).is_err());
     }
     #[test]
     fn device_changes_do_not_create_spikes() {

@@ -855,7 +855,7 @@ def compositor_restarted(out):
 # starts a service that exits again a second later, so one that cannot start
 # shows as running for a moment, over and over.
 DESKTOP_SERVICES = ("seatd", "crowbar-compositor", "crowbar-shell", "crowbar-launcher",
-                    "crowbar-unlock", "crowbar-lever", "crowbar-pipewire")
+                    "crowbar-unlock", "crowbar-lever", "crowbar-pipewire", "crowbar-monitor-status")
 # One digit: the guest's own pattern for it, in CHECKS, counts on that.
 STAYED_UP = 3
 # The shell's service starts `crowbar-shell-connect`, which waits for the

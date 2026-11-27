@@ -1,0 +1,13 @@
+#!/bin/sh
+# Publish runit's read-only status without exposing its private control FIFOs.
+# /run is root-owned; the person can read this directory but cannot write it.
+set -eu
+umask 077
+install -d -m 755 /run/crowbar-monitor
+cd /
+while :; do
+  timeout 3 sv status /var/service/* 2>&1 | head -c 65536 > /run/crowbar-monitor/services.tmp
+  chmod 644 /run/crowbar-monitor/services.tmp
+  mv -f /run/crowbar-monitor/services.tmp /run/crowbar-monitor/services
+  sleep 5
+done
